@@ -1,0 +1,147 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai2-olmo-core"
+dynamic = ["version"]
+readme = "README.md"
+description = "Core training module for the Open Language Model (OLMo)"
+authors = [
+    { name = "Allen Institute for Artificial Intelligence", email = "olmo@allenai.org" }
+]
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+dependencies = [
+    "numpy",
+    "torch>=2.0",
+    "safetensors",
+    "pydantic>=2.0,<3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "mypy>=1.0,<1.4",
+    "black>=23.1,<24.0",
+    "isort>=5.12,<5.13",
+    "pytest",
+    "pytest-sphinx",
+    "twine>=1.11.0",
+    "setuptools",
+    "wheel",
+    "build",
+    "boto3",
+    "google-cloud-storage",
+    "requests",
+]
+all = [
+    "ai2-olmo-core[dev]",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+olmo_core = ["py.typed"]
+
+[tool.setuptools.dynamic]
+version = { attr = "olmo_core.version.VERSION" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["olmo_core*"]
+exclude = [
+    "*.tests",
+    "*.tests.*",
+    "tests.*",
+    "tests",
+    "test_fixtures",
+    "test_fixtures.*",
+    "docs*",
+    "scripts*",
+]
+
+[tool.black]
+line-length = 115
+include = '\.pyi?$'
+exclude = '''
+(
+      __pycache__
+    | \.git
+    | \.mypy_cache
+    | \.pytest_cache
+    | \.vscode
+    | \.venv
+    | \bdist\b
+    | \bdoc\b
+    | pretrain_data/
+    | inference/
+)
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+
+[tool.ruff]
+line-length = 115
+ignore = ["F403", "F405", "E501"]
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".venv",
+    "venv",
+    ".mypy_cache",
+    "__pycache__",
+    ".nox",
+    ".pants.d",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "doc",
+    "pretrain_data",
+    "inference",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401"]
+
+[tool.pyright]
+reportPrivateImportUsage = false
+
+[tool.mypy]
+ignore_missing_imports = true
+no_site_packages = true
+check_untyped_defs = true
+no_namespace_packages = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+strict_optional = false
+
+[tool.pytest.ini_options]
+testpaths = "tests/"
+python_classes = [
+  "Test*",
+  "*Test",
+]
+log_format = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
+log_level = "DEBUG"
+markers = [
+    "gpu",
+]
+filterwarnings = [
+    'ignore::FutureWarning:huggingface_hub\.file_download',
+    'ignore::DeprecationWarning:pkg_resources',
+    'ignore::DeprecationWarning:google\.rpc',
+]
