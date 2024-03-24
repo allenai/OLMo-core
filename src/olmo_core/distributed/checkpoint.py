@@ -23,7 +23,7 @@ from ..io import (
     is_url,
     upload,
 )
-from ..utils import wait_for
+from ..utils import TORCH_DTYPE_TO_STR, TORCH_DTYPES, wait_for
 from .sharded_flat_parameter import ShardedFlatParameter
 from .utils import barrier, get_rank, scatter_object
 
@@ -41,6 +41,12 @@ class TensorStorageMetadata(BaseModel):
     """
     The shape of the full (unflattened) tensor.
     """
+
+    dtype: str
+
+    @property
+    def torch_dtype(self) -> torch.dtype:
+        return TORCH_DTYPES[self.dtype]
 
 
 class StorageMetadata(BaseModel):
@@ -157,6 +163,12 @@ class SafeTensorsMultiFileLoader:
 
 
 class Checkpointer:
+    """
+    A checkpointer for saving and loading *flat* state dictionaries, where keys are strings values
+    are either regular :class:`torch.Tensor`s, :class:`torch.nn.Parameter`s, or :class:`ShardedFlatParameter`s.
+    Nested dictionaries are not supported.
+    """
+
     METADATA_FILENAME = "metadata.json"
 
     def _filename_for_rank(self, rank: int) -> str:
@@ -187,6 +199,7 @@ class Checkpointer:
                     self._filename_for_rank(rank): offsets for rank, offsets in flattened_offsets_per_rank.items()
                 },
                 shape=full_shape,
+                dtype=TORCH_DTYPE_TO_STR[tensor.dtype],
             )
 
         tensors_save_plan = scatter_object(tensors_save_plan)
@@ -283,7 +296,13 @@ class Checkpointer:
                 clear_directory(local_dir)
 
     @torch.no_grad()
-    def load(self, dir: PathOrStr, state_dict: Dict[str, torch.Tensor]):
+    def load(
+        self,
+        dir: PathOrStr,
+        state_dict: Dict[str, torch.Tensor],
+        _safetensors_mfl: Optional[SafeTensorsMultiFileLoader] = None,
+        _metadata: Optional[StorageMetadata] = None,
+    ):
         """
         Load a state dict in-place.
         """
@@ -294,14 +313,15 @@ class Checkpointer:
         local_rank = get_rank()
 
         # Collect metadata from rank 0, scatter to other ranks.
-        metadata: Optional[StorageMetadata] = None
-        if local_rank == 0:
-            with open(cached_path(f"{dir}/{self.METADATA_FILENAME}")) as f:
-                metadata = StorageMetadata(**json.load(f))
-        metadata = scatter_object(metadata)
+        metadata: Optional[StorageMetadata] = _metadata
+        if metadata is None:
+            if local_rank == 0:
+                with open(cached_path(f"{dir}/{self.METADATA_FILENAME}")) as f:
+                    metadata = StorageMetadata(**json.load(f))
+            metadata = scatter_object(metadata)
         assert metadata is not None
 
-        safetensors_mfl = SafeTensorsMultiFileLoader()
+        safetensors_mfl = _safetensors_mfl or SafeTensorsMultiFileLoader()
 
         # Load each tensor from the slices in each file.
         for key in state_dict.keys():
@@ -405,3 +425,27 @@ class Checkpointer:
 
             state_dict[key].copy_(flat_tensor.view(tensor.shape))
             del flat_tensor
+
+    @torch.no_grad()
+    def unshard(self, dir: PathOrStr) -> Dict[str, torch.Tensor]:
+        """
+        Unshard a checkpoint, returning the full state dict.
+        """
+        dir = str(dir).rstrip("/")
+        if dir.startswith("file://"):
+            dir = dir.replace("file://", "", 1)
+
+        # Load metadata.
+        with open(cached_path(f"{dir}/{self.METADATA_FILENAME}")) as f:
+            metadata = StorageMetadata(**json.load(f))
+
+        # Initialize state dict.
+        state_dict = {}
+        for key, tensor_metadata in metadata.tensors.items():
+            tensor = torch.empty(tensor_metadata.shape, dtype=tensor_metadata.torch_dtype)
+            state_dict[key] = tensor
+
+        # Load the state dict in place.
+        self.load(dir, state_dict, _metadata=metadata)
+
+        return state_dict

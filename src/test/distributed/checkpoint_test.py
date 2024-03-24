@@ -98,6 +98,7 @@ def save_and_load_checkpoint_from_regular_to_sharded_tensor(dir):
     checkpointer.load(dir, state_dict_to_load)  # type: ignore
 
     torch.testing.assert_close(state_dict_to_save["x"], state_dict_to_load["x"].gather())
+    torch.testing.assert_close(state_dict_to_save, checkpointer.unshard(dir))
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
@@ -122,6 +123,7 @@ def save_and_load_checkpoint_from_sharded_to_regular_tensor(dir):
     checkpointer.load(dir, state_dict_to_load)  # type: ignore
 
     torch.testing.assert_close(state_dict_to_save["x"].gather(), state_dict_to_load["x"])
+    torch.testing.assert_close(state_dict_to_load, checkpointer.unshard(dir))
 
 
 @pytest.mark.parametrize("backend", BACKENDS)

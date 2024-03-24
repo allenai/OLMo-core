@@ -30,6 +30,27 @@ TORCH_TO_NP_DTYPES = {
     _float8_e5m2: np.uint8,
 }
 
+TORCH_DTYPES = {
+    "F64": torch.float64,
+    "F32": torch.float32,
+    "F16": torch.float16,
+    "BF16": torch.bfloat16,
+    "I64": torch.int64,
+    # "U64": torch.uint64,
+    "I32": torch.int32,
+    # "U32": torch.uint32,
+    "I16": torch.int16,
+    # "U16": torch.uint16,
+    "I8": torch.int8,
+    "U8": torch.uint8,
+    "BOOL": torch.bool,
+    "F8_E4M3": _float8_e4m3fn,
+    "F8_E5M2": _float8_e5m2,
+}
+
+
+TORCH_DTYPE_TO_STR = {v: k for k, v in TORCH_DTYPES.items()}
+
 
 def default_thread_count() -> int:
     env_val = os.environ.get(OLMO_NUM_THREADS_ENV_VAR)
