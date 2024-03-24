@@ -1,7 +1,8 @@
 import pytest
 import torch
+from cached_path import cached_path
 
-from olmo_core.distributed.checkpoint import Checkpointer
+from olmo_core.distributed.checkpoint import Checkpointer, SafeTensorsLoader
 from olmo_core.distributed.sharded_flat_parameter import (
     ShardedFlatParameter,
     ShardingSpec,
@@ -146,3 +147,64 @@ def test_save_and_load_non_distributed(device, tmp_path):
     checkpointer.load(tmp_path, state_dict_to_load)
 
     torch.testing.assert_close(state_dict_to_save, state_dict_to_load)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_save_and_load_remote_non_distributed(device, s3_checkpoint_dir):
+    checkpointer = Checkpointer()
+
+    state_dict_to_save = {
+        "x": torch.tensor([[1, 2, 3], [2, 2, 2]], device=device),
+    }
+
+    state_dict_to_load = {
+        "x": torch.zeros_like(state_dict_to_save["x"]),
+    }
+
+    checkpointer.save(s3_checkpoint_dir, state_dict_to_save)
+    checkpointer.load(s3_checkpoint_dir, state_dict_to_load)
+
+    torch.testing.assert_close(state_dict_to_save, state_dict_to_load)
+
+
+def save_and_load_remote_checkpoint(remote_dir):
+    checkpointer = Checkpointer()
+
+    state_dict_to_save = {
+        "x": torch.tensor([[1, 2, 3], [2, 2, 2]], device=get_default_device()),
+        "y": ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device())),
+    }
+
+    state_dict_to_load = {
+        "x": torch.zeros_like(state_dict_to_save["x"]),
+        "y": ShardedFlatParameter.shard(torch.zeros(2, 3, device=get_default_device())),
+    }
+
+    checkpointer.save(remote_dir, state_dict_to_save)
+    checkpointer.load(remote_dir, state_dict_to_load)
+
+    torch.testing.assert_close(state_dict_to_save, state_dict_to_load)
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_save_and_load_remote_checkpoint(backend, s3_checkpoint_dir):
+    run_distributed_test(save_and_load_remote_checkpoint, backend=backend, func_args=(s3_checkpoint_dir,))
+
+
+def test_safe_tensors_loader():
+    url = "https://huggingface.co/stas/tiny-random-llama-2/resolve/main/model.safetensors"
+    key = "model.layers.0.post_attention_layernorm.weight"
+    path = cached_path(url)
+
+    for start_idx, end_idx in [(0, None), (7, 13), (13, None)]:
+        with SafeTensorsLoader(url) as loader:
+            tensor_from_url = loader.get_flat_slice(key, start_idx, end_idx)
+
+        with SafeTensorsLoader(path) as loader:
+            tensor_from_path = loader.get_flat_slice(key, start_idx, end_idx)
+
+        try:
+            torch.testing.assert_close(tensor_from_path, tensor_from_url)
+        except AssertionError:
+            print(f"start_idx={start_idx}, end_idx={end_idx}")
+            raise

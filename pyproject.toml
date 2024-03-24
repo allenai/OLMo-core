@@ -17,6 +17,8 @@ dependencies = [
     "torch>=2.0",
     "safetensors",
     "pydantic>=2.0,<3.0",
+    "cached-path",
+    "requests",
 ]
 
 [project.optional-dependencies]
@@ -33,7 +35,6 @@ dev = [
     "build",
     "boto3",
     "google-cloud-storage",
-    "requests",
 ]
 all = [
     "ai2-olmo-core[dev]",

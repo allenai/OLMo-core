@@ -10,3 +10,7 @@ class OLMoNetworkError(OLMoError):
 
 class OLMoEnvironmentError(OLMoError):
     pass
+
+
+class OLMoUserError(OLMoError):
+    pass

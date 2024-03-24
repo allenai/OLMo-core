@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import shutil
 import time
 from os import PathLike
 from pathlib import Path
@@ -18,11 +19,15 @@ log = logging.getLogger(__name__)
 PathOrStr = Union[Path, PathLike, str]
 
 
+def is_url(path: PathOrStr) -> bool:
+    return re.match(r"[a-z0-9]+://.*", str(path)) is not None
+
+
 def file_size(path: PathOrStr) -> int:
     """
     Get the size of a local or remote file in bytes.
     """
-    if _is_url(path):
+    if is_url(path):
         from urllib.parse import urlparse
 
         parsed = urlparse(str(path))
@@ -39,7 +44,7 @@ def file_size(path: PathOrStr) -> int:
 
 
 def get_bytes_range(source: PathOrStr, bytes_start: int, num_bytes: int) -> bytes:
-    if _is_url(source):
+    if is_url(source):
         from urllib.parse import urlparse
 
         parsed = urlparse(str(source))
@@ -67,6 +72,8 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
 
     source = Path(source)
     assert source.is_file()
+    num_bytes = file_size(source)
+    log.info(f"Uploading {_format_bytes(num_bytes)} from '{source}' to '{target}'...")
     parsed = urlparse(target)
     if parsed.scheme == "gs":
         _gcs_upload(source, parsed.netloc, parsed.path.strip("/"), save_overwrite=save_overwrite)
@@ -87,17 +94,65 @@ def dir_is_empty(dir: PathOrStr) -> bool:
         return True
 
 
+def file_exists(path: PathOrStr) -> bool:
+    if is_url(path):
+        from urllib.parse import urlparse
+
+        parsed = urlparse(str(path))
+        if parsed.scheme == "gs":
+            try:
+                _gcs_file_size(parsed.netloc, parsed.path.strip("/"))
+            except FileNotFoundError:
+                return False
+            else:
+                return True
+        elif parsed.scheme in ("s3", "r2"):
+            try:
+                _s3_file_size(parsed.scheme, parsed.netloc, parsed.path.strip("/"))
+            except FileNotFoundError:
+                return False
+            else:
+                return True
+        elif parsed.scheme == "https":
+            return _https_file_exists(str(path))
+        elif parsed.scheme == "file":
+            return file_exists(str(path).replace("file://", "", 1))
+        else:
+            raise NotImplementedError(f"file_exists not implemented for '{parsed.scheme}' files")
+    else:
+        return Path(path).exists()
+
+
+def clear_directory(dir: PathOrStr):
+    if is_url(dir):
+        from urllib.parse import urlparse
+
+        parsed = urlparse(str(dir))
+        if parsed.scheme in ("s3", "r2"):
+            return _s3_clear_directory(parsed.scheme, parsed.netloc, parsed.path.strip("/"))
+        elif parsed.scheme == "file":
+            return clear_directory(str(dir).replace("file://", "", 1))
+        else:
+            raise NotImplementedError(f"clear_directory not implemented for '{parsed.scheme}' folders")
+    elif Path(dir).is_dir():
+        shutil.rmtree(dir)
+
+
 ######################
 ## Internal helpers ##
 ######################
 
 
-def _is_url(path: PathOrStr) -> bool:
-    return re.match(r"[a-z0-9]+://.*", str(path)) is not None
-
-
 def _wait_before_retry(attempt: int):
     time.sleep(min(0.5 * 2**attempt, 3.0))
+
+
+def _format_bytes(num: Union[int, float], suffix="B") -> str:
+    for unit in ("", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"):
+        if abs(num) < 1024.0:
+            return f"{num:3.1f}{unit}{suffix}"
+        num /= 1024.0
+    return f"{num:.1f}Yi{suffix}"
 
 
 ######################
@@ -114,6 +169,17 @@ def _https_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
 
     response.raise_for_status()
     return response.content
+
+
+def _https_file_exists(url: str) -> bool:
+    import requests
+
+    response = requests.head(url)
+    if response.status_code == 404:
+        return False
+
+    response.raise_for_status()
+    return True
 
 
 ####################
@@ -304,3 +370,27 @@ def _s3_upload(
         _get_s3_client(scheme).upload_file(source, bucket_name, key)
     except ClientError as e:
         raise OLMoNetworkError("Failed to upload to s3") from e
+
+
+def _s3_clear_directory(scheme: str, bucket_name: str, prefix: str, max_attempts: int = 3):
+    from botocore.exceptions import ClientError
+
+    if not prefix.endswith("/"):
+        prefix = prefix + "/"
+
+    err: Optional[Exception] = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            for o in _get_s3_client(scheme).list_objects_v2(Bucket=bucket_name, Prefix=prefix)["Contents"]:
+                _get_s3_client(scheme).delete_object(Bucket=bucket_name, Key=o["Key"])
+            return
+        except ClientError as e:
+            if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
+                return
+            err = e
+
+        if attempt < max_attempts:
+            log.warning("%s failed attempt %d with retriable error: %s", _s3_upload.__name__, attempt, err)
+            _wait_before_retry(attempt)
+
+    raise OLMoNetworkError("Failed to remove S3 directory") from err
