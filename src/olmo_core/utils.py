@@ -1,6 +1,7 @@
 import os
+import pickle
 import time
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 import torch
@@ -72,3 +73,13 @@ def wait_for(condition: Callable[[], bool], description: str, timeout: float = 1
         time.sleep(0.5)
         if time.monotonic() - start_time > timeout:
             raise TimeoutError(f"{description} timed out")
+
+
+def serialize_to_tensor(x: Any) -> torch.Tensor:
+    serialized_bytes = pickle.dumps(x)
+    return torch.frombuffer(bytearray(serialized_bytes), dtype=torch.uint8)
+
+
+def deserialize_from_tensor(data: torch.Tensor) -> Any:
+    assert data.dtype == torch.uint8
+    return pickle.loads(bytearray([int(x.item()) for x in data.flatten()]))

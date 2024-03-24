@@ -2,7 +2,12 @@ import pytest
 import torch
 from cached_path import cached_path
 
-from olmo_core.distributed.checkpoint import Checkpointer, SafeTensorsLoader
+from olmo_core.distributed.checkpoint import (
+    Checkpointer,
+    SafeTensorsLoader,
+    flatten_optimizer_state,
+    unflatten_optimizer_state,
+)
 from olmo_core.distributed.sharded_flat_parameter import (
     ShardedFlatParameter,
     ShardingSpec,
@@ -210,3 +215,32 @@ def test_safe_tensors_loader():
         except AssertionError:
             print(f"start_idx={start_idx}, end_idx={end_idx}")
             raise
+
+
+def test_flatten_optimizer_state(tiny_model, tiny_model_data):
+    # Do a step to ensure optimizer state is initialized.
+    optim = torch.optim.AdamW(tiny_model.parameters())
+    tiny_model(tiny_model_data).sum().backward()
+    optim.step()
+
+    flat_optim_state = flatten_optimizer_state(tiny_model, optim)
+    unflattened_optim_state = unflatten_optimizer_state(flat_optim_state)
+
+    # Make sure unflattened state matches what we'd get from `optim.state_dict()`.
+    optim_state = optim.state_dict()
+    assert unflattened_optim_state.keys() == optim_state.keys()
+    # Validate param groups.
+    assert len(unflattened_optim_state["param_groups"]) == len(optim_state["param_groups"])
+    for i in range(len(optim_state["param_groups"])):
+        assert unflattened_optim_state["param_groups"][i] == optim_state["param_groups"][i]
+    # Validate state tensors.
+    assert unflattened_optim_state["state"].keys() == optim_state["state"].keys()
+    for param_id in optim_state["state"].keys():
+        assert unflattened_optim_state["state"][param_id].keys() == optim_state["state"][param_id].keys()
+        for key in optim_state["state"][param_id].keys():
+            torch.testing.assert_close(
+                unflattened_optim_state["state"][param_id][key], optim_state["state"][param_id][key]
+            )
+
+    # Lastly, make sure we can load it.
+    optim.load_state_dict(unflattened_optim_state)  # type: ignore

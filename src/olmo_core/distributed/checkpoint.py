@@ -5,11 +5,12 @@ import sys
 import tempfile
 from functools import cached_property, reduce
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, TypedDict
 
 import safetensors as sft
 import safetensors.torch as sft_torch
 import torch
+import torch.nn as nn
 from cached_path import cached_path
 from pydantic import BaseModel
 
@@ -23,7 +24,13 @@ from ..io import (
     is_url,
     upload,
 )
-from ..utils import TORCH_DTYPE_TO_STR, TORCH_DTYPES, wait_for
+from ..utils import (
+    TORCH_DTYPE_TO_STR,
+    TORCH_DTYPES,
+    deserialize_from_tensor,
+    serialize_to_tensor,
+    wait_for,
+)
 from .sharded_flat_parameter import ShardedFlatParameter
 from .utils import barrier, get_rank, scatter_object
 
@@ -167,6 +174,9 @@ class Checkpointer:
     A checkpointer for saving and loading *flat* state dictionaries, where keys are strings values
     are either regular :class:`torch.Tensor`s, :class:`torch.nn.Parameter`s, or :class:`ShardedFlatParameter`s.
     Nested dictionaries are not supported.
+
+    For saving and loading model and optimizer state together, use :func:`save_model_and_optim_state()`
+    and :func:`load_model_and_optim_state()` instead.
     """
 
     METADATA_FILENAME = "metadata.json"
@@ -449,3 +459,142 @@ class Checkpointer:
         self.load(dir, state_dict, _metadata=metadata)
 
         return state_dict
+
+
+class ParamGroup(TypedDict):
+    params: List[int]
+    """
+    Parameter IDs.
+    """
+
+
+class OptimStateDict(TypedDict):
+    state: Dict[int, Dict[str, torch.Tensor]]
+    """
+    Maps parameter IDs to the optimizer-specific state of each parameter.
+    """
+
+    param_groups: List[ParamGroup]
+    """
+    Parameter groups.
+    """
+
+
+def flatten_optimizer_state(
+    model: nn.Module,
+    optim: torch.optim.Optimizer,
+    model_state: Optional[Dict[str, torch.Tensor]] = None,
+    optim_state: Optional[OptimStateDict] = None,
+) -> Dict[str, torch.Tensor]:
+    model_state = model_state or model.state_dict()
+    optim_state = optim_state or optim.state_dict()  # type: ignore
+    assert optim_state
+
+    # Collect mapping of parameter IDs from the optimizer to the FQN of the corresponding parameter.
+    name_to_param: Dict[str, nn.Parameter] = {k: v for k, v in model.named_parameters()}
+    param_to_name: Dict[nn.Parameter, str] = {v: k for k, v in model.named_parameters()}
+    param_id_to_name: Dict[int, str] = {}
+    for param_group, param_group_state in zip(optim.param_groups, optim_state["param_groups"]):
+        for param, param_id in zip(param_group["params"], param_group_state["params"]):
+            param_id_to_name[param_id] = param_to_name[param]
+    del param_to_name
+
+    flat_optim_state: Dict[str, torch.Tensor] = {}
+
+    # Serialize param groups to tensors.
+    flat_optim_state["num_param_groups"] = torch.tensor(len(optim_state["param_groups"]))
+    for i, param_group in enumerate(optim_state["param_groups"]):
+        # make copy.
+        param_group = {k: v for k, v in param_group.items()}
+        param_group["param_names"] = [param_id_to_name[param_id] for param_id in param_group["params"]]
+        flat_optim_state[f"param_group{i}"] = serialize_to_tensor(param_group)
+
+    # Flatten state tensors and wrap any tensor with `ShardedFlatParameter` if the corresponding
+    # parameter is a `ShardedFlatParameter`.
+    state_keys: Set[str] = set()
+    for param_id, state in optim_state["state"].items():
+        param_name = param_id_to_name[param_id]
+        param = name_to_param[param_name]
+        for key, tensor in state.items():
+            state_keys.add(key)
+            if isinstance(param, ShardedFlatParameter):
+                tensor = ShardedFlatParameter(tensor)
+                tensor.mark_as_sharded(param.sharding_spec, process_group=param.process_group)
+            flat_optim_state[f"state.{key}.{param_name}"] = tensor
+    flat_optim_state["state_keys"] = serialize_to_tensor(list(state_keys))
+
+    return flat_optim_state
+
+
+def unflatten_optimizer_state(flat_optim_state: Dict[str, torch.Tensor]) -> OptimStateDict:
+    num_param_groups = int(flat_optim_state["num_param_groups"].item())
+    optim_state: OptimStateDict = {
+        "state": {},
+        "param_groups": [],
+    }
+
+    param_name_to_id: Dict[str, int] = {}
+
+    # Deserialize param group data while collecting the mapping of param names to IDs.
+    for i in range(num_param_groups):
+        param_group = deserialize_from_tensor(flat_optim_state[f"param_group{i}"])
+        param_names = param_group.pop("param_names")
+        for param_name, param_id in zip(param_names, param_group["params"]):
+            param_name_to_id[param_name] = param_id
+        optim_state["param_groups"].append(param_group)
+
+    # Unflatten the state tensors.
+    state_keys = deserialize_from_tensor(flat_optim_state["state_keys"])
+    for param_name, param_id in param_name_to_id.items():
+        param_state: Dict[str, torch.Tensor] = {}
+        for key in state_keys:
+            state_tensor = flat_optim_state.get(f"state.{key}.{param_name}")
+            if state_tensor is not None:
+                # calling `.data` here ensures we get a regular tensor, not a `ShardedFlatParameter`.
+                param_state[key] = state_tensor.data
+
+        optim_state["state"][param_id] = param_state
+
+    return optim_state
+
+
+def save_model_and_optim_state(
+    dir: PathOrStr, model: nn.Module, optim: torch.optim.Optimizer, save_overwrite: bool = False
+):
+    """
+    Save model and optimizer state dictionaries. The model state can be a sharded model, in which
+    case this method will correctly handle the optimizer state to ensure it can be loaded again with
+    a different distributed topology through :func:`load_model_and_optim_state()`.
+    """
+    dir = str(dir).rstrip("/")
+
+    model_state: Dict[str, torch.Tensor] = model.state_dict()
+    flat_optim_state = flatten_optimizer_state(model, optim, model_state=model_state)
+
+    checkpointer = Checkpointer()
+    checkpointer.save(f"{dir}/model", model_state, save_overwrite=save_overwrite)
+    checkpointer.save(f"{dir}/optim", flat_optim_state, save_overwrite=save_overwrite)
+
+
+def load_model_and_optim_state(dir: PathOrStr, model: nn.Module, optim: torch.optim.Optimizer):
+    """
+    Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
+    This method is agnostic to the distributed topology in that it can load checkpoints saved with a different
+    distributed topology.
+    """
+    dir = str(dir).rstrip("/")
+
+    checkpointer = Checkpointer()
+
+    # Load model state in-place.
+    model_state: Dict[str, torch.Tensor] = model.state_dict()
+    checkpointer.load(f"{dir}/model", model_state)
+    model.load_state_dict(model_state)
+
+    # Load flattened optimizer state in-place.
+    flat_optim_state = flatten_optimizer_state(model, optim, model_state=model_state)
+    checkpointer.load(f"{dir}/optim", flat_optim_state)
+
+    # Unflatten optimizer state.
+    optim_state = unflatten_optimizer_state(flat_optim_state)
+    optim.load_state_dict(optim_state)  # type: ignore
