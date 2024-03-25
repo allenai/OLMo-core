@@ -18,19 +18,15 @@ from ..exceptions import OLMoUserError
 from ..io import (
     PathOrStr,
     clear_directory,
+    deserialize_from_tensor,
     dir_is_empty,
     file_exists,
     get_bytes_range,
     is_url,
+    serialize_to_tensor,
     upload,
 )
-from ..utils import (
-    TORCH_DTYPE_TO_STR,
-    TORCH_DTYPES,
-    deserialize_from_tensor,
-    serialize_to_tensor,
-    wait_for,
-)
+from ..utils import TORCH_DTYPE_TO_STR, TORCH_DTYPES, wait_for
 from .sharded_flat_parameter import ShardedFlatParameter
 from .utils import barrier, get_rank, scatter_object
 

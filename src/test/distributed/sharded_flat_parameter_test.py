@@ -71,3 +71,27 @@ def shard_and_gather(init_device: Optional[str] = None):
 @pytest.mark.parametrize("init_device", ("meta", None))
 def test_shard_and_gather(backend, init_device: Optional[str]):
     run_distributed_test(shard_and_gather, backend=backend, func_kwargs=dict(init_device=init_device))
+
+
+def unshard_reshard_in_place_with_grads():
+    flat_param = ShardedFlatParameter.shard(torch.rand(2, 3), requires_grad=True, device=get_default_device())
+    assert flat_param.grad is None
+    assert flat_param.is_sharded
+
+    # Unshard in place and compute a gradient.
+    flat_param.unshard_()
+    flat_param.sum().backward()
+    assert flat_param.grad is not None
+    assert flat_param.grad.shape == flat_param.unsharded_shape
+    assert not flat_param.is_sharded
+
+    # Reshard in place. Gradient should remain untouched.
+    flat_param.reshard_()
+    assert flat_param.grad is not None
+    assert flat_param.grad.shape == flat_param.unsharded_shape
+    assert flat_param.is_sharded
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_unshard_reshard_in_place(backend):
+    run_distributed_test(unshard_reshard_in_place_with_grads, backend=backend, start_method="spawn")

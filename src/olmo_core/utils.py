@@ -1,10 +1,12 @@
+import dataclasses
 import os
-import pickle
 import time
+from enum import Enum
 from typing import Any, Callable
 
 import numpy as np
 import torch
+from pydantic import BaseModel
 
 from .exceptions import OLMoEnvironmentError
 
@@ -75,11 +77,45 @@ def wait_for(condition: Callable[[], bool], description: str, timeout: float = 1
             raise TimeoutError(f"{description} timed out")
 
 
-def serialize_to_tensor(x: Any) -> torch.Tensor:
-    serialized_bytes = pickle.dumps(x)
-    return torch.frombuffer(bytearray(serialized_bytes), dtype=torch.uint8)
+def apply_to_tensors(fn, container: Any) -> None:
+    """
+    Recursively apply ``fn`` to all tensors in a container.
+    """
+    if isinstance(container, torch.Tensor):
+        fn(container)
+    elif isinstance(container, (list, tuple, set)):
+        for x in container:
+            apply_to_tensors(fn, x)
+    elif isinstance(container, dict):
+        for k, v in container.items():
+            apply_to_tensors(fn, k)
+            apply_to_tensors(fn, v)
+    elif hasattr(container, "__dataclass_fields__"):
+        for f in dataclasses.fields(container):
+            name = f.name
+            apply_to_tensors(fn, getattr(container, name))
+    elif isinstance(container, BaseModel):
+        apply_to_tensors(fn, container.model_dump())
+    elif hasattr(container, "__next__"):
+        for x in container:
+            apply_to_tensors(fn, x)
 
 
-def deserialize_from_tensor(data: torch.Tensor) -> Any:
-    assert data.dtype == torch.uint8
-    return pickle.loads(bytearray([int(x.item()) for x in data.flatten()]))
+def get_default_device() -> torch.device:
+    if torch.cuda.is_available() and torch.cuda.is_initialized():
+        return torch.device("cuda")
+    else:
+        return torch.device("cpu")
+
+
+class StrEnum(str, Enum):
+    """
+    This is equivalent to Python's :class:`enum.StrEnum` since version 3.11.
+    We include this here for compatibility with older version of Python.
+    """
+
+    def __str__(self) -> str:
+        return self.value
+
+    def __repr__(self) -> str:
+        return f"'{str(self)}'"

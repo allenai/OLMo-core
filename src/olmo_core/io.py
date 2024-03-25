@@ -1,22 +1,29 @@
 import logging
 import os
+import pickle
 import re
 import shutil
 import time
 from os import PathLike
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 try:
     from functools import cache
 except ImportError:
     from functools import lru_cache as cache
 
+import torch
+
 from .exceptions import OLMoEnvironmentError, OLMoNetworkError
 
 log = logging.getLogger(__name__)
 
 PathOrStr = Union[Path, PathLike, str]
+
+############################################
+## Unified API for local and remote files ##
+############################################
 
 
 def is_url(path: PathOrStr) -> bool:
@@ -136,6 +143,21 @@ def clear_directory(dir: PathOrStr):
             raise NotImplementedError(f"clear_directory not implemented for '{parsed.scheme}' folders")
     elif Path(dir).is_dir():
         shutil.rmtree(dir)
+
+
+###################################
+## Serialization/deserialization ##
+###################################
+
+
+def serialize_to_tensor(x: Any) -> torch.Tensor:
+    serialized_bytes = pickle.dumps(x)
+    return torch.frombuffer(bytearray(serialized_bytes), dtype=torch.uint8)
+
+
+def deserialize_from_tensor(data: torch.Tensor) -> Any:
+    assert data.dtype == torch.uint8
+    return pickle.loads(bytearray([int(x.item()) for x in data.flatten()]))
 
 
 ######################

@@ -1,4 +1,6 @@
 import datetime
+import logging
+import sys
 from typing import Any, Callable, Dict, Optional, Tuple
 
 import pytest
@@ -12,10 +14,11 @@ BACKENDS = [pytest.param("gloo", id="backend=GLOO")]
 DEVICES = [pytest.param(torch.device("cpu"), id="device=CPU")]
 
 if torch.cuda.is_available():
-    BACKENDS = [
-        pytest.param("gloo", id="backend=GLOO"),
-        pytest.param("nccl", id="backend=NCCL", marks=pytest.mark.gpu),
-    ]
+    if torch.cuda.device_count() > 1:
+        BACKENDS = [
+            pytest.param("gloo", id="backend=GLOO"),
+            pytest.param("nccl", id="backend=NCCL", marks=pytest.mark.gpu),
+        ]
     DEVICES = [
         pytest.param(torch.device("cpu"), id="device=CPU"),
         pytest.param(torch.device("cuda"), id="device=CUDA", marks=pytest.mark.gpu),
@@ -48,6 +51,22 @@ def init_process(
     primary_port: int = 29500,
 ):
     assert world_size > 1
+
+    old_log_record_factory = logging.getLogRecordFactory()
+
+    def log_record_factory(*args, **kwargs) -> logging.LogRecord:
+        record = old_log_record_factory(*args, **kwargs)
+        setattr(record, "local_rank", dist.get_rank())
+        return record
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(
+        logging.Formatter("[rank %(local_rank)s] %(asctime)s:%(name)s:%(lineno)s:%(levelname)s: %(message)s")
+    )
+    logging.setLogRecordFactory(log_record_factory)
+
+    if process_rank == 0:
+        logging.basicConfig(level=logging.DEBUG, handlers=[handler])
 
     dist.init_process_group(
         backend=backend,

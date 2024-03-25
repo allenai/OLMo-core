@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import reduce
-from typing import Any, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -41,6 +41,7 @@ class ShardedFlatParameter(nn.Parameter):
     SHARDED_FLAT_PARAMETER_METADATA_NAME = "__sharded_metadata__"
     SHARDED_FLAT_PARAMETER_SHARDING_SPEC_KEY = "sharding_spec"
     SHARDED_FLAT_PARAMETER_PROCESS_GROUP_KEY = "process_group"
+    SHARDED_FLAT_PARAMETER_CACHED_SHARDED_DATA_KEY = "sharded_data"
 
     def __new__(cls, data: Optional[torch.Tensor] = None, requires_grad: bool = True) -> ShardedFlatParameter:
         if data is not None and data.ndim != 1:
@@ -70,12 +71,46 @@ class ShardedFlatParameter(nn.Parameter):
             r = r[:-1]
         return r
 
-    def _set_metadata(self, key: str, value: Any):
+    def _set_metadata(self, key: str, value: Any, force: bool = False):
         metadata = getattr(self, self.SHARDED_FLAT_PARAMETER_METADATA_NAME)
-        if key in metadata:
+        if not force and key in metadata:
             raise ValueError(f"Metadata key '{key}' already exists in {self.__class__.__name__}")
         else:
             metadata[key] = value
+
+    def _gather_data(self, dtype: Optional[torch.dtype] = None) -> torch.Tensor:
+        # NOTE: ``all_gather_into_tensor`` is not supported on Gloo.
+        sharded_numels = self.sharding_spec.sharded_numels
+        max_numel = max(sharded_numels)
+
+        # Pad sharded tensors to the same size.
+        flat_sharded_tensor_list = [
+            torch.empty(max_numel, device=self.device, dtype=dtype or self.dtype)
+            for _ in self.sharding_spec.sharded_numels
+        ]
+
+        # Gather padding sharded tensors across all ranks.
+        dist.all_gather(
+            flat_sharded_tensor_list,
+            F.pad(
+                self.data.to(dtype or self.dtype),
+                (0, max_numel - sharded_numels[get_rank(group=self.process_group)]),
+            ),
+            group=self.process_group,
+        )
+
+        # Unpad, sort by starting offset, and concatenate.
+        flat_tensor = torch.cat(
+            [
+                flat_sharded_tensor_list[idx][: sharded_numels[idx]]
+                for idx in sorted(
+                    range(len(sharded_numels)),
+                    key=lambda idx: self.sharding_spec.unsharded_flattened_offsets[idx][0],
+                )
+            ]
+        )
+
+        return flat_tensor.reshape(self.sharding_spec.unsharded_shape)
 
     @classmethod
     def shard(
@@ -123,40 +158,39 @@ class ShardedFlatParameter(nn.Parameter):
         sharded_param.mark_as_sharded(sharding_spec, process_group=process_group)
         return sharded_param
 
-    def gather(self) -> nn.Parameter:
+    def gather(self, dtype: Optional[torch.dtype] = None) -> nn.Parameter:
         """
-        Gather the sharded flat parameter across a process group into the full unsharded parameter.
+        Gather the sharded flat parameter across a process group into a full unsharded parameter.
         """
-        # NOTE: ``all_gather_into_tensor`` is not supported on Gloo.
-        sharded_numels = self.sharding_spec.sharded_numels
-        max_numel = max(sharded_numels)
+        unsharded_data = self._gather_data(dtype=dtype)
+        return nn.Parameter(unsharded_data, requires_grad=self.requires_grad)
 
-        # Pad sharded tensors to the same size.
-        flat_sharded_tensor_list = [
-            torch.empty(max_numel, device=self.device, dtype=self.dtype) for _ in self.sharding_spec.sharded_numels
-        ]
+    def unshard_(self, dtype: Optional[torch.dtype] = None):
+        """
+        Unshard this parameter's data in-place. You should generally call :meth:`reshard_()` afterwards.
+        """
+        unsharded_data = self._gather_data(dtype=dtype)
+        self._set_metadata(self.SHARDED_FLAT_PARAMETER_CACHED_SHARDED_DATA_KEY, self.data)
+        self.data = unsharded_data
 
-        # Gather padding sharded tensors across all ranks.
-        dist.all_gather(
-            flat_sharded_tensor_list,
-            F.pad(self.data, (0, max_numel - sharded_numels[get_rank(group=self.process_group)])),
-            group=self.process_group,
-        )
-
-        # Unpad, sort by starting offset, and concatenate.
-        flat_tensor = torch.cat(
-            [
-                flat_sharded_tensor_list[idx][: sharded_numels[idx]]
-                for idx in sorted(
-                    range(len(sharded_numels)),
-                    key=lambda idx: self.sharding_spec.unsharded_flattened_offsets[idx][0],
-                )
-            ]
-        )
-
-        return nn.Parameter(
-            flat_tensor.reshape(self.sharding_spec.unsharded_shape), requires_grad=self.requires_grad
-        )
+    def reshard_(self):
+        """
+        Reshard this parameter's data in-place. Should only be called after :meth:`unshard_()`.
+        This does *not* do anything with the parameter's gradient, if it has one. That should
+        be handled separately by the calling code.
+        """
+        if self.is_sharded:
+            return
+        metadata = getattr(self, self.SHARDED_FLAT_PARAMETER_METADATA_NAME)
+        try:
+            sharded_data = metadata[self.SHARDED_FLAT_PARAMETER_CACHED_SHARDED_DATA_KEY]
+        except KeyError:
+            raise ValueError(
+                f"{self.__class__.__name__} has not been unsharded in place yet, "
+                "did you forget to class '.unshard_()'?"
+            )
+        self.data = sharded_data
+        del metadata[self.SHARDED_FLAT_PARAMETER_CACHED_SHARDED_DATA_KEY]
 
     def mark_as_sharded(self, sharding_spec: ShardingSpec, process_group: Optional[dist.ProcessGroup] = None):
         self._set_metadata(self.SHARDED_FLAT_PARAMETER_SHARDING_SPEC_KEY, sharding_spec)
@@ -173,18 +207,47 @@ class ShardedFlatParameter(nn.Parameter):
         wrapped.mark_as_sharded(self.sharding_spec, process_group=self.process_group)
         return wrapped
 
+    def chunk_unsharded(self, tensor: torch.Tensor, pad: bool = False) -> List[torch.Tensor]:
+        """
+        Chunk an unsharded tensor with the same shape as ``self.unsharded_shape`` and split it
+        into flat chunks where each chunk has the shape of sharded data corresponding to that rank.
+
+        :param pad: Whether or not to add right padding to the chunks to ensure they're all the same size.
+        """
+        if tensor.shape != self.unsharded_shape:
+            raise ValueError(f"shape mismatched, expected {self.unsharded_shape}, got {tensor.shape}")
+        chunks = []
+        flat_tensor = tensor.flatten()
+        max_size = max(self.sharding_spec.sharded_numels)
+        for offsets in self.sharding_spec.unsharded_flattened_offsets:
+            chunk = flat_tensor[offsets[0] : offsets[1]]
+            if pad:
+                chunk = F.pad(chunk, (0, max_size - (offsets[1] - offsets[0])))
+            chunks.append(chunk)
+        return chunks
+
+    def sharded_chunk(self, tensor: torch.Tensor) -> torch.Tensor:
+        """
+        Get this rank's sharded chunk of an unsharded tensor with the same shape as ``self.unsharded_shape``.
+        """
+        if tensor.shape != self.unsharded_shape:
+            raise ValueError(f"shape mismatched, expected {self.unsharded_shape}, got {tensor.shape}")
+        offset_start, offset_end = self.unsharded_flattened_offsets
+        return tensor.flatten()[offset_start:offset_end]
+
     @property
     def is_sharded(self) -> bool:
-        return self.SHARDED_FLAT_PARAMETER_SHARDING_SPEC_KEY in getattr(
-            self, self.SHARDED_FLAT_PARAMETER_METADATA_NAME
+        metadata = getattr(self, self.SHARDED_FLAT_PARAMETER_METADATA_NAME)
+        return (
+            self.SHARDED_FLAT_PARAMETER_SHARDING_SPEC_KEY in metadata
+            and self.SHARDED_FLAT_PARAMETER_CACHED_SHARDED_DATA_KEY not in metadata
         )
 
     @property
     def sharding_spec(self) -> ShardingSpec:
+        metadata = getattr(self, self.SHARDED_FLAT_PARAMETER_METADATA_NAME)
         try:
-            return getattr(self, self.SHARDED_FLAT_PARAMETER_METADATA_NAME)[
-                self.SHARDED_FLAT_PARAMETER_SHARDING_SPEC_KEY
-            ]
+            return metadata[self.SHARDED_FLAT_PARAMETER_SHARDING_SPEC_KEY]
         except KeyError:
             raise ValueError(
                 f"{self.__class__.__name__} has not been marked as sharded yet, "
