@@ -4,6 +4,7 @@ from cached_path import cached_path
 
 from olmo_core.distributed.checkpoint import (
     Checkpointer,
+    OptimStateDict,
     SafeTensorsLoader,
     flatten_optimizer_state,
     unflatten_optimizer_state,
@@ -217,6 +218,22 @@ def test_safe_tensors_loader():
             raise
 
 
+def assert_optim_state_close(optim_state1: OptimStateDict, optim_state2: OptimStateDict):
+    assert optim_state1.keys() == optim_state2.keys()
+
+    # Validate param groups.
+    assert len(optim_state1["param_groups"]) == len(optim_state2["param_groups"])
+    for i in range(len(optim_state2["param_groups"])):
+        assert optim_state1["param_groups"][i] == optim_state2["param_groups"][i]
+
+    # Validate state tensors.
+    assert optim_state1["state"].keys() == optim_state2["state"].keys()
+    for param_id in optim_state2["state"].keys():
+        assert optim_state1["state"][param_id].keys() == optim_state2["state"][param_id].keys()
+        for key in optim_state2["state"][param_id].keys():
+            torch.testing.assert_close(optim_state1["state"][param_id][key], optim_state2["state"][param_id][key])
+
+
 def test_flatten_optimizer_state(tiny_model, tiny_model_data):
     # Do a step to ensure optimizer state is initialized.
     optim = torch.optim.AdamW(tiny_model.parameters())
@@ -227,20 +244,50 @@ def test_flatten_optimizer_state(tiny_model, tiny_model_data):
     unflattened_optim_state = unflatten_optimizer_state(flat_optim_state)
 
     # Make sure unflattened state matches what we'd get from `optim.state_dict()`.
-    optim_state = optim.state_dict()
-    assert unflattened_optim_state.keys() == optim_state.keys()
-    # Validate param groups.
-    assert len(unflattened_optim_state["param_groups"]) == len(optim_state["param_groups"])
-    for i in range(len(optim_state["param_groups"])):
-        assert unflattened_optim_state["param_groups"][i] == optim_state["param_groups"][i]
-    # Validate state tensors.
-    assert unflattened_optim_state["state"].keys() == optim_state["state"].keys()
-    for param_id in optim_state["state"].keys():
-        assert unflattened_optim_state["state"][param_id].keys() == optim_state["state"][param_id].keys()
-        for key in optim_state["state"][param_id].keys():
-            torch.testing.assert_close(
-                unflattened_optim_state["state"][param_id][key], optim_state["state"][param_id][key]
-            )
+    assert_optim_state_close(optim.state_dict(), unflattened_optim_state)  # type: ignore
 
     # Lastly, make sure we can load it.
     optim.load_state_dict(unflattened_optim_state)  # type: ignore
+
+
+def flatten_optimizer_state_with_sharded_flat_params(model_factory, model_data_factory):
+    model = model_factory().to(get_default_device())
+    model_data = model_data_factory().to(get_default_device())
+
+    # Do a step to ensure optimizer state is initialized.
+    optim = torch.optim.AdamW(model.parameters())
+    model(model_data).sum().backward()
+    optim.step()
+
+    # Now shard part of the model and the corresponding optimizer state.
+    og_param = model.fc[0].weight
+    flat_param = ShardedFlatParameter.shard(og_param)
+    optim.state[flat_param] = {
+        k: v if k == "step" else ShardedFlatParameter.shard(v, requires_grad=False).data
+        for k, v in optim.state.pop(og_param).items()
+    }
+    param_id = optim.param_groups[0]["params"].index(og_param)
+    optim.param_groups[0]["params"][param_id] = flat_param
+    setattr(model.fc[0], "weight", flat_param)
+
+    model_state = model.state_dict()
+    assert model_state["fc.0.weight"].shape == flat_param.shape
+
+    flat_optim_state = flatten_optimizer_state(model, optim, model_state=model_state)
+    unflattened_optim_state = unflatten_optimizer_state(flat_optim_state)
+
+    # Make sure unflattened state matches what we'd get from `optim.state_dict()`.
+    assert_optim_state_close(optim.state_dict(), unflattened_optim_state)  # type: ignore
+
+    # Lastly, make sure we can load it.
+    optim.load_state_dict(unflattened_optim_state)  # type: ignore
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_flatten_optimizer_state_with_sharded_flat_params(backend, tiny_model_factory, tiny_model_data_factory):
+    run_distributed_test(
+        flatten_optimizer_state_with_sharded_flat_params,
+        backend=backend,
+        start_method="spawn",
+        func_args=(tiny_model_factory, tiny_model_data_factory),
+    )

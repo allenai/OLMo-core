@@ -517,9 +517,8 @@ def flatten_optimizer_state(
         param = name_to_param[param_name]
         for key, tensor in state.items():
             state_keys.add(key)
-            if isinstance(param, ShardedFlatParameter):
-                tensor = ShardedFlatParameter(tensor)
-                tensor.mark_as_sharded(param.sharding_spec, process_group=param.process_group)
+            if key != "step" and isinstance(param, ShardedFlatParameter):
+                tensor = param.wrap(tensor, requires_grad=False)
             flat_optim_state[f"state.{key}.{param_name}"] = tensor
     flat_optim_state["state_keys"] = serialize_to_tensor(list(state_keys))
 

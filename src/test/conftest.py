@@ -1,4 +1,5 @@
 import uuid
+from functools import partial
 from typing import Generator
 
 import pytest
@@ -37,10 +38,20 @@ class TinyModel(nn.Module):
 
 
 @pytest.fixture
-def tiny_model() -> TinyModel:
-    return TinyModel(8)
+def tiny_model_factory():
+    return TinyModel
 
 
 @pytest.fixture
-def tiny_model_data() -> torch.Tensor:
-    return torch.rand(2, 8)
+def tiny_model(tiny_model_factory) -> TinyModel:
+    return tiny_model_factory()
+
+
+@pytest.fixture
+def tiny_model_data_factory():
+    return partial(torch.rand, 2, 8)
+
+
+@pytest.fixture
+def tiny_model_data(tiny_model_data_factory) -> torch.Tensor:
+    return tiny_model_data_factory()

@@ -85,6 +85,7 @@ class ShardedFlatParameter(nn.Parameter):
         process_group: Optional[dist.ProcessGroup] = None,
         synchronize: bool = True,
         device: Optional[torch.device] = None,
+        requires_grad: Optional[bool] = None,
     ) -> ShardedFlatParameter:
         """
         Shard a tensor across a process group.
@@ -116,7 +117,9 @@ class ShardedFlatParameter(nn.Parameter):
         else:
             sharded_tensor = torch.empty(offsets[1] - offsets[0], device=device, dtype=tensor.dtype)
 
-        sharded_param = cls(sharded_tensor, requires_grad=tensor.requires_grad)
+        sharded_param = cls(
+            sharded_tensor, requires_grad=requires_grad if requires_grad is not None else tensor.requires_grad
+        )
         sharded_param.mark_as_sharded(sharding_spec, process_group=process_group)
         return sharded_param
 
@@ -158,6 +161,17 @@ class ShardedFlatParameter(nn.Parameter):
     def mark_as_sharded(self, sharding_spec: ShardingSpec, process_group: Optional[dist.ProcessGroup] = None):
         self._set_metadata(self.SHARDED_FLAT_PARAMETER_SHARDING_SPEC_KEY, sharding_spec)
         self._set_metadata(self.SHARDED_FLAT_PARAMETER_PROCESS_GROUP_KEY, process_group)
+
+    def wrap(self, tensor: torch.Tensor, requires_grad: bool = True) -> ShardedFlatParameter:
+        """
+        Wrap another tensor and mark as sharded with the same sharding spec.
+        ``tensor`` should have the same shape as ``self.data``, the sharded data.
+        """
+        if tensor.shape != self.data.shape:
+            raise ValueError(f"shape mismatched, expected {self.data.shape}, got {tensor.shape}")
+        wrapped = ShardedFlatParameter(tensor.data, requires_grad=requires_grad)
+        wrapped.mark_as_sharded(self.sharding_spec, process_group=self.process_group)
+        return wrapped
 
     @property
     def is_sharded(self) -> bool:
