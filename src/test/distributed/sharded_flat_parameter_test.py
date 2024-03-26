@@ -58,11 +58,14 @@ def shard_and_gather(init_device: Optional[str] = None):
                 unsharded_shape=unsharded_shape, unsharded_flattened_offsets=unsharded_flattened_offsets
             )
 
+        # Shard tensor.
         sharded_param = ShardedFlatParameter.shard(tensor, sharding_spec, device=get_default_device())
 
+        # Get unsharded version of the parameter.
         param = sharded_param.gather()
         assert param.shape == tensor.shape
 
+        # Check that unsharded parameter matches original data.
         if tensor.device != torch.device("meta"):
             torch.testing.assert_close(tensor, param)
 
@@ -71,6 +74,49 @@ def shard_and_gather(init_device: Optional[str] = None):
 @pytest.mark.parametrize("init_device", ("meta", None))
 def test_shard_and_gather(backend, init_device: Optional[str]):
     run_distributed_test(shard_and_gather, backend=backend, func_kwargs=dict(init_device=init_device))
+
+
+def unshard_reshard_in_place_rank0_only():
+    flat_param = ShardedFlatParameter.shard(torch.rand(2, 3), requires_grad=False, device=get_default_device())
+    param = flat_param.gather()
+    assert flat_param.grad is None
+    assert flat_param.is_sharded
+
+    # Unshard in place from rank0 only.
+    flat_param.unshard_(rank0_only=True)
+    assert not flat_param.is_sharded
+    if dist.get_rank() == 0:
+        assert flat_param.shape == flat_param.unsharded_shape == param.shape
+        torch.testing.assert_close(flat_param, param)
+    else:
+        assert flat_param.numel() == 0
+
+    # Reshard in place.
+    flat_param.reshard_()
+    assert flat_param.shape == flat_param.sharded_shape
+    assert flat_param.is_sharded
+
+    # Unshard in place again, this time using a different dtype and modifying the data.
+    flat_param.unshard_(rank0_only=True, dtype=torch.float16)
+    assert flat_param.dtype == torch.float16
+    assert not flat_param.is_sharded
+    if dist.get_rank() == 0:
+        assert flat_param.shape == flat_param.unsharded_shape == param.shape
+        torch.testing.assert_close(flat_param, param.to(torch.float16))
+        flat_param.fill_(torch.tensor(0.0, dtype=torch.float16))
+    else:
+        assert flat_param.numel() == 0
+
+    flat_param.reshard_(writeback=True)
+    assert flat_param.is_sharded
+    assert flat_param.shape == flat_param.sharded_shape
+    assert flat_param.dtype == torch.float32
+    torch.testing.assert_close(flat_param, torch.zeros_like(flat_param))
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_unshard_reshard_in_place_rank0_only(backend):
+    run_distributed_test(unshard_reshard_in_place_rank0_only, backend=backend)
 
 
 def unshard_reshard_in_place_with_grads():
@@ -93,5 +139,5 @@ def unshard_reshard_in_place_with_grads():
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_unshard_reshard_in_place(backend):
+def test_unshard_reshard_in_place_with_grads(backend):
     run_distributed_test(unshard_reshard_in_place_with_grads, backend=backend, start_method="spawn")

@@ -78,39 +78,51 @@ class ShardedFlatParameter(nn.Parameter):
         else:
             metadata[key] = value
 
-    def _gather_data(self, dtype: Optional[torch.dtype] = None) -> torch.Tensor:
+    def _gather_data(self, dtype: Optional[torch.dtype] = None, rank0_only: bool = False) -> torch.Tensor:
         # NOTE: ``all_gather_into_tensor`` is not supported on Gloo.
         sharded_numels = self.sharding_spec.sharded_numels
         max_numel = max(sharded_numels)
+        local_padding = (0, max_numel - sharded_numels[get_rank(group=self.process_group)])
+
+        flat_sharded_tensor_list: Optional[List[torch.Tensor]] = None
 
         # Pad sharded tensors to the same size.
-        flat_sharded_tensor_list = [
-            torch.empty(max_numel, device=self.device, dtype=dtype or self.dtype)
-            for _ in self.sharding_spec.sharded_numels
-        ]
+        if not rank0_only or get_rank(group=self.process_group) == 0:
+            flat_sharded_tensor_list = [
+                torch.empty(max_numel, device=self.device, dtype=dtype or self.dtype)
+                for _ in self.sharding_spec.sharded_numels
+            ]
 
-        # Gather padding sharded tensors across all ranks.
-        dist.all_gather(
-            flat_sharded_tensor_list,
-            F.pad(
-                self.data.to(dtype or self.dtype),
-                (0, max_numel - sharded_numels[get_rank(group=self.process_group)]),
-            ),
-            group=self.process_group,
-        )
+        if not rank0_only:
+            # Gather padded sharded tensors across all ranks.
+            assert flat_sharded_tensor_list is not None
+            dist.all_gather(
+                flat_sharded_tensor_list,
+                F.pad(
+                    self.data.to(dtype or self.dtype),
+                    local_padding,
+                ),
+                group=self.process_group,
+            )
+        else:
+            # Gather padded sharded tensors to rank 0.
+            local_padded_shard = F.pad(self.data.to(dtype or self.dtype), local_padding)
+            dist.gather(local_padded_shard, gather_list=flat_sharded_tensor_list, group=self.process_group)
 
         # Unpad, sort by starting offset, and concatenate.
-        flat_tensor = torch.cat(
-            [
-                flat_sharded_tensor_list[idx][: sharded_numels[idx]]
-                for idx in sorted(
-                    range(len(sharded_numels)),
-                    key=lambda idx: self.sharding_spec.unsharded_flattened_offsets[idx][0],
-                )
-            ]
-        )
-
-        return flat_tensor.reshape(self.sharding_spec.unsharded_shape)
+        if flat_sharded_tensor_list is not None:
+            flat_tensor = torch.cat(
+                [
+                    flat_sharded_tensor_list[idx][: sharded_numels[idx]]
+                    for idx in sorted(
+                        range(len(sharded_numels)),
+                        key=lambda idx: self.sharding_spec.unsharded_flattened_offsets[idx][0],
+                    )
+                ]
+            )
+            return flat_tensor.reshape(self.sharding_spec.unsharded_shape)
+        else:
+            return torch.empty(0, dtype=dtype or self.dtype, device=self.device)
 
     @classmethod
     def shard(
@@ -139,11 +151,13 @@ class ShardedFlatParameter(nn.Parameter):
             # Shard tensor as evenly as possible across all ranks.
             world_size = get_world_size(group=process_group)
             shard_max_numel = tensor.numel() // world_size
-            offsets = tuple(
+            all_offsets = tuple(
                 (rank * shard_max_numel, min((rank + 1) * shard_max_numel, tensor.numel()))
                 for rank in range(world_size)
             )
-            sharding_spec = ShardingSpec(unsharded_shape=tuple(tensor.shape), unsharded_flattened_offsets=offsets)
+            sharding_spec = ShardingSpec(
+                unsharded_shape=tuple(tensor.shape), unsharded_flattened_offsets=all_offsets
+            )
 
         offsets = sharding_spec.unsharded_flattened_offsets[get_rank(group=process_group)]
 
@@ -165,11 +179,13 @@ class ShardedFlatParameter(nn.Parameter):
         unsharded_data = self._gather_data(dtype=dtype)
         return nn.Parameter(unsharded_data, requires_grad=self.requires_grad)
 
-    def unshard_(self, dtype: Optional[torch.dtype] = None):
+    def unshard_(self, dtype: Optional[torch.dtype] = None, rank0_only: bool = False):
         """
         Unshard this parameter's data in-place. You should generally call :meth:`reshard_()` afterwards.
+
+        If ``rank0_only=True``, non rank 0 processes will have an empty tensor in their data.
         """
-        unsharded_data = self._gather_data(dtype=dtype)
+        unsharded_data = self._gather_data(dtype=dtype, rank0_only=rank0_only)
         self._set_metadata(self.SHARDED_FLAT_PARAMETER_CACHED_SHARDED_DATA_KEY, self.data)
         self.data = unsharded_data
 
@@ -181,6 +197,7 @@ class ShardedFlatParameter(nn.Parameter):
         """
         if self.is_sharded:
             return
+
         metadata = getattr(self, self.SHARDED_FLAT_PARAMETER_METADATA_NAME)
         try:
             sharded_data = metadata[self.SHARDED_FLAT_PARAMETER_CACHED_SHARDED_DATA_KEY]
@@ -189,9 +206,21 @@ class ShardedFlatParameter(nn.Parameter):
                 f"{self.__class__.__name__} has not been unsharded in place yet, "
                 "did you forget to class '.unshard_()'?"
             )
+
         if writeback:
-            dist.broadcast(self.data, 0, group=self.process_group)
-            self.data = self.sharded_chunk(self.data).to(dtype=sharded_data.dtype)
+            unsharded_data = self.data
+            if unsharded_data.shape != self.unsharded_shape:
+                # unsharded data could be empty if `.unshard_` was called with `rank0_only=True`.
+                if unsharded_data.numel() > 0:
+                    raise ValueError(
+                        f"Unexpected shape found for {self.__class__.__name__}, "
+                        f"expected {self.unsharded_shape}, found {tuple(unsharded_data.shape)}."
+                    )
+                unsharded_data = torch.empty(
+                    self.unsharded_shape, dtype=unsharded_data.dtype, device=unsharded_data.device
+                )
+            dist.broadcast(unsharded_data, 0, group=self.process_group)
+            self.data = self.sharded_chunk(unsharded_data).to(dtype=sharded_data.dtype)
         else:
             self.data = sharded_data
         del metadata[self.SHARDED_FLAT_PARAMETER_CACHED_SHARDED_DATA_KEY]
@@ -272,8 +301,16 @@ class ShardedFlatParameter(nn.Parameter):
 
     @property
     def unsharded_flattened_offsets(self) -> Tuple[int, int]:
-        return self.sharding_spec.unsharded_flattened_offsets[get_rank(group=self.process_group)]
+        # mypy is really bad some times
+        offsets: Tuple[int, int] = self.sharding_spec.unsharded_flattened_offsets[  # type: ignore[assignment]
+            get_rank(group=self.process_group)
+        ]
+        return offsets
 
     @property
     def unsharded_shape(self) -> Tuple[int, ...]:
         return self.sharding_spec.unsharded_shape
+
+    @property
+    def sharded_shape(self) -> Tuple[int, ...]:
+        return (self.sharding_spec.sharded_numels[get_rank(self.process_group)],)

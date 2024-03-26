@@ -1,28 +1,59 @@
 import datetime
 import logging
 import sys
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import pytest
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
+from olmo_core.distributed.fsdp import FSDPPrecision
 from olmo_core.distributed.utils import is_distributed
 
 BACKENDS = [pytest.param("gloo", id="backend=GLOO")]
 DEVICES = [pytest.param(torch.device("cpu"), id="device=CPU")]
+LOW_PRECISION_DTYPES = [pytest.param(torch.float16, id="dtype=float16")]
+FSDP_MIXED_PRECISION = [
+    pytest.param(FSDPPrecision(param_dtype=torch.float16, reduce_dtype=None), id="param_dtype=FP16"),
+    pytest.param(
+        FSDPPrecision(param_dtype=torch.float16, reduce_dtype=torch.float16),
+        id="param_dtype=FP16,reduce_dtype=FP16",
+    ),
+    pytest.param(
+        FSDPPrecision(param_dtype=torch.float16, reduce_dtype=torch.float16, keep_low_precision_grads=True),
+        id="param_dtype=FP16,reduce_dtype=FP16,keep_LP",
+    ),
+    pytest.param(
+        FSDPPrecision(param_dtype=torch.float16, reduce_dtype=torch.float32),
+        id="param_dtype=FP16,reduce_dtype=FP32",
+    ),
+]
 
 if torch.cuda.is_available():
     if torch.cuda.device_count() > 1:
-        BACKENDS = [
-            pytest.param("gloo", id="backend=GLOO"),
-            pytest.param("nccl", id="backend=NCCL", marks=pytest.mark.gpu),
+        BACKENDS.append(pytest.param("nccl", id="backend=NCCL", marks=pytest.mark.gpu))
+    DEVICES.append(pytest.param(torch.device("cuda"), id="device=CUDA", marks=pytest.mark.gpu))
+    LOW_PRECISION_DTYPES.append(pytest.param(torch.bfloat16, id="dtype=bfloat16", marks=pytest.mark.gpu))
+    FSDP_MIXED_PRECISION.extend(
+        [
+            pytest.param(
+                FSDPPrecision(param_dtype=torch.bfloat16, reduce_dtype=None),
+                id="param_dtype=BF16",
+                marks=pytest.mark.gpu,
+            ),
+            pytest.param(
+                FSDPPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.bfloat16),
+                id="param_dtype=BF16,reduce_dtype=BF16",
+                marks=pytest.mark.gpu,
+            ),
+            pytest.param(
+                FSDPPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32),
+                id="param_dtype=BF16,reduce_dtype=FP32",
+                marks=pytest.mark.gpu,
+            ),
         ]
-    DEVICES = [
-        pytest.param(torch.device("cpu"), id="device=CPU"),
-        pytest.param(torch.device("cuda"), id="device=CUDA", marks=pytest.mark.gpu),
-    ]
+    )
 
 
 def get_default_device():
@@ -44,6 +75,7 @@ def init_process(
     process_rank: int,
     world_size: int,
     backend: str,
+    log_from_all_ranks: bool,
     func: Callable,
     func_args: Optional[Tuple[Any, ...]] = None,
     func_kwargs: Optional[Dict[str, Any]] = None,
@@ -65,7 +97,7 @@ def init_process(
     )
     logging.setLogRecordFactory(log_record_factory)
 
-    if process_rank == 0:
+    if log_from_all_ranks or process_rank == 0:
         logging.basicConfig(level=logging.DEBUG, handlers=[handler])
 
     dist.init_process_group(
@@ -88,6 +120,7 @@ def init_process(
 def run_distributed_test(
     func: Callable,
     world_size: int = 2,
+    log_from_all_ranks: bool = False,
     backend: str = "gloo",
     start_method: Optional[str] = None,
     func_args: Optional[Tuple[Any, ...]] = None,
@@ -101,7 +134,7 @@ def run_distributed_test(
 
     mp.start_processes(
         init_process,
-        args=(world_size, backend, func, func_args, func_kwargs),
+        args=(world_size, backend, log_from_all_ranks, func, func_args, func_kwargs),
         nprocs=world_size,
         start_method=start_method,
     )

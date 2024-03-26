@@ -1,12 +1,18 @@
 import pytest
 import torch
 import torch.distributed as dist
+import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from olmo_core.distributed.fsdp import FSDP, FSDPDebugConfig
 from olmo_core.distributed.sharded_flat_parameter import ShardedFlatParameter
 
-from ..utils import BACKENDS, get_default_device, run_distributed_test
+from ..utils import (
+    BACKENDS,
+    FSDP_MIXED_PRECISION,
+    get_default_device,
+    run_distributed_test,
+)
 
 
 def run_fsdp_against_non_distributed_model(model_factory, model_data_factory):
@@ -164,7 +170,8 @@ def test_fsdp_against_ddp(backend, tiny_model_factory, tiny_model_data_factory):
 
 def run_fsdp_with_gradient_accumulation(model_factory, model_data_factory):
     """
-    Compare outputs from forward pass and gradients to those from a non-distributed model.
+    Compare outputs from forward pass and gradients to those from a non-distributed model with
+    gradient accumulation.
     """
     model_data1 = model_data_factory().to(get_default_device())
     model_data2 = model_data_factory().to(get_default_device())
@@ -214,5 +221,112 @@ def test_fsdp_with_gradient_accumulation(backend, tiny_model_factory, tiny_model
         run_fsdp_with_gradient_accumulation,
         backend=backend,
         func_args=(tiny_model_factory, tiny_model_data_factory),
+        start_method="spawn",
+    )
+
+
+def run_nested_fsdp_api(model_factory):
+    class NestedModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.inner = FSDP(model_factory())
+            self.out = nn.Linear(8, 8)
+
+    fsdp = FSDP(NestedModel())
+    assert list(fsdp._fsdp_children()) == [fsdp.module.inner]
+    assert list(fsdp._managed_named_parameters()) == [
+        ("out.weight", fsdp.module.out.weight),
+        ("out.bias", fsdp.module.out.bias),
+    ]
+
+    with fsdp.summon_full_params(recurse=False, writeback=False):
+        # Only directly managed params should be sharded.
+        assert not fsdp.module.out.weight.is_sharded  # type: ignore
+        # Params in child FSDP instances should not be sharded.
+        assert fsdp.module.inner.module.fc[0].weight.is_sharded  # type: ignore
+        state_dict = fsdp.state_dict()
+        # State dict should never contain "_fsdp_wrapped_module" prefix.
+        assert set(state_dict.keys()) == {
+            "out.weight",
+            "out.bias",
+            "inner.fc.0.weight",
+            "inner.fc.0.bias",
+            "inner.fc.2.weight",
+            "inner.fc.2.bias",
+            "inner.fc.4.weight",
+            "inner.fc.4.bias",
+        }
+        fsdp.load_state_dict(state_dict)
+
+    with fsdp.summon_full_params(recurse=True, writeback=False):
+        # All FSDP-managed params should be sharded, including those owned by child FSDP instances.
+        assert not fsdp.module.out.weight.is_sharded  # type: ignore
+        assert not fsdp.module.inner.module.fc[0].weight.is_sharded  # type: ignore
+        # State dict should never contain "_fsdp_wrapped_module" prefix.
+        state_dict = fsdp.state_dict()
+        assert set(state_dict.keys()) == {
+            "out.weight",
+            "out.bias",
+            "inner.fc.0.weight",
+            "inner.fc.0.bias",
+            "inner.fc.2.weight",
+            "inner.fc.2.bias",
+            "inner.fc.4.weight",
+            "inner.fc.4.bias",
+        }
+        fsdp.load_state_dict(state_dict)
+
+    with fsdp.summon_full_params(recurse=True, writeback=True, rank0_only=True):
+        if dist.get_rank() == 0:
+            with torch.no_grad():
+                fsdp.module.out.weight.fill_(torch.tensor(0.0, device=fsdp.device))
+                fsdp.module.inner.module.fc[0].weight.fill_(torch.tensor(0.0, device=fsdp.device))
+
+    assert (fsdp.module.out.weight == 0).all()
+    assert (fsdp.module.inner.module.fc[0].weight == 0).all()
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_nested_fsdp_api(backend, tiny_model_factory):
+    run_distributed_test(
+        run_nested_fsdp_api,
+        backend=backend,
+        func_args=(tiny_model_factory,),
+    )
+
+
+def run_fsdp_with_mixed_precision(model_factory, model_data_factory, precision):
+    fsdp = FSDP(model_factory(), precision=precision)
+
+    model_data = model_data_factory().to(fsdp.device)
+    if precision.param_dtype is not None:
+        model_data = model_data.to(dtype=precision.param_dtype)
+
+    # Forward pass.
+    loss = fsdp(model_data).sum()
+
+    # Loss dtype should match precision.param_dtype (the datatype we gather full params in).
+    if precision.param_dtype is not None:
+        assert loss.dtype == precision.param_dtype
+
+    # Trigger backward pass.
+    loss.backward()
+
+    # Make sure grads are now in the correct type.
+    for param in fsdp.parameters():
+        assert param.grad is not None
+        if precision.keep_low_precision_grads and precision.param_dtype is not None:
+            assert param.grad.dtype == precision.param_dtype
+        else:
+            assert param.grad.dtype == param.dtype
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("precision", FSDP_MIXED_PRECISION)
+def test_fsdp_with_mixed_precision(backend, tiny_model_factory, tiny_model_data_factory, precision):
+    run_distributed_test(
+        run_fsdp_with_mixed_precision,
+        backend=backend,
+        func_args=(tiny_model_factory, tiny_model_data_factory, precision),
         start_method="spawn",
     )

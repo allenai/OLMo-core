@@ -1,16 +1,29 @@
+from __future__ import annotations
+
 import logging
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, Dict, Generic, List, Optional, TypeVar
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generator,
+    Generic,
+    List,
+    Optional,
+    Tuple,
+    TypeVar,
+    Union,
+)
 
 import torch
 import torch.distributed as dist
 import torch.nn as nn
 from torch.utils.hooks import RemovableHandle
 
-from ...utils import apply_to_tensors, get_default_device
-from ..sharded_flat_parameter import ShardedFlatParameter
+from olmo_core.distributed.sharded_flat_parameter import ShardedFlatParameter
+from olmo_core.utils import apply_to_tensors, get_default_device
 
 log = logging.getLogger(__name__)
 
@@ -19,12 +32,18 @@ log = logging.getLogger(__name__)
 class FSDPPrecision:
     param_dtype: Optional[torch.dtype] = None
     """
-    The type for model parameters during the forward and backward pass.
+    The data type to cast full model parameters to during the forward and backward pass.
     """
 
     reduce_dtype: Optional[torch.dtype] = None
     """
-    The data type used when reducing gradients.
+    The data type used when reducing gradients. If not set this defaults to ``param_dtype``.
+    """
+
+    keep_low_precision_grads: bool = False
+    """
+    If ``True``, gradients are kept in low precision (if ``param_dtype`` is to set to low precision)
+    instead of being upcast to full precision for the optimizer.
     """
 
 
@@ -36,6 +55,10 @@ class FSDPState:
     """
 
     post_backward_hook_handles: Dict[str, RemovableHandle] = field(default_factory=dict)
+    """
+    Post-backward hooks registered to the next autograd function in the graph for each parameter.
+    The keys are parameter FQNs.
+    """
 
 
 @dataclass
@@ -47,6 +70,8 @@ M = TypeVar("M", bound=nn.Module)
 
 
 class FSDP(Generic[M], nn.Module):
+    WRAPPED_MODULE_PREFIX = "_fsdp_wrapped_module"
+
     def __init__(
         self,
         module: M,
@@ -55,7 +80,7 @@ class FSDP(Generic[M], nn.Module):
         _debug_config: Optional[FSDPDebugConfig] = None,
     ):
         super().__init__()
-        self._fsdp_wrapped_module = module
+        setattr(self, FSDP.WRAPPED_MODULE_PREFIX, module)
         self.process_group = process_group
         self.precision = precision or FSDPPrecision()
         self.debug_config = _debug_config or FSDPDebugConfig()
@@ -98,21 +123,98 @@ class FSDP(Generic[M], nn.Module):
 
         return output
 
+    def state_dict(self, *args, **kwargs):
+        """
+        Return the state dict. The keys in the state dict will always correspond to the original keys
+        in the wrapped model.
+
+        The data in the state dict will be sharded flat data unless you're within the :meth:`summon_full_params()`
+        context or have gathered the full parameters another way.
+        """
+        return self.module.state_dict(*args, **kwargs)
+
+    def load_state_dict(self, state_dict, *args, **kwargs):
+        """
+        Load a state dict. The data in the state dict should correspond to the current state of the
+        FSDP wrapper, either sharded or unsharded.
+        """
+        # Fix keys to include the right prefix.
+        key_mapping: Dict[str, str] = {}  # maps original key to wrapped key
+
+        def collect_key_mappings(module: nn.Module, og_prefix: str, wrapped_prefix: str):
+            for param_name, _ in module.named_parameters(recurse=False):
+                key_mapping[f"{og_prefix}{param_name}"] = f"{wrapped_prefix}{param_name}"
+
+            if isinstance(module, FSDP):
+                wrapped_prefix = f"{wrapped_prefix}{self.WRAPPED_MODULE_PREFIX}."
+                module = module.module
+
+            for child_name, child in module.named_children():
+                collect_key_mappings(child, f"{og_prefix}{child_name}.", f"{wrapped_prefix}{child_name}.")
+
+        collect_key_mappings(self.module, "", f"{self.WRAPPED_MODULE_PREFIX}.")
+
+        return super().load_state_dict({key_mapping.get(k, k): v for k, v in state_dict.items()}, *args, **kwargs)
+
     @contextmanager
-    def summon_full_params(self, writeback: bool = True):
-        self._unshard(cast=False)
+    def summon_full_params(self, recurse: bool = True, writeback: bool = True, rank0_only: bool = False):
+        """
+        Gather full unsharded params in-place with this context manager.
+
+        :param recurse: Gather unsharded params for all child FSDP instances as well.
+        :param writeback: Write the unsharded data back from rank 0 to all other ranks while exiting
+            the context manager.
+        :param rank0_only: Only summon full params on rank 0.
+        """
+        self._unshard(cast=False, recurse=recurse, rank0_only=rank0_only)
         try:
             yield self
         finally:
-            self._reshard(writeback=writeback)
+            self._reshard(writeback=writeback, recurse=recurse)
+
+    def _named_children(
+        self, recurse: Union[bool, Callable[[nn.Module], bool]] = True
+    ) -> Generator[Tuple[str, nn.Module], None, None]:
+        """
+        Returns a generator over children modules with their names, only recursing further if the condition is met.
+        """
+
+        def collect_children(module: nn.Module, prefix: str = "") -> Generator[Tuple[str, nn.Module], None, None]:
+            for child_name, child in module.named_children():
+                yield prefix + child_name, child
+                if recurse is True or (callable(recurse) and recurse(module)):
+                    yield from collect_children(child, prefix=f"{prefix}{child_name}.")
+
+        yield from collect_children(self.module)
+
+    def _managed_named_parameters(self) -> Generator[Tuple[str, nn.Parameter], None, None]:
+        """
+        Returns a generator over all parameters managed by this FSDP instance. This is equivalent
+        to `self.module.named_parameters()` except that parameters within nested FSDP instances are omitted.
+        """
+        for module_name, module in self._named_children(recurse=lambda m: not isinstance(m, FSDP)):
+            if not isinstance(module, FSDP):
+                for param_name, param in module.named_parameters(recurse=False):
+                    yield f"{module_name}.{param_name}", param
+
+    def _fsdp_children(self) -> Generator[FSDP, None, None]:
+        """
+        Returns a generator over all child FSDP instances of this module.
+        """
+        for _, module in self._named_children(recurse=lambda m: not isinstance(m, FSDP)):
+            if isinstance(module, FSDP):
+                yield module
 
     @torch.no_grad()
     def _shard(self):
         """
-        Shard the wrapped module in place. This should only be called once.
+        Shard the wrapped module in place, replacing each ``nn.Parameter`` with a ``ShardedFlatParameter``.
+        This should only be called once at initialization.
         """
         log.debug("Sharding %s...", self.module.__class__.__name__)
         for m in self.module.modules():
+            if isinstance(m, FSDP):
+                continue
             for param_name, param in m.named_parameters(recurse=False):
                 # TODO: use better sharding strategy that doesn't potentially always result in highest rank with
                 # smallest shard.
@@ -122,14 +224,16 @@ class FSDP(Generic[M], nn.Module):
                 setattr(m, param_name, sharded_flat_param)
 
     @torch.no_grad()
-    def _unshard(self, cast: bool = True, cache_grads: bool = False):
+    def _unshard(
+        self, cast: bool = True, cache_grads: bool = False, recurse: bool = False, rank0_only: bool = False
+    ):
         """
         Unshard the wrapped module in place.
         """
         log.debug("Unsharding %s...", self.module.__class__.__name__)
-        for param_name, param in self.module.named_parameters():
+        for param_name, param in self._managed_named_parameters():
             if isinstance(param, ShardedFlatParameter):
-                param.unshard_(dtype=self.precision.param_dtype if cast else None)
+                param.unshard_(dtype=self.precision.param_dtype if cast else None, rank0_only=rank0_only)
                 if cache_grads and param.grad is not None:
                     # We should only be caching these between the pre-backward and post-backward
                     # hooks. The post-backward hook will remove the cached grad as it accumulates
@@ -137,16 +241,22 @@ class FSDP(Generic[M], nn.Module):
                     assert param_name not in self._sharded_grad_cache
                     self._sharded_grad_cache[param_name] = param.grad.detach()
                     param.grad = None
+        if recurse:
+            for module in self._fsdp_children():
+                module._unshard(cast=cast, cache_grads=cache_grads, recurse=recurse, rank0_only=rank0_only)
 
     @torch.no_grad()
-    def _reshard(self, writeback: bool = False):
+    def _reshard(self, writeback: bool = False, recurse: bool = False):
         """
         Re-shard the wrapped module in place. Should be called after :meth:`unshard()`.
         """
         log.debug("Resharding %s...", self.module.__class__.__name__)
-        for param in self.module.parameters():
+        for _, param in self._managed_named_parameters():
             if isinstance(param, ShardedFlatParameter):
                 param.reshard_(writeback=writeback)
+        if recurse:
+            for module in self._fsdp_children():
+                module._reshard(writeback=writeback, recurse=recurse)
 
     @torch.no_grad()
     def _reduce_scatter_grads(self):
@@ -162,16 +272,29 @@ class FSDP(Generic[M], nn.Module):
             )
             return
 
-        for param_name, param in self.module.named_parameters():
+        # dtype to keep sharded gradients in.
+        grad_dtype: Optional[torch.dtype] = (
+            self.precision.param_dtype if self.precision.keep_low_precision_grads else None
+        )
+        # dtype just for reducing gradients.
+        grad_reduce_dtype: Optional[torch.dtype] = self.precision.reduce_dtype or self.precision.param_dtype
+
+        for param_name, param in self._managed_named_parameters():
             if (unsharded_grad := param.grad) is None:
                 continue
 
             log.debug("Reduce-scattering grads for %s.%s...", self.module.__class__.__name__, param_name)
 
+            if grad_reduce_dtype is not None:
+                unsharded_grad = unsharded_grad.to(dtype=grad_reduce_dtype)
+
             if not isinstance(param, ShardedFlatParameter):
                 dist.all_reduce(unsharded_grad, group=self.process_group)
                 param.grad = unsharded_grad
                 continue
+
+            if grad_dtype is None:
+                grad_dtype = param.dtype
 
             # Only NCCL supports 'reduce_scatter'. So with other backends we use 'all_reduce'.
             if dist.get_backend() == dist.Backend.NCCL:
@@ -179,10 +302,10 @@ class FSDP(Generic[M], nn.Module):
                 grad_chunks = param.chunk_unsharded(unsharded_grad, pad=True)
                 new_sharded_grad = torch.empty_like(grad_chunks[0])
                 dist.reduce_scatter(new_sharded_grad, grad_chunks, group=self.process_group)
-                param.grad = new_sharded_grad[: param.unsharded_flattened_offsets[1]]
+                param.grad = new_sharded_grad[: param.unsharded_flattened_offsets[1]].to(dtype=grad_dtype)
             else:
                 dist.all_reduce(unsharded_grad, group=self.process_group)
-                param.grad = param.sharded_chunk(unsharded_grad).detach().clone()
+                param.grad = param.sharded_chunk(unsharded_grad).detach().to(dtype=grad_dtype)
 
             del unsharded_grad
 
@@ -231,6 +354,9 @@ class FSDP(Generic[M], nn.Module):
         log.debug("Running post-backward hook for %s.%s...", self.module.__class__.__name__, param_name)
         self.state.post_backward_hook_handles.pop(param_name).remove()
         if not self.state.post_backward_hook_handles:
+            # NOTE: reshard *before* reducing grads to correctly handle precision settings.
+            # '_reduce_scatter_grads' checks 'param.dtype' to determine dtype for grads, which
+            # at that point should be the original dtype.
             self._reshard()
             self._reduce_scatter_grads()
 
@@ -253,5 +379,5 @@ class FSDP(Generic[M], nn.Module):
             for handle in self.state.post_backward_hook_handles.values():
                 handle.remove()
             self.state.post_backward_hook_handles.clear()
-        for param_name, param in self.module.named_parameters():
+        for param_name, param in self._managed_named_parameters():
             self._register_post_backward_hook(param_name, param)

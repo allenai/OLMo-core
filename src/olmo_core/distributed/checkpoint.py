@@ -14,8 +14,8 @@ import torch.nn as nn
 from cached_path import cached_path
 from pydantic import BaseModel
 
-from ..exceptions import OLMoUserError
-from ..io import (
+from olmo_core.exceptions import OLMoUserError
+from olmo_core.io import (
     PathOrStr,
     clear_directory,
     deserialize_from_tensor,
@@ -26,7 +26,8 @@ from ..io import (
     serialize_to_tensor,
     upload,
 )
-from ..utils import TORCH_DTYPE_TO_STR, TORCH_DTYPES, wait_for
+from olmo_core.utils import TORCH_DTYPE_TO_STR, TORCH_DTYPES, wait_for
+
 from .sharded_flat_parameter import ShardedFlatParameter
 from .utils import barrier, get_rank, scatter_object
 
