@@ -1,4 +1,5 @@
 import logging
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, Dict, Generic, List, Optional, TypeVar
@@ -37,6 +38,11 @@ class FSDPState:
     post_backward_hook_handles: Dict[str, RemovableHandle] = field(default_factory=dict)
 
 
+@dataclass
+class FSDPDebugConfig:
+    no_reduce_grads: bool = False
+
+
 M = TypeVar("M", bound=nn.Module)
 
 
@@ -46,6 +52,7 @@ class FSDP(Generic[M], nn.Module):
         module: M,
         process_group: Optional[dist.ProcessGroup] = None,
         precision: Optional[FSDPPrecision] = None,
+        _debug_config: Optional[FSDPDebugConfig] = None,
     ):
         super().__init__()
         self._fsdp_wrapped_module = module
@@ -53,6 +60,7 @@ class FSDP(Generic[M], nn.Module):
         self.precision = precision or FSDPPrecision()
         self.state = FSDPState()
         self.device = get_default_device()
+        self._debug_config = _debug_config or FSDPDebugConfig()
 
         # Shard the module in place.
         self._shard()
@@ -87,6 +95,14 @@ class FSDP(Generic[M], nn.Module):
 
         return output
 
+    @contextmanager
+    def summon_full_params(self, writeback: bool = True):
+        self._unshard(cast=False)
+        try:
+            yield self
+        finally:
+            self._reshard(writeback=writeback)
+
     @torch.no_grad()
     def _shard(self):
         """
@@ -98,12 +114,12 @@ class FSDP(Generic[M], nn.Module):
                 # TODO: use better sharding strategy that doesn't potentially always result in highest rank with
                 # smallest shard.
                 sharded_flat_param = ShardedFlatParameter.shard(
-                    param, process_group=self.process_group, device=self.device
+                    param, process_group=self.process_group, device=self.device, synchronize=False
                 )
                 setattr(m, param_name, sharded_flat_param)
 
     @torch.no_grad()
-    def _unshard(self):
+    def _unshard(self, cast: bool = True):
         """
         Unshard the wrapped module in place.
         """
@@ -111,17 +127,17 @@ class FSDP(Generic[M], nn.Module):
         for m in self.module.modules():
             for param in m.parameters(recurse=False):
                 if isinstance(param, ShardedFlatParameter):
-                    param.unshard_(dtype=self.precision.param_dtype)
+                    param.unshard_(dtype=self.precision.param_dtype if cast else None)
 
     @torch.no_grad()
-    def _reshard(self):
+    def _reshard(self, writeback: bool = False):
         """
         Re-shard the wrapped module in place. Should be called after :meth:`unshard()`.
         """
         log.debug("Resharding %s...", self.module.__class__.__name__)
         for param in self.module.parameters():
             if isinstance(param, ShardedFlatParameter):
-                param.reshard_()
+                param.reshard_(writeback=writeback)
 
     @torch.no_grad()
     def _reduce_scatter_grads(self):
@@ -129,6 +145,13 @@ class FSDP(Generic[M], nn.Module):
         Reduce and scatter unsharded gradients across the process group, leaving only sharded
         gradients in their place.
         """
+        if self._debug_config.no_reduce_grads:
+            log.warning(
+                "Skipping reduce-scattering grads for %s due to debug config.",
+                self.module.__class__.__name__,
+            )
+            return
+
         for param_name, param in self.module.named_parameters():
             if (unsharded_grad := param.grad) is None:
                 continue
@@ -146,7 +169,7 @@ class FSDP(Generic[M], nn.Module):
                 grad_chunks = param.chunk_unsharded(unsharded_grad, pad=True)
                 new_sharded_grad = torch.empty_like(grad_chunks[0])
                 dist.reduce_scatter(new_sharded_grad, grad_chunks, group=self.process_group)
-                param.grad = new_sharded_grad
+                param.grad = new_sharded_grad[: param.unsharded_flattened_offsets[1]]
             else:
                 dist.all_reduce(unsharded_grad, group=self.process_group)
                 param.grad = param.sharded_chunk(unsharded_grad)
@@ -195,7 +218,7 @@ class FSDP(Generic[M], nn.Module):
 
     def _register_post_backward_hook(self, param_name: str, param: nn.Parameter):
         if isinstance(param, ShardedFlatParameter) and param.requires_grad:
-            # Force creation of a `grad_fn` in order to register a hook that will after this param's
+            # Force creation of a `grad_fn` in order to register a hook that will run *after* this param's
             # backward pass.
             tmp_param = param.expand_as(param)
             assert tmp_param.grad_fn is not None

@@ -12,6 +12,20 @@ from .exceptions import OLMoEnvironmentError
 
 OLMO_NUM_THREADS_ENV_VAR = "OLMO_NUM_THREADS"
 
+
+class StrEnum(str, Enum):
+    """
+    This is equivalent to Python's :class:`enum.StrEnum` since version 3.11.
+    We include this here for compatibility with older version of Python.
+    """
+
+    def __str__(self) -> str:
+        return self.value
+
+    def __repr__(self) -> str:
+        return f"'{str(self)}'"
+
+
 # torch.float8 formats require 2.1; we do not support these dtypes on earlier versions
 _float8_e4m3fn = getattr(torch, "float8_e4m3fn", None)
 _float8_e5m2 = getattr(torch, "float8_e5m2", None)
@@ -108,14 +122,17 @@ def get_default_device() -> torch.device:
         return torch.device("cpu")
 
 
-class StrEnum(str, Enum):
-    """
-    This is equivalent to Python's :class:`enum.StrEnum` since version 3.11.
-    We include this here for compatibility with older version of Python.
-    """
+def seed_all(seed: int):
+    """Seed all rng objects."""
+    import random
 
-    def __str__(self) -> str:
-        return self.value
+    import numpy as np
 
-    def __repr__(self) -> str:
-        return f"'{str(self)}'"
+    if seed < 0 or seed > 2**32 - 1:
+        raise ValueError(f"Seed {seed} is invalid. It must be on [0; 2^32 - 1]")
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    # torch.manual_seed may call manual_seed_all but calling it again here
+    # to make sure it gets called at least once
+    torch.cuda.manual_seed_all(seed)

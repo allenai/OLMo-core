@@ -1,7 +1,7 @@
 import datetime
 import logging
 import sys
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pytest
 import torch

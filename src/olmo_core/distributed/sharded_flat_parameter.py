@@ -173,7 +173,7 @@ class ShardedFlatParameter(nn.Parameter):
         self._set_metadata(self.SHARDED_FLAT_PARAMETER_CACHED_SHARDED_DATA_KEY, self.data)
         self.data = unsharded_data
 
-    def reshard_(self):
+    def reshard_(self, writeback: bool = False):
         """
         Reshard this parameter's data in-place. Should only be called after :meth:`unshard_()`.
         This does *not* do anything with the parameter's gradient, if it has one. That should
@@ -189,7 +189,11 @@ class ShardedFlatParameter(nn.Parameter):
                 f"{self.__class__.__name__} has not been unsharded in place yet, "
                 "did you forget to class '.unshard_()'?"
             )
-        self.data = sharded_data
+        if writeback:
+            dist.broadcast(self.data, 0, group=self.process_group)
+            self.data = self.sharded_chunk(self.data).to(dtype=sharded_data.dtype)
+        else:
+            self.data = sharded_data
         del metadata[self.SHARDED_FLAT_PARAMETER_CACHED_SHARDED_DATA_KEY]
 
     def mark_as_sharded(self, sharding_spec: ShardingSpec, process_group: Optional[dist.ProcessGroup] = None):

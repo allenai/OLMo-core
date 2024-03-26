@@ -1,3 +1,3 @@
-from .fsdp import FSDP, FSDPPrecision
+from .fsdp import FSDP, FSDPDebugConfig, FSDPPrecision
 
-__all__ = ["FSDP", "FSDPPrecision"]
+__all__ = ["FSDP", "FSDPDebugConfig", "FSDPPrecision"]
