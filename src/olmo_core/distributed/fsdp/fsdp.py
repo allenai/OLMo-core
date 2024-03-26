@@ -58,9 +58,12 @@ class FSDP(Generic[M], nn.Module):
         self._fsdp_wrapped_module = module
         self.process_group = process_group
         self.precision = precision or FSDPPrecision()
+        self.debug_config = _debug_config or FSDPDebugConfig()
         self.state = FSDPState()
         self.device = get_default_device()
-        self._debug_config = _debug_config or FSDPDebugConfig()
+        # For caching sharded gradients during gradient accumulation.
+        # Maps param FQN to local sharded gradient.
+        self._sharded_grad_cache: Dict[str, torch.Tensor] = {}
 
         # Shard the module in place.
         self._shard()
@@ -119,15 +122,21 @@ class FSDP(Generic[M], nn.Module):
                 setattr(m, param_name, sharded_flat_param)
 
     @torch.no_grad()
-    def _unshard(self, cast: bool = True):
+    def _unshard(self, cast: bool = True, cache_grads: bool = False):
         """
         Unshard the wrapped module in place.
         """
         log.debug("Unsharding %s...", self.module.__class__.__name__)
-        for m in self.module.modules():
-            for param in m.parameters(recurse=False):
-                if isinstance(param, ShardedFlatParameter):
-                    param.unshard_(dtype=self.precision.param_dtype if cast else None)
+        for param_name, param in self.module.named_parameters():
+            if isinstance(param, ShardedFlatParameter):
+                param.unshard_(dtype=self.precision.param_dtype if cast else None)
+                if cache_grads and param.grad is not None:
+                    # We should only be caching these between the pre-backward and post-backward
+                    # hooks. The post-backward hook will remove the cached grad as it accumulates
+                    # it into persistent sharded grad.
+                    assert param_name not in self._sharded_grad_cache
+                    self._sharded_grad_cache[param_name] = param.grad.detach()
+                    param.grad = None
 
     @torch.no_grad()
     def _reshard(self, writeback: bool = False):
@@ -143,9 +152,10 @@ class FSDP(Generic[M], nn.Module):
     def _reduce_scatter_grads(self):
         """
         Reduce and scatter unsharded gradients across the process group, leaving only sharded
-        gradients in their place.
+        gradients in their place. This also checks for cached sharded gradients
+        (cached during gradient accumulation) and accumulates those before clearing that cache.
         """
-        if self._debug_config.no_reduce_grads:
+        if self.debug_config.no_reduce_grads:
             log.warning(
                 "Skipping reduce-scattering grads for %s due to debug config.",
                 self.module.__class__.__name__,
@@ -172,20 +182,27 @@ class FSDP(Generic[M], nn.Module):
                 param.grad = new_sharded_grad[: param.unsharded_flattened_offsets[1]]
             else:
                 dist.all_reduce(unsharded_grad, group=self.process_group)
-                param.grad = param.sharded_chunk(unsharded_grad)
+                param.grad = param.sharded_chunk(unsharded_grad).detach().clone()
+
+            del unsharded_grad
+
+            if (cached_grad := self._sharded_grad_cache.pop(param_name, None)) is not None:
+                param.grad.add_(cached_grad)
+                del cached_grad
 
     ###########
     ## Hooks ##
     ###########
 
-    ### Pre-backward ###
+    ### Pre-backward hook to unshard parameters in-place and cache existing sharded grads for
+    ### gradient accumulation.
 
     @torch.no_grad()
     def _pre_backward_hook(self, *unused: Any):
         del unused
         log.debug("Running pre-backward hook for %s...", self.module.__class__.__name__)
         # Unshard parameters in place.
-        self._unshard()
+        self._unshard(cast=True, cache_grads=True)
         # Remove all pre backward hooks since they all do the same thing.
         for handle in self.state.pre_backward_hook_handles:
             handle.remove()
@@ -205,7 +222,8 @@ class FSDP(Generic[M], nn.Module):
             self.state.pre_backward_hook_handles.clear()
         apply_to_tensors(self._register_pre_backward_hook, output)
 
-    ### Post-backward ###
+    ### Post-backward hook to reshard parameters in-place and reduce-scatter gradients across
+    ### the process group. Also accumulates any cached sharded gradients.
 
     @torch.no_grad()
     def _post_backward_hook(self, param_name: str, *unused: Any):

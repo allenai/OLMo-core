@@ -28,7 +28,7 @@ def run_fsdp_against_non_distributed_model(model_factory, model_data_factory):
         with fsdp.summon_full_params():
             fsdp.module.load_state_dict(model.state_dict())
 
-        for name, param in fsdp1.module.named_parameters():
+        for name, param in fsdp.module.named_parameters():
             assert isinstance(param, ShardedFlatParameter)
             assert param.is_sharded
             assert param.grad is None
@@ -95,7 +95,7 @@ def run_fsdp_against_ddp(model_factory, model_data_factory):
     """
     model_data = model_data_factory().to(get_default_device())
 
-    ddp_model = DDP(model_factory())
+    ddp_model = DDP(model_factory().to(get_default_device()))
     fsdp_model = FSDP(model_factory())
 
     with fsdp_model.summon_full_params():
@@ -144,6 +144,10 @@ def run_fsdp_against_ddp(model_factory, model_data_factory):
                 msg=lambda m: f"On gradient for '{name}'. {m}",
             )
 
+    # Since we've only done a single backwards pass (no grad accumulation), there shouldn't
+    # be any cached gradients.
+    assert not fsdp_model._sharded_grad_cache
+
     # Run optimizer step.
     optim.step()
 
@@ -152,6 +156,62 @@ def run_fsdp_against_ddp(model_factory, model_data_factory):
 def test_fsdp_against_ddp(backend, tiny_model_factory, tiny_model_data_factory):
     run_distributed_test(
         run_fsdp_against_ddp,
+        backend=backend,
+        func_args=(tiny_model_factory, tiny_model_data_factory),
+        start_method="spawn",
+    )
+
+
+def run_fsdp_with_gradient_accumulation(model_factory, model_data_factory):
+    """
+    Compare outputs from forward pass and gradients to those from a non-distributed model.
+    """
+    model_data1 = model_data_factory().to(get_default_device())
+    model_data2 = model_data_factory().to(get_default_device())
+
+    ddp = DDP(model_factory().to(get_default_device()))
+    fsdp = FSDP(model_factory())
+
+    # Ensure params for all models on all ranks match.
+    with fsdp.summon_full_params():
+        fsdp.module.load_state_dict(ddp.module.state_dict())
+
+    for name, param in fsdp.module.named_parameters():
+        assert isinstance(param, ShardedFlatParameter)
+        assert param.is_sharded
+        assert param.grad is None
+        with torch.no_grad():
+            torch.testing.assert_close(param.data, param.sharded_chunk(ddp.module.state_dict()[name]))
+
+    # Run forward/backward pass on non-distributed model and collect grads for comparison.
+    ddp(model_data1).sum().backward()
+    ddp(model_data2).sum().backward()
+
+    expected_grads = {}
+    for param_name, param in ddp.module.named_parameters():
+        expected_grads[param_name] = param.grad.detach()
+
+    # Run forward/backward pass on FSDP model.
+    fsdp(model_data1).sum().backward()
+    fsdp(model_data2).sum().backward()
+
+    # Check gradients and ensure model is in a sharded state again.
+    for name, param in fsdp.module.named_parameters():
+        assert isinstance(param, ShardedFlatParameter)
+        assert param.is_sharded
+        assert param.grad is not None
+        with torch.no_grad():
+            torch.testing.assert_close(
+                param.grad,
+                param.sharded_chunk(expected_grads[name] * dist.get_world_size()),
+                msg=lambda m: f"On gradient for '{name}'. {m}",
+            )
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_fsdp_with_gradient_accumulation(backend, tiny_model_factory, tiny_model_data_factory):
+    run_distributed_test(
+        run_fsdp_with_gradient_accumulation,
         backend=backend,
         func_args=(tiny_model_factory, tiny_model_data_factory),
         start_method="spawn",
