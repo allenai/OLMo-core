@@ -238,6 +238,8 @@ def run_nested_fsdp_api(model_factory):
         ("out.weight", fsdp.module.out.weight),
         ("out.bias", fsdp.module.out.bias),
     ]
+    assert fsdp.root
+    assert not fsdp.module.inner.root
 
     with fsdp.summon_full_params(recurse=False, writeback=False):
         # Only directly managed params should be sharded.

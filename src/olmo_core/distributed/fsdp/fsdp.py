@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import (
     Any,
@@ -24,6 +24,8 @@ from torch.utils.hooks import RemovableHandle
 
 from olmo_core.distributed.sharded_flat_parameter import ShardedFlatParameter
 from olmo_core.utils import apply_to_tensors, get_default_device
+
+from .stream import Stream
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +51,8 @@ class FSDPPrecision:
 
 @dataclass
 class FSDPState:
+    device: torch.device = field(default_factory=get_default_device)
+
     pre_backward_hook_handles: List[RemovableHandle] = field(default_factory=list)
     """
     Backward hooks registered to the output tensors from the wrapped module's forward method.
@@ -59,6 +63,33 @@ class FSDPState:
     Post-backward hooks registered to the next autograd function in the graph for each parameter.
     The keys are parameter FQNs.
     """
+
+    compute_stream: Stream = field(default_factory=Stream.default)
+    """
+    Default stream for computation.
+    """
+
+    unshard_stream: Stream = field(default_factory=Stream.default)
+    """
+    Stream for unsharding parameters.
+    """
+
+    reduce_stream: Stream = field(default_factory=Stream.default)
+    """
+    Stream for reducing gradients after the backward pass.
+    """
+
+    def wait_for_compute_stream(self):
+        """
+        Has unshard stream wait for computation stream.
+        For example, this should be called in the root FSDP instance pre-forward to respect
+        optimizer step computation.
+        """
+        self.unshard_stream.wait_stream(self.compute_stream)
+
+    @property
+    def current_stream(self) -> Stream:
+        return Stream.current(self.device)
 
 
 @dataclass
@@ -84,14 +115,20 @@ class FSDP(Generic[M], nn.Module):
         self.process_group = process_group
         self.precision = precision or FSDPPrecision()
         self.debug_config = _debug_config or FSDPDebugConfig()
-        self.state = FSDPState()
         self.device = get_default_device()
+        self.state = FSDPState(device=self.device)
+        self.is_root = True
         # For caching sharded gradients during gradient accumulation.
         # Maps param FQN to local sharded gradient.
         self._sharded_grad_cache: Dict[str, torch.Tensor] = {}
+        self._lazy_init_complete = False
 
         # Shard the module in place.
         self._shard()
+
+        # Mark all children as not root.
+        for fsdp_child in self._fsdp_children(recurse=True):
+            fsdp_child.is_root = False
 
     @property
     def module(self) -> M:
@@ -101,14 +138,21 @@ class FSDP(Generic[M], nn.Module):
         return self._fsdp_wrapped_module
 
     def forward(self, *args, **kwargs):
+        self._lazy_init()
+
+        if self.is_root:
+            self.state.wait_for_compute_stream()
+
         log.debug("Running forward pass for %s...", self.module.__class__.__name__)
 
         # Unshard parameters in-place.
+        # TODO: figure out how to prefetch
         self._unshard()
 
         try:
             # Run forward pass on the original model.
-            output = self.module(*args, **kwargs)
+            with self.state.compute_stream(wait_stream=self.state.unshard_stream):
+                output = self.module(*args, **kwargs)
         finally:
             # Reshard parameters in-place.
             self._reshard()
@@ -172,6 +216,35 @@ class FSDP(Generic[M], nn.Module):
         finally:
             self._reshard(writeback=writeback, recurse=recurse)
 
+    def _lazy_init(self):
+        """
+        Complete initialization of streams and other stuff.
+        """
+        if self._lazy_init_complete:
+            return
+
+        self._lazy_init_complete = True
+        if not self.is_root:
+            return False
+
+        log.debug("Completing lazy initialization from root FSDP for %s...", self.module.__class__.__name__)
+
+        # Initialize streams.
+        self.state.compute_stream = Stream.default(self.device)
+        self.state.unshard_stream = Stream.new(self.device)
+        self.state.reduce_stream = Stream.new(self.device)
+
+        for fsdp_child in self._fsdp_children(recurse=True):
+            fsdp_child._lazy_init_complete = True  # not really necessary
+
+            # Set child to use same streams.
+            fsdp_child.state = replace(
+                fsdp_child.state,
+                compute_stream=self.state.compute_stream,
+                unshard_stream=self.state.unshard_stream,
+                reduce_stream=self.state.reduce_stream,
+            )
+
     def _named_children(
         self, recurse: Union[bool, Callable[[nn.Module], bool]] = True
     ) -> Generator[Tuple[str, nn.Module], None, None]:
@@ -197,11 +270,13 @@ class FSDP(Generic[M], nn.Module):
                 for param_name, param in module.named_parameters(recurse=False):
                     yield f"{module_name}.{param_name}", param
 
-    def _fsdp_children(self) -> Generator[FSDP, None, None]:
+    def _fsdp_children(self, recurse: bool = False) -> Generator[FSDP, None, None]:
         """
         Returns a generator over all child FSDP instances of this module.
+
+        :recurse: Whether to recurse into each FSDP child.
         """
-        for _, module in self._named_children(recurse=lambda m: not isinstance(m, FSDP)):
+        for _, module in self._named_children(recurse=recurse or (lambda m: not isinstance(m, FSDP))):
             if isinstance(module, FSDP):
                 yield module
 
@@ -231,8 +306,15 @@ class FSDP(Generic[M], nn.Module):
         Unshard the wrapped module in place.
         """
         log.debug("Unsharding %s...", self.module.__class__.__name__)
-        for param_name, param in self._managed_named_parameters():
-            if isinstance(param, ShardedFlatParameter):
+
+        # TODO: figure out how to limit the number of all gathers here like PyTorch FSDP does
+        # when you set 'limit_all_gathers=True'.
+        with self.state.unshard_stream:
+            # TODO: batch the unshards for all params together?
+            for param_name, param in self._managed_named_parameters():
+                if not isinstance(param, ShardedFlatParameter):
+                    continue
+
                 param.unshard_(dtype=self.precision.param_dtype if cast else None, rank0_only=rank0_only)
                 if cache_grads and param.grad is not None:
                     # We should only be caching these between the pre-backward and post-backward
@@ -241,6 +323,7 @@ class FSDP(Generic[M], nn.Module):
                     assert param_name not in self._sharded_grad_cache
                     self._sharded_grad_cache[param_name] = param.grad.detach()
                     param.grad = None
+
         if recurse:
             for module in self._fsdp_children():
                 module._unshard(cast=cast, cache_grads=cache_grads, recurse=recurse, rank0_only=rank0_only)
@@ -251,9 +334,15 @@ class FSDP(Generic[M], nn.Module):
         Re-shard the wrapped module in place. Should be called after :meth:`unshard()`.
         """
         log.debug("Resharding %s...", self.module.__class__.__name__)
-        for _, param in self._managed_named_parameters():
-            if isinstance(param, ShardedFlatParameter):
+
+        with self.state.unshard_stream:
+            # TODO: batch the unshards for all params together?
+            for _, param in self._managed_named_parameters():
+                if not isinstance(param, ShardedFlatParameter):
+                    continue
+
                 param.reshard_(writeback=writeback)
+
         if recurse:
             for module in self._fsdp_children():
                 module._reshard(writeback=writeback, recurse=recurse)
@@ -279,39 +368,41 @@ class FSDP(Generic[M], nn.Module):
         # dtype just for reducing gradients.
         grad_reduce_dtype: Optional[torch.dtype] = self.precision.reduce_dtype or self.precision.param_dtype
 
-        for param_name, param in self._managed_named_parameters():
-            if (unsharded_grad := param.grad) is None:
-                continue
+        with self.state.reduce_stream(wait_stream=self.state.current_stream):
+            # TODO: batch the reductions for all params together?
+            for param_name, param in self._managed_named_parameters():
+                if (unsharded_grad := param.grad) is None:
+                    continue
 
-            log.debug("Reduce-scattering grads for %s.%s...", self.module.__class__.__name__, param_name)
+                log.debug("Reduce-scattering grads for %s.%s...", self.module.__class__.__name__, param_name)
 
-            if grad_reduce_dtype is not None:
-                unsharded_grad = unsharded_grad.to(dtype=grad_reduce_dtype)
+                if grad_reduce_dtype is not None:
+                    unsharded_grad = unsharded_grad.to(dtype=grad_reduce_dtype)
 
-            if not isinstance(param, ShardedFlatParameter):
-                dist.all_reduce(unsharded_grad, group=self.process_group)
-                param.grad = unsharded_grad
-                continue
+                if not isinstance(param, ShardedFlatParameter):
+                    dist.all_reduce(unsharded_grad, group=self.process_group)
+                    param.grad = unsharded_grad
+                    continue
 
-            if grad_dtype is None:
-                grad_dtype = param.dtype
+                if grad_dtype is None:
+                    grad_dtype = param.dtype
 
-            # Only NCCL supports 'reduce_scatter'. So with other backends we use 'all_reduce'.
-            if dist.get_backend() == dist.Backend.NCCL:
-                # Get chunks corresponding to each rank.
-                grad_chunks = param.chunk_unsharded(unsharded_grad, pad=True)
-                new_sharded_grad = torch.empty_like(grad_chunks[0])
-                dist.reduce_scatter(new_sharded_grad, grad_chunks, group=self.process_group)
-                param.grad = new_sharded_grad[: param.unsharded_flattened_offsets[1]].to(dtype=grad_dtype)
-            else:
-                dist.all_reduce(unsharded_grad, group=self.process_group)
-                param.grad = param.sharded_chunk(unsharded_grad).detach().to(dtype=grad_dtype)
+                # Only NCCL supports 'reduce_scatter'. So with other backends we use 'all_reduce'.
+                if dist.get_backend() == dist.Backend.NCCL:
+                    # Get chunks corresponding to each rank.
+                    grad_chunks = param.chunk_unsharded(unsharded_grad, pad=True)
+                    new_sharded_grad = torch.empty_like(grad_chunks[0])
+                    dist.reduce_scatter(new_sharded_grad, grad_chunks, group=self.process_group)
+                    param.grad = new_sharded_grad[: param.unsharded_flattened_offsets[1]].to(dtype=grad_dtype)
+                else:
+                    dist.all_reduce(unsharded_grad, group=self.process_group)
+                    param.grad = param.sharded_chunk(unsharded_grad).detach().to(dtype=grad_dtype)
 
-            del unsharded_grad
+                del unsharded_grad
 
-            if (cached_grad := self._sharded_grad_cache.pop(param_name, None)) is not None:
-                param.grad.add_(cached_grad)
-                del cached_grad
+                if (cached_grad := self._sharded_grad_cache.pop(param_name, None)) is not None:
+                    param.grad.add_(cached_grad)
+                    del cached_grad
 
     ###########
     ## Hooks ##
@@ -324,12 +415,18 @@ class FSDP(Generic[M], nn.Module):
     def _pre_backward_hook(self, *unused: Any):
         del unused
         log.debug("Running pre-backward hook for %s...", self.module.__class__.__name__)
+
         # Unshard parameters in place.
+        # TODO: figure out how to prefetch
         self._unshard(cast=True, cache_grads=True)
+
         # Remove all pre backward hooks since they all do the same thing.
         for handle in self.state.pre_backward_hook_handles:
             handle.remove()
         self.state.pre_backward_hook_handles.clear()
+
+        # Wait for unshard stream so gradient computation can proceed.
+        self.state.current_stream.wait_stream(self.state.unshard_stream)
 
     def _register_pre_backward_hook(self, x: torch.Tensor):
         handle = x.register_hook(self._pre_backward_hook)
