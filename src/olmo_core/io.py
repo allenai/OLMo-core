@@ -42,6 +42,8 @@ def file_size(path: PathOrStr) -> int:
             return _gcs_file_size(parsed.netloc, parsed.path.strip("/"))
         elif parsed.scheme in ("s3", "r2"):
             return _s3_file_size(parsed.scheme, parsed.netloc, parsed.path.strip("/"))
+        elif parsed.scheme in ("http", "https"):
+            return _http_file_size(str(path))
         elif parsed.scheme == "file":
             return file_size(str(path).replace("file://", "", 1))
         else:
@@ -61,8 +63,8 @@ def get_bytes_range(source: PathOrStr, bytes_start: int, num_bytes: int) -> byte
             return _s3_get_bytes_range(
                 parsed.scheme, parsed.netloc, parsed.path.strip("/"), bytes_start, num_bytes
             )
-        elif parsed.scheme == "https":
-            return _https_get_bytes_range(str(source), bytes_start, num_bytes)
+        elif parsed.scheme in ("http", "https"):
+            return _http_get_bytes_range(str(source), bytes_start, num_bytes)
         elif parsed.scheme == "file":
             return get_bytes_range(str(source).replace("file://", "", 1), bytes_start, num_bytes)
         else:
@@ -120,8 +122,8 @@ def file_exists(path: PathOrStr) -> bool:
                 return False
             else:
                 return True
-        elif parsed.scheme == "https":
-            return _https_file_exists(str(path))
+        elif parsed.scheme in ("http", "https"):
+            return _http_file_exists(str(path))
         elif parsed.scheme == "file":
             return file_exists(str(path).replace("file://", "", 1))
         else:
@@ -182,7 +184,16 @@ def _format_bytes(num: Union[int, float], suffix="B") -> str:
 ######################
 
 
-def _https_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
+def _http_file_size(url: str) -> int:
+    import requests
+
+    response = requests.head(url, allow_redirects=True)
+    content_length = response.headers.get("content-length")
+    assert content_length
+    return int(content_length)
+
+
+def _http_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
     import requests
 
     response = requests.get(url, headers={"Range": f"bytes={bytes_start}-{bytes_start+num_bytes-1}"})
@@ -190,10 +201,15 @@ def _https_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
         raise FileNotFoundError(url)
 
     response.raise_for_status()
-    return response.content
+
+    result = response.content
+    # Some web servers silently ignore range requests and send everything
+    assert len(result) == num_bytes, f"expected {num_bytes} bytes, got {len(result)}"
+
+    return result
 
 
-def _https_file_exists(url: str) -> bool:
+def _http_file_exists(url: str) -> bool:
     import requests
 
     response = requests.head(url)
