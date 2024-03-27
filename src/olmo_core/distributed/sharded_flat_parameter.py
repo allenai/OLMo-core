@@ -80,34 +80,33 @@ class ShardedFlatParameter(nn.Parameter):
 
     def _gather_data(self, dtype: Optional[torch.dtype] = None, rank0_only: bool = False) -> torch.Tensor:
         # NOTE: ``all_gather_into_tensor`` is not supported on Gloo.
+        local_rank = get_rank(group=self.process_group)
         sharded_numels = self.sharding_spec.sharded_numels
         max_numel = max(sharded_numels)
-        local_padding = (0, max_numel - sharded_numels[get_rank(group=self.process_group)])
+        local_padding = (0, max_numel - sharded_numels[local_rank])
 
         flat_sharded_tensor_list: Optional[List[torch.Tensor]] = None
+        local_flat_padded_tensor = F.pad(self.data.to(dtype or self.dtype), local_padding)
 
         # Pad sharded tensors to the same size.
         if not rank0_only or get_rank(group=self.process_group) == 0:
             flat_sharded_tensor_list = [
                 torch.empty(max_numel, device=self.device, dtype=dtype or self.dtype)
-                for _ in self.sharding_spec.sharded_numels
+                for _ in range(len(self.sharding_spec.sharded_numels) - 1)
             ]
+            flat_sharded_tensor_list.insert(local_rank, local_flat_padded_tensor)
 
         if not rank0_only:
             # Gather padded sharded tensors across all ranks.
             assert flat_sharded_tensor_list is not None
             dist.all_gather(
                 flat_sharded_tensor_list,
-                F.pad(
-                    self.data.to(dtype or self.dtype),
-                    local_padding,
-                ),
+                local_flat_padded_tensor,
                 group=self.process_group,
             )
         else:
             # Gather padded sharded tensors to rank 0.
-            local_padded_shard = F.pad(self.data.to(dtype or self.dtype), local_padding)
-            dist.gather(local_padded_shard, gather_list=flat_sharded_tensor_list, group=self.process_group)
+            dist.gather(local_flat_padded_tensor, gather_list=flat_sharded_tensor_list, group=self.process_group)
 
         # Unpad, sort by starting offset, and concatenate.
         if flat_sharded_tensor_list is not None:
