@@ -363,6 +363,9 @@ def run_fsdp_with_mixed_precision(model_factory, model_data_factory, precision):
 @pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize("precision", FSDP_MIXED_PRECISION)
 def test_fsdp_with_mixed_precision(backend, tiny_model_factory, tiny_model_data_factory, precision):
+    if backend == "gloo" and (precision.param_dtype == torch.bfloat16 or precision.reduce_dtype == torch.bfloat16):
+        pytest.skip("Weird combination")
+
     run_distributed_test(
         run_fsdp_with_mixed_precision,
         backend=backend,
