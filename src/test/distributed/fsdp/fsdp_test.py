@@ -414,3 +414,63 @@ def test_auto_wrap(backend):
         run_auto_wrap,
         backend=backend,
     )
+
+
+def run_apply():
+    class ComplexNestedModule(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc1 = nn.Linear(8, 8)
+            self.ln1 = nn.LayerNorm(8)
+            self.fc2 = nn.ModuleDict(
+                {
+                    "fc1": nn.Linear(8, 8),
+                    "ln1": nn.LayerNorm(8),
+                    "fc2": nn.Linear(8, 8),
+                }
+            )
+
+    model = ComplexNestedModule()
+    fsdp = FSDP.auto_wrap(model, ["fc2", "fc2.fc1"])
+
+    assert isinstance(fsdp, FSDP)
+    assert fsdp.is_root
+    assert not isinstance(fsdp.module.fc1, FSDP)
+    assert not isinstance(fsdp.module.ln1, FSDP)
+    assert isinstance(fsdp.module.fc2, FSDP)
+    assert not fsdp.module.fc2.is_root
+    assert isinstance(fsdp.module.fc2.module.fc1, FSDP)
+    assert not fsdp.module.fc2.module.fc1.is_root
+    assert not isinstance(fsdp.module.fc2.module.ln1, FSDP)
+    assert not isinstance(fsdp.module.fc2.module.fc2, FSDP)
+
+    def initialize_and_check(m: nn.Module):
+        if isinstance(m, FSDP):
+            # All managed params should be unsharded.
+            for _, param in m._managed_named_parameters():
+                if isinstance(param, ShardedFlatParameter):
+                    assert not param.is_sharded
+
+            # But all params in child instances should still be sharded.
+            for child in m._fsdp_children(recurse=True):
+                for _, param in child._managed_named_parameters():
+                    if isinstance(param, ShardedFlatParameter):
+                        assert param.is_sharded
+
+        with torch.no_grad():
+            for param in m.parameters(recurse=False):
+                param.data.fill_(1.1)
+
+    fsdp.apply(initialize_and_check)
+
+    # Now validate that the param changes were written back.
+    for param in fsdp.parameters():
+        assert (param.data.detach() == 1.1).all()
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_apply(backend):
+    run_distributed_test(
+        run_apply,
+        backend=backend,
+    )

@@ -242,6 +242,21 @@ class FSDP(Generic[M], nn.Module):
             self._reshard(writeback=writeback, recurse=recurse)
             self.state.current_stream.wait_stream(self.state.unshard_stream)
 
+    def apply(self, fn):
+        """
+        Apply ``fn`` recursively to every submodule (as returned by ``.children()``) as well as self.
+
+        Typical use includes initializing the parameters of a model.
+
+        Compared to ``torch.nn.Module.apply``, this version additionally gathers the full parameters
+        for all sharded parameters that are *directly managed* but the given FSDP instance before applying ``fn``.
+        This should not be called from within another ``summon_full_params`` context.
+        """
+        with self.summon_full_params(recurse=False, writeback=True, rank0_only=False):
+            ret = super().apply(fn)
+
+        return ret
+
     def _lazy_init(self):
         """
         Complete initialization of streams and other stuff.
