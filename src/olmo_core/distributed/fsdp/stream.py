@@ -59,7 +59,7 @@ class CudaStream(Stream):
 
     def __enter__(self) -> Stream:
         self.stream_context = torch.cuda.stream(self.base_stream)
-        self.stream_context.__enter__()
+        self.stream_context.__enter__()  # type: ignore
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
