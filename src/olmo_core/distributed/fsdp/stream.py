@@ -55,13 +55,15 @@ class Stream(ABC):
 class CudaStream(Stream):
     def __init__(self, base_stream: torch.cuda.Stream):
         self.base_stream = base_stream
+        self.stream_context = None
 
     def __enter__(self) -> Stream:
-        torch.cuda.stream(self.base_stream).__enter__()
+        self.stream_context = torch.cuda.stream(self.base_stream).__enter__()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        torch.cuda.stream(self.base_stream).__exit__(exc_type, exc_val, exc_tb)
+        assert self.stream_context is not None
+        self.stream_context.__exit__(exc_type, exc_val, exc_tb)
 
     def wait_stream(self, other: Stream):
         if isinstance(other, CudaStream):
