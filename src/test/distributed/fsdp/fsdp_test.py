@@ -372,3 +372,45 @@ def test_fsdp_with_mixed_precision(backend, tiny_model_factory, tiny_model_data_
         func_args=(tiny_model_factory, tiny_model_data_factory, precision),
         start_method="spawn",
     )
+
+
+def run_auto_wrap():
+    class ComplexNestedModule(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc1 = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 8), nn.LayerNorm(8))
+            self.fc2 = nn.Linear(8, 8)
+            self.ln1 = nn.LayerNorm(8)
+            self.fc3 = nn.ModuleDict(
+                {
+                    "in_proj": nn.Linear(8, 8),
+                    "in_ln": nn.LayerNorm(8),
+                    "out_proj": nn.Linear(8, 8),
+                }
+            )
+
+    model = ComplexNestedModule()
+    fsdp = FSDP.auto_wrap(model, ["fc1.*", nn.LayerNorm, model.fc3.out_proj], max_prefetch_count=3)
+
+    assert isinstance(fsdp, FSDP)
+    assert fsdp.is_root
+    assert not isinstance(fsdp.module.fc1, FSDP)
+    assert isinstance(fsdp.module.fc1[0], FSDP)
+    assert not fsdp.module.fc1[0].is_root
+    assert isinstance(fsdp.module.fc1[1], FSDP)
+    assert isinstance(fsdp.module.fc1[2], FSDP)
+    assert not isinstance(fsdp.module.fc2, FSDP)
+    assert isinstance(fsdp.module.ln1, FSDP)
+    assert not isinstance(fsdp.module.fc3, FSDP)
+    assert not isinstance(fsdp.module.fc3.in_proj, FSDP)
+    assert isinstance(fsdp.module.fc3.in_ln, FSDP)
+    assert isinstance(fsdp.module.fc3.out_proj, FSDP)
+    assert fsdp.module.fc3.out_proj.max_prefetch_count == 3
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_auto_wrap(backend):
+    run_distributed_test(
+        run_auto_wrap,
+        backend=backend,
+    )

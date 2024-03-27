@@ -12,7 +12,9 @@ from typing import (
     Generator,
     Generic,
     Optional,
+    Sequence,
     Tuple,
+    Type,
     TypeVar,
     Union,
 )
@@ -56,6 +58,8 @@ class FSDPDebugConfig:
 
 M = TypeVar("M", bound=nn.Module)
 
+ModuleWrapSpec = Sequence[Union[str, nn.Module, Type[nn.Module]]]
+
 
 class FSDP(Generic[M], nn.Module):
     """
@@ -94,6 +98,45 @@ class FSDP(Generic[M], nn.Module):
         # Mark all children as not root.
         for fsdp_child in self._fsdp_children(recurse=True):
             fsdp_child.is_root = False
+
+    @classmethod
+    def auto_wrap(cls, module: M, children_to_wrap: ModuleWrapSpec, **fsdp_kwargs) -> FSDP[M]:
+        """
+        Wrap a module and specific children of the module specific by ``children_to_wrap``.
+
+        :param children_to_wrap: Specify which children modules to wrap. This can be a list of children
+            FQNs (wildcards allowed), a list of module instances, or a list of module types.
+        :param fsdp_kwargs: Keyword args to the FSDP constructor.
+        """
+        from fnmatch import fnmatch
+
+        def named_modules_with_parent(
+            parent: nn.Module, parent_fqn: str
+        ) -> Generator[Tuple[nn.Module, nn.Module, str, str], None, None]:
+            for child_name, child_module in parent.named_children():
+                child_fqn = f"{parent_fqn}.{child_name}" if parent_fqn else child_name
+                yield parent, child_module, child_fqn, child_name
+                yield from named_modules_with_parent(child_module, child_fqn)
+
+        for parent, child, child_fqn, child_name in named_modules_with_parent(module, ""):
+            should_wrap = False
+            for wrap_spec in children_to_wrap:
+                if isinstance(wrap_spec, str):
+                    should_wrap = child_fqn == wrap_spec or fnmatch(child_fqn, wrap_spec)
+                elif isinstance(wrap_spec, nn.Module):
+                    should_wrap = child is wrap_spec
+                elif issubclass(wrap_spec, nn.Module):
+                    should_wrap = isinstance(child, wrap_spec)
+                else:
+                    raise TypeError(f"unexpected type in 'children_to_wrap' ({type(wrap_spec)})")
+
+                if should_wrap:
+                    break
+
+            if should_wrap:
+                setattr(parent, child_name, cls(child, **fsdp_kwargs))
+
+        return cls(module, **fsdp_kwargs)
 
     @property
     def module(self) -> M:
