@@ -21,7 +21,7 @@ def run_fsdp_against_non_distributed_model(model_factory, model_data_factory):
     """
     model_data = model_data_factory().to(get_default_device())
 
-    model = model_factory()
+    model = model_factory().to(get_default_device())
     fsdp1 = FSDP(model_factory(), _debug_config=FSDPDebugConfig(no_reduce_grads=True))
     fsdp2 = FSDP(model_factory())
 
