@@ -1,5 +1,6 @@
 import pytest
 import torch
+import torch.distributed as dist
 from cached_path import cached_path
 
 from olmo_core.distributed.checkpoint import (
@@ -103,8 +104,10 @@ def save_and_load_checkpoint_from_regular_to_sharded_tensor(dir):
     checkpointer.save(dir, state_dict_to_save)  # type: ignore
     checkpointer.load(dir, state_dict_to_load)  # type: ignore
 
-    torch.testing.assert_close(state_dict_to_save["x"], state_dict_to_load["x"].gather())
-    torch.testing.assert_close(state_dict_to_save, checkpointer.unshard(dir, device=get_default_device()))
+    gathered = state_dict_to_load["x"].gather()
+    if dist.get_rank() == 0:
+        torch.testing.assert_close(state_dict_to_save["x"], gathered)
+    torch.testing.assert_close(gathered, checkpointer.unshard(dir, device=get_default_device())["x"])
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
