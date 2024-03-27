@@ -434,7 +434,7 @@ class Checkpointer:
             del flat_tensor
 
     @torch.no_grad()
-    def unshard(self, dir: PathOrStr) -> Dict[str, torch.Tensor]:
+    def unshard(self, dir: PathOrStr, device: Optional[torch.device] = None) -> Dict[str, torch.Tensor]:
         """
         Unshard a checkpoint, returning the full state dict.
         """
@@ -449,7 +449,7 @@ class Checkpointer:
         # Initialize state dict.
         state_dict = {}
         for key, tensor_metadata in metadata.tensors.items():
-            tensor = torch.empty(tensor_metadata.shape, dtype=tensor_metadata.torch_dtype)
+            tensor = torch.empty(tensor_metadata.shape, dtype=tensor_metadata.torch_dtype, device=device)
             state_dict[key] = tensor
 
         # Load the state dict in place.
