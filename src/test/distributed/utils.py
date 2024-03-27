@@ -91,7 +91,7 @@ def init_process(
         setattr(record, "local_rank", dist.get_rank())
         return record
 
-    handler = logging.StreamHandler(sys.stdout)
+    handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(
         logging.Formatter("[rank %(local_rank)s] %(asctime)s:%(name)s:%(lineno)s:%(levelname)s: %(message)s")
     )
@@ -100,6 +100,8 @@ def init_process(
     if log_from_all_ranks or process_rank == 0:
         logging.basicConfig(level=logging.DEBUG, handlers=[handler])
 
+    log = logging.getLogger()
+
     dist.init_process_group(
         backend=backend,
         init_method=f"tcp://{primary_addr}:{primary_port}",
@@ -107,6 +109,8 @@ def init_process(
         rank=process_rank,
         timeout=datetime.timedelta(seconds=120),
     )
+
+    log.info("Starting test...")
 
     if torch.cuda.is_available():
         torch.cuda.set_device(int(process_rank))

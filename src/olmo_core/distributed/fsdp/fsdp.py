@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -52,6 +53,9 @@ class FSDPPrecision:
 @dataclass
 class FSDPState:
     device: torch.device = field(default_factory=get_default_device)
+    """
+    The device the FSDP node is running on.
+    """
 
     pre_backward_hook_handles: List[RemovableHandle] = field(default_factory=list)
     """
@@ -62,6 +66,54 @@ class FSDPState:
     """
     Post-backward hooks registered to the next autograd function in the graph for each parameter.
     The keys are parameter FQNs.
+    """
+
+    sharded_grad_cache: Dict[str, torch.Tensor] = field(default_factory=dict)
+    """
+    For caching sharded gradients during gradient accumulation.
+    Maps param FQNs to the corresponding local sharded gradient.
+    """
+
+    lazy_init_complete: bool = False
+    """
+    Marked true when final initialization runs lazily during the first forward pass.
+    """
+
+    params_prefetched: bool = False
+    """
+    Indicates that the unsharded params have already been prefetched.
+    """
+
+    forward_execution_order: List[FSDP] = field(default_factory=list)
+    """
+    The forward-pass execution order of all FSDP instances as determined by the first forward pass.
+    This is used on subsequent steps to determine the prefetch order.
+    """
+
+    forward_execution_order_finalized: bool = False
+    """
+    Marked true when the forward pass execution order has been finalized after the first forward pass.
+    """
+
+    forward_prefetch_queue: deque[FSDP] = field(default_factory=lambda: deque([]))
+    """
+    Queue of FSDP modules to prefetch for unsharding during forward pass.
+    """
+
+    backward_execution_order: List[FSDP] = field(default_factory=list)
+    """
+    The backward-pass execution order of all FSDP instances as determined by the first backward pass.
+    This is used on subsequent steps to determine the prefetch order.
+    """
+
+    backward_execution_order_finalized: bool = False
+    """
+    Marked true when the backward pass execution order has been finalized after the first backward pass.
+    """
+
+    backward_prefetch_queue: deque[FSDP] = field(default_factory=lambda: deque([]))
+    """
+    Queue of FSDP modules to prefetch for unsharding during backward pass.
     """
 
     compute_stream: Stream = field(default_factory=Stream.default)
@@ -79,14 +131,6 @@ class FSDPState:
     Stream for reducing gradients after the backward pass.
     """
 
-    def wait_for_compute_stream(self):
-        """
-        Has unshard stream wait for computation stream.
-        For example, this should be called in the root FSDP instance pre-forward to respect
-        optimizer step computation.
-        """
-        self.unshard_stream.wait_stream(self.compute_stream)
-
     @property
     def current_stream(self) -> Stream:
         return Stream.current(self.device)
@@ -101,6 +145,16 @@ M = TypeVar("M", bound=nn.Module)
 
 
 class FSDP(Generic[M], nn.Module):
+    """
+    This is a complete rewrite of PyTorch's ``FullyShardedDataParallel``, a ZeRO-3 model wrapper.
+
+    :param module: The module to wrap.
+    :param process_group: The distributed process group.
+    :param precision: Mixed precision settings.
+    :param max_prefetch_count: The number of nested FSDP modules that can be prefetched during the forward
+        and backward passes. This is like PyTorch's ``limit_all_gathers`` except it allows more control.
+    """
+
     WRAPPED_MODULE_PREFIX = "_fsdp_wrapped_module"
 
     def __init__(
@@ -108,20 +162,18 @@ class FSDP(Generic[M], nn.Module):
         module: M,
         process_group: Optional[dist.ProcessGroup] = None,
         precision: Optional[FSDPPrecision] = None,
+        max_prefetch_count: int = 1,
         _debug_config: Optional[FSDPDebugConfig] = None,
     ):
         super().__init__()
         setattr(self, FSDP.WRAPPED_MODULE_PREFIX, module)
         self.process_group = process_group
         self.precision = precision or FSDPPrecision()
+        self.max_prefetch_count = max_prefetch_count
         self.debug_config = _debug_config or FSDPDebugConfig()
         self.device = get_default_device()
         self.state = FSDPState(device=self.device)
         self.is_root = True
-        # For caching sharded gradients during gradient accumulation.
-        # Maps param FQN to local sharded gradient.
-        self._sharded_grad_cache: Dict[str, torch.Tensor] = {}
-        self._lazy_init_complete = False
 
         # Shard the module in place.
         self._shard()
@@ -140,14 +192,19 @@ class FSDP(Generic[M], nn.Module):
     def forward(self, *args, **kwargs):
         self._lazy_init()
 
-        if self.is_root:
-            self.state.wait_for_compute_stream()
-
         log.debug("Running forward pass for %s...", self.module.__class__.__name__)
 
+        if self.is_root and self.state.forward_execution_order_finalized:
+            # Fill forward-pass prefetch queue for unsharding.
+            for module in self.state.forward_execution_order:
+                self.state.forward_prefetch_queue.append(module)
+
         # Unshard parameters in-place.
-        # TODO: figure out how to prefetch
-        self._unshard()
+        self._unshard(
+            prefetch_from=self.state.forward_prefetch_queue
+            if self.state.forward_execution_order_finalized
+            else None
+        )
 
         try:
             # Run forward pass on the original model.
@@ -157,7 +214,18 @@ class FSDP(Generic[M], nn.Module):
             # Reshard parameters in-place.
             self._reshard()
 
+        if self.is_root:
+            # At the end of the first forward pass, execution order is now finalized, meaning
+            # we can use 'self.state.forward_execution_order' to start prefetching unshards.
+            self.state.forward_execution_order_finalized = True
+            assert not self.state.forward_prefetch_queue
+
         if torch.is_grad_enabled():
+            if self.is_root and self.state.backward_execution_order_finalized:
+                # Fill backward-pass prefetch queue for unsharding.
+                for module in self.state.backward_execution_order:
+                    self.state.backward_prefetch_queue.append(module)
+
             # If gradients are required, register a backward hook on the outputs to unshard
             # parameters in place again when needed.
             self._register_pre_backward_hooks(output)
@@ -211,21 +279,27 @@ class FSDP(Generic[M], nn.Module):
         :param rank0_only: Only summon full params on rank 0.
         """
         self._unshard(cast=False, recurse=recurse, rank0_only=rank0_only)
+        self.state.current_stream.wait_stream(self.state.unshard_stream)
         try:
             yield self
         finally:
             self._reshard(writeback=writeback, recurse=recurse)
+            self.state.current_stream.wait_stream(self.state.unshard_stream)
 
     def _lazy_init(self):
         """
         Complete initialization of streams and other stuff.
+        Should be called automatically during first forward pass.
         """
-        if self._lazy_init_complete:
+        if self.state.lazy_init_complete:
             return
 
-        self._lazy_init_complete = True
+        self.state.lazy_init_complete = True
         if not self.is_root:
-            return False
+            # Mark 'self' next in the execution order.
+            assert self.state.forward_execution_order
+            self.state.forward_execution_order.append(self)
+            return
 
         log.debug("Completing lazy initialization from root FSDP for %s...", self.module.__class__.__name__)
 
@@ -234,15 +308,22 @@ class FSDP(Generic[M], nn.Module):
         self.state.unshard_stream = Stream.new(self.device)
         self.state.reduce_stream = Stream.new(self.device)
 
-        for fsdp_child in self._fsdp_children(recurse=True):
-            fsdp_child._lazy_init_complete = True  # not really necessary
+        # Initialize execution order.
+        self.state.forward_execution_order.clear()
+        self.state.forward_execution_order.append(self)
+        self.state.backward_execution_order.clear()
 
+        for fsdp_child in self._fsdp_children(recurse=True):
             # Set child to use same streams.
             fsdp_child.state = replace(
                 fsdp_child.state,
                 compute_stream=self.state.compute_stream,
                 unshard_stream=self.state.unshard_stream,
                 reduce_stream=self.state.reduce_stream,
+                forward_execution_order=self.state.forward_execution_order,
+                forward_prefetch_queue=self.state.forward_prefetch_queue,
+                backward_execution_order=self.state.backward_execution_order,
+                backward_prefetch_queue=self.state.backward_prefetch_queue,
             )
 
     def _named_children(
@@ -287,7 +368,9 @@ class FSDP(Generic[M], nn.Module):
         This should only be called once at initialization.
         """
         log.debug("Sharding %s...", self.module.__class__.__name__)
-        for m in self.module.modules():
+        for _, m in self._named_children(
+            recurse=lambda m: not isinstance(m, FSDP)
+        ):  # NOTE: this generator will include `self.module` itself
             if isinstance(m, FSDP):
                 continue
             for param_name, param in m.named_parameters(recurse=False):
@@ -300,16 +383,28 @@ class FSDP(Generic[M], nn.Module):
 
     @torch.no_grad()
     def _unshard(
-        self, cast: bool = True, cache_grads: bool = False, recurse: bool = False, rank0_only: bool = False
+        self,
+        cast: bool = True,
+        cache_grads: bool = False,
+        recurse: bool = False,
+        rank0_only: bool = False,
+        prefetch_from: Optional[deque[FSDP]] = None,
     ):
         """
         Unshard the wrapped module in place.
         """
-        log.debug("Unsharding %s...", self.module.__class__.__name__)
+        if self.state.params_prefetched:
+            return
 
-        # TODO: figure out how to limit the number of all gathers here like PyTorch FSDP does
-        # when you set 'limit_all_gathers=True'.
-        with self.state.unshard_stream:
+        kwargs = dict(cast=cast, cache_grads=cache_grads, recurse=recurse, rank0_only=rank0_only)
+
+        log.debug("Unsharding %s...", self.module.__class__.__name__)
+        self.state.params_prefetched = True
+
+        # NOTE: `unshard_stream` should wait on current stream (usually `compute_stream` / `default_stream`)
+        # if root to respect the optimizer step and any other computations on the params outside of this
+        # module's forward/backward pass.
+        with self.state.unshard_stream(wait_stream=self.state.current_stream if self.is_root else None):
             # TODO: batch the unshards for all params together?
             for param_name, param in self._managed_named_parameters():
                 if not isinstance(param, ShardedFlatParameter):
@@ -320,22 +415,32 @@ class FSDP(Generic[M], nn.Module):
                     # We should only be caching these between the pre-backward and post-backward
                     # hooks. The post-backward hook will remove the cached grad as it accumulates
                     # it into persistent sharded grad.
-                    assert param_name not in self._sharded_grad_cache
-                    self._sharded_grad_cache[param_name] = param.grad.detach()
+                    assert param_name not in self.state.sharded_grad_cache
+                    self.state.sharded_grad_cache[param_name] = param.grad.detach()
                     param.grad = None
+
+        if prefetch_from is not None:
+            for module in self._deque_from(prefetch_from):
+                log.debug(
+                    "Prefetching %s from %s...", module.module.__class__.__name__, self.module.__class__.__name__
+                )
+                module._unshard(**kwargs)
 
         if recurse:
             for module in self._fsdp_children():
-                module._unshard(cast=cast, cache_grads=cache_grads, recurse=recurse, rank0_only=rank0_only)
+                module._unshard(**kwargs)
 
     @torch.no_grad()
     def _reshard(self, writeback: bool = False, recurse: bool = False):
         """
         Re-shard the wrapped module in place. Should be called after :meth:`unshard()`.
         """
-        log.debug("Resharding %s...", self.module.__class__.__name__)
+        kwargs = dict(writeback=writeback, recurse=recurse)
 
-        with self.state.unshard_stream:
+        log.debug("Resharding %s...", self.module.__class__.__name__)
+        self.state.params_prefetched = False
+
+        with self.state.unshard_stream(wait_stream=self.state.compute_stream):
             # TODO: batch the unshards for all params together?
             for _, param in self._managed_named_parameters():
                 if not isinstance(param, ShardedFlatParameter):
@@ -345,7 +450,7 @@ class FSDP(Generic[M], nn.Module):
 
         if recurse:
             for module in self._fsdp_children():
-                module._reshard(writeback=writeback, recurse=recurse)
+                module._reshard(**kwargs)
 
     @torch.no_grad()
     def _reduce_scatter_grads(self):
@@ -400,9 +505,17 @@ class FSDP(Generic[M], nn.Module):
 
                 del unsharded_grad
 
-                if (cached_grad := self._sharded_grad_cache.pop(param_name, None)) is not None:
+                if (cached_grad := self.state.sharded_grad_cache.pop(param_name, None)) is not None:
                     param.grad.add_(cached_grad)
                     del cached_grad
+
+    def _deque_from(self, prefetch_queue: deque[FSDP]) -> Generator[FSDP, None, None]:
+        count = 0
+        while prefetch_queue and count <= self.max_prefetch_count:
+            module = prefetch_queue.popleft()
+            if module is not self:
+                count += 1
+                yield module
 
     ###########
     ## Hooks ##
@@ -416,11 +529,19 @@ class FSDP(Generic[M], nn.Module):
         del unused
         log.debug("Running pre-backward hook for %s...", self.module.__class__.__name__)
 
-        # Unshard parameters in place.
-        # TODO: figure out how to prefetch
-        self._unshard(cast=True, cache_grads=True)
+        if not self.state.backward_execution_order_finalized:
+            # Add self to backward execution order.
+            self.state.backward_execution_order.append(self)
 
-        # Remove all pre backward hooks since they all do the same thing.
+        # Unshard parameters in place.
+        self._unshard(
+            cache_grads=True,
+            prefetch_from=self.state.backward_prefetch_queue
+            if self.state.backward_execution_order_finalized
+            else None,
+        )
+
+        # Remove all pre backward hooks for this FSDP instance since they all do the same thing.
         for handle in self.state.pre_backward_hook_handles:
             handle.remove()
         self.state.pre_backward_hook_handles.clear()
@@ -450,12 +571,29 @@ class FSDP(Generic[M], nn.Module):
         del unused
         log.debug("Running post-backward hook for %s.%s...", self.module.__class__.__name__, param_name)
         self.state.post_backward_hook_handles.pop(param_name).remove()
-        if not self.state.post_backward_hook_handles:
-            # NOTE: reshard *before* reducing grads to correctly handle precision settings.
-            # '_reduce_scatter_grads' checks 'param.dtype' to determine dtype for grads, which
-            # at that point should be the original dtype.
-            self._reshard()
-            self._reduce_scatter_grads()
+
+        # If there are still more handles then there are still more post-backward hooks to be ran
+        # in the current FSDP node. Only the last handle should do the work.
+        if self.state.post_backward_hook_handles:
+            return
+
+        # NOTE: reshard *before* reducing grads to correctly handle precision settings.
+        # '_reduce_scatter_grads' checks 'param.dtype' to determine dtype for grads, which
+        # at that point should be the original dtype.
+        self._reshard()
+        self._reduce_scatter_grads()
+
+        # The root FSDP instance needs to do some final cleanup.
+        if not self.is_root:
+            return
+
+        # Mark backward execution order as finalized.
+        self.state.backward_execution_order_finalized = True
+
+        # Wait for unsharding and reducing streams to complete so the model is not left in a bad
+        # state before grad clipping, optimizer step, or whatever else.
+        self.state.current_stream.wait_stream(self.state.unshard_stream)
+        self.state.current_stream.wait_stream(self.state.reduce_stream)
 
     def _register_post_backward_hook(self, param_name: str, param: nn.Parameter):
         if isinstance(param, ShardedFlatParameter) and param.requires_grad:

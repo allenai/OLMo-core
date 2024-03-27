@@ -152,7 +152,7 @@ def run_fsdp_against_ddp(model_factory, model_data_factory):
 
     # Since we've only done a single backwards pass (no grad accumulation), there shouldn't
     # be any cached gradients.
-    assert not fsdp_model._sharded_grad_cache
+    assert not fsdp_model.state.sharded_grad_cache
 
     # Run optimizer step.
     optim.step()
@@ -225,12 +225,16 @@ def test_fsdp_with_gradient_accumulation(backend, tiny_model_factory, tiny_model
     )
 
 
-def run_nested_fsdp_api(model_factory):
+def run_nested_fsdp_api(model_factory, model_data_factory):
     class NestedModel(nn.Module):
         def __init__(self):
             super().__init__()
             self.inner = FSDP(model_factory())
             self.out = nn.Linear(8, 8)
+
+        def forward(self, x):
+            x = self.inner(x)
+            return self.out(x)
 
     fsdp = FSDP(NestedModel())
     assert list(fsdp._fsdp_children()) == [fsdp.module.inner]
@@ -238,16 +242,24 @@ def run_nested_fsdp_api(model_factory):
         ("out.weight", fsdp.module.out.weight),
         ("out.bias", fsdp.module.out.bias),
     ]
-    assert fsdp.root
-    assert not fsdp.module.inner.root
+    assert fsdp.is_root
+    assert not fsdp.module.inner.is_root
+
+    inner_weight = fsdp.module.inner.module.fc[0].weight
+    assert isinstance(inner_weight, ShardedFlatParameter)
+    outer_weight = fsdp.module.out.weight
+    assert isinstance(outer_weight, ShardedFlatParameter)
+
+    assert inner_weight.unsharded_shape == (16, 8)
 
     with fsdp.summon_full_params(recurse=False, writeback=False):
         # Only directly managed params should be sharded.
-        assert not fsdp.module.out.weight.is_sharded  # type: ignore
-        # Params in child FSDP instances should not be sharded.
-        assert fsdp.module.inner.module.fc[0].weight.is_sharded  # type: ignore
-        state_dict = fsdp.state_dict()
+        assert inner_weight.is_sharded
+        assert not outer_weight.is_sharded
+        assert outer_weight.shape == outer_weight.unsharded_shape == (8, 8)
+
         # State dict should never contain "_fsdp_wrapped_module" prefix.
+        state_dict = fsdp.state_dict()
         assert set(state_dict.keys()) == {
             "out.weight",
             "out.bias",
@@ -262,8 +274,11 @@ def run_nested_fsdp_api(model_factory):
 
     with fsdp.summon_full_params(recurse=True, writeback=False):
         # All FSDP-managed params should be sharded, including those owned by child FSDP instances.
-        assert not fsdp.module.out.weight.is_sharded  # type: ignore
-        assert not fsdp.module.inner.module.fc[0].weight.is_sharded  # type: ignore
+        assert not inner_weight.is_sharded
+        assert inner_weight.shape == inner_weight.unsharded_shape == (16, 8)
+        assert not outer_weight.is_sharded
+        assert outer_weight.shape == outer_weight.unsharded_shape == (8, 8)
+
         # State dict should never contain "_fsdp_wrapped_module" prefix.
         state_dict = fsdp.state_dict()
         assert set(state_dict.keys()) == {
@@ -281,19 +296,41 @@ def run_nested_fsdp_api(model_factory):
     with fsdp.summon_full_params(recurse=True, writeback=True, rank0_only=True):
         if dist.get_rank() == 0:
             with torch.no_grad():
-                fsdp.module.out.weight.fill_(torch.tensor(0.0, device=fsdp.device))
-                fsdp.module.inner.module.fc[0].weight.fill_(torch.tensor(0.0, device=fsdp.device))
+                outer_weight.fill_(torch.tensor(1.0, device=fsdp.device))
+                inner_weight.fill_(torch.tensor(1.0, device=fsdp.device))
 
-    assert (fsdp.module.out.weight == 0).all()
-    assert (fsdp.module.inner.module.fc[0].weight == 0).all()
+    assert (outer_weight == 1.0).all()
+    assert (inner_weight == 1.0).all()
+
+    # Now complete a forward pass and make sure lazy initialization did its job.
+    loss = fsdp(model_data_factory().to(fsdp.device)).sum()
+    assert fsdp.state.forward_execution_order_finalized
+    assert fsdp.state.forward_execution_order == [fsdp, fsdp.module.inner]
+    assert fsdp.state.forward_execution_order is fsdp.module.inner.state.forward_execution_order
+    assert fsdp.state.forward_prefetch_queue is fsdp.module.inner.state.forward_prefetch_queue
+
+    assert not fsdp.state.backward_execution_order_finalized
+    assert fsdp.state.backward_execution_order is fsdp.module.inner.state.backward_execution_order
+    assert fsdp.state.backward_prefetch_queue is fsdp.module.inner.state.backward_prefetch_queue
+
+    # Trigger backward pass.
+    loss.backward()
+
+    assert fsdp.state.backward_execution_order_finalized
+    assert fsdp.state.backward_execution_order == [fsdp, fsdp.module.inner]
+
+    # Let's do a 2nd forward pass now that the execution order is finalized.
+    loss = fsdp(model_data_factory().to(fsdp.device)).sum()
+    loss.backward()
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_nested_fsdp_api(backend, tiny_model_factory):
+def test_nested_fsdp_api(backend, tiny_model_factory, tiny_model_data_factory):
     run_distributed_test(
         run_nested_fsdp_api,
         backend=backend,
-        func_args=(tiny_model_factory,),
+        func_args=(tiny_model_factory, tiny_model_data_factory),
+        start_method="spawn",
     )
 
 
