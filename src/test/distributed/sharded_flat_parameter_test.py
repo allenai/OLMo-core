@@ -67,7 +67,7 @@ def shard_and_gather(init_device: Optional[str] = None):
 
         # Check that unsharded parameter matches original data.
         if tensor.device != torch.device("meta"):
-            torch.testing.assert_close(tensor, param)
+            torch.testing.assert_close(tensor.to(param.device), param)
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
