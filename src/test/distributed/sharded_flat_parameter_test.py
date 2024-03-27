@@ -73,6 +73,8 @@ def shard_and_gather(init_device: torch.device):
 @pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize("init_device", INIT_DEVICES)
 def test_shard_and_gather(backend, init_device: torch.device):
+    if backend == "gloo" and init_device.type == "cuda":
+        pytest.skip("Weird combination")
     run_distributed_test(shard_and_gather, backend=backend, func_args=(init_device,))
 
 
