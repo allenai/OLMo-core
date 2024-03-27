@@ -145,6 +145,8 @@ class ShardedFlatParameter(nn.Parameter):
         tensor_is_initialized = tensor.device != torch.device("meta")
 
         if synchronize and tensor_is_initialized:
+            if device is not None:
+                tensor = tensor.to(device)
             dist.broadcast(tensor, 0, group=process_group)
 
         if sharding_spec is None:
