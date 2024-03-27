@@ -9,7 +9,7 @@ from olmo_core.distributed.sharded_flat_parameter import (
     ShardingSpec,
 )
 
-from .utils import BACKENDS, get_default_device, run_distributed_test
+from .utils import BACKENDS, INIT_DEVICES, get_default_device, run_distributed_test
 
 
 def test_init_empty_sharded_parameter():
@@ -38,7 +38,7 @@ def test_init_sharded_parameter_from_sharded_param():
     assert sp.shape == (6,)
 
 
-def shard_and_gather(init_device: Optional[str] = None):
+def shard_and_gather(init_device: torch.device):
     assert dist.get_world_size() == 2
 
     unsharded_shape = (2, 3)
@@ -66,14 +66,14 @@ def shard_and_gather(init_device: Optional[str] = None):
         assert param.shape == tensor.shape
 
         # Check that unsharded parameter matches original data.
-        if tensor.device != torch.device("meta"):
-            torch.testing.assert_close(tensor.to(param.device), param)
+        if init_device == param.device:
+            torch.testing.assert_close(tensor, param)
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-@pytest.mark.parametrize("init_device", ("meta", None))
-def test_shard_and_gather(backend, init_device: Optional[str]):
-    run_distributed_test(shard_and_gather, backend=backend, func_kwargs=dict(init_device=init_device))
+@pytest.mark.parametrize("init_device", INIT_DEVICES)
+def test_shard_and_gather(backend, init_device: torch.device):
+    run_distributed_test(shard_and_gather, backend=backend, func_args=(init_device,))
 
 
 def unshard_reshard_in_place_rank0_only():

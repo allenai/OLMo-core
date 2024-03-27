@@ -32,6 +32,16 @@ DEVICES = [
     ),
 ]
 
+INIT_DEVICES = [
+    pytest.param(torch.device("meta"), id="device=meta"),
+    pytest.param(torch.device("cpu"), id="device=CPU"),
+    pytest.param(
+        torch.device("cuda"),
+        id="device=CUDA",
+        marks=(pytest.mark.gpu, pytest.mark.skipif(not has_cuda, reason="Requires a GPU")),
+    ),
+]
+
 LOW_PRECISION_DTYPES = [
     pytest.param(torch.float16, id="dtype=float16"),
     pytest.param(
