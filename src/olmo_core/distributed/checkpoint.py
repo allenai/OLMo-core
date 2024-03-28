@@ -652,8 +652,7 @@ def unflatten_optimizer_state(flat_optim_state: Dict[str, torch.Tensor]) -> Opti
         for key in state_keys:
             state_tensor = flat_optim_state.get(f"state.{key}.{param_name}")
             if state_tensor is not None:
-                # calling `.data` here ensures we get a regular tensor, not a `ShardedFlatParameter`.
-                param_state[key] = state_tensor.data
+                param_state[key] = state_tensor
 
         optim_state["state"][param_id] = param_state
 
