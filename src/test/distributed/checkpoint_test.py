@@ -340,7 +340,7 @@ def run_save_and_load_with_pytorch_fsdp(model_factory, data_factory, dir):
 @requires_multi_gpu
 def test_save_and_load_with_pytorch_fsdp(tiny_model_factory, tiny_model_data_factory, tmp_path):
     run_distributed_test(
-        flatten_optimizer_state_with_sharded_flat_params,
+        run_save_and_load_with_pytorch_fsdp,
         backend="nccl",
         start_method="spawn",
         func_args=(tiny_model_factory, tiny_model_data_factory, tmp_path),
