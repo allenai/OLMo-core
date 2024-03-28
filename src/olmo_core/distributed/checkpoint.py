@@ -595,7 +595,8 @@ def flatten_optimizer_state(
     for i, param_group in enumerate(optim_state["param_groups"]):
         # make copy.
         param_group = {k: v for k, v in param_group.items()}
-        param_group["param_names"] = [param_id_to_name[param_id] for param_id in param_group["params"]]
+        if "param_names" not in param_group:
+            param_group["param_names"] = [param_id_to_name[param_id] for param_id in param_group["params"]]
         flat_optim_state[f"param_group{i}"] = serialize_to_tensor(param_group)
 
     # Flatten state tensors and wrap any tensor with the right sharded class if the corresponding
