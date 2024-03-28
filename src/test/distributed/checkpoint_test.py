@@ -330,8 +330,13 @@ def test_flatten_optimizer_state_with_sharded_flat_params(backend, tiny_model_fa
 
 
 def run_save_and_load_with_pytorch_fsdp(dir):
+    from torch.distributed.fsdp import FullOptimStateDictConfig, FullStateDictConfig
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-    from torch.distributed.fsdp import ShardedStateDictConfig, StateDictType
+    from torch.distributed.fsdp import (
+        ShardedOptimStateDictConfig,
+        ShardedStateDictConfig,
+        StateDictType,
+    )
 
     class TinyModel(nn.Module):
         def __init__(self, dim: int = 8):
@@ -354,34 +359,49 @@ def run_save_and_load_with_pytorch_fsdp(dir):
             x = self.inner(x)
             return self.out(x)
 
-    fsdp = FSDP(NestedModel().cuda())
-    optim = torch.optim.AdamW(fsdp.parameters())
+    fsdp1 = FSDP(NestedModel().cuda())
+    optim1 = torch.optim.AdamW(fsdp1.parameters())
 
     # Take one forward/backward and optim step to initialize the optimizer.
-    fsdp(torch.rand(2, 8).cuda()).sum().backward()
-    optim.step()
+    fsdp1(torch.rand(2, 8).cuda()).sum().backward()
+    optim1.step()
 
     # Now save a checkpoint.
-    with FSDP.state_dict_type(fsdp, StateDictType.SHARDED_STATE_DICT, ShardedStateDictConfig(offload_to_cpu=True)):
-        with torch.no_grad():
-            torch.save(
-                {
-                    "model": fsdp.state_dict(),
-                    "optim": FSDP.optim_state_dict(fsdp, optim),
-                },
-                dir / "torch_checkpoint.pt",
-            )
+    with FSDP.state_dict_type(
+        fsdp1,
+        StateDictType.SHARDED_STATE_DICT,
+        ShardedStateDictConfig(offload_to_cpu=True),
+        ShardedOptimStateDictConfig(offload_to_cpu=True),
+    ):
+        save_model_and_optim_state(dir, fsdp1, optim1)
 
-            save_model_and_optim_state(dir / "olmo_core_checkpoint", fsdp, optim)
+    # Create a new FSDP model and optimizer and load the checkpoint.
+    fsdp2 = FSDP(NestedModel().cuda())
+    optim2 = torch.optim.AdamW(fsdp2.parameters())
+    with FSDP.state_dict_type(
+        fsdp2,
+        StateDictType.SHARDED_STATE_DICT,
+        ShardedStateDictConfig(offload_to_cpu=True),
+        ShardedOptimStateDictConfig(offload_to_cpu=True),
+    ):
+        load_model_and_optim_state(dir, fsdp2, optim2)
 
-    # Take another step to change the parameters.
-    optim.zero_grad()
-    fsdp(torch.rand(2, 8).cuda()).sum().backward()
-    optim.step()
-
-    # Create a new fsdp model and load the original checkpoint.
-    with FSDP.state_dict_type(fsdp, StateDictType.SHARDED_STATE_DICT, ShardedStateDictConfig(offload_to_cpu=True)):
-        load_model_and_optim_state(dir / "olmo_core_checkpoint", fsdp, optim)
+    # Now compare full state dicts.
+    with FSDP.state_dict_type(
+        fsdp2,
+        StateDictType.FULL_STATE_DICT,
+        FullStateDictConfig(offload_to_cpu=True),
+        FullOptimStateDictConfig(offload_to_cpu=True),
+    ):
+        state_dict1 = {
+            "model": fsdp1.state_dict(),
+            "optim": FSDP.optim_state_dict(fsdp1, optim1),
+        }
+        state_dict2 = {
+            "model": fsdp2.state_dict(),
+            "optim": FSDP.optim_state_dict(fsdp2, optim2),
+        }
+        torch.testing.assert_close(state_dict1, state_dict2)
 
 
 @requires_multi_gpu
