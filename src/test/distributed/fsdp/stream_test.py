@@ -27,4 +27,4 @@ def test_cuda_stream():
         y = torch.sum(x)
 
     default_stream.wait_stream(other_stream)
-    del x
+    del x, y

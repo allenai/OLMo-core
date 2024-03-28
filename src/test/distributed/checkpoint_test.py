@@ -1,7 +1,6 @@
 import pytest
 import torch
 import torch.distributed as dist
-import torch.nn as nn
 from cached_path import cached_path
 
 from olmo_core.distributed.checkpoint import (
@@ -9,9 +8,6 @@ from olmo_core.distributed.checkpoint import (
     OptimStateDict,
     SafeTensorsLoader,
     flatten_optimizer_state,
-    init_optimizer_state,
-    load_model_and_optim_state,
-    save_model_and_optim_state,
     unflatten_optimizer_state,
 )
 from olmo_core.distributed.sharded_flat_parameter import (
@@ -19,13 +15,7 @@ from olmo_core.distributed.sharded_flat_parameter import (
     ShardingSpec,
 )
 
-from .utils import (
-    BACKENDS,
-    DEVICES,
-    get_default_device,
-    requires_multi_gpu,
-    run_distributed_test,
-)
+from .utils import BACKENDS, DEVICES, get_default_device, run_distributed_test
 
 
 def save_and_load_checkpoint_with_regular_and_sharded_tensors(dir):
@@ -327,112 +317,4 @@ def test_flatten_optimizer_state_with_sharded_flat_params(backend, tiny_model_fa
         backend=backend,
         start_method="spawn",
         func_args=(tiny_model_factory, tiny_model_data_factory),
-    )
-
-
-def run_save_and_load_with_pytorch_fsdp(dir):
-    from torch.distributed.fsdp import FullOptimStateDictConfig, FullStateDictConfig
-    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-    from torch.distributed.fsdp import (
-        ShardedOptimStateDictConfig,
-        ShardedStateDictConfig,
-        StateDictType,
-    )
-
-    class TinyModel(nn.Module):
-        def __init__(self, dim: int = 8):
-            super().__init__()
-            self.fc = nn.Sequential(
-                nn.Linear(dim, dim * 2), nn.ReLU(), nn.Linear(dim * 2, dim), nn.ReLU(), nn.Linear(dim, dim)
-            )
-
-        def forward(self, x):
-            return self.fc(x)
-
-    class NestedModel(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.inner = FSDP(TinyModel().cuda())
-            self.out = nn.Linear(8, 8)
-            self.register_buffer("buf", torch.tensor([1.0, 2.0]), persistent=True)
-
-        def forward(self, x):
-            x = self.inner(x)
-            return self.out(x)
-
-    fsdp1 = FSDP(NestedModel().cuda())
-    optim1 = torch.optim.AdamW(fsdp1.parameters())
-
-    # Take one forward/backward and optim step to initialize the optimizer.
-    fsdp1(torch.rand(2, 8).cuda()).sum().backward()
-    optim1.step()
-
-    # Now save a checkpoint.
-    with FSDP.state_dict_type(
-        fsdp1,
-        StateDictType.SHARDED_STATE_DICT,
-        ShardedStateDictConfig(offload_to_cpu=True),
-        ShardedOptimStateDictConfig(offload_to_cpu=True),
-    ):
-        save_model_and_optim_state(
-            dir,
-            fsdp1,
-            optim1,
-            model_state=fsdp1.state_dict(),
-            optim_state=FSDP.optim_state_dict(fsdp1, optim1),  # type: ignore[arg-type]
-        )
-
-    # Create a new FSDP model and optimizer and load the checkpoint.
-    fsdp2 = FSDP(NestedModel().cuda())
-    optim2 = torch.optim.AdamW(fsdp2.parameters())
-    init_optimizer_state(optim2)
-
-    with FSDP.state_dict_type(
-        fsdp2,
-        StateDictType.SHARDED_STATE_DICT,
-        ShardedStateDictConfig(offload_to_cpu=True),
-        ShardedOptimStateDictConfig(offload_to_cpu=True),
-    ):
-        load_model_and_optim_state(
-            dir,
-            fsdp2,
-            optim2,
-            model_state=fsdp2.state_dict(),
-            optim_state=FSDP.optim_state_dict(fsdp2, optim2),  # type: ignore[arg-type]
-        )
-
-    # Now compare full state dicts.
-    with FSDP.state_dict_type(
-        fsdp1,
-        StateDictType.FULL_STATE_DICT,
-        FullStateDictConfig(offload_to_cpu=True),
-        FullOptimStateDictConfig(offload_to_cpu=True),
-    ):
-        state_dict1 = {
-            "model": fsdp1.state_dict(),
-            "optim": FSDP.optim_state_dict(fsdp1, optim1),
-        }
-
-    with FSDP.state_dict_type(
-        fsdp2,
-        StateDictType.FULL_STATE_DICT,
-        FullStateDictConfig(offload_to_cpu=True),
-        FullOptimStateDictConfig(offload_to_cpu=True),
-    ):
-        state_dict2 = {
-            "model": fsdp2.state_dict(),
-            "optim": FSDP.optim_state_dict(fsdp2, optim2),
-        }
-
-    torch.testing.assert_close(state_dict1["model"], state_dict2["model"])
-    torch.testing.assert_close(state_dict1["optim"]["state"], state_dict2["optim"]["state"])
-
-
-@requires_multi_gpu
-def test_save_and_load_with_pytorch_fsdp(tmp_path):
-    run_distributed_test(
-        run_save_and_load_with_pytorch_fsdp,
-        backend="nccl",
-        start_method="spawn",
-        func_args=(tmp_path,),
     )

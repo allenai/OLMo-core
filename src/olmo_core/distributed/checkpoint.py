@@ -3,7 +3,6 @@ import logging
 import struct
 import sys
 import tempfile
-from dataclasses import replace
 from functools import cached_property, reduce
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, TypedDict
@@ -169,7 +168,7 @@ class SafeTensorsMultiFileLoader:
 
 class Checkpointer:
     """
-    A checkpointer for saving and loading *non-nestaed* state dictionaries, i.e. where keys are strings and values
+    A checkpointer for saving and loading *non-nested* state dictionaries, i.e. where keys are strings and values
     are either regular :class:`torch.Tensor`s, :class:`torch.nn.Parameter`s, or :class:`ShardedFlatParameter`s.
 
     For saving and loading model and optimizer states together, use :func:`save_model_and_optim_state()`
@@ -431,57 +430,16 @@ class Checkpointer:
     def _get_flat_view_and_full_shape_and_flattened_offsets(
         self, tensor: torch.Tensor
     ) -> Tuple[torch.Tensor, Tuple[int, ...], Dict[int, Tuple[int, int]]]:
-        from torch.distributed._shard.sharded_tensor import (
-            ShardedTensor as TorchShardedTensor,
-        )
-
-        flat_view: torch.Tensor
         full_shape: Tuple[int, ...]
         flattened_offsets_per_rank: Dict[int, Tuple[int, int]] = {}
         if isinstance(tensor, ShardedFlatParameter):
-            flat_view = tensor.data
             full_shape = tensor.unsharded_shape
             for rank, offset in enumerate(tensor.sharding_spec.unsharded_flattened_offsets):
                 flattened_offsets_per_rank[rank] = offset
-        elif isinstance(tensor, TorchShardedTensor):
-            metadata = tensor.metadata()
-            # For example, the metadata for a (16, 8) tensor could look like this:
-            #  ShardedTensorMetadata(
-            #      shards_metadata=[
-            #          ShardMetadata(shard_offsets=[0, 0], shard_sizes=[8, 8], placement="rank:0/cpu"),
-            #          ShardMetadata(shard_offsets=[8, 0], shard_sizes=[8, 8], placement="rank:1/cpu"),
-            #      ],
-            #      size=torch.Size([16, 8]),
-            #      tensor_properties=TensorProperties(
-            #          dtype=torch.float32,
-            #          layout=torch.strided,
-            #          requires_grad=False,
-            #          memory_format=torch.contiguous_format,
-            #          pin_memory=False,
-            #      ),
-            #  )
-            flat_view = tensor.local_tensor().view(-1)
-            full_shape = tuple(metadata.size)
-            numel_per_flat_row = reduce(lambda a, b: a * b, full_shape[1:], 1)
-            for shard_metadata in metadata.shards_metadata:
-                assert shard_metadata.placement is not None
-                rank = shard_metadata.placement.rank()
-                assert rank is not None
-                # We make the simplifying assumption that the tensor is sharded in the 1st dimension only (dim=0).
-                for dim_start in shard_metadata.shard_offsets[1:]:
-                    if dim_start != 0:
-                        raise NotImplementedError(
-                            f"this is only implemented for tensors sharded in the 1st dimension"
-                        )
-                # This logic is only valid under the above assumption.
-                offset_start = shard_metadata.shard_offsets[0] * numel_per_flat_row
-                offset_end = offset_start + shard_metadata.shard_sizes[0] * numel_per_flat_row
-                flattened_offsets_per_rank[rank] = (offset_start, offset_end)
         else:
-            flat_view = tensor.view(-1)
             flattened_offsets_per_rank = {0: (0, tensor.numel())}
             full_shape = tuple(tensor.shape)
-        return flat_view, full_shape, flattened_offsets_per_rank
+        return get_local_tensor_data(tensor).view(-1), full_shape, flattened_offsets_per_rank
 
     def _get_global_save_plan_and_metadata(
         self, state_dict: Dict[str, torch.Tensor]
@@ -546,31 +504,12 @@ class OptimStateDict(TypedDict):
 
 
 def get_local_tensor_data(tensor: torch.Tensor) -> torch.Tensor:
-    from torch.distributed._shard.sharded_tensor import (
-        ShardedTensor as TorchShardedTensor,
-    )
-
-    if isinstance(tensor, TorchShardedTensor):
-        return tensor.local_tensor()
-    else:
-        return tensor.data
+    return tensor.data
 
 
 def wrap_tensor_for_sharded_parameter(tensor: torch.Tensor, param: Optional[torch.Tensor]) -> torch.Tensor:
-    from torch.distributed._shard.sharded_tensor import (
-        ShardedTensor as TorchShardedTensor,
-    )
-
     if isinstance(param, ShardedFlatParameter):
         return param.wrap(tensor, requires_grad=False)
-    elif isinstance(param, TorchShardedTensor):
-        shards = param.local_shards()
-        assert len(shards) == 1
-        new_shards = [replace(shards[0], tensor=tensor)]
-        return TorchShardedTensor._init_from_local_shards_and_global_metadata(
-            new_shards,
-            param.metadata(),
-        )
     else:
         return tensor
 
@@ -585,47 +524,30 @@ def flatten_optimizer_state(
     optim_state = optim_state or optim.state_dict()  # type: ignore
     assert optim_state
 
-    param_ids_are_names: bool = False  # PyTorch FSDP does this.
-
     # Collect mapping of parameter IDs from the optimizer to the FQN of the corresponding parameter.
     name_to_param: Dict[str, nn.Parameter] = {k: v for k, v in model.named_parameters()}
     param_to_name: Dict[nn.Parameter, str] = {v: k for k, v in model.named_parameters()}
     param_id_to_name: Dict[int, str] = {}
     for param_group, param_group_state in zip(optim.param_groups, optim_state["param_groups"]):
         for param, param_id in zip(param_group["params"], param_group_state["params"]):
-            if isinstance(param_id, str):
-                param_id = len(param_id_to_name)
-                param_ids_are_names = True
             param_id_to_name[param_id] = param_to_name[param]
     del param_to_name
 
     flat_optim_state: Dict[str, torch.Tensor] = {}
-
-    param_name_to_id: Optional[Dict[str, int]] = None
-    if param_ids_are_names:
-        param_name_to_id = {v: k for k, v in param_id_to_name.items()}
 
     # Serialize param groups to tensors.
     flat_optim_state["num_param_groups"] = torch.tensor(len(optim_state["param_groups"]))
     for i, param_group in enumerate(optim_state["param_groups"]):
         # make copy.
         param_group = {k: v for k, v in param_group.items()}
-        if param_ids_are_names:
-            assert param_name_to_id is not None
-            param_group["param_names"] = param_group["params"]
-            param_group["params"] = [param_name_to_id[name] for name in param_group["param_names"]]  # type: ignore
-        else:
-            param_group["param_names"] = [param_id_to_name[param_id] for param_id in param_group["params"]]  # type: ignore
+        param_group["param_names"] = [param_id_to_name[param_id] for param_id in param_group["params"]]
         flat_optim_state[f"param_group{i}"] = serialize_to_tensor(param_group)
 
     # Flatten state tensors and wrap any tensor with the right sharded class if the corresponding
     # parameter is sharded.
     state_keys: Set[str] = set()
     for param_id, state in optim_state["state"].items():
-        if isinstance(param_id, str):
-            param_name = param_id
-        else:
-            param_name = param_id_to_name[param_id]
+        param_name = param_id_to_name[param_id]
         param = name_to_param.get(param_name)
         for key, tensor in state.items():
             state_keys.add(key)
