@@ -237,6 +237,11 @@ def run_nested_fsdp_api(model_factory, model_data_factory):
             return self.out(x)
 
     fsdp = FSDP(NestedModel())
+    assert isinstance(fsdp.module, NestedModel)
+
+    # FSDP should forward getattr to wrapped module.
+    assert isinstance(fsdp.out, nn.Linear)
+
     assert list(fsdp._fsdp_children()) == [fsdp.module.inner]
     assert list(fsdp._managed_named_parameters()) == [
         ("out.weight", fsdp.module.out.weight),
@@ -244,6 +249,18 @@ def run_nested_fsdp_api(model_factory, model_data_factory):
     ]
     assert fsdp.is_root
     assert not fsdp.module.inner.is_root
+
+    param_names = set(n for n, _ in fsdp.named_parameters())
+    assert param_names == {
+        "out.weight",
+        "out.bias",
+        "inner.fc.0.weight",
+        "inner.fc.0.bias",
+        "inner.fc.2.weight",
+        "inner.fc.2.bias",
+        "inner.fc.4.weight",
+        "inner.fc.4.bias",
+    }, param_names
 
     inner_weight = fsdp.module.inner.module.fc[0].weight
     assert isinstance(inner_weight, ShardedFlatParameter)

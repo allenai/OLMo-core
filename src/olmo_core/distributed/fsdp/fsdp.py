@@ -5,6 +5,7 @@ from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import partial
+from itertools import chain
 from typing import (
     Any,
     Callable,
@@ -83,7 +84,7 @@ class FSDP(Generic[M], nn.Module):
         _debug_config: Optional[FSDPDebugConfig] = None,
     ):
         super().__init__()
-        setattr(self, FSDP.WRAPPED_MODULE_PREFIX, module)
+        self._fsdp_wrapped_module = module
         self.process_group = process_group
         self.precision = precision or FSDPPrecision()
         self.max_prefetch_count = max_prefetch_count
@@ -207,22 +208,29 @@ class FSDP(Generic[M], nn.Module):
         FSDP wrapper, either sharded or unsharded.
         """
         # Fix keys to include the right prefix.
-        key_mapping: Dict[str, str] = {}  # maps original key to wrapped key
-
-        def collect_key_mappings(module: nn.Module, og_prefix: str, wrapped_prefix: str):
-            for param_name, _ in module.named_parameters(recurse=False):
-                key_mapping[f"{og_prefix}{param_name}"] = f"{wrapped_prefix}{param_name}"
-
-            if isinstance(module, FSDP):
-                wrapped_prefix = f"{wrapped_prefix}{self.WRAPPED_MODULE_PREFIX}."
-                module = module.module
-
-            for child_name, child in module.named_children():
-                collect_key_mappings(child, f"{og_prefix}{child_name}.", f"{wrapped_prefix}{child_name}.")
-
-        collect_key_mappings(self.module, "", f"{self.WRAPPED_MODULE_PREFIX}.")
-
+        key_mapping = self._get_key_mapping()  # maps original key to wrapped key
         return super().load_state_dict({key_mapping.get(k, k): v for k, v in state_dict.items()}, *args, **kwargs)
+
+    def named_buffers(self, *args, **kwargs):
+        """
+        Return an iterator over module buffers, yielding both the name of the buffer and the buffer itself.
+
+        The buffer names will be the original buffer names.
+        """
+        key_mapping = self._get_key_mapping(reverse=True)
+        for name, buffer in super().named_buffers(*args, **kwargs):
+            yield key_mapping.get(name, name), buffer
+
+    def named_parameters(self, *args, **kwargs):
+        """
+        Return an iterator over module parameters, yielding both the name of the parameter as well
+        as the parameter itself.
+
+        The parameter names will be the original parameter names.
+        """
+        key_mapping = self._get_key_mapping(reverse=True)
+        for name, param in super().named_parameters(*args, **kwargs):
+            yield key_mapping.get(name, name), param
 
     @contextmanager
     def summon_full_params(self, recurse: bool = True, writeback: bool = True, rank0_only: bool = False):
@@ -256,6 +264,23 @@ class FSDP(Generic[M], nn.Module):
             ret = super().apply(fn)
 
         return ret
+
+    def __getattr__(self, name: str) -> Any:
+        """
+        Forward missing attributes to the wrapped module.
+        """
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            return getattr(self._fsdp_wrapped_module, name)
+
+    def __getitem__(self, key) -> Any:
+        """
+        Forward indexing calls in case the module is an ``nn.Sequential`` or ``nn.ModuleDict``.
+        """
+        if hasattr(self, FSDP.WRAPPED_MODULE_PREFIX):
+            return self._fsdp_wrapped_module.__getitem__(key)  # type: ignore[operator]
+        return super().__getitem__(key)  # type: ignore
 
     def _lazy_init(self):
         """
@@ -296,6 +321,35 @@ class FSDP(Generic[M], nn.Module):
                 backward_execution_order=self.state.backward_execution_order,
                 backward_prefetch_queue=self.state.backward_prefetch_queue,
             )
+
+    def _get_key_mapping(self, reverse: bool = False, modules: bool = False) -> Dict[str, str]:
+        """
+        Get mapping of original keys to wrapped keys, or the other way around if ``reverse=True``.
+        """
+        key_mapping: Dict[str, str] = {}  # maps original key to wrapped key
+
+        def collect_key_mappings(module: nn.Module, og_prefix: str, wrapped_prefix: str):
+            if not modules:
+                for param_name, _ in chain(
+                    module.named_parameters(recurse=False), module.named_buffers(recurse=False)
+                ):
+                    key_mapping[f"{og_prefix}{param_name}"] = f"{wrapped_prefix}{param_name}"
+
+            if isinstance(module, FSDP):
+                wrapped_prefix = f"{wrapped_prefix}{self.WRAPPED_MODULE_PREFIX}."
+                module = module.module
+
+            for child_name, child in module.named_children():
+                if modules:
+                    key_mapping[og_prefix.strip(".")] = wrapped_prefix.strip(".")
+                collect_key_mappings(child, f"{og_prefix}{child_name}.", f"{wrapped_prefix}{child_name}.")
+
+        collect_key_mappings(self.module, "", f"{self.WRAPPED_MODULE_PREFIX}.")
+
+        if reverse:
+            key_mapping = {v: k for k, v in key_mapping.items()}
+
+        return key_mapping
 
     def _named_children(
         self, recurse: Union[bool, Callable[[nn.Module], bool]] = True
