@@ -423,14 +423,9 @@ class Checkpointer:
         return f"rank_{rank}.safetensors"
 
     def _copy_into(self, target: torch.Tensor, source: torch.Tensor):
-        from torch.distributed._shard.sharded_tensor import (
-            ShardedTensor as TorchShardedTensor,
-        )
-
-        if isinstance(target, TorchShardedTensor):
-            target.local_tensor().copy_(source.view(target.local_tensor().shape))
-        else:
-            target.copy_(source.view(target.shape))
+        target_data = get_local_tensor_data(target)
+        source_data = get_local_tensor_data(source)
+        target_data.copy_(source_data.view(target_data.shape))
         return target
 
     def _get_flat_view_and_full_shape_and_flattened_offsets(
@@ -550,6 +545,17 @@ class OptimStateDict(TypedDict):
     """
 
 
+def get_local_tensor_data(tensor: torch.Tensor) -> torch.Tensor:
+    from torch.distributed._shard.sharded_tensor import (
+        ShardedTensor as TorchShardedTensor,
+    )
+
+    if isinstance(tensor, TorchShardedTensor):
+        return tensor.local_tensor()
+    else:
+        return tensor.data
+
+
 def wrap_tensor_for_sharded_parameter(tensor: torch.Tensor, param: Optional[torch.Tensor]) -> torch.Tensor:
     from torch.distributed._shard.sharded_tensor import (
         ShardedTensor as TorchShardedTensor,
@@ -652,7 +658,8 @@ def unflatten_optimizer_state(flat_optim_state: Dict[str, torch.Tensor]) -> Opti
         for key in state_keys:
             state_tensor = flat_optim_state.get(f"state.{key}.{param_name}")
             if state_tensor is not None:
-                param_state[key] = state_tensor
+                # Ensure we have a regular tensor here, not some sharded wrapper.
+                param_state[key] = get_local_tensor_data(state_tensor)
 
         optim_state["state"][param_id] = param_state
 
