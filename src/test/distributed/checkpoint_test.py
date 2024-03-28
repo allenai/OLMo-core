@@ -7,11 +7,11 @@ from olmo_core.distributed.checkpoint import (
     Checkpointer,
     OptimStateDict,
     SafeTensorsLoader,
-    flatten_optimizer_state,
+    _flatten_optimizer_state,
+    _unflatten_optimizer_state,
     init_optimizer_state,
     load_model_and_optim_state,
     save_model_and_optim_state,
-    unflatten_optimizer_state,
 )
 from olmo_core.distributed.fsdp import FSDP
 from olmo_core.distributed.sharded_flat_parameter import (
@@ -271,8 +271,8 @@ def test_flatten_optimizer_state(tiny_model, tiny_model_data):
     tiny_model(tiny_model_data).sum().backward()
     optim.step()
 
-    flat_optim_state = flatten_optimizer_state(tiny_model, optim)
-    unflattened_optim_state = unflatten_optimizer_state(flat_optim_state)
+    flat_optim_state = _flatten_optimizer_state(tiny_model, optim)
+    unflattened_optim_state = _unflatten_optimizer_state(flat_optim_state)
 
     # Make sure unflattened state matches what we'd get from `optim.state_dict()`.
     assert_optim_state_close(optim.state_dict(), unflattened_optim_state)  # type: ignore
@@ -304,8 +304,8 @@ def flatten_optimizer_state_with_sharded_flat_params(model_factory, model_data_f
     model_state = model.state_dict()
     assert model_state["fc.0.weight"].shape == flat_param.shape
 
-    flat_optim_state = flatten_optimizer_state(model, optim, model_state=model_state)
-    unflattened_optim_state = unflatten_optimizer_state(flat_optim_state)
+    flat_optim_state = _flatten_optimizer_state(model, optim, model_state=model_state)
+    unflattened_optim_state = _unflatten_optimizer_state(flat_optim_state)
 
     # Make sure unflattened state matches what we'd get from `optim.state_dict()`.
     assert_optim_state_close(optim.state_dict(), unflattened_optim_state)  # type: ignore
@@ -340,6 +340,10 @@ def run_save_and_load_fsdp_model(dir, model_factory, model_data_factory):
     optim2 = torch.optim.AdamW(fsdp_model2.parameters())
     init_optimizer_state(optim2)
     load_model_and_optim_state(dir, fsdp_model2, optim2)
+
+    # Check model parameters.
+    with fsdp_model.summon_full_params(recurse=True), fsdp_model2.summon_full_params(recurse=True):
+        torch.testing.assert_close(fsdp_model.state_dict(), fsdp_model2.state_dict())
 
 
 @pytest.mark.parametrize("backend", BACKENDS)

@@ -422,8 +422,8 @@ class Checkpointer:
         return f"rank_{rank}.safetensors"
 
     def _copy_into(self, target: torch.Tensor, source: torch.Tensor):
-        target_data = get_local_tensor_data(target)
-        source_data = get_local_tensor_data(source)
+        target_data = _get_local_tensor_data(target)
+        source_data = _get_local_tensor_data(source)
         target_data.copy_(source_data.view(target_data.shape))
         return target
 
@@ -439,7 +439,7 @@ class Checkpointer:
         else:
             flattened_offsets_per_rank = {0: (0, tensor.numel())}
             full_shape = tuple(tensor.shape)
-        return get_local_tensor_data(tensor).view(-1), full_shape, flattened_offsets_per_rank
+        return _get_local_tensor_data(tensor).view(-1), full_shape, flattened_offsets_per_rank
 
     def _get_global_save_plan_and_metadata(
         self, state_dict: Dict[str, torch.Tensor]
@@ -503,18 +503,75 @@ class OptimStateDict(TypedDict):
     """
 
 
-def get_local_tensor_data(tensor: torch.Tensor) -> torch.Tensor:
-    return tensor.data
+def save_model_and_optim_state(
+    dir: PathOrStr,
+    model: nn.Module,
+    optim: torch.optim.Optimizer,
+    save_overwrite: bool = False,
+):
+    """
+    Save model and optimizer state dictionaries. The model state can be a sharded model, in which
+    case this method will correctly handle the optimizer state to ensure it can be loaded again with
+    a different distributed topology through :func:`load_model_and_optim_state()`.
+    """
+    dir = str(dir).rstrip("/")
+
+    model_state = _get_model_state_dict_for_checkpoint(model)
+    flat_optim_state = _flatten_optimizer_state(
+        model, optim, model_state=model_state, optim_state=optim.state_dict()  # type: ignore[arg-type]
+    )
+
+    checkpointer = Checkpointer()
+    checkpointer.save(f"{dir}/model", model_state, save_overwrite=save_overwrite)
+    checkpointer.save(f"{dir}/optim", flat_optim_state, save_overwrite=save_overwrite)
 
 
-def wrap_tensor_for_sharded_parameter(tensor: torch.Tensor, param: Optional[torch.Tensor]) -> torch.Tensor:
-    if isinstance(param, ShardedFlatParameter):
-        return param.wrap(tensor, requires_grad=False)
-    else:
-        return tensor
+def load_model_and_optim_state(
+    dir: PathOrStr,
+    model: nn.Module,
+    optim: torch.optim.Optimizer,
+):
+    """
+    Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
+    This method is agnostic to the distributed topology in that it can load checkpoints saved with a different
+    distributed topology.
+
+    Note: You need to make sure your optimizer state is initialized before calling this.
+    To do so, it suffices to call :func:`init_optimizer_state` before this.
+    """
+    dir = str(dir).rstrip("/")
+
+    checkpointer = Checkpointer()
+
+    # Load model state in-place.
+    model_state = _get_model_state_dict_for_checkpoint(model)
+    checkpointer.load(f"{dir}/model", model_state)
+    model.load_state_dict(model_state)
+
+    # Load flattened optimizer state in-place.
+    flat_optim_state = _flatten_optimizer_state(
+        model, optim, model_state=model_state, optim_state=optim.state_dict()  # type: ignore[arg-type]
+    )
+    checkpointer.load(f"{dir}/optim", flat_optim_state)
+
+    # Unflatten optimizer state.
+    optim_state = _unflatten_optimizer_state(flat_optim_state)
+    optim.load_state_dict(optim_state)  # type: ignore
 
 
-def flatten_optimizer_state(
+def init_optimizer_state(optim: torch.optim.Optimizer):
+    """
+    Ensure optimizer state is initialized.
+    """
+    for group in optim.param_groups:
+        for p in group["params"]:
+            p.grad = p.data.new(p.size()).zero_()
+            p.grad.requires_grad_(False)
+    optim.step()
+    optim.zero_grad()
+
+
+def _flatten_optimizer_state(
     model: nn.Module,
     optim: torch.optim.Optimizer,
     model_state: Optional[Dict[str, torch.Tensor]] = None,
@@ -548,21 +605,21 @@ def flatten_optimizer_state(
     state_keys: Set[str] = set()
     for param_id, state in optim_state["state"].items():
         param_name = param_id_to_name[param_id]
-        param = name_to_param.get(param_name)
+        param = name_to_param[param_name]
         for key, tensor in state.items():
             state_keys.add(key)
             if key == "step":
                 # step tensors might be shared between params, which safetensors doesn't like
                 tensor = tensor.clone()
             else:
-                tensor = wrap_tensor_for_sharded_parameter(tensor, param)
+                tensor = _wrap_tensor_for_sharded_parameter(tensor, param)
             flat_optim_state[f"state.{key}.{param_name}"] = tensor
     flat_optim_state["state_keys"] = serialize_to_tensor(list(state_keys))
 
     return flat_optim_state
 
 
-def unflatten_optimizer_state(flat_optim_state: Dict[str, torch.Tensor]) -> OptimStateDict:
+def _unflatten_optimizer_state(flat_optim_state: Dict[str, torch.Tensor]) -> OptimStateDict:
     num_param_groups = int(flat_optim_state["num_param_groups"].item())
     optim_state: OptimStateDict = {
         "state": {},
@@ -587,76 +644,32 @@ def unflatten_optimizer_state(flat_optim_state: Dict[str, torch.Tensor]) -> Opti
             state_tensor = flat_optim_state.get(f"state.{key}.{param_name}")
             if state_tensor is not None:
                 # Ensure we have a regular tensor here, not some sharded wrapper.
-                param_state[key] = get_local_tensor_data(state_tensor)
+                param_state[key] = _get_local_tensor_data(state_tensor)
 
         optim_state["state"][param_id] = param_state
 
     return optim_state
 
 
-def save_model_and_optim_state(
-    dir: PathOrStr,
-    model: nn.Module,
-    optim: torch.optim.Optimizer,
-    model_state: Optional[Dict[str, torch.Tensor]] = None,
-    optim_state: Optional[OptimStateDict] = None,
-    save_overwrite: bool = False,
-):
-    """
-    Save model and optimizer state dictionaries. The model state can be a sharded model, in which
-    case this method will correctly handle the optimizer state to ensure it can be loaded again with
-    a different distributed topology through :func:`load_model_and_optim_state()`.
-    """
-    dir = str(dir).rstrip("/")
+def _get_model_state_dict_for_checkpoint(model: nn.Module) -> Dict[str, torch.Tensor]:
+    from .fsdp import FSDP
 
-    model_state = model_state or model.state_dict()
-    flat_optim_state = flatten_optimizer_state(model, optim, model_state=model_state, optim_state=optim_state)
+    model_state = model.state_dict()
+    if isinstance(model, FSDP):
+        key_to_param = {key: param for key, param in model.named_parameters()}
+        for key, tensor in model_state.items():
+            param = key_to_param.get(key)
+            model_state[key] = _wrap_tensor_for_sharded_parameter(tensor, param)
 
-    checkpointer = Checkpointer()
-    checkpointer.save(f"{dir}/model", model_state, save_overwrite=save_overwrite)
-    checkpointer.save(f"{dir}/optim", flat_optim_state, save_overwrite=save_overwrite)
+    return model_state
 
 
-def load_model_and_optim_state(
-    dir: PathOrStr,
-    model: nn.Module,
-    optim: torch.optim.Optimizer,
-    model_state: Optional[Dict[str, torch.Tensor]] = None,
-    optim_state: Optional[OptimStateDict] = None,
-):
-    """
-    Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
-    This method is agnostic to the distributed topology in that it can load checkpoints saved with a different
-    distributed topology.
-
-    Note: You need to make sure your optimizer state is initialized before calling this.
-    To do so, it suffices to call :func:`init_optimizer_state` before this.
-    """
-    dir = str(dir).rstrip("/")
-
-    checkpointer = Checkpointer()
-
-    # Load model state in-place.
-    model_state = model_state or model.state_dict()
-    checkpointer.load(f"{dir}/model", model_state)
-    model.load_state_dict(model_state)
-
-    # Load flattened optimizer state in-place.
-    flat_optim_state = flatten_optimizer_state(model, optim, model_state=model_state, optim_state=optim_state)
-    checkpointer.load(f"{dir}/optim", flat_optim_state)
-
-    # Unflatten optimizer state.
-    optim_state = unflatten_optimizer_state(flat_optim_state)
-    optim.load_state_dict(optim_state)  # type: ignore
+def _get_local_tensor_data(tensor: torch.Tensor) -> torch.Tensor:
+    return tensor.data
 
 
-def init_optimizer_state(optim: torch.optim.Optimizer):
-    """
-    Ensure optimizer state is initialized.
-    """
-    for group in optim.param_groups:
-        for p in group["params"]:
-            p.grad = p.data.new(p.size()).zero_()
-            p.grad.requires_grad_(False)
-    optim.step()
-    optim.zero_grad()
+def _wrap_tensor_for_sharded_parameter(tensor: torch.Tensor, param: Optional[torch.Tensor]) -> torch.Tensor:
+    if isinstance(param, ShardedFlatParameter):
+        return param.wrap(tensor, requires_grad=False)
+    else:
+        return tensor
