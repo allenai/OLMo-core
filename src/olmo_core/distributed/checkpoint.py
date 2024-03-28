@@ -178,41 +178,6 @@ class Checkpointer:
 
     METADATA_FILENAME = "metadata.json"
 
-    def _filename_for_rank(self, rank: int) -> str:
-        return f"rank_{rank}.safetensors"
-
-    def _get_global_save_plan_and_metadata(
-        self, state_dict: Dict[str, torch.Tensor]
-    ) -> Tuple[SavePlan, StorageMetadata]:
-        tensors_save_plan = {}
-        tensors_metadata = {}
-        for key in state_dict.keys():
-            tensor = state_dict[key]
-
-            flattened_offsets_per_rank = {}
-            full_shape: Tuple[int, ...]
-
-            if isinstance(tensor, ShardedFlatParameter):
-                for rank, offset in enumerate(tensor.sharding_spec.unsharded_flattened_offsets):
-                    flattened_offsets_per_rank[rank] = offset
-                full_shape = tensor.unsharded_shape
-            else:
-                flattened_offsets_per_rank = {0: (0, tensor.numel())}
-                full_shape = tuple(tensor.shape)
-
-            tensors_save_plan[key] = TensorSavePlan(flattened_offsets_per_rank=flattened_offsets_per_rank)
-            tensors_metadata[key] = TensorStorageMetadata(
-                flattened_offsets_per_file={
-                    self._filename_for_rank(rank): offsets for rank, offsets in flattened_offsets_per_rank.items()
-                },
-                shape=full_shape,
-                dtype=TORCH_DTYPE_TO_STR[tensor.dtype],
-            )
-
-        tensors_save_plan = scatter_object(tensors_save_plan)
-        tensors_metadata = scatter_object(tensors_metadata)
-        return SavePlan(tensors=tensors_save_plan), StorageMetadata(tensors=tensors_metadata)
-
     @torch.no_grad()
     def save(self, dir: PathOrStr, state_dict: Dict[str, torch.Tensor], save_overwrite: bool = False):
         """
@@ -221,8 +186,7 @@ class Checkpointer:
         When calling this from a distributed context, all ranks must call this at the same time and the
         state dict must have the same keys and tensor types across each rank.
         """
-        if str(dir).startswith("file://"):
-            dir = str(dir).replace("file://", "", 1)
+        dir = self._normalize_dir(dir)
 
         local_rank = get_rank()
 
@@ -307,27 +271,19 @@ class Checkpointer:
         self,
         dir: PathOrStr,
         state_dict: Dict[str, torch.Tensor],
+        no_dist: bool = False,
         _safetensors_mfl: Optional[SafeTensorsMultiFileLoader] = None,
         _metadata: Optional[StorageMetadata] = None,
     ):
         """
         Load a state dict in-place.
+
+        :param dir: The state dict directory.
+        :param state_dict: The state dict to load into.
+        :param no_dist: Disable distributed communication even if within a distributed context.
         """
-        dir = str(dir).rstrip("/")
-        if dir.startswith("file://"):
-            dir = dir.replace("file://", "", 1)
-
-        local_rank = get_rank()
-
-        # Collect metadata from rank 0, scatter to other ranks.
-        metadata: Optional[StorageMetadata] = _metadata
-        if metadata is None:
-            if local_rank == 0:
-                with open(cached_path(f"{dir}/{self.METADATA_FILENAME}")) as f:
-                    metadata = StorageMetadata(**json.load(f))
-            metadata = scatter_object(metadata)
-        assert metadata is not None
-
+        dir = self._normalize_dir(dir)
+        metadata = _metadata or self._collect_metadata(dir, no_dist=no_dist)
         safetensors_mfl = _safetensors_mfl or SafeTensorsMultiFileLoader()
 
         # Load each tensor from the slices in each file.
@@ -434,17 +390,32 @@ class Checkpointer:
             del flat_tensor
 
     @torch.no_grad()
-    def unshard(self, dir: PathOrStr, device: Optional[torch.device] = None) -> Dict[str, torch.Tensor]:
+    def unshard(
+        self,
+        dir: PathOrStr,
+        device: Optional[torch.device] = None,
+        rank0_only: bool = False,
+        no_dist: bool = False,
+    ) -> Dict[str, torch.Tensor]:
         """
-        Unshard a checkpoint, returning the full state dict.
+        Unshard a checkpoint, returning the full state dict. This can be used in both distributed
+        and non-distributed contexts. If you only want to load a single copy to rank 0 in a distributed
+        context, set ``rank0_only=True``, in which case other ranks will receive an empty state dict.
+
+        Alternatively, setting ``no_dist=True`` will return a full state dict from whatever process
+        calls this.
         """
-        dir = str(dir).rstrip("/")
-        if dir.startswith("file://"):
-            dir = dir.replace("file://", "", 1)
+        dir = self._normalize_dir(dir)
+
+        if rank0_only and no_dist and get_rank() != 0:
+            raise ValueError(
+                f"calling `unshard()` with `rank0_only=True` and `no_dist=True` is undefined for rank `{get_rank()} != 0`"
+            )
+        elif rank0_only and get_rank() != 0:
+            return {}
 
         # Load metadata.
-        with open(cached_path(f"{dir}/{self.METADATA_FILENAME}")) as f:
-            metadata = StorageMetadata(**json.load(f))
+        metadata = self._collect_metadata(dir, no_dist=no_dist or rank0_only)
 
         # Initialize state dict.
         state_dict = {}
@@ -453,9 +424,60 @@ class Checkpointer:
             state_dict[key] = tensor
 
         # Load the state dict in place.
-        self.load(dir, state_dict, _metadata=metadata)
+        self.load(dir, state_dict, _metadata=metadata, no_dist=no_dist or rank0_only)
 
         return state_dict
+
+    def _filename_for_rank(self, rank: int) -> str:
+        return f"rank_{rank}.safetensors"
+
+    def _get_global_save_plan_and_metadata(
+        self, state_dict: Dict[str, torch.Tensor]
+    ) -> Tuple[SavePlan, StorageMetadata]:
+        tensors_save_plan = {}
+        tensors_metadata = {}
+        for key in state_dict.keys():
+            tensor = state_dict[key]
+
+            flattened_offsets_per_rank = {}
+            full_shape: Tuple[int, ...]
+
+            if isinstance(tensor, ShardedFlatParameter):
+                for rank, offset in enumerate(tensor.sharding_spec.unsharded_flattened_offsets):
+                    flattened_offsets_per_rank[rank] = offset
+                full_shape = tensor.unsharded_shape
+            else:
+                flattened_offsets_per_rank = {0: (0, tensor.numel())}
+                full_shape = tuple(tensor.shape)
+
+            tensors_save_plan[key] = TensorSavePlan(flattened_offsets_per_rank=flattened_offsets_per_rank)
+            tensors_metadata[key] = TensorStorageMetadata(
+                flattened_offsets_per_file={
+                    self._filename_for_rank(rank): offsets for rank, offsets in flattened_offsets_per_rank.items()
+                },
+                shape=full_shape,
+                dtype=TORCH_DTYPE_TO_STR[tensor.dtype],
+            )
+
+        tensors_save_plan = scatter_object(tensors_save_plan)
+        tensors_metadata = scatter_object(tensors_metadata)
+        return SavePlan(tensors=tensors_save_plan), StorageMetadata(tensors=tensors_metadata)
+
+    def _normalize_dir(self, dir: PathOrStr) -> str:
+        dir = str(dir).strip("/")
+        if dir.startswith("file://"):
+            dir = dir.replace("file://", "", 1)
+        return dir
+
+    def _collect_metadata(self, dir: str, no_dist: bool = False) -> StorageMetadata:
+        metadata: Optional[StorageMetadata] = None
+        if no_dist or get_rank() == 0:
+            with open(cached_path(f"{dir}/{self.METADATA_FILENAME}")) as f:
+                metadata = StorageMetadata(**json.load(f))
+        if not no_dist:
+            metadata = scatter_object(metadata)
+        assert metadata is not None
+        return metadata
 
 
 class ParamGroup(TypedDict):

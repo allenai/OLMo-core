@@ -36,12 +36,35 @@ def save_and_load_checkpoint_with_regular_and_sharded_tensors(dir):
 
     torch.testing.assert_close(state_dict_to_save, state_dict_to_load)
 
+    # Test loading unsharded checkpoint.
+    full_state_dict = checkpointer.unshard(dir)
+    assert full_state_dict["x"].shape == (2, 3)
+    assert full_state_dict["y"].shape == (2, 3)
+
+    # Now from rank 0 only.
+    full_state_dict = checkpointer.unshard(dir, rank0_only=True)
+    if dist.get_rank() == 0:
+        assert full_state_dict["x"].shape == (2, 3)
+        assert full_state_dict["y"].shape == (2, 3)
+    else:
+        assert len(full_state_dict) == 0
+
+    # Now from rank 1 only.
+    if dist.get_rank() == 1:
+        full_state_dict = checkpointer.unshard(dir, no_dist=True)
+        assert full_state_dict["x"].shape == (2, 3)
+        assert full_state_dict["y"].shape == (2, 3)
+
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_save_and_load_checkpoint_with_regular_and_sharded_tensors(backend, tmp_path):
     run_distributed_test(
         save_and_load_checkpoint_with_regular_and_sharded_tensors, backend=backend, func_args=(tmp_path,)
     )
+    # We should be able to load unsharded checkpoint from a non-distributed context.
+    full_state_dict = Checkpointer().unshard(tmp_path)
+    assert full_state_dict["x"].shape == (2, 3)
+    assert full_state_dict["y"].shape == (2, 3)
 
 
 def save_and_load_checkpoint_with_different_sharding_spec(dir):
