@@ -610,7 +610,10 @@ def flatten_optimizer_state(
     # parameter is sharded.
     state_keys: Set[str] = set()
     for param_id, state in optim_state["state"].items():
-        param_name = param_id_to_name[param_id]
+        if isinstance(param_id, str):
+            param_name = param_id
+        else:
+            param_name = param_id_to_name[param_id]
         param = name_to_param[param_name]
         for key, tensor in state.items():
             state_keys.add(key)
