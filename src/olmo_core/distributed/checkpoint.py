@@ -617,7 +617,10 @@ def flatten_optimizer_state(
         param = name_to_param.get(param_name)
         for key, tensor in state.items():
             state_keys.add(key)
-            if key != "step":  # TODO: make this more robust
+            if key == "step":
+                # step tensors might be shared between params, which safetensors doesn't like
+                tensor = tensor.clone()
+            else:
                 tensor = wrap_tensor_for_sharded_parameter(tensor, param)
             flat_optim_state[f"state.{key}.{param_name}"] = tensor
     flat_optim_state["state_keys"] = serialize_to_tensor(list(state_keys))
