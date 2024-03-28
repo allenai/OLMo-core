@@ -9,6 +9,7 @@ from olmo_core.distributed.checkpoint import (
     OptimStateDict,
     SafeTensorsLoader,
     flatten_optimizer_state,
+    init_optimizer_state,
     load_model_and_optim_state,
     save_model_and_optim_state,
     unflatten_optimizer_state,
@@ -378,6 +379,8 @@ def run_save_and_load_with_pytorch_fsdp(dir):
     # Create a new FSDP model and optimizer and load the checkpoint.
     fsdp2 = FSDP(NestedModel().cuda())
     optim2 = torch.optim.AdamW(fsdp2.parameters())
+    init_optimizer_state(optim2)
+
     with FSDP.state_dict_type(
         fsdp2,
         StateDictType.SHARDED_STATE_DICT,

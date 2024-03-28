@@ -669,6 +669,9 @@ def load_model_and_optim_state(dir: PathOrStr, model: nn.Module, optim: torch.op
     Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
     This method is agnostic to the distributed topology in that it can load checkpoints saved with a different
     distributed topology.
+
+    Note: You need to make sure your optimizer state is initialized before calling this.
+    To do so, it suffices to call :func:`init_optimizer_state` before this.
     """
     dir = str(dir).rstrip("/")
 
@@ -686,3 +689,15 @@ def load_model_and_optim_state(dir: PathOrStr, model: nn.Module, optim: torch.op
     # Unflatten optimizer state.
     optim_state = unflatten_optimizer_state(flat_optim_state)
     optim.load_state_dict(optim_state)  # type: ignore
+
+
+def init_optimizer_state(optim: torch.optim.Optimizer):
+    """
+    Ensure optimizer state is initialized.
+    """
+    for group in optim.param_groups:
+        for p in group["params"]:
+            p.grad = p.data.new(p.size()).zero_()
+            p.grad.requires_grad_(False)
+    optim.step()
+    optim.zero_grad()
