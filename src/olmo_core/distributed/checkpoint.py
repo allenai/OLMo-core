@@ -579,6 +579,8 @@ def flatten_optimizer_state(
     optim_state = optim_state or optim.state_dict()  # type: ignore
     assert optim_state
 
+    param_ids_are_names: bool = False
+
     # Collect mapping of parameter IDs from the optimizer to the FQN of the corresponding parameter.
     name_to_param: Dict[str, nn.Parameter] = {k: v for k, v in model.named_parameters()}
     param_to_name: Dict[nn.Parameter, str] = {v: k for k, v in model.named_parameters()}
@@ -587,6 +589,7 @@ def flatten_optimizer_state(
         for param, param_id in zip(param_group["params"], param_group_state["params"]):
             if isinstance(param_id, str):  # PyTorch FSDP does this.
                 param_id = len(param_id_to_name)
+                param_ids_are_names = True
             param_id_to_name[param_id] = param_to_name[param]
     del param_to_name
 
@@ -597,7 +600,10 @@ def flatten_optimizer_state(
     for i, param_group in enumerate(optim_state["param_groups"]):
         # make copy.
         param_group = {k: v for k, v in param_group.items()}
-        param_group["param_names"] = [param_id_to_name[param_id] for param_id in param_group["params"]]
+        if param_ids_are_names:
+            param_group["param_names"] = param_group["params"]
+        else:
+            param_group["param_names"] = [param_id_to_name[param_id] for param_id in param_group["params"]]  # type: ignore
         flat_optim_state[f"param_group{i}"] = serialize_to_tensor(param_group)
 
     # Flatten state tensors and wrap any tensor with the right sharded class if the corresponding
