@@ -8,8 +8,12 @@ from olmo_core.distributed.checkpoint import (
     OptimStateDict,
     SafeTensorsLoader,
     flatten_optimizer_state,
+    init_optimizer_state,
+    load_model_and_optim_state,
+    save_model_and_optim_state,
     unflatten_optimizer_state,
 )
+from olmo_core.distributed.fsdp import FSDP
 from olmo_core.distributed.sharded_flat_parameter import (
     ShardedFlatParameter,
     ShardingSpec,
@@ -317,4 +321,32 @@ def test_flatten_optimizer_state_with_sharded_flat_params(backend, tiny_model_fa
         backend=backend,
         start_method="spawn",
         func_args=(tiny_model_factory, tiny_model_data_factory),
+    )
+
+
+def run_save_and_load_fsdp_model(dir, model_factory, model_data_factory):
+    fsdp_model = FSDP(model_factory())
+    optim = torch.optim.AdamW(fsdp_model.parameters())
+
+    # Take a train step to initialize optimizer state.
+    fsdp_model(model_data_factory().to(fsdp_model.device)).sum().backward()
+    optim.step()
+
+    # Save checkpoint.
+    save_model_and_optim_state(dir, fsdp_model, optim)
+
+    # Now create a new fsdp model and load that state.
+    fsdp_model2 = FSDP(model_factory())
+    optim2 = torch.optim.AdamW(fsdp_model2.parameters())
+    init_optimizer_state(optim2)
+    load_model_and_optim_state(dir, fsdp_model2, optim2)
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_save_and_load_fsdp_model(backend, tmp_path, tiny_model_factory, tiny_model_data_factory):
+    run_distributed_test(
+        run_save_and_load_fsdp_model,
+        backend=backend,
+        start_method="spawn",
+        func_args=(tmp_path, tiny_model_factory, tiny_model_data_factory),
     )
