@@ -374,7 +374,13 @@ def run_save_and_load_with_pytorch_fsdp(dir):
         ShardedStateDictConfig(offload_to_cpu=True),
         ShardedOptimStateDictConfig(offload_to_cpu=True),
     ):
-        save_model_and_optim_state(dir, fsdp1, optim1)
+        save_model_and_optim_state(
+            dir,
+            fsdp1,
+            optim1,
+            model_state=fsdp1.state_dict(),
+            optim_state=FSDP.optim_state_dict(fsdp1, optim1),  # type: ignore[arg-type]
+        )
 
     # Create a new FSDP model and optimizer and load the checkpoint.
     fsdp2 = FSDP(NestedModel().cuda())
@@ -387,7 +393,13 @@ def run_save_and_load_with_pytorch_fsdp(dir):
         ShardedStateDictConfig(offload_to_cpu=True),
         ShardedOptimStateDictConfig(offload_to_cpu=True),
     ):
-        load_model_and_optim_state(dir, fsdp2, optim2)
+        load_model_and_optim_state(
+            dir,
+            fsdp2,
+            optim2,
+            model_state=fsdp2.state_dict(),
+            optim_state=FSDP.optim_state_dict(fsdp2, optim2),  # type: ignore[arg-type]
+        )
 
     # Now compare full state dicts.
     with FSDP.state_dict_type(

@@ -647,7 +647,12 @@ def unflatten_optimizer_state(flat_optim_state: Dict[str, torch.Tensor]) -> Opti
 
 
 def save_model_and_optim_state(
-    dir: PathOrStr, model: nn.Module, optim: torch.optim.Optimizer, save_overwrite: bool = False
+    dir: PathOrStr,
+    model: nn.Module,
+    optim: torch.optim.Optimizer,
+    model_state: Optional[Dict[str, torch.Tensor]] = None,
+    optim_state: Optional[OptimStateDict] = None,
+    save_overwrite: bool = False,
 ):
     """
     Save model and optimizer state dictionaries. The model state can be a sharded model, in which
@@ -656,15 +661,21 @@ def save_model_and_optim_state(
     """
     dir = str(dir).rstrip("/")
 
-    model_state: Dict[str, torch.Tensor] = model.state_dict()
-    flat_optim_state = flatten_optimizer_state(model, optim, model_state=model_state)
+    model_state = model_state or model.state_dict()
+    flat_optim_state = flatten_optimizer_state(model, optim, model_state=model_state, optim_state=optim_state)
 
     checkpointer = Checkpointer()
     checkpointer.save(f"{dir}/model", model_state, save_overwrite=save_overwrite)
     checkpointer.save(f"{dir}/optim", flat_optim_state, save_overwrite=save_overwrite)
 
 
-def load_model_and_optim_state(dir: PathOrStr, model: nn.Module, optim: torch.optim.Optimizer):
+def load_model_and_optim_state(
+    dir: PathOrStr,
+    model: nn.Module,
+    optim: torch.optim.Optimizer,
+    model_state: Optional[Dict[str, torch.Tensor]] = None,
+    optim_state: Optional[OptimStateDict] = None,
+):
     """
     Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
     This method is agnostic to the distributed topology in that it can load checkpoints saved with a different
@@ -678,12 +689,12 @@ def load_model_and_optim_state(dir: PathOrStr, model: nn.Module, optim: torch.op
     checkpointer = Checkpointer()
 
     # Load model state in-place.
-    model_state: Dict[str, torch.Tensor] = model.state_dict()
+    model_state = model_state or model.state_dict()
     checkpointer.load(f"{dir}/model", model_state)
     model.load_state_dict(model_state)
 
     # Load flattened optimizer state in-place.
-    flat_optim_state = flatten_optimizer_state(model, optim, model_state=model_state)
+    flat_optim_state = flatten_optimizer_state(model, optim, model_state=model_state, optim_state=optim_state)
     checkpointer.load(f"{dir}/optim", flat_optim_state)
 
     # Unflatten optimizer state.
