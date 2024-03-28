@@ -363,7 +363,25 @@ def run_save_and_load_with_pytorch_fsdp(dir):
 
     # Now save a checkpoint.
     with FSDP.state_dict_type(fsdp, StateDictType.SHARDED_STATE_DICT, ShardedStateDictConfig(offload_to_cpu=True)):
-        save_model_and_optim_state(dir, fsdp, optim)
+        with torch.no_grad():
+            torch.save(
+                {
+                    "model": fsdp.state_dict(),
+                    "optim": FSDP.optim_state_dict(fsdp, optim),
+                },
+                dir / "torch_checkpoint.pt",
+            )
+
+            save_model_and_optim_state(dir / "olmo_core_checkpoint", fsdp, optim)
+
+    # Take another step to change the parameters.
+    optim.zero_grad()
+    fsdp(torch.rand(2, 8).cuda()).sum().backward()
+    optim.step()
+
+    # Create a new fsdp model and load the original checkpoint.
+    with FSDP.state_dict_type(fsdp, StateDictType.SHARDED_STATE_DICT, ShardedStateDictConfig(offload_to_cpu=True)):
+        load_model_and_optim_state(dir / "olmo_core_checkpoint", fsdp, optim)
 
 
 @requires_multi_gpu
