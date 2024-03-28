@@ -7,9 +7,13 @@ from olmo_core.distributed.checkpoint import (
     Checkpointer,
     OptimStateDict,
     SafeTensorsLoader,
-    flatten_optimizer_state,
-    unflatten_optimizer_state,
+    _flatten_optimizer_state,
+    _unflatten_optimizer_state,
+    init_optimizer_state,
+    load_model_and_optim_state,
+    save_model_and_optim_state,
 )
+from olmo_core.distributed.fsdp import FSDP
 from olmo_core.distributed.sharded_flat_parameter import (
     ShardedFlatParameter,
     ShardingSpec,
@@ -34,7 +38,27 @@ def save_and_load_checkpoint_with_regular_and_sharded_tensors(dir):
     checkpointer.save(dir, state_dict_to_save)
     checkpointer.load(dir, state_dict_to_load)
 
-    torch.testing.assert_close(state_dict_to_save, state_dict_to_load)
+    torch.testing.assert_close(state_dict_to_save["x"], state_dict_to_load["x"])
+    torch.testing.assert_close(state_dict_to_save["y"], state_dict_to_load["y"])
+
+    # Test loading unsharded checkpoint.
+    full_state_dict = checkpointer.unshard(dir)
+    assert full_state_dict["x"].shape == (2, 3)
+    assert full_state_dict["y"].shape == (2, 3)
+
+    # Now from rank 0 only.
+    full_state_dict = checkpointer.unshard(dir, rank0_only=True)
+    if dist.get_rank() == 0:
+        assert full_state_dict["x"].shape == (2, 3)
+        assert full_state_dict["y"].shape == (2, 3)
+    else:
+        assert len(full_state_dict) == 0
+
+    # Now from rank 1 only.
+    if dist.get_rank() == 1:
+        full_state_dict = checkpointer.unshard(dir, no_dist=True)
+        assert full_state_dict["x"].shape == (2, 3)
+        assert full_state_dict["y"].shape == (2, 3)
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
@@ -42,6 +66,10 @@ def test_save_and_load_checkpoint_with_regular_and_sharded_tensors(backend, tmp_
     run_distributed_test(
         save_and_load_checkpoint_with_regular_and_sharded_tensors, backend=backend, func_args=(tmp_path,)
     )
+    # We should be able to load unsharded checkpoint from a non-distributed context.
+    full_state_dict = Checkpointer().unshard(tmp_path)
+    assert full_state_dict["x"].shape == (2, 3)
+    assert full_state_dict["y"].shape == (2, 3)
 
 
 def save_and_load_checkpoint_with_different_sharding_spec(dir):
@@ -243,8 +271,8 @@ def test_flatten_optimizer_state(tiny_model, tiny_model_data):
     tiny_model(tiny_model_data).sum().backward()
     optim.step()
 
-    flat_optim_state = flatten_optimizer_state(tiny_model, optim)
-    unflattened_optim_state = unflatten_optimizer_state(flat_optim_state)
+    flat_optim_state = _flatten_optimizer_state(tiny_model, optim)
+    unflattened_optim_state = _unflatten_optimizer_state(flat_optim_state)
 
     # Make sure unflattened state matches what we'd get from `optim.state_dict()`.
     assert_optim_state_close(optim.state_dict(), unflattened_optim_state)  # type: ignore
@@ -276,8 +304,8 @@ def flatten_optimizer_state_with_sharded_flat_params(model_factory, model_data_f
     model_state = model.state_dict()
     assert model_state["fc.0.weight"].shape == flat_param.shape
 
-    flat_optim_state = flatten_optimizer_state(model, optim, model_state=model_state)
-    unflattened_optim_state = unflatten_optimizer_state(flat_optim_state)
+    flat_optim_state = _flatten_optimizer_state(model, optim, model_state=model_state)
+    unflattened_optim_state = _unflatten_optimizer_state(flat_optim_state)
 
     # Make sure unflattened state matches what we'd get from `optim.state_dict()`.
     assert_optim_state_close(optim.state_dict(), unflattened_optim_state)  # type: ignore
@@ -293,4 +321,36 @@ def test_flatten_optimizer_state_with_sharded_flat_params(backend, tiny_model_fa
         backend=backend,
         start_method="spawn",
         func_args=(tiny_model_factory, tiny_model_data_factory),
+    )
+
+
+def run_save_and_load_fsdp_model(dir, model_factory, model_data_factory):
+    fsdp_model = FSDP(model_factory())
+    optim = torch.optim.AdamW(fsdp_model.parameters())
+
+    # Take a train step to initialize optimizer state.
+    fsdp_model(model_data_factory().to(fsdp_model.device)).sum().backward()
+    optim.step()
+
+    # Save checkpoint.
+    save_model_and_optim_state(dir, fsdp_model, optim)
+
+    # Now create a new fsdp model and load that state.
+    fsdp_model2 = FSDP(model_factory())
+    optim2 = torch.optim.AdamW(fsdp_model2.parameters())
+    init_optimizer_state(optim2)
+    load_model_and_optim_state(dir, fsdp_model2, optim2)
+
+    # Check model parameters.
+    with fsdp_model.summon_full_params(recurse=True), fsdp_model2.summon_full_params(recurse=True):
+        torch.testing.assert_close(fsdp_model.state_dict(), fsdp_model2.state_dict())
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_save_and_load_fsdp_model(backend, tmp_path, tiny_model_factory, tiny_model_data_factory):
+    run_distributed_test(
+        run_save_and_load_fsdp_model,
+        backend=backend,
+        start_method="spawn",
+        func_args=(tmp_path, tiny_model_factory, tiny_model_data_factory),
     )

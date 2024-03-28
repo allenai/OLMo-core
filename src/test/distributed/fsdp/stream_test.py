@@ -1,11 +1,11 @@
-import pytest
 import torch
 
 from olmo_core.distributed.fsdp.stream import CudaStream, Stream
 
+from ..utils import requires_gpu
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires a GPU")
-@pytest.mark.gpu
+
+@requires_gpu
 def test_cuda_stream():
     device = torch.device("cuda")
 
@@ -27,4 +27,4 @@ def test_cuda_stream():
         y = torch.sum(x)
 
     default_stream.wait_stream(other_stream)
-    del x
+    del x, y

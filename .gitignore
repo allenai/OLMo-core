@@ -6,7 +6,8 @@
 build/
 dist/
 pip-wheel-metadata/
-
+private/
+tmp/
 
 # dev tools
 
