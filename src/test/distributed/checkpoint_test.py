@@ -325,15 +325,23 @@ def test_flatten_optimizer_state_with_sharded_flat_params(backend, tiny_model_fa
     )
 
 
-def run_save_and_load_with_pytorch_fsdp(model_factory, data_factory):
-    pass
+def run_save_and_load_with_pytorch_fsdp(model_factory, data_factory, dir):
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+    from torch.distributed.fsdp import ShardedStateDictConfig, StateDictType
+
+    fsdp = FSDP(model_factory())
+
+    with FSDP.state_dict_type(fsdp, StateDictType.SHARDED_STATE_DICT, ShardedStateDictConfig(offload_to_cpu=True)):
+        state_dict = fsdp.state_dict()
+        print(state_dict)
+        assert False
 
 
 @requires_multi_gpu
-def test_save_and_load_with_pytorch_fsdp(tiny_model_factory, tiny_model_data_factory):
+def test_save_and_load_with_pytorch_fsdp(tiny_model_factory, tiny_model_data_factory, tmp_path):
     run_distributed_test(
         flatten_optimizer_state_with_sharded_flat_params,
         backend="nccl",
         start_method="spawn",
-        func_args=(tiny_model_factory, tiny_model_data_factory),
+        func_args=(tiny_model_factory, tiny_model_data_factory, tmp_path),
     )
