@@ -391,7 +391,7 @@ def run_save_and_load_with_pytorch_fsdp(dir):
 
     # Now compare full state dicts.
     with FSDP.state_dict_type(
-        fsdp2,
+        fsdp1,
         StateDictType.FULL_STATE_DICT,
         FullStateDictConfig(offload_to_cpu=True),
         FullOptimStateDictConfig(offload_to_cpu=True),
@@ -400,12 +400,20 @@ def run_save_and_load_with_pytorch_fsdp(dir):
             "model": fsdp1.state_dict(),
             "optim": FSDP.optim_state_dict(fsdp1, optim1),
         }
+
+    with FSDP.state_dict_type(
+        fsdp2,
+        StateDictType.FULL_STATE_DICT,
+        FullStateDictConfig(offload_to_cpu=True),
+        FullOptimStateDictConfig(offload_to_cpu=True),
+    ):
         state_dict2 = {
             "model": fsdp2.state_dict(),
             "optim": FSDP.optim_state_dict(fsdp2, optim2),
         }
-        torch.testing.assert_close(state_dict1["model"], state_dict2["model"])
-        torch.testing.assert_close(state_dict1["optim"]["state"], state_dict2["optim"]["state"])
+
+    torch.testing.assert_close(state_dict1["model"], state_dict2["model"])
+    torch.testing.assert_close(state_dict1["optim"]["state"], state_dict2["optim"]["state"])
 
 
 @requires_multi_gpu
