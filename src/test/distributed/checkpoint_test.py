@@ -1,6 +1,7 @@
 import pytest
 import torch
 import torch.distributed as dist
+import torch.nn as nn
 from cached_path import cached_path
 
 from olmo_core.distributed.checkpoint import (
@@ -325,23 +326,44 @@ def test_flatten_optimizer_state_with_sharded_flat_params(backend, tiny_model_fa
     )
 
 
-def run_save_and_load_with_pytorch_fsdp(model_factory, data_factory, dir):
+def run_save_and_load_with_pytorch_fsdp(dir):
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
     from torch.distributed.fsdp import ShardedStateDictConfig, StateDictType
 
-    fsdp = FSDP(model_factory())
+    class TinyModel(nn.Module):
+        def __init__(self, dim: int = 8):
+            super().__init__()
+            self.fc = nn.Sequential(
+                nn.Linear(dim, dim * 2), nn.ReLU(), nn.Linear(dim * 2, dim), nn.ReLU(), nn.Linear(dim, dim)
+            )
+
+        def forward(self, x):
+            return self.fc(x)
+
+    class NestedModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.inner = FSDP(TinyModel().cuda())
+            self.out = nn.Linear(8, 8)
+            self.register_buffer("buf", torch.tensor([1.0, 2.0]), persistent=True)
+
+        def forward(self, x):
+            x = self.inner(x)
+            return self.out(x)
+
+    fsdp = FSDP(NestedModel().cuda())
+    checkpointer = Checkpointer()
 
     with FSDP.state_dict_type(fsdp, StateDictType.SHARDED_STATE_DICT, ShardedStateDictConfig(offload_to_cpu=True)):
         state_dict = fsdp.state_dict()
-        print(state_dict)
-        assert False
+        checkpointer.save(dir, state_dict)
 
 
 @requires_multi_gpu
-def test_save_and_load_with_pytorch_fsdp(tiny_model_factory, tiny_model_data_factory, tmp_path):
+def test_save_and_load_with_pytorch_fsdp(tmp_path):
     run_distributed_test(
         run_save_and_load_with_pytorch_fsdp,
         backend="nccl",
         start_method="spawn",
-        func_args=(tiny_model_factory, tiny_model_data_factory, tmp_path),
+        func_args=(tmp_path,),
     )

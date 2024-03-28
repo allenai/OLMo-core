@@ -5,7 +5,7 @@ import sys
 import tempfile
 from functools import cached_property, reduce
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, TypedDict
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, TypedDict
 
 import safetensors as sft
 import safetensors.torch as sft_torch
@@ -13,6 +13,9 @@ import torch
 import torch.nn as nn
 from cached_path import cached_path
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from torch.distributed.fsdp import FullyShardedDataParallel as TorchFSDP
 
 from olmo_core.exceptions import OLMoUserError
 from olmo_core.io import (
@@ -290,24 +293,16 @@ class Checkpointer:
             tensor_storage_metadata = metadata.tensors[key]
             tensor = state_dict[key]
 
-            flat_tensor: torch.Tensor
-            offsets: Tuple[int, int]
-            if isinstance(tensor, ShardedFlatParameter):
-                if tensor.unsharded_shape != tensor_storage_metadata.shape:
-                    raise ValueError(
-                        f"Shape mismatched for '{key}', expected {tuple(tensor.unsharded_shape)}, found {tensor_storage_metadata.shape}"
-                    )
+            flat_tensor, full_shape, offsets_per_rank = self._get_flat_view_and_full_shape_and_flattened_offsets(
+                tensor
+            )
+            # Rank 0 will always be present, other ranks will not be for regular unsharded tensors.
+            offsets = offsets_per_rank.get(get_rank(), offsets_per_rank[0])
 
-                offsets = tensor.unsharded_flattened_offsets
-                flat_tensor = tensor.detach()
-            else:
-                if tensor.shape != tensor_storage_metadata.shape:
-                    raise ValueError(
-                        f"Shape mismatched for '{key}', expected {tuple(tensor.shape)}, found {tensor_storage_metadata.shape}"
-                    )
-
-                offsets = (0, tensor.numel())
-                flat_tensor = tensor.detach().cpu().flatten()
+            if full_shape != tensor_storage_metadata.shape:
+                raise ValueError(
+                    f"Shape mismatched for '{key}', expected {full_shape}, found {tensor_storage_metadata.shape}"
+                )
 
             for filename, offsets_in_file in tensor_storage_metadata.flattened_offsets_per_file.items():
                 # Check for overlap in offsets, and if there is overlap, load the slice from disk.
@@ -430,6 +425,61 @@ class Checkpointer:
     def _filename_for_rank(self, rank: int) -> str:
         return f"rank_{rank}.safetensors"
 
+    def _get_flat_view_and_full_shape_and_flattened_offsets(
+        self, tensor: torch.Tensor
+    ) -> Tuple[torch.Tensor, Tuple[int, ...], Dict[int, Tuple[int, int]]]:
+        from torch.distributed._shard.sharded_tensor import (
+            ShardedTensor as TorchShardedTensor,
+        )
+
+        flat_view: torch.Tensor
+        full_shape: Tuple[int, ...]
+        flattened_offsets_per_rank: Dict[int, Tuple[int, int]] = {}
+        if isinstance(tensor, ShardedFlatParameter):
+            flat_view = tensor.data.detach()
+            full_shape = tensor.unsharded_shape
+            for rank, offset in enumerate(tensor.sharding_spec.unsharded_flattened_offsets):
+                flattened_offsets_per_rank[rank] = offset
+        elif isinstance(tensor, TorchShardedTensor):
+            metadata = tensor.metadata()
+            # For example, the metadata for a (16, 8) tensor could look like this:
+            #  ShardedTensorMetadata(
+            #      shards_metadata=[
+            #          ShardMetadata(shard_offsets=[0, 0], shard_sizes=[8, 8], placement="rank:0/cpu"),
+            #          ShardMetadata(shard_offsets=[8, 0], shard_sizes=[8, 8], placement="rank:1/cpu"),
+            #      ],
+            #      size=torch.Size([16, 8]),
+            #      tensor_properties=TensorProperties(
+            #          dtype=torch.float32,
+            #          layout=torch.strided,
+            #          requires_grad=False,
+            #          memory_format=torch.contiguous_format,
+            #          pin_memory=False,
+            #      ),
+            #  )
+            flat_view = tensor.local_tensor().view(-1)
+            full_shape = tuple(metadata.size)
+            numel_per_flat_row = reduce(lambda a, b: a * b, full_shape[1:], 1)
+            for shard_metadata in metadata.shards_metadata:
+                assert shard_metadata.placement is not None
+                rank = shard_metadata.placement.rank()
+                assert rank is not None
+                # We make the simplifying assumption that the tensor is sharded in the 1st dimension only (dim=0).
+                for dim_start in shard_metadata.shard_offsets[1:]:
+                    if dim_start != 0:
+                        raise NotImplementedError(
+                            f"this is only implemented for tensors sharded in the 1st dimension"
+                        )
+                # This logic is only valid under the above assumption.
+                offset_start = shard_metadata.shard_offsets[0] * numel_per_flat_row
+                offset_end = offset_start + shard_metadata.shard_sizes[0] * numel_per_flat_row
+                flattened_offsets_per_rank[rank] = (offset_start, offset_end)
+        else:
+            flat_view = tensor.view(-1)
+            flattened_offsets_per_rank = {0: (0, tensor.numel())}
+            full_shape = tuple(tensor.shape)
+        return flat_view, full_shape, flattened_offsets_per_rank
+
     def _get_global_save_plan_and_metadata(
         self, state_dict: Dict[str, torch.Tensor]
     ) -> Tuple[SavePlan, StorageMetadata]:
@@ -437,18 +487,9 @@ class Checkpointer:
         tensors_metadata = {}
         for key in state_dict.keys():
             tensor = state_dict[key]
-
-            flattened_offsets_per_rank = {}
-            full_shape: Tuple[int, ...]
-
-            if isinstance(tensor, ShardedFlatParameter):
-                for rank, offset in enumerate(tensor.sharding_spec.unsharded_flattened_offsets):
-                    flattened_offsets_per_rank[rank] = offset
-                full_shape = tensor.unsharded_shape
-            else:
-                flattened_offsets_per_rank = {0: (0, tensor.numel())}
-                full_shape = tuple(tensor.shape)
-
+            _, full_shape, flattened_offsets_per_rank = self._get_flat_view_and_full_shape_and_flattened_offsets(
+                tensor
+            )
             tensors_save_plan[key] = TensorSavePlan(flattened_offsets_per_rank=flattened_offsets_per_rank)
             tensors_metadata[key] = TensorStorageMetadata(
                 flattened_offsets_per_file={
