@@ -41,7 +41,8 @@ def save_and_load_checkpoint_with_regular_and_sharded_tensors(dir):
     checkpointer.save(dir, state_dict_to_save)
     checkpointer.load(dir, state_dict_to_load)
 
-    torch.testing.assert_close(state_dict_to_save, state_dict_to_load)
+    torch.testing.assert_close(state_dict_to_save["x"], state_dict_to_load["x"])
+    torch.testing.assert_close(state_dict_to_save["y"], state_dict_to_load["y"])
 
     # Test loading unsharded checkpoint.
     full_state_dict = checkpointer.unshard(dir)

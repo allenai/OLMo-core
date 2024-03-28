@@ -5,17 +5,14 @@ import sys
 import tempfile
 from functools import cached_property, reduce
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, TypedDict
+from typing import Any, Dict, List, Optional, Set, Tuple, TypedDict
 
 import safetensors as sft
 import safetensors.torch as sft_torch
 import torch
 import torch.nn as nn
 from cached_path import cached_path
-from pydantic import BaseModel
-
-if TYPE_CHECKING:
-    from torch.distributed.fsdp import FullyShardedDataParallel as TorchFSDP
+from pydantic import BaseModel, ConfigDict
 
 from olmo_core.exceptions import OLMoUserError
 from olmo_core.io import (
@@ -232,15 +229,15 @@ class Checkpointer:
 
             barrier()
 
-            global_save_plan, metadata = self._get_global_save_plan_and_metadata(state_dict)
+            flat_views, global_save_plan, metadata = self._get_global_save_plan_and_metadata(state_dict)
 
             # Construct local flat tensors state dict to save.
             local_state_dict: Dict[str, torch.Tensor] = {}
             for key in state_dict.keys():
                 tensor_save_plan = global_save_plan.tensors[key]
+                local_flat_tensor = flat_views[key]
 
                 if (local_offsets := tensor_save_plan.flattened_offsets_per_rank.get(local_rank)) is not None:
-                    local_flat_tensor = state_dict[key].data.detach().flatten()
                     assert local_offsets[1] - local_offsets[0] == local_flat_tensor.numel()
                     local_state_dict[key] = local_flat_tensor
 
@@ -298,7 +295,6 @@ class Checkpointer:
             )
             # Rank 0 will always be present, other ranks will not be for regular unsharded tensors.
             offsets = offsets_per_rank.get(get_rank(), offsets_per_rank[0])
-
             if full_shape != tensor_storage_metadata.shape:
                 raise ValueError(
                     f"Shape mismatched for '{key}', expected {full_shape}, found {tensor_storage_metadata.shape}"
@@ -436,7 +432,7 @@ class Checkpointer:
         full_shape: Tuple[int, ...]
         flattened_offsets_per_rank: Dict[int, Tuple[int, int]] = {}
         if isinstance(tensor, ShardedFlatParameter):
-            flat_view = tensor.data.detach()
+            flat_view = tensor.data
             full_shape = tensor.unsharded_shape
             for rank, offset in enumerate(tensor.sharding_spec.unsharded_flattened_offsets):
                 flattened_offsets_per_rank[rank] = offset
@@ -482,14 +478,17 @@ class Checkpointer:
 
     def _get_global_save_plan_and_metadata(
         self, state_dict: Dict[str, torch.Tensor]
-    ) -> Tuple[SavePlan, StorageMetadata]:
+    ) -> Tuple[Dict[str, torch.Tensor], SavePlan, StorageMetadata]:
+        tensors_flat_view = {}
         tensors_save_plan = {}
         tensors_metadata = {}
-        for key in state_dict.keys():
-            tensor = state_dict[key]
-            _, full_shape, flattened_offsets_per_rank = self._get_flat_view_and_full_shape_and_flattened_offsets(
-                tensor
-            )
+        for key, tensor in state_dict.items():
+            (
+                flat_view,
+                full_shape,
+                flattened_offsets_per_rank,
+            ) = self._get_flat_view_and_full_shape_and_flattened_offsets(tensor)
+            tensors_flat_view[key] = flat_view
             tensors_save_plan[key] = TensorSavePlan(flattened_offsets_per_rank=flattened_offsets_per_rank)
             tensors_metadata[key] = TensorStorageMetadata(
                 flattened_offsets_per_file={
@@ -501,7 +500,7 @@ class Checkpointer:
 
         tensors_save_plan = scatter_object(tensors_save_plan)
         tensors_metadata = scatter_object(tensors_metadata)
-        return SavePlan(tensors=tensors_save_plan), StorageMetadata(tensors=tensors_metadata)
+        return tensors_flat_view, SavePlan(tensors=tensors_save_plan), StorageMetadata(tensors=tensors_metadata)
 
     def _normalize_dir(self, dir: PathOrStr) -> str:
         dir = str(dir).strip("/")
