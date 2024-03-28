@@ -2,10 +2,11 @@ import dataclasses
 import os
 import time
 from enum import Enum
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 import numpy as np
 import torch
+import torch.nn as nn
 from pydantic import BaseModel
 
 from .exceptions import OLMoEnvironmentError
@@ -136,3 +137,29 @@ def seed_all(seed: int):
     # torch.manual_seed may call manual_seed_all but calling it again here
     # to make sure it gets called at least once
     torch.cuda.manual_seed_all(seed)
+
+
+def get_grad_norm(params: Iterable[nn.Parameter], norm_type: float) -> torch.Tensor:
+    """
+    Return the gradient norm of parameters ``param`` s, where the gradients are viewed as a single vector.
+
+    The returned norm is in FP32 even if parameters/gradients are in a low precision. This is because the downstream
+    use of this return value is a reduction across ranks.
+    """
+    grads = [param.grad for param in params if param.grad is not None]
+    if not grads:
+        return torch.tensor(0.0)
+
+    grad_dtypes = {grad.dtype for grad in grads}
+    if len(grad_dtypes) != 1:
+        raise ValueError(f"Requires uniform dtype across all gradients but got {grad_dtypes}")
+    # Compute the gradient norm in FP32, where we treat the gradients as a
+    # single vector
+    grad_norm = torch.linalg.vector_norm(
+        torch.stack(
+            [torch.linalg.vector_norm(grad.detach(), norm_type, dtype=torch.float32) for grad in grads],
+        ),
+        norm_type,
+        dtype=torch.float32,
+    )
+    return grad_norm

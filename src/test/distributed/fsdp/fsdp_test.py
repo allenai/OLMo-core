@@ -231,6 +231,7 @@ def run_nested_fsdp_api(model_factory, model_data_factory):
             super().__init__()
             self.inner = FSDP(model_factory())
             self.out = nn.Linear(8, 8)
+            self.register_buffer("buf", torch.tensor([1.0, 2.0]), persistent=True)
 
         def forward(self, x):
             x = self.inner(x)
@@ -262,6 +263,9 @@ def run_nested_fsdp_api(model_factory, model_data_factory):
         "inner.fc.4.bias",
     }, param_names
 
+    buf_names = set(n for n, _ in fsdp.named_buffers())
+    assert buf_names == {"buf"}
+
     inner_weight = fsdp.module.inner.module.fc[0].weight
     assert isinstance(inner_weight, ShardedFlatParameter)
     outer_weight = fsdp.module.out.weight
@@ -286,6 +290,7 @@ def run_nested_fsdp_api(model_factory, model_data_factory):
             "inner.fc.2.bias",
             "inner.fc.4.weight",
             "inner.fc.4.bias",
+            "buf",
         }
         fsdp.load_state_dict(state_dict)
 
@@ -307,6 +312,7 @@ def run_nested_fsdp_api(model_factory, model_data_factory):
             "inner.fc.2.bias",
             "inner.fc.4.weight",
             "inner.fc.4.bias",
+            "buf",
         }
         fsdp.load_state_dict(state_dict)
 

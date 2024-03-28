@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -12,8 +13,10 @@ from typing import (
     Dict,
     Generator,
     Generic,
+    List,
     Optional,
     Sequence,
+    Set,
     Tuple,
     Type,
     TypeVar,
@@ -25,7 +28,7 @@ import torch.distributed as dist
 import torch.nn as nn
 
 from olmo_core.distributed.sharded_flat_parameter import ShardedFlatParameter
-from olmo_core.utils import apply_to_tensors, get_default_device
+from olmo_core.utils import apply_to_tensors, get_default_device, get_grad_norm
 
 from .state import FSDPState
 from .stream import Stream
@@ -64,7 +67,15 @@ ModuleWrapSpec = Sequence[Union[str, nn.Module, Type[nn.Module]]]
 
 class FSDP(Generic[M], nn.Module):
     """
-    This is a complete rewrite of PyTorch's ``FullyShardedDataParallel``, a ZeRO-3 model wrapper.
+    This is a complete rewrite of PyTorch's ``FullyShardedDataParallel``, a ZeRO-3 model wrapper,
+    with a number of improvements such as:
+
+    * Well-defined "hands off" handling of buffers. FSDP never shards buffers, they are left as-is.
+    * Well-defined handling of frozen params. You can mix and match within an FSDP instance as long
+      as the frozen/non-frozen params are consistent across the process group.
+    * A much better checkpointing mechanism (:mod:`olmo_core.distributed.checkpoint`) which has virtually
+      no memory overhead, works seamlessly when restarting with a different distributed topology,
+      and works for both local and remote files.
 
     :param module: The module to wrap.
     :param process_group: The distributed process group.
@@ -99,6 +110,10 @@ class FSDP(Generic[M], nn.Module):
         # Mark all children as not root.
         for fsdp_child in self._fsdp_children(recurse=True):
             fsdp_child.is_root = False
+
+    ################
+    ## Public API ##
+    ################
 
     @classmethod
     def auto_wrap(cls, module: M, children_to_wrap: ModuleWrapSpec, **fsdp_kwargs) -> FSDP[M]:
@@ -265,6 +280,57 @@ class FSDP(Generic[M], nn.Module):
 
         return ret
 
+    @torch.no_grad()
+    def clip_grad_norm_(self, max_norm: float, norm_type: float = 2.0) -> torch.Tensor:
+        """
+        Clip the gradient norm of all parameters.
+
+        The norm is computed over all parameters’ gradients as viewed as a single vector, and the
+        gradients are modified in-place.
+        """
+        if not self.is_root:
+            raise RuntimeError("`clip_grad_norm_()` should only be called on the root FSDP instance")
+
+        sharded_params: Set[ShardedFlatParameter] = set()
+        nonsharded_params: Set[nn.Parameter] = set()
+        grads: List[torch.Tensor] = []
+        for param in self.parameters():
+            if param.grad is None:
+                continue
+
+            if isinstance(param, ShardedFlatParameter):
+                sharded_params.add(param)
+            else:
+                nonsharded_params.add(param)
+            grads.append(param.grad)
+
+        if not grads:
+            raise RuntimeError("`clip_grad_norm_()` was called but there are no gradients to clip!")
+
+        local_sharded_norm = get_grad_norm(sharded_params, norm_type).to(self.device)
+        global_nonsharded_norm = get_grad_norm(nonsharded_params, norm_type).to(self.device)
+
+        # Reconstruct total gradient norm.
+        total_norm: torch.Tensor
+        if norm_type == math.inf:
+            total_norm = torch.maximum(local_sharded_norm, global_nonsharded_norm)
+            dist.all_reduce(total_norm, op=dist.ReduceOp.MAX, group=self.process_group)
+        else:
+            total_norm = local_sharded_norm**norm_type
+            dist.all_reduce(total_norm, group=self.process_group)
+            total_norm += global_nonsharded_norm**norm_type
+            total_norm = total_norm ** (1.0 / norm_type)
+
+        clip_coef = max_norm / (total_norm + 1e-6)
+        clip_coef_clamped = torch.clamp(clip_coef, max=1.0)
+        # Multiplying by the clamped coefficient is meaningless when it is
+        # equal to 1, but it avoids the host-device sync that would result from
+        # `if clip_coef < 1`
+        for grad in grads:
+            grad.detach().mul_(clip_coef_clamped.to(grad.device, grad.dtype))
+
+        return total_norm
+
     def __getattr__(self, name: str) -> Any:
         """
         Forward missing attributes to the wrapped module.
@@ -281,6 +347,10 @@ class FSDP(Generic[M], nn.Module):
         if hasattr(self, FSDP.WRAPPED_MODULE_PREFIX):
             return self._fsdp_wrapped_module.__getitem__(key)  # type: ignore[operator]
         return super().__getitem__(key)  # type: ignore
+
+    ##################
+    ## Internal API ##
+    ##################
 
     def _lazy_init(self):
         """
