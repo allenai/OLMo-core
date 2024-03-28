@@ -585,6 +585,8 @@ def flatten_optimizer_state(
     param_id_to_name: Dict[int, str] = {}
     for param_group, param_group_state in zip(optim.param_groups, optim_state["param_groups"]):
         for param, param_id in zip(param_group["params"], param_group_state["params"]):
+            if isinstance(param_id, str):  # PyTorch FSDP does this.
+                param_id = len(param_id_to_name)
             param_id_to_name[param_id] = param_to_name[param]
     del param_to_name
 
@@ -595,8 +597,7 @@ def flatten_optimizer_state(
     for i, param_group in enumerate(optim_state["param_groups"]):
         # make copy.
         param_group = {k: v for k, v in param_group.items()}
-        if "param_names" not in param_group:
-            param_group["param_names"] = [param_id_to_name[param_id] for param_id in param_group["params"]]
+        param_group["param_names"] = [param_id_to_name[param_id] for param_id in param_group["params"]]
         flat_optim_state[f"param_group{i}"] = serialize_to_tensor(param_group)
 
     # Flatten state tensors and wrap any tensor with the right sharded class if the corresponding
