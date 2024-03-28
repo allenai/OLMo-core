@@ -377,7 +377,7 @@ class Checkpointer:
 
                         del flat_tensor_to_load
 
-            state_dict[key].copy_(flat_tensor.view(tensor.shape))
+            state_dict[key] = self._copy_into(tensor, flat_tensor)
             del flat_tensor
 
     @torch.no_grad()
@@ -421,6 +421,17 @@ class Checkpointer:
 
     def _filename_for_rank(self, rank: int) -> str:
         return f"rank_{rank}.safetensors"
+
+    def _copy_into(self, target: torch.Tensor, source: torch.Tensor):
+        from torch.distributed._shard.sharded_tensor import (
+            ShardedTensor as TorchShardedTensor,
+        )
+
+        if isinstance(target, TorchShardedTensor):
+            target.local_tensor().copy_(source.view(target.local_tensor().shape))
+        else:
+            target.copy_(source.view(target.shape))
+        return target
 
     def _get_flat_view_and_full_shape_and_flattened_offsets(
         self, tensor: torch.Tensor
