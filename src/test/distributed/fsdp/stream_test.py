@@ -1,11 +1,11 @@
-import pytest
 import torch
 
 from olmo_core.distributed.fsdp.stream import CudaStream, Stream
 
+from ..utils import requires_gpu
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires a GPU")
-@pytest.mark.gpu
+
+@requires_gpu
 def test_cuda_stream():
     device = torch.device("cuda")
 

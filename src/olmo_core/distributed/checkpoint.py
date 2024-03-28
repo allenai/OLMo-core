@@ -168,11 +168,10 @@ class SafeTensorsMultiFileLoader:
 
 class Checkpointer:
     """
-    A checkpointer for saving and loading *flat* state dictionaries, where keys are strings values
+    A checkpointer for saving and loading *non-nestaed* state dictionaries, i.e. where keys are strings and values
     are either regular :class:`torch.Tensor`s, :class:`torch.nn.Parameter`s, or :class:`ShardedFlatParameter`s.
-    Nested dictionaries are not supported.
 
-    For saving and loading model and optimizer state together, use :func:`save_model_and_optim_state()`
+    For saving and loading model and optimizer states together, use :func:`save_model_and_optim_state()`
     and :func:`load_model_and_optim_state()` instead.
     """
 

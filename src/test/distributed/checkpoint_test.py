@@ -15,7 +15,13 @@ from olmo_core.distributed.sharded_flat_parameter import (
     ShardingSpec,
 )
 
-from .utils import BACKENDS, DEVICES, get_default_device, run_distributed_test
+from .utils import (
+    BACKENDS,
+    DEVICES,
+    get_default_device,
+    requires_multi_gpu,
+    run_distributed_test,
+)
 
 
 def save_and_load_checkpoint_with_regular_and_sharded_tensors(dir):
@@ -314,6 +320,20 @@ def test_flatten_optimizer_state_with_sharded_flat_params(backend, tiny_model_fa
     run_distributed_test(
         flatten_optimizer_state_with_sharded_flat_params,
         backend=backend,
+        start_method="spawn",
+        func_args=(tiny_model_factory, tiny_model_data_factory),
+    )
+
+
+def run_save_and_load_with_pytorch_fsdp(model_factory, data_factory):
+    pass
+
+
+@requires_multi_gpu
+def test_save_and_load_with_pytorch_fsdp(tiny_model_factory, tiny_model_data_factory):
+    run_distributed_test(
+        flatten_optimizer_state_with_sharded_flat_params,
+        backend="nccl",
         start_method="spawn",
         func_args=(tiny_model_factory, tiny_model_data_factory),
     )

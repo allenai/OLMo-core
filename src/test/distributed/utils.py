@@ -14,12 +14,29 @@ from olmo_core.distributed.utils import is_distributed
 has_cuda = torch.cuda.is_available()
 has_multiple_gpus = has_cuda and torch.cuda.device_count() > 1
 
+GPU_MARKS = (pytest.mark.gpu, pytest.mark.skipif(not has_cuda, reason="Requires a GPU"))
+
+MULTI_GPU_MARKS = (pytest.mark.gpu, pytest.mark.skipif(not has_multiple_gpus, reason="Requires multiple GPUs"))
+
+
+def requires_gpu(func):
+    for mark in GPU_MARKS:
+        func = mark(func)
+    return func
+
+
+def requires_multi_gpu(func):
+    for mark in MULTI_GPU_MARKS:
+        func = mark(func)
+    return func
+
+
 BACKENDS = [
     pytest.param("gloo", id="backend=GLOO"),
     pytest.param(
         "nccl",
         id="backend=NCCL",
-        marks=(pytest.mark.gpu, pytest.mark.skipif(not has_multiple_gpus, reason="Requires multiple GPUs")),
+        marks=MULTI_GPU_MARKS,
     ),
 ]
 
@@ -28,7 +45,7 @@ DEVICES = [
     pytest.param(
         torch.device("cuda"),
         id="device=CUDA",
-        marks=(pytest.mark.gpu, pytest.mark.skipif(not has_cuda, reason="Requires a GPU")),
+        marks=GPU_MARKS,
     ),
 ]
 
@@ -38,7 +55,7 @@ INIT_DEVICES = [
     pytest.param(
         torch.device("cuda"),
         id="device=CUDA",
-        marks=(pytest.mark.gpu, pytest.mark.skipif(not has_cuda, reason="Requires a GPU")),
+        marks=GPU_MARKS,
     ),
 ]
 
@@ -47,7 +64,7 @@ LOW_PRECISION_DTYPES = [
     pytest.param(
         torch.bfloat16,
         id="dtype=bfloat16",
-        marks=(pytest.mark.gpu, pytest.mark.skipif(not has_cuda, reason="Requires a GPU")),
+        marks=GPU_MARKS,
     ),
 ]
 
@@ -68,17 +85,17 @@ FSDP_MIXED_PRECISION = [
     pytest.param(
         FSDPPrecision(param_dtype=torch.bfloat16, reduce_dtype=None),
         id="param_dtype=BF16",
-        marks=(pytest.mark.gpu, pytest.mark.skipif(not has_multiple_gpus, reason="Requires multiple GPUs")),
+        marks=MULTI_GPU_MARKS,
     ),
     pytest.param(
         FSDPPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.bfloat16),
         id="param_dtype=BF16,reduce_dtype=BF16",
-        marks=(pytest.mark.gpu, pytest.mark.skipif(not has_multiple_gpus, reason="Requires multiple GPUs")),
+        marks=MULTI_GPU_MARKS,
     ),
     pytest.param(
         FSDPPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32),
         id="param_dtype=BF16,reduce_dtype=FP32",
-        marks=(pytest.mark.gpu, pytest.mark.skipif(not has_multiple_gpus, reason="Requires multiple GPUs")),
+        marks=MULTI_GPU_MARKS,
     ),
 ]
 
