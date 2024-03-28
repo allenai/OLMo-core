@@ -3,6 +3,7 @@ import logging
 import struct
 import sys
 import tempfile
+from dataclasses import replace
 from functools import cached_property, reduce
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, TypedDict
@@ -12,7 +13,7 @@ import safetensors.torch as sft_torch
 import torch
 import torch.nn as nn
 from cached_path import cached_path
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
 from olmo_core.exceptions import OLMoUserError
 from olmo_core.io import (
@@ -538,6 +539,25 @@ class OptimStateDict(TypedDict):
     """
 
 
+def wrap_tensor_for_sharded_parameter(tensor: torch.Tensor, param: torch.Tensor) -> torch.Tensor:
+    from torch.distributed._shard.sharded_tensor import (
+        ShardedTensor as TorchShardedTensor,
+    )
+
+    if isinstance(param, ShardedFlatParameter):
+        return param.wrap(tensor, requires_grad=False)
+    elif isinstance(param, TorchShardedTensor):
+        shards = param.local_shards()
+        assert len(shards) == 1
+        new_shards = [replace(shards[0], tensor=tensor)]
+        return TorchShardedTensor._init_from_local_shards_and_global_metadata(
+            new_shards,
+            param.metadata(),
+        )
+    else:
+        return tensor
+
+
 def flatten_optimizer_state(
     model: nn.Module,
     optim: torch.optim.Optimizer,
@@ -567,16 +587,16 @@ def flatten_optimizer_state(
         param_group["param_names"] = [param_id_to_name[param_id] for param_id in param_group["params"]]
         flat_optim_state[f"param_group{i}"] = serialize_to_tensor(param_group)
 
-    # Flatten state tensors and wrap any tensor with `ShardedFlatParameter` if the corresponding
-    # parameter is a `ShardedFlatParameter`.
+    # Flatten state tensors and wrap any tensor with the right sharded class if the corresponding
+    # parameter is sharded.
     state_keys: Set[str] = set()
     for param_id, state in optim_state["state"].items():
         param_name = param_id_to_name[param_id]
         param = name_to_param[param_name]
         for key, tensor in state.items():
             state_keys.add(key)
-            if key != "step" and isinstance(param, ShardedFlatParameter):
-                tensor = param.wrap(tensor, requires_grad=False)
+            if key != "step":  # TODO: make this more robust
+                tensor = wrap_tensor_for_sharded_parameter(tensor, param)
             flat_optim_state[f"state.{key}.{param_name}"] = tensor
     flat_optim_state["state_keys"] = serialize_to_tensor(list(state_keys))
 
