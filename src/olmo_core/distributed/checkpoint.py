@@ -550,7 +550,7 @@ class OptimStateDict(TypedDict):
     """
 
 
-def wrap_tensor_for_sharded_parameter(tensor: torch.Tensor, param: torch.Tensor) -> torch.Tensor:
+def wrap_tensor_for_sharded_parameter(tensor: torch.Tensor, param: Optional[torch.Tensor]) -> torch.Tensor:
     from torch.distributed._shard.sharded_tensor import (
         ShardedTensor as TorchShardedTensor,
     )
@@ -614,7 +614,7 @@ def flatten_optimizer_state(
             param_name = param_id
         else:
             param_name = param_id_to_name[param_id]
-        param = name_to_param[param_name]
+        param = name_to_param.get(param_name)
         for key, tensor in state.items():
             state_keys.add(key)
             if key != "step":  # TODO: make this more robust
