@@ -647,7 +647,7 @@ def load_model_and_optim_state(
     # Load model state in-place.
     model_state = _patch_keys(model, model_state)
     checkpointer.load(f"{dir}/model", model_state)
-    model.load_state_dict(model_state)
+    _load_model_state_dict(model, model_state)
 
     # Load flattened optimizer state in place.
     flat_optim_state = _patch_keys(model, flat_optim_state)
@@ -772,15 +772,6 @@ def _get_model_state_dict_for_checkpoint(model: nn.Module) -> Dict[str, torch.Te
     return model_state
 
 
-def _patch_keys(model: nn.Module, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-    from torch.distributed.fsdp import FullyShardedDataParallel as TorchFSDP
-
-    if isinstance(model, TorchFSDP):
-        return {k.replace("_fsdp_wrapped_module.", ""): v for k, v in state_dict.items()}
-
-    return state_dict
-
-
 @torch.no_grad()
 def _get_torch_fsdp_state_dict_for_checkpoint(model: nn.Module) -> Dict[str, torch.Tensor]:
     from torch.distributed.fsdp import FullyShardedDataParallel as TorchFSDP
@@ -832,6 +823,31 @@ def _get_torch_fsdp_state_dict_for_checkpoint(model: nn.Module) -> Dict[str, tor
         state_dict[name] = param_to_flat_tensor.get(param, param.data.detach())
 
     # TODO: buffers
+
+    return state_dict
+
+
+@torch.no_grad()
+def _load_model_state_dict(model: nn.Module, state_dict: Dict[str, torch.Tensor]):
+    from torch.distributed.fsdp import FullyShardedDataParallel as TorchFSDP
+
+    if isinstance(model, TorchFSDP):
+        _load_torch_fsdp_model_state_dict(model, state_dict)
+    else:
+        model.load_state_dict(state_dict)
+
+
+@torch.no_grad()
+def _load_torch_fsdp_model_state_dict(model: nn.Module, state_dict: Dict[str, torch.Tensor]):
+    for name, param in model.named_parameters():
+        param.data.copy_(state_dict[name])
+
+
+def _patch_keys(model: nn.Module, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    from torch.distributed.fsdp import FullyShardedDataParallel as TorchFSDP
+
+    if isinstance(model, TorchFSDP):
+        return {k.replace("_fsdp_wrapped_module.", ""): v for k, v in state_dict.items()}
 
     return state_dict
 
