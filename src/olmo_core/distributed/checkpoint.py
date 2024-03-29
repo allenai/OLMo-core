@@ -28,7 +28,7 @@ from olmo_core.io import (
 )
 from olmo_core.utils import TORCH_DTYPE_TO_STR, TORCH_DTYPES, wait_for
 
-from .sharded_flat_parameter import ShardedFlatParameter
+from .sharded_flat_tensor import ShardedFlatTensor
 from .utils import barrier, get_rank, scatter_object
 
 log = logging.getLogger(__name__)
@@ -68,7 +68,7 @@ class TensorStorageMetadata(BaseModel):
     def materialize_from_sharded(
         self, tensor: torch.Tensor, device: Optional[torch.device] = None
     ) -> torch.Tensor:
-        if isinstance(tensor, ShardedFlatParameter):
+        if isinstance(tensor, ShardedFlatTensor):
             if tensor.unsharded_shape != self.shape:
                 raise ValueError(
                     f"unexpected shape for sharded tensor, expected {self.shape}, got {tensor.unsharded_shape}"
@@ -194,7 +194,8 @@ class SafeTensorsMultiFileLoader:
 class Checkpointer:
     """
     A checkpointer for saving and loading *non-nested* state dictionaries, i.e. where keys are strings and values
-    are either regular :class:`torch.Tensor`s, :class:`torch.nn.Parameter`s, or :class:`ShardedFlatParameter`s.
+    are either regular :class:`torch.Tensor`s, :class:`torch.nn.Parameter`s, or any sharded tensors from
+    the library.
 
     For saving and loading model and optimizer states together, use :func:`save_model_and_optim_state()`
     and :func:`load_model_and_optim_state()` instead.
@@ -205,7 +206,8 @@ class Checkpointer:
     @torch.no_grad()
     def save(self, dir: PathOrStr, state_dict: Dict[str, torch.Tensor], save_overwrite: bool = False):
         """
-        Save a state dict. The state dict can contain regular Tensors, Parameters, or :class:`ShardedFlatParameter`s.
+        Save a state dict. The state dict can contain regular Tensors, Parameters, or any sharded tensors
+        from this library.
 
         When calling this from a distributed context, all ranks must call this at the same time and the
         state dict must have the same keys and tensor types across each rank.
@@ -474,7 +476,7 @@ class Checkpointer:
         full_shape: Tuple[int, ...]
         flattened_offsets_per_rank: Dict[int, Tuple[int, int]] = {}
         is_sharded: bool = False
-        if isinstance(tensor, ShardedFlatParameter):
+        if isinstance(tensor, ShardedFlatTensor):
             full_shape = tensor.unsharded_shape
             is_sharded = True
             for rank, offset in enumerate(tensor.sharding_spec.unsharded_flattened_offsets):
@@ -570,9 +572,6 @@ def load_model_and_optim_state(
     Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
     This method is agnostic to the distributed topology in that it can load checkpoints saved with a different
     distributed topology.
-
-    Note: You need to make sure your optimizer state is initialized before calling this.
-    To do so, it suffices to call :func:`init_optimizer_state` before this.
     """
     dir = str(dir).rstrip("/")
 
@@ -599,7 +598,7 @@ def load_model_and_optim_state(
                     state_key = _decode_state_key_for_param(param_name, key)
                     state_keys.add(state_key)
                     tensor: torch.Tensor
-                    if tensor_metadata.is_sharded and isinstance(param, ShardedFlatParameter):
+                    if tensor_metadata.is_sharded and isinstance(param, ShardedFlatTensor):
                         tensor = tensor_metadata.materialize_from_sharded(param, device=param.device)
                         tensor = _wrap_tensor_for_sharded_parameter(tensor, param)
                     else:
@@ -737,7 +736,7 @@ def _get_local_tensor_data(tensor: torch.Tensor) -> torch.Tensor:
 
 
 def _wrap_tensor_for_sharded_parameter(tensor: torch.Tensor, param: Optional[torch.Tensor]) -> torch.Tensor:
-    if isinstance(param, ShardedFlatParameter):
+    if isinstance(param, ShardedFlatTensor):
         return param.wrap(tensor, requires_grad=False)
     else:
         return tensor
