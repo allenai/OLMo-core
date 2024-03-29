@@ -773,8 +773,11 @@ def _get_model_state_dict_for_checkpoint(model: nn.Module) -> Dict[str, torch.Te
 @torch.no_grad()
 def _get_torch_fsdp_state_dict_for_checkpoint(model: nn.Module) -> Dict[str, torch.Tensor]:
     from torch.distributed.fsdp import FullyShardedDataParallel as TorchFSDP
+    from torch.distributed.fsdp._runtime_utils import _lazy_init
 
     assert isinstance(model, TorchFSDP)
+    # Make sure FSDP initialization is complete, otherwise we can't access 'model._all_handles'.
+    _lazy_init(model, model)
 
     param_to_flat_tensor: Dict[nn.Parameter, ShardedFlatTensor] = {}
     for handle in model._all_handles:
