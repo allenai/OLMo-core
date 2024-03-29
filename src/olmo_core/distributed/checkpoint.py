@@ -325,7 +325,15 @@ class Checkpointer:
                 is_sharded,
             ) = self._get_flat_view_and_full_shape_and_flattened_offsets(tensor)
             # Rank 0 will always be present, other ranks will not be for regular unsharded tensors.
-            offsets = offsets_per_rank[0] if not is_sharded else offsets_per_rank[get_rank()]
+            offsets: Tuple[int, int]
+            if is_sharded:
+                offsets = offsets_per_rank[get_rank()]
+            else:
+                if get_rank() in offsets_per_rank:
+                    offsets = offsets_per_rank[get_rank()]
+                else:
+                    offsets = next(iter(offsets_per_rank.values()))
+
             if full_shape != tensor_storage_metadata.shape:
                 raise ValueError(
                     f"Shape mismatched for '{key}', expected {full_shape}, found {tensor_storage_metadata.shape}"
@@ -483,7 +491,7 @@ class Checkpointer:
             for rank, offset in enumerate(tensor.sharding_spec.unsharded_flattened_offsets):
                 flattened_offsets_per_rank[rank] = offset
         else:
-            flattened_offsets_per_rank = {0: (0, tensor.numel())}
+            flattened_offsets_per_rank = {get_rank(): (0, tensor.numel())}
             full_shape = tuple(tensor.shape)
         return _get_local_tensor_data(tensor).view(-1), full_shape, flattened_offsets_per_rank, is_sharded
 

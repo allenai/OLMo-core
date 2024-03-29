@@ -1,3 +1,5 @@
+from typing import Dict
+
 import pytest
 import torch
 import torch.distributed as dist
@@ -235,6 +237,37 @@ def save_and_load_remote_checkpoint(remote_dir):
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_save_and_load_remote_checkpoint(backend, s3_checkpoint_dir):
     run_distributed_test(save_and_load_remote_checkpoint, backend=backend, func_args=(s3_checkpoint_dir,))
+
+
+def run_save_and_load_with_different_data_across_ranks(dir):
+    checkpointer = Checkpointer()
+
+    state_dict_to_save: Dict[str, torch.Tensor] = {
+        "x": ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device()))
+    }
+    y_to_save = ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device()))
+    if dist.get_rank() == 1:
+        state_dict_to_save["y"] = y_to_save
+        state_dict_to_save["z"] = torch.rand(2, 3)
+
+    state_dict_to_load: Dict[str, torch.Tensor] = {
+        "x": ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device()))
+    }
+    y_to_load = ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device()))
+    if dist.get_rank() == 0:
+        state_dict_to_load["z"] = torch.rand(2, 3)
+    else:
+        state_dict_to_load["y"] = y_to_load
+
+    checkpointer.save(dir, state_dict_to_save)
+    checkpointer.load(dir, state_dict_to_load)
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_save_and_load_with_different_data_across_ranks(backend, tmp_path):
+    run_distributed_test(
+        run_save_and_load_with_different_data_across_ranks, backend=backend, func_args=(tmp_path,)
+    )
 
 
 def test_safe_tensors_loader():
