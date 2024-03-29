@@ -90,6 +90,11 @@ class TensorSavePlan(BaseModel):
     rank corresponds to. Some ranks may be omitted.
     """
 
+    is_sharded: bool
+    """
+    If the tensor is sharded.
+    """
+
 
 class SavePlan(BaseModel):
     tensors: Dict[str, TensorSavePlan]
@@ -509,7 +514,9 @@ class Checkpointer:
                 is_sharded,
             ) = self._get_flat_view_and_full_shape_and_flattened_offsets(tensor)
             tensors_flat_view[key] = flat_view
-            tensors_save_plan[key] = TensorSavePlan(flattened_offsets_per_rank=flattened_offsets_per_rank)
+            tensors_save_plan[key] = TensorSavePlan(
+                flattened_offsets_per_rank=flattened_offsets_per_rank, is_sharded=is_sharded
+            )
             tensors_metadata[key] = TensorStorageMetadata(
                 flattened_offsets_per_file={
                     self._filename_for_rank(rank): offsets for rank, offsets in flattened_offsets_per_rank.items()
@@ -528,11 +535,15 @@ class Checkpointer:
                 if key not in final_tensors_save_plan:
                     final_tensors_save_plan[key] = plan
                 elif plan != final_tensors_save_plan[key]:
-                    raise ValueError(
-                        f"Save plan for {key} does not match across all ranks!\n"
-                        f"1st plan: {final_tensors_save_plan[key]}\n"
-                        f"2nd plan: {plan}"
-                    )
+                    if not plan.is_sharded and not final_tensors_save_plan[key].is_sharded:
+                        # default to first rank with a save plan for this tensor
+                        pass
+                    else:
+                        raise ValueError(
+                            f"Save plan for '{key}' does not match across all ranks!\n"
+                            f"1st plan: {final_tensors_save_plan[key]}\n"
+                            f"2nd plan: {plan}"
+                        )
 
         # All-gather storage metadata across ranks, merge and validate.
         tensors_metadata_all_ranks = all_gather_object(tensors_metadata)
@@ -543,11 +554,15 @@ class Checkpointer:
                 if key not in final_tensors_metadata:
                     final_tensors_metadata[key] = metadata
                 elif metadata != final_tensors_metadata[key]:
-                    raise ValueError(
-                        f"Storage metadata for {key} does not match across all ranks!"
-                        f"1st metadata: {final_tensors_metadata[key]}\n"
-                        f"2nd metadata: {metadata}"
-                    )
+                    if not metadata.is_sharded and not final_tensors_metadata[key].is_sharded:
+                        # default to first rank with metadata for this tensor
+                        pass
+                    else:
+                        raise ValueError(
+                            f"Storage metadata for '{key}' does not match across all ranks!"
+                            f"1st metadata: {final_tensors_metadata[key]}\n"
+                            f"2nd metadata: {metadata}"
+                        )
 
         return (
             tensors_flat_view,
