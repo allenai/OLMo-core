@@ -600,13 +600,20 @@ def load_model_and_optim_state(
                 if key.startswith(state_key_prefix) and key not in flat_optim_state:
                     state_key = _decode_state_key_for_param(param_name, key)
                     state_keys.add(state_key)
+
+                    device = param.device
+                    if state_key == "step":  # TODO: make more robust
+                        device = torch.device("cpu")
+
                     tensor: torch.Tensor
                     if tensor_metadata.is_sharded and isinstance(param, ShardedFlatTensor):
-                        tensor = tensor_metadata.materialize_from_sharded(param, device=param.device)
+                        tensor = tensor_metadata.materialize_from_sharded(param, device=device)
                         tensor = _wrap_tensor_for_sharded_parameter(tensor, param)
                     else:
-                        tensor = tensor_metadata.materialize_empty(device=param.device)
+                        tensor = tensor_metadata.materialize_empty(device=device)
+
                     flat_optim_state[key] = tensor
+
         flat_optim_state["state_keys"] = serialize_to_tensor(sorted(state_keys))
 
     # Now load the flattened optimizer state in place.
