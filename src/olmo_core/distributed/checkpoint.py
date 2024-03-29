@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, TypedDict
 import safetensors as sft
 import safetensors.torch as sft_torch
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from cached_path import cached_path
 from pydantic import BaseModel
@@ -29,7 +30,7 @@ from olmo_core.io import (
 from olmo_core.utils import TORCH_DTYPE_TO_STR, TORCH_DTYPES, wait_for
 
 from .sharded_flat_tensor import ShardedFlatTensor, ShardingSpec
-from .utils import barrier, get_rank, scatter_object
+from .utils import barrier, get_rank, get_world_size, scatter_object
 
 log = logging.getLogger(__name__)
 
@@ -747,14 +748,24 @@ def _get_torch_fsdp_state_dict_for_checkpoint(model: nn.Module) -> Dict[str, tor
         if not handle.uses_sharded_strategy:
             continue
 
-        shard_metadata = handle.shard_metadata
+        shard_metadata = handle.shard_metadata()
         if handle._use_orig_params:
             flat_param = handle.flat_param
             assert flat_param._params is not None
             for i, param in enumerate(flat_param._params):
+                # Shape of the original parameter.
                 og_shape = shard_metadata.param_shapes[i]
-                offsets = shard_metadata.param_offsets[i]
-                shard_spec = ShardingSpec(unsharded_shape=tuple(og_shape), unsharded_flattened_offsets=offsets)
+
+                # Offsets into the flattened original parameter.
+                local_offsets = shard_metadata.param_offsets[i]
+                all_offsets: List[Tuple[int, int]] = [(0, 0)] * get_world_size(group=handle.process_group)
+                all_offsets[get_rank(group=handle.process_group)] = local_offsets
+                dist.all_gather_object(all_offsets, local_offsets, group=handle.process_group)
+
+                # Wrap the parameter's data in a `ShardedFlatTensor`.
+                shard_spec = ShardingSpec(
+                    unsharded_shape=tuple(og_shape), unsharded_flattened_offsets=tuple(all_offsets)
+                )
                 flat_tensor = ShardedFlatTensor(param.data.detach())
                 flat_tensor.mark_as_sharded(shard_spec)
                 param_to_flat_tensor[param] = flat_tensor

@@ -361,7 +361,7 @@ def run_save_and_load_fsdp_model(dir, model_factory, model_data_factory, pre_ini
 @pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize(
     "pre_init_optim_state_to_load",
-    (pytest.param(True, id="initialized-optim"), pytest.param(False, id="uninitialized-optim")),
+    (pytest.param(True, id="initialized_optim"), pytest.param(False, id="uninitialized_optim")),
 )
 def test_save_and_load_fsdp_model(
     backend, tmp_path, tiny_model_factory, tiny_model_data_factory, pre_init_optim_state_to_load
@@ -409,7 +409,7 @@ def run_save_and_load_torch_fsdp_model(
 @requires_multi_gpu
 @pytest.mark.parametrize(
     "pre_init_optim_state_to_load",
-    (pytest.param(True, id="initialized-optim"), pytest.param(False, id="uninitialized-optim")),
+    (pytest.param(True, id="initialized_optim"), pytest.param(False, id="uninitialized_optim")),
 )
 @pytest.mark.parametrize(
     "use_orig_params",
