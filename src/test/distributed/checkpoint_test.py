@@ -324,7 +324,7 @@ def test_flatten_optimizer_state_with_sharded_flat_params(backend, tiny_model_fa
     )
 
 
-def run_save_and_load_fsdp_model(dir, model_factory, model_data_factory):
+def run_save_and_load_fsdp_model(dir, model_factory, model_data_factory, pre_init_optim_state_to_load):
     fsdp_model = FSDP(model_factory())
     optim = torch.optim.AdamW(fsdp_model.parameters())
 
@@ -334,11 +334,13 @@ def run_save_and_load_fsdp_model(dir, model_factory, model_data_factory):
 
     # Save checkpoint.
     save_model_and_optim_state(dir, fsdp_model, optim)
+    dist.barrier()
 
     # Now create a new fsdp model and load that state.
     fsdp_model2 = FSDP(model_factory())
     optim2 = torch.optim.AdamW(fsdp_model2.parameters())
-    init_optimizer_state(optim2)
+    if pre_init_optim_state_to_load:
+        init_optimizer_state(optim2)
     load_model_and_optim_state(dir, fsdp_model2, optim2)
 
     # Check model parameters.
@@ -347,10 +349,13 @@ def run_save_and_load_fsdp_model(dir, model_factory, model_data_factory):
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_save_and_load_fsdp_model(backend, tmp_path, tiny_model_factory, tiny_model_data_factory):
+@pytest.mark.parametrize("pre_init_optim_state_to_load", (True, False))
+def test_save_and_load_fsdp_model(
+    backend, tmp_path, tiny_model_factory, tiny_model_data_factory, pre_init_optim_state_to_load
+):
     run_distributed_test(
         run_save_and_load_fsdp_model,
         backend=backend,
         start_method="spawn",
-        func_args=(tmp_path, tiny_model_factory, tiny_model_data_factory),
+        func_args=(tmp_path, tiny_model_factory, tiny_model_data_factory, pre_init_optim_state_to_load),
     )
