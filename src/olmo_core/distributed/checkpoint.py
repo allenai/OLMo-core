@@ -28,7 +28,7 @@ from olmo_core.io import (
 )
 from olmo_core.utils import TORCH_DTYPE_TO_STR, TORCH_DTYPES, wait_for
 
-from .sharded_flat_tensor import ShardedFlatTensor
+from .sharded_flat_tensor import ShardedFlatTensor, ShardingSpec
 from .utils import barrier, get_rank, scatter_object
 
 log = logging.getLogger(__name__)
@@ -540,6 +540,7 @@ class OptimStateDict(TypedDict):
     """
 
 
+@torch.no_grad()
 def save_model_and_optim_state(
     dir: PathOrStr,
     model: nn.Module,
@@ -563,6 +564,7 @@ def save_model_and_optim_state(
     checkpointer.save(f"{dir}/optim", flat_optim_state, save_overwrite=save_overwrite)
 
 
+@torch.no_grad()
 def load_model_and_optim_state(
     dir: PathOrStr,
     model: nn.Module,
@@ -614,6 +616,7 @@ def load_model_and_optim_state(
     optim.load_state_dict(optim_state)  # type: ignore
 
 
+@torch.no_grad()
 def init_optimizer_state(optim: torch.optim.Optimizer):
     """
     Ensure optimizer state is initialized.
@@ -718,17 +721,56 @@ def _decode_state_key_for_param(param_name: str, encoded_key: str) -> str:
     return encoded_key.replace(_state_key_prefix_for_param(param_name), "", 1)
 
 
+@torch.no_grad()
 def _get_model_state_dict_for_checkpoint(model: nn.Module) -> Dict[str, torch.Tensor]:
-    from .fsdp import FSDP
+    from torch.distributed.fsdp import FullyShardedDataParallel as TorchFSDP
+
+    if isinstance(model, TorchFSDP):
+        return _get_torch_fsdp_state_dict_for_checkpoint(model)
 
     model_state = model.state_dict()
-    if isinstance(model, FSDP):
-        key_to_param = {key: param for key, param in model.named_parameters()}
-        for key, tensor in model_state.items():
-            param = key_to_param.get(key)
-            model_state[key] = _wrap_tensor_for_sharded_parameter(tensor, param)
-
+    key_to_param = {key: param for key, param in model.named_parameters()}
+    for key, tensor in model_state.items():
+        param = key_to_param.get(key)
+        model_state[key] = _wrap_tensor_for_sharded_parameter(tensor, param)
     return model_state
+
+
+@torch.no_grad()
+def _get_torch_fsdp_state_dict_for_checkpoint(model: nn.Module) -> Dict[str, torch.Tensor]:
+    from torch.distributed.fsdp import FullyShardedDataParallel as TorchFSDP
+
+    assert isinstance(model, TorchFSDP)
+
+    param_to_flat_tensor: Dict[nn.Parameter, ShardedFlatTensor] = {}
+    for handle in model._all_handles:
+        if not handle.uses_sharded_strategy:
+            continue
+
+        shard_metadata = handle.shard_metadata
+        if handle._use_orig_params:
+            flat_param = handle.flat_param
+            assert flat_param._params is not None
+            for i, param in enumerate(flat_param._params):
+                og_shape = shard_metadata.param_shapes[i]
+                offsets = shard_metadata.param_offsets[i]
+                shard_spec = ShardingSpec(unsharded_shape=tuple(og_shape), unsharded_flattened_offsets=offsets)
+                flat_tensor = ShardedFlatTensor(param.data.detach())
+                flat_tensor.mark_as_sharded(shard_spec)
+                param_to_flat_tensor[param] = flat_tensor
+        else:
+            raise NotImplementedError(
+                "checkpointing is only implemented for PyTorch FSDP with `use_orig_params=True`"
+            )
+
+    # Build state dict manually since `FSDP.state_dict()` does some nonsense.
+    state_dict: Dict[str, torch.Tensor] = {}
+    for name, param in model.named_parameters():
+        state_dict[name] = param_to_flat_tensor.get(param, param.data.detach())
+
+    # TODO: buffers
+
+    return state_dict
 
 
 def _get_local_tensor_data(tensor: torch.Tensor) -> torch.Tensor:

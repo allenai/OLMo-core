@@ -19,7 +19,13 @@ from olmo_core.distributed.sharded_flat_parameter import (
     ShardingSpec,
 )
 
-from .utils import BACKENDS, DEVICES, get_default_device, run_distributed_test
+from .utils import (
+    BACKENDS,
+    DEVICES,
+    get_default_device,
+    requires_multi_gpu,
+    run_distributed_test,
+)
 
 
 def save_and_load_checkpoint_with_regular_and_sharded_tensors(dir):
@@ -347,9 +353,16 @@ def run_save_and_load_fsdp_model(dir, model_factory, model_data_factory, pre_ini
     with fsdp_model.summon_full_params(recurse=True), fsdp_model2.summon_full_params(recurse=True):
         torch.testing.assert_close(fsdp_model.state_dict(), fsdp_model2.state_dict())
 
+    # Check optimizer state.
+    for p1, p2 in zip(fsdp_model.parameters(), fsdp_model2.parameters()):
+        torch.testing.assert_close(optim.state[p1], optim2.state[p2])
+
 
 @pytest.mark.parametrize("backend", BACKENDS)
-@pytest.mark.parametrize("pre_init_optim_state_to_load", (True, False))
+@pytest.mark.parametrize(
+    "pre_init_optim_state_to_load",
+    (pytest.param(True, id="initialized-optim"), pytest.param(False, "uninitialized-optim")),
+)
 def test_save_and_load_fsdp_model(
     backend, tmp_path, tiny_model_factory, tiny_model_data_factory, pre_init_optim_state_to_load
 ):
@@ -358,4 +371,65 @@ def test_save_and_load_fsdp_model(
         backend=backend,
         start_method="spawn",
         func_args=(tmp_path, tiny_model_factory, tiny_model_data_factory, pre_init_optim_state_to_load),
+    )
+
+
+def run_save_and_load_torch_fsdp_model(
+    dir, model_factory, model_data_factory, pre_init_optim_state_to_load, use_orig_params
+):
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+    fsdp_model = FSDP(model_factory().cuda(), use_orig_params=use_orig_params)
+    optim = torch.optim.AdamW(fsdp_model.parameters())
+
+    # Take a train step to initialize optimizer state.
+    fsdp_model(model_data_factory().cuda()).sum().backward()
+    optim.step()
+
+    # Save checkpoint.
+    save_model_and_optim_state(dir, fsdp_model, optim)
+    dist.barrier()
+
+    # Now create a new fsdp model and load that state.
+    fsdp_model2 = FSDP(model_factory().cuda(), use_orig_params=use_orig_params)
+    optim2 = torch.optim.AdamW(fsdp_model2.parameters())
+    if pre_init_optim_state_to_load:
+        init_optimizer_state(optim2)
+    load_model_and_optim_state(dir, fsdp_model2, optim2)
+
+    # Check model parameters.
+    with FSDP.summon_full_params(fsdp_model, recurse=True), FSDP.summon_full_params(fsdp_model2, recurse=True):
+        torch.testing.assert_close(fsdp_model.state_dict(), fsdp_model2.state_dict())
+
+    # Check optimizer state.
+    for p1, p2 in zip(fsdp_model.parameters(), fsdp_model2.parameters()):
+        torch.testing.assert_close(optim.state[p1], optim2.state[p2])
+
+
+@requires_multi_gpu
+@pytest.mark.parametrize(
+    "pre_init_optim_state_to_load",
+    (pytest.param(True, id="initialized-optim"), pytest.param(False, "uninitialized-optim")),
+)
+@pytest.mark.parametrize(
+    "use_orig_params",
+    (
+        pytest.param(True, id="use_orig_params=True"),
+        pytest.param(False, id="use_orig_param=False", marks=pytest.mark.skip(reason="Not implemented")),
+    ),
+)
+def test_save_and_load_torch_fsdp_model(
+    tmp_path, tiny_model_factory, tiny_model_data_factory, pre_init_optim_state_to_load, use_orig_params
+):
+    run_distributed_test(
+        run_save_and_load_torch_fsdp_model,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(
+            tmp_path,
+            tiny_model_factory,
+            tiny_model_data_factory,
+            pre_init_optim_state_to_load,
+            use_orig_params,
+        ),
     )
