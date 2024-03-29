@@ -832,6 +832,8 @@ def _load_model_state_dict(model: nn.Module, state_dict: Dict[str, torch.Tensor]
     from torch.distributed.fsdp import FullyShardedDataParallel as TorchFSDP
 
     if isinstance(model, TorchFSDP):
+        # We can't call `model.load_state_dict` directly on a TorchFSDP model because it does
+        # some nonsense.
         _load_torch_fsdp_model_state_dict(model, state_dict)
     else:
         model.load_state_dict(state_dict)
@@ -840,6 +842,7 @@ def _load_model_state_dict(model: nn.Module, state_dict: Dict[str, torch.Tensor]
 @torch.no_grad()
 def _load_torch_fsdp_model_state_dict(model: nn.Module, state_dict: Dict[str, torch.Tensor]):
     for name, param in model.named_parameters():
+        name = name.replace("_fsdp_wrapped_module.", "")
         param.data.copy_(state_dict[name])
 
 
