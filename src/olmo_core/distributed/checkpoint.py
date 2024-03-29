@@ -262,14 +262,7 @@ class Checkpointer:
             # Construct local flat tensors state dict to save.
             local_state_dict: Dict[str, torch.Tensor] = {}
             for key in state_dict.keys():
-                try:
-                    tensor_save_plan = global_save_plan.tensors[key]
-                except KeyError:
-                    raise KeyError(
-                        f"Local state dict key '{key}' missing from global save plan. "
-                        "This means the state dictionaries have inconsistent keys across ranks."
-                    )
-
+                tensor_save_plan = global_save_plan.tensors[key]
                 local_flat_tensor = flat_views[key]
 
                 if (local_offsets := tensor_save_plan.flattened_offsets_per_rank.get(local_rank)) is not None:
@@ -518,9 +511,6 @@ class Checkpointer:
                 dtype=TORCH_DTYPE_TO_STR[tensor.dtype],
             )
 
-        #  tensors_save_plan = scatter_object(tensors_save_plan)
-        #  tensors_metadata = scatter_object(tensors_metadata)
-
         # All-gather save plans across ranks, merge and validate.
         tensors_save_plan_all_ranks = all_gather_object(tensors_save_plan)
 
@@ -599,7 +589,7 @@ def save_model_and_optim_state(
 
     model_state = _get_model_state_dict_for_checkpoint(model)
     flat_optim_state = _flatten_optimizer_state(
-        model, optim, model_state=model_state, optim_state=optim.state_dict()  # type: ignore[arg-type]
+        model, optim, model_state, optim.state_dict()  # type: ignore[arg-type]
     )
 
     checkpointer = Checkpointer()
@@ -629,7 +619,7 @@ def load_model_and_optim_state(
 
     # Get flattened optimizer state to load.
     flat_optim_state = _flatten_optimizer_state(
-        model, optim, model_state=model_state, optim_state=optim.state_dict()  # type: ignore[arg-type]
+        model, optim, model_state, optim.state_dict()  # type: ignore[arg-type]
     )
     metadata = checkpointer.get_metadata(f"{dir}/optim")
     # If current optimizer has not been initialized, we'll need to initialize the right tensors
@@ -682,17 +672,12 @@ def init_optimizer_state(optim: torch.optim.Optimizer):
 def _flatten_optimizer_state(
     model: nn.Module,
     optim: torch.optim.Optimizer,
-    model_state: Optional[Dict[str, torch.Tensor]] = None,
-    optim_state: Optional[OptimStateDict] = None,
+    model_state: Dict[str, torch.Tensor],
+    optim_state: OptimStateDict,
 ) -> Dict[str, torch.Tensor]:
-    model_state = model_state or model.state_dict()
-    optim_state = optim_state or optim.state_dict()  # type: ignore
-    assert optim_state
-
     # Collect mapping of parameter IDs from the optimizer to the FQN of the corresponding parameter.
-    name_to_param: Dict[str, nn.Parameter] = {k: v for k, v in model.named_parameters()}
-    param_to_name: Dict[nn.Parameter, str] = {v: k for k, v in model.named_parameters()}
     param_id_to_name: Dict[int, str] = {}
+    param_to_name: Dict[nn.Parameter, str] = {v: k for k, v in model.named_parameters()}
     for param_group, param_group_state in zip(optim.param_groups, optim_state["param_groups"]):
         for param, param_id in zip(param_group["params"], param_group_state["params"]):
             param_id_to_name[param_id] = param_to_name[param]
@@ -713,14 +698,13 @@ def _flatten_optimizer_state(
     state_keys: Set[str] = set()
     for param_id, state in optim_state["state"].items():
         param_name = param_id_to_name[param_id]
-        param = name_to_param[param_name]
         for key, tensor in state.items():
             state_keys.add(key)
             if key == "step":
                 # step tensors might be shared between params, which safetensors doesn't like
                 tensor = tensor.clone()
             else:
-                tensor = _wrap_tensor_for_sharded_parameter(tensor, param)
+                tensor = _wrap_tensor_for_sharded_parameter(tensor, model_state[param_name])
             flat_optim_state[_encode_state_key_for_param(param_name, key)] = tensor
     flat_optim_state["state_keys"] = serialize_to_tensor(sorted(state_keys))
 

@@ -8,6 +8,7 @@ from olmo_core.distributed.checkpoint import (
     OptimStateDict,
     SafeTensorsLoader,
     _flatten_optimizer_state,
+    _get_model_state_dict_for_checkpoint,
     _unflatten_optimizer_state,
     init_optimizer_state,
     load_model_and_optim_state,
@@ -277,7 +278,12 @@ def test_flatten_optimizer_state(tiny_model, tiny_model_data):
     tiny_model(tiny_model_data).sum().backward()
     optim.step()
 
-    flat_optim_state = _flatten_optimizer_state(tiny_model, optim)
+    flat_optim_state = _flatten_optimizer_state(
+        tiny_model,
+        optim,
+        _get_model_state_dict_for_checkpoint(tiny_model),
+        optim.state_dict(),  # type: ignore[arg-type]
+    )
     unflattened_optim_state = _unflatten_optimizer_state(flat_optim_state)
 
     # Make sure unflattened state matches what we'd get from `optim.state_dict()`.
@@ -307,10 +313,15 @@ def flatten_optimizer_state_with_sharded_flat_params(model_factory, model_data_f
     optim.param_groups[0]["params"][param_id] = flat_param
     setattr(model.fc[0], "weight", flat_param)
 
-    model_state = model.state_dict()
+    model_state = _get_model_state_dict_for_checkpoint(model)
     assert model_state["fc.0.weight"].shape == flat_param.shape
 
-    flat_optim_state = _flatten_optimizer_state(model, optim, model_state=model_state)
+    flat_optim_state = _flatten_optimizer_state(
+        model,
+        optim,
+        model_state,
+        optim.state_dict(),  # type: ignore[arg-type]
+    )
     unflattened_optim_state = _unflatten_optimizer_state(flat_optim_state)
 
     # Make sure unflattened state matches what we'd get from `optim.state_dict()`.
