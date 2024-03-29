@@ -764,7 +764,12 @@ def _get_torch_fsdp_state_dict_for_checkpoint(model: nn.Module) -> Dict[str, tor
 
                 # Offsets into the flattened original parameter.
                 shard_info = flat_param._shard_param_infos[i]
-                local_offsets = (shard_info.intra_param_start_idx or 0, shard_info.intra_param_end_idx or 0)
+                start_idx = shard_info.intra_param_start_idx
+                end_idx = shard_info.intra_param_end_idx
+                local_offsets = (
+                    start_idx if start_idx is not None else 0,
+                    end_idx + 1 if end_idx is not None else 0,
+                )
                 all_offsets: List[Tuple[int, int]] = [(0, 0)] * get_world_size(group=handle.process_group)
                 all_offsets[get_rank(group=handle.process_group)] = local_offsets
                 dist.all_gather_object(all_offsets, local_offsets, group=handle.process_group)
