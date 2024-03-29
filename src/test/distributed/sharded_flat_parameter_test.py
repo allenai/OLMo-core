@@ -4,10 +4,8 @@ import pytest
 import torch
 import torch.distributed as dist
 
-from olmo_core.distributed.sharded_flat_parameter import (
-    ShardedFlatParameter,
-    ShardingSpec,
-)
+from olmo_core.distributed.sharded_flat_parameter import ShardedFlatParameter
+from olmo_core.distributed.sharded_flat_tensor import ShardedFlatTensor, ShardingSpec
 
 from .utils import BACKENDS, INIT_DEVICES, get_default_device, run_distributed_test
 
@@ -16,6 +14,8 @@ def test_init_empty_sharded_parameter():
     sp = ShardedFlatParameter()
     assert isinstance(sp, ShardedFlatParameter)
     assert isinstance(sp, torch.nn.Parameter)
+    assert isinstance(sp, ShardedFlatTensor)
+    assert isinstance(sp, torch.Tensor)
     assert repr(sp) == "ShardedFlatParameter([], requires_grad=True)"
     assert not sp.is_sharded  # hasn't been marked sharded yet
 
