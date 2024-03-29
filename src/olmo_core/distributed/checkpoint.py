@@ -530,7 +530,11 @@ class Checkpointer:
                 if key not in final_tensors_save_plan:
                     final_tensors_save_plan[key] = plan
                 elif plan != final_tensors_save_plan[key]:
-                    raise ValueError(f"save plan for {key} does not match across all ranks!")
+                    raise ValueError(
+                        f"Save plan for {key} does not match across all ranks!\n"
+                        f"1st plan: {final_tensors_save_plan[key]}\n"
+                        f"2nd plan: {plan}"
+                    )
 
         # All-gather storage metadata across ranks, merge and validate.
         tensors_metadata_all_ranks = all_gather_object(tensors_metadata)
@@ -541,7 +545,11 @@ class Checkpointer:
                 if key not in final_tensors_metadata:
                     final_tensors_metadata[key] = metadata
                 elif metadata != final_tensors_metadata[key]:
-                    raise ValueError(f"storage metadata for {key} does not match across all ranks!")
+                    raise ValueError(
+                        f"Storage metadata for {key} does not match across all ranks!"
+                        f"1st metadata: {final_tensors_metadata[key]}\n"
+                        f"2nd metadata: {metadata}"
+                    )
 
         return (
             tensors_flat_view,
