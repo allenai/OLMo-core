@@ -30,7 +30,7 @@ from olmo_core.io import (
 from olmo_core.utils import TORCH_DTYPE_TO_STR, TORCH_DTYPES, wait_for
 
 from .sharded_flat_tensor import ShardedFlatTensor, ShardingSpec
-from .utils import barrier, get_rank, get_world_size, scatter_object
+from .utils import all_gather_object, barrier, get_rank, get_world_size, scatter_object
 
 log = logging.getLogger(__name__)
 
@@ -262,7 +262,14 @@ class Checkpointer:
             # Construct local flat tensors state dict to save.
             local_state_dict: Dict[str, torch.Tensor] = {}
             for key in state_dict.keys():
-                tensor_save_plan = global_save_plan.tensors[key]
+                try:
+                    tensor_save_plan = global_save_plan.tensors[key]
+                except KeyError:
+                    raise KeyError(
+                        f"Local state dict key '{key}' missing from global save plan. "
+                        "This means the state dictionaries have inconsistent keys across ranks."
+                    )
+
                 local_flat_tensor = flat_views[key]
 
                 if (local_offsets := tensor_save_plan.flattened_offsets_per_rank.get(local_rank)) is not None:
@@ -511,9 +518,36 @@ class Checkpointer:
                 dtype=TORCH_DTYPE_TO_STR[tensor.dtype],
             )
 
-        tensors_save_plan = scatter_object(tensors_save_plan)
-        tensors_metadata = scatter_object(tensors_metadata)
-        return tensors_flat_view, SavePlan(tensors=tensors_save_plan), StorageMetadata(tensors=tensors_metadata)
+        #  tensors_save_plan = scatter_object(tensors_save_plan)
+        #  tensors_metadata = scatter_object(tensors_metadata)
+
+        # All-gather save plans across ranks, merge and validate.
+        tensors_save_plan_all_ranks = all_gather_object(tensors_save_plan)
+
+        final_tensors_save_plan = {}
+        for rank_plan in tensors_save_plan_all_ranks:
+            for key, plan in rank_plan.items():
+                if key not in final_tensors_save_plan:
+                    final_tensors_save_plan[key] = plan
+                elif plan != final_tensors_save_plan[key]:
+                    raise ValueError(f"save plan for {key} does not match across all ranks!")
+
+        # All-gather storage metadata across ranks, merge and validate.
+        tensors_metadata_all_ranks = all_gather_object(tensors_metadata)
+
+        final_tensors_metadata = {}
+        for rank_metadata in tensors_metadata_all_ranks:
+            for key, metadata in rank_metadata.items():
+                if key not in final_tensors_metadata:
+                    final_tensors_metadata[key] = metadata
+                elif metadata != final_tensors_metadata[key]:
+                    raise ValueError(f"storage metadata for {key} does not match across all ranks!")
+
+        return (
+            tensors_flat_view,
+            SavePlan(tensors=final_tensors_save_plan),
+            StorageMetadata(tensors=final_tensors_metadata),
+        )
 
     def _normalize_dir(self, dir: PathOrStr) -> str:
         dir = str(dir).strip("/")
@@ -594,21 +628,21 @@ def load_model_and_optim_state(
     # in the `flat_optim_state` before loading it in place.
     if not optim.state and set(metadata.tensors.keys()) > (flat_optim_state.keys()):
         state_keys: Set[str] = set()
-        for param_name, param in model_state.items():
+        for param_name, param_data in model_state.items():
             state_key_prefix = _state_key_prefix_for_param(param_name)
             for key, tensor_metadata in metadata.tensors.items():
                 if key.startswith(state_key_prefix) and key not in flat_optim_state:
                     state_key = _decode_state_key_for_param(param_name, key)
                     state_keys.add(state_key)
 
-                    device = param.device
+                    device = param_data.device
                     if state_key == "step":  # TODO: make more robust
                         device = torch.device("cpu")
 
                     tensor: torch.Tensor
-                    if tensor_metadata.is_sharded and isinstance(param, ShardedFlatTensor):
-                        tensor = tensor_metadata.materialize_from_sharded(param, device=device)
-                        tensor = _wrap_tensor_for_sharded_parameter(tensor, param)
+                    if tensor_metadata.is_sharded and isinstance(param_data, ShardedFlatTensor):
+                        tensor = tensor_metadata.materialize_from_sharded(param_data, device=device)
+                        tensor = _wrap_tensor_for_sharded_parameter(tensor, param_data)
                     else:
                         tensor = tensor_metadata.materialize_empty(device=device)
 
@@ -617,7 +651,7 @@ def load_model_and_optim_state(
         flat_optim_state["state_keys"] = serialize_to_tensor(sorted(state_keys))
 
     # Now load the flattened optimizer state in place.
-    checkpointer.load(f"{dir}/optim", flat_optim_state)
+    checkpointer.load(f"{dir}/optim", flat_optim_state, metadata=metadata)
 
     # Unflatten optimizer state.
     optim_state = _unflatten_optimizer_state(flat_optim_state)
