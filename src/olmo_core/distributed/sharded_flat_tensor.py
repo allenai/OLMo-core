@@ -166,7 +166,7 @@ class ShardedFlatTensor(torch.Tensor):
         else:
             sharded_tensor = torch.empty(offsets[1] - offsets[0], device=device, dtype=tensor.dtype)
 
-        sharded_param = cls(
+        sharded_param = cls(  # type: ignore
             sharded_tensor, requires_grad=requires_grad if requires_grad is not None else tensor.requires_grad
         )
         sharded_param.mark_as_sharded(sharding_spec, process_group=process_group)
@@ -236,7 +236,7 @@ class ShardedFlatTensor(torch.Tensor):
         """
         if tensor.shape != self.data.shape:
             raise ValueError(f"shape mismatched, expected {self.data.shape}, got {tensor.shape}")
-        wrapped = ShardedFlatTensor(tensor.data, requires_grad=requires_grad)
+        wrapped = ShardedFlatTensor(tensor.data, requires_grad=requires_grad)  # type: ignore
         wrapped.mark_as_sharded(self.sharding_spec, process_group=self.process_group)
         return wrapped
 
