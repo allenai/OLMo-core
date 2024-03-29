@@ -593,8 +593,8 @@ def save_model_and_optim_state(
     )
 
     checkpointer = Checkpointer()
-    checkpointer.save(f"{dir}/model", model_state, save_overwrite=save_overwrite)
-    checkpointer.save(f"{dir}/optim", flat_optim_state, save_overwrite=save_overwrite)
+    checkpointer.save(f"{dir}/model", _patch_keys(model, model_state), save_overwrite=save_overwrite)
+    checkpointer.save(f"{dir}/optim", _patch_keys(model, flat_optim_state), save_overwrite=save_overwrite)
 
 
 @torch.no_grad()
@@ -612,12 +612,8 @@ def load_model_and_optim_state(
 
     checkpointer = Checkpointer()
 
-    # Load model state in-place.
+    # Get model state and flattened optimizer state to load.
     model_state = _get_model_state_dict_for_checkpoint(model)
-    checkpointer.load(f"{dir}/model", model_state)
-    model.load_state_dict(model_state)
-
-    # Get flattened optimizer state to load.
     flat_optim_state = _flatten_optimizer_state(
         model, optim, model_state, optim.state_dict()  # type: ignore[arg-type]
     )
@@ -648,10 +644,16 @@ def load_model_and_optim_state(
 
         flat_optim_state["state_keys"] = serialize_to_tensor(sorted(state_keys))
 
-    # Now load the flattened optimizer state in place.
+    # Load model state in-place.
+    model_state = _patch_keys(model, model_state)
+    checkpointer.load(f"{dir}/model", model_state)
+    model.load_state_dict(model_state)
+
+    # Load flattened optimizer state in place.
+    flat_optim_state = _patch_keys(model, flat_optim_state)
     checkpointer.load(f"{dir}/optim", flat_optim_state, metadata=metadata)
 
-    # Unflatten optimizer state.
+    # Unflatten optimizer state and pass to optimizer.
     optim_state = _unflatten_optimizer_state(flat_optim_state)
     optim.load_state_dict(optim_state)  # type: ignore
 
@@ -768,6 +770,15 @@ def _get_model_state_dict_for_checkpoint(model: nn.Module) -> Dict[str, torch.Te
         param = key_to_param.get(key)
         model_state[key] = _wrap_tensor_for_sharded_parameter(tensor, param)
     return model_state
+
+
+def _patch_keys(model: nn.Module, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    from torch.distributed.fsdp import FullyShardedDataParallel as TorchFSDP
+
+    if isinstance(model, TorchFSDP):
+        return {k.replace("_fsdp_wrapped_module.", ""): v for k, v in state_dict.items()}
+
+    return state_dict
 
 
 @torch.no_grad()
