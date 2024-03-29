@@ -226,6 +226,10 @@ class ShardedFlatTensor(torch.Tensor):
         del metadata[self.SHARDED_FLAT_TENSOR_CACHED_SHARDED_DATA_KEY]
 
     def mark_as_sharded(self, sharding_spec: ShardingSpec, process_group: Optional[dist.ProcessGroup] = None):
+        if self.numel() != (shard_numel := sharding_spec.sharded_numels[get_rank(group=process_group)]):
+            raise ValueError(
+                f"invalid sharding spec, numel in spec ({shard_numel}) does not match numel in shard ({self.numel()})"
+            )
         self._set_metadata(self.SHARDED_FLAT_TENSOR_SHARDING_SPEC_KEY, sharding_spec)
         self._set_metadata(self.SHARDED_FLAT_TENSOR_PROCESS_GROUP_KEY, process_group)
 
