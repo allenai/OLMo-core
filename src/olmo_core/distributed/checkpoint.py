@@ -528,7 +528,6 @@ class Checkpointer:
 
         # All-gather save plans across ranks, merge and validate.
         tensors_save_plan_all_ranks = all_gather_object(tensors_save_plan)
-
         final_tensors_save_plan = {}
         for rank_plan in tensors_save_plan_all_ranks:
             for key, plan in rank_plan.items():
@@ -547,7 +546,6 @@ class Checkpointer:
 
         # All-gather storage metadata across ranks, merge and validate.
         tensors_metadata_all_ranks = all_gather_object(tensors_metadata)
-
         final_tensors_metadata = {}
         for rank_metadata in tensors_metadata_all_ranks:
             for key, metadata in rank_metadata.items():
