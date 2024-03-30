@@ -446,8 +446,11 @@ def run_save_and_load_torch_fsdp_model(
         torch.testing.assert_close(fsdp_model.state_dict(), fsdp_model2.state_dict())
 
     # Check optimizer state.
-    for p1, p2 in zip(fsdp_model.parameters(), fsdp_model2.parameters()):
-        torch.testing.assert_close(optim.state[p1], optim2.state[p2])
+    for (p1_name, p1), (p2_name, p2) in zip(fsdp_model.named_parameters(), fsdp_model2.named_parameters()):
+        assert p1_name == p2_name
+        torch.testing.assert_close(
+            optim.state[p1], optim2.state[p2], msg=lambda m: f"State for '{p1_name}' does not match. {m}"
+        )
 
 
 @requires_multi_gpu
