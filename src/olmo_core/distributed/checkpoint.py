@@ -555,17 +555,23 @@ class Checkpointer:
         final_tensors_save_plan = {}
         for rank_plan in tensors_save_plan_all_ranks:
             for key, plan in rank_plan.items():
-                if key not in final_tensors_save_plan:
+                final_plan = final_tensors_save_plan.get(key)
+                if final_plan is None:
                     final_tensors_save_plan[key] = plan
-                elif plan != final_tensors_save_plan[key]:
+                elif plan != final_plan:
                     # TODO: handle case where a tensor is sharded in a process group, not globally.
-                    if not plan.is_sharded and not final_tensors_save_plan[key].is_sharded:
+                    if not plan.is_sharded and not final_plan.is_sharded:
                         # default to first rank with a save plan for this tensor
+                        pass
+                    elif not set(plan.flattened_offsets_per_rank).intersection(
+                        final_plan.flattened_offsets_per_rank
+                    ):
+                        # tensor may be sharded in separate process groups, that's okay.
                         pass
                     else:
                         raise ValueError(
                             f"Save plan for '{key}' does not match across all ranks!\n"
-                            f"1st plan: {final_tensors_save_plan[key]}\n"
+                            f"1st plan: {final_plan}\n"
                             f"2nd plan: {plan}"
                         )
 
@@ -574,16 +580,22 @@ class Checkpointer:
         final_tensors_metadata = {}
         for rank_metadata in tensors_metadata_all_ranks:
             for key, metadata in rank_metadata.items():
-                if key not in final_tensors_metadata:
+                final_metadata = final_tensors_metadata.get(key)
+                if final_metadata is None:
                     final_tensors_metadata[key] = metadata
-                elif metadata != final_tensors_metadata[key]:
+                elif metadata != final_metadata:
                     # TODO: handle case where a tensor is sharded in a process group, not globally.
-                    if not metadata.is_sharded and not final_tensors_metadata[key].is_sharded:
+                    if not metadata.is_sharded and not final_metadata.is_sharded:
                         # default to first rank with metadata for this tensor
+                        pass
+                    elif not set(metadata.flattened_offsets_per_file).intersection(
+                        final_metadata.flattened_offsets_per_file
+                    ):
+                        # tensor may be sharded in separate process groups, that's okay.
                         pass
                     else:
                         raise ValueError(
-                            f"Storage metadata for '{key}' does not match across all ranks!"
+                            f"Storage metadata for '{key}' does not match across all ranks!\n"
                             f"1st metadata: {final_tensors_metadata[key]}\n"
                             f"2nd metadata: {metadata}"
                         )
@@ -689,12 +701,14 @@ def load_model_and_optim_state(
 @torch.no_grad()
 def init_optimizer_state(optim: torch.optim.Optimizer):
     """
-    Ensure optimizer state is initialized.
+    Ensure optimizer state is initialized for checkpointing.
     """
     if optim.state:
         return
     for group in optim.param_groups:
         for p in group["params"]:
+            # Some parameters may be empty for sharded models, in which case the state does not need
+            # to be initialized.
             if p.numel() > 0:
                 p.grad = p.data.new(p.size()).zero_()
                 p.grad.requires_grad_(False)
@@ -771,6 +785,7 @@ def _unflatten_optimizer_state(flat_optim_state: Dict[str, torch.Tensor]) -> Opt
                 # Ensure we have a regular tensor here, not some sharded wrapper.
                 param_state[key] = _get_local_tensor_data(state_tensor)
 
+        # Can'give pass the optimizer an empty state for a param.
         if param_state:
             optim_state["state"][param_id] = param_state
 

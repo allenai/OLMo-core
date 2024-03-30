@@ -17,10 +17,8 @@ from olmo_core.distributed.checkpoint import (
     save_model_and_optim_state,
 )
 from olmo_core.distributed.fsdp import FSDP
-from olmo_core.distributed.sharded_flat_parameter import (
-    ShardedFlatParameter,
-    ShardingSpec,
-)
+from olmo_core.distributed.sharded_flat_parameter import ShardedFlatParameter
+from olmo_core.distributed.sharded_flat_tensor import ShardedFlatTensor, ShardingSpec
 
 from .utils import (
     BACKENDS,
@@ -267,6 +265,41 @@ def run_save_and_load_with_different_data_across_ranks(dir):
 def test_save_and_load_with_different_data_across_ranks(backend, tmp_path):
     run_distributed_test(
         run_save_and_load_with_different_data_across_ranks, backend=backend, func_args=(tmp_path,)
+    )
+
+
+def run_save_and_load_with_sharded_tensors_in_process_group(dir):
+    checkpointer = Checkpointer()
+
+    pg1 = dist.new_group([0, 1])
+    pg2 = dist.new_group([2, 3])
+
+    state_dict_to_save: Dict[str, torch.Tensor] = {"x": ShardedFlatTensor.shard(torch.rand(2, 3))}
+    if dist.get_rank(pg1) >= 0:
+        state_dict_to_save["y"] = ShardedFlatTensor.shard(torch.rand(2, 3), process_group=pg1)
+    if dist.get_rank(pg2) >= 0:
+        state_dict_to_save["y"] = ShardedFlatTensor.shard(torch.rand(2, 3), process_group=pg2)
+
+    state_dict_to_load: Dict[str, torch.Tensor] = {
+        "x": ShardedFlatTensor.shard(torch.rand(2, 3)),
+        "y": ShardedFlatTensor.shard(torch.rand(2, 3)),
+    }
+
+    checkpointer.save(dir, state_dict_to_save)
+    checkpointer.load(dir, state_dict_to_load)
+
+    loaded_y = state_dict_to_load["y"].gather()  # type: ignore
+    if dist.get_rank(pg1) >= 0:
+        saved_y = state_dict_to_save["y"].gather()  # type: ignore
+        torch.testing.assert_close(loaded_y, saved_y)
+
+
+def test_save_and_load_with_sharded_tensors_in_process_group(tmp_path):
+    run_distributed_test(
+        run_save_and_load_with_sharded_tensors_in_process_group,
+        backend="gloo",
+        func_args=(tmp_path,),
+        world_size=4,
     )
 
 
