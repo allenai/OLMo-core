@@ -771,7 +771,8 @@ def _unflatten_optimizer_state(flat_optim_state: Dict[str, torch.Tensor]) -> Opt
                 # Ensure we have a regular tensor here, not some sharded wrapper.
                 param_state[key] = _get_local_tensor_data(state_tensor)
 
-        optim_state["state"][param_id] = param_state
+        if param_state:
+            optim_state["state"][param_id] = param_state
 
     return optim_state
 
