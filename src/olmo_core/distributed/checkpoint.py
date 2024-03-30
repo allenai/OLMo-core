@@ -695,8 +695,9 @@ def init_optimizer_state(optim: torch.optim.Optimizer):
         return
     for group in optim.param_groups:
         for p in group["params"]:
-            p.grad = p.data.new(p.size()).zero_()
-            p.grad.requires_grad_(False)
+            if p.numel() > 0:
+                p.grad = p.data.new(p.size()).zero_()
+                p.grad.requires_grad_(False)
     optim.step()
     optim.zero_grad()
 
