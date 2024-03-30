@@ -3,6 +3,7 @@ import logging
 import struct
 import sys
 import tempfile
+from dataclasses import dataclass
 from functools import cached_property, reduce
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, TypedDict
@@ -93,6 +94,29 @@ class TensorSavePlan(BaseModel):
     is_sharded: bool
     """
     If the tensor is sharded.
+    """
+
+
+@dataclass
+class TensorFlatView:
+    view: torch.Tensor
+    """
+    A 1D view into the tensor.
+    """
+
+    full_shape: Tuple[int, ...]
+    """
+    The shape of the full unsharded tensor.
+    """
+
+    is_sharded: bool
+    """
+    If the tensor is sharded.
+    """
+
+    flattened_offsets_per_rank: Dict[int, Tuple[int, int]]
+    """
+    A mapping of *global* rank to offsets into the full flattened tensor.
     """
 
 
@@ -322,26 +346,21 @@ class Checkpointer:
         for key in state_dict.keys():
             tensor_storage_metadata = metadata.tensors[key]
             tensor = state_dict[key]
+            flat_view = self._get_flat_view(tensor)
 
-            (
-                flat_tensor,
-                full_shape,
-                offsets_per_rank,
-                is_sharded,
-            ) = self._get_flat_view_and_full_shape_and_flattened_offsets(tensor)
             # Rank 0 will always be present, other ranks will not be for regular unsharded tensors.
             offsets: Tuple[int, int]
-            if is_sharded:
-                offsets = offsets_per_rank[get_rank()]
+            if flat_view.is_sharded:
+                offsets = flat_view.flattened_offsets_per_rank[get_rank()]
             else:
-                if get_rank() in offsets_per_rank:
-                    offsets = offsets_per_rank[get_rank()]
+                if get_rank() in flat_view.flattened_offsets_per_rank:
+                    offsets = flat_view.flattened_offsets_per_rank[get_rank()]
                 else:
-                    offsets = next(iter(offsets_per_rank.values()))
+                    offsets = next(iter(flat_view.flattened_offsets_per_rank.values()))
 
-            if full_shape != tensor_storage_metadata.shape:
+            if flat_view.full_shape != tensor_storage_metadata.shape:
                 raise ValueError(
-                    f"Shape mismatched for '{key}', expected {full_shape}, found {tensor_storage_metadata.shape}"
+                    f"Shape mismatched for '{key}', expected {flat_view.full_shape}, found {tensor_storage_metadata.shape}"
                 )
 
             for filename, offsets_in_file in tensor_storage_metadata.flattened_offsets_per_file.items():
@@ -356,16 +375,16 @@ class Checkpointer:
                                 f"Expected a 1D tensor at {key} in {filename}, found shape {shape_in_file}"
                             )
 
-                        if (dtype := loader.get_dtype(key)) != flat_tensor.dtype:
+                        if (dtype := loader.get_dtype(key)) != tensor.dtype:
                             raise ValueError(
-                                f"Data type mismatch between tensor to load ({dtype}) and to load into ({flat_tensor.dtype})"
+                                f"Data type mismatch between tensor to load ({dtype}) and to load into ({tensor.dtype})"
                             )
 
                         numel_in_file = loader.get_numel(key)
 
                         # Start and end index of the slice within `flat_tensor` that we're going to load
                         # from a slice of `flat_tensor_to_load`.
-                        flat_tensor_start, flat_tensor_end = 0, flat_tensor.numel()
+                        flat_tensor_start, flat_tensor_end = 0, flat_view.view.numel()
                         # Start and end index of the slice within `flat_tensor_to_load` that we're going
                         # to load into the slice of `flat_tensor`.
                         flat_tensor_to_load_start, flat_tensor_to_load_end = 0, numel_in_file
@@ -416,12 +435,12 @@ class Checkpointer:
                         flat_tensor_to_load = loader.get_flat_slice(
                             key, flat_tensor_to_load_start, flat_tensor_to_load_end
                         )
-                        flat_tensor[flat_tensor_start:flat_tensor_end].copy_(flat_tensor_to_load)
+                        flat_view.view[flat_tensor_start:flat_tensor_end].copy_(flat_tensor_to_load)
 
                         del flat_tensor_to_load
 
-            state_dict[key] = self._copy_into(tensor, flat_tensor)
-            del flat_tensor
+            state_dict[key] = self._copy_into(tensor, flat_view.view)
+            del flat_view
 
     @torch.no_grad()
     def unshard(
@@ -484,21 +503,30 @@ class Checkpointer:
         target_data.copy_(source_data.view(target_data.shape))
         return target
 
-    def _get_flat_view_and_full_shape_and_flattened_offsets(
-        self, tensor: torch.Tensor
-    ) -> Tuple[torch.Tensor, Tuple[int, ...], Dict[int, Tuple[int, int]], bool]:
+    def _get_flat_view(self, tensor: torch.Tensor) -> TensorFlatView:
         full_shape: Tuple[int, ...]
-        flattened_offsets_per_rank: Dict[int, Tuple[int, int]] = {}
         is_sharded: bool = False
+        flattened_offsets_per_rank: Dict[int, Tuple[int, int]] = {}
         if isinstance(tensor, ShardedFlatTensor):
             full_shape = tensor.unsharded_shape
             is_sharded = True
-            for rank, offset in enumerate(tensor.sharding_spec.unsharded_flattened_offsets):
-                flattened_offsets_per_rank[rank] = offset
+            for pg_rank, offset in enumerate(tensor.sharding_spec.unsharded_flattened_offsets):
+                # Translate process group rank into global rank.
+                global_rank = (
+                    pg_rank
+                    if tensor.process_group is None
+                    else dist.get_global_rank(tensor.process_group, pg_rank)
+                )
+                flattened_offsets_per_rank[global_rank] = offset
         else:
-            flattened_offsets_per_rank = {get_rank(): (0, tensor.numel())}
             full_shape = tuple(tensor.shape)
-        return _get_local_tensor_data(tensor).view(-1), full_shape, flattened_offsets_per_rank, is_sharded
+            flattened_offsets_per_rank = {get_rank(): (0, tensor.numel())}
+        return TensorFlatView(
+            view=_get_local_tensor_data(tensor).view(-1),
+            full_shape=full_shape,
+            is_sharded=is_sharded,
+            flattened_offsets_per_rank=flattened_offsets_per_rank,
+        )
 
     def _get_global_save_plan_and_metadata(
         self, state_dict: Dict[str, torch.Tensor]
@@ -507,22 +535,18 @@ class Checkpointer:
         tensors_save_plan = {}
         tensors_metadata = {}
         for key, tensor in state_dict.items():
-            (
-                flat_view,
-                full_shape,
-                flattened_offsets_per_rank,
-                is_sharded,
-            ) = self._get_flat_view_and_full_shape_and_flattened_offsets(tensor)
-            tensors_flat_view[key] = flat_view
+            flat_view = self._get_flat_view(tensor)
+            tensors_flat_view[key] = flat_view.view
             tensors_save_plan[key] = TensorSavePlan(
-                flattened_offsets_per_rank=flattened_offsets_per_rank, is_sharded=is_sharded
+                flattened_offsets_per_rank=flat_view.flattened_offsets_per_rank, is_sharded=flat_view.is_sharded
             )
             tensors_metadata[key] = TensorStorageMetadata(
                 flattened_offsets_per_file={
-                    self._filename_for_rank(rank): offsets for rank, offsets in flattened_offsets_per_rank.items()
+                    self._filename_for_rank(rank): offsets
+                    for rank, offsets in flat_view.flattened_offsets_per_rank.items()
                 },
-                shape=full_shape,
-                is_sharded=is_sharded,
+                shape=flat_view.full_shape,
+                is_sharded=flat_view.is_sharded,
                 dtype=TORCH_DTYPE_TO_STR[tensor.dtype],
             )
 
@@ -534,6 +558,7 @@ class Checkpointer:
                 if key not in final_tensors_save_plan:
                     final_tensors_save_plan[key] = plan
                 elif plan != final_tensors_save_plan[key]:
+                    # TODO: handle case where a tensor is sharded in a process group, not globally.
                     if not plan.is_sharded and not final_tensors_save_plan[key].is_sharded:
                         # default to first rank with a save plan for this tensor
                         pass
@@ -552,6 +577,7 @@ class Checkpointer:
                 if key not in final_tensors_metadata:
                     final_tensors_metadata[key] = metadata
                 elif metadata != final_tensors_metadata[key]:
+                    # TODO: handle case where a tensor is sharded in a process group, not globally.
                     if not metadata.is_sharded and not final_tensors_metadata[key].is_sharded:
                         # default to first rank with metadata for this tensor
                         pass
@@ -608,6 +634,9 @@ def save_model_and_optim_state(
     """
     dir = str(dir).rstrip("/")
 
+    # Ensure optimizer state has been initialized.
+    init_optimizer_state(optim)
+
     model_state = _get_model_state_dict_for_checkpoint(model)
     flat_optim_state = _flatten_optimizer_state(
         model, optim, model_state, optim.state_dict()  # type: ignore[arg-type]
@@ -633,50 +662,30 @@ def load_model_and_optim_state(
 
     checkpointer = Checkpointer()
 
+    # Ensure optimizer state has been initialized.
+    init_optimizer_state(optim)
+
     # Get model state and flattened optimizer state to load.
     model_state = _get_model_state_dict_for_checkpoint(model)
     flat_optim_state = _flatten_optimizer_state(
         model, optim, model_state, optim.state_dict()  # type: ignore[arg-type]
     )
-    metadata = checkpointer.get_metadata(f"{dir}/optim")
-    # If current optimizer has not been initialized, we'll need to initialize the right tensors
-    # in the `flat_optim_state` before loading it in place.
-    if not optim.state and set(metadata.tensors.keys()) > (flat_optim_state.keys()):
-        state_keys: Set[str] = set()
-        for param_name, param_data in model_state.items():
-            state_key_prefix = _state_key_prefix_for_param(param_name)
-            for key, tensor_metadata in metadata.tensors.items():
-                if key.startswith(state_key_prefix) and key not in flat_optim_state:
-                    state_key = _decode_state_key_for_param(param_name, key)
-                    state_keys.add(state_key)
-
-                    device = param_data.device
-                    if state_key == "step":  # TODO: make more robust
-                        device = torch.device("cpu")
-
-                    tensor: torch.Tensor
-                    if tensor_metadata.is_sharded and isinstance(param_data, ShardedFlatTensor):
-                        tensor = tensor_metadata.materialize_from_sharded(param_data, device=device)
-                        tensor = _wrap_tensor_for_sharded_parameter(tensor, param_data)
-                    else:
-                        tensor = tensor_metadata.materialize_empty(device=device)
-
-                    flat_optim_state[key] = tensor
-
-        flat_optim_state["state_keys"] = serialize_to_tensor(sorted(state_keys))
 
     # Load model state in-place.
     model_state = _patch_keys(model, model_state)
     checkpointer.load(f"{dir}/model", model_state)
     _load_model_state_dict(model, model_state)
+    del model_state
 
     # Load flattened optimizer state in place.
     flat_optim_state = _patch_keys(model, flat_optim_state)
-    checkpointer.load(f"{dir}/optim", flat_optim_state, metadata=metadata)
+    checkpointer.load(f"{dir}/optim", flat_optim_state)
 
     # Unflatten optimizer state and pass to optimizer.
     optim_state = _unflatten_optimizer_state(flat_optim_state)
+    del flat_optim_state
     optim.load_state_dict(optim_state)  # type: ignore
+    del optim_state
 
 
 @torch.no_grad()
@@ -684,6 +693,8 @@ def init_optimizer_state(optim: torch.optim.Optimizer):
     """
     Ensure optimizer state is initialized.
     """
+    if optim.state:
+        return
     for group in optim.param_groups:
         for p in group["params"]:
             p.grad = p.data.new(p.size()).zero_()
@@ -772,10 +783,6 @@ def _state_key_prefix_for_param(param_name: str) -> str:
 
 def _encode_state_key_for_param(param_name: str, state_key: str) -> str:
     return f"{_state_key_prefix_for_param(param_name)}{state_key}"
-
-
-def _decode_state_key_for_param(param_name: str, encoded_key: str) -> str:
-    return encoded_key.replace(_state_key_prefix_for_param(param_name), "", 1)
 
 
 @torch.no_grad()
