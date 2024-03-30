@@ -643,8 +643,8 @@ def save_model_and_optim_state(
     )
 
     checkpointer = Checkpointer()
-    checkpointer.save(f"{dir}/model", _patch_keys(model, model_state), save_overwrite=save_overwrite)
-    checkpointer.save(f"{dir}/optim", _patch_keys(model, flat_optim_state), save_overwrite=save_overwrite)
+    checkpointer.save(f"{dir}/model", model_state, save_overwrite=save_overwrite)
+    checkpointer.save(f"{dir}/optim", flat_optim_state, save_overwrite=save_overwrite)
 
 
 @torch.no_grad()
@@ -672,20 +672,18 @@ def load_model_and_optim_state(
     )
 
     # Load model state in-place.
-    model_state = _patch_keys(model, model_state)
     checkpointer.load(f"{dir}/model", model_state)
     _load_model_state_dict(model, model_state)
     del model_state
 
     # Load flattened optimizer state in place.
-    flat_optim_state = _patch_keys(model, flat_optim_state)
     checkpointer.load(f"{dir}/optim", flat_optim_state)
 
     # Unflatten optimizer state and pass to optimizer.
-    optim_state = _unflatten_optimizer_state(flat_optim_state)
+    optim_state_to_load = _unflatten_optimizer_state(flat_optim_state)
     del flat_optim_state
-    optim.load_state_dict(optim_state)  # type: ignore
-    del optim_state
+    optim.load_state_dict(optim_state_to_load)  # type: ignore
+    del optim_state_to_load
 
 
 @torch.no_grad()
@@ -711,7 +709,7 @@ def _flatten_optimizer_state(
 ) -> Dict[str, torch.Tensor]:
     # Collect mapping of parameter IDs from the optimizer to the FQN of the corresponding parameter.
     param_id_to_name: Dict[int, str] = {}
-    param_to_name: Dict[nn.Parameter, str] = {v: k for k, v in model.named_parameters()}
+    param_to_name: Dict[nn.Parameter, str] = {v: _patch_key(model, k) for k, v in model.named_parameters()}
     for param_group, param_group_state in zip(optim.param_groups, optim_state["param_groups"]):
         for param, param_id in zip(param_group["params"], param_group_state["params"]):
             param_id_to_name[param_id] = param_to_name[param]
@@ -848,6 +846,7 @@ def _get_torch_fsdp_state_dict_for_checkpoint(model: nn.Module) -> Dict[str, tor
     # Build state dict manually since `FSDP.state_dict()` does some nonsense.
     state_dict: Dict[str, torch.Tensor] = {}
     for name, param in model.named_parameters():
+        name = _patch_key(model, name)
         state_dict[name] = param_to_flat_tensor.get(param, param.data.detach())
 
     # TODO: buffers
@@ -874,13 +873,13 @@ def _load_torch_fsdp_model_state_dict(model: nn.Module, state_dict: Dict[str, to
         param.data.copy_(state_dict[name])
 
 
-def _patch_keys(model: nn.Module, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+def _patch_key(model: nn.Module, key: str) -> str:
     from torch.distributed.fsdp import FullyShardedDataParallel as TorchFSDP
 
     if isinstance(model, TorchFSDP):
-        return {k.replace("_fsdp_wrapped_module.", ""): v for k, v in state_dict.items()}
-
-    return state_dict
+        return key.replace("_fsdp_wrapped_module.", "")
+    else:
+        return key
 
 
 def _get_local_tensor_data(tensor: torch.Tensor) -> torch.Tensor:
