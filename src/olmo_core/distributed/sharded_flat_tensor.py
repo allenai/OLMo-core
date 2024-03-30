@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from functools import reduce
 from typing import Any, List, Optional, Tuple
@@ -145,12 +146,16 @@ class ShardedFlatTensor(torch.Tensor):
         if synchronize and tensor_is_initialized:
             if device is not None:
                 tensor = tensor.to(device)
-            dist.broadcast(tensor, 0, group=process_group)
+            dist.broadcast(
+                tensor,
+                0 if process_group is None else dist.get_global_rank(process_group, 0),
+                group=process_group,
+            )
 
         if sharding_spec is None:
             # Shard tensor as evenly as possible across all ranks.
             world_size = get_world_size(group=process_group)
-            shard_max_numel = tensor.numel() // world_size
+            shard_max_numel = math.ceil(tensor.numel() / world_size)
             all_offsets = tuple(
                 (rank * shard_max_numel, min((rank + 1) * shard_max_numel, tensor.numel()))
                 for rank in range(world_size)
@@ -219,13 +224,21 @@ class ShardedFlatTensor(torch.Tensor):
                 unsharded_data = torch.empty(
                     self.unsharded_shape, dtype=unsharded_data.dtype, device=unsharded_data.device
                 )
-            dist.broadcast(unsharded_data, 0, group=self.process_group)
+            dist.broadcast(
+                unsharded_data,
+                0 if self.process_group is None else dist.get_global_rank(self.process_group, 0),
+                group=self.process_group,
+            )
             self.data = self.sharded_chunk(unsharded_data).to(dtype=sharded_data.dtype)
         else:
             self.data = sharded_data
         del metadata[self.SHARDED_FLAT_TENSOR_CACHED_SHARDED_DATA_KEY]
 
     def mark_as_sharded(self, sharding_spec: ShardingSpec, process_group: Optional[dist.ProcessGroup] = None):
+        if self.numel() != (shard_numel := sharding_spec.sharded_numels[get_rank(group=process_group)]):
+            raise ValueError(
+                f"invalid sharding spec, numel in spec ({shard_numel}) does not match numel in shard ({self.numel()})"
+            )
         self._set_metadata(self.SHARDED_FLAT_TENSOR_SHARDING_SPEC_KEY, sharding_spec)
         self._set_metadata(self.SHARDED_FLAT_TENSOR_PROCESS_GROUP_KEY, process_group)
 

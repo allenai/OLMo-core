@@ -1,3 +1,5 @@
+from typing import Dict
+
 import pytest
 import torch
 import torch.distributed as dist
@@ -8,18 +10,23 @@ from olmo_core.distributed.checkpoint import (
     OptimStateDict,
     SafeTensorsLoader,
     _flatten_optimizer_state,
+    _get_model_state_dict_for_checkpoint,
     _unflatten_optimizer_state,
     init_optimizer_state,
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
 from olmo_core.distributed.fsdp import FSDP
-from olmo_core.distributed.sharded_flat_parameter import (
-    ShardedFlatParameter,
-    ShardingSpec,
-)
+from olmo_core.distributed.sharded_flat_parameter import ShardedFlatParameter
+from olmo_core.distributed.sharded_flat_tensor import ShardedFlatTensor, ShardingSpec
 
-from .utils import BACKENDS, DEVICES, get_default_device, run_distributed_test
+from .utils import (
+    BACKENDS,
+    DEVICES,
+    get_default_device,
+    requires_multi_gpu,
+    run_distributed_test,
+)
 
 
 def save_and_load_checkpoint_with_regular_and_sharded_tensors(dir):
@@ -230,6 +237,72 @@ def test_save_and_load_remote_checkpoint(backend, s3_checkpoint_dir):
     run_distributed_test(save_and_load_remote_checkpoint, backend=backend, func_args=(s3_checkpoint_dir,))
 
 
+def run_save_and_load_with_different_data_across_ranks(dir):
+    checkpointer = Checkpointer()
+
+    state_dict_to_save: Dict[str, torch.Tensor] = {
+        "x": ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device()))
+    }
+    y_to_save = ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device()))
+    if dist.get_rank() == 1:
+        state_dict_to_save["y"] = y_to_save
+        state_dict_to_save["z"] = torch.rand(2, 3)
+
+    state_dict_to_load: Dict[str, torch.Tensor] = {
+        "x": ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device()))
+    }
+    y_to_load = ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device()))
+    if dist.get_rank() == 0:
+        state_dict_to_load["z"] = torch.rand(2, 3)
+    else:
+        state_dict_to_load["y"] = y_to_load
+
+    checkpointer.save(dir, state_dict_to_save)
+    checkpointer.load(dir, state_dict_to_load)
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_save_and_load_with_different_data_across_ranks(backend, tmp_path):
+    run_distributed_test(
+        run_save_and_load_with_different_data_across_ranks, backend=backend, func_args=(tmp_path,)
+    )
+
+
+def run_save_and_load_with_sharded_tensors_in_process_group(dir):
+    checkpointer = Checkpointer()
+
+    pg1 = dist.new_group([0, 1])
+    pg2 = dist.new_group([2, 3])
+
+    state_dict_to_save: Dict[str, torch.Tensor] = {"x": ShardedFlatTensor.shard(torch.rand(2, 3))}
+    if dist.get_rank(pg1) >= 0:
+        state_dict_to_save["y"] = ShardedFlatTensor.shard(torch.rand(2, 3), process_group=pg1)
+    if dist.get_rank(pg2) >= 0:
+        state_dict_to_save["y"] = ShardedFlatTensor.shard(torch.rand(2, 3), process_group=pg2)
+
+    state_dict_to_load: Dict[str, torch.Tensor] = {
+        "x": ShardedFlatTensor.shard(torch.rand(2, 3)),
+        "y": ShardedFlatTensor.shard(torch.rand(2, 3)),
+    }
+
+    checkpointer.save(dir, state_dict_to_save)
+    checkpointer.load(dir, state_dict_to_load)
+
+    loaded_y = state_dict_to_load["y"].gather()  # type: ignore
+    if dist.get_rank(pg1) >= 0:
+        saved_y = state_dict_to_save["y"].gather()  # type: ignore
+        torch.testing.assert_close(loaded_y, saved_y)
+
+
+def test_save_and_load_with_sharded_tensors_in_process_group(tmp_path):
+    run_distributed_test(
+        run_save_and_load_with_sharded_tensors_in_process_group,
+        backend="gloo",
+        func_args=(tmp_path,),
+        world_size=4,
+    )
+
+
 def test_safe_tensors_loader():
     url = "https://huggingface.co/stas/tiny-random-llama-2/resolve/main/model.safetensors"
     key = "model.layers.0.post_attention_layernorm.weight"
@@ -271,7 +344,12 @@ def test_flatten_optimizer_state(tiny_model, tiny_model_data):
     tiny_model(tiny_model_data).sum().backward()
     optim.step()
 
-    flat_optim_state = _flatten_optimizer_state(tiny_model, optim)
+    flat_optim_state = _flatten_optimizer_state(
+        tiny_model,
+        optim,
+        _get_model_state_dict_for_checkpoint(tiny_model),
+        optim.state_dict(),  # type: ignore[arg-type]
+    )
     unflattened_optim_state = _unflatten_optimizer_state(flat_optim_state)
 
     # Make sure unflattened state matches what we'd get from `optim.state_dict()`.
@@ -301,10 +379,15 @@ def flatten_optimizer_state_with_sharded_flat_params(model_factory, model_data_f
     optim.param_groups[0]["params"][param_id] = flat_param
     setattr(model.fc[0], "weight", flat_param)
 
-    model_state = model.state_dict()
+    model_state = _get_model_state_dict_for_checkpoint(model)
     assert model_state["fc.0.weight"].shape == flat_param.shape
 
-    flat_optim_state = _flatten_optimizer_state(model, optim, model_state=model_state)
+    flat_optim_state = _flatten_optimizer_state(
+        model,
+        optim,
+        model_state,
+        optim.state_dict(),  # type: ignore[arg-type]
+    )
     unflattened_optim_state = _unflatten_optimizer_state(flat_optim_state)
 
     # Make sure unflattened state matches what we'd get from `optim.state_dict()`.
@@ -347,9 +430,16 @@ def run_save_and_load_fsdp_model(dir, model_factory, model_data_factory, pre_ini
     with fsdp_model.summon_full_params(recurse=True), fsdp_model2.summon_full_params(recurse=True):
         torch.testing.assert_close(fsdp_model.state_dict(), fsdp_model2.state_dict())
 
+    # Check optimizer state.
+    for p1, p2 in zip(fsdp_model.parameters(), fsdp_model2.parameters()):
+        torch.testing.assert_close(optim.state[p1], optim2.state[p2])
+
 
 @pytest.mark.parametrize("backend", BACKENDS)
-@pytest.mark.parametrize("pre_init_optim_state_to_load", (True, False))
+@pytest.mark.parametrize(
+    "pre_init_optim_state_to_load",
+    (pytest.param(True, id="initialized_optim"), pytest.param(False, id="uninitialized_optim")),
+)
 def test_save_and_load_fsdp_model(
     backend, tmp_path, tiny_model_factory, tiny_model_data_factory, pre_init_optim_state_to_load
 ):
@@ -358,4 +448,68 @@ def test_save_and_load_fsdp_model(
         backend=backend,
         start_method="spawn",
         func_args=(tmp_path, tiny_model_factory, tiny_model_data_factory, pre_init_optim_state_to_load),
+    )
+
+
+def run_save_and_load_torch_fsdp_model(
+    dir, model_factory, model_data_factory, pre_init_optim_state_to_load, use_orig_params
+):
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+    fsdp_model = FSDP(model_factory().cuda(), use_orig_params=use_orig_params)
+    optim = torch.optim.AdamW(fsdp_model.parameters())
+
+    # Take a train step to initialize optimizer state.
+    fsdp_model(model_data_factory().cuda()).sum().backward()
+    optim.step()
+
+    # Save checkpoint.
+    save_model_and_optim_state(dir, fsdp_model, optim)
+    dist.barrier()
+
+    # Now create a new fsdp model and load that state.
+    fsdp_model2 = FSDP(model_factory().cuda(), use_orig_params=use_orig_params)
+    optim2 = torch.optim.AdamW(fsdp_model2.parameters())
+    if pre_init_optim_state_to_load:
+        init_optimizer_state(optim2)
+    load_model_and_optim_state(dir, fsdp_model2, optim2)
+
+    # Check model parameters.
+    with FSDP.summon_full_params(fsdp_model, recurse=True), FSDP.summon_full_params(fsdp_model2, recurse=True):
+        torch.testing.assert_close(fsdp_model.state_dict(), fsdp_model2.state_dict())
+
+    # Check optimizer state.
+    for (p1_name, p1), (p2_name, p2) in zip(fsdp_model.named_parameters(), fsdp_model2.named_parameters()):
+        assert p1_name == p2_name
+        torch.testing.assert_close(
+            optim.state[p1], optim2.state[p2], msg=lambda m: f"State for '{p1_name}' does not match. {m}"
+        )
+
+
+@requires_multi_gpu
+@pytest.mark.parametrize(
+    "pre_init_optim_state_to_load",
+    (pytest.param(True, id="initialized_optim"), pytest.param(False, id="uninitialized_optim")),
+)
+@pytest.mark.parametrize(
+    "use_orig_params",
+    (
+        pytest.param(True, id="use_orig_params=True"),
+        pytest.param(False, id="use_orig_param=False", marks=pytest.mark.skip(reason="Not implemented")),
+    ),
+)
+def test_save_and_load_torch_fsdp_model(
+    tmp_path, tiny_model_factory, tiny_model_data_factory, pre_init_optim_state_to_load, use_orig_params
+):
+    run_distributed_test(
+        run_save_and_load_torch_fsdp_model,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(
+            tmp_path,
+            tiny_model_factory,
+            tiny_model_data_factory,
+            pre_init_optim_state_to_load,
+            use_orig_params,
+        ),
     )

@@ -64,3 +64,15 @@ def scatter_object(obj: T, src: int = 0, group: Optional[dist.ProcessGroup] = No
     input_list = [obj] * get_world_size(group) if get_rank(group) == src else None
     dist.scatter_object_list(output_list, input_list, src=src, group=group)
     return output_list[0]
+
+
+def all_gather_object(obj: T, group: Optional[dist.ProcessGroup] = None) -> List[T]:
+    """
+    All-gather an object using pickle to all ranks in a process group.
+    """
+    if not is_distributed():
+        return [obj]
+
+    output_list = [obj] * get_world_size(group)
+    dist.all_gather_object(output_list, obj, group=group)
+    return output_list
