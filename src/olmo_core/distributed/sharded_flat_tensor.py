@@ -56,7 +56,7 @@ class ShardedFlatTensor(torch.Tensor):
             setattr(
                 tensor,
                 cls.SHARDED_FLAT_TENSOR_METADATA_NAME,
-                getattr(data, cls.SHARDED_FLAT_TENSOR_METADATA_NAME).copy(),
+                getattr(data, cls.SHARDED_FLAT_TENSOR_METADATA_NAME, {}).copy(),
             )
         elif type(data) is torch.Tensor or type(data) is nn.Parameter:
             # For ease of BC maintenance, keep this path for standard Tensor.
