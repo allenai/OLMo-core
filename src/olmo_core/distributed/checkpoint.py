@@ -439,6 +439,13 @@ class Checkpointer:
                         flat_tensor_to_load = loader.get_flat_slice(
                             key, flat_tensor_to_load_start, flat_tensor_to_load_end
                         )
+                        if (
+                            load_shape := flat_view.view[flat_tensor_start:flat_tensor_end].shape
+                        ) != flat_tensor_to_load.shape:
+                            raise RuntimeError(
+                                f"error loading {key} from {filename} with offsets ({flat_tensor_start}, {flat_tensor_end}), "
+                                f"expected {load_shape}, found {flat_tensor_to_load.shape}"
+                            )
                         flat_view.view[flat_tensor_start:flat_tensor_end].copy_(flat_tensor_to_load)
 
                         del flat_tensor_to_load
