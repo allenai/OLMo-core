@@ -741,7 +741,7 @@ def _flatten_optimizer_state(
     for i, param_group in enumerate(optim_state["param_groups"]):
         # make copy.
         param_group = {k: v for k, v in param_group.items()}
-        param_group["param_names"] = [param_id_to_name[param_id] for param_id in param_group["params"]]
+        param_group["_param_names"] = [param_id_to_name[param_id] for param_id in param_group["params"]]
         flat_optim_state[f"param_group{i}"] = serialize_to_tensor(param_group)
 
     # Flatten state tensors and wrap any tensor with the right sharded class if the corresponding
@@ -774,7 +774,7 @@ def _unflatten_optimizer_state(flat_optim_state: Dict[str, torch.Tensor]) -> Opt
     # Deserialize param group data while collecting the mapping of param names to IDs.
     for i in range(num_param_groups):
         param_group = deserialize_from_tensor(flat_optim_state[f"param_group{i}"])
-        param_names = param_group.pop("param_names")
+        param_names = param_group.pop("_param_names")
         for param_name, param_id in zip(param_names, param_group["params"]):
             param_name_to_id[param_name] = param_id
         optim_state["param_groups"].append(param_group)
