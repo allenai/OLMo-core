@@ -173,6 +173,8 @@ class SafeTensorsLoader:
             dtype = self.get_dtype(key)
             bytes_per_item = sft_torch._SIZE[dtype]
             num_bytes = bytes_per_item * (end_idx - start_idx)
+            if num_bytes == 0:
+                return torch.tensor([], dtype=dtype)
 
             # Transform `start_idx` into a byte offset.
             offset_start = self.header[key]["data_offsets"][0]
