@@ -692,8 +692,14 @@ def load_model_and_optim_state(
         )
         del model_state
 
+        # Make sure pickled fields are the right size.
+        metadata = checkpointer.get_metadata(f"{dir}/optim")
+        for i in range(len(optim.param_groups)):
+            flat_optim_state[f"param_group{i}"] = metadata.tensors[f"param_group{i}"].materialize_empty()
+        flat_optim_state["state_keys"] = metadata.tensors["state_keys"].materialize_empty()
+
         # Load flattened optimizer state in place.
-        checkpointer.load(f"{dir}/optim", flat_optim_state)
+        checkpointer.load(f"{dir}/optim", flat_optim_state, metadata=metadata)
 
         # Unflatten optimizer state and pass to optimizer.
         optim_state_to_load = _unflatten_optimizer_state(flat_optim_state)
