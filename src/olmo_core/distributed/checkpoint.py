@@ -751,8 +751,8 @@ def _flatten_optimizer_state(
         param_name = param_id_to_name[param_id]
         for key, tensor in state.items():
             state_keys.add(key)
-            if key == "step":
-                # step tensors might be shared between params, which safetensors doesn't like
+            if key == "step" or tensor.shape != model_state[param_name].shape:
+                # step tensors might be shared between params, which safetensors doesn't like, hence we clone
                 tensor = tensor.clone()
             else:
                 tensor = _wrap_tensor_for_sharded_parameter(tensor, model_state[param_name])
