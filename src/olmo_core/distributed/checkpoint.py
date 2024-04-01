@@ -223,9 +223,9 @@ class SafeTensorsMultiFileLoader:
 
 class Checkpointer:
     """
-    A checkpointer for saving and loading *non-nested* state dictionaries, i.e. where keys are strings and values
-    are either regular :class:`torch.Tensor`s, :class:`torch.nn.Parameter`s, or any sharded tensors from
-    the library.
+    A distributed checkpointer for saving and loading *non-nested* state dictionaries,
+    i.e. where keys are strings and values are either regular :class:`torch.Tensor`s, :class:`torch.nn.Parameter`s,
+    or any sharded tensors from this library.
 
     For saving and loading model and optimizer states together, use :func:`save_model_and_optim_state()`
     and :func:`load_model_and_optim_state()` instead.
@@ -234,7 +234,9 @@ class Checkpointer:
     METADATA_FILENAME = "metadata.json"
 
     @torch.no_grad()
-    def save(self, dir: PathOrStr, state_dict: Dict[str, torch.Tensor], save_overwrite: bool = False):
+    def save(
+        self, dir: PathOrStr, state_dict: Dict[str, torch.Tensor], save_overwrite: bool = False
+    ) -> StorageMetadata:
         """
         Save a state dict. The state dict can contain regular Tensors, Parameters, or any sharded tensors
         from this library.
@@ -275,7 +277,7 @@ class Checkpointer:
             # but that's super dangerous. All it takes is one person passing in the wrong folder
             # name and they could wipe out a ton of very important checkpoints.
             if local_rank == 0:
-                if file_exists(f"{remote_dir}/{self.METADATA_FILENAME}"):
+                if not save_overwrite and file_exists(f"{remote_dir}/{self.METADATA_FILENAME}"):
                     raise FileExistsError(
                         f"Remote checkpoint directory '{remote_dir}' already contains a checkpoint!"
                     )
@@ -321,6 +323,8 @@ class Checkpointer:
         finally:
             if clean_up_local_dir and local_dir.exists():
                 clear_directory(local_dir)
+
+        return metadata
 
     @torch.no_grad()
     def load(
@@ -531,9 +535,9 @@ class Checkpointer:
     def _get_global_save_plan_and_metadata(
         self, state_dict: Dict[str, torch.Tensor]
     ) -> Tuple[Dict[str, torch.Tensor], SavePlan, StorageMetadata]:
-        tensors_flat_view = {}
-        tensors_save_plan = {}
-        tensors_metadata = {}
+        tensors_flat_view: Dict[str, torch.Tensor] = {}
+        tensors_save_plan: Dict[str, TensorSavePlan] = {}
+        tensors_metadata: Dict[str, TensorStorageMetadata] = {}
         for key, tensor in state_dict.items():
             flat_view = self._get_flat_view(tensor)
             tensors_flat_view[key] = flat_view.view
@@ -552,7 +556,7 @@ class Checkpointer:
 
         # All-gather save plans across ranks, merge and validate.
         tensors_save_plan_all_ranks = all_gather_object(tensors_save_plan)
-        final_tensors_save_plan = {}
+        final_tensors_save_plan: Dict[str, TensorSavePlan] = {}
         for rank_plan in tensors_save_plan_all_ranks:
             for key, plan in rank_plan.items():
                 final_plan = final_tensors_save_plan.get(key)
@@ -577,7 +581,7 @@ class Checkpointer:
 
         # All-gather storage metadata across ranks, merge and validate.
         tensors_metadata_all_ranks = all_gather_object(tensors_metadata)
-        final_tensors_metadata = {}
+        final_tensors_metadata: Dict[str, TensorStorageMetadata] = {}
         for rank_metadata in tensors_metadata_all_ranks:
             for key, metadata in rank_metadata.items():
                 final_metadata = final_tensors_metadata.get(key)
@@ -663,7 +667,7 @@ def save_model_and_optim_state(
 def load_model_and_optim_state(
     dir: PathOrStr,
     model: nn.Module,
-    optim: torch.optim.Optimizer,
+    optim: Optional[torch.optim.Optimizer] = None,
 ):
     """
     Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
@@ -674,28 +678,28 @@ def load_model_and_optim_state(
 
     checkpointer = Checkpointer()
 
-    # Ensure optimizer state has been initialized.
-    init_optimizer_state(optim)
-
-    # Get model state and flattened optimizer state to load.
+    # Get model state in-place.
     model_state = _get_model_state_dict_for_checkpoint(model)
-    flat_optim_state = _flatten_optimizer_state(
-        model, optim, model_state, optim.state_dict()  # type: ignore[arg-type]
-    )
-
-    # Load model state in-place.
     checkpointer.load(f"{dir}/model", model_state)
     _load_model_state_dict(model, model_state)
-    del model_state
 
-    # Load flattened optimizer state in place.
-    checkpointer.load(f"{dir}/optim", flat_optim_state)
+    if optim is not None:
+        # Ensure optimizer state has been initialized.
+        init_optimizer_state(optim)
 
-    # Unflatten optimizer state and pass to optimizer.
-    optim_state_to_load = _unflatten_optimizer_state(flat_optim_state)
-    del flat_optim_state
-    optim.load_state_dict(optim_state_to_load)  # type: ignore
-    del optim_state_to_load
+        flat_optim_state = _flatten_optimizer_state(
+            model, optim, model_state, optim.state_dict()  # type: ignore[arg-type]
+        )
+        del model_state
+
+        # Load flattened optimizer state in place.
+        checkpointer.load(f"{dir}/optim", flat_optim_state)
+
+        # Unflatten optimizer state and pass to optimizer.
+        optim_state_to_load = _unflatten_optimizer_state(flat_optim_state)
+        del flat_optim_state
+        optim.load_state_dict(optim_state_to_load)  # type: ignore
+        del optim_state_to_load
 
 
 @torch.no_grad()
