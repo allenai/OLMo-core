@@ -28,7 +28,7 @@ from olmo_core.io import (
     serialize_to_tensor,
     upload,
 )
-from olmo_core.utils import TORCH_DTYPE_TO_STR, TORCH_DTYPES, wait_for
+from olmo_core.utils import TORCH_DTYPE_TO_STR, TORCH_DTYPES
 
 from .sharded_flat_tensor import ShardedFlatTensor, ShardingSpec
 from .utils import all_gather_object, barrier, get_rank, get_world_size, scatter_object
@@ -258,22 +258,11 @@ class Checkpointer:
         clean_up_local_dir = False
         if not is_url(dir):
             local_dir = Path(dir)
-            if local_rank == 0:
-                if save_overwrite and not dir_is_empty(local_dir):
-                    clear_directory(local_dir)
-                local_dir.mkdir(parents=True, exist_ok=True)
+            if save_overwrite and not dir_is_empty(local_dir):
+                clear_directory(local_dir)
 
             barrier()
-
-            # All ranks wait for rank 0 to create the directory. On NFS the directory might
-            # not be available immediately. This also ensures all ranks share the filesystem.
-            description = f"Waiting for '{local_dir}' to be created"
-            try:
-                wait_for(local_dir.exists, description)
-            except TimeoutError as e:
-                raise RuntimeError(
-                    f"{description} timed out, please ensure each rank is saving to the same directory on a shared filesystem."
-                ) from e
+            local_dir.mkdir(parents=True, exist_ok=True)
         else:
             local_dir = Path(tempfile.mkdtemp())
             remote_dir = str(dir).rstrip("/")
@@ -281,11 +270,8 @@ class Checkpointer:
             # NOTE: we do have the ability to clear bucket storage "folders" via `clear_directory`,
             # but that's super dangerous. All it takes is one person passing in the wrong folder
             # name and they could wipe out a ton of very important checkpoints.
-            if local_rank == 0:
-                if not save_overwrite and file_exists(f"{remote_dir}/{self.METADATA_FILENAME}"):
-                    raise FileExistsError(
-                        f"Remote checkpoint directory '{remote_dir}' already contains a checkpoint!"
-                    )
+            if not save_overwrite and file_exists(f"{remote_dir}/{self.METADATA_FILENAME}"):
+                raise FileExistsError(f"Remote checkpoint directory '{remote_dir}' already contains a checkpoint!")
 
         try:
             if not dir_is_empty(local_dir):
