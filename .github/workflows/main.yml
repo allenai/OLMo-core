@@ -1,0 +1,103 @@
+name: Main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*.*.*'
+
+env:
+  # Change this to invalidate existing cache.
+  CACHE_PREFIX: v0
+  PYTHONPATH: ./src/
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+jobs:
+  checks:
+    name: ${{ matrix.task.name }}
+    # TODO: change to 'ubuntu-latest' once repo is public (will have more RAM then), and update the torch
+    # install command in the setup-venv action.
+    runs-on: [macos-13]
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10']
+        task:
+          - name: Lint
+            run: make lint-check
+
+          - name: Test
+            run: |
+              pytest -v --color=yes --durations=3 src/test/ \
+                --ignore-glob='src/test/distributed/fsdp*' \
+                --ignore-glob='src/test/distributed/checkpoint*'
+
+          - name: Test checkpoint
+            run: |
+              pytest -v --color=yes --durations=3 src/test/distributed/checkpoint*
+
+          - name: Test FSDP
+            run: |
+              pytest -v --color=yes --durations=3 src/test/distributed/fsdp/
+
+          - name: Type check
+            run: make type-check
+
+          - name: Build
+            run: make build
+
+          - name: Style
+            run: make style-check
+
+        include:
+          - python: '3.8'
+            task:
+              name: Lint (min Python)
+              run: make lint-check
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Python environment
+        uses: ./.github/actions/setup-venv
+        with:
+          python-version: ${{ matrix.python }}
+          cache-prefix: ${{ env.CACHE_PREFIX }}
+
+      - name: Restore mypy cache
+        if: matrix.task.name == 'Type check'
+        uses: actions/cache@v3
+        with:
+          path: .mypy_cache
+          key: mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('pyproject.toml') }}-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('pyproject.toml') }}-${{ github.ref }}
+            mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('pyproject.toml') }}
+
+      - name: ${{ matrix.task.name }}
+        run: |
+          . .venv/bin/activate
+          ${{ matrix.task.run }}
+
+      - name: Upload package distribution files
+        if: matrix.task.name == 'Build'
+        uses: actions/upload-artifact@v3
+        with:
+          name: package
+          path: dist
+
+      - name: Clean up
+        if: always()
+        run: |
+          . .venv/bin/activate
+          pip uninstall -y ai2-olmo-core
