@@ -85,6 +85,7 @@ def run_fsdp_against_non_distributed_model(model_factory, model_data_factory):
             )
 
 
+@pytest.mark.fsdp1
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_fsdp_against_non_distributed_model(backend, tiny_model_factory, tiny_model_data_factory):
     run_distributed_test(
@@ -158,6 +159,7 @@ def run_fsdp_against_ddp(model_factory, model_data_factory):
     optim.step()
 
 
+@pytest.mark.fsdp1
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_fsdp_against_ddp(backend, tiny_model_factory, tiny_model_data_factory):
     run_distributed_test(
@@ -215,6 +217,7 @@ def run_fsdp_with_gradient_accumulation(model_factory, model_data_factory):
             )
 
 
+@pytest.mark.fsdp1
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_fsdp_with_gradient_accumulation(backend, tiny_model_factory, tiny_model_data_factory):
     run_distributed_test(
@@ -347,6 +350,7 @@ def run_nested_fsdp_api(model_factory, model_data_factory):
     loss.backward()
 
 
+@pytest.mark.fsdp1
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_nested_fsdp_api(backend, tiny_model_factory, tiny_model_data_factory):
     run_distributed_test(
@@ -383,6 +387,7 @@ def run_fsdp_with_mixed_precision(model_factory, model_data_factory, precision):
             assert param.grad.dtype == param.dtype
 
 
+@pytest.mark.fsdp2
 @pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize("precision", FSDP_MIXED_PRECISION)
 def test_fsdp_with_mixed_precision(backend, tiny_model_factory, tiny_model_data_factory, precision):
@@ -431,6 +436,7 @@ def run_auto_wrap():
     assert fsdp.module.fc3.out_proj.max_prefetch_count == 3
 
 
+@pytest.mark.fsdp1
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_auto_wrap(backend):
     run_distributed_test(
@@ -491,6 +497,7 @@ def run_apply():
         assert (param.data.detach() == 1.1).all()
 
 
+@pytest.mark.fsdp1
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_apply(backend):
     run_distributed_test(
