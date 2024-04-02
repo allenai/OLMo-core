@@ -25,7 +25,7 @@ jobs:
   checks:
     name: ${{ matrix.task.name }}
     runs-on: [ubuntu-latest]
-    timeout-minutes: 15
+    timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
@@ -41,7 +41,7 @@ jobs:
             run: pytest -v --color=yes --durations=5 src/test/ -m 'fsdp1'
 
           - name: Test FSDP (2)
-            run: pytest -v --color=yes --durations=5 src/test/ -m 'fsdp2'
+            run: pytest -v --color=yes --durations=5 -n=1 src/test/ -m 'fsdp2'
 
           - name: Type check
             run: make type-check

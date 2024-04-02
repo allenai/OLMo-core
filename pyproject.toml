@@ -29,6 +29,7 @@ dev = [
     "isort>=5.12,<5.13",
     "pytest",
     "pytest-sphinx",
+    "pytest-xdist",
     "twine>=1.11.0",
     "setuptools",
     "wheel",
