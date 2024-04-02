@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Dict
 
 import pytest
@@ -42,7 +43,11 @@ def save_and_load_checkpoint_with_regular_and_sharded_tensors(dir):
         "y": ShardedFlatParameter.shard(torch.zeros(2, 3, device=get_default_device())),
     }
 
-    checkpointer.save(dir, state_dict_to_save)
+    _, files = checkpointer.save(dir, state_dict_to_save)
+    assert files
+    for path in files:
+        assert isinstance(path, Path)
+        assert path.exists()
     checkpointer.load(dir, state_dict_to_load)
 
     torch.testing.assert_close(state_dict_to_save["x"], state_dict_to_load["x"])
@@ -207,7 +212,11 @@ def test_save_and_load_remote_non_distributed(device, s3_checkpoint_dir):
         "x": torch.zeros_like(state_dict_to_save["x"]),
     }
 
-    checkpointer.save(s3_checkpoint_dir, state_dict_to_save)
+    _, files = checkpointer.save(s3_checkpoint_dir, state_dict_to_save)
+    assert files
+    for path in files:
+        assert isinstance(path, str)
+        assert path.startswith("s3://")
     checkpointer.load(s3_checkpoint_dir, state_dict_to_load)
 
     torch.testing.assert_close(state_dict_to_save, state_dict_to_load)

@@ -238,17 +238,20 @@ class Checkpointer:
     @torch.no_grad()
     def save(
         self, dir: PathOrStr, state_dict: Dict[str, torch.Tensor], save_overwrite: bool = False
-    ) -> StorageMetadata:
+    ) -> Tuple[StorageMetadata, List[PathOrStr]]:
         """
         Save a state dict. The state dict can contain regular Tensors, Parameters, or any sharded tensors
         from this library.
 
         When calling this from a distributed context, all ranks must call this at the same time and the
         state dict must have the same keys and tensor types across each rank.
+
+        Returns the storage metadata and a list of files created by the local rank.
         """
         dir = self._normalize_dir(dir)
 
         local_rank = get_rank()
+        files_created: List[PathOrStr] = []
 
         local_dir: Path
         remote_dir: Optional[str] = None
@@ -306,27 +309,35 @@ class Checkpointer:
             local_sft_path = local_dir / self._filename_for_rank(local_rank)
             sft_torch.save_file(local_state_dict, local_sft_path)
             if remote_dir is not None:
+                remote_sft_path = f"{remote_dir}/{self._filename_for_rank(local_rank)}"
                 upload(
                     local_sft_path,
-                    f"{remote_dir}/{self._filename_for_rank(local_rank)}",
+                    remote_sft_path,
                     save_overwrite=save_overwrite,
                 )
+                files_created.append(remote_sft_path)
+            else:
+                files_created.append(local_sft_path)
 
             # Save metadata.
             if local_rank == 0:
-                metadata_path = local_dir / self.METADATA_FILENAME
-                with open(metadata_path, "w") as f:
+                local_metadata_path = local_dir / self.METADATA_FILENAME
+                with open(local_metadata_path, "w") as f:
                     json.dump(metadata.model_dump(), f)
 
                 if remote_dir is not None:
-                    upload(metadata_path, f"{remote_dir}/{self.METADATA_FILENAME}", save_overwrite=save_overwrite)
+                    remote_metadata_path = f"{remote_dir}/{self.METADATA_FILENAME}"
+                    upload(local_metadata_path, remote_metadata_path, save_overwrite=save_overwrite)
+                    files_created.append(remote_metadata_path)
+                else:
+                    files_created.append(local_metadata_path)
 
             barrier()
         finally:
             if clean_up_local_dir and local_dir.exists():
                 clear_directory(local_dir)
 
-        return metadata
+        return metadata, files_created
 
     @torch.no_grad()
     def load(
@@ -651,11 +662,13 @@ def save_model_and_optim_state(
     model: nn.Module,
     optim: torch.optim.Optimizer,
     save_overwrite: bool = False,
-):
+) -> List[PathOrStr]:
     """
     Save model and optimizer state dictionaries. The model state can be a sharded model, in which
     case this method will correctly handle the optimizer state to ensure it can be loaded again with
     a different distributed topology through :func:`load_model_and_optim_state()`.
+
+    Returns all of the files created by the current rank.
     """
     dir = str(dir).rstrip("/")
 
@@ -668,8 +681,9 @@ def save_model_and_optim_state(
     )
 
     checkpointer = Checkpointer()
-    checkpointer.save(f"{dir}/model", model_state, save_overwrite=save_overwrite)
-    checkpointer.save(f"{dir}/optim", flat_optim_state, save_overwrite=save_overwrite)
+    _, model_files_created = checkpointer.save(f"{dir}/model", model_state, save_overwrite=save_overwrite)
+    _, optim_files_created = checkpointer.save(f"{dir}/optim", flat_optim_state, save_overwrite=save_overwrite)
+    return model_files_created + optim_files_created
 
 
 @torch.no_grad()
