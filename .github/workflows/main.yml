@@ -34,14 +34,11 @@ jobs:
           - name: Lint
             run: make lint-check
 
-          - name: Test (default)
-            run: pytest -v --color=yes --durations=5 src/test/ -m 'not fsdp1 and not fsdp2'
+          - name: Test core
+            run: pytest -v --color=yes --durations=5 -n=1 src/test/ --ignore-glob='src/test/distributed/fsdp/*'
 
-          - name: Test FSDP (1)
-            run: pytest -v --color=yes --durations=5 src/test/ -m 'fsdp1'
-
-          - name: Test FSDP (2)
-            run: pytest -v --color=yes --durations=5 -n=1 src/test/ -m 'fsdp2'
+          - name: Test FSDP
+            run: pytest -v --color=yes --durations=5 -n=1 src/test/distributed/fsdp/
 
           - name: Type check
             run: make type-check
