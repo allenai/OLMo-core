@@ -38,8 +38,13 @@ jobs:
         include:
           - python: '3.10'
             task:
-              name: Test
-              run: pytest -v --color=yes --durations=5 src/test/
+              name: Test (main group)
+              run: pytest -v --color=yes --durations=5 src/test/ -m 'not group1'
+
+          - python: '3.10'
+            task:
+              name: Test (group 1)
+              run: pytest -v --color=yes --durations=5 src/test/ -m 'group1'
 
           - python: '3.10'
             task:
