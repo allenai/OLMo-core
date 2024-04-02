@@ -39,12 +39,12 @@ jobs:
           - name: Test
             run: |
               pytest -v --color=yes --durations=3 src/test/ \
-                --ignore-glob='src/test/distributed/fsdp/*' \
-                --ignore-glob='src/test/distributed/sharded_flat_*'
+                --ignore-glob='src/test/distributed/fsdp*' \
+                --ignore-glob='src/test/distributed/checkpoint*'
 
-          - name: Test tensors
+          - name: Test checkpoint
             run: |
-              pytest -v --color=yes --durations=3 src/test/distributed/sharded_flat_*
+              pytest -v --color=yes --durations=3 src/test/distributed/checkpoint*
 
           - name: Test FSDP
             run: |
