@@ -24,13 +24,13 @@ env:
 jobs:
   checks:
     name: ${{ matrix.task.name }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
         python: ['3.10']
-        runner: [macos-13]  # TODO: change to ubuntu-latest once repo is public (will have more RAM then)
+        os: [macos-13]  # TODO: change to ubuntu-latest once repo is public (will have more RAM then)
         task:
           - name: Lint
             run: make lint-check
