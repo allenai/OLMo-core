@@ -17,6 +17,8 @@ env:
   # Change this to invalidate existing cache.
   CACHE_PREFIX: v0
   PYTHONPATH: ./src/
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
 jobs:
   checks:
@@ -30,7 +32,7 @@ jobs:
         task:
           - name: Lint
             run: |
-              make lint
+              make lint-check
 
         include:
           - python: '3.10'
