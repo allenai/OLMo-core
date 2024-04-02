@@ -31,3 +31,10 @@ class ShardedFlatParameter(ShardedFlatTensor, nn.Parameter):
             setattr(param, cls.SHARDED_FLAT_TENSOR_METADATA_NAME, {})
 
         return param
+
+    def __repr__(self) -> str:
+        r = torch.Tensor.__repr__(self)
+        if r.startswith("Parameter("):  # )  -- the open parenthesis confuses treesitter sometimes
+            r = r.replace("Parameter(", "", 1)  # )  -- the open parenthesis confuses treesitter sometimes
+            r = r[:-1]
+        return r
