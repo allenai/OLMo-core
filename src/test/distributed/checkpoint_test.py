@@ -44,7 +44,10 @@ def save_and_load_checkpoint_with_regular_and_sharded_tensors(dir):
     }
 
     _, files = checkpointer.save(dir, state_dict_to_save)
-    assert files
+    if dist.get_rank() == 0:
+        assert len(files) == 2  # will include metadata
+    else:
+        assert len(files) == 1
     for path in files:
         assert isinstance(path, Path)
         assert path.exists()
@@ -213,7 +216,7 @@ def test_save_and_load_remote_non_distributed(device, s3_checkpoint_dir):
     }
 
     _, files = checkpointer.save(s3_checkpoint_dir, state_dict_to_save)
-    assert files
+    assert len(files) == 2  # will include metadata
     for path in files:
         assert isinstance(path, str)
         assert path.startswith("s3://")
@@ -473,7 +476,11 @@ def run_save_and_load_torch_fsdp_model(
     optim.step()
 
     # Save checkpoint.
-    save_model_and_optim_state(dir, fsdp_model, optim)
+    files = save_model_and_optim_state(dir, fsdp_model, optim)
+    if dist.get_rank() == 0:
+        assert len(files) == 4
+    else:
+        assert len(files) == 2
     dist.barrier()
 
     # Now create a new fsdp model and load that state.

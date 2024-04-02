@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import logging
 import struct
@@ -36,198 +38,86 @@ from .utils import all_gather_object, barrier, get_rank, get_world_size, scatter
 log = logging.getLogger(__name__)
 
 
-class TensorStorageMetadata(BaseModel):
-    flattened_offsets_per_file: Dict[str, Tuple[int, int]]
+@torch.no_grad()
+def save_model_and_optim_state(
+    dir: PathOrStr,
+    model: nn.Module,
+    optim: torch.optim.Optimizer,
+    save_overwrite: bool = False,
+) -> List[PathOrStr]:
     """
-    Maps file name to the offsets within the full flattened tensor that the shard in the file
-    corresponds to.
+    Save model and optimizer state dictionaries. The model state can be a sharded model, in which
+    case this method will correctly handle the optimizer state to ensure it can be loaded again with
+    a different distributed topology through :func:`load_model_and_optim_state()`.
+
+    Returns all of the files created by the current rank.
     """
+    dir = str(dir).rstrip("/")
 
-    shape: Tuple[int, ...]
+    # Ensure optimizer state has been initialized.
+    init_optimizer_state(optim)
+
+    model_state = _get_model_state_dict_for_checkpoint(model)
+    flat_optim_state = _flatten_optimizer_state(
+        model, optim, model_state, optim.state_dict()  # type: ignore[arg-type]
+    )
+
+    checkpointer = Checkpointer()
+    _, model_files_created = checkpointer.save(f"{dir}/model", model_state, save_overwrite=save_overwrite)
+    _, optim_files_created = checkpointer.save(f"{dir}/optim", flat_optim_state, save_overwrite=save_overwrite)
+    return model_files_created + optim_files_created
+
+
+@torch.no_grad()
+def load_model_and_optim_state(
+    dir: PathOrStr,
+    model: nn.Module,
+    optim: Optional[torch.optim.Optimizer] = None,
+):
     """
-    The shape of the full (unflattened) tensor.
+    Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
+    This method is agnostic to the distributed topology in that it can load checkpoints saved with a different
+    distributed topology.
     """
+    dir = str(dir).rstrip("/")
 
-    is_sharded: bool
-    """
-    Whether the original tensor (when saved) was sharded.
-    """
+    checkpointer = Checkpointer()
 
-    dtype: str
-    """
-    The data type of the tensor.
-    """
+    # Get model state in-place.
+    model_state = _get_model_state_dict_for_checkpoint(model)
+    checkpointer.load(f"{dir}/model", model_state)
+    _load_model_state_dict(model, model_state)
 
-    @property
-    def torch_dtype(self) -> torch.dtype:
-        return TORCH_DTYPES[self.dtype]
+    if optim is not None:
+        # Ensure optimizer state has been initialized.
+        init_optimizer_state(optim)
 
-    def materialize_empty(
-        self, *, device: Optional[torch.device] = None, shape: Optional[Tuple[int, ...]] = None
-    ) -> torch.Tensor:
-        return torch.empty(shape if shape is not None else self.shape, dtype=self.torch_dtype, device=device)
+        flat_optim_state = _flatten_optimizer_state(
+            model, optim, model_state, optim.state_dict()  # type: ignore[arg-type]
+        )
+        del model_state
 
-    def materialize_from_sharded(
-        self, tensor: torch.Tensor, device: Optional[torch.device] = None
-    ) -> torch.Tensor:
-        if isinstance(tensor, ShardedFlatTensor):
-            if tensor.unsharded_shape != self.shape:
-                raise ValueError(
-                    f"unexpected shape for sharded tensor, expected {self.shape}, got {tensor.unsharded_shape}"
-                )
-            return torch.empty(tensor.shape, device=device, dtype=self.torch_dtype)
-        else:
-            raise NotImplementedError(f"`materialize_from_sharded()` not implemented for {tensor}")
+        # Make sure pickled fields are the right size.
+        metadata = checkpointer.get_metadata(f"{dir}/optim")
+        for i in range(len(optim.param_groups)):
+            flat_optim_state[f"param_group{i}"] = metadata.tensors[f"param_group{i}"].materialize_empty()
+        flat_optim_state["state_keys"] = metadata.tensors["state_keys"].materialize_empty()
 
+        # Load flattened optimizer state in place.
+        checkpointer.load(f"{dir}/optim", flat_optim_state, metadata=metadata)
 
-class StorageMetadata(BaseModel):
-    tensors: Dict[str, TensorStorageMetadata]
-
-
-class TensorSavePlan(BaseModel):
-    flattened_offsets_per_rank: Dict[int, Tuple[int, int]]
-    """
-    Maps global process rank to the offsets within the full flattened tensor that the shard for the
-    rank corresponds to. Some ranks may be omitted.
-    """
-
-    is_sharded: bool
-    """
-    If the tensor is sharded.
-    """
-
-
-@dataclass
-class TensorFlatView:
-    view: torch.Tensor
-    """
-    A 1D view into the tensor.
-    """
-
-    full_shape: Tuple[int, ...]
-    """
-    The shape of the full unsharded tensor.
-    """
-
-    is_sharded: bool
-    """
-    If the tensor is sharded.
-    """
-
-    flattened_offsets_per_rank: Dict[int, Tuple[int, int]]
-    """
-    A mapping of *global* rank to offsets into the full flattened tensor.
-    """
-
-
-class SavePlan(BaseModel):
-    tensors: Dict[str, TensorSavePlan]
-
-
-class SafeTensorsLoader:
-    """
-    A wrapper around ``safetensors`` loading functionality for PyTorch that works with remote
-    files as well without having to download the whole file.
-
-    This should be used a context manager.
-    """
-
-    def __init__(self, path: PathOrStr):
-        self.path = path
-        self.safe_open: Optional[sft.safe_open] = None
-
-    @cached_property
-    def header_length(self) -> int:
-        return struct.unpack("<Q", get_bytes_range(self.path, 0, 8))[0]
-
-    @cached_property
-    def header(self) -> Dict[str, Any]:
-        return json.loads(get_bytes_range(self.path, 8, self.header_length))
-
-    def get_shape(self, key: str) -> Tuple[int, ...]:
-        return self.header[key]["shape"]
-
-    def get_dtype(self, key: str) -> torch.dtype:
-        return sft_torch._getdtype(self.header[key]["dtype"])
-
-    def get_numel(self, key: str) -> int:
-        return reduce(lambda x, y: x * y, self.get_shape(key), 1)
-
-    def get_flat_slice(self, key: str, start_idx: int = 0, end_idx: Optional[int] = None) -> torch.Tensor:
-        if self.safe_open is not None:
-            return self.safe_open.get_slice(key)[start_idx:end_idx]  # type: ignore
-        elif is_url(self.path):
-            # Validate indices. Can only work with positive indices.
-            if start_idx < 0:
-                start_idx = self.get_numel(key) + start_idx
-            elif start_idx > self.get_numel(key):
-                raise IndexError(f"slice start index ({start_idx}) out of range")
-
-            if end_idx is None:
-                end_idx = self.get_numel(key)
-            elif end_idx < 0:
-                end_idx = self.get_numel(key) + end_idx
-            elif end_idx > self.get_numel(key):
-                raise IndexError(f"slice end index ({end_idx}) out of range")
-
-            dtype = self.get_dtype(key)
-            bytes_per_item = sft_torch._SIZE[dtype]
-            num_bytes = bytes_per_item * (end_idx - start_idx)
-            if num_bytes == 0:
-                return torch.tensor([], dtype=dtype)
-
-            # Transform `start_idx` into a byte offset.
-            offset_start = self.header[key]["data_offsets"][0]
-            offset_start += bytes_per_item * start_idx
-            # At this point `offset_start` is an offset into the byte-buffer part
-            # of the file, not the file itself. We have to offset further by the header size byte
-            # and the number of bytes in the header itself.
-            offset_start += 8 + self.header_length
-
-            # Load the tensor.
-            array_bytes = get_bytes_range(self.path, offset_start, num_bytes)
-            tensor = torch.frombuffer(bytearray(array_bytes), dtype=dtype)
-            if sys.byteorder == "big":
-                tensor = torch.from_numpy(tensor.numpy().byteswap(inplace=False))
-            return tensor
-        else:
-            raise OLMoUserError(
-                f"{self.__class__.__name__} is meant to be used as a context manager, did you forget to call __enter__?"
-            )
-
-    def __enter__(self):
-        if not is_url(self.path):
-            self.safe_open = sft.safe_open(self.path, framework="pt", device="cpu")
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.safe_open is not None:
-            self.safe_open.__exit__(exc_type, exc_val, exc_tb)  # type: ignore
-            self.safe_open = None
-
-
-class SafeTensorsMultiFileLoader:
-    """
-    A wrapper around :class:`SafeTensorsLoader` that should be used when working with multiple ``safetensors``
-    files at once to avoid unnecessary IO.
-    """
-
-    def __init__(self):
-        self.loaders: Dict[str, SafeTensorsLoader] = {}
-
-    def open(self, path: PathOrStr) -> SafeTensorsLoader:
-        if (loader := self.loaders.get(str(path))) is not None:
-            return loader
-        loader = SafeTensorsLoader(path)
-        self.loaders[str(path)] = loader
-        return loader
+        # Unflatten optimizer state and pass to optimizer.
+        optim_state_to_load = _unflatten_optimizer_state(flat_optim_state)
+        del flat_optim_state
+        optim.load_state_dict(optim_state_to_load)  # type: ignore
+        del optim_state_to_load
 
 
 class Checkpointer:
     """
     A distributed checkpointer for saving and loading *non-nested* state dictionaries,
-    i.e. where keys are strings and values are either regular :class:`torch.Tensor`s, :class:`torch.nn.Parameter`s,
-    or any sharded tensors from this library.
+    i.e. where keys are strings and values are either regular :class:`torch.Tensor` instances,
+    :class:`torch.nn.Parameter` instances, or any sharded tensors from this library.
 
     For saving and loading model and optimizer states together, use :func:`save_model_and_optim_state()`
     and :func:`load_model_and_optim_state()` instead.
@@ -247,6 +137,11 @@ class Checkpointer:
         state dict must have the same keys and tensor types across each rank.
 
         Returns the storage metadata and a list of files created by the local rank.
+
+        :param dir: The location to save the checkpoint to. Could be a path to a local directory or a URL
+            to a "folder" in an S3 or GCS bucket.
+        :param state_dict: The state dictionary to save.
+        :param save_overwrite: Overwrite existing data.
         """
         dir = self._normalize_dir(dir)
 
@@ -337,8 +232,9 @@ class Checkpointer:
         """
         Load a state dict in-place.
 
-        :param dir: The state dict directory.
-        :param state_dict: The state dict to load into.
+        :param dir: The path or URL to the checkpoint saved via :meth:`save()`.
+        :param state_dict: The state dictionary to load into. This should contain all of the tensors
+            you want to load.
         :param no_dist: Disable distributed communication even if within a distributed context.
         """
         dir = self._normalize_dir(dir)
@@ -623,6 +519,193 @@ class Checkpointer:
         return dir
 
 
+class TensorStorageMetadata(BaseModel):
+    flattened_offsets_per_file: Dict[str, Tuple[int, int]]
+    """
+    Maps file name to the offsets within the full flattened tensor that the shard in the file
+    corresponds to.
+    """
+
+    shape: Tuple[int, ...]
+    """
+    The shape of the full (unflattened) tensor.
+    """
+
+    is_sharded: bool
+    """
+    Whether the original tensor (when saved) was sharded.
+    """
+
+    dtype: str
+    """
+    The data type of the tensor.
+    """
+
+    @property
+    def torch_dtype(self) -> torch.dtype:
+        return TORCH_DTYPES[self.dtype]
+
+    def materialize_empty(
+        self, *, device: Optional[torch.device] = None, shape: Optional[Tuple[int, ...]] = None
+    ) -> torch.Tensor:
+        return torch.empty(shape if shape is not None else self.shape, dtype=self.torch_dtype, device=device)
+
+    def materialize_from_sharded(
+        self, tensor: torch.Tensor, device: Optional[torch.device] = None
+    ) -> torch.Tensor:
+        if isinstance(tensor, ShardedFlatTensor):
+            if tensor.unsharded_shape != self.shape:
+                raise ValueError(
+                    f"unexpected shape for sharded tensor, expected {self.shape}, got {tensor.unsharded_shape}"
+                )
+            return torch.empty(tensor.shape, device=device, dtype=self.torch_dtype)
+        else:
+            raise NotImplementedError(f"`materialize_from_sharded()` not implemented for {tensor}")
+
+
+class StorageMetadata(BaseModel):
+    tensors: Dict[str, TensorStorageMetadata]
+
+
+class TensorSavePlan(BaseModel):
+    flattened_offsets_per_rank: Dict[int, Tuple[int, int]]
+    """
+    Maps global process rank to the offsets within the full flattened tensor that the shard for the
+    rank corresponds to. Some ranks may be omitted.
+    """
+
+    is_sharded: bool
+    """
+    If the tensor is sharded.
+    """
+
+
+@dataclass
+class TensorFlatView:
+    view: torch.Tensor
+    """
+    A 1D view into the tensor.
+    """
+
+    full_shape: Tuple[int, ...]
+    """
+    The shape of the full unsharded tensor.
+    """
+
+    is_sharded: bool
+    """
+    If the tensor is sharded.
+    """
+
+    flattened_offsets_per_rank: Dict[int, Tuple[int, int]]
+    """
+    A mapping of *global* rank to offsets into the full flattened tensor.
+    """
+
+
+class SavePlan(BaseModel):
+    tensors: Dict[str, TensorSavePlan]
+
+
+class SafeTensorsLoader:
+    """
+    A wrapper around ``safetensors`` loading functionality for PyTorch that works with remote
+    files as well without having to download the whole file.
+
+    This should be used a context manager.
+    """
+
+    def __init__(self, path: PathOrStr):
+        self.path = path
+        self.safe_open: Optional[sft.safe_open] = None
+
+    @cached_property
+    def header_length(self) -> int:
+        return struct.unpack("<Q", get_bytes_range(self.path, 0, 8))[0]
+
+    @cached_property
+    def header(self) -> Dict[str, Any]:
+        return json.loads(get_bytes_range(self.path, 8, self.header_length))
+
+    def get_shape(self, key: str) -> Tuple[int, ...]:
+        return self.header[key]["shape"]
+
+    def get_dtype(self, key: str) -> torch.dtype:
+        return sft_torch._getdtype(self.header[key]["dtype"])
+
+    def get_numel(self, key: str) -> int:
+        return reduce(lambda x, y: x * y, self.get_shape(key), 1)
+
+    def get_flat_slice(self, key: str, start_idx: int = 0, end_idx: Optional[int] = None) -> torch.Tensor:
+        if self.safe_open is not None:
+            return self.safe_open.get_slice(key)[start_idx:end_idx]  # type: ignore
+        elif is_url(self.path):
+            # Validate indices. Can only work with positive indices.
+            if start_idx < 0:
+                start_idx = self.get_numel(key) + start_idx
+            elif start_idx > self.get_numel(key):
+                raise IndexError(f"slice start index ({start_idx}) out of range")
+
+            if end_idx is None:
+                end_idx = self.get_numel(key)
+            elif end_idx < 0:
+                end_idx = self.get_numel(key) + end_idx
+            elif end_idx > self.get_numel(key):
+                raise IndexError(f"slice end index ({end_idx}) out of range")
+
+            dtype = self.get_dtype(key)
+            bytes_per_item = sft_torch._SIZE[dtype]
+            num_bytes = bytes_per_item * (end_idx - start_idx)
+            if num_bytes == 0:
+                return torch.tensor([], dtype=dtype)
+
+            # Transform `start_idx` into a byte offset.
+            offset_start = self.header[key]["data_offsets"][0]
+            offset_start += bytes_per_item * start_idx
+            # At this point `offset_start` is an offset into the byte-buffer part
+            # of the file, not the file itself. We have to offset further by the header size byte
+            # and the number of bytes in the header itself.
+            offset_start += 8 + self.header_length
+
+            # Load the tensor.
+            array_bytes = get_bytes_range(self.path, offset_start, num_bytes)
+            tensor = torch.frombuffer(bytearray(array_bytes), dtype=dtype)
+            if sys.byteorder == "big":
+                tensor = torch.from_numpy(tensor.numpy().byteswap(inplace=False))
+            return tensor
+        else:
+            raise OLMoUserError(
+                f"{self.__class__.__name__} is meant to be used as a context manager, did you forget to call __enter__?"
+            )
+
+    def __enter__(self):
+        if not is_url(self.path):
+            self.safe_open = sft.safe_open(self.path, framework="pt", device="cpu")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.safe_open is not None:
+            self.safe_open.__exit__(exc_type, exc_val, exc_tb)  # type: ignore
+            self.safe_open = None
+
+
+class SafeTensorsMultiFileLoader:
+    """
+    A wrapper around :class:`SafeTensorsLoader` that should be used when working with multiple ``safetensors``
+    files at once to avoid unnecessary IO.
+    """
+
+    def __init__(self):
+        self.loaders: Dict[str, SafeTensorsLoader] = {}
+
+    def open(self, path: PathOrStr) -> SafeTensorsLoader:
+        if (loader := self.loaders.get(str(path))) is not None:
+            return loader
+        loader = SafeTensorsLoader(path)
+        self.loaders[str(path)] = loader
+        return loader
+
+
 class ParamGroup(TypedDict):
     params: List[int]
     """
@@ -640,81 +723,6 @@ class OptimStateDict(TypedDict):
     """
     Parameter groups.
     """
-
-
-@torch.no_grad()
-def save_model_and_optim_state(
-    dir: PathOrStr,
-    model: nn.Module,
-    optim: torch.optim.Optimizer,
-    save_overwrite: bool = False,
-) -> List[PathOrStr]:
-    """
-    Save model and optimizer state dictionaries. The model state can be a sharded model, in which
-    case this method will correctly handle the optimizer state to ensure it can be loaded again with
-    a different distributed topology through :func:`load_model_and_optim_state()`.
-
-    Returns all of the files created by the current rank.
-    """
-    dir = str(dir).rstrip("/")
-
-    # Ensure optimizer state has been initialized.
-    init_optimizer_state(optim)
-
-    model_state = _get_model_state_dict_for_checkpoint(model)
-    flat_optim_state = _flatten_optimizer_state(
-        model, optim, model_state, optim.state_dict()  # type: ignore[arg-type]
-    )
-
-    checkpointer = Checkpointer()
-    _, model_files_created = checkpointer.save(f"{dir}/model", model_state, save_overwrite=save_overwrite)
-    _, optim_files_created = checkpointer.save(f"{dir}/optim", flat_optim_state, save_overwrite=save_overwrite)
-    return model_files_created + optim_files_created
-
-
-@torch.no_grad()
-def load_model_and_optim_state(
-    dir: PathOrStr,
-    model: nn.Module,
-    optim: Optional[torch.optim.Optimizer] = None,
-):
-    """
-    Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
-    This method is agnostic to the distributed topology in that it can load checkpoints saved with a different
-    distributed topology.
-    """
-    dir = str(dir).rstrip("/")
-
-    checkpointer = Checkpointer()
-
-    # Get model state in-place.
-    model_state = _get_model_state_dict_for_checkpoint(model)
-    checkpointer.load(f"{dir}/model", model_state)
-    _load_model_state_dict(model, model_state)
-
-    if optim is not None:
-        # Ensure optimizer state has been initialized.
-        init_optimizer_state(optim)
-
-        flat_optim_state = _flatten_optimizer_state(
-            model, optim, model_state, optim.state_dict()  # type: ignore[arg-type]
-        )
-        del model_state
-
-        # Make sure pickled fields are the right size.
-        metadata = checkpointer.get_metadata(f"{dir}/optim")
-        for i in range(len(optim.param_groups)):
-            flat_optim_state[f"param_group{i}"] = metadata.tensors[f"param_group{i}"].materialize_empty()
-        flat_optim_state["state_keys"] = metadata.tensors["state_keys"].materialize_empty()
-
-        # Load flattened optimizer state in place.
-        checkpointer.load(f"{dir}/optim", flat_optim_state, metadata=metadata)
-
-        # Unflatten optimizer state and pass to optimizer.
-        optim_state_to_load = _unflatten_optimizer_state(flat_optim_state)
-        del flat_optim_state
-        optim.load_state_dict(optim_state_to_load)  # type: ignore
-        del optim_state_to_load
 
 
 @torch.no_grad()
