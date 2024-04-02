@@ -24,7 +24,9 @@ env:
 jobs:
   checks:
     name: ${{ matrix.task.name }}
-    runs-on: [macos-13]  # TODO: change to ubuntu-latest once repo is public (will have more RAM then)
+    # TODO: change to 'ubuntu-latest' once repo is public (will have more RAM then), and update the torch
+    # install command in the setup-venv action.
+    runs-on: [macos-13]
     timeout-minutes: 5
     strategy:
       fail-fast: false
@@ -34,9 +36,15 @@ jobs:
           - name: Lint
             run: make lint-check
 
-          - name: Test core
+          - name: Test
             run: |
-              pytest -v --color=yes --durations=3 src/test/ --ignore-glob='src/test/distributed/fsdp/*'
+              pytest -v --color=yes --durations=3 src/test/ \
+                --ignore-glob='src/test/distributed/fsdp/*' \
+                --ignore-glob='src/test/distributed/sharded_flat_*'
+
+          - name: Test tensors
+            run: |
+              pytest -v --color=yes --durations=3 src/test/distributed/sharded_flat_*
 
           - name: Test FSDP
             run: |
