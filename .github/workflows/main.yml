@@ -24,25 +24,24 @@ env:
 jobs:
   checks:
     name: ${{ matrix.task.name }}
-    runs-on: [ubuntu-latest]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
         python: ['3.10']
+        runner: [macos-13]  # TODO: change to ubuntu-latest once repo is public (will have more RAM then)
         task:
           - name: Lint
             run: make lint-check
 
           - name: Test core
             run: |
-              pytest -v --color=yes --durations=3 src/test/ --ignore-glob='src/test/distributed/*'
-              pytest -v --color=yes --durations=3 src/test/distributed/ --ignore-glob='src/test/distributed/fsdp/*'
+              pytest -v --color=yes --durations=3 src/test/ --ignore-glob='src/test/distributed/fsdp/*'
 
           - name: Test FSDP
             run: |
-              pytest -v --color=yes --durations=3 src/test/distributed/fsdp/ -m 'fsdp1'
-              pytest -v --color=yes --durations=3 -n=1 src/test/distributed/fsdp/ -m 'fsdp2'
+              pytest -v --color=yes --durations=3 src/test/distributed/fsdp/
 
           - name: Type check
             run: make type-check
