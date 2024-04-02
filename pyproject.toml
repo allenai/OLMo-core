@@ -151,7 +151,8 @@ log_cli = false
 log_cli_level = "DEBUG"
 markers = [
     "gpu",
-    "group1",
+    "fsdp1",
+    "fsdp2",
 ]
 filterwarnings = [
     'ignore::FutureWarning:huggingface_hub\.file_download',

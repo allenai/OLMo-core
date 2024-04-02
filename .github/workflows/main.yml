@@ -23,46 +23,40 @@ env:
 
 jobs:
   checks:
-    name: ${{ matrix.task.name }} (py ${{ matrix.python }})
+    name: ${{ matrix.task.name }}
     runs-on: [ubuntu-latest]
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.8', '3.10']
+        python: ['3.10']
         task:
           - name: Lint
-            run: |
-              make lint-check
+            run: make lint-check
+
+          - name: Test (default)
+            run: pytest -v --color=yes --durations=5 src/test/ -m 'not fsdp1 and not fsdp2'
+
+          - name: Test FSDP (1)
+            run: pytest -v --color=yes --durations=5 src/test/ -m 'fsdp1'
+
+          - name: Test FSDP (2)
+            run: pytest -v --color=yes --durations=5 src/test/ -m 'fsdp2'
+
+          - name: Type check
+            run: make type-check
+
+          - name: Build
+            run: make build
+
+          - name: Style
+            run: make style-check
 
         include:
-          - python: '3.10'
+          - python: '3.8'
             task:
-              name: Test (main group)
-              run: pytest -v --color=yes --durations=5 src/test/ -m 'not group1'
-
-          - python: '3.10'
-            task:
-              name: Test (group 1)
-              run: pytest -v --color=yes --durations=5 src/test/ -m 'group1'
-
-          - python: '3.10'
-            task:
-              name: Type check
-              run: |
-                make type-check
-
-          - python: '3.10'
-            task:
-              name: Build
-              run: |
-                make build
-
-          - python: '3.10'
-            task:
-              name: Style
-              run: |
-                make style-check
+              name: Lint (min Python)
+              run: make lint-check
 
     steps:
       - uses: actions/checkout@v3
