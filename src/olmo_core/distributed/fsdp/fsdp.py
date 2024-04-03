@@ -38,6 +38,10 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class FSDPPrecision:
+    """
+    Mixed precision settings for :class:`FSDP`.
+    """
+
     param_dtype: Optional[torch.dtype] = None
     """
     The data type to cast full model parameters to during the forward and backward pass.
@@ -67,15 +71,7 @@ ModuleWrapSpec = Sequence[Union[str, nn.Module, Type[nn.Module]]]
 
 class FSDP(Generic[M], nn.Module):
     """
-    This is a complete rewrite of PyTorch's ``FullyShardedDataParallel``, a ZeRO-3 model wrapper,
-    with a number of improvements such as:
-
-    * Well-defined "hands off" handling of buffers. FSDP never shards buffers, they are left as-is.
-    * Well-defined handling of frozen params. You can mix and match within an FSDP instance as long
-      as the frozen/non-frozen params are consistent across the process group.
-    * A much better checkpointing mechanism (:mod:`olmo_core.distributed.checkpoint`) which has virtually
-      no memory overhead, works seamlessly when restarting with a different distributed topology,
-      and works for both local and remote files.
+    FSDP, a.k.a. Fully Sharded Data Parallel, a ZeRO-3 model wrapper.
 
     :param module: The module to wrap.
     :param process_group: The distributed process group.
@@ -162,6 +158,9 @@ class FSDP(Generic[M], nn.Module):
         return self._fsdp_wrapped_module
 
     def forward(self, *args, **kwargs):
+        """
+        Run the forward pass on the wrapped module, gathering full parameters when necessary.
+        """
         self._lazy_init()
 
         log.debug("Running forward pass for %s...", self.module.__class__.__name__)
@@ -188,11 +187,13 @@ class FSDP(Generic[M], nn.Module):
 
         if self.is_root:
             # At the end of the first forward pass, execution order is now finalized, meaning
-            # we can use 'self.state.forward_execution_order' to start prefetching unshards.
+            # we can use 'self.state.forward_execution_order' to start prefetching unshards during
+            # the next forward pass.
             self.state.forward_execution_order_finalized = True
             assert not self.state.forward_prefetch_queue
 
         if torch.is_grad_enabled():
+            # Prepare for backward pass.
             if self.is_root and self.state.backward_execution_order_finalized:
                 # Fill backward-pass prefetch queue for unsharding.
                 for module in self.state.backward_execution_order:
@@ -209,11 +210,18 @@ class FSDP(Generic[M], nn.Module):
 
     def state_dict(self, *args, **kwargs):
         """
-        Return the state dict. The keys in the state dict will always correspond to the original keys
-        in the wrapped model.
+        Return the state dict.
 
-        The data in the state dict will be sharded flat data unless you're within the :meth:`summon_full_params()`
-        context or have gathered the full parameters another way.
+        .. seealso::
+            For saving and loading :class:`FSDP` checkpoints, see :mod:`olmo_core.distributed.checkpoint`.
+
+        .. tip::
+            The data in the state dict will be sharded flat data unless you're within the :meth:`summon_full_params()`
+            context or have gathered the full parameters another way.
+
+        .. tip::
+            The parameter names will be the original parameter names of the wrapped module, i.e.
+            without the :data:`WRAPPED_MODULE_PREFIX`.
         """
         return self.module.state_dict(*args, **kwargs)
 
@@ -221,6 +229,9 @@ class FSDP(Generic[M], nn.Module):
         """
         Load a state dict. The data in the state dict should correspond to the current state of the
         FSDP wrapper, either sharded or unsharded.
+
+        .. seealso::
+            For saving and loading :class:`FSDP` checkpoints, see :mod:`olmo_core.distributed.checkpoint`.
         """
         # Fix keys to include the right prefix.
         key_mapping = self._get_key_mapping()  # maps original key to wrapped key
@@ -230,7 +241,9 @@ class FSDP(Generic[M], nn.Module):
         """
         Return an iterator over module buffers, yielding both the name of the buffer and the buffer itself.
 
-        The buffer names will be the original buffer names.
+        .. tip::
+            The parameter names will be the original parameter names of the wrapped module, i.e.
+            without the :data:`WRAPPED_MODULE_PREFIX`.
         """
         key_mapping = self._get_key_mapping(reverse=True)
         for name, buffer in super().named_buffers(*args, **kwargs):
@@ -241,7 +254,9 @@ class FSDP(Generic[M], nn.Module):
         Return an iterator over module parameters, yielding both the name of the parameter as well
         as the parameter itself.
 
-        The parameter names will be the original parameter names.
+        .. tip::
+            The parameter names will be the original parameter names of the wrapped module, i.e.
+            without the :data:`WRAPPED_MODULE_PREFIX`.
         """
         key_mapping = self._get_key_mapping(reverse=True)
         for name, param in super().named_parameters(*args, **kwargs):
@@ -271,9 +286,9 @@ class FSDP(Generic[M], nn.Module):
 
         Typical use includes initializing the parameters of a model.
 
-        Compared to ``torch.nn.Module.apply``, this version additionally gathers the full parameters
+        Compared to :meth:`torch.nn.Module.apply`, this version additionally gathers the full parameters
         for all sharded parameters that are *directly managed* but the given FSDP instance before applying ``fn``.
-        This should not be called from within another ``summon_full_params`` context.
+        This should not be called from within another :meth:`summon_full_params()` context.
         """
         with self.summon_full_params(recurse=False, writeback=True, rank0_only=False):
             ret = super().apply(fn)
@@ -283,7 +298,7 @@ class FSDP(Generic[M], nn.Module):
     @torch.no_grad()
     def clip_grad_norm_(self, max_norm: float, norm_type: float = 2.0) -> torch.Tensor:
         """
-        Clip the gradient norm of all parameters.
+        Clip the gradient norm of all parameters, returning the norm prior to clipping.
 
         The norm is computed over all parameters’ gradients as viewed as a single vector, and the
         gradients are modified in-place.
@@ -399,15 +414,15 @@ class FSDP(Generic[M], nn.Module):
         key_mapping: Dict[str, str] = {}  # maps original key to wrapped key
 
         def collect_key_mappings(module: nn.Module, og_prefix: str, wrapped_prefix: str):
+            if isinstance(module, FSDP):
+                wrapped_prefix = f"{wrapped_prefix}{self.WRAPPED_MODULE_PREFIX}."
+                module = module.module
+
             if not modules:
                 for param_name, _ in chain(
                     module.named_parameters(recurse=False), module.named_buffers(recurse=False)
                 ):
                     key_mapping[f"{og_prefix}{param_name}"] = f"{wrapped_prefix}{param_name}"
-
-            if isinstance(module, FSDP):
-                wrapped_prefix = f"{wrapped_prefix}{self.WRAPPED_MODULE_PREFIX}."
-                module = module.module
 
             for child_name, child in module.named_children():
                 if modules:

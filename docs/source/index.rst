@@ -17,6 +17,7 @@
    utils.rst
    io.rst
    distributed/checkpoint.rst
+   distributed/fsdp.rst
 
 .. toctree::
    :hidden:

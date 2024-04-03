@@ -1,3 +1,5 @@
+from functools import partial
+
 import pytest
 import torch
 import torch.distributed as dist
@@ -353,6 +355,153 @@ def test_nested_fsdp_api(backend, tiny_model_factory, tiny_model_data_factory):
         run_nested_fsdp_api,
         backend=backend,
         func_args=(tiny_model_factory, tiny_model_data_factory),
+        start_method="spawn",
+    )
+
+
+def run_fsdp_with_frozen_params():
+    class Model(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.ff1 = nn.Linear(8, 8)
+            self.ff2 = nn.Linear(8, 8)
+            self.ff2.weight.requires_grad = False
+            self.ff2.bias.requires_grad = False
+
+        def forward(self, x):
+            return self.ff2(self.ff1(x))
+
+    fsdp = FSDP(Model())
+
+    # Run forward pass
+    loss = fsdp(torch.rand(2, 8, device=fsdp.device)).sum()
+
+    # Trigger backward pass.
+    loss.backward()
+    assert fsdp.module.ff1.weight.grad is not None
+    assert fsdp.module.ff1.bias.grad is not None
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_fsdp_with_frozen_params(backend):
+    run_distributed_test(
+        run_fsdp_with_frozen_params,
+        backend=backend,
+        start_method="spawn",
+    )
+
+
+def run_fsdp_with_node_activation_checkpointing():
+    from torch.utils.checkpoint import checkpoint
+
+    checkpoint_fn = partial(checkpoint, use_reentrant=False)
+
+    class Model(nn.Module):
+        def __init__(self, do_activation_checkpointing: bool = True):
+            super().__init__()
+            self.ff1 = FSDP(nn.Linear(4, 8))
+            self.ff2 = FSDP(nn.Linear(8, 8))
+            self.ff3 = FSDP(nn.Linear(8, 4))
+            self.do_activation_checkpointing = do_activation_checkpointing
+
+        def forward(self, x):
+            x = self.ff1(x)
+            if self.do_activation_checkpointing:
+                x = checkpoint_fn(self.ff2, x)
+            else:
+                x = self.ff2(x)
+            x = self.ff3(x)
+            return x
+
+    fsdp_ckpt = FSDP(Model(do_activation_checkpointing=True))
+    fsdp = FSDP(Model(do_activation_checkpointing=True))
+
+    # Synchronize weights.
+    fsdp.load_state_dict(fsdp_ckpt.state_dict())
+
+    # Run forward pass
+    inputs = torch.rand(2, 4, device=fsdp.device)
+    loss_ckpt = fsdp_ckpt(inputs).sum()
+    loss = fsdp(inputs).sum()
+    torch.testing.assert_close(loss_ckpt, loss)
+
+    # Run backward pass.
+    loss_ckpt.backward()
+    loss.backward()
+    for p1, p2 in zip(fsdp_ckpt.parameters(), fsdp.parameters()):
+        assert p1.grad is not None
+        assert p2.grad is not None
+        assert p1.grad.shape == p2.grad.shape
+        torch.testing.assert_close(p1.grad, p2.grad)
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_fsdp_with_node_activation_checkpointing(backend):
+    run_distributed_test(
+        run_fsdp_with_node_activation_checkpointing,
+        backend=backend,
+        start_method="spawn",
+    )
+
+
+def run_fsdp_with_intra_node_activation_checkpointing():
+    from torch.utils.checkpoint import checkpoint
+
+    checkpoint_fn = partial(checkpoint, use_reentrant=False)
+
+    class SubModel(nn.Module):
+        def __init__(self, do_activation_checkpointing: bool = True):
+            super().__init__()
+            self.ff1 = nn.Linear(8, 4)
+            self.ff2 = nn.Linear(4, 8)
+            self.do_activation_checkpointing = do_activation_checkpointing
+
+        def forward(self, x):
+            x = self.ff1(x)
+            if self.do_activation_checkpointing:
+                x = checkpoint_fn(self.ff2, x)
+            else:
+                x = self.ff2(x)
+            return x
+
+    class Model(nn.Module):
+        def __init__(self, do_activation_checkpointing: bool = True):
+            super().__init__()
+            self.ff1 = nn.Linear(4, 8)
+            self.ff2 = FSDP(SubModel(do_activation_checkpointing=do_activation_checkpointing))
+
+        def forward(self, x):
+            x = self.ff1(x)
+            x = self.ff2(x)
+            return x
+
+    fsdp_ckpt = FSDP(Model(do_activation_checkpointing=True))
+    fsdp = FSDP(Model(do_activation_checkpointing=True))
+
+    # Synchronize weights.
+    fsdp.load_state_dict(fsdp_ckpt.state_dict())
+
+    # Run forward pass
+    inputs = torch.rand(2, 4, device=fsdp.device)
+    loss_ckpt = fsdp_ckpt(inputs).sum()
+    loss = fsdp(inputs).sum()
+    torch.testing.assert_close(loss_ckpt, loss)
+
+    # Run backward pass.
+    loss_ckpt.backward()
+    loss.backward()
+    for p1, p2 in zip(fsdp_ckpt.parameters(), fsdp.parameters()):
+        assert p1.grad is not None
+        assert p2.grad is not None
+        assert p1.grad.shape == p2.grad.shape
+        torch.testing.assert_close(p1.grad, p2.grad)
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_fsdp_with_intra_node_activation_checkpointing(backend):
+    run_distributed_test(
+        run_fsdp_with_intra_node_activation_checkpointing,
+        backend=backend,
         start_method="spawn",
     )
 
