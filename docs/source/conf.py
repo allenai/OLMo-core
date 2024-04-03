@@ -62,6 +62,8 @@ intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
     "docker": ("https://docker-py.readthedocs.io/en/stable/", None),
     "requests": ("https://requests.readthedocs.io/en/stable/", None),
+    "torch": ("https://pytorch.org/docs/stable/", None),
+    "safetensors": ("https://huggingface.co/docs/safetensors/main/en/", None),
 }
 
 # By default, sort documented members by type within classes and modules.

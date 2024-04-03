@@ -1,3 +1,34 @@
+"""
+A low-overhead, fast, distributed checkpointing module with a unified API for saving and
+loading both local and remote checkpoints. Built on top of `safetensors <https://huggingface.co/docs/safetensors/>`_
+and inspired by :mod:`torch.distributed.checkpoint`, but better suited for handling distributed models and
+optimizer state without unnecessary distributed communication and GPU allocations.
+
+Features
+--------
+
+- Sharded distributed models, such as PyTorch's :class:`~torch.distributed.fsdp.FullyShardedDataParallel`
+  are supported out-of-the-box.
+- Utilizes `safetensors <https://huggingface.co/docs/safetensors/>`_ under the hood for fast, efficient, and
+  safe serialization/deserialization.
+- Save with one distributed topology, seamlessly load with a different one. For example,
+  with FSDP you can save/load checkpoints with different world sizes or wrapping strategies.
+- Save/load directly to/from a remote object store like S3 or GCS. When loading from a remote object store each
+  rank only downloads the fraction of the data it needs for its local (potentially sharded) tensors.
+- Checkpoints are always loaded in-place and one tensor at a time to avoid unnecessary allocations.
+  This results in virtually no additional memory overhead.
+
+Overview
+--------
+
+Use :func:`save_model_and_optim_state()` to write a checkpoint with your model and optimizer's state, then
+use :func:`load_model_and_optim_state()` to load the checkpoint in-place. You can also generate unsharded, full
+state dictionaries from a checkpoint with :func:`unshard_model_state()` and :func:`unshard_optim_state()`.
+
+API Reference
+-------------
+"""
+
 from __future__ import annotations
 
 import json
@@ -51,6 +82,26 @@ def save_model_and_optim_state(
     a different distributed topology through :func:`load_model_and_optim_state()`.
 
     Returns all of the files created by the current rank.
+
+    .. seealso::
+        - :func:`load_model_and_optim_state()`
+        - :func:`unshard_model_state()`
+        - :func:`unshard_optim_state()`
+
+    .. tip::
+        With :class:`~torch.distributed.fsdp.FullyShardedDataParallel` models it's not necessary
+        to set the state dict type before calling this (or :func:`load_model_and_optim_state()`) via
+        :meth:`~torch.distributed.fsdp.FullyShardedDataParallel.state_dict_type()` or other methods.
+        In fact those settings will always be ignored.
+
+    .. attention::
+        At the moment :class:`~torch.distributed.fsdp.FullyShardedDataParallel` models must have
+        ``use_orig_params=True``.
+
+    :param dir: Path/URL to save to.
+    :param model: The model to save state from.
+    :param optim: The optimizer to save state from.
+    :param save_overwrite: Overwrite existing files.
     """
     dir = str(dir).rstrip("/")
 
@@ -77,10 +128,22 @@ def load_model_and_optim_state(
     """
     Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
     This method is agnostic to the distributed topology in that it can load checkpoints saved with a different
-    distributed topology.
+    distributed topology (e.g. FSDP vs DDP, or FSDP with a different world size).
+
+    .. seealso::
+        - :func:`save_model_and_optim_state()`
+        - :func:`unshard_model_state()`
+        - :func:`unshard_optim_state()`
+
+    .. tip::
+        Internally this function handles calling :meth:`torch.nn.Module.load_state_dict()` and
+        :meth:`torch.optim.Optimizer.load_state_dict()` for you, hence the return type is ``None``.
+
+    :param dir: Path/URL to the checkpoint saved via :func:`save_model_and_optim_state()`.
+    :param model: The model to load the state into.
+    :param optim: The optimizer to load the state into.
     """
     dir = str(dir).rstrip("/")
-
     checkpointer = Checkpointer()
 
     # Get model state in-place.
@@ -111,6 +174,51 @@ def load_model_and_optim_state(
         del flat_optim_state
         optim.load_state_dict(optim_state_to_load)  # type: ignore
         del optim_state_to_load
+
+
+@torch.no_grad()
+def unshard_model_state(
+    dir: PathOrStr, device: Optional[torch.device] = None, rank0_only: bool = False, no_dist: bool = False
+) -> Dict[str, torch.Tensor]:
+    """
+    Unshard model state saved via :func:`save_model_and_optim_state()`.
+
+    .. seealso::
+        - :func:`unshard_optim_state()`
+
+    :param dir: Local or remote checkpoint directory.
+    :param device: Device to load the checkpoint onto. Defaults to CPU.
+    :param rank0_only: Set to true if you only want to load the unsharded state to rank 0 in a distributed
+        context. Other ranks will receive an empty dictionary.
+    :param no_dist: Set to true to avoid any distributed communication whatsoever.
+    """
+    dir = str(dir).rstrip("/")
+    checkpointer = Checkpointer()
+    return checkpointer.unshard(f"{dir}/model", device=device, rank0_only=rank0_only, no_dist=no_dist)
+
+
+@torch.no_grad()
+def unshard_optim_state(
+    dir: PathOrStr, device: Optional[torch.device] = None, rank0_only: bool = False, no_dist: bool = False
+) -> OptimStateDict:
+    """
+    Unshard optimizer state saved via :func:`save_model_and_optim_state()`.
+
+    .. seealso::
+        - :func:`unshard_model_state()`
+
+    :param dir: Local or remote checkpoint directory.
+    :param device: Device to load the checkpoint onto. Defaults to CPU.
+    :param rank0_only: Set to true if you only want to load the unsharded state to rank 0 in a distributed
+        context. Other ranks will receive an empty dictionary.
+    :param no_dist: Set to true to avoid any distributed communication whatsoever.
+    """
+    dir = str(dir).rstrip("/")
+    checkpointer = Checkpointer()
+    flat_optim_state = checkpointer.unshard(f"{dir}/optim", device=device, rank0_only=rank0_only, no_dist=no_dist)
+    optim_state = _unflatten_optimizer_state(flat_optim_state)
+    del flat_optim_state
+    return optim_state
 
 
 class Checkpointer:
@@ -363,6 +471,12 @@ class Checkpointer:
 
         Alternatively, setting ``no_dist=True`` will return a full state dict from whatever process
         calls this.
+
+        :param dir: Local or remote checkpoint directory.
+        :param device: Device to load the checkpoint onto. Defaults to CPU.
+        :param rank0_only: Set to true if you only want to load the unsharded state to rank 0 in a distributed
+            context. Other ranks will receive an empty dictionary.
+        :param no_dist: Set to true to avoid any distributed communication whatsoever.
         """
         dir = self._normalize_dir(dir)
 

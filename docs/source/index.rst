@@ -13,6 +13,9 @@
    :maxdepth: 2
    :caption: API Reference
 
+   exceptions.rst
+   utils.rst
+   io.rst
    distributed/checkpoint.rst
 
 .. toctree::

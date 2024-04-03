@@ -27,12 +27,19 @@ PathOrStr = Union[Path, PathLike, str]
 
 
 def is_url(path: PathOrStr) -> bool:
+    """
+    Check if a path is a URL.
+
+    :param path: Path-like object to check.
+    """
     return re.match(r"[a-z0-9]+://.*", str(path)) is not None
 
 
 def file_size(path: PathOrStr) -> int:
     """
     Get the size of a local or remote file in bytes.
+
+    :param path: Path/URL to the file.
     """
     if is_url(path):
         from urllib.parse import urlparse
@@ -52,11 +59,18 @@ def file_size(path: PathOrStr) -> int:
         return os.stat(path).st_size
 
 
-def get_bytes_range(source: PathOrStr, bytes_start: int, num_bytes: int) -> bytes:
-    if is_url(source):
+def get_bytes_range(path: PathOrStr, bytes_start: int, num_bytes: int) -> bytes:
+    """
+    Get a range of bytes from a file.
+
+    :param source: Path/URL to the file.
+    :param bytes_start: Byte offset to start at.
+    :param num_bytes: Number of bytes to get.
+    """
+    if is_url(path):
         from urllib.parse import urlparse
 
-        parsed = urlparse(str(source))
+        parsed = urlparse(str(path))
         if parsed.scheme == "gs":
             return _gcs_get_bytes_range(parsed.netloc, parsed.path.strip("/"), bytes_start, num_bytes)
         elif parsed.scheme in ("s3", "r2"):
@@ -64,19 +78,25 @@ def get_bytes_range(source: PathOrStr, bytes_start: int, num_bytes: int) -> byte
                 parsed.scheme, parsed.netloc, parsed.path.strip("/"), bytes_start, num_bytes
             )
         elif parsed.scheme in ("http", "https"):
-            return _http_get_bytes_range(str(source), bytes_start, num_bytes)
+            return _http_get_bytes_range(str(path), bytes_start, num_bytes)
         elif parsed.scheme == "file":
-            return get_bytes_range(str(source).replace("file://", "", 1), bytes_start, num_bytes)
+            return get_bytes_range(str(path).replace("file://", "", 1), bytes_start, num_bytes)
         else:
             raise NotImplementedError(f"file size not implemented for '{parsed.scheme}' files")
     else:
-        with open(source, "rb") as f:
+        with open(path, "rb") as f:
             f.seek(bytes_start)
             return f.read(num_bytes)
 
 
 def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
-    """Upload source file to a target location on GCS or S3."""
+    """
+    Upload source file to a target location on GCS or S3.
+
+    :param source: Path to the file to upload.
+    :param target: Target URL to upload to.
+    :param save_overwrite: Overwrite any existing file.
+    """
     from urllib.parse import urlparse
 
     source = Path(source)
@@ -93,6 +113,11 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
 
 
 def dir_is_empty(dir: PathOrStr) -> bool:
+    """
+    Check if a local directory is empty. This also returns true if the directory does not exist.
+
+    :param dir: Path to the local directory.
+    """
     dir = Path(dir)
     if not dir.is_dir():
         return True
@@ -104,6 +129,11 @@ def dir_is_empty(dir: PathOrStr) -> bool:
 
 
 def file_exists(path: PathOrStr) -> bool:
+    """
+    Check if a file exists.
+
+    :param path: Path/URL to a file.
+    """
     if is_url(path):
         from urllib.parse import urlparse
 
@@ -133,6 +163,11 @@ def file_exists(path: PathOrStr) -> bool:
 
 
 def clear_directory(dir: PathOrStr):
+    """
+    Clear out the contents of a local or remote directory. GCS (``gs://``) and S3 (``s3://``) URLs are supported.
+
+    :param dir: Path/URL to the directory.
+    """
     if is_url(dir):
         from urllib.parse import urlparse
 
@@ -153,11 +188,21 @@ def clear_directory(dir: PathOrStr):
 
 
 def serialize_to_tensor(x: Any) -> torch.Tensor:
+    """
+    Serialize an object to a byte tensor using pickle.
+
+    :param x: The pickeable object to serialize.
+    """
     serialized_bytes = pickle.dumps(x)
     return torch.frombuffer(bytearray(serialized_bytes), dtype=torch.uint8)
 
 
 def deserialize_from_tensor(data: torch.Tensor) -> Any:
+    """
+    Deserialize an object from a byte tensor using pickle.
+
+    :param data: The byte tensor to deserialize.
+    """
     assert data.dtype == torch.uint8
     return pickle.loads(bytearray([int(x.item()) for x in data.flatten()]))
 

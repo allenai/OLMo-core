@@ -16,6 +16,8 @@ from olmo_core.distributed.checkpoint import (
     init_optimizer_state,
     load_model_and_optim_state,
     save_model_and_optim_state,
+    unshard_model_state,
+    unshard_optim_state,
 )
 from olmo_core.distributed.fsdp import FSDP
 from olmo_core.distributed.sharded_flat_parameter import ShardedFlatParameter
@@ -445,6 +447,26 @@ def run_save_and_load_fsdp_model(dir, model_factory, model_data_factory, pre_ini
     # Check optimizer state.
     for p1, p2 in zip(fsdp_model.parameters(), fsdp_model2.parameters()):
         torch.testing.assert_close(optim.state[p1], optim2.state[p2])
+
+    # Check unsharding model state.
+    full_model_state = unshard_model_state(dir)
+    assert full_model_state
+    for name, param in fsdp_model.named_parameters():
+        assert isinstance(param, ShardedFlatParameter)
+        assert name in full_model_state
+        assert full_model_state[name].shape == param.unsharded_shape
+
+    # Check unsharding optim state.
+    full_optim_state = unshard_optim_state(dir)
+    assert full_optim_state
+    assert len(full_optim_state["param_groups"]) == len(optim.param_groups)
+    for i, param in enumerate(fsdp_model.parameters()):
+        assert isinstance(param, ShardedFlatParameter)
+        assert i in full_optim_state["state"]
+        state = full_optim_state["state"][i]
+        assert state["step"].numel() == 1
+        assert state["exp_avg"].shape == param.unsharded_shape
+        assert state["exp_avg_sq"].shape == param.unsharded_shape
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
