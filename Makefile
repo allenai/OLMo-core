@@ -7,7 +7,7 @@ style-check :
 	black --check .
 
 .PHONY : lint-check
-format-check :
+lint-check :
 	ruff check .
 
 .PHONY : type-check
