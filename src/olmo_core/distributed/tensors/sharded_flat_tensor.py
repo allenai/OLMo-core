@@ -10,7 +10,7 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .utils import get_rank, get_world_size
+from ..utils import get_rank, get_world_size
 
 __all__ = ["ShardedFlatTensor", "ShardingSpec"]
 

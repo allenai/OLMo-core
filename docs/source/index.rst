@@ -14,10 +14,11 @@
    :caption: API Reference
 
    exceptions.rst
-   utils.rst
    io.rst
+   utils.rst
    distributed/checkpoint.rst
    distributed/fsdp.rst
+   distributed/tensors.rst
 
 .. toctree::
    :hidden:

@@ -6,8 +6,11 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import torch
 import torch.distributed as dist
 
-from olmo_core.distributed.sharded_flat_parameter import ShardedFlatParameter
-from olmo_core.distributed.sharded_flat_tensor import ShardedFlatTensor, ShardingSpec
+from olmo_core.distributed.tensors import (
+    ShardedFlatParameter,
+    ShardedFlatTensor,
+    ShardingSpec,
+)
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.utils import get_default_device
 

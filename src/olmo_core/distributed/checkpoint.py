@@ -63,7 +63,7 @@ from olmo_core.io import (
 )
 from olmo_core.utils import TORCH_DTYPE_TO_STR, TORCH_DTYPES
 
-from .sharded_flat_tensor import ShardedFlatTensor, ShardingSpec
+from .tensors import ShardedFlatTensor, ShardingSpec
 from .utils import all_gather_object, barrier, get_rank, get_world_size, scatter_object
 
 log = logging.getLogger(__name__)

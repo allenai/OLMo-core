@@ -3,7 +3,7 @@ import torch
 import torch.distributed as dist
 
 from olmo_core.distributed.fsdp.flat_param_handle import FlatParamHandle
-from olmo_core.distributed.sharded_flat_parameter import ShardedFlatParameter
+from olmo_core.distributed.tensors import ShardedFlatParameter
 from olmo_core.utils import same_storage
 
 from ..utils import BACKENDS, get_default_device, run_distributed_test

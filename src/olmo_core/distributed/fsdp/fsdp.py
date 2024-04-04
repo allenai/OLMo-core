@@ -27,8 +27,8 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 
-from olmo_core.distributed.sharded_flat_parameter import ShardedFlatParameter
-from olmo_core.utils import apply_to_tensors, get_default_device, get_grad_norm
+from olmo_core.distributed.tensors import ShardedFlatParameter
+from olmo_core.utils import apply_to_tensors, gc_cuda, get_default_device, get_grad_norm
 
 from .flat_param_handle import FlatParamHandle
 from .state import FSDPState
@@ -498,10 +498,11 @@ class FSDP(Generic[M], nn.Module):
 
         # Collate the data from all flat params into the flat param handle. The data in each flat param
         # will then just be a view into a slice of the data managed by the flat param handle.
-        # This makes unsharded more efficient.
+        # This makes unsharding more efficient as we'll only need a single `all_gather` call.
         self.state.flat_param_handle = FlatParamHandle.collate_flat_params(
             params, param_fqns, process_group=self.process_group, device=self.device
         )
+        gc_cuda()
 
     @torch.no_grad()
     def _unshard(

@@ -7,7 +7,7 @@ import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from olmo_core.distributed.fsdp import FSDP, FSDPDebugConfig
-from olmo_core.distributed.sharded_flat_parameter import ShardedFlatParameter
+from olmo_core.distributed.tensors import ShardedFlatParameter
 
 from ..utils import (
     BACKENDS,
