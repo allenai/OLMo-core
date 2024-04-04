@@ -484,8 +484,6 @@ class FSDP(Generic[M], nn.Module):
             if isinstance(m, FSDP):
                 continue
             for param_name, param in m.named_parameters(recurse=False):
-                # TODO: use better sharding strategy that doesn't potentially always result in highest rank with
-                # smallest shard.
                 sharded_flat_param = ShardedFlatParameter.shard(
                     param, process_group=self.process_group, device=self.device, synchronize=False
                 )
@@ -515,7 +513,6 @@ class FSDP(Generic[M], nn.Module):
         # if root to respect the optimizer step and any other computations on the params outside of this
         # module's forward/backward pass.
         with self.state.unshard_stream(wait_stream=self.state.current_stream if self.is_root else None):
-            # TODO: batch the unshards for all params together?
             for param_name, param in self._managed_named_parameters():
                 if not isinstance(param, ShardedFlatParameter):
                     continue
@@ -551,7 +548,6 @@ class FSDP(Generic[M], nn.Module):
         self.state.params_prefetched = False
 
         with self.state.unshard_stream(wait_stream=self.state.compute_stream):
-            # TODO: batch the unshards for all params together?
             for _, param in self._managed_named_parameters():
                 if not isinstance(param, ShardedFlatParameter):
                     continue
@@ -584,7 +580,6 @@ class FSDP(Generic[M], nn.Module):
         grad_reduce_dtype: Optional[torch.dtype] = self.precision.reduce_dtype or self.precision.param_dtype
 
         with self.state.reduce_stream(wait_stream=self.state.current_stream):
-            # TODO: batch the reductions for all params together?
             for param_name, param in self._managed_named_parameters():
                 if (unsharded_grad := param.grad) is None:
                     continue
