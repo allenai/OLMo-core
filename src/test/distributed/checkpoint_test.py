@@ -20,8 +20,11 @@ from olmo_core.distributed.checkpoint import (
     unshard_optim_state,
 )
 from olmo_core.distributed.fsdp import FSDP
-from olmo_core.distributed.sharded_flat_parameter import ShardedFlatParameter
-from olmo_core.distributed.sharded_flat_tensor import ShardedFlatTensor, ShardingSpec
+from olmo_core.distributed.tensors import (
+    ShardedFlatParameter,
+    ShardedFlatTensor,
+    ShardingSpec,
+)
 
 from .utils import (
     BACKENDS,

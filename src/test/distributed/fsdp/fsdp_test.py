@@ -7,7 +7,7 @@ import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from olmo_core.distributed.fsdp import FSDP, FSDPDebugConfig
-from olmo_core.distributed.sharded_flat_parameter import ShardedFlatParameter
+from olmo_core.distributed.tensors import ShardedFlatParameter
 
 from ..utils import (
     BACKENDS,
@@ -42,6 +42,11 @@ def run_fsdp_against_non_distributed_model(model_factory, model_data_factory):
             assert param.grad is None
             with torch.no_grad():
                 torch.testing.assert_close(param.data, param.sharded_chunk(model.state_dict()[name]))
+
+        with fsdp.summon_full_params():
+            for name, param in fsdp.module.named_parameters():
+                with torch.no_grad():
+                    torch.testing.assert_close(param.data, model.state_dict()[name])
 
     # Run forward/backward pass on non-distributed model and collect grads for comparison.
     expected_grads = {}
@@ -154,7 +159,8 @@ def run_fsdp_against_ddp(model_factory, model_data_factory):
 
     # Since we've only done a single backwards pass (no grad accumulation), there shouldn't
     # be any cached gradients.
-    assert not fsdp_model.state.sharded_grad_cache
+    for cached_grad in fsdp_model.state.flat_param_handle.grads:
+        assert cached_grad is None
 
     # Run optimizer step.
     optim.step()
@@ -264,6 +270,20 @@ def run_nested_fsdp_api(model_factory, model_data_factory):
         "inner.fc.4.weight",
         "inner.fc.4.bias",
     }, param_names
+
+    assert set(fsdp.state.flat_param_handle.param_fqns) == {
+        "out.weight",
+        "out.bias",
+    }
+
+    assert set(fsdp.module.inner.state.flat_param_handle.param_fqns) == {
+        "fc.0.weight",
+        "fc.0.bias",
+        "fc.2.weight",
+        "fc.2.bias",
+        "fc.4.weight",
+        "fc.4.bias",
+    }
 
     buf_names = set(n for n, _ in fsdp.named_buffers())
     assert buf_names == {"buf"}

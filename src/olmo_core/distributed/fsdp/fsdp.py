@@ -27,9 +27,10 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 
-from olmo_core.distributed.sharded_flat_parameter import ShardedFlatParameter
-from olmo_core.utils import apply_to_tensors, get_default_device, get_grad_norm
+from olmo_core.distributed.tensors import ShardedFlatParameter
+from olmo_core.utils import apply_to_tensors, gc_cuda, get_default_device, get_grad_norm
 
+from .flat_param_handle import FlatParamHandle
 from .state import FSDPState
 from .stream import Stream
 
@@ -456,10 +457,8 @@ class FSDP(Generic[M], nn.Module):
         Returns a generator over all parameters managed by this FSDP instance. This is equivalent
         to `self.module.named_parameters()` except that parameters within nested FSDP instances are omitted.
         """
-        for module_name, module in self._named_children(recurse=lambda m: not isinstance(m, FSDP)):
-            if not isinstance(module, FSDP):
-                for param_name, param in module.named_parameters(recurse=False):
-                    yield f"{module_name}.{param_name}", param
+        for param_name, param in zip(self.state.flat_param_handle.param_fqns, self.state.flat_param_handle.params):
+            yield param_name, param
 
     def _fsdp_children(self, recurse: bool = False) -> Generator[FSDP, None, None]:
         """
@@ -474,22 +473,36 @@ class FSDP(Generic[M], nn.Module):
     @torch.no_grad()
     def _shard(self):
         """
-        Shard the wrapped module in place, replacing each ``nn.Parameter`` with a ``ShardedFlatParameter``.
+        Shard the wrapped module in place, replacing each ``nn.Parameter`` with a ``ShardedFlatParameter``,
+        and then collecting all sharded flat param data into a single ``FlatParamHandle``. Afterwards
+        the sharded data in each sharded flat param will be a view into a single flat tensor managed
+        by the flat param handle.
+
         This should only be called once at initialization.
         """
         log.debug("Sharding %s...", self.module.__class__.__name__)
-        for _, m in self._named_children(
-            recurse=lambda m: not isinstance(m, FSDP)
-        ):  # NOTE: this generator will include `self.module` itself
-            if isinstance(m, FSDP):
+
+        params: List[ShardedFlatParameter] = []
+        param_fqns: List[str] = []
+        # NOTE: this generator will include `self.module` itself
+        for module_name, module in self._named_children(recurse=lambda m: not isinstance(m, FSDP)):
+            if isinstance(module, FSDP):
                 continue
-            for param_name, param in m.named_parameters(recurse=False):
-                # TODO: use better sharding strategy that doesn't potentially always result in highest rank with
-                # smallest shard.
+            for param_name, param in module.named_parameters(recurse=False):
                 sharded_flat_param = ShardedFlatParameter.shard(
                     param, process_group=self.process_group, device=self.device, synchronize=False
                 )
-                setattr(m, param_name, sharded_flat_param)
+                setattr(module, param_name, sharded_flat_param)
+                params.append(sharded_flat_param)
+                param_fqns.append(f"{module_name}.{param_name}")
+
+        # Collate the data from all flat params into the flat param handle. The data in each flat param
+        # will then just be a view into a slice of the data managed by the flat param handle.
+        # This makes unsharding more efficient as we'll only need a single `all_gather` call.
+        self.state.flat_param_handle = FlatParamHandle.collate_flat_params(
+            params, param_fqns, process_group=self.process_group, device=self.device
+        )
+        gc_cuda()
 
     @torch.no_grad()
     def _unshard(
@@ -515,19 +528,9 @@ class FSDP(Generic[M], nn.Module):
         # if root to respect the optimizer step and any other computations on the params outside of this
         # module's forward/backward pass.
         with self.state.unshard_stream(wait_stream=self.state.current_stream if self.is_root else None):
-            # TODO: batch the unshards for all params together?
-            for param_name, param in self._managed_named_parameters():
-                if not isinstance(param, ShardedFlatParameter):
-                    continue
-
-                param.unshard_(dtype=self.precision.param_dtype if cast else None, rank0_only=rank0_only)
-                if cache_grads and param.grad is not None:
-                    # We should only be caching these between the pre-backward and post-backward
-                    # hooks. The post-backward hook will remove the cached grad as it accumulates
-                    # it into persistent sharded grad.
-                    assert param_name not in self.state.sharded_grad_cache
-                    self.state.sharded_grad_cache[param_name] = param.grad.detach()
-                    param.grad = None
+            self.state.flat_param_handle.unshard_(
+                self.precision.param_dtype if cast else None, rank0_only=rank0_only, cache_grads=cache_grads
+            )
 
         if prefetch_from is not None:
             for module in self._deque_from(prefetch_from):
@@ -551,12 +554,7 @@ class FSDP(Generic[M], nn.Module):
         self.state.params_prefetched = False
 
         with self.state.unshard_stream(wait_stream=self.state.compute_stream):
-            # TODO: batch the unshards for all params together?
-            for _, param in self._managed_named_parameters():
-                if not isinstance(param, ShardedFlatParameter):
-                    continue
-
-                param.reshard_(writeback=writeback)
+            self.state.flat_param_handle.reshard_(writeback=writeback)
 
         if recurse:
             for module in self._fsdp_children():
@@ -584,40 +582,10 @@ class FSDP(Generic[M], nn.Module):
         grad_reduce_dtype: Optional[torch.dtype] = self.precision.reduce_dtype or self.precision.param_dtype
 
         with self.state.reduce_stream(wait_stream=self.state.current_stream):
-            # TODO: batch the reductions for all params together?
-            for param_name, param in self._managed_named_parameters():
-                if (unsharded_grad := param.grad) is None:
-                    continue
-
-                log.debug("Reduce-scattering grads for %s.%s...", self.module.__class__.__name__, param_name)
-
-                if grad_reduce_dtype is not None:
-                    unsharded_grad = unsharded_grad.to(dtype=grad_reduce_dtype)
-
-                if not isinstance(param, ShardedFlatParameter):
-                    dist.all_reduce(unsharded_grad, group=self.process_group)
-                    param.grad = unsharded_grad
-                    continue
-
-                if grad_dtype is None:
-                    grad_dtype = param.dtype
-
-                # Only NCCL supports 'reduce_scatter'. So with other backends we use 'all_reduce'.
-                if dist.get_backend() == dist.Backend.NCCL:
-                    # Get chunks corresponding to each rank.
-                    grad_chunks = param.chunk_unsharded(unsharded_grad, pad=True)
-                    new_sharded_grad = torch.empty_like(grad_chunks[0])
-                    dist.reduce_scatter(new_sharded_grad, grad_chunks, group=self.process_group)
-                    param.grad = new_sharded_grad[: param.unsharded_flattened_offsets[1]].to(dtype=grad_dtype)
-                else:
-                    dist.all_reduce(unsharded_grad, group=self.process_group)
-                    param.grad = param.sharded_chunk(unsharded_grad).detach().to(dtype=grad_dtype)
-
-                del unsharded_grad
-
-                if (cached_grad := self.state.sharded_grad_cache.pop(param_name, None)) is not None:
-                    param.grad.add_(cached_grad)
-                    del cached_grad
+            log.debug("Reduce-scattering grads for %s", self.module.__class__.__name__)
+            self.state.flat_param_handle.reduce_scatter_grads(
+                grad_dtype=grad_dtype, grad_reduce_dtype=grad_reduce_dtype
+            )
 
     def _deque_from(self, prefetch_queue: deque[FSDP]) -> Generator[FSDP, None, None]:
         count = 0

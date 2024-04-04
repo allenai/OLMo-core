@@ -3,16 +3,19 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from functools import reduce
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple, Type, TypeVar
 
 import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .utils import get_rank, get_world_size
+from ..utils import get_rank, get_world_size
 
 __all__ = ["ShardedFlatTensor", "ShardingSpec"]
+
+
+T = TypeVar("T", bound="ShardedFlatTensor")
 
 
 @dataclass
@@ -125,14 +128,14 @@ class ShardedFlatTensor(torch.Tensor):
 
     @classmethod
     def shard(
-        cls,
+        cls: Type[T],
         tensor: torch.Tensor,
         sharding_spec: Optional[ShardingSpec] = None,
         process_group: Optional[dist.ProcessGroup] = None,
         synchronize: bool = True,
         device: Optional[torch.device] = None,
         requires_grad: Optional[bool] = None,
-    ) -> ShardedFlatTensor:
+    ) -> T:
         """
         Shard a tensor across a process group.
         """
@@ -171,26 +174,35 @@ class ShardedFlatTensor(torch.Tensor):
         else:
             sharded_tensor = torch.empty(offsets[1] - offsets[0], device=device, dtype=tensor.dtype)
 
-        sharded_param = cls(  # type: ignore
+        sharded_tensor = cls(  # type: ignore
             sharded_tensor, requires_grad=requires_grad if requires_grad is not None else tensor.requires_grad
         )
-        sharded_param.mark_as_sharded(sharding_spec, process_group=process_group)
-        return sharded_param
+        sharded_tensor.mark_as_sharded(sharding_spec, process_group=process_group)
+        return sharded_tensor
 
-    def gather(self, dtype: Optional[torch.dtype] = None) -> nn.Parameter:
+    def gather(self, dtype: Optional[torch.dtype] = None, rank0_only: bool = False) -> torch.Tensor:
         """
         Gather the sharded flat parameter across a process group into a full unsharded parameter.
         """
-        unsharded_data = self._gather_data(dtype=dtype)
-        return nn.Parameter(unsharded_data, requires_grad=self.requires_grad)
+        unsharded_data = self._gather_data(dtype=dtype, rank0_only=rank0_only)
+        unsharded_data.requires_grad = self.requires_grad
+        return unsharded_data
 
-    def unshard_(self, dtype: Optional[torch.dtype] = None, rank0_only: bool = False):
+    def unshard_(
+        self,
+        unsharded_data: Optional[torch.Tensor] = None,
+        dtype: Optional[torch.dtype] = None,
+        rank0_only: bool = False,
+    ):
         """
         Unshard this parameter's data in-place. You should generally call :meth:`reshard_()` afterwards.
 
         If ``rank0_only=True``, non rank 0 processes will have an empty tensor in their data.
         """
-        unsharded_data = self._gather_data(dtype=dtype, rank0_only=rank0_only)
+        if unsharded_data is None:
+            unsharded_data = self._gather_data(dtype=dtype, rank0_only=rank0_only)
+        elif not rank0_only or get_rank(self.process_group) == 0:
+            unsharded_data = unsharded_data.view(*self.unsharded_shape)
         self._set_metadata(self.SHARDED_FLAT_TENSOR_CACHED_SHARDED_DATA_KEY, self.data)
         self.data = unsharded_data
 

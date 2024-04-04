@@ -9,6 +9,7 @@ from torch.utils.hooks import RemovableHandle
 
 from olmo_core.utils import get_default_device
 
+from .flat_param_handle import FlatParamHandle
 from .stream import Stream
 
 if TYPE_CHECKING:
@@ -22,6 +23,11 @@ class FSDPState:
     The device the FSDP node is running on.
     """
 
+    flat_param_handle: FlatParamHandle = field(default_factory=FlatParamHandle)
+    """
+    Manages the shared data for all sharded flat params.
+    """
+
     pre_backward_hook_handles: List[RemovableHandle] = field(default_factory=list)
     """
     Backward hooks registered to the output tensors from the wrapped module's forward method.
@@ -31,12 +37,6 @@ class FSDPState:
     """
     Post-backward hooks registered to the next autograd function in the graph for each parameter.
     The keys are parameter FQNs.
-    """
-
-    sharded_grad_cache: Dict[str, torch.Tensor] = field(default_factory=dict)
-    """
-    For caching sharded gradients during gradient accumulation.
-    Maps param FQNs to the corresponding local sharded gradient.
     """
 
     lazy_init_complete: bool = False

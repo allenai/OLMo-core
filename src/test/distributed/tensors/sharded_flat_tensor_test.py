@@ -4,9 +4,12 @@ import pytest
 import torch
 import torch.distributed as dist
 
-from olmo_core.distributed.sharded_flat_tensor import ShardedFlatTensor, ShardingSpec
+from olmo_core.distributed.tensors.sharded_flat_tensor import (
+    ShardedFlatTensor,
+    ShardingSpec,
+)
 
-from .utils import BACKENDS, INIT_DEVICES, get_default_device, run_distributed_test
+from ..utils import BACKENDS, INIT_DEVICES, get_default_device, run_distributed_test
 
 
 def test_init_sharded():
