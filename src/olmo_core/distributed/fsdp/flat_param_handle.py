@@ -47,6 +47,8 @@ class FlatParamHandle:
 
     process_group: Optional[dist.ProcessGroup] = None
 
+    device: Optional[torch.device] = None
+
     @classmethod
     def collate_flat_params(
         cls,
@@ -120,6 +122,7 @@ class FlatParamHandle:
             params_data=params_data,
             params_offsets_per_rank=params_offsets_per_rank,
             process_group=process_group,
+            device=device,
         )
 
     def unshard_(self, dtype: Optional[torch.dtype] = None, rank0_only: bool = False, cache_grads: bool = False):
@@ -138,7 +141,9 @@ class FlatParamHandle:
                 )
             else:
                 unsharded_data = torch.empty(
-                    param.sharding_spec.unsharded_flattened_shape, dtype=all_params_unsharded_data.dtype
+                    param.sharding_spec.unsharded_flattened_shape,
+                    dtype=all_params_unsharded_data.dtype,
+                    device=self.device,
                 )
                 for rank in range(world_size):
                     rank_local_data = all_params_unsharded_data[rank][
