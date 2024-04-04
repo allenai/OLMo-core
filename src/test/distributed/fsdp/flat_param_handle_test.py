@@ -4,6 +4,7 @@ import torch.distributed as dist
 
 from olmo_core.distributed.fsdp.flat_param_handle import FlatParamHandle
 from olmo_core.distributed.sharded_flat_parameter import ShardedFlatParameter
+from olmo_core.utils import same_storage
 
 from ..utils import BACKENDS, get_default_device, run_distributed_test
 
@@ -18,7 +19,9 @@ def run_flat_param_handle_collate_flat_params():
         dist.all_reduce(og_data)
 
     flat_params = [ShardedFlatParameter.shard(og_data) for og_data in all_og_data]
-    handle = FlatParamHandle.collate_flat_params(flat_params)
+    handle = FlatParamHandle.collate_flat_params(flat_params, ["x", "y", "z"])
+    for param in handle.params:
+        assert same_storage(param, handle.params_data)
 
     # Unshard all params.
     handle.unshard_()
@@ -30,6 +33,7 @@ def run_flat_param_handle_collate_flat_params():
     handle.reshard_()
     for param in handle.params:
         assert param.is_sharded
+        assert same_storage(param, handle.params_data)
 
     # Updated the data in a param should update the data in the handle, since the data in the
     # param is just a view into the data in the handle.
