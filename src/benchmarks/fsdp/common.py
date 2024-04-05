@@ -156,6 +156,7 @@ def build_components(
             ),
             auto_wrap_policy=auto_wrap_policy,
             use_orig_params=True,
+            param_init_fn=init_function,
         )
     else:
         raise NotImplementedError(fsdp_wrapper)
