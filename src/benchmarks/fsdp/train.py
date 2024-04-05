@@ -58,6 +58,9 @@ def main(
                 f"NaN loss encountered.\nInputs: {batch}\nLogits: {logits_for_loss}\nLabels: {labels}"
             )
 
+        # Clip gradient norms.
+        model.clip_grad_norm_(1.0)
+
         # Take optimizer step.
         optim.step()
 

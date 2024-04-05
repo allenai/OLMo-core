@@ -108,8 +108,7 @@ class Dataloader:
 
 
 @torch.no_grad()
-def init_function(m: nn.Module):
-    std = 0.01
+def init_function(m: nn.Module, std: float = 0.01):
     if isinstance(m, nn.Embedding):
         nn.init.trunc_normal_(m.weight, mean=0.0, std=std, a=-2 * std, b=2 * std)
     elif isinstance(m, nn.Linear):
