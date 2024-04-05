@@ -182,6 +182,20 @@ class FSDP(Generic[M], nn.Module):
             # Run forward pass on the original model.
             with self.state.compute_stream(wait_stream=self.state.unshard_stream):
                 output = self.module(*args, **kwargs)
+
+            if torch.is_grad_enabled():
+                # Prepare for backward pass.
+                if self.is_root and self.state.backward_execution_order_finalized:
+                    # Fill backward-pass prefetch queue for unsharding.
+                    for module in self.state.backward_execution_order:
+                        self.state.backward_prefetch_queue.append(module)
+
+                # If gradients are required, register a backward hook on the outputs to unshard
+                # parameters in place again when needed.
+                self._register_pre_backward_hooks(output)
+
+                # Register post-backward hooks to reshard the parameters in place and reduce gradients.
+                self._register_post_backward_hooks()
         finally:
             # Reshard parameters in-place.
             self._reshard()
@@ -201,20 +215,6 @@ class FSDP(Generic[M], nn.Module):
                     f"Still contains {len(self.state.forward_prefetch_queue)} modules:\n"
                     f"{[m.module.__class__.__name__ for m in self.state.forward_prefetch_queue]}"
                 )
-
-        if torch.is_grad_enabled():
-            # Prepare for backward pass.
-            if self.is_root and self.state.backward_execution_order_finalized:
-                # Fill backward-pass prefetch queue for unsharding.
-                for module in self.state.backward_execution_order:
-                    self.state.backward_prefetch_queue.append(module)
-
-            # If gradients are required, register a backward hook on the outputs to unshard
-            # parameters in place again when needed.
-            self._register_pre_backward_hooks(output)
-
-            # Register post-backward hooks to reshard the parameters in place and reduce gradients.
-            self._register_post_backward_hooks()
 
         return output
 

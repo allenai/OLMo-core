@@ -545,6 +545,8 @@ def run_fsdp_with_mixed_precision(model_factory, model_data_factory, precision):
 
     # Make sure grads are now in the correct type.
     for param in fsdp.parameters():
+        assert isinstance(param, ShardedFlatParameter)
+        assert param.is_sharded
         assert param.grad is not None
         if precision.keep_low_precision_grads and precision.param_dtype is not None:
             assert param.grad.dtype == precision.param_dtype

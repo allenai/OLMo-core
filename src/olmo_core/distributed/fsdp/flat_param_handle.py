@@ -164,7 +164,7 @@ class FlatParamHandle:
                 # hooks. The post-backward hook will remove the cached grad as it accumulates
                 # it into the persistent sharded grad.
                 assert self.grads[i] is None
-                self.grads[i] = param.grad.detach()
+                self.grads[i] = param.grad.data
                 param.grad = None
 
         del all_params_unsharded_data
