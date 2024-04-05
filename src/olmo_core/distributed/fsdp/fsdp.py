@@ -190,7 +190,11 @@ class FSDP(Generic[M], nn.Module):
             # At the end of the first forward pass, execution order is now finalized, meaning
             # we can use 'self.state.forward_execution_order' to start prefetching unshards during
             # the next forward pass.
-            self.state.forward_execution_order_finalized = True
+            if not self.state.forward_execution_order_finalized:
+                self.state.forward_execution_order_finalized = True
+                for child in self._fsdp_children(recurse=True):
+                    child.state.forward_execution_order_finalized = True
+
             if self.state.forward_prefetch_queue:
                 raise RuntimeError(
                     "Forward prefetch queue has not been emptied!\n"
