@@ -4,6 +4,8 @@ Train a mock FSDP transformer model. Launch this script via `torchrun`:
 """
 
 import argparse
+import logging
+import os
 import time
 from typing import Literal
 
@@ -93,6 +95,10 @@ if __name__ == "__main__":
         "--dry-run",
         action="store_true",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+    )
     args = parser.parse_args()
 
     config: TransformerConfig
@@ -105,7 +111,13 @@ if __name__ == "__main__":
     else:
         raise NotImplementedError(args.model_size)
 
+    if args.debug:
+        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+
     dist.init_process_group(backend="nccl")
     torch.cuda.set_device(dist.get_rank())
+
+    if args.debug and dist.get_rank() == 0:
+        logging.basicConfig(level=logging.DEBUG)
 
     main(config, args.batch_size, num_batches=args.num_batches, fsdp_wrapper=args.fsdp, dry_run=args.dry_run)
