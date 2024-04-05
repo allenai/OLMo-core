@@ -59,16 +59,7 @@ version = { attr = "olmo_core.version.VERSION" }
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["olmo_core*"]
-exclude = [
-    "*.tests",
-    "*.tests.*",
-    "tests.*",
-    "tests",
-    "test_fixtures",
-    "test_fixtures.*",
-    "docs*",
-    "scripts*",
-]
+exclude = []
 
 [tool.black]
 line-length = 115
