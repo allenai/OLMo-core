@@ -44,6 +44,7 @@ class TransformerConfig:
 
 class Transformer(nn.Module):
     def __init__(self, config: TransformerConfig):
+        super().__init__()
         self.wte = nn.Embedding(config.vocab_size, config.d_model, device=config.init_device)
         self.wpe = nn.Embedding(config.max_sequence_length, config.d_model, device=config.init_device)
         self.blocks = nn.ModuleList(

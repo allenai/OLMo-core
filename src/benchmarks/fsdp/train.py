@@ -1,6 +1,6 @@
 """
 Train a mock FSDP transformer model. Launch this script via `torchrun`:
-    torchrun --nproc-per-node=8 src/benchmarks/fsdp/train.py
+    torchrun --nproc-per-node=8 -m benchmarks.fsdp.train
 """
 
 import argparse
