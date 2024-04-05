@@ -35,7 +35,6 @@ def main(
 
     print_rank0("Starting training...")
     for i, batch in enumerate(iter(dataloader)):
-        log.debug("Batch: %s", batch)
         batch_start = time.monotonic()
 
         # Zero-gradients.
@@ -54,7 +53,9 @@ def main(
         # Trigger backward pass.
         loss.backward()
         if not torch.isfinite(loss):
-            raise ValueError("NaN loss encountered")
+            raise ValueError(
+                f"NaN loss encountered.\nInputs: {batch}\nLogits: {logits_for_loss}\nLabels: {labels}"
+            )
 
         # Take optimizer step.
         optim.step()
