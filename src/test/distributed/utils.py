@@ -75,10 +75,6 @@ FSDP_MIXED_PRECISION = [
         id="param_dtype=FP16,reduce_dtype=FP16",
     ),
     pytest.param(
-        FSDPPrecision(param_dtype=torch.float16, reduce_dtype=torch.float16, keep_low_precision_grads=True),
-        id="param_dtype=FP16,reduce_dtype=FP16,keep_LP",
-    ),
-    pytest.param(
         FSDPPrecision(param_dtype=torch.float16, reduce_dtype=torch.float32),
         id="param_dtype=FP16,reduce_dtype=FP32",
     ),

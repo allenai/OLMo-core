@@ -548,10 +548,7 @@ def run_fsdp_with_mixed_precision(model_factory, model_data_factory, precision):
         assert isinstance(param, ShardedFlatParameter)
         assert param.is_sharded
         assert param.grad is not None
-        if precision.keep_low_precision_grads and precision.param_dtype is not None:
-            assert param.grad.dtype == precision.param_dtype
-        else:
-            assert param.grad.dtype == param.dtype
+        assert param.grad.dtype == param.dtype
 
 
 @pytest.mark.parametrize("backend", BACKENDS)

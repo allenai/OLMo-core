@@ -142,8 +142,8 @@ def build_components(
     elif fsdp_wrapper == "torch":
         from torch.distributed.fsdp import FullyShardedDataParallel, MixedPrecision
 
-        def auto_wrap_policy(module: nn.Module, recurse: bool, *args) -> bool:
-            del args
+        def auto_wrap_policy(module: nn.Module, recurse: bool, *args, **kwargs) -> bool:
+            del args, kwargs
             if recurse:
                 return True
             else:

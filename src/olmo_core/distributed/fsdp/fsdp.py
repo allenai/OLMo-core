@@ -53,12 +53,6 @@ class FSDPPrecision:
     The data type used when reducing gradients. If not set this defaults to ``param_dtype``.
     """
 
-    keep_low_precision_grads: bool = False
-    """
-    If ``True``, gradients are kept in low precision (if ``param_dtype`` is to set to low precision)
-    instead of being upcast to full precision for the optimizer.
-    """
-
 
 @dataclass
 class FSDPDebugConfig:
@@ -583,18 +577,12 @@ class FSDP(Generic[M], nn.Module):
             )
             return
 
-        # dtype to keep sharded gradients in.
-        grad_dtype: Optional[torch.dtype] = (
-            self.precision.param_dtype if self.precision.keep_low_precision_grads else None
-        )
         # dtype just for reducing gradients.
         grad_reduce_dtype: Optional[torch.dtype] = self.precision.reduce_dtype or self.precision.param_dtype
 
         with self.state.reduce_stream(wait_stream=self.state.current_stream):
             log.debug("Reduce-scattering grads for %s", self.module.__class__.__name__)
-            self.state.flat_param_handle.reduce_scatter_grads(
-                grad_dtype=grad_dtype, grad_reduce_dtype=grad_reduce_dtype
-            )
+            self.state.flat_param_handle.reduce_scatter_grads(grad_reduce_dtype=grad_reduce_dtype)
 
     def _deque_from(self, prefetch_queue: deque[FSDP]) -> Generator[FSDP, None, None]:
         count = 0
@@ -701,4 +689,5 @@ class FSDP(Generic[M], nn.Module):
                 handle.remove()
             self.state.post_backward_hook_handles.clear()
         for param_name, param in self._managed_named_parameters():
-            self._register_post_backward_hook(param_name, param)
+            if param.requires_grad:
+                self._register_post_backward_hook(param_name, param)
