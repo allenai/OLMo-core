@@ -21,7 +21,7 @@ def print_rank0(*args):
 
 @dataclass
 class TransformerConfig:
-    vocab_size: int = 16384
+    vocab_size: int = 8192
     d_model: int = 4196
     n_layers: int = 32
     n_heads: int = 64
@@ -110,9 +110,9 @@ class Dataloader:
 @torch.no_grad()
 def init_function(m: nn.Module):
     if isinstance(m, nn.Embedding):
-        nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02, a=-0.06, b=0.06)
+        nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02, a=-0.04, b=0.04)
     elif isinstance(m, nn.Linear):
-        nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02, a=-0.06, b=0.06)
+        nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02, a=-0.04, b=0.04)
         if m.bias is not None:
             nn.init.zeros_(m.bias)
     elif isinstance(m, nn.LayerNorm):
