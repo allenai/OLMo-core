@@ -7,11 +7,17 @@ import argparse
 import logging
 import os
 import time
-from typing import Literal
+from pathlib import Path
+from typing import Literal, Optional
 
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+
+from olmo_core.distributed.checkpoint import (
+    load_model_and_optim_state,
+    save_model_and_optim_state,
+)
 
 from .common import TransformerConfig, build_components, print_rank0
 
@@ -24,14 +30,25 @@ def main(
     num_batches: int = 100,
     fsdp_wrapper: Literal["torch", "olmo_core"] = "olmo_core",
     dry_run: bool = False,
+    save_path: Optional[str] = None,
+    load_path: Optional[str] = None,
 ):
     model, optim, dataloader = build_components(
         config, batch_size, num_batches=num_batches, fsdp_wrapper=fsdp_wrapper
     )
 
+    if load_path is not None:
+        print_rank0(f"Loading checkpoint from {load_path}...")
+        load_model_and_optim_state(load_path, model, optim)
+
     if dry_run:
         print_rank0("Dry run complete")
         return
+
+    if save_path is not None:
+        checkpoint_dir = Path(save_path) / "pretrain"
+        print_rank0(f"Saving checkpoint to {checkpoint_dir}...")
+        save_model_and_optim_state(checkpoint_dir, model, optim)
 
     print_rank0("Starting training...")
     for i, batch in enumerate(iter(dataloader)):
@@ -72,6 +89,11 @@ def main(
             f"  throughput/seconds_per_batch={batch_end-batch_start:.1f}",
         )
 
+    if save_path is not None:
+        checkpoint_dir = Path(save_path) / "final"
+        print_rank0(f"Saving checkpoint to {checkpoint_dir}...")
+        save_model_and_optim_state(checkpoint_dir, model, optim)
+
     print_rank0("Training complete")
 
 
@@ -109,6 +131,14 @@ if __name__ == "__main__":
         "--debug",
         action="store_true",
     )
+    parser.add_argument(
+        "--save-path",
+        type=str,
+    )
+    parser.add_argument(
+        "--load-path",
+        type=str,
+    )
     args = parser.parse_args()
 
     config: TransformerConfig
@@ -130,4 +160,12 @@ if __name__ == "__main__":
     if args.debug and dist.get_rank() == 0:
         logging.basicConfig(level=logging.DEBUG)
 
-    main(config, args.batch_size, num_batches=args.num_batches, fsdp_wrapper=args.fsdp, dry_run=args.dry_run)
+    main(
+        config,
+        args.batch_size,
+        num_batches=args.num_batches,
+        fsdp_wrapper=args.fsdp,
+        dry_run=args.dry_run,
+        save_path=args.save_path,
+        load_path=args.load_path,
+    )
