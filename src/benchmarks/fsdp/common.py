@@ -67,10 +67,17 @@ class Transformer(nn.Module):
             ),
             persistent=False,
         )
+        self.register_buffer(
+            "positions",
+            torch.arange(0, config.max_sequence_length, dtype=torch.long, device=get_default_device()).unsqueeze(
+                0
+            ),
+            persistent=False,
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.wte(x)
-        x = self.wpe(x)
+        x = x + self.wpe(self.positions)
         for block in self.blocks:
             x = block(x, src_mask=self.causal_mask, is_causal=True)
         return self.decoder(x)
