@@ -627,7 +627,7 @@ class Checkpointer:
         )
 
     def _normalize_dir(self, dir: PathOrStr) -> str:
-        dir = str(dir).strip("/")
+        dir = str(dir).rstrip("/")
         if dir.startswith("file://"):
             dir = dir.replace("file://", "", 1)
         return dir
