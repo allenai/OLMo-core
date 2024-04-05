@@ -35,6 +35,7 @@ def main(
 
     print_rank0("Starting training...")
     for i, batch in enumerate(iter(dataloader)):
+        log.debug("Batch: %s", batch)
         batch_start = time.monotonic()
 
         # Zero-gradients.
