@@ -139,7 +139,7 @@ def build_components(
             [nn.TransformerEncoderLayer],
             precision=FSDPPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32),
         )
-        #  model.apply(init_function)
+        model.apply(init_function)
     elif fsdp_wrapper == "torch":
         from torch.distributed.fsdp import FullyShardedDataParallel, MixedPrecision
 
