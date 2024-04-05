@@ -191,7 +191,10 @@ class FSDP(Generic[M], nn.Module):
             # we can use 'self.state.forward_execution_order' to start prefetching unshards during
             # the next forward pass.
             self.state.forward_execution_order_finalized = True
-            assert not self.state.forward_prefetch_queue
+            if self.state.forward_prefetch_queue:
+                raise RuntimeError(
+                    f"Forward prefetch queue has not been emptied!\n{self.state.forward_prefetch_queue}"
+                )
 
         if torch.is_grad_enabled():
             # Prepare for backward pass.

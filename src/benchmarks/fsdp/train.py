@@ -26,6 +26,7 @@ def main(
     )
 
     if dry_run:
+        print_rank0("Dry run complete")
         return
 
     print_rank0("Starting training...")
