@@ -178,6 +178,10 @@ class FSDP(Generic[M], nn.Module):
             else None
         )
 
+        if torch.is_grad_enabled():
+            # Register post-backward hooks to reshard the parameters in place and reduce gradients.
+            self._register_post_backward_hooks()
+
         try:
             # Run forward pass on the original model.
             with self.state.compute_stream(wait_stream=self.state.unshard_stream):
@@ -212,9 +216,6 @@ class FSDP(Generic[M], nn.Module):
             # If gradients are required, register a backward hook on the outputs to unshard
             # parameters in place again when needed.
             self._register_pre_backward_hooks(output)
-
-            # And post-backward hooks to reshard the parameters in place and reduce gradients.
-            self._register_post_backward_hooks()
 
         return output
 
