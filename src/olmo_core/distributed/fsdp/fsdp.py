@@ -461,7 +461,7 @@ class FSDP(Generic[M], nn.Module):
 
         yield from collect_children(self.module)
 
-    def _managed_named_parameters(self) -> Generator[Tuple[str, nn.Parameter], None, None]:
+    def _managed_named_parameters(self) -> Generator[Tuple[str, ShardedFlatParameter], None, None]:
         """
         Returns a generator over all parameters managed by this FSDP instance. This is equivalent
         to `self.module.named_parameters()` except that parameters within nested FSDP instances are omitted.
@@ -682,16 +682,15 @@ class FSDP(Generic[M], nn.Module):
         self.state.current_stream.wait_stream(self.state.unshard_stream)
         self.state.current_stream.wait_stream(self.state.reduce_stream)
 
-    def _register_post_backward_hook(self, param_name: str, param: nn.Parameter):
-        if isinstance(param, ShardedFlatParameter) and param.requires_grad:
-            # Force creation of a `grad_fn` in order to register a hook that will run *after* this param's
-            # backward pass.
-            tmp_param = param.expand_as(param)
-            assert tmp_param.grad_fn is not None
-            acc_grad = tmp_param.grad_fn.next_functions[0][0]
-            assert acc_grad is not None
-            handle = acc_grad.register_hook(partial(self._post_backward_hook, param_name))
-            self.state.post_backward_hook_handles[param_name] = handle
+    def _register_post_backward_hook(self, param_name: str, param: ShardedFlatParameter):
+        # Force creation of a `grad_fn` in order to register a hook that will run *after* this param's
+        # backward pass.
+        tmp_param = param.expand_as(param)
+        assert tmp_param.grad_fn is not None
+        acc_grad = tmp_param.grad_fn.next_functions[0][0]
+        assert acc_grad is not None
+        handle = acc_grad.register_hook(partial(self._post_backward_hook, param_name))
+        self.state.post_backward_hook_handles[param_name] = handle
 
     def _register_post_backward_hooks(self):
         log.debug("Registering post-backward hooks for %s...", self.module.__class__.__name__)
