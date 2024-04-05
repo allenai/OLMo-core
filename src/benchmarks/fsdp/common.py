@@ -109,10 +109,11 @@ class Dataloader:
 
 @torch.no_grad()
 def init_function(m: nn.Module):
+    std = 0.01
     if isinstance(m, nn.Embedding):
-        nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02, a=-0.04, b=0.04)
+        nn.init.trunc_normal_(m.weight, mean=0.0, std=std, a=-2 * std, b=2 * std)
     elif isinstance(m, nn.Linear):
-        nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02, a=-0.04, b=0.04)
+        nn.init.trunc_normal_(m.weight, mean=0.0, std=std, a=-2 * std, b=2 * std)
         if m.bias is not None:
             nn.init.zeros_(m.bias)
     elif isinstance(m, nn.LayerNorm):
@@ -166,5 +167,5 @@ def build_components(
     print_rank0(model)
 
     print_rank0("Initializing optimizer...")
-    optim = torch.optim.AdamW(model.parameters())
+    optim = torch.optim.AdamW(model.parameters(), lr=1e-5)
     return model, optim, Dataloader(batch_size, config, num_batches=num_batches)
