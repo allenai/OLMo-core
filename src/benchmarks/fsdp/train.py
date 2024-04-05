@@ -42,14 +42,15 @@ def main(
         optim.zero_grad()
 
         # Run forward pass.
-        logits = model(batch)
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            logits = model(batch)
 
-        # Compute loss.
-        logits_for_loss = logits[..., :-1, :].contiguous()
-        logits_for_loss = logits_for_loss.view(-1, logits_for_loss.size(-1))
-        labels = batch[..., 1:].contiguous()
-        labels = labels.view(-1)
-        loss = F.cross_entropy(logits_for_loss, labels)
+            # Compute loss.
+            logits_for_loss = logits[..., :-1, :].contiguous()
+            logits_for_loss = logits_for_loss.view(-1, logits_for_loss.size(-1))
+            labels = batch[..., 1:].contiguous()
+            labels = labels.view(-1)
+            loss = F.cross_entropy(logits_for_loss, labels)
 
         # Trigger backward pass.
         loss.backward()
