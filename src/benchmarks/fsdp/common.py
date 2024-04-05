@@ -21,7 +21,7 @@ def print_rank0(*args):
 
 @dataclass
 class TransformerConfig:
-    vocab_size: int = 50304
+    vocab_size: int = 16384
     d_model: int = 4196
     n_layers: int = 32
     n_heads: int = 64
