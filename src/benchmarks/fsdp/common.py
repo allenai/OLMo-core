@@ -27,7 +27,7 @@ class TransformerConfig:
     n_heads: int = 64
     mlp_ratio: int = 4
     max_sequence_length: int = 2048
-    init_device: torch.device = torch.device("meta")
+    init_device: torch.device = torch.device("cpu")
 
     @classmethod
     def tiny(cls) -> TransformerConfig:
@@ -139,6 +139,7 @@ def build_components(
             [nn.TransformerEncoderLayer],
             precision=FSDPPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32),
         )
+        #  model.apply(init_function)
     elif fsdp_wrapper == "torch":
         from torch.distributed.fsdp import FullyShardedDataParallel, MixedPrecision
 
@@ -163,9 +164,6 @@ def build_components(
         raise NotImplementedError(fsdp_wrapper)
 
     print_rank0(model)
-
-    print_rank0("Initializing model params...")
-    model.apply(init_function)
 
     print_rank0("Initializing optimizer...")
     optim = torch.optim.AdamW(model.parameters())
