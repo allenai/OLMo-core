@@ -120,7 +120,9 @@ def build_components(
         from olmo_core.distributed.fsdp import FSDP, FSDPPrecision
 
         model = FSDP.auto_wrap(
-            model, ["blocks.*"], precision=FSDPPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32)
+            model,
+            [nn.TransformerEncoderLayer],
+            precision=FSDPPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32),
         )
     elif fsdp_wrapper == "torch":
         from torch.distributed.fsdp import FullyShardedDataParallel, MixedPrecision

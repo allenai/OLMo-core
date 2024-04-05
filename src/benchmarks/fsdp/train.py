@@ -7,6 +7,7 @@ import argparse
 import time
 from typing import Literal
 
+import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 
@@ -103,5 +104,6 @@ if __name__ == "__main__":
         raise NotImplementedError(args.model_size)
 
     dist.init_process_group(backend="nccl")
+    torch.cuda.set_device(dist.get_rank())
 
     main(config, args.batch_size, num_batches=args.num_batches, fsdp_wrapper=args.fsdp)
