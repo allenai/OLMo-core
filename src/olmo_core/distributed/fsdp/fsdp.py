@@ -193,7 +193,9 @@ class FSDP(Generic[M], nn.Module):
             self.state.forward_execution_order_finalized = True
             if self.state.forward_prefetch_queue:
                 raise RuntimeError(
-                    f"Forward prefetch queue has not been emptied!\n{self.state.forward_prefetch_queue}"
+                    "Forward prefetch queue has not been emptied!\n"
+                    f"Still contains {len(self.state.forward_prefetch_queue)} modules:\n"
+                    f"{[m.__class__.__name__ for m in self.state.forward_prefetch_queue]}"
                 )
 
         if torch.is_grad_enabled():
