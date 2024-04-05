@@ -15,6 +15,8 @@ import torch.nn.functional as F
 
 from .common import TransformerConfig, build_components, print_rank0
 
+log = logging.getLogger(__name__)
+
 
 def main(
     config: TransformerConfig,
@@ -33,6 +35,7 @@ def main(
 
     print_rank0("Starting training...")
     for i, batch in enumerate(iter(dataloader)):
+        log.debug("Batch: %s", batch)
         batch_start = time.monotonic()
 
         # Zero-gradients.
@@ -50,6 +53,8 @@ def main(
 
         # Trigger backward pass.
         loss.backward()
+        if not torch.isfinite(loss):
+            raise ValueError("NaN loss encountered")
 
         # Take optimizer step.
         optim.step()
