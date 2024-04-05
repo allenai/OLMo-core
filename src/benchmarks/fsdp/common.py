@@ -92,8 +92,16 @@ class Dataloader:
 
     def __iter__(self):
         return (
-            torch.randint(
-                0, self.config.vocab_size, (self.batch_size, self.config.max_sequence_length), device=self.device
+            torch.concat(
+                [
+                    torch.arange(
+                        int(start_offset), int(start_offset) + self.config.max_sequence_length, device=self.device
+                    ).unsqueeze(0)
+                    for start_offset in torch.randint(
+                        0, self.config.vocab_size - self.config.max_sequence_length, (self.batch_size,)
+                    )
+                ],
+                dim=0,
             )
             for _ in range(self.num_batches)
         )
