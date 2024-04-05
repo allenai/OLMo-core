@@ -1,3 +1,8 @@
+"""
+Train a mock FSDP transformer model. Launch this script via `torchrun`:
+    torchrun --nproc-per-node=8 src/benchmarks/fsdp/train.py
+"""
+
 import argparse
 import time
 from typing import Literal
@@ -13,10 +18,14 @@ def main(
     batch_size: int,
     num_batches: int = 100,
     fsdp_wrapper: Literal["torch", "olmo_core"] = "olmo_core",
+    dry_run: bool = False,
 ):
     model, optim, dataloader = build_components(
         config, batch_size, num_batches=num_batches, fsdp_wrapper=fsdp_wrapper
     )
+
+    if dry_run:
+        return
 
     print_rank0("Starting training...")
     for i, batch in enumerate(iter(dataloader)):
@@ -76,6 +85,10 @@ if __name__ == "__main__":
         type=int,
         default=100,
         help="""The number of batches to train for.""",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
     )
     args = parser.parse_args()
 
