@@ -32,12 +32,12 @@ def main(
     save_path: Optional[str] = None,
 ):
     torch_model, torch_optim, dataloader = build_components(
-        config, batch_size, num_batches=num_batches, fsdp_wrapper="torch", wrap_blocks=True
+        config, batch_size, num_batches=num_batches, fsdp_wrapper="torch"
     )
     assert isinstance(torch_model, TorchFSDP)
 
     olmo_model, olmo_optim, _ = build_components(
-        config, batch_size, num_batches=num_batches, fsdp_wrapper="olmo_core", wrap_blocks=True
+        config, batch_size, num_batches=num_batches, fsdp_wrapper="olmo_core"
     )
     assert isinstance(olmo_model, FSDP)
 
