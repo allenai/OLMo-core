@@ -12,11 +12,13 @@ from typing import Optional
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+from torch.distributed.fsdp import FullyShardedDataParallel as TorchFSDP
 
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
+from olmo_core.distributed.fsdp import FSDP
 
 from .common import TransformerConfig, build_components, print_rank0
 
@@ -33,9 +35,12 @@ def main(
     torch_model, torch_optim, dataloader = build_components(
         config, batch_size, num_batches=num_batches, fsdp_wrapper="torch"
     )
+    assert isinstance(torch_model, TorchFSDP)
+
     olmo_model, olmo_optim, _ = build_components(
         config, batch_size, num_batches=num_batches, fsdp_wrapper="olmo_core"
     )
+    assert isinstance(olmo_model, FSDP)
 
     checkpoint_dir = Path(save_path or "/tmp/olmo-core-fsdp-benchmark-test")
     print_rank0(f"Saving torch FSDP checkpoint to {checkpoint_dir}...")
@@ -43,6 +48,11 @@ def main(
 
     print_rank0(f"Loading OLMo-core FSDP checkpoint from {checkpoint_dir}...")
     load_model_and_optim_state(checkpoint_dir, olmo_model, olmo_optim)
+
+    with TorchFSDP.summon_full_params(torch_model), olmo_model.summon_full_params():
+        torch_state_dict = {k.replace("_fsdp_wrapped_module.", ""): v for k, v in torch_model.state_dict().items()}
+        olmo_state_dict = olmo_model.state_dict()
+        assert torch_state_dict.keys() == olmo_state_dict.keys()
 
     if dry_run:
         print_rank0("Dry run complete")
