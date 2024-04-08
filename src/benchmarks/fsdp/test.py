@@ -32,7 +32,7 @@ def main(
     save_path: Optional[str] = None,
 ):
     torch_model, torch_optim, dataloader = build_components(
-        config, batch_size, num_batches=num_batches, fsdp_wrapper="torch"
+        config, batch_size, num_batches=num_batches, fsdp_wrapper="torch", wrap_blocks=False
     )
     assert isinstance(torch_model, TorchFSDP)
 
