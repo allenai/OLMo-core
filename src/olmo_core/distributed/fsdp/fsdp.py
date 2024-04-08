@@ -488,23 +488,24 @@ class FSDP(Generic[M], nn.Module):
         params: List[ShardedFlatParameter] = []
         param_fqns: List[str] = []
         # NOTE: this generator will include `self.module` itself
-        for module_name, module in self._named_children(recurse=lambda m: not isinstance(m, FSDP)):
-            if isinstance(module, FSDP):
-                continue
-            for param_name, param in module.named_parameters(recurse=False):
-                sharded_flat_param = ShardedFlatParameter.shard(
-                    param, process_group=self.process_group, device=self.device, synchronize=False
-                )
-                setattr(module, param_name, sharded_flat_param)
-                params.append(sharded_flat_param)
-                param_fqns.append(f"{module_name}.{param_name}")
+        with torch.autocast(self.device.type, enabled=False):
+            for module_name, module in self._named_children(recurse=lambda m: not isinstance(m, FSDP)):
+                if isinstance(module, FSDP):
+                    continue
+                for param_name, param in module.named_parameters(recurse=False):
+                    sharded_flat_param = ShardedFlatParameter.shard(
+                        param, process_group=self.process_group, device=self.device, synchronize=False
+                    )
+                    setattr(module, param_name, sharded_flat_param)
+                    params.append(sharded_flat_param)
+                    param_fqns.append(f"{module_name}.{param_name}")
 
-        # Collate the data from all flat params into the flat param handle. The data in each flat param
-        # will then just be a view into a slice of the data managed by the flat param handle.
-        # This makes unsharding more efficient as we'll only need a single `all_gather` call.
-        self.state.flat_param_handle = FlatParamHandle.collate_flat_params(
-            params, param_fqns, process_group=self.process_group, device=self.device
-        )
+            # Collate the data from all flat params into the flat param handle. The data in each flat param
+            # will then just be a view into a slice of the data managed by the flat param handle.
+            # This makes unsharding more efficient as we'll only need a single `all_gather` call.
+            self.state.flat_param_handle = FlatParamHandle.collate_flat_params(
+                params, param_fqns, process_group=self.process_group, device=self.device
+            )
         gc_cuda()
 
     @torch.no_grad()
