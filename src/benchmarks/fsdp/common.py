@@ -32,7 +32,7 @@ class TransformerConfig:
 
     @classmethod
     def tiny(cls) -> TransformerConfig:
-        return cls(d_model=1024, n_layers=2, n_heads=16)
+        return cls(d_model=1024, n_layers=16, n_heads=16)
 
     @classmethod
     def small(cls) -> TransformerConfig:
