@@ -44,15 +44,18 @@ def main(
 
     checkpoint_dir = Path(save_path or "/tmp/olmo-core-fsdp-benchmark-test")
     print_rank0(f"Saving torch FSDP checkpoint to {checkpoint_dir}...")
-    save_model_and_optim_state(checkpoint_dir, torch_model, torch_optim)
+    save_model_and_optim_state(checkpoint_dir, torch_model, torch_optim, save_overwrite=True)
 
     print_rank0(f"Loading OLMo-core FSDP checkpoint from {checkpoint_dir}...")
     load_model_and_optim_state(checkpoint_dir, olmo_model, olmo_optim)
 
+    print_rank0(f"Checking state dict...")
     with TorchFSDP.summon_full_params(torch_model), olmo_model.summon_full_params():
         torch_state_dict = {k.replace("_fsdp_wrapped_module.", ""): v for k, v in torch_model.state_dict().items()}
         olmo_state_dict = olmo_model.state_dict()
         assert torch_state_dict.keys() == olmo_state_dict.keys()
+        for key in torch_state_dict:
+            torch.testing.assert_close(torch_state_dict[key], olmo_state_dict[key], msg=lambda msg: f"Failure for {key}: {msg}")
 
     if dry_run:
         print_rank0("Dry run complete")
