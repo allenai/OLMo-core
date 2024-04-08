@@ -179,7 +179,7 @@ def clear_directory(dir: PathOrStr):
         else:
             raise NotImplementedError(f"clear_directory not implemented for '{parsed.scheme}' folders")
     elif Path(dir).is_dir():
-        shutil.rmtree(dir)
+        shutil.rmtree(dir, ignore_errors=True)
 
 
 ###################################
