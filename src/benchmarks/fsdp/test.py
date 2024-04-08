@@ -37,7 +37,7 @@ def main(
     assert isinstance(torch_model, TorchFSDP)
 
     olmo_model, olmo_optim, _ = build_components(
-        config, batch_size, num_batches=num_batches, fsdp_wrapper="olmo_core"
+        config, batch_size, num_batches=num_batches, fsdp_wrapper="olmo_core", wrap_blocks=False
     )
     assert isinstance(olmo_model, FSDP)
 
@@ -66,8 +66,8 @@ def main(
 
     print_rank0("Running first batch...")
     batch1 = next(batches)
-    torch_logits = torch_model(batch1)
-    olmo_logits = olmo_model(batch1)
+    torch_logits = compute_loss(torch_model, batch1)
+    olmo_logits = compute_loss(olmo_model, batch1)
     torch.testing.assert_close(olmo_logits, torch_logits)
 
     print_rank0("Test complete")

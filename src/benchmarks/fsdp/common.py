@@ -128,6 +128,7 @@ def build_components(
     batch_size: int,
     num_batches: int = 100,
     fsdp_wrapper: Literal["torch", "olmo_core"] = "olmo_core",
+    wrap_blocks: bool = True,
 ) -> Tuple[nn.Module, torch.optim.Optimizer, Dataloader]:
     model = Transformer(config)
 
@@ -137,9 +138,10 @@ def build_components(
 
         model = FSDP.auto_wrap(
             model,
-            [nn.TransformerEncoderLayer],
+            [nn.TransformerEncoderLayer] if wrap_blocks else [],
             precision=FSDPPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32),
         )
+
         model.apply(init_function)
     elif fsdp_wrapper == "torch":
         from torch.distributed.fsdp import FullyShardedDataParallel, MixedPrecision
@@ -156,7 +158,7 @@ def build_components(
             mixed_precision=MixedPrecision(
                 param_dtype=torch.bfloat16, reduce_dtype=torch.float32, buffer_dtype=torch.float32
             ),
-            auto_wrap_policy=auto_wrap_policy,
+            auto_wrap_policy=auto_wrap_policy if wrap_blocks else None,
             use_orig_params=True,
             param_init_fn=lambda m: init_function(m.to_empty(device=get_default_device())),
             device_id=dist.get_rank(),
@@ -164,6 +166,7 @@ def build_components(
     else:
         raise NotImplementedError(fsdp_wrapper)
 
+    model.train()
     print_rank0(model)
 
     print_rank0("Initializing optimizer...")
