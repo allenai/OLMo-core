@@ -66,10 +66,9 @@ def main(
 
     print_rank0("Running first batch...")
     batch1 = next(batches)
-    with torch.autocast("cuda", dtype=torch.bfloat16):
-        torch_logits = torch_model(batch1)
-        olmo_logits = olmo_model(batch1)
-        torch.testing.assert_close(olmo_logits, torch_logits)
+    torch_logits = torch_model(batch1)
+    olmo_logits = olmo_model(batch1)
+    torch.testing.assert_close(olmo_logits, torch_logits)
 
     print_rank0("Test complete")
 
