@@ -11,7 +11,6 @@ from typing import Optional
 
 import torch
 import torch.distributed as dist
-import torch.nn.functional as F
 from torch.distributed.fsdp import FullyShardedDataParallel as TorchFSDP
 
 from olmo_core.distributed.checkpoint import (
@@ -20,7 +19,7 @@ from olmo_core.distributed.checkpoint import (
 )
 from olmo_core.distributed.fsdp import FSDP
 
-from .common import TransformerConfig, build_components, print_rank0
+from .common import TransformerConfig, build_components, compute_loss, print_rank0
 
 log = logging.getLogger(__name__)
 
@@ -55,11 +54,22 @@ def main(
         olmo_state_dict = olmo_model.state_dict()
         assert torch_state_dict.keys() == olmo_state_dict.keys()
         for key in torch_state_dict:
-            torch.testing.assert_close(torch_state_dict[key], olmo_state_dict[key], msg=lambda msg: f"Failure for {key}: {msg}")
+            torch.testing.assert_close(
+                torch_state_dict[key], olmo_state_dict[key], msg=lambda msg: f"Failure for {key}: {msg}"
+            )
 
     if dry_run:
         print_rank0("Dry run complete")
         return
+
+    batches = iter(dataloader)
+
+    print_rank0("Running first batch...")
+    batch1 = next(batches)
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        torch_logits = torch_model(batch1)
+        olmo_logits = olmo_model(batch1)
+        torch.testing.assert_close(olmo_logits, torch_logits)
 
     print_rank0("Test complete")
 

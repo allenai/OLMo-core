@@ -10,6 +10,7 @@ from typing import Literal, Tuple
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+import torch.nn.functional as F
 
 from olmo_core.utils import get_default_device
 
@@ -168,3 +169,13 @@ def build_components(
     print_rank0("Initializing optimizer...")
     optim = torch.optim.AdamW(model.parameters(), lr=1e-5)
     return model, optim, Dataloader(batch_size, config, num_batches=num_batches)
+
+
+def compute_loss(model: nn.Module, batch: torch.Tensor) -> torch.Tensor:
+    logits = model(batch)
+    logits_for_loss = logits[..., :-1, :].contiguous()
+    logits_for_loss = logits_for_loss.view(-1, logits_for_loss.size(-1))
+    labels = batch[..., 1:].contiguous()
+    labels = labels.view(-1)
+    loss = F.cross_entropy(logits_for_loss, labels)
+    return loss

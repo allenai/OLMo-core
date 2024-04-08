@@ -19,7 +19,7 @@ from olmo_core.distributed.checkpoint import (
     save_model_and_optim_state,
 )
 
-from .common import TransformerConfig, build_components, print_rank0
+from .common import TransformerConfig, build_components, compute_loss, print_rank0
 
 log = logging.getLogger(__name__)
 
@@ -60,21 +60,12 @@ def main(
 
         # Run forward pass.
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            logits = model(batch)
-
-            # Compute loss.
-            logits_for_loss = logits[..., :-1, :].contiguous()
-            logits_for_loss = logits_for_loss.view(-1, logits_for_loss.size(-1))
-            labels = batch[..., 1:].contiguous()
-            labels = labels.view(-1)
-            loss = F.cross_entropy(logits_for_loss, labels)
+            loss = compute_loss(model, batch)
 
         # Trigger backward pass.
         loss.backward()
         if not torch.isfinite(loss):
-            raise ValueError(
-                f"NaN loss encountered.\nInputs: {batch}\nLogits: {logits_for_loss}\nLabels: {labels}"
-            )
+            raise ValueError("NaN loss encountered.")
 
         # Clip gradient norms.
         model.clip_grad_norm_(1.0)
