@@ -12,7 +12,6 @@ from typing import Literal, Optional
 
 import torch
 import torch.distributed as dist
-import torch.nn.functional as F
 
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,

@@ -530,7 +530,9 @@ class FSDP(Generic[M], nn.Module):
         # NOTE: `unshard_stream` should wait on current stream (usually `compute_stream` / `default_stream`)
         # if root to respect the optimizer step and any other computations on the params outside of this
         # module's forward/backward pass.
-        with self.state.unshard_stream(wait_stream=self.state.current_stream if self.is_root else None):
+        with self.state.unshard_stream(
+            wait_stream=self.state.current_stream if self.is_root else None
+        ), torch.autocast(self.device.type, enabled=False):
             self.state.flat_param_handle.unshard_(
                 self.precision.param_dtype if cast else None, rank0_only=rank0_only, cache_grads=cache_grads
             )
@@ -556,7 +558,9 @@ class FSDP(Generic[M], nn.Module):
         log.debug("Resharding %s...", self.module.__class__.__name__)
         self.state.params_prefetched = False
 
-        with self.state.unshard_stream(wait_stream=self.state.compute_stream):
+        with self.state.unshard_stream(wait_stream=self.state.compute_stream), torch.autocast(
+            self.device.type, enabled=False
+        ):
             self.state.flat_param_handle.reshard_(writeback=writeback)
 
         if recurse:
@@ -580,7 +584,9 @@ class FSDP(Generic[M], nn.Module):
         # dtype just for reducing gradients.
         grad_reduce_dtype: Optional[torch.dtype] = self.precision.reduce_dtype or self.precision.param_dtype
 
-        with self.state.reduce_stream(wait_stream=self.state.current_stream):
+        with self.state.reduce_stream(wait_stream=self.state.current_stream), torch.autocast(
+            self.device.type, enabled=False
+        ):
             log.debug("Reduce-scattering grads for %s", self.module.__class__.__name__)
             self.state.flat_param_handle.reduce_scatter_grads(grad_reduce_dtype=grad_reduce_dtype)
 
