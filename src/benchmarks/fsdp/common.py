@@ -5,7 +5,7 @@ Contains an implementation of a basic decoder-only transformer model and a mock 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Tuple
+from typing import Literal, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -175,8 +175,10 @@ def build_components(
     return model, optim, Dataloader(batch_size, config, num_batches=num_batches)
 
 
-def compute_loss(model: nn.Module, batch: torch.Tensor) -> torch.Tensor:
-    logits = model(batch)
+def compute_loss(model: nn.Module, batch: torch.Tensor, logits: Optional[torch.Tensor] = None) -> torch.Tensor:
+    if logits is None:
+        logits = model(batch)
+    assert logits is not None
     logits_for_loss = logits[..., :-1, :].contiguous()
     logits_for_loss = logits_for_loss.view(-1, logits_for_loss.size(-1))
     labels = batch[..., 1:].contiguous()

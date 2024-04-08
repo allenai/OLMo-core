@@ -67,9 +67,12 @@ def main(
     print_rank0("Running first batch...")
     batch1 = next(batches)
 
-    with torch.autocast("cuda", dtype=torch.bfloat16, enabled=True):
-        torch_loss = compute_loss(torch_model, batch1)
-        olmo_loss = compute_loss(olmo_model, batch1)
+    with torch.autocast("cuda", dtype=torch.bfloat16, enabled=False):
+        torch_logits = torch_model(batch1)
+        olmo_logits = olmo_model(batch1)
+        torch_loss = compute_loss(torch_model, batch1, logits=torch_logits)
+        olmo_loss = compute_loss(olmo_model, batch1, logits=olmo_logits)
+    torch.testing.assert_close(olmo_logits, torch_logits)
     torch.testing.assert_close(olmo_loss, torch_loss)
 
     torch_loss.backward()

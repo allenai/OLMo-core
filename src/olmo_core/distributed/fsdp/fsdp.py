@@ -488,24 +488,23 @@ class FSDP(Generic[M], nn.Module):
         params: List[ShardedFlatParameter] = []
         param_fqns: List[str] = []
         # NOTE: this generator will include `self.module` itself
-        with torch.autocast(self.device.type, enabled=False):
-            for module_name, module in self._named_children(recurse=lambda m: not isinstance(m, FSDP)):
-                if isinstance(module, FSDP):
-                    continue
-                for param_name, param in module.named_parameters(recurse=False):
-                    sharded_flat_param = ShardedFlatParameter.shard(
-                        param, process_group=self.process_group, device=self.device, synchronize=False
-                    )
-                    setattr(module, param_name, sharded_flat_param)
-                    params.append(sharded_flat_param)
-                    param_fqns.append(f"{module_name}.{param_name}")
+        for module_name, module in self._named_children(recurse=lambda m: not isinstance(m, FSDP)):
+            if isinstance(module, FSDP):
+                continue
+            for param_name, param in module.named_parameters(recurse=False):
+                sharded_flat_param = ShardedFlatParameter.shard(
+                    param, process_group=self.process_group, device=self.device, synchronize=False
+                )
+                setattr(module, param_name, sharded_flat_param)
+                params.append(sharded_flat_param)
+                param_fqns.append(f"{module_name}.{param_name}")
 
-            # Collate the data from all flat params into the flat param handle. The data in each flat param
-            # will then just be a view into a slice of the data managed by the flat param handle.
-            # This makes unsharding more efficient as we'll only need a single `all_gather` call.
-            self.state.flat_param_handle = FlatParamHandle.collate_flat_params(
-                params, param_fqns, process_group=self.process_group, device=self.device
-            )
+        # Collate the data from all flat params into the flat param handle. The data in each flat param
+        # will then just be a view into a slice of the data managed by the flat param handle.
+        # This makes unsharding more efficient as we'll only need a single `all_gather` call.
+        self.state.flat_param_handle = FlatParamHandle.collate_flat_params(
+            params, param_fqns, process_group=self.process_group, device=self.device
+        )
         gc_cuda()
 
     @torch.no_grad()
@@ -531,9 +530,7 @@ class FSDP(Generic[M], nn.Module):
         # NOTE: `unshard_stream` should wait on current stream (usually `compute_stream` / `default_stream`)
         # if root to respect the optimizer step and any other computations on the params outside of this
         # module's forward/backward pass.
-        with self.state.unshard_stream(
-            wait_stream=self.state.current_stream if self.is_root else None
-        ), torch.autocast(self.device.type, enabled=False):
+        with self.state.unshard_stream(wait_stream=self.state.current_stream if self.is_root else None):
             self.state.flat_param_handle.unshard_(
                 self.precision.param_dtype if cast else None, rank0_only=rank0_only, cache_grads=cache_grads
             )
@@ -559,9 +556,7 @@ class FSDP(Generic[M], nn.Module):
         log.debug("Resharding %s...", self.module.__class__.__name__)
         self.state.params_prefetched = False
 
-        with self.state.unshard_stream(wait_stream=self.state.compute_stream), torch.autocast(
-            self.device.type, enabled=False
-        ):
+        with self.state.unshard_stream(wait_stream=self.state.compute_stream):
             self.state.flat_param_handle.reshard_(writeback=writeback)
 
         if recurse:
@@ -585,9 +580,7 @@ class FSDP(Generic[M], nn.Module):
         # dtype just for reducing gradients.
         grad_reduce_dtype: Optional[torch.dtype] = self.precision.reduce_dtype or self.precision.param_dtype
 
-        with self.state.reduce_stream(wait_stream=self.state.current_stream), torch.autocast(
-            self.device.type, enabled=False
-        ):
+        with self.state.reduce_stream(wait_stream=self.state.current_stream):
             log.debug("Reduce-scattering grads for %s", self.module.__class__.__name__)
             self.state.flat_param_handle.reduce_scatter_grads(grad_reduce_dtype=grad_reduce_dtype)
 
