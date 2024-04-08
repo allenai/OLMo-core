@@ -56,6 +56,7 @@ class Transformer(nn.Module):
                     dim_feedforward=config.mlp_ratio * config.d_model,
                     batch_first=True,
                     device=config.init_device,
+                    dropout=0.0,
                 )
                 for _ in range(config.n_layers)
             ]
