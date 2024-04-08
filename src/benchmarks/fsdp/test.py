@@ -75,8 +75,10 @@ def main(
     torch_loss.backward()
     olmo_loss.backward()
     for (param_name, olmo_param), torch_param in zip(olmo_model.named_parameters(), torch_model.parameters()):
-        assert olmo_param.grad is not None, f"Gradient for {param_name} is None!"
-        assert torch_param.grad is not None
+        if olmo_param.numel() > 0:
+            assert olmo_param.grad is not None, f"Gradient for {param_name} is None!"
+        if torch_param.numel() > 0:
+            assert torch_param.grad is not None, f"Gradient for {param_name} is None!"
 
     print_rank0("Test complete")
 
