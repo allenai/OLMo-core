@@ -70,6 +70,11 @@ def main(
     olmo_loss = compute_loss(olmo_model, batch1)
     torch.testing.assert_close(olmo_loss, torch_loss)
 
+    for (param_name, olmo_param), torch_param in zip(olmo_model.named_parameters(), torch_model.parameters()):
+        assert olmo_param.grad is not None
+        assert torch_param.grad is not None
+        torch.testing.assert_close(olmo_param.grad, torch_param.grad, msg=lambda msg: f"{param_name} {msg}")
+
     print_rank0("Test complete")
 
 
