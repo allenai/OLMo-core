@@ -529,6 +529,11 @@ def test_fsdp_with_intra_node_activation_checkpointing(backend):
 def run_fsdp_with_mixed_precision(model_factory, model_data_factory, precision):
     fsdp = FSDP(model_factory(), precision=precision)
 
+    fsdp._unshard(cast=True, recurse=True)
+    for param in fsdp.parameters():
+        assert param.data.dtype == precision.param_dtype
+    fsdp._reshard(recurse=True)
+
     model_data = model_data_factory().to(fsdp.device)
     if precision.param_dtype is not None:
         model_data = model_data.to(dtype=precision.param_dtype)

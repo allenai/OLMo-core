@@ -532,7 +532,7 @@ class FSDP(Generic[M], nn.Module):
         # module's forward/backward pass.
         with self.state.unshard_stream(wait_stream=self.state.current_stream if self.is_root else None):
             self.state.flat_param_handle.unshard_(
-                self.precision.param_dtype if cast else None, rank0_only=rank0_only, cache_grads=cache_grads
+                dtype=self.precision.param_dtype if cast else None, rank0_only=rank0_only, cache_grads=cache_grads
             )
 
         if prefetch_from is not None:
