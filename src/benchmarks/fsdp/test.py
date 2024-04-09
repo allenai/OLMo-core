@@ -79,7 +79,7 @@ def main(
     print_rank0("Running first batch...")
     batch1 = next(batches)
 
-    with torch.autocast("cuda", dtype=torch.bfloat16, enabled=False):
+    with torch.autocast("cuda", dtype=torch.bfloat16, enabled=mixed_precision):
         torch_logits = torch_model(batch1)
         olmo_logits = olmo_model(batch1)
         torch_loss = compute_loss(torch_model, batch1, logits=torch_logits)
