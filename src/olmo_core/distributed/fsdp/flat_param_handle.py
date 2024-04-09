@@ -142,7 +142,7 @@ class FlatParamHandle:
         if rank0_only or dist.get_backend() == dist.Backend.GLOO:
             all_params_unsharded_data = self.params_data.gather(dtype=dtype, rank0_only=rank0_only)
         else:
-            # We prefer to use `all_gather_into_tensor` when possible.
+            # We prefer to use `all_gather_into_tensor()` when possible.
             all_params_unsharded_data = torch.empty(
                 self.params_data.unsharded_shape, dtype=dtype or self.params_data.dtype, device=self.device
             )
