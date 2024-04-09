@@ -375,6 +375,7 @@ class Checkpointer:
                 if (
                     offsets_in_file[0] <= offsets[0] < offsets_in_file[1]
                     or offsets_in_file[0] < offsets[1] <= offsets_in_file[1]
+                    or (offsets[0] < offsets_in_file[0] and offsets_in_file[1] < offsets[1])
                 ):
                     with safetensors_mfl.open(f"{dir}/{filename}") as loader:
                         if len((shape_in_file := loader.get_shape(key))) != 1:
@@ -388,6 +389,8 @@ class Checkpointer:
                             )
 
                         numel_in_file = loader.get_numel(key)
+                        if numel_in_file == 0:
+                            continue
 
                         # Start and end index of the slice within `flat_tensor` that we're going to load
                         # from a slice of `flat_tensor_to_load`.
