@@ -31,6 +31,10 @@ class TransformerConfig:
     init_device: torch.device = torch.device("cpu")
 
     @classmethod
+    def tiniest(cls) -> TransformerConfig:
+        return cls(d_model=1024, n_layers=1, n_heads=16)
+
+    @classmethod
     def tiny(cls) -> TransformerConfig:
         return cls(d_model=1024, n_layers=16, n_heads=16)
 

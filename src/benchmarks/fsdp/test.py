@@ -30,14 +30,15 @@ def main(
     num_batches: int = 100,
     dry_run: bool = False,
     save_path: Optional[str] = None,
+    wrap_blocks: bool = True,
 ):
     torch_model, torch_optim, dataloader = build_components(
-        config, batch_size, num_batches=num_batches, fsdp_wrapper="torch"
+        config, batch_size, num_batches=num_batches, fsdp_wrapper="torch", wrap_blocks=wrap_blocks
     )
     assert isinstance(torch_model, TorchFSDP)
 
     olmo_model, olmo_optim, _ = build_components(
-        config, batch_size, num_batches=num_batches, fsdp_wrapper="olmo_core"
+        config, batch_size, num_batches=num_batches, fsdp_wrapper="olmo_core", wrap_blocks=wrap_blocks
     )
     assert isinstance(olmo_model, FSDP)
 
@@ -90,8 +91,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="train.py", description="Train an FSDP model")
     parser.add_argument(
         "--model-size",
-        choices=["tiny", "small", "medium"],
-        default="tiny",
+        choices=["tiniest", "tiny", "small", "medium"],
+        default="tiniest",
         help="""The model size.""",
     )
     parser.add_argument(
@@ -121,7 +122,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     config: TransformerConfig
-    if args.model_size == "tiny":
+    wrap_blocks: bool = True
+    if args.model_size == "tiniest":
+        config = TransformerConfig.tiniest()
+        wrap_blocks = False
+    elif args.model_size == "tiny":
         config = TransformerConfig.tiny()
     elif args.model_size == "small":
         config = TransformerConfig.small()
@@ -145,4 +150,5 @@ if __name__ == "__main__":
         num_batches=args.num_batches,
         dry_run=args.dry_run,
         save_path=args.save_path,
+        wrap_blocks=wrap_blocks,
     )
