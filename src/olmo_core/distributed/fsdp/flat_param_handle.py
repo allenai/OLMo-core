@@ -146,7 +146,11 @@ class FlatParamHandle:
             all_params_unsharded_data = torch.empty(
                 self.params_data.unsharded_shape, dtype=dtype or self.params_data.dtype, device=self.device
             )
-            dist.all_gather_into_tensor(all_params_unsharded_data, self.params_data.data, group=self.process_group)
+            dist.all_gather_into_tensor(
+                all_params_unsharded_data,
+                self.params_data.data.to(dtype or self.params_data.dtype),
+                group=self.process_group,
+            )
 
         for i, (param, param_offsets) in enumerate(zip(self.params, self.params_offsets_per_rank)):
             if rank0_only and local_rank != 0:
