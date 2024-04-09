@@ -134,6 +134,7 @@ def build_components(
     num_batches: int = 100,
     fsdp_wrapper: Literal["torch", "olmo_core"] = "olmo_core",
     wrap_blocks: bool = True,
+    mixed_precision: bool = True,
 ) -> Tuple[nn.Module, torch.optim.Optimizer, Dataloader]:
     model = Transformer(config)
 
@@ -144,7 +145,9 @@ def build_components(
         model = FSDP.auto_wrap(
             model,
             [nn.TransformerEncoderLayer] if wrap_blocks else [],
-            precision=FSDPPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32),
+            precision=FSDPPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32)
+            if mixed_precision
+            else None,
         )
 
         model.apply(init_function)
@@ -162,7 +165,9 @@ def build_components(
             model,
             mixed_precision=MixedPrecision(
                 param_dtype=torch.bfloat16, reduce_dtype=torch.float32, buffer_dtype=torch.float32
-            ),
+            )
+            if mixed_precision
+            else None,
             auto_wrap_policy=auto_wrap_policy if wrap_blocks else None,
             use_orig_params=True,
             param_init_fn=lambda m: init_function(m.to_empty(device=get_default_device())),

@@ -31,14 +31,25 @@ def main(
     dry_run: bool = False,
     save_path: Optional[str] = None,
     wrap_blocks: bool = True,
+    mixed_precision: bool = True,
 ):
     torch_model, torch_optim, dataloader = build_components(
-        config, batch_size, num_batches=num_batches, fsdp_wrapper="torch", wrap_blocks=wrap_blocks
+        config,
+        batch_size,
+        num_batches=num_batches,
+        fsdp_wrapper="torch",
+        wrap_blocks=wrap_blocks,
+        mixed_precision=mixed_precision,
     )
     assert isinstance(torch_model, TorchFSDP)
 
     olmo_model, olmo_optim, _ = build_components(
-        config, batch_size, num_batches=num_batches, fsdp_wrapper="olmo_core", wrap_blocks=wrap_blocks
+        config,
+        batch_size,
+        num_batches=num_batches,
+        fsdp_wrapper="olmo_core",
+        wrap_blocks=wrap_blocks,
+        mixed_precision=mixed_precision,
     )
     assert isinstance(olmo_model, FSDP)
 
@@ -119,7 +130,13 @@ if __name__ == "__main__":
         "--save-path",
         type=str,
     )
+    parser.add_argument(
+        "--no-mixed-precision",
+        action="store_true",
+    )
     args = parser.parse_args()
+
+    mixed_precision = not args.no_mixed_precision
 
     config: TransformerConfig
     wrap_blocks: bool = True
@@ -151,4 +168,5 @@ if __name__ == "__main__":
         dry_run=args.dry_run,
         save_path=args.save_path,
         wrap_blocks=wrap_blocks,
+        mixed_precision=mixed_precision,
     )
