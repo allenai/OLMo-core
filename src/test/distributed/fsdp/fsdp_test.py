@@ -529,6 +529,11 @@ def test_fsdp_with_intra_node_activation_checkpointing(backend):
 def run_fsdp_with_mixed_precision(model_factory, model_data_factory, precision):
     fsdp = FSDP(model_factory(), precision=precision)
 
+    fsdp._unshard(cast=True, recurse=True)
+    for param in fsdp.parameters():
+        assert param.data.dtype == precision.param_dtype
+    fsdp._reshard(recurse=True)
+
     model_data = model_data_factory().to(fsdp.device)
     if precision.param_dtype is not None:
         model_data = model_data.to(dtype=precision.param_dtype)
@@ -545,11 +550,10 @@ def run_fsdp_with_mixed_precision(model_factory, model_data_factory, precision):
 
     # Make sure grads are now in the correct type.
     for param in fsdp.parameters():
+        assert isinstance(param, ShardedFlatParameter)
+        assert param.is_sharded
         assert param.grad is not None
-        if precision.keep_low_precision_grads and precision.param_dtype is not None:
-            assert param.grad.dtype == precision.param_dtype
-        else:
-            assert param.grad.dtype == param.dtype
+        assert param.grad.dtype == param.dtype
 
 
 @pytest.mark.parametrize("backend", BACKENDS)

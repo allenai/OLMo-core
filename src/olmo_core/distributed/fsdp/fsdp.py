@@ -53,12 +53,6 @@ class FSDPPrecision:
     The data type used when reducing gradients. If not set this defaults to ``param_dtype``.
     """
 
-    keep_low_precision_grads: bool = False
-    """
-    If ``True``, gradients are kept in low precision (if ``param_dtype`` is to set to low precision)
-    instead of being upcast to full precision for the optimizer.
-    """
-
 
 @dataclass
 class FSDPDebugConfig:
@@ -182,6 +176,20 @@ class FSDP(Generic[M], nn.Module):
             # Run forward pass on the original model.
             with self.state.compute_stream(wait_stream=self.state.unshard_stream):
                 output = self.module(*args, **kwargs)
+
+            if torch.is_grad_enabled():
+                # Prepare for backward pass.
+                if self.is_root and self.state.backward_execution_order_finalized:
+                    # Fill backward-pass prefetch queue for unsharding.
+                    for module in self.state.backward_execution_order:
+                        self.state.backward_prefetch_queue.append(module)
+
+                # If gradients are required, register a backward hook on the outputs to unshard
+                # parameters in place again when needed.
+                self._register_pre_backward_hooks(output)
+
+                # Register post-backward hooks to reshard the parameters in place and reduce gradients.
+                self._register_post_backward_hooks()
         finally:
             # Reshard parameters in-place.
             self._reshard()
@@ -190,22 +198,17 @@ class FSDP(Generic[M], nn.Module):
             # At the end of the first forward pass, execution order is now finalized, meaning
             # we can use 'self.state.forward_execution_order' to start prefetching unshards during
             # the next forward pass.
-            self.state.forward_execution_order_finalized = True
-            assert not self.state.forward_prefetch_queue
+            if not self.state.forward_execution_order_finalized:
+                self.state.forward_execution_order_finalized = True
+                for child in self._fsdp_children(recurse=True):
+                    child.state.forward_execution_order_finalized = True
 
-        if torch.is_grad_enabled():
-            # Prepare for backward pass.
-            if self.is_root and self.state.backward_execution_order_finalized:
-                # Fill backward-pass prefetch queue for unsharding.
-                for module in self.state.backward_execution_order:
-                    self.state.backward_prefetch_queue.append(module)
-
-            # If gradients are required, register a backward hook on the outputs to unshard
-            # parameters in place again when needed.
-            self._register_pre_backward_hooks(output)
-
-            # And post-backward hooks to reshard the parameters in place and reduce gradients.
-            self._register_post_backward_hooks()
+            if self.state.forward_prefetch_queue:
+                raise RuntimeError(
+                    "Forward prefetch queue has not been emptied!\n"
+                    f"Still contains {len(self.state.forward_prefetch_queue)} modules:\n"
+                    f"{[m.module.__class__.__name__ for m in self.state.forward_prefetch_queue]}"
+                )
 
         return output
 
@@ -452,7 +455,7 @@ class FSDP(Generic[M], nn.Module):
 
         yield from collect_children(self.module)
 
-    def _managed_named_parameters(self) -> Generator[Tuple[str, nn.Parameter], None, None]:
+    def _managed_named_parameters(self) -> Generator[Tuple[str, ShardedFlatParameter], None, None]:
         """
         Returns a generator over all parameters managed by this FSDP instance. This is equivalent
         to `self.module.named_parameters()` except that parameters within nested FSDP instances are omitted.
@@ -529,7 +532,7 @@ class FSDP(Generic[M], nn.Module):
         # module's forward/backward pass.
         with self.state.unshard_stream(wait_stream=self.state.current_stream if self.is_root else None):
             self.state.flat_param_handle.unshard_(
-                self.precision.param_dtype if cast else None, rank0_only=rank0_only, cache_grads=cache_grads
+                dtype=self.precision.param_dtype if cast else None, rank0_only=rank0_only, cache_grads=cache_grads
             )
 
         if prefetch_from is not None:
@@ -574,18 +577,12 @@ class FSDP(Generic[M], nn.Module):
             )
             return
 
-        # dtype to keep sharded gradients in.
-        grad_dtype: Optional[torch.dtype] = (
-            self.precision.param_dtype if self.precision.keep_low_precision_grads else None
-        )
         # dtype just for reducing gradients.
         grad_reduce_dtype: Optional[torch.dtype] = self.precision.reduce_dtype or self.precision.param_dtype
 
         with self.state.reduce_stream(wait_stream=self.state.current_stream):
             log.debug("Reduce-scattering grads for %s", self.module.__class__.__name__)
-            self.state.flat_param_handle.reduce_scatter_grads(
-                grad_dtype=grad_dtype, grad_reduce_dtype=grad_reduce_dtype
-            )
+            self.state.flat_param_handle.reduce_scatter_grads(grad_reduce_dtype=grad_reduce_dtype)
 
     def _deque_from(self, prefetch_queue: deque[FSDP]) -> Generator[FSDP, None, None]:
         count = 0
@@ -673,16 +670,15 @@ class FSDP(Generic[M], nn.Module):
         self.state.current_stream.wait_stream(self.state.unshard_stream)
         self.state.current_stream.wait_stream(self.state.reduce_stream)
 
-    def _register_post_backward_hook(self, param_name: str, param: nn.Parameter):
-        if isinstance(param, ShardedFlatParameter) and param.requires_grad:
-            # Force creation of a `grad_fn` in order to register a hook that will run *after* this param's
-            # backward pass.
-            tmp_param = param.expand_as(param)
-            assert tmp_param.grad_fn is not None
-            acc_grad = tmp_param.grad_fn.next_functions[0][0]
-            assert acc_grad is not None
-            handle = acc_grad.register_hook(partial(self._post_backward_hook, param_name))
-            self.state.post_backward_hook_handles[param_name] = handle
+    def _register_post_backward_hook(self, param_name: str, param: ShardedFlatParameter):
+        # Force creation of a `grad_fn` in order to register a hook that will run *after* this param's
+        # backward pass.
+        tmp_param = param.expand_as(param)
+        assert tmp_param.grad_fn is not None
+        acc_grad = tmp_param.grad_fn.next_functions[0][0]
+        assert acc_grad is not None
+        handle = acc_grad.register_hook(partial(self._post_backward_hook, param_name))
+        self.state.post_backward_hook_handles[param_name] = handle
 
     def _register_post_backward_hooks(self):
         log.debug("Registering post-backward hooks for %s...", self.module.__class__.__name__)
@@ -693,4 +689,5 @@ class FSDP(Generic[M], nn.Module):
                 handle.remove()
             self.state.post_backward_hook_handles.clear()
         for param_name, param in self._managed_named_parameters():
-            self._register_post_backward_hook(param_name, param)
+            if param.requires_grad:
+                self._register_post_backward_hook(param_name, param)
