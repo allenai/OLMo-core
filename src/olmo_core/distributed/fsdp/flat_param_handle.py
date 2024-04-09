@@ -144,7 +144,7 @@ class FlatParamHandle:
         else:
             # We prefer to use `all_gather_into_tensor` when possible.
             all_params_unsharded_data = torch.empty(
-                self.params_data.unsharded_shape, dtype=dtype or self.params_data.dtype
+                self.params_data.unsharded_shape, dtype=dtype or self.params_data.dtype, device=self.device
             )
             dist.all_gather_into_tensor(all_params_unsharded_data, self.params_data.data, group=self.process_group)
 
