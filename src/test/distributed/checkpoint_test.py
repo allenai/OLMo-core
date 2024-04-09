@@ -515,9 +515,16 @@ def run_save_and_load_torch_fsdp_model(
         init_optimizer_state(optim2)
     load_model_and_optim_state(dir, fsdp_model2, optim2)
 
+    # Check unsharding state.
+    full_model_state = unshard_model_state(dir, device=torch.device("cuda"))
+
     # Check model parameters.
     with FSDP.summon_full_params(fsdp_model, recurse=True), FSDP.summon_full_params(fsdp_model2, recurse=True):
         torch.testing.assert_close(fsdp_model.state_dict(), fsdp_model2.state_dict())
+        torch.testing.assert_close(
+            full_model_state,
+            {k.replace("_fsdp_wrapped_module.", ""): v for k, v in fsdp_model.state_dict().items()},
+        )
 
     # Check optimizer state.
     for (p1_name, p1), (p2_name, p2) in zip(fsdp_model.named_parameters(), fsdp_model2.named_parameters()):
