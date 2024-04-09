@@ -164,7 +164,10 @@ def build_components(
         model = FullyShardedDataParallel(
             model,
             mixed_precision=MixedPrecision(
-                param_dtype=torch.bfloat16, reduce_dtype=torch.float32, buffer_dtype=torch.float32
+                param_dtype=torch.bfloat16,
+                reduce_dtype=torch.float32,
+                buffer_dtype=torch.float32,
+                cast_root_forward_inputs=False,
             )
             if mixed_precision
             else None,
