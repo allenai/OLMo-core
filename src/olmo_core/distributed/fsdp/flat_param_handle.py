@@ -138,11 +138,13 @@ class FlatParamHandle:
         local_rank = get_rank(self.process_group)
         world_size = get_world_size(self.process_group)
 
+        # Gather full, padded, unsharded data for all params.
         all_params_unsharded_data: torch.Tensor
         if rank0_only or dist.get_backend() == dist.Backend.GLOO:
             all_params_unsharded_data = self.params_data.gather(dtype=dtype, rank0_only=rank0_only)
         else:
-            # We prefer to use `all_gather_into_tensor()` when possible.
+            # We prefer to use `all_gather_into_tensor()` directly when possible as it involves
+            # fewer allocations.
             all_params_unsharded_data = torch.empty(
                 self.params_data.unsharded_shape, dtype=dtype or self.params_data.dtype, device=self.device
             )
@@ -152,6 +154,7 @@ class FlatParamHandle:
                 group=self.process_group,
             )
 
+        # Set the data for each param as a view into `all_params_unsharded_data`.
         for i, (param, param_offsets) in enumerate(zip(self.params, self.params_offsets_per_rank)):
             if rank0_only and local_rank != 0:
                 param.unshard_(
