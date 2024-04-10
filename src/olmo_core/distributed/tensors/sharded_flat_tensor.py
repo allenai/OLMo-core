@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from functools import reduce
@@ -13,6 +14,9 @@ import torch.nn.functional as F
 from ..utils import get_rank, get_world_size
 
 __all__ = ["ShardedFlatTensor", "ShardingSpec"]
+
+
+log = logging.getLogger(__name__)
 
 
 T = TypeVar("T", bound="ShardedFlatTensor")
@@ -247,6 +251,8 @@ class ShardedFlatTensor(torch.Tensor):
         del metadata[self.SHARDED_FLAT_TENSOR_CACHED_SHARDED_DATA_KEY]
 
     def mark_as_sharded(self, sharding_spec: ShardingSpec, process_group: Optional[dist.ProcessGroup] = None):
+        log.info("Retrieved rank: %d", get_rank(group=process_group))
+        log.info("Process group: %s", process_group)
         if self.numel() != (shard_numel := sharding_spec.sharded_numels[get_rank(group=process_group)]):
             raise ValueError(
                 f"invalid sharding spec, numel in spec ({shard_numel}) does not match numel in shard ({self.numel()})"
