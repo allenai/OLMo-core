@@ -966,7 +966,9 @@ def _get_torch_fsdp_state_dict_for_checkpoint(model: nn.Module) -> Dict[str, tor
 
     assert isinstance(model, TorchFSDP)
     # Make sure FSDP initialization is complete, otherwise we can't access 'model._all_handles'.
+    log.info("Process group before init: %s", model.process_group)
     _lazy_init(model, model)
+    log.info("Process group after init: %s", model.process_group)
 
     param_to_flat_tensor: Dict[nn.Parameter, ShardedFlatTensor] = {}
     for handle in model._all_handles:
