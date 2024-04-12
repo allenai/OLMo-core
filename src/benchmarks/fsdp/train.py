@@ -64,8 +64,6 @@ def main(
 
         # Trigger backward pass.
         loss.backward()
-        if not torch.isfinite(loss):
-            raise ValueError("NaN loss encountered.")
 
         # Clip gradient norms.
         model.clip_grad_norm_(1.0)
