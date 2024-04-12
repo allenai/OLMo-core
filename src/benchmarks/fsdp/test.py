@@ -66,6 +66,8 @@ def main(
         olmo_state_dict = olmo_model.state_dict()
         assert torch_state_dict.keys() == olmo_state_dict.keys()
         for key in torch_state_dict:
+            assert torch_state_dict[key].dtype == torch.float32
+            assert olmo_state_dict[key].dtype == torch.float32
             torch.testing.assert_close(
                 torch_state_dict[key], olmo_state_dict[key], msg=lambda msg: f"Failure for {key}: {msg}"
             )
