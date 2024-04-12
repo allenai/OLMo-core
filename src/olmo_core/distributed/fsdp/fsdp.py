@@ -158,23 +158,25 @@ class FSDP(Generic[M], nn.Module):
         """
         self._lazy_init()
 
-        log.debug("Running forward pass for %s...", self.module.__class__.__name__)
-
         if self.is_root and self.state.forward_execution_order_finalized:
             # Fill forward-pass prefetch queue for unsharding.
             for module in self.state.forward_execution_order:
                 self.state.forward_prefetch_queue.append(module)
 
         # Unshard parameters in-place.
-        self._unshard(
-            prefetch_from=self.state.forward_prefetch_queue
-            if self.state.forward_execution_order_finalized
-            else None
-        )
+        self._unshard()
 
         try:
-            # Run forward pass on the original model.
-            with self.state.compute_stream(wait_stream=self.state.unshard_stream):
+            # Wait for unsharding stream before running the wrapped module's forward pass.
+            self.state.compute_stream.wait_stream(self.state.unshard_stream)
+
+            # Then we can prefetch the next FSDP module(s) asynchronously.
+            if self.state.forward_execution_order_finalized:
+                self._prefetch(self.state.forward_prefetch_queue)
+
+            # Run forward pass on the wrapped module.
+            with self.state.compute_stream:
+                log.debug("Running forward pass for %s...", self.module.__class__.__name__)
                 output = self.module(*args, **kwargs)
 
             if torch.is_grad_enabled():
@@ -552,6 +554,13 @@ class FSDP(Generic[M], nn.Module):
         if recurse:
             for module in self._fsdp_children():
                 module._unshard(**kwargs)
+
+    def _prefetch(self, prefetch_from: deque[FSDP], **kwargs):
+        for module in self._deque_from(prefetch_from):
+            log.debug(
+                "Prefetching %s from %s...", module.module.__class__.__name__, self.module.__class__.__name__
+            )
+            module._unshard(**kwargs)
 
     @torch.no_grad()
     def _reshard(self, writeback: bool = False, recurse: bool = False):
