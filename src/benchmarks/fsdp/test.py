@@ -83,11 +83,9 @@ def main(
             assert olmo_bf16_state_dict.keys() == olmo_fp32_state_dict.keys()
             for key in olmo_bf16_state_dict.keys():
                 torch.testing.assert_close(
-                    olmo_bf16_state_dict[key],
-                    olmo_fp32_state_dict[key].to(torch.bfloat16),
+                    olmo_bf16_state_dict[key].to(torch.float32),
+                    olmo_fp32_state_dict[key],
                     msg=lambda msg: f"Failure for {key}: {msg}",
-                    rtol=1.3e-6,
-                    atol=1e-5,
                 )
 
     if dry_run:
