@@ -523,7 +523,6 @@ class FSDP(Generic[M], nn.Module):
         cache_grads: bool = False,
         recurse: bool = False,
         rank0_only: bool = False,
-        prefetch_from: Optional[deque[FSDP]] = None,
     ):
         """
         Unshard the wrapped module in place.
@@ -543,13 +542,6 @@ class FSDP(Generic[M], nn.Module):
             self.state.flat_param_handle.unshard_(
                 dtype=self.precision.param_dtype if cast else None, rank0_only=rank0_only, cache_grads=cache_grads
             )
-
-        if prefetch_from is not None:
-            for module in self._deque_from(prefetch_from):
-                log.debug(
-                    "Prefetching %s from %s...", module.module.__class__.__name__, self.module.__class__.__name__
-                )
-                module._unshard(**kwargs)
 
         if recurse:
             for module in self._fsdp_children():
@@ -620,25 +612,23 @@ class FSDP(Generic[M], nn.Module):
         del unused
         log.debug("Running pre-backward hook for %s...", self.module.__class__.__name__)
 
-        if not self.state.backward_execution_order_finalized:
-            # Add self to backward execution order.
-            self.state.backward_execution_order.append(self)
-
-        # Unshard parameters in place.
-        self._unshard(
-            cache_grads=True,
-            prefetch_from=self.state.backward_prefetch_queue
-            if self.state.backward_execution_order_finalized
-            else None,
-        )
-
         # Remove all pre backward hooks for this FSDP instance since they all do the same thing.
         for handle in self.state.pre_backward_hook_handles:
             handle.remove()
         self.state.pre_backward_hook_handles.clear()
 
+        # Unshard parameters in place.
+        self._unshard(cache_grads=True)
+
         # Wait for unshard stream so gradient computation can proceed.
         self.state.current_stream.wait_stream(self.state.unshard_stream)
+
+        if self.state.backward_execution_order_finalized:
+            # Prefetch next FSDP module(s) asynchronously.
+            self._prefetch(self.state.backward_prefetch_queue, cache_grads=True)
+        else:
+            # Add self to backward execution order.
+            self.state.backward_execution_order.append(self)
 
     def _register_pre_backward_hook(self, x: torch.Tensor):
         handle = x.register_hook(self._pre_backward_hook)
