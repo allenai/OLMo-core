@@ -78,7 +78,7 @@ def main(
 
     if mixed_precision:
         print_rank0("Checking gathering full params in low precision...")
-        with olmo_model.summon_full_params(cast=True):
+        with olmo_model.summon_full_params(cast=True, writeback=False):
             olmo_bf16_state_dict = olmo_model.state_dict()
             assert olmo_bf16_state_dict.keys() == olmo_fp32_state_dict.keys()
             for key in olmo_bf16_state_dict.keys():
@@ -86,6 +86,8 @@ def main(
                     olmo_bf16_state_dict[key],
                     olmo_fp32_state_dict[key].to(torch.bfloat16),
                     msg=lambda msg: f"Failure for {key}: {msg}",
+                    rtol=1.3e-6,
+                    atol=1e-5,
                 )
 
     if dry_run:
