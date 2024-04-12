@@ -69,6 +69,10 @@ class CudaStream(Stream):
     def wait_stream(self, other: Stream):
         if isinstance(other, CudaStream):
             self.base_stream.wait_stream(other.base_stream)
+        elif isinstance(other, torch.cuda.Stream):
+            self.base_stream.wait_stream(other)
+        elif not isinstance(other, Stream):
+            raise ValueError(f"expected a Stream, got {type(other)}")
 
 
 class CpuStream(Stream):

@@ -29,3 +29,12 @@ def test_cuda_stream():
 
     default_stream.wait_stream(other_stream)
     del x, y
+
+    x = torch.empty((100, 100), device=device).normal_(0.0, 1.0)
+    with other_stream(wait_stream=default_stream):
+        assert torch.cuda.current_stream(device) == other_stream.base_stream
+        y = torch.sum(x)
+    assert torch.cuda.current_stream(device) == default_stream.base_stream
+
+    default_stream.wait_stream(other_stream)
+    del x, y
