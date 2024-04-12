@@ -59,7 +59,7 @@ def main(
         optim.zero_grad()
 
         # Run forward pass.
-        with torch.autocast("cuda", dtype=torch.bfloat16):
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=mixed_precision):
             loss = compute_loss(model, batch)
 
         # Trigger backward pass.
