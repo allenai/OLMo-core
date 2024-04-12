@@ -31,9 +31,10 @@ def main(
     dry_run: bool = False,
     save_path: Optional[str] = None,
     load_path: Optional[str] = None,
+    mixed_precision: bool = True,
 ):
     model, optim, dataloader = build_components(
-        config, batch_size, num_batches=num_batches, fsdp_wrapper=fsdp_wrapper
+        config, batch_size, num_batches=num_batches, fsdp_wrapper=fsdp_wrapper, mixed_precision=mixed_precision
     )
 
     if load_path is not None:
@@ -129,7 +130,13 @@ if __name__ == "__main__":
         "--load-path",
         type=str,
     )
+    parser.add_argument(
+        "--no-mixed-precision",
+        action="store_true",
+    )
     args = parser.parse_args()
+
+    mixed_precision = not args.no_mixed_precision
 
     config: TransformerConfig
     if args.model_size == "tiny":
@@ -158,4 +165,5 @@ if __name__ == "__main__":
         dry_run=args.dry_run,
         save_path=args.save_path,
         load_path=args.load_path,
+        mixed_precision=mixed_precision,
     )
