@@ -150,6 +150,7 @@ if __name__ == "__main__":
 
     if args.debug:
         os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+        config.debug = True
 
     dist.init_process_group(backend="nccl")
     torch.cuda.set_device(dist.get_rank())

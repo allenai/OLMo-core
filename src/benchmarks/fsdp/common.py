@@ -29,6 +29,7 @@ class TransformerConfig:
     mlp_ratio: int = 4
     max_sequence_length: int = 2048
     init_device: torch.device = torch.device("cpu")
+    debug: bool = False
 
     @classmethod
     def tiniest(cls) -> TransformerConfig:
@@ -50,6 +51,7 @@ class TransformerConfig:
 class Transformer(nn.Module):
     def __init__(self, config: TransformerConfig):
         super().__init__()
+        self.config = config
         self.wte = nn.Embedding(config.vocab_size, config.d_model, device=config.init_device)
         self.wpe = nn.Embedding(config.max_sequence_length, config.d_model, device=config.init_device)
         self.blocks = nn.ModuleList(
@@ -82,11 +84,24 @@ class Transformer(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.config.debug:
+            for param in self.parameters(recurse=False):
+                assert not param.isnan().any()
+            assert not x.isnan().any()
         x = self.wte(x)
+        if self.config.debug:
+            assert not x.isnan().any()
         x = x + self.wpe(self.positions)
+        if self.config.debug:
+            assert not x.isnan().any()
         for block in self.blocks:
             x = block(x, src_mask=self.causal_mask, is_causal=True)
-        return self.decoder(x)
+            if self.config.debug:
+                assert not x.isnan().any()
+        x = self.decoder(x)
+        if self.config.debug:
+            assert not x.isnan().any()
+        return x
 
 
 class Dataloader:
