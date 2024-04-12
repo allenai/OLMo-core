@@ -278,8 +278,11 @@ class FSDP(Generic[M], nn.Module):
             the context manager.
         :param rank0_only: Only summon full params on rank 0.
         :param cast: If using a mixed-precision strategy, params are cast to the same dtype as they
-            are during the forward and backward passes.
+            are during the forward and backward passes. If this is ``True``, ``writeback`` must be
+            ``False``.
         """
+        if cast and writeback:
+            raise ValueError("`summon_full_params` with `cast=True` and `writeback=True` is not supported")
         self._unshard(cast=cast, recurse=recurse, rank0_only=rank0_only)
         self.state.current_stream.wait_stream(self.state.unshard_stream)
         try:
