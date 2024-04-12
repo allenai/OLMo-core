@@ -150,6 +150,8 @@ def build_components(
     fsdp_wrapper: Literal["torch", "olmo_core"] = "olmo_core",
     wrap_blocks: bool = True,
     mixed_precision: bool = True,
+    max_prefetch_count: int = 1,
+    learning_rate: float = 1e-4,
 ) -> Tuple[nn.Module, torch.optim.Optimizer, Dataloader]:
     model = Transformer(config)
 
@@ -163,6 +165,7 @@ def build_components(
             precision=FSDPPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32)
             if mixed_precision
             else None,
+            max_prefetch_count=max_prefetch_count,
         )
 
         model.apply(init_function)
@@ -198,7 +201,7 @@ def build_components(
     print_rank0(model)
 
     print_rank0("Initializing optimizer...")
-    optim = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    optim = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     return model, optim, Dataloader(batch_size, config, num_batches=num_batches)
 
 

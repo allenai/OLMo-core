@@ -32,9 +32,15 @@ def main(
     save_path: Optional[str] = None,
     load_path: Optional[str] = None,
     mixed_precision: bool = True,
+    **kwargs,
 ):
     model, optim, dataloader = build_components(
-        config, batch_size, num_batches=num_batches, fsdp_wrapper=fsdp_wrapper, mixed_precision=mixed_precision
+        config,
+        batch_size,
+        num_batches=num_batches,
+        fsdp_wrapper=fsdp_wrapper,
+        mixed_precision=mixed_precision,
+        **kwargs,
     )
 
     if load_path is not None:
@@ -132,6 +138,16 @@ if __name__ == "__main__":
         "--no-mixed-precision",
         action="store_true",
     )
+    parser.add_argument(
+        "--max-prefetch-count",
+        type=int,
+        default=1,
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=1e-4,
+    )
     args = parser.parse_args()
 
     mixed_precision = not args.no_mixed_precision
@@ -165,4 +181,6 @@ if __name__ == "__main__":
         save_path=args.save_path,
         load_path=args.load_path,
         mixed_precision=mixed_precision,
+        max_prefetch_count=args.max_prefetch_count,
+        learning_rate=args.lr,
     )
