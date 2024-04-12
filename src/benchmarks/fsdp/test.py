@@ -61,7 +61,9 @@ def main(
     load_model_and_optim_state(checkpoint_dir, olmo_model, olmo_optim)
 
     print_rank0("Checking state dict...")
-    with TorchFSDP.summon_full_params(torch_model), olmo_model.summon_full_params():
+    with TorchFSDP.summon_full_params(torch_model, writeback=False), olmo_model.summon_full_params(
+        writeback=False
+    ):
         torch_state_dict = {k.replace("_fsdp_wrapped_module.", ""): v for k, v in torch_model.state_dict().items()}
         olmo_state_dict = olmo_model.state_dict()
         assert torch_state_dict.keys() == olmo_state_dict.keys()
