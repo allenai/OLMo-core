@@ -77,7 +77,7 @@ def main(
         print_rank0(
             f"Batch [{i+1}/{num_batches}]:\n"
             f"  loss={loss.item():.3f}\n"
-            f"  throughput/seconds_per_batch={batch_end-batch_start:.1f}",
+            f"  throughput/seconds_per_batch={batch_end-batch_start:.3f}",
         )
 
     if save_path is not None:
