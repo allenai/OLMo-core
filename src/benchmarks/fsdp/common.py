@@ -183,7 +183,7 @@ def build_components(
     print_rank0(model)
 
     print_rank0("Initializing optimizer...")
-    optim = torch.optim.AdamW(model.parameters(), lr=1e-5)
+    optim = torch.optim.AdamW(model.parameters(), lr=1e-4)
     return model, optim, Dataloader(batch_size, config, num_batches=num_batches)
 
 
