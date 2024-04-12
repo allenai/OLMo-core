@@ -1,8 +1,8 @@
 import torch
 
-from olmo_core.distributed.fsdp.stream import CudaStream, Stream
+from olmo_core.stream import CudaStream, Stream
 
-from ..utils import requires_gpu
+from .utils import requires_gpu
 
 
 @requires_gpu

@@ -28,11 +28,11 @@ import torch.distributed as dist
 import torch.nn as nn
 
 from olmo_core.distributed.tensors import ShardedFlatParameter
+from olmo_core.stream import Stream
 from olmo_core.utils import apply_to_tensors, gc_cuda, get_default_device, get_grad_norm
 
 from .flat_param_handle import FlatParamHandle
 from .state import FSDPState
-from .stream import Stream
 
 log = logging.getLogger(__name__)
 
