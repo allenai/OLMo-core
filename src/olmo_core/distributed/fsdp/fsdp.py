@@ -291,7 +291,6 @@ class FSDP(Generic[M], nn.Module):
             yield self
         finally:
             self._reshard(writeback=writeback, recurse=recurse)
-            self.state.current_stream.wait_stream(self.state.unshard_stream)
 
     def apply(self, fn):
         """
@@ -564,8 +563,7 @@ class FSDP(Generic[M], nn.Module):
         log.debug("Resharding %s...", self.module.__class__.__name__)
         self.state.params_prefetched = False
 
-        with self.state.unshard_stream(wait_stream=self.state.compute_stream):
-            self.state.flat_param_handle.reshard_(writeback=writeback)
+        self.state.flat_param_handle.reshard_(writeback=writeback)
 
         if recurse:
             for module in self._fsdp_children():
@@ -673,7 +671,6 @@ class FSDP(Generic[M], nn.Module):
 
         # Wait for unsharding and reducing streams to complete so the model is not left in a bad
         # state before grad clipping, optimizer step, or whatever else.
-        self.state.current_stream.wait_stream(self.state.unshard_stream)
         self.state.current_stream.wait_stream(self.state.reduce_stream)
 
     def _register_post_backward_hook(self, param_name: str, param: ShardedFlatParameter):
