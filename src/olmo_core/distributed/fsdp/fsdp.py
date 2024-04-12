@@ -601,7 +601,7 @@ class FSDP(Generic[M], nn.Module):
 
     def _deque_from(self, prefetch_queue: deque[FSDP]) -> Generator[FSDP, None, None]:
         count = 0
-        while prefetch_queue and count <= self.max_prefetch_count:
+        while prefetch_queue and count < self.max_prefetch_count:
             module = prefetch_queue.popleft()
             if module is not self:
                 count += 1
