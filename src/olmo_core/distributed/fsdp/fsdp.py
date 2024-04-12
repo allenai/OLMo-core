@@ -585,17 +585,19 @@ class FSDP(Generic[M], nn.Module):
 
         # dtype just for reducing gradients.
         grad_reduce_dtype: Optional[torch.dtype] = self.precision.reduce_dtype or self.precision.param_dtype
-        grads = [param.grad for param in self.state.flat_param_handle.params if param.grad is not None]
+
+        og_grads = [param.grad for param in self.state.flat_param_handle.params if param.grad is not None]
 
         with self.state.reduce_stream(wait_stream=self.state.current_stream):
             log.debug("Reduce-scattering grads for %s", self.module.__class__.__name__)
             self.state.flat_param_handle.reduce_scatter_grads(grad_reduce_dtype=grad_reduce_dtype)
 
-        # Reduce-scattering the grads relies on the grads of course, which are produced in the current
-        # stream being used for the backwards pass. Since we're using a separate stream for reduce-scatter,
-        # we need to make sure those grads are not deallocated before reduce-scatter finishes.
-        for grad in grads:
-            self.state.reduce_stream.record_for(grad)
+        # Reduce-scattering the grads relies on the original (local) grads of course,
+        # which are produced in the current stream being used for the backwards pass.
+        # Since we're using a separate stream for the reduce-scatter, we need to make sure those
+        # grads are not deallocated before the reduce-scatter finishes.
+        for og_grad in og_grads:
+            self.state.reduce_stream.record_for(og_grad)
 
     def _deque_from(self, prefetch_queue: deque[FSDP]) -> Generator[FSDP, None, None]:
         count = 0

@@ -32,7 +32,7 @@ class FlatParamHandle:
     The FQNs of the managed params.
     """
 
-    grads: List[Optional[torch.Tensor]] = field(default_factory=list)
+    grads_cache: List[Optional[torch.Tensor]] = field(default_factory=list)
     """
     Used for caching gradients during gradient accumulation.
     """
@@ -121,7 +121,7 @@ class FlatParamHandle:
         return cls(
             params=params,
             param_fqns=list(param_fqns),
-            grads=[None] * len(params),
+            grads_cache=[None] * len(params),
             params_data=params_data,
             params_offsets_per_rank=params_offsets_per_rank,
             process_group=process_group,
@@ -181,8 +181,8 @@ class FlatParamHandle:
                 # We should only be caching these between the pre-backward and post-backward
                 # hooks. The post-backward hook will remove the cached grad as it accumulates
                 # it into the persistent sharded grad.
-                assert self.grads[i] is None
-                self.grads[i] = param.grad.data
+                assert self.grads_cache[i] is None
+                self.grads_cache[i] = param.grad.data
                 param.grad = None
 
         del all_params_unsharded_data
@@ -212,7 +212,8 @@ class FlatParamHandle:
             if grad_dtype is None:
                 grad_dtype = param.dtype
 
-            # TODO: batch reductions together
+            # TODO: batch reductions together? This is complicated, especially if we want to allow
+            # a mixture of trainable and frozen params.
 
             # Only NCCL supports 'reduce_scatter'. So with other backends we use 'all_reduce'.
             if dist.get_backend() == dist.Backend.NCCL:
@@ -227,7 +228,7 @@ class FlatParamHandle:
 
             del unsharded_grad
 
-            if (cached_grad := self.grads[i]) is not None:
+            if (cached_grad := self.grads_cache[i]) is not None:
                 param.grad.add_(cached_grad)
-                self.grads[i] = None
+                self.grads_cache[i] = None
                 del cached_grad
