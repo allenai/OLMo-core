@@ -267,7 +267,9 @@ class FSDP(Generic[M], nn.Module):
             yield key_mapping.get(name, name), param
 
     @contextmanager
-    def summon_full_params(self, recurse: bool = True, writeback: bool = True, rank0_only: bool = False):
+    def summon_full_params(
+        self, recurse: bool = True, writeback: bool = True, rank0_only: bool = False, cast: bool = False
+    ):
         """
         Gather full unsharded params in-place with this context manager.
 
@@ -275,8 +277,10 @@ class FSDP(Generic[M], nn.Module):
         :param writeback: Write the unsharded data back from rank 0 to all other ranks while exiting
             the context manager.
         :param rank0_only: Only summon full params on rank 0.
+        :param cast: If using a mixed-precision strategy, params are cast to the same dtype as they
+            are during the forward and backward passes.
         """
-        self._unshard(cast=False, recurse=recurse, rank0_only=rank0_only)
+        self._unshard(cast=cast, recurse=recurse, rank0_only=rank0_only)
         self.state.current_stream.wait_stream(self.state.unshard_stream)
         try:
             yield self
