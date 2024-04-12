@@ -31,9 +31,16 @@ def main(
     dry_run: bool = False,
     save_path: Optional[str] = None,
     load_path: Optional[str] = None,
+    mixed_precision: bool = True,
+    **kwargs,
 ):
     model, optim, dataloader = build_components(
-        config, batch_size, num_batches=num_batches, fsdp_wrapper=fsdp_wrapper
+        config,
+        batch_size,
+        num_batches=num_batches,
+        fsdp_wrapper=fsdp_wrapper,
+        mixed_precision=mixed_precision,
+        **kwargs,
     )
 
     if load_path is not None:
@@ -58,13 +65,11 @@ def main(
         optim.zero_grad()
 
         # Run forward pass.
-        with torch.autocast("cuda", dtype=torch.bfloat16):
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=mixed_precision):
             loss = compute_loss(model, batch)
 
         # Trigger backward pass.
         loss.backward()
-        if not torch.isfinite(loss):
-            raise ValueError("NaN loss encountered.")
 
         # Clip gradient norms.
         model.clip_grad_norm_(1.0)
@@ -76,7 +81,7 @@ def main(
         print_rank0(
             f"Batch [{i+1}/{num_batches}]:\n"
             f"  loss={loss.item():.3f}\n"
-            f"  throughput/seconds_per_batch={batch_end-batch_start:.1f}",
+            f"  throughput/seconds_per_batch={batch_end-batch_start:.3f}",
         )
 
     if save_path is not None:
@@ -129,7 +134,23 @@ if __name__ == "__main__":
         "--load-path",
         type=str,
     )
+    parser.add_argument(
+        "--no-mixed-precision",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--max-prefetch-count",
+        type=int,
+        default=1,
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=1e-4,
+    )
     args = parser.parse_args()
+
+    mixed_precision = not args.no_mixed_precision
 
     config: TransformerConfig
     if args.model_size == "tiny":
@@ -143,6 +164,7 @@ if __name__ == "__main__":
 
     if args.debug:
         os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+        config.debug = True
 
     dist.init_process_group(backend="nccl")
     torch.cuda.set_device(dist.get_rank())
@@ -158,4 +180,7 @@ if __name__ == "__main__":
         dry_run=args.dry_run,
         save_path=args.save_path,
         load_path=args.load_path,
+        mixed_precision=mixed_precision,
+        max_prefetch_count=args.max_prefetch_count,
+        learning_rate=args.lr,
     )

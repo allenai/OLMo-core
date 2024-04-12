@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING, Dict, List
 import torch
 from torch.utils.hooks import RemovableHandle
 
+from olmo_core.stream import Stream
 from olmo_core.utils import get_default_device
 
 from .flat_param_handle import FlatParamHandle
-from .stream import Stream
 
 if TYPE_CHECKING:
     from .fsdp import FSDP

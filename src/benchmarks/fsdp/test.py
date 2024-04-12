@@ -61,14 +61,34 @@ def main(
     load_model_and_optim_state(checkpoint_dir, olmo_model, olmo_optim)
 
     print_rank0("Checking state dict...")
-    with TorchFSDP.summon_full_params(torch_model), olmo_model.summon_full_params():
-        torch_state_dict = {k.replace("_fsdp_wrapped_module.", ""): v for k, v in torch_model.state_dict().items()}
-        olmo_state_dict = olmo_model.state_dict()
-        assert torch_state_dict.keys() == olmo_state_dict.keys()
-        for key in torch_state_dict:
+    with TorchFSDP.summon_full_params(torch_model, writeback=False), olmo_model.summon_full_params(
+        writeback=False
+    ):
+        torch_fp32_state_dict = {
+            k.replace("_fsdp_wrapped_module.", ""): v for k, v in torch_model.state_dict().items()
+        }
+        olmo_fp32_state_dict = olmo_model.state_dict()
+        assert torch_fp32_state_dict.keys() == olmo_fp32_state_dict.keys()
+        for key in torch_fp32_state_dict:
+            assert torch_fp32_state_dict[key].dtype == torch.float32
+            assert olmo_fp32_state_dict[key].dtype == torch.float32
             torch.testing.assert_close(
-                torch_state_dict[key], olmo_state_dict[key], msg=lambda msg: f"Failure for {key}: {msg}"
+                torch_fp32_state_dict[key], olmo_fp32_state_dict[key], msg=lambda msg: f"Failure for {key}: {msg}"
             )
+
+    if mixed_precision:
+        print_rank0("Checking gathering full params in low precision...")
+        with olmo_model.summon_full_params(cast=True, writeback=False):
+            olmo_bf16_state_dict = olmo_model.state_dict()
+            assert olmo_bf16_state_dict.keys() == olmo_fp32_state_dict.keys()
+            for key in olmo_bf16_state_dict.keys():
+                torch.testing.assert_close(
+                    olmo_bf16_state_dict[key],
+                    olmo_fp32_state_dict[key].to(torch.bfloat16),
+                    msg=lambda msg: f"Failure for {key}: {msg}",
+                    rtol=1.3e-6,
+                    atol=1e-5,
+                )
 
     if dry_run:
         print_rank0("Dry run complete")
@@ -84,6 +104,11 @@ def main(
         olmo_logits = olmo_model(batch1)
         torch_loss = compute_loss(torch_model, batch1, logits=torch_logits)
         olmo_loss = compute_loss(olmo_model, batch1, logits=olmo_logits)
+
+    if mixed_precision:
+        assert torch_logits.dtype == torch.bfloat16
+        assert olmo_logits.dtype == torch.bfloat16
+
     torch.testing.assert_close(olmo_logits, torch_logits)
     torch.testing.assert_close(olmo_loss, torch_loss)
 

@@ -11,18 +11,35 @@ import torch.multiprocessing as mp
 from olmo_core.distributed.fsdp import FSDPPrecision
 from olmo_core.distributed.utils import is_distributed
 
-has_cuda = torch.cuda.is_available()
+from ..utils import (
+    DEVICES,
+    GPU_MARKS,
+    INIT_DEVICES,
+    LOW_PRECISION_DTYPES,
+    has_cuda,
+    requires_gpu,
+)
+
+__all__ = [
+    "has_cuda",
+    "has_multiple_gpus",
+    "requires_gpu",
+    "requires_multi_gpu",
+    "get_default_device",
+    "init_process",
+    "run_distributed_test",
+    "DEVICES",
+    "INIT_DEVICES",
+    "BACKENDS",
+    "LOW_PRECISION_DTYPES",
+    "FSDP_MIXED_PRECISION",
+    "GPU_MARKS",
+    "MULTI_GPU_MARKS",
+]
+
 has_multiple_gpus = has_cuda and torch.cuda.device_count() > 1
 
-GPU_MARKS = (pytest.mark.gpu, pytest.mark.skipif(not has_cuda, reason="Requires a GPU"))
-
 MULTI_GPU_MARKS = (pytest.mark.gpu, pytest.mark.skipif(not has_multiple_gpus, reason="Requires multiple GPUs"))
-
-
-def requires_gpu(func):
-    for mark in GPU_MARKS:
-        func = mark(func)
-    return func
 
 
 def requires_multi_gpu(func):
@@ -37,34 +54,6 @@ BACKENDS = [
         "nccl",
         id="backend=NCCL",
         marks=MULTI_GPU_MARKS,
-    ),
-]
-
-DEVICES = [
-    pytest.param(torch.device("cpu"), id="device=CPU"),
-    pytest.param(
-        torch.device("cuda"),
-        id="device=CUDA",
-        marks=GPU_MARKS,
-    ),
-]
-
-INIT_DEVICES = [
-    pytest.param(torch.device("meta"), id="device=meta"),
-    pytest.param(torch.device("cpu"), id="device=CPU"),
-    pytest.param(
-        torch.device("cuda"),
-        id="device=CUDA",
-        marks=GPU_MARKS,
-    ),
-]
-
-LOW_PRECISION_DTYPES = [
-    pytest.param(torch.float16, id="dtype=float16"),
-    pytest.param(
-        torch.bfloat16,
-        id="dtype=bfloat16",
-        marks=GPU_MARKS,
     ),
 ]
 

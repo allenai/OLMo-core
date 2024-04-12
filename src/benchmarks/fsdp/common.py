@@ -29,6 +29,7 @@ class TransformerConfig:
     mlp_ratio: int = 4
     max_sequence_length: int = 2048
     init_device: torch.device = torch.device("cpu")
+    debug: bool = False
 
     @classmethod
     def tiniest(cls) -> TransformerConfig:
@@ -50,6 +51,7 @@ class TransformerConfig:
 class Transformer(nn.Module):
     def __init__(self, config: TransformerConfig):
         super().__init__()
+        self.config = config
         self.wte = nn.Embedding(config.vocab_size, config.d_model, device=config.init_device)
         self.wpe = nn.Embedding(config.max_sequence_length, config.d_model, device=config.init_device)
         self.blocks = nn.ModuleList(
@@ -82,11 +84,24 @@ class Transformer(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.config.debug:
+            for param in self.parameters(recurse=False):
+                assert not param.isnan().any()
+            assert not x.isnan().any()
         x = self.wte(x)
+        if self.config.debug:
+            assert not x.isnan().any()
         x = x + self.wpe(self.positions)
+        if self.config.debug:
+            assert not x.isnan().any()
         for block in self.blocks:
             x = block(x, src_mask=self.causal_mask, is_causal=True)
-        return self.decoder(x)
+            if self.config.debug:
+                assert not x.isnan().any()
+        x = self.decoder(x)
+        if self.config.debug:
+            assert not x.isnan().any()
+        return x
 
 
 class Dataloader:
@@ -135,6 +150,8 @@ def build_components(
     fsdp_wrapper: Literal["torch", "olmo_core"] = "olmo_core",
     wrap_blocks: bool = True,
     mixed_precision: bool = True,
+    max_prefetch_count: int = 1,
+    learning_rate: float = 1e-4,
 ) -> Tuple[nn.Module, torch.optim.Optimizer, Dataloader]:
     model = Transformer(config)
 
@@ -148,6 +165,7 @@ def build_components(
             precision=FSDPPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32)
             if mixed_precision
             else None,
+            max_prefetch_count=max_prefetch_count,
         )
 
         model.apply(init_function)
@@ -164,7 +182,10 @@ def build_components(
         model = FullyShardedDataParallel(
             model,
             mixed_precision=MixedPrecision(
-                param_dtype=torch.bfloat16, reduce_dtype=torch.float32, buffer_dtype=torch.float32
+                param_dtype=torch.bfloat16,
+                reduce_dtype=torch.float32,
+                buffer_dtype=torch.float32,
+                cast_root_forward_inputs=False,
             )
             if mixed_precision
             else None,
@@ -180,7 +201,7 @@ def build_components(
     print_rank0(model)
 
     print_rank0("Initializing optimizer...")
-    optim = torch.optim.AdamW(model.parameters(), lr=1e-5)
+    optim = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     return model, optim, Dataloader(batch_size, config, num_batches=num_batches)
 
 

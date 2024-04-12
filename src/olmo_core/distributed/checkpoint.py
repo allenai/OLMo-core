@@ -501,6 +501,11 @@ class Checkpointer:
         # Load the state dict in place.
         self.load(dir, state_dict, metadata=metadata, no_dist=no_dist or rank0_only)
 
+        # Check for NaNs which would indicate we didn't fill the state dict correctly.
+        for key, tensor in state_dict.items():
+            if tensor.isnan().any().item():
+                raise RuntimeError("error loading {key} from checkpoint, nans encountered")
+
         return state_dict
 
     def get_metadata(self, dir: str, no_dist: bool = False) -> StorageMetadata:
@@ -665,7 +670,10 @@ class TensorStorageMetadata(BaseModel):
     def materialize_empty(
         self, *, device: Optional[torch.device] = None, shape: Optional[Tuple[int, ...]] = None
     ) -> torch.Tensor:
-        return torch.empty(shape if shape is not None else self.shape, dtype=self.torch_dtype, device=device)
+        tensor = torch.empty(shape if shape is not None else self.shape, dtype=self.torch_dtype, device=device)
+        if tensor.dtype.is_floating_point:
+            tensor.fill_(torch.nan)
+        return tensor
 
     def materialize_from_sharded(
         self, tensor: torch.Tensor, device: Optional[torch.device] = None
@@ -675,7 +683,10 @@ class TensorStorageMetadata(BaseModel):
                 raise ValueError(
                     f"unexpected shape for sharded tensor, expected {self.shape}, got {tensor.unsharded_shape}"
                 )
-            return torch.empty(tensor.shape, device=device, dtype=self.torch_dtype)
+            tensor = torch.empty(tensor.shape, device=device, dtype=self.torch_dtype)
+            if tensor.dtype.is_floating_point:
+                tensor.fill_(torch.nan)
+            return tensor
         else:
             raise NotImplementedError(f"`materialize_from_sharded()` not implemented for {tensor}")
 

@@ -51,6 +51,9 @@ class Stream(ABC):
     def wait_stream(self, other: Stream):
         del other
 
+    def record_for(self, tensor: torch.Tensor):
+        del tensor
+
 
 class CudaStream(Stream):
     def __init__(self, base_stream: torch.cuda.Stream):
@@ -69,6 +72,13 @@ class CudaStream(Stream):
     def wait_stream(self, other: Stream):
         if isinstance(other, CudaStream):
             self.base_stream.wait_stream(other.base_stream)
+        elif isinstance(other, torch.cuda.Stream):
+            self.base_stream.wait_stream(other)
+        elif not isinstance(other, Stream):
+            raise ValueError(f"expected a Stream, got {type(other)}")
+
+    def record_for(self, tensor: torch.Tensor):
+        tensor.record_stream(self.base_stream)
 
 
 class CpuStream(Stream):
