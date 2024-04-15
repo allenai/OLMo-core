@@ -286,7 +286,7 @@ class FlatParamHandle:
             # Only NCCL supports 'reduce_scatter'. So with other backends we use 'all_reduce'.
             if dist.get_backend() == dist.Backend.NCCL:
                 # Get chunks corresponding to each rank.
-                grad_chunks = param.chunk_unsharded(unsharded_grad, pad=True)
+                grad_chunks = param.chunk_unsharded(unsharded_grad)
                 new_sharded_grad = torch.empty_like(grad_chunks[local_rank])
                 dist.reduce_scatter(new_sharded_grad, grad_chunks, group=self.process_group)
                 param.grad = new_sharded_grad.to(dtype=grad_dtype)
