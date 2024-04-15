@@ -52,6 +52,8 @@ class FlatParamHandle:
 
     device: Optional[torch.device] = None
 
+    requires_grad: bool = True
+
     @classmethod
     def shard_params(
         cls,
@@ -97,8 +99,14 @@ class FlatParamHandle:
         #
         # Now first we need to initialize a flat parameter to take the place of each regular parameter.
         flat_params: List[ShardedFlatParameter] = []
+        requires_grad = None
         numel_running_total = 0
         for param in params:
+            if requires_grad is None:
+                requires_grad = param.requires_grad
+            elif requires_grad != param.requires_grad:
+                raise ValueError("FlatParamHandle requires all params to have the same value of '.requires_grad'")
+
             flat_param_global_offsets = (numel_running_total, numel_running_total + param.numel())
 
             # First we need to determine which ranks will have a slice of the data.
@@ -165,6 +173,8 @@ class FlatParamHandle:
             numel_running_total += param.numel()
             param.data = torch.empty(0, device=param.device)
 
+        assert requires_grad is not None
+
         # Now that we have all of the flat parameters we need to collate all of their data into a single
         # sharded flat tensor, then set the data for each flat parameter as a view into that flat tensor.
         local_flat_sharded_data = torch.cat([flat_param.data for flat_param in flat_params])
@@ -199,6 +209,7 @@ class FlatParamHandle:
             params_data=params_data,
             process_group=process_group,
             device=device,
+            requires_grad=requires_grad,
         )
 
     def unshard_(self, dtype: Optional[torch.dtype] = None, rank0_only: bool = False, cache_grads: bool = False):
@@ -270,32 +281,40 @@ class FlatParamHandle:
     def reduce_scatter_grads(
         self, grad_dtype: Optional[torch.dtype] = None, grad_reduce_dtype: Optional[torch.dtype] = None
     ):
+        if not self.requires_grad:
+            return
+
         local_rank = get_rank(self.process_group)
+        grad_dtype = grad_dtype or self.params_data.dtype
+        all_params_unsharded_padded_grad = torch.empty(
+            self.params_data.unsharded_numel, dtype=grad_reduce_dtype or grad_dtype
+        )
+
+        numel_running_total = 0
+        for param_fqn, param in zip(self.param_fqns, self.params):
+            if param.grad is None:
+                raise RuntimeError(f"expected gradient for param '{param_fqn}', found None")
+            all_params_unsharded_padded_grad[
+                numel_running_total : numel_running_total + param.unsharded_numel
+            ].copy_(param.grad.view(-1))
+            numel_running_total += param.unsharded_numel
+
+        # Only NCCL supports 'reduce_scatter'. So with other backends we use 'all_reduce'.
+        if dist.get_backend() == dist.Backend.NCCL:
+            # Get chunks corresponding to each rank.
+            grad_chunks = self.params_data.chunk_unsharded(all_params_unsharded_padded_grad)
+            new_sharded_grad = torch.empty_like(grad_chunks[local_rank])
+            dist.reduce_scatter(new_sharded_grad, grad_chunks, group=self.process_group)
+            new_sharded_grad.to(dtype=grad_dtype)
+        else:
+            dist.all_reduce(all_params_unsharded_padded_grad, group=self.process_group)
+            new_sharded_grad = self.params_data.sharded_chunk(all_params_unsharded_padded_grad).to(
+                dtype=grad_dtype
+            )
+
+        offset = 0
         for i, param in enumerate(self.params):
-            if (unsharded_grad := param.grad) is None:
-                continue
-
-            if grad_reduce_dtype is not None:
-                unsharded_grad = unsharded_grad.to(dtype=grad_reduce_dtype)
-
-            if grad_dtype is None:
-                grad_dtype = param.dtype
-
-            # TODO: batch reductions together?
-
-            # Only NCCL supports 'reduce_scatter'. So with other backends we use 'all_reduce'.
-            if dist.get_backend() == dist.Backend.NCCL:
-                # Get chunks corresponding to each rank.
-                grad_chunks = param.chunk_unsharded(unsharded_grad)
-                new_sharded_grad = torch.empty_like(grad_chunks[local_rank])
-                dist.reduce_scatter(new_sharded_grad, grad_chunks, group=self.process_group)
-                param.grad = new_sharded_grad.to(dtype=grad_dtype)
-            else:
-                dist.all_reduce(unsharded_grad, group=self.process_group)
-                param.grad = param.sharded_chunk(unsharded_grad).detach().to(dtype=grad_dtype)
-
-            del unsharded_grad
-
+            param.grad = new_sharded_grad[offset : offset + param.numel()]
             if (cached_grad := self.grads_cache[i]) is not None:
                 param.grad.add_(cached_grad)
                 self.grads_cache[i] = None

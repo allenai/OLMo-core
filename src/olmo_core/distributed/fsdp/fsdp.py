@@ -468,8 +468,9 @@ class FSDP(Generic[M], nn.Module):
         Returns a generator over all parameters managed by this FSDP instance. This is equivalent
         to `self.module.named_parameters()` except that parameters within nested FSDP instances are omitted.
         """
-        for param_name, param in zip(self.state.flat_param_handle.param_fqns, self.state.flat_param_handle.params):
-            yield param_name, param
+        for handle in self.state.flat_param_handles:
+            for param_name, param in zip(handle.param_fqns, handle.params):
+                yield param_name, param
 
     def _fsdp_children(self, recurse: bool = False) -> Generator[FSDP, None, None]:
         """
@@ -493,31 +494,59 @@ class FSDP(Generic[M], nn.Module):
         """
         log.debug("Sharding %s...", self.module.__class__.__name__)
 
-        params: List[nn.Parameter] = []
-        param_fqns: List[str] = []
+        params_with_grads: List[nn.Parameter] = []
+        params_with_grads_fqns: List[str] = []
+        params_without_grads: List[nn.Parameter] = []
+        params_without_grads_fqns: List[str] = []
+
         # NOTE: this generator will include `self.module` itself
         for module_name, module in self._named_children(recurse=lambda m: not isinstance(m, FSDP)):
             if isinstance(module, FSDP):
                 continue
             for param_name, param in module.named_parameters(recurse=False):
-                params.append(param)
-                param_fqns.append(f"{module_name}.{param_name}")
+                param_fqn = f"{module_name}.{param_name}"
+                if param.requires_grad:
+                    params_with_grads.append(param)
+                    params_with_grads_fqns.append(param_fqn)
+                else:
+                    params_without_grads.append(param)
+                    params_without_grads_fqns.append(param_fqn)
 
         # Collate the data from params into the flat param handle. The data in each flat param
         # will then just be a view into a slice of the data managed by the flat param handle.
         # This makes unsharding more efficient as we'll only need a single `all_gather` call.
-        self.state.flat_param_handle = FlatParamHandle.shard_params(
-            params, param_fqns, process_group=self.process_group, device=self.device
-        )
+        handles = []
+        if params_with_grads:
+            handles.append(
+                FlatParamHandle.shard_params(
+                    params_with_grads, params_with_grads_fqns, process_group=self.process_group, device=self.device
+                )
+            )
+        if params_without_grads:
+            handles.append(
+                FlatParamHandle.shard_params(
+                    params_without_grads,
+                    params_without_grads_fqns,
+                    process_group=self.process_group,
+                    device=self.device,
+                )
+            )
 
-        idx = 0
+        self.state.flat_param_handles = handles
+
         for module_name, module in self._named_children(recurse=lambda m: not isinstance(m, FSDP)):
             if isinstance(module, FSDP):
                 continue
             for param_name, param in module.named_parameters(recurse=False):
-                sharded_flat_param = self.state.flat_param_handle.params[idx]
-                setattr(module, param_name, sharded_flat_param)
-                idx += 1
+                param_fqn = f"{module_name}.{param_name}"
+                for handle in handles:
+                    try:
+                        idx_in_handle = handle.param_fqns.index(param_fqn)
+                    except ValueError:
+                        continue
+                    sharded_flat_param = handle.params[idx_in_handle]
+                    setattr(module, param_name, sharded_flat_param)
+                    break
 
         gc_cuda()
 
@@ -544,9 +573,12 @@ class FSDP(Generic[M], nn.Module):
         # if root to respect the optimizer step and any other computations on the params outside of this
         # module's forward/backward pass.
         with self.state.unshard_stream(wait_stream=self.state.current_stream if self.is_root else None):
-            self.state.flat_param_handle.unshard_(
-                dtype=self.precision.param_dtype if cast else None, rank0_only=rank0_only, cache_grads=cache_grads
-            )
+            for handle in self.state.flat_param_handles:
+                handle.unshard_(
+                    dtype=self.precision.param_dtype if cast else None,
+                    rank0_only=rank0_only,
+                    cache_grads=cache_grads,
+                )
 
         if recurse:
             for module in self._fsdp_children():
@@ -569,7 +601,8 @@ class FSDP(Generic[M], nn.Module):
         log.debug("Resharding %s...", self.module.__class__.__name__)
         self.state.params_prefetched = False
 
-        self.state.flat_param_handle.reshard_(writeback=writeback)
+        for handle in self.state.flat_param_handles:
+            handle.reshard_(writeback=writeback)
 
         if recurse:
             for module in self._fsdp_children():
@@ -592,11 +625,16 @@ class FSDP(Generic[M], nn.Module):
         # dtype just for reducing gradients.
         grad_reduce_dtype: Optional[torch.dtype] = self.precision.reduce_dtype or self.precision.param_dtype
 
-        og_grads = [param.grad for param in self.state.flat_param_handle.params if param.grad is not None]
+        og_grads = []
+        for handle in self.state.flat_param_handles:
+            for param in handle.params:
+                if param.grad is not None:
+                    og_grads.append(param.grad)
 
         with self.state.reduce_stream(wait_stream=self.state.current_stream):
             log.debug("Reduce-scattering grads for %s", self.module.__class__.__name__)
-            self.state.flat_param_handle.reduce_scatter_grads(grad_reduce_dtype=grad_reduce_dtype)
+            for handle in self.state.flat_param_handles:
+                handle.reduce_scatter_grads(grad_reduce_dtype=grad_reduce_dtype)
 
         # Reduce-scattering the grads relies on the original (local) grads of course,
         # which are produced in the current stream being used for the backwards pass.

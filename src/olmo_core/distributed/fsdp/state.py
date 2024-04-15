@@ -23,7 +23,7 @@ class FSDPState:
     The device the FSDP node is running on.
     """
 
-    flat_param_handle: FlatParamHandle = field(default_factory=FlatParamHandle)
+    flat_param_handles: List[FlatParamHandle] = field(default_factory=list)
     """
     Manages the shared data for all sharded flat params.
     """
