@@ -270,6 +270,7 @@ class FlatParamHandle:
     def reduce_scatter_grads(
         self, grad_dtype: Optional[torch.dtype] = None, grad_reduce_dtype: Optional[torch.dtype] = None
     ):
+        local_rank = get_rank(self.process_group)
         for i, param in enumerate(self.params):
             if (unsharded_grad := param.grad) is None:
                 continue
@@ -280,16 +281,15 @@ class FlatParamHandle:
             if grad_dtype is None:
                 grad_dtype = param.dtype
 
-            # TODO: batch reductions together? This is complicated, especially if we want to allow
-            # a mixture of trainable and frozen params.
+            # TODO: batch reductions together?
 
             # Only NCCL supports 'reduce_scatter'. So with other backends we use 'all_reduce'.
             if dist.get_backend() == dist.Backend.NCCL:
                 # Get chunks corresponding to each rank.
                 grad_chunks = param.chunk_unsharded(unsharded_grad, pad=True)
-                new_sharded_grad = torch.empty_like(grad_chunks[0])
+                new_sharded_grad = torch.empty_like(grad_chunks[local_rank])
                 dist.reduce_scatter(new_sharded_grad, grad_chunks, group=self.process_group)
-                param.grad = new_sharded_grad[: param.unsharded_flattened_offsets[1]].to(dtype=grad_dtype)
+                param.grad = new_sharded_grad.to(dtype=grad_dtype)
             else:
                 dist.all_reduce(unsharded_grad, group=self.process_group)
                 param.grad = param.sharded_chunk(unsharded_grad).detach().to(dtype=grad_dtype)
