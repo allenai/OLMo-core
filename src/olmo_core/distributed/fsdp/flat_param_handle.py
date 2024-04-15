@@ -287,7 +287,7 @@ class FlatParamHandle:
         local_rank = get_rank(self.process_group)
         grad_dtype = grad_dtype or self.params_data.dtype
         all_params_unsharded_padded_grad = torch.empty(
-            self.params_data.unsharded_numel, dtype=grad_reduce_dtype or grad_dtype
+            self.params_data.unsharded_numel, dtype=grad_reduce_dtype or grad_dtype, device=self.device
         )
 
         numel_running_total = 0
