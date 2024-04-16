@@ -16,6 +16,7 @@ from olmo_core.distributed.tensors import (
     ShardingSpec,
 )
 from olmo_core.distributed.utils import get_rank, get_world_size
+from olmo_core.stream import Stream
 from olmo_core.utils import get_default_device
 
 log = logging.getLogger(__name__)
@@ -316,6 +317,9 @@ class FlatParamHandle:
 
         # Deallocate the unsharded padded grad.
         del all_params_unsharded_padded_grad
+        # Since we're potentially using a separate stream for the reduce-scatter, we need to make
+        # sure `params_unsharded_grad` is not deallocated before the reduce-scatter finishes.
+        Stream.current(self.device).record_for(self.params_unsharded_grad)
         self.params_unsharded_grad = None
 
         if self.params_sharded_grad is None:
