@@ -286,6 +286,9 @@ class FlatParamHandle:
             if dtype is not None:
                 assert self.params_sharded_data_lp is not None
                 local_shard = self.params_sharded_data_lp
+                # Since `self.params_sharded_data_lp` was potentially created in a separate stream,
+                # we need to make it's not deallocated until the current stream finishes.
+                Stream.current(self.device).record_for(local_shard)
             else:
                 local_shard = self.params_data.sharded_data
             dist.all_gather_into_tensor(
@@ -358,7 +361,7 @@ class FlatParamHandle:
 
         # Deallocate the unsharded padded grad.
         del all_params_unsharded_padded_grad
-        # Since we're potentially using a separate stream for the reduce-scatter, we need to make
+        # Since we're potentially using a separate stream for this reduce-scatter, we need to make
         # sure `params_unsharded_grad` is not deallocated before the reduce-scatter finishes.
         Stream.current(self.device).record_for(self.params_unsharded_grad)
         self.params_unsharded_grad = None
