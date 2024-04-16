@@ -110,6 +110,7 @@ class Dataloader:
         self.config = config
         self.num_batches = num_batches
         self.device = get_default_device()
+        self.generator = torch.Generator().manual_seed(5234 + dist.get_rank())
 
     def __iter__(self):
         return (
@@ -119,7 +120,10 @@ class Dataloader:
                         int(start_offset), int(start_offset) + self.config.max_sequence_length, device=self.device
                     ).unsqueeze(0)
                     for start_offset in torch.randint(
-                        0, self.config.vocab_size - self.config.max_sequence_length, (self.batch_size,)
+                        0,
+                        self.config.vocab_size - self.config.max_sequence_length,
+                        (self.batch_size,),
+                        generator=self.generator,
                     )
                 ],
                 dim=0,
