@@ -253,6 +253,9 @@ class FlatParamHandle:
         if not self.params:
             return
 
+        if rank0_only:
+            assert not set_grads
+
         local_rank = get_rank(self.process_group)
 
         if not self._ran_pre_unshard:

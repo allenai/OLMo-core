@@ -574,7 +574,9 @@ class FSDP(Generic[M], nn.Module):
         with self.state.pre_unshard_stream:
             for handle in self.state.flat_param_handles:
                 handle.pre_unshard_(
-                    dtype=self.precision.param_dtype if cast else None, rank0_only=rank0_only, set_grads=set_grads
+                    dtype=self.precision.param_dtype if cast else None,
+                    rank0_only=rank0_only,
+                    set_grads=set_grads,
                 )
 
         # NOTE: `unshard_stream` should wait on current stream (usually `compute_stream` / `default_stream`)
