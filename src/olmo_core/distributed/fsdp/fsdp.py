@@ -571,6 +571,12 @@ class FSDP(Generic[M], nn.Module):
         log.debug("Unsharding %s...", self.module.__class__.__name__)
         self.state.params_prefetched = True
 
+        # NOTE: `unshard_stream` should wait on current stream (usually `compute_stream` / `default_stream`)
+        # if root to respect the optimizer step and any other computations on the params outside of this
+        # module's forward/backward pass.
+        if self.is_root:
+            self.state.unshard_stream.wait_stream(self.state.current_stream)
+
         with self.state.pre_unshard_stream:
             for handle in self.state.flat_param_handles:
                 handle.pre_unshard_(
@@ -578,12 +584,6 @@ class FSDP(Generic[M], nn.Module):
                     rank0_only=rank0_only,
                     set_grads=set_grads,
                 )
-
-        # NOTE: `unshard_stream` should wait on current stream (usually `compute_stream` / `default_stream`)
-        # if root to respect the optimizer step and any other computations on the params outside of this
-        # module's forward/backward pass.
-        if self.is_root:
-            self.state.unshard_stream.wait_stream(self.state.current_stream)
 
         with self.state.unshard_stream(wait_stream=self.state.pre_unshard_stream):
             for handle in self.state.flat_param_handles:
