@@ -222,6 +222,9 @@ class FlatParamHandle:
         )
 
     def pre_unshard_(self, dtype: Optional[torch.dtype] = None, rank0_only: bool = False, set_grads: bool = False):
+        """
+        Allocate the unsharded, padded data prior to the all-gather.
+        """
         self._ran_pre_unshard = True
 
         if not self.params:
