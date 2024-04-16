@@ -330,7 +330,7 @@ class FlatParamHandle:
             grad_chunks = self.params_data.chunk_unsharded(all_params_unsharded_padded_grad)
             new_sharded_grad = torch.empty_like(grad_chunks[local_rank])
             dist.reduce_scatter(new_sharded_grad, grad_chunks, group=self.process_group)
-            new_sharded_grad.to(dtype=grad_dtype)
+            new_sharded_grad = new_sharded_grad.to(dtype=grad_dtype)
         else:
             dist.all_reduce(all_params_unsharded_padded_grad, group=self.process_group)
             new_sharded_grad = self.params_data.sharded_chunk(all_params_unsharded_padded_grad).to(

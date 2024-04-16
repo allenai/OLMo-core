@@ -708,8 +708,6 @@ class FSDP(Generic[M], nn.Module):
             return
 
         # NOTE: reshard *before* reducing grads to correctly handle precision settings.
-        # '_reduce_scatter_grads' checks 'param.dtype' to determine dtype for grads, which
-        # at that point should be the original dtype.
         self._reshard()
         self._reduce_scatter_grads()
 
