@@ -62,6 +62,8 @@ class FlatParamHandle:
 
     requires_grad: bool = True
 
+    _ran_pre_unshard: bool = False
+
     @classmethod
     def shard_params(
         cls,
@@ -219,6 +221,23 @@ class FlatParamHandle:
             requires_grad=requires_grad,
         )
 
+    def pre_unshard_(self, dtype: Optional[torch.dtype] = None, rank0_only: bool = False, set_grads: bool = False):
+        self._ran_pre_unshard = True
+
+        if not self.params:
+            return
+
+        if rank0_only or dist.get_backend() == dist.Backend.GLOO:
+            return
+
+        all_params_unsharded_data = torch.empty(
+            self.params_data.unsharded_shape, dtype=dtype or self.params_data.dtype, device=self.device
+        )
+        self.params_data.unshard_(unsharded_data=all_params_unsharded_data, dtype=dtype, rank0_only=rank0_only)
+
+        if set_grads and self.params_unsharded_grad is None:
+            self.params_unsharded_grad = torch.zeros_like(all_params_unsharded_data)
+
     def unshard_(
         self,
         dtype: Optional[torch.dtype] = None,
@@ -233,36 +252,33 @@ class FlatParamHandle:
 
         local_rank = get_rank(self.process_group)
 
+        if not self._ran_pre_unshard:
+            self.pre_unshard_(dtype=dtype, rank0_only=rank0_only, set_grads=set_grads)
+
         # Gather full, padded, unsharded data for all params.
-        all_params_unsharded_data: torch.Tensor
         if rank0_only or dist.get_backend() == dist.Backend.GLOO:
-            all_params_unsharded_data = self.params_data.gather(dtype=dtype, rank0_only=rank0_only)
+            assert self.params_data.is_sharded
+            self.params_data.unshard_(dtype=dtype, rank0_only=rank0_only)
+            self.params_unsharded_grad = torch.zeros_like(self.params_data)
         else:
+            assert not self.params_data.is_sharded
             # We prefer to use `all_gather_into_tensor()` directly when possible as it involves
             # fewer allocations.
-            all_params_unsharded_data = torch.empty(
-                self.params_data.unsharded_shape, dtype=dtype or self.params_data.dtype, device=self.device
-            )
             dist.all_gather_into_tensor(
-                all_params_unsharded_data,
-                self.params_data.data.to(dtype or self.params_data.dtype),
+                self.params_data.data,
+                self.params_data.sharded_data.to(dtype or self.params_data.sharded_data.dtype),
                 group=self.process_group,
             )
-
-        self.params_data.unshard_(unsharded_data=all_params_unsharded_data, dtype=dtype, rank0_only=rank0_only)
-
-        if set_grads and self.params_unsharded_grad is None:
-            self.params_unsharded_grad = torch.zeros_like(all_params_unsharded_data)
 
         # Set the data for each param as a view into `all_params_unsharded_data`.
         offset = 0
         for param in self.params:
             if rank0_only and local_rank != 0:
                 param.unshard_(
-                    unsharded_data=torch.empty_like(all_params_unsharded_data), dtype=dtype, rank0_only=rank0_only
+                    unsharded_data=torch.empty_like(self.params_data), dtype=dtype, rank0_only=rank0_only
                 )
             else:
-                unsharded_data = all_params_unsharded_data[offset : offset + param.unsharded_numel]
+                unsharded_data = self.params_data[offset : offset + param.unsharded_numel]
                 param.unshard_(unsharded_data, dtype=dtype, rank0_only=rank0_only)
 
             if set_grads:
@@ -273,12 +289,12 @@ class FlatParamHandle:
 
             offset += param.unsharded_numel
 
-        del all_params_unsharded_data
-
     def reshard_(self, writeback: bool = False):
         """
         Reshard the handle's managed flat parameters in-place.
         """
+        self._ran_pre_unshard = False
+
         if not self.params:
             return
 

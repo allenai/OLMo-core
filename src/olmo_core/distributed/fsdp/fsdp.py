@@ -398,6 +398,7 @@ class FSDP(Generic[M], nn.Module):
 
         # Initialize streams.
         self.state.compute_stream = Stream.default(self.device)
+        self.state.pre_unshard_stream = Stream.new(self.device)
         self.state.unshard_stream = Stream.new(self.device)
         self.state.reduce_stream = Stream.new(self.device)
 
@@ -411,6 +412,7 @@ class FSDP(Generic[M], nn.Module):
             fsdp_child.state = replace(
                 fsdp_child.state,
                 compute_stream=self.state.compute_stream,
+                pre_unshard_stream=self.state.pre_unshard_stream,
                 unshard_stream=self.state.unshard_stream,
                 reduce_stream=self.state.reduce_stream,
                 forward_execution_order=self.state.forward_execution_order,
@@ -569,10 +571,19 @@ class FSDP(Generic[M], nn.Module):
         log.debug("Unsharding %s...", self.module.__class__.__name__)
         self.state.params_prefetched = True
 
+        with self.state.pre_unshard_stream:
+            for handle in self.state.flat_param_handles:
+                handle.pre_unshard_(
+                    dtype=self.precision.param_dtype if cast else None, rank0_only=rank0_only, set_grads=set_grads
+                )
+
         # NOTE: `unshard_stream` should wait on current stream (usually `compute_stream` / `default_stream`)
         # if root to respect the optimizer step and any other computations on the params outside of this
         # module's forward/backward pass.
-        with self.state.unshard_stream(wait_stream=self.state.current_stream if self.is_root else None):
+        if self.is_root:
+            self.state.unshard_stream.wait_stream(self.state.current_stream)
+
+        with self.state.unshard_stream(wait_stream=self.state.pre_unshard_stream):
             for handle in self.state.flat_param_handles:
                 handle.unshard_(
                     dtype=self.precision.param_dtype if cast else None,

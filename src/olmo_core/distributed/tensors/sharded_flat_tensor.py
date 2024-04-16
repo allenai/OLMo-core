@@ -359,3 +359,11 @@ class ShardedFlatTensor(torch.Tensor):
     @property
     def sharded_shape(self) -> Tuple[int, ...]:
         return (self.sharding_spec.sharded_numels[get_rank(self.process_group)],)
+
+    @property
+    def sharded_data(self) -> torch.Tensor:
+        metadata = getattr(self, self.SHARDED_FLAT_TENSOR_METADATA_NAME)
+        try:
+            return metadata[self.SHARDED_FLAT_TENSOR_CACHED_SHARDED_DATA_KEY]
+        except KeyError:
+            return self.data

@@ -86,14 +86,19 @@ class FSDPState:
     Default stream for computation.
     """
 
+    pre_unshard_stream: Stream = field(default_factory=Stream.default)
+    """
+    Stream used to allocate unsharded tensors prior to the all-gather.
+    """
+
     unshard_stream: Stream = field(default_factory=Stream.default)
     """
-    Stream for unsharding parameters.
+    Stream used during the all-gather for unsharding parameters.
     """
 
     reduce_stream: Stream = field(default_factory=Stream.default)
     """
-    Stream for reducing gradients after the backward pass.
+    Stream used during the reduce-scatter for reducing gradients after the backward pass.
     """
 
     @property
