@@ -182,3 +182,37 @@ def gc_cuda():
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+
+@torch.no_grad()
+def alloc_storage(tensor: torch.Tensor, size: torch.Size) -> None:
+    """
+    Allocate storage for ``tensor`` with the given size.
+
+    Returns ``True`` if this method allocated storage and ``False`` if the storage was already allocated.
+    """
+    already_allocated = tensor._typed_storage()._size() == size.numel()
+    if not already_allocated:
+        tensor_storage_size = tensor._typed_storage()._size()
+        if tensor_storage_size != 0:
+            raise RuntimeError(f"Tensor storage should have been resized to be 0 but got {tensor_storage_size}")
+        tensor._typed_storage()._resize_(size.numel())
+
+
+@torch.no_grad()
+def free_storage(tensor: torch.Tensor) -> None:
+    """
+    Frees the underlying storage of ``tensor``.
+
+    Returns ``True`` if the method freed the storage and ``False`` if the storage was already freed.
+    """
+    already_freed = tensor._typed_storage()._size() == 0
+    if not already_freed:
+        if tensor.storage_offset() != 0:
+            raise RuntimeError(
+                "Freeing a tensor's storage is unsafe when it is not the sole occupant\n"
+                f"storage offset: {tensor.storage_offset()}\n"
+                f"storage size: {tensor._typed_storage()._size()}\n"
+                f"tensor shape: {tensor.shape}",
+            )
+        tensor._typed_storage()._resize_(0)

@@ -253,7 +253,7 @@ class ShardedFlatTensor(torch.Tensor):
                 0 if self.process_group is None else dist.get_global_rank(self.process_group, 0),
                 group=self.process_group,
             )
-            self.data = self.sharded_chunk(unsharded_data).to(dtype=sharded_data.dtype)
+            self.data = self.sharded_chunk(unsharded_data).to(dtype=sharded_data.dtype).clone()
         else:
             self.data = sharded_data
         del metadata[self.SHARDED_FLAT_TENSOR_CACHED_SHARDED_DATA_KEY]
