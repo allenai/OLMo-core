@@ -282,9 +282,12 @@ class FlatParamHandle:
             assert not self.params_data.is_sharded
             # We prefer to use `all_gather_into_tensor()` directly when possible as it involves
             # fewer allocations.
-            local_shard = self.params_sharded_data_lp or self.params_data.sharded_data.to(
-                dtype or self.params_data.sharded_data.dtype
-            )
+            local_shard: torch.Tensor
+            if dtype is not None:
+                assert self.params_sharded_data_lp is not None
+                local_shard = self.params_sharded_data_lp
+            else:
+                local_shard = self.params_data.sharded_data
             dist.all_gather_into_tensor(
                 self.params_data.data,
                 local_shard,
