@@ -30,7 +30,7 @@ class FlatParamHandle:
 
     params: List[ShardedFlatParameter] = field(default_factory=list)
     """
-    The params managed by this handle.
+    The params managed by this handle. The data for each of these params will be a view into ``params_data``.
     """
 
     param_fqns: List[str] = field(default_factory=list)
@@ -38,14 +38,21 @@ class FlatParamHandle:
     The FQNs of the managed params.
     """
 
-    grads_cache: List[Optional[torch.Tensor]] = field(default_factory=list)
-    """
-    Used for caching gradients during gradient accumulation.
-    """
-
     params_data: ShardedFlatTensor = field(default_factory=lambda: ShardedFlatTensor(torch.empty(0)))
     """
     Consolidated data for all of the local sharded data of the parameters including padding.
+    """
+
+    params_unsharded_grad: Optional[torch.Tensor] = None
+    """
+    Consolidated unsharded grads for all of the local sharded flat parameters. When initialized this will have
+    the same shape as the unsharded version of ``params_data``.
+    """
+
+    params_sharded_grad: Optional[torch.Tensor] = None
+    """
+    Consolidated sharded grads for all of the local sharded flat parameters. When initialized this will have
+    the same shape as the sharded version of ``params_data``.
     """
 
     process_group: Optional[dist.ProcessGroup] = None
@@ -205,14 +212,18 @@ class FlatParamHandle:
         return cls(
             params=flat_params,
             param_fqns=list(param_fqns),
-            grads_cache=[None] * len(flat_params),
             params_data=params_data,
             process_group=process_group,
             device=device,
             requires_grad=requires_grad,
         )
 
-    def unshard_(self, dtype: Optional[torch.dtype] = None, rank0_only: bool = False, cache_grads: bool = False):
+    def unshard_(
+        self,
+        dtype: Optional[torch.dtype] = None,
+        rank0_only: bool = False,
+        set_grads: bool = False,
+    ):
         """
         Unshard the handle's managed flat parameters in-place.
         """
@@ -236,29 +247,30 @@ class FlatParamHandle:
                 self.params_data.data.to(dtype or self.params_data.dtype),
                 group=self.process_group,
             )
+
         self.params_data.unshard_(unsharded_data=all_params_unsharded_data, dtype=dtype, rank0_only=rank0_only)
 
+        if set_grads and self.params_unsharded_grad is None:
+            self.params_unsharded_grad = torch.zeros_like(all_params_unsharded_data)
+
         # Set the data for each param as a view into `all_params_unsharded_data`.
-        numel_running_total = 0
-        for i, param in enumerate(self.params):
+        offset = 0
+        for param in self.params:
             if rank0_only and local_rank != 0:
                 param.unshard_(
                     unsharded_data=torch.empty_like(all_params_unsharded_data), dtype=dtype, rank0_only=rank0_only
                 )
             else:
-                unsharded_data = all_params_unsharded_data[
-                    numel_running_total : numel_running_total + param.unsharded_numel
-                ]
+                unsharded_data = all_params_unsharded_data[offset : offset + param.unsharded_numel]
                 param.unshard_(unsharded_data, dtype=dtype, rank0_only=rank0_only)
-            numel_running_total += param.unsharded_numel
 
-            if cache_grads and param.grad is not None:
-                # We should only be caching these between the pre-backward and post-backward
-                # hooks. The post-backward hook will remove the cached grad as it accumulates
-                # it into the persistent sharded grad.
-                assert self.grads_cache[i] is None
-                self.grads_cache[i] = param.grad.data
-                param.grad = None
+            if set_grads:
+                if param.grad is None and self.params_sharded_grad is not None:
+                    self.params_sharded_grad = None
+                assert self.params_unsharded_grad is not None
+                param.grad = self.params_unsharded_grad[offset : offset + param.unsharded_numel].view(param.shape)
+
+            offset += param.unsharded_numel
 
         del all_params_unsharded_data
 
@@ -275,31 +287,21 @@ class FlatParamHandle:
             flat_param.reshard_(writeback=False)
             if writeback:
                 # Reset the view into the new `params_data`.
-                flat_param.data = self.params_data[offset : offset + flat_param.numel()]
-            offset += flat_param.numel()
+                flat_param.data = self.params_data[offset : offset + flat_param.sharded_numel]
+            offset += flat_param.sharded_numel
 
     def reduce_scatter_grads(
         self, grad_dtype: Optional[torch.dtype] = None, grad_reduce_dtype: Optional[torch.dtype] = None
     ):
-        if not self.requires_grad:
+        if not self.requires_grad or self.params_unsharded_grad is None:
             return
 
         local_rank = get_rank(self.process_group)
         grad_dtype = grad_dtype or self.params_data.dtype
-        all_params_unsharded_padded_grad = torch.empty(
-            self.params_data.unsharded_numel, dtype=grad_reduce_dtype or grad_dtype, device=self.device
-        )
 
-        numel_running_total = 0
-        for param_fqn, param in zip(self.param_fqns, self.params):
-            if param.grad is None:
-                raise RuntimeError(f"expected gradient for param '{param_fqn}', found None")
-            all_params_unsharded_padded_grad[
-                numel_running_total : numel_running_total + param.unsharded_numel
-            ].copy_(param.grad.view(-1))
-            numel_running_total += param.unsharded_numel
-
-        # Only NCCL supports 'reduce_scatter'. So with other backends we use 'all_reduce'.
+        # Reduce the unsharded padded grad for all params.
+        # NOTE: Only NCCL supports reduce-scatter. So with other backends we use all-reduce.
+        all_params_unsharded_padded_grad = self.params_unsharded_grad.to(dtype=grad_reduce_dtype or grad_dtype)
         if dist.get_backend() == dist.Backend.NCCL:
             # Get chunks corresponding to each rank.
             grad_chunks = self.params_data.chunk_unsharded(all_params_unsharded_padded_grad)
@@ -312,10 +314,20 @@ class FlatParamHandle:
                 dtype=grad_dtype
             )
 
+        # Deallocate the unsharded padded grad.
+        del all_params_unsharded_padded_grad
+        self.params_unsharded_grad = None
+
+        if self.params_sharded_grad is None:
+            self.params_sharded_grad = new_sharded_grad
+        else:
+            self.params_sharded_grad.add_(new_sharded_grad)
+
+        del new_sharded_grad
+
+        # At this point each param will be sharded again, and we set the grad for each param as a view
+        # into the sharded grad.
         offset = 0
-        for i, param in enumerate(self.params):
-            param.grad = new_sharded_grad[offset : offset + param.numel()]
-            if (cached_grad := self.grads_cache[i]) is not None:
-                param.grad.add_(cached_grad)
-                self.grads_cache[i] = None
-                del cached_grad
+        for param in self.params:
+            param.grad = self.params_sharded_grad[offset : offset + param.sharded_numel]
+            offset += param.sharded_numel

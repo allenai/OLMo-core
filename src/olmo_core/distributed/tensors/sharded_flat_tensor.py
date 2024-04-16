@@ -353,5 +353,9 @@ class ShardedFlatTensor(torch.Tensor):
         return self.sharding_spec.unsharded_shape
 
     @property
+    def sharded_numel(self) -> int:
+        return self.sharding_spec.sharded_numels[get_rank(self.process_group)]
+
+    @property
     def sharded_shape(self) -> Tuple[int, ...]:
         return (self.sharding_spec.sharded_numels[get_rank(self.process_group)],)

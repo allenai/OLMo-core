@@ -554,7 +554,7 @@ class FSDP(Generic[M], nn.Module):
     def _unshard(
         self,
         cast: bool = True,
-        cache_grads: bool = False,
+        set_grads: bool = False,
         recurse: bool = False,
         rank0_only: bool = False,
     ):
@@ -564,7 +564,7 @@ class FSDP(Generic[M], nn.Module):
         if self.state.params_prefetched:
             return
 
-        kwargs = dict(cast=cast, cache_grads=cache_grads, recurse=recurse, rank0_only=rank0_only)
+        kwargs = dict(cast=cast, set_grads=set_grads, recurse=recurse, rank0_only=rank0_only)
 
         log.debug("Unsharding %s...", self.module.__class__.__name__)
         self.state.params_prefetched = True
@@ -577,7 +577,7 @@ class FSDP(Generic[M], nn.Module):
                 handle.unshard_(
                     dtype=self.precision.param_dtype if cast else None,
                     rank0_only=rank0_only,
-                    cache_grads=cache_grads,
+                    set_grads=set_grads,
                 )
 
         if recurse:
@@ -627,9 +627,8 @@ class FSDP(Generic[M], nn.Module):
 
         og_grads = []
         for handle in self.state.flat_param_handles:
-            for param in handle.params:
-                if param.grad is not None:
-                    og_grads.append(param.grad)
+            if handle.params_unsharded_grad is not None:
+                og_grads.append(handle.params_unsharded_grad)
 
         with self.state.reduce_stream(wait_stream=self.state.current_stream):
             log.debug("Reduce-scattering grads for %s", self.module.__class__.__name__)
@@ -669,14 +668,14 @@ class FSDP(Generic[M], nn.Module):
         self.state.pre_backward_hook_handles.clear()
 
         # Unshard parameters in place.
-        self._unshard(cache_grads=True)
+        self._unshard(set_grads=True)
 
         # Wait for unshard stream so gradient computation can proceed.
         self.state.current_stream.wait_stream(self.state.unshard_stream)
 
         if self.state.backward_execution_order_finalized:
             # Prefetch next FSDP module(s) asynchronously.
-            self._prefetch(self.state.backward_prefetch_queue, cache_grads=True)
+            self._prefetch(self.state.backward_prefetch_queue, set_grads=True)
         else:
             # Add self to backward execution order.
             self.state.backward_execution_order.append(self)

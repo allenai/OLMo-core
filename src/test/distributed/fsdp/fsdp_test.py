@@ -157,10 +157,8 @@ def run_fsdp_against_ddp(model_factory, model_data_factory):
                 msg=lambda m: f"On gradient for '{name}'. {m}",
             )
 
-    # Since we've only done a single backwards pass (no grad accumulation), there shouldn't
-    # be any cached gradients.
-    for cached_grad in fsdp_model.state.flat_param_handles[0].grads_cache:
-        assert cached_grad is None
+    assert fsdp_model.state.flat_param_handles[0].params_sharded_grad is not None
+    assert fsdp_model.state.flat_param_handles[0].params_unsharded_grad is None
 
     # Run optimizer step.
     optim.step()
