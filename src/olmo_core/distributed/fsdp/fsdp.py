@@ -633,7 +633,7 @@ class FSDP(Generic[M], nn.Module):
         with self.state.reduce_stream(wait_stream=self.state.current_stream):
             log.debug("Reduce-scattering grads for %s", self.module.__class__.__name__)
             for handle in self.state.flat_param_handles:
-                handle.reduce_scatter_grads(grad_reduce_dtype=grad_reduce_dtype)
+                handle.reduce_scatter_grads_(grad_reduce_dtype=grad_reduce_dtype)
 
         # Reduce-scattering the grads relies on the original (local) grads of course,
         # which are produced in the current stream being used for the backwards pass.

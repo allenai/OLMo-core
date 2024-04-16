@@ -290,7 +290,7 @@ class FlatParamHandle:
                 flat_param.data = self.params_data[offset : offset + flat_param.sharded_numel]
             offset += flat_param.sharded_numel
 
-    def reduce_scatter_grads(
+    def reduce_scatter_grads_(
         self, grad_dtype: Optional[torch.dtype] = None, grad_reduce_dtype: Optional[torch.dtype] = None
     ):
         if not self.requires_grad or self.params_unsharded_grad is None:
