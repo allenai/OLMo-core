@@ -44,6 +44,11 @@ class FlatParamHandle:
     Consolidated data for all of the local sharded data of the parameters including padding.
     """
 
+    params_sharded_data_lp: Optional[torch.Tensor] = None
+    """
+    Low-precision version of sharded ``params_data``.
+    """
+
     params_unsharded_grad: Optional[torch.Tensor] = None
     """
     Consolidated unsharded grads for all of the local sharded flat parameters. When initialized this will have
@@ -233,11 +238,17 @@ class FlatParamHandle:
         if rank0_only or dist.get_backend() == dist.Backend.GLOO:
             return
 
+        # Initialize unsharded, padded ``params_data`` without the all-gather.
         all_params_unsharded_data = torch.empty(
             self.params_data.unsharded_shape, dtype=dtype or self.params_data.dtype, device=self.device
         )
         self.params_data.unshard_(unsharded_data=all_params_unsharded_data, dtype=dtype, rank0_only=rank0_only)
 
+        # Cast sharded ``params_data`` to ``dtype``.
+        if dtype is not None:
+            self.params_sharded_data_lp = self.params_data.sharded_data.to(dtype)
+
+        # Initialize unsharded, padded gradient.
         if set_grads and self.params_unsharded_grad is None:
             self.params_unsharded_grad = torch.zeros_like(all_params_unsharded_data)
 
@@ -271,11 +282,16 @@ class FlatParamHandle:
             assert not self.params_data.is_sharded
             # We prefer to use `all_gather_into_tensor()` directly when possible as it involves
             # fewer allocations.
+            local_shard = self.params_sharded_data_lp or self.params_data.sharded_data.to(
+                dtype or self.params_data.sharded_data.dtype
+            )
             dist.all_gather_into_tensor(
                 self.params_data.data,
-                self.params_data.sharded_data.to(dtype or self.params_data.sharded_data.dtype),
+                local_shard,
                 group=self.process_group,
             )
+            self.params_sharded_data_lp = None
+            del local_shard
 
         # Set the data for each param as a view into `all_params_unsharded_data`.
         offset = 0
