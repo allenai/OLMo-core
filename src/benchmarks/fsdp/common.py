@@ -12,7 +12,7 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 
-from olmo_core.utils import get_default_device
+from olmo_core.utils import get_default_device, seed_all
 
 
 def print_rank0(*args):
@@ -105,12 +105,12 @@ class Transformer(nn.Module):
 
 
 class Dataloader:
-    def __init__(self, batch_size: int, config: TransformerConfig, num_batches: int = 100):
+    def __init__(self, batch_size: int, config: TransformerConfig, num_batches: int = 100, seed: int = 5234):
         self.batch_size = batch_size
         self.config = config
         self.num_batches = num_batches
         self.device = get_default_device()
-        self.generator = torch.Generator().manual_seed(5234 + dist.get_rank())
+        self.generator = torch.Generator().manual_seed(seed + dist.get_rank())
 
     def __iter__(self):
         return (
@@ -156,7 +156,10 @@ def build_components(
     mixed_precision: bool = True,
     max_prefetch_count: int = 1,
     learning_rate: float = 1e-4,
+    seed: int = 4634534,
 ) -> Tuple[nn.Module, torch.optim.Optimizer, Dataloader]:
+    seed_all(seed)
+
     model = Transformer(config)
 
     print_rank0("Wrapping model...")
@@ -206,7 +209,7 @@ def build_components(
 
     print_rank0("Initializing optimizer...")
     optim = torch.optim.AdamW(model.parameters(), lr=learning_rate)
-    return model, optim, Dataloader(batch_size, config, num_batches=num_batches)
+    return model, optim, Dataloader(batch_size, config, num_batches=num_batches, seed=seed)
 
 
 def compute_loss(model: nn.Module, batch: torch.Tensor, logits: Optional[torch.Tensor] = None) -> torch.Tensor:

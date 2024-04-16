@@ -17,7 +17,6 @@ from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
-from olmo_core.utils import seed_all
 
 from .common import TransformerConfig, build_components, compute_loss, print_rank0
 
@@ -175,8 +174,6 @@ if __name__ == "__main__":
     dist.init_process_group(backend="nccl")
     torch.cuda.set_device(dist.get_rank())
 
-    seed_all(args.seed)
-
     if args.debug and dist.get_rank() == 0:
         logging.basicConfig(level=logging.DEBUG)
 
@@ -191,4 +188,5 @@ if __name__ == "__main__":
         mixed_precision=mixed_precision,
         max_prefetch_count=args.max_prefetch_count,
         learning_rate=args.lr,
+        seed=args.seed,
     )
