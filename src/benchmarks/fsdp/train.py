@@ -102,7 +102,8 @@ def main(
             optim.step()
 
             batch_time = time.monotonic() - batch_start
-            batch_times.append(batch_time)
+            if i > 0:
+                batch_times.append(batch_time)
             print_rank0(
                 f"Batch [{i+1}/{num_batches}]:\n"
                 f"  loss={loss.item():.3f}\n"
