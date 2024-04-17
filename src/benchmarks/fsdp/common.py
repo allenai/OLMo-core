@@ -202,6 +202,8 @@ def build_components(
             device_id=dist.get_rank(),
             limit_all_gathers=True,
         )
+
+        model.apply(init_function)  # just in case
     else:
         raise NotImplementedError(fsdp_wrapper)
 
