@@ -6,7 +6,6 @@ Train a mock FSDP transformer model. Launch this script via `torchrun`:
 import argparse
 import contextlib
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Literal, Optional
