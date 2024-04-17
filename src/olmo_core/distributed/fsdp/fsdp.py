@@ -646,6 +646,7 @@ class FSDP(Generic[M], nn.Module):
             )
             return
 
+        log.debug("Reduce-scattering grads for %s (%s)", self.module.__class__.__name__, id(self.module))
         grad_reduce_dtype: Optional[torch.dtype] = self.precision.reduce_dtype or self.precision.param_dtype
 
         with self.state.post_backward_stream(wait_stream=self.state.current_stream):
@@ -653,7 +654,6 @@ class FSDP(Generic[M], nn.Module):
                 handle.pre_reduce_scatter_grads_(grad_reduce_dtype=grad_reduce_dtype)
 
         with self.state.reduce_stream(wait_stream=self.state.post_backward_stream):
-            log.debug("Reduce-scattering grads for %s (%s)", self.module.__class__.__name__, id(self.module))
             for handle in self.state.flat_param_handles:
                 handle.reduce_scatter_grads_(grad_reduce_dtype=grad_reduce_dtype)
 

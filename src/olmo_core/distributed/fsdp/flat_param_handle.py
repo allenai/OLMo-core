@@ -362,9 +362,9 @@ class FlatParamHandle:
         if grad_reduce_dtype != self.params_unsharded_grad.dtype:
             Stream.current(self.device).record_for(self.params_unsharded_grad)
             self.params_unsharded_grad = self.params_unsharded_grad.to(dtype=grad_reduce_dtype)
-            self.params_sharded_grad_tmp = torch.empty(
-                self.params_data.sharded_shape, dtype=self.params_unsharded_grad.dtype, device=self.device
-            )
+        self.params_sharded_grad_tmp = torch.empty(
+            self.params_data.sharded_shape, dtype=self.params_unsharded_grad.dtype, device=self.device
+        )
 
     def reduce_scatter_grads_(
         self, grad_dtype: Optional[torch.dtype] = None, grad_reduce_dtype: Optional[torch.dtype] = None
