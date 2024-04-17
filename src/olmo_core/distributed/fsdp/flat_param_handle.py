@@ -61,6 +61,11 @@ class FlatParamHandle:
     the same shape as the sharded version of ``params_data``.
     """
 
+    params_sharded_grad_tmp: Optional[torch.Tensor] = None
+    """
+    Temporary storage for the local consolidated sharded grads during the reduce-scatter.
+    """
+
     process_group: Optional[dist.ProcessGroup] = None
 
     device: Optional[torch.device] = None
@@ -344,6 +349,9 @@ class FlatParamHandle:
     def pre_reduce_scatter_grads_(
         self, grad_dtype: Optional[torch.dtype] = None, grad_reduce_dtype: Optional[torch.dtype] = None
     ):
+        """
+        Cast the unsharded, padded gradient to the reduce dtype if needed.
+        """
         self._ran_pre_reduce_scatter_grads = True
 
         if not self.requires_grad or self.params_unsharded_grad is None:
@@ -354,21 +362,29 @@ class FlatParamHandle:
         if grad_reduce_dtype != self.params_unsharded_grad.dtype:
             Stream.current(self.device).record_for(self.params_unsharded_grad)
             self.params_unsharded_grad = self.params_unsharded_grad.to(dtype=grad_reduce_dtype)
+            self.params_sharded_grad_tmp = torch.empty(
+                self.params_data.sharded_shape, dtype=self.params_unsharded_grad.dtype, device=self.device
+            )
 
     def reduce_scatter_grads_(
         self, grad_dtype: Optional[torch.dtype] = None, grad_reduce_dtype: Optional[torch.dtype] = None
     ):
+        """
+        Reduce-scatter the unsharded, padded gradient.
+        """
         if not self.requires_grad or self.params_unsharded_grad is None:
             return
 
         if not self._ran_pre_reduce_scatter_grads:
             self.pre_reduce_scatter_grads_(grad_dtype=grad_dtype, grad_reduce_dtype=grad_reduce_dtype)
+            assert self.params_sharded_grad_tmp is not None
         else:
+            assert self.params_sharded_grad_tmp is not None
             Stream.current(self.device).record_for(self.params_unsharded_grad)
+            Stream.current(self.device).record_for(self.params_sharded_grad_tmp)
 
         self._ran_pre_reduce_scatter_grads = False
 
-        local_rank = get_rank(self.process_group)
         grad_dtype = grad_dtype or self.params_data.dtype
         grad_reduce_dtype = grad_reduce_dtype or grad_dtype
         assert self.params_unsharded_grad.dtype == grad_reduce_dtype
@@ -378,12 +394,10 @@ class FlatParamHandle:
         if dist.get_backend() == dist.Backend.NCCL:
             # Get chunks corresponding to each rank.
             grad_chunks = self.params_data.chunk_unsharded(self.params_unsharded_grad)
-            new_sharded_grad = torch.empty_like(grad_chunks[local_rank])
-            dist.reduce_scatter(new_sharded_grad, grad_chunks, group=self.process_group)
-            new_sharded_grad = new_sharded_grad.to(dtype=grad_dtype)
+            dist.reduce_scatter(self.params_sharded_grad_tmp, grad_chunks, group=self.process_group)
         else:
             dist.all_reduce(self.params_unsharded_grad, group=self.process_group)
-            new_sharded_grad = self.params_data.sharded_chunk(self.params_unsharded_grad).to(dtype=grad_dtype)
+            self.params_sharded_grad_tmp.copy_(self.params_data.sharded_chunk(self.params_unsharded_grad))
 
         # Deallocate the unsharded padded grad.
         # Since we're potentially using a separate stream for this reduce-scatter, we need to make
@@ -391,11 +405,29 @@ class FlatParamHandle:
         Stream.current(self.device).record_for(self.params_unsharded_grad)
         self.params_unsharded_grad = None
 
+    def post_reduce_scatter_grads_(
+        self, grad_dtype: Optional[torch.dtype] = None, grad_reduce_dtype: Optional[torch.dtype] = None
+    ):
+        """
+        Cast the new sharded grad and add to any cached grad if needed, then set the ``.grad`` attribute
+        for each param as a view into the new sharded grad.
+        """
+        if not self.requires_grad or self.params_unsharded_grad is None:
+            return
+
+        grad_dtype = grad_dtype or self.params_data.dtype
+        grad_reduce_dtype = grad_reduce_dtype or grad_dtype
+
+        assert self.params_sharded_grad_tmp is not None
+        Stream.current(self.device).record_for(self.params_sharded_grad_tmp)
+        new_sharded_grad = self.params_sharded_grad_tmp.to(dtype=grad_dtype)
+
         if self.params_sharded_grad is None:
             self.params_sharded_grad = new_sharded_grad
         else:
             self.params_sharded_grad.add_(new_sharded_grad)
 
+        self.params_sharded_grad_tmp = None
         del new_sharded_grad
 
         # At this point each param will be sharded again, and we set the grad for each param as a view
