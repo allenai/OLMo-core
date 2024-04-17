@@ -271,6 +271,10 @@ class FlatParamHandle:
 
         if not self._ran_pre_unshard:
             self.pre_unshard_(dtype=dtype, rank0_only=rank0_only, set_grads=set_grads)
+        else:
+            Stream.current(self.device).record_for(self.params_data.data)
+            if self.params_sharded_data_lp is not None:
+                Stream.current(self.device).record_for(self.params_sharded_data_lp)
 
         # Gather full, padded, unsharded data for all params.
         if rank0_only or dist.get_backend() == dist.Backend.GLOO:
@@ -286,9 +290,6 @@ class FlatParamHandle:
             if dtype is not None:
                 assert self.params_sharded_data_lp is not None
                 local_shard = self.params_sharded_data_lp
-                # Since `self.params_sharded_data_lp` was potentially created in a separate stream,
-                # we need to make it's not deallocated until the current stream finishes.
-                Stream.current(self.device).record_for(local_shard)
             else:
                 local_shard = self.params_data.sharded_data
             dist.all_gather_into_tensor(
