@@ -96,6 +96,11 @@ class FSDPState:
     Stream used during the all-gather for unsharding parameters.
     """
 
+    post_backward_stream: Stream = field(default_factory=Stream.default)
+    """
+    Stream used during the post-backward hook to cast gradients in preparation for the all-gather.
+    """
+
     reduce_stream: Stream = field(default_factory=Stream.default)
     """
     Stream used during the reduce-scatter for reducing gradients after the backward pass.

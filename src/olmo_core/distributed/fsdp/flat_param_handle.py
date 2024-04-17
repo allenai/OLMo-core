@@ -69,6 +69,8 @@ class FlatParamHandle:
 
     _ran_pre_unshard: bool = False
 
+    _ran_pre_reduce_scatter_grads: bool = False
+
     @classmethod
     def shard_params(
         cls,
@@ -279,6 +281,8 @@ class FlatParamHandle:
             if self.params_sharded_data_lp is not None:
                 Stream.current(self.device).record_for(self.params_sharded_data_lp)
 
+        self._ran_pre_unshard = False
+
         # Gather full, padded, unsharded data for all params.
         if rank0_only or dist.get_backend() == dist.Backend.GLOO:
             assert self.params_data.is_sharded
@@ -325,8 +329,6 @@ class FlatParamHandle:
         """
         Reshard the handle's managed flat parameters in-place.
         """
-        self._ran_pre_unshard = False
-
         if not self.params:
             return
 
@@ -339,32 +341,51 @@ class FlatParamHandle:
                 flat_param.data = self.params_data[offset : offset + flat_param.sharded_numel]
             offset += flat_param.sharded_numel
 
+    def pre_reduce_scatter_grads_(
+        self, grad_dtype: Optional[torch.dtype] = None, grad_reduce_dtype: Optional[torch.dtype] = None
+    ):
+        self._ran_pre_reduce_scatter_grads = True
+
+        if not self.requires_grad or self.params_unsharded_grad is None:
+            return
+
+        grad_dtype = grad_dtype or self.params_data.dtype
+        grad_reduce_dtype = grad_reduce_dtype or grad_dtype
+        if grad_reduce_dtype != self.params_unsharded_grad.dtype:
+            Stream.current(self.device).record_for(self.params_unsharded_grad)
+            self.params_unsharded_grad = self.params_unsharded_grad.to(dtype=grad_reduce_dtype)
+
     def reduce_scatter_grads_(
         self, grad_dtype: Optional[torch.dtype] = None, grad_reduce_dtype: Optional[torch.dtype] = None
     ):
         if not self.requires_grad or self.params_unsharded_grad is None:
             return
 
+        if not self._ran_pre_reduce_scatter_grads:
+            self.pre_reduce_scatter_grads_(grad_dtype=grad_dtype, grad_reduce_dtype=grad_reduce_dtype)
+        else:
+            Stream.current(self.device).record_for(self.params_unsharded_grad)
+
+        self._ran_pre_reduce_scatter_grads = False
+
         local_rank = get_rank(self.process_group)
         grad_dtype = grad_dtype or self.params_data.dtype
+        grad_reduce_dtype = grad_reduce_dtype or grad_dtype
+        assert self.params_unsharded_grad.dtype == grad_reduce_dtype
 
         # Reduce the unsharded padded grad for all params.
         # NOTE: Only NCCL supports reduce-scatter. So with other backends we use all-reduce.
-        all_params_unsharded_padded_grad = self.params_unsharded_grad.to(dtype=grad_reduce_dtype or grad_dtype)
         if dist.get_backend() == dist.Backend.NCCL:
             # Get chunks corresponding to each rank.
-            grad_chunks = self.params_data.chunk_unsharded(all_params_unsharded_padded_grad)
+            grad_chunks = self.params_data.chunk_unsharded(self.params_unsharded_grad)
             new_sharded_grad = torch.empty_like(grad_chunks[local_rank])
             dist.reduce_scatter(new_sharded_grad, grad_chunks, group=self.process_group)
             new_sharded_grad = new_sharded_grad.to(dtype=grad_dtype)
         else:
-            dist.all_reduce(all_params_unsharded_padded_grad, group=self.process_group)
-            new_sharded_grad = self.params_data.sharded_chunk(all_params_unsharded_padded_grad).to(
-                dtype=grad_dtype
-            )
+            dist.all_reduce(self.params_unsharded_grad, group=self.process_group)
+            new_sharded_grad = self.params_data.sharded_chunk(self.params_unsharded_grad).to(dtype=grad_dtype)
 
         # Deallocate the unsharded padded grad.
-        del all_params_unsharded_padded_grad
         # Since we're potentially using a separate stream for this reduce-scatter, we need to make
         # sure `params_unsharded_grad` is not deallocated before the reduce-scatter finishes.
         Stream.current(self.device).record_for(self.params_unsharded_grad)
