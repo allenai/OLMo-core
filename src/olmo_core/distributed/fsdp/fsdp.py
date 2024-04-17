@@ -322,7 +322,7 @@ class FSDP(Generic[M], nn.Module):
         nonsharded_params: Set[nn.Parameter] = set()
         grads: List[torch.Tensor] = []
         for param in self.parameters():
-            if param.grad is None:
+            if param.grad is None or param.grad.numel() == 0:
                 continue
 
             if isinstance(param, ShardedFlatParameter):
