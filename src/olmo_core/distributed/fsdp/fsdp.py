@@ -26,6 +26,7 @@ from typing import (
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+from torch.autograd import Variable
 
 from olmo_core.distributed.tensors import ShardedFlatParameter
 from olmo_core.stream import Stream
@@ -666,6 +667,9 @@ class FSDP(Generic[M], nn.Module):
             handle.remove()
         self.state.pre_backward_hook_handles.clear()
 
+        if self.is_root:
+            self._register_post_backward_final_hook()
+
         # Unshard parameters in place.
         self._unshard(set_grads=True)
 
@@ -699,7 +703,6 @@ class FSDP(Generic[M], nn.Module):
     @torch.no_grad()
     def _post_backward_hook(self, param_name: str, *unused: Any):
         del unused
-        log.debug("Running post-backward hook for %s.%s...", self.module.__class__.__name__, param_name)
         self.state.post_backward_hook_handles.pop(param_name).remove()
 
         # If there are still more handles then there are still more post-backward hooks to be ran
@@ -707,20 +710,11 @@ class FSDP(Generic[M], nn.Module):
         if self.state.post_backward_hook_handles:
             return
 
+        log.debug("Running post-backward hook for %s", self.module.__class__.__name__)
+
         # NOTE: reshard *before* reducing grads to correctly handle precision settings.
         self._reshard()
         self._reduce_scatter_grads()
-
-        # The root FSDP instance needs to do some final cleanup.
-        if not self.is_root:
-            return
-
-        # Mark backward execution order as finalized.
-        self.state.backward_execution_order_finalized = True
-
-        # Wait for unsharding and reducing streams to complete so the model is not left in a bad
-        # state before grad clipping, optimizer step, or whatever else.
-        self.state.current_stream.wait_stream(self.state.reduce_stream)
 
     def _register_post_backward_hook(self, param_name: str, param: ShardedFlatParameter):
         # Force creation of a `grad_fn` in order to register a hook that will run *after* this param's
@@ -743,3 +737,24 @@ class FSDP(Generic[M], nn.Module):
         for param_name, param in self._managed_named_parameters():
             if param.requires_grad:
                 self._register_post_backward_hook(param_name, param)
+
+    @torch.no_grad()
+    def _post_backward_final_hook(self):
+        if not self.is_root:
+            return
+
+        log.debug("Running post-backward final hook for %s", self.module.__class__.__name__)
+
+        # Mark backward execution order as finalized.
+        self.state.backward_execution_order_finalized = True
+
+        # Wait for unsharding and reducing streams to complete so the model is not left in a bad
+        # state before grad clipping, optimizer step, or whatever else.
+        self.state.current_stream.wait_stream(self.state.reduce_stream)
+
+    def _register_post_backward_final_hook(self):
+        if not self.is_root:
+            return
+
+        log.debug("Registering post-backward final hook for %s...", self.module.__class__.__name__)
+        Variable._execution_engine.queue_callback(self._post_backward_final_hook)
