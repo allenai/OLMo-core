@@ -64,7 +64,7 @@ def main(
         from torch.profiler import ProfilerActivity, schedule
 
         def on_trace_ready(p):
-            trace_path = Path(trace_output)
+            trace_path = Path(trace_output).expanduser()
             trace_path.parent.mkdir(exist_ok=True, parents=True)
             p.export_chrome_trace(str(trace_path))
             print_rank0(f"Tracing complete, saved to '{trace_path}'")
