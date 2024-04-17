@@ -412,13 +412,12 @@ class FlatParamHandle:
         Cast the new sharded grad and add to any cached grad if needed, then set the ``.grad`` attribute
         for each param as a view into the new sharded grad.
         """
-        if not self.requires_grad or self.params_unsharded_grad is None:
+        if not self.requires_grad or self.params_sharded_grad_tmp is None:
             return
 
         grad_dtype = grad_dtype or self.params_data.dtype
         grad_reduce_dtype = grad_reduce_dtype or grad_dtype
 
-        assert self.params_sharded_grad_tmp is not None
         Stream.current(self.device).record_for(self.params_sharded_grad_tmp)
         new_sharded_grad = self.params_sharded_grad_tmp.to(dtype=grad_dtype)
 
