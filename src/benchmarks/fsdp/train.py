@@ -79,7 +79,7 @@ def main(
         )
 
     print_rank0("Starting training...")
-    batch_times = deque([], 50)
+    batch_times: deque[float] = deque([], 50)
     with profiler as p:
         for i, batch in enumerate(iter(dataloader)):
             log.debug("Batch: %s", batch)
