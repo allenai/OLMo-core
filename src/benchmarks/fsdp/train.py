@@ -203,7 +203,7 @@ if __name__ == "__main__":
         raise NotImplementedError(args.model_size)
 
     if args.debug:
-        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+        #  os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
         config.debug = True
 
     dist.init_process_group(backend="nccl")
