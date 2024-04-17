@@ -26,6 +26,7 @@ from typing import (
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+from torch.autograd import Variable
 
 from olmo_core.distributed.tensors import ShardedFlatParameter
 from olmo_core.stream import Stream
@@ -322,7 +323,7 @@ class FSDP(Generic[M], nn.Module):
         nonsharded_params: Set[nn.Parameter] = set()
         grads: List[torch.Tensor] = []
         for param in self.parameters():
-            if param.grad is None:
+            if param.grad is None or param.grad.numel() == 0:
                 continue
 
             if isinstance(param, ShardedFlatParameter):
@@ -394,7 +395,11 @@ class FSDP(Generic[M], nn.Module):
             self.state.forward_execution_order.append(self)
             return
 
-        log.debug("Completing lazy initialization from root FSDP for %s...", self.module.__class__.__name__)
+        log.debug(
+            "Completing lazy initialization from root FSDP for %s (%s)...",
+            self.module.__class__.__name__,
+            id(self.module),
+        )
 
         # Initialize streams.
         self.state.compute_stream = Stream.default(self.device)
@@ -494,7 +499,7 @@ class FSDP(Generic[M], nn.Module):
 
         This should only be called once at initialization.
         """
-        log.debug("Sharding %s...", self.module.__class__.__name__)
+        log.debug("Sharding %s (%s)...", self.module.__class__.__name__, id(self.module))
 
         params_with_grads: List[nn.Parameter] = []
         params_with_grads_fqns: List[str] = []
@@ -568,7 +573,7 @@ class FSDP(Generic[M], nn.Module):
 
         kwargs = dict(cast=cast, set_grads=set_grads, recurse=recurse, rank0_only=rank0_only)
 
-        log.debug("Unsharding %s...", self.module.__class__.__name__)
+        log.debug("Unsharding %s (%s)...", self.module.__class__.__name__, id(self.module))
         self.state.params_prefetched = True
 
         # NOTE: `unshard_stream` should wait on current stream (usually `compute_stream` / `default_stream`)
@@ -600,7 +605,11 @@ class FSDP(Generic[M], nn.Module):
     def _prefetch(self, prefetch_from: deque[FSDP], **kwargs):
         for module in self._deque_from(prefetch_from):
             log.debug(
-                "Prefetching %s from %s...", module.module.__class__.__name__, self.module.__class__.__name__
+                "Prefetching %s (%s) from %s (%s)...",
+                module.module.__class__.__name__,
+                id(module.module),
+                self.module.__class__.__name__,
+                id(self.module),
             )
             module._unshard(**kwargs)
 
@@ -611,7 +620,7 @@ class FSDP(Generic[M], nn.Module):
         """
         kwargs = dict(writeback=writeback, recurse=recurse)
 
-        log.debug("Resharding %s...", self.module.__class__.__name__)
+        log.debug("Resharding %s (%s)...", self.module.__class__.__name__, id(self.module))
         self.state.params_prefetched = False
 
         for handle in self.state.flat_param_handles:
@@ -637,7 +646,7 @@ class FSDP(Generic[M], nn.Module):
 
         grad_reduce_dtype: Optional[torch.dtype] = self.precision.reduce_dtype or self.precision.param_dtype
         with self.state.reduce_stream(wait_stream=self.state.current_stream):
-            log.debug("Reduce-scattering grads for %s", self.module.__class__.__name__)
+            log.debug("Reduce-scattering grads for %s (%s)", self.module.__class__.__name__, id(self.module))
             for handle in self.state.flat_param_handles:
                 handle.reduce_scatter_grads_(grad_reduce_dtype=grad_reduce_dtype)
 
@@ -659,12 +668,15 @@ class FSDP(Generic[M], nn.Module):
     @torch.no_grad()
     def _pre_backward_hook(self, *unused: Any):
         del unused
-        log.debug("Running pre-backward hook for %s...", self.module.__class__.__name__)
+        log.debug("Running pre-backward hook for %s (%s)...", self.module.__class__.__name__, id(self.module))
 
         # Remove all pre backward hooks for this FSDP instance since they all do the same thing.
         for handle in self.state.pre_backward_hook_handles:
             handle.remove()
         self.state.pre_backward_hook_handles.clear()
+
+        if self.is_root:
+            self._register_post_backward_final_hook()
 
         # Unshard parameters in place.
         self._unshard(set_grads=True)
@@ -684,10 +696,12 @@ class FSDP(Generic[M], nn.Module):
         self.state.pre_backward_hook_handles.append(handle)
 
     def _register_pre_backward_hooks(self, output: Any):
-        log.debug("Registering pre-backward hooks for %s...", self.module.__class__.__name__)
+        log.debug("Registering pre-backward hooks for %s (%s)...", self.module.__class__.__name__, id(self.module))
         # Clear existing hooks if there are any.
         if self.state.pre_backward_hook_handles:
-            log.debug("Removing old pre-backward hooks for %s...", self.module.__class__.__name__)
+            log.debug(
+                "Removing old pre-backward hooks for %s (%s)...", self.module.__class__.__name__, id(self.module)
+            )
             for handle in self.state.pre_backward_hook_handles:
                 handle.remove()
             self.state.pre_backward_hook_handles.clear()
@@ -699,7 +713,6 @@ class FSDP(Generic[M], nn.Module):
     @torch.no_grad()
     def _post_backward_hook(self, param_name: str, *unused: Any):
         del unused
-        log.debug("Running post-backward hook for %s.%s...", self.module.__class__.__name__, param_name)
         self.state.post_backward_hook_handles.pop(param_name).remove()
 
         # If there are still more handles then there are still more post-backward hooks to be ran
@@ -707,20 +720,11 @@ class FSDP(Generic[M], nn.Module):
         if self.state.post_backward_hook_handles:
             return
 
+        log.debug("Running post-backward hook for %s (%s)", self.module.__class__.__name__, id(self.module))
+
         # NOTE: reshard *before* reducing grads to correctly handle precision settings.
         self._reshard()
         self._reduce_scatter_grads()
-
-        # The root FSDP instance needs to do some final cleanup.
-        if not self.is_root:
-            return
-
-        # Mark backward execution order as finalized.
-        self.state.backward_execution_order_finalized = True
-
-        # Wait for unsharding and reducing streams to complete so the model is not left in a bad
-        # state before grad clipping, optimizer step, or whatever else.
-        self.state.current_stream.wait_stream(self.state.reduce_stream)
 
     def _register_post_backward_hook(self, param_name: str, param: ShardedFlatParameter):
         # Force creation of a `grad_fn` in order to register a hook that will run *after* this param's
@@ -733,13 +737,42 @@ class FSDP(Generic[M], nn.Module):
         self.state.post_backward_hook_handles[param_name] = handle
 
     def _register_post_backward_hooks(self):
-        log.debug("Registering post-backward hooks for %s...", self.module.__class__.__name__)
+        log.debug(
+            "Registering post-backward hooks for %s (%s)...", self.module.__class__.__name__, id(self.module)
+        )
         # Clear existing hooks if there are any.
         if self.state.post_backward_hook_handles:
-            log.debug("Removing old post-backward hooks for %s...", self.module.__class__.__name__)
+            log.debug(
+                "Removing old post-backward hooks for %s (%s)...", self.module.__class__.__name__, id(self.module)
+            )
             for handle in self.state.post_backward_hook_handles.values():
                 handle.remove()
             self.state.post_backward_hook_handles.clear()
         for param_name, param in self._managed_named_parameters():
             if param.requires_grad:
                 self._register_post_backward_hook(param_name, param)
+
+    @torch.no_grad()
+    def _post_backward_final_hook(self):
+        if not self.is_root:
+            return
+
+        log.debug("Running post-backward final hook for %s (%s)", self.module.__class__.__name__, id(self.module))
+
+        # Mark backward execution order as finalized.
+        self.state.backward_execution_order_finalized = True
+        for child in self._fsdp_children(recurse=True):
+            child.state.backward_execution_order_finalized = True
+
+        # Wait for unsharding and reducing streams to complete so the model is not left in a bad
+        # state before grad clipping, optimizer step, or whatever else.
+        self.state.current_stream.wait_stream(self.state.reduce_stream)
+
+    def _register_post_backward_final_hook(self):
+        if not self.is_root:
+            return
+
+        log.debug(
+            "Registering post-backward final hook for %s (%s)...", self.module.__class__.__name__, id(self.module)
+        )
+        Variable._execution_engine.queue_callback(self._post_backward_final_hook)
