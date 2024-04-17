@@ -200,6 +200,7 @@ def build_components(
             use_orig_params=True,
             param_init_fn=lambda m: init_function(m.to_empty(device=get_default_device())),
             device_id=dist.get_rank(),
+            limit_all_gathers=True,
         )
     else:
         raise NotImplementedError(fsdp_wrapper)
