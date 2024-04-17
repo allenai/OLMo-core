@@ -761,6 +761,8 @@ class FSDP(Generic[M], nn.Module):
 
         # Mark backward execution order as finalized.
         self.state.backward_execution_order_finalized = True
+        for child in self._fsdp_children(recurse=True):
+            child.state.backward_execution_order_finalized = True
 
         # Wait for unsharding and reducing streams to complete so the model is not left in a bad
         # state before grad clipping, optimizer step, or whatever else.
