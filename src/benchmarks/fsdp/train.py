@@ -4,6 +4,7 @@ Train a mock FSDP transformer model. Launch this script via `torchrun`:
 """
 
 import argparse
+import contextlib
 import logging
 import os
 import time
@@ -32,6 +33,7 @@ def main(
     save_path: Optional[str] = None,
     load_path: Optional[str] = None,
     mixed_precision: bool = True,
+    profile: bool = False,
     **kwargs,
 ):
     model, optim, dataloader = build_components(
@@ -56,33 +58,62 @@ def main(
         print_rank0(f"Saving checkpoint to {checkpoint_dir}...")
         save_model_and_optim_state(checkpoint_dir, model, optim)
 
-    print_rank0("Starting training...")
-    for i, batch in enumerate(iter(dataloader)):
-        log.debug("Batch: %s", batch)
-        batch_start = time.monotonic()
+    profiler = contextlib.nullcontext()
+    if profile:
+        from torch.profiler import ProfilerActivity, schedule
 
-        # Zero-gradients.
-        optim.zero_grad()
+        def on_trace_ready(p):
+            profiler_output_dir = Path("/tmp/profiler")
+            profiler_output_dir.mkdir(exist_ok=True, parents=True)
 
-        # Run forward pass.
-        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=mixed_precision):
-            loss = compute_loss(model, batch)
+            output = p.key_averages().table(sort_by="self_cuda_time_total", row_limit=32)
+            log.info(f"Profile by total GPU time at step {p.step_num}:\n{output}")
+            output = p.key_averages().table(sort_by="self_cpu_time_total", row_limit=32)
+            log.info(f"Profile by total CPU time at step {p.step_num}:\n{output}")
 
-        # Trigger backward pass.
-        loss.backward()
+            p.export_chrome_trace(str(trace_path := (profiler_output_dir / f"{p.step_num}.chrome_trace.json.gz")))
+            print_rank0(f"Tracing complete, saved to '{trace_path}'")
 
-        # Clip gradient norms.
-        model.clip_grad_norm_(1.0)
-
-        # Take optimizer step.
-        optim.step()
-
-        batch_end = time.monotonic()
-        print_rank0(
-            f"Batch [{i+1}/{num_batches}]:\n"
-            f"  loss={loss.item():.3f}\n"
-            f"  throughput/seconds_per_batch={batch_end-batch_start:.3f}",
+        profiler = torch.profiler.profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            record_shapes=False,
+            profile_memory=False,
+            with_stack=True,
+            schedule=schedule(wait=1, warmup=5, active=3, repeat=1),
+            on_trace_ready=on_trace_ready,
         )
+
+    print_rank0("Starting training...")
+    with profiler as p:
+        for i, batch in enumerate(iter(dataloader)):
+            log.debug("Batch: %s", batch)
+            batch_start = time.monotonic()
+
+            # Zero-gradients.
+            optim.zero_grad()
+
+            # Run forward pass.
+            with torch.autocast("cuda", dtype=torch.bfloat16, enabled=mixed_precision):
+                loss = compute_loss(model, batch)
+
+            # Trigger backward pass.
+            loss.backward()
+
+            # Clip gradient norms.
+            model.clip_grad_norm_(1.0)
+
+            # Take optimizer step.
+            optim.step()
+
+            batch_end = time.monotonic()
+            print_rank0(
+                f"Batch [{i+1}/{num_batches}]:\n"
+                f"  loss={loss.item():.3f}\n"
+                f"  throughput/seconds_per_batch={batch_end-batch_start:.3f}",
+            )
+
+            if p is not None:
+                p.step()
 
     if save_path is not None:
         checkpoint_dir = Path(save_path) / "final"
@@ -124,6 +155,10 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--debug",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--profile",
         action="store_true",
     )
     parser.add_argument(
@@ -185,6 +220,7 @@ if __name__ == "__main__":
         dry_run=args.dry_run,
         save_path=args.save_path,
         load_path=args.load_path,
+        profile=args.profile,
         mixed_precision=mixed_precision,
         max_prefetch_count=args.max_prefetch_count,
         learning_rate=args.lr,
