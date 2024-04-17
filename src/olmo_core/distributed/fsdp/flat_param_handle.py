@@ -228,7 +228,8 @@ class FlatParamHandle:
 
     def pre_unshard_(self, dtype: Optional[torch.dtype] = None, rank0_only: bool = False, set_grads: bool = False):
         """
-        Allocate the unsharded, padded data prior to the all-gather.
+        Allocate the unsharded, padded data prior to the all-gather. Ideally this should be called
+        in a separate stream from :meth:`.unshard_()` for better throughput.
         """
         self._ran_pre_unshard = True
 
@@ -272,6 +273,8 @@ class FlatParamHandle:
         if not self._ran_pre_unshard:
             self.pre_unshard_(dtype=dtype, rank0_only=rank0_only, set_grads=set_grads)
         else:
+            # The following tensors were potentially created in a different stream, so we need
+            # to make sure they're not deallocated prematurely.
             Stream.current(self.device).record_for(self.params_data.data)
             if self.params_sharded_data_lp is not None:
                 Stream.current(self.device).record_for(self.params_sharded_data_lp)
