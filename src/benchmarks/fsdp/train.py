@@ -34,6 +34,7 @@ def main(
     load_path: Optional[str] = None,
     mixed_precision: bool = True,
     profile: bool = False,
+    trace_output: str = "/tmp/traces/olmo_core.chrome_trace.json.gz",
     **kwargs,
 ):
     model, optim, dataloader = build_components(
@@ -63,15 +64,9 @@ def main(
         from torch.profiler import ProfilerActivity, schedule
 
         def on_trace_ready(p):
-            profiler_output_dir = Path("/tmp/profiler")
-            profiler_output_dir.mkdir(exist_ok=True, parents=True)
-
-            output = p.key_averages().table(sort_by="self_cuda_time_total", row_limit=32)
-            log.info(f"Profile by total GPU time at step {p.step_num}:\n{output}")
-            output = p.key_averages().table(sort_by="self_cpu_time_total", row_limit=32)
-            log.info(f"Profile by total CPU time at step {p.step_num}:\n{output}")
-
-            p.export_chrome_trace(str(trace_path := (profiler_output_dir / f"{p.step_num}.chrome_trace.json.gz")))
+            trace_path = Path(trace_output)
+            trace_path.parent.mkdir(exist_ok=True, parents=True)
+            p.export_chrome_trace(str(trace_path))
             print_rank0(f"Tracing complete, saved to '{trace_path}'")
 
         profiler = torch.profiler.profile(
@@ -162,6 +157,11 @@ if __name__ == "__main__":
         action="store_true",
     )
     parser.add_argument(
+        "--trace-output",
+        type=str,
+        default="/tmp/traces/olmo_core.chrome_trace.json.gz",
+    )
+    parser.add_argument(
         "--save-path",
         type=str,
     )
@@ -221,6 +221,7 @@ if __name__ == "__main__":
         save_path=args.save_path,
         load_path=args.load_path,
         profile=args.profile,
+        trace_output=args.trace_output,
         mixed_precision=mixed_precision,
         max_prefetch_count=args.max_prefetch_count,
         learning_rate=args.lr,
