@@ -23,7 +23,7 @@ class FSDPState:
     The device the FSDP node is running on.
     """
 
-    flat_param_handle: FlatParamHandle = field(default_factory=FlatParamHandle)
+    flat_param_handles: List[FlatParamHandle] = field(default_factory=list)
     """
     Manages the shared data for all sharded flat params.
     """
@@ -86,14 +86,19 @@ class FSDPState:
     Default stream for computation.
     """
 
+    pre_unshard_stream: Stream = field(default_factory=Stream.default)
+    """
+    Stream used to allocate unsharded tensors prior to the all-gather.
+    """
+
     unshard_stream: Stream = field(default_factory=Stream.default)
     """
-    Stream for unsharding parameters.
+    Stream used during the all-gather for unsharding parameters.
     """
 
     reduce_stream: Stream = field(default_factory=Stream.default)
     """
-    Stream for reducing gradients after the backward pass.
+    Stream used during the reduce-scatter for reducing gradients after the backward pass.
     """
 
     @property

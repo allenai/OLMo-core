@@ -34,13 +34,25 @@ class ShardingSpec:
     parameter for the local shard of the current rank is given by ``unsharded_flattened_offsets[dist.get_rank(process_group)]``.
     """
 
+    def __post_init__(self):
+        numel_accounted_for = 0
+        for offsets in self.unsharded_flattened_offsets:
+            assert offsets[0] <= offsets[1]
+            numel_accounted_for += offsets[1] - offsets[0]
+        if numel_accounted_for != self.unsharded_numel:
+            raise ValueError(f"invalid sharding spec {self}")
+
     @property
-    def unsharded_flattened_shape(self) -> int:
+    def unsharded_numel(self) -> int:
         return reduce(lambda x, y: x * y, self.unsharded_shape, 1)
 
     @property
     def sharded_numels(self) -> Tuple[int, ...]:
         return tuple((offsets[1] - offsets[0] for offsets in self.unsharded_flattened_offsets))
+
+    @property
+    def unsharded_flattened_shape(self) -> Tuple[int, ...]:
+        return (self.unsharded_numel,)
 
 
 class ShardedFlatTensor(torch.Tensor):
@@ -241,7 +253,7 @@ class ShardedFlatTensor(torch.Tensor):
                 0 if self.process_group is None else dist.get_global_rank(self.process_group, 0),
                 group=self.process_group,
             )
-            self.data = self.sharded_chunk(unsharded_data).to(dtype=sharded_data.dtype)
+            self.data = self.sharded_chunk(unsharded_data).to(dtype=sharded_data.dtype).clone()
         else:
             self.data = sharded_data
         del metadata[self.SHARDED_FLAT_TENSOR_CACHED_SHARDED_DATA_KEY]
@@ -333,9 +345,25 @@ class ShardedFlatTensor(torch.Tensor):
         return offsets
 
     @property
+    def unsharded_numel(self) -> int:
+        return self.sharding_spec.unsharded_numel
+
+    @property
     def unsharded_shape(self) -> Tuple[int, ...]:
         return self.sharding_spec.unsharded_shape
 
     @property
+    def sharded_numel(self) -> int:
+        return self.sharding_spec.sharded_numels[get_rank(self.process_group)]
+
+    @property
     def sharded_shape(self) -> Tuple[int, ...]:
         return (self.sharding_spec.sharded_numels[get_rank(self.process_group)],)
+
+    @property
+    def sharded_data(self) -> torch.Tensor:
+        metadata = getattr(self, self.SHARDED_FLAT_TENSOR_METADATA_NAME)
+        try:
+            return metadata[self.SHARDED_FLAT_TENSOR_CACHED_SHARDED_DATA_KEY]
+        except KeyError:
+            return self.data

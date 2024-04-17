@@ -148,6 +148,11 @@ if __name__ == "__main__":
         type=float,
         default=1e-4,
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=234523,
+    )
     args = parser.parse_args()
 
     mixed_precision = not args.no_mixed_precision
@@ -183,4 +188,5 @@ if __name__ == "__main__":
         mixed_precision=mixed_precision,
         max_prefetch_count=args.max_prefetch_count,
         learning_rate=args.lr,
+        seed=args.seed,
     )
