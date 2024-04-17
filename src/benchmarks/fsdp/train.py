@@ -7,6 +7,7 @@ import argparse
 import contextlib
 import logging
 import time
+from collections import deque
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -78,6 +79,7 @@ def main(
         )
 
     print_rank0("Starting training...")
+    batch_times: deque[float] = deque([], 50)
     with profiler as p:
         for i, batch in enumerate(iter(dataloader)):
             log.debug("Batch: %s", batch)
@@ -99,15 +101,21 @@ def main(
             # Take optimizer step.
             optim.step()
 
-            batch_end = time.monotonic()
+            batch_time = time.monotonic() - batch_start
+            if i > 0:
+                batch_times.append(batch_time)
             print_rank0(
                 f"Batch [{i+1}/{num_batches}]:\n"
                 f"  loss={loss.item():.3f}\n"
-                f"  throughput/seconds_per_batch={batch_end-batch_start:.3f}",
+                f"  throughput/seconds_per_batch={batch_time:.3f}",
             )
 
             if p is not None:
                 p.step()
+
+    if batch_times:
+        time_per_batch = sum(batch_times) / len(batch_times)
+        print_rank0(f"Average throughput: {time_per_batch:.3f}s/b")
 
     if save_path is not None:
         checkpoint_dir = Path(save_path) / "final"

@@ -405,6 +405,7 @@ class FSDP(Generic[M], nn.Module):
         self.state.compute_stream = Stream.default(self.device)
         self.state.pre_unshard_stream = Stream.new(self.device)
         self.state.unshard_stream = Stream.new(self.device)
+        self.state.post_backward_stream = Stream.new(self.device)
         self.state.reduce_stream = Stream.new(self.device)
 
         # Initialize execution order.
@@ -419,6 +420,7 @@ class FSDP(Generic[M], nn.Module):
                 compute_stream=self.state.compute_stream,
                 pre_unshard_stream=self.state.pre_unshard_stream,
                 unshard_stream=self.state.unshard_stream,
+                post_backward_stream=self.state.post_backward_stream,
                 reduce_stream=self.state.reduce_stream,
                 forward_execution_order=self.state.forward_execution_order,
                 forward_prefetch_queue=self.state.forward_prefetch_queue,
@@ -644,9 +646,14 @@ class FSDP(Generic[M], nn.Module):
             )
             return
 
+        log.debug("Reduce-scattering grads for %s (%s)", self.module.__class__.__name__, id(self.module))
         grad_reduce_dtype: Optional[torch.dtype] = self.precision.reduce_dtype or self.precision.param_dtype
-        with self.state.reduce_stream(wait_stream=self.state.current_stream):
-            log.debug("Reduce-scattering grads for %s (%s)", self.module.__class__.__name__, id(self.module))
+
+        with self.state.post_backward_stream(wait_stream=self.state.current_stream):
+            for handle in self.state.flat_param_handles:
+                handle.pre_reduce_scatter_grads_(grad_reduce_dtype=grad_reduce_dtype)
+
+        with self.state.reduce_stream(wait_stream=self.state.post_backward_stream):
             for handle in self.state.flat_param_handles:
                 handle.reduce_scatter_grads_(grad_reduce_dtype=grad_reduce_dtype)
 
