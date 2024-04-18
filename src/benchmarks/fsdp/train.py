@@ -86,7 +86,7 @@ def main(
             batch_start = time.monotonic()
 
             # Zero-gradients.
-            optim.zero_grad()
+            optim.zero_grad(set_to_none=True)
 
             # Run forward pass.
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=mixed_precision):
