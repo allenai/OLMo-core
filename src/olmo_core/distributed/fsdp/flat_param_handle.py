@@ -254,7 +254,8 @@ class FlatParamHandle:
 
         # Cast sharded ``params_data`` to ``dtype``.
         if dtype is not None:
-            self.params_sharded_data_lp = self.params_data.sharded_data.to(dtype)
+            self.params_sharded_data_lp = self.params_data.sharded_chunk(all_params_unsharded_data)
+            self.params_sharded_data_lp.copy_(self.params_data.sharded_data)
 
         # Initialize unsharded, padded gradient.
         if set_grads and self.params_unsharded_grad is None:
