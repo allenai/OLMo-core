@@ -396,7 +396,10 @@ class FlatParamHandle:
         # Cast the reduce-scatter target to the right dtype, potentially accumulating it into
         # the existing gradient.
         if self.params_sharded_grad is None:
-            self.params_sharded_grad = new_sharded_grad.to(grad_dtype)
+            if new_sharded_grad.dtype == grad_dtype:
+                self.params_sharded_grad = new_sharded_grad.clone()
+            else:
+                self.params_sharded_grad = new_sharded_grad.to(grad_dtype)
         else:
             self.params_sharded_grad.add_(new_sharded_grad)
 
@@ -405,6 +408,7 @@ class FlatParamHandle:
         # sure `params_unsharded_grad` is not deallocated before the reduce-scatter finishes.
         Stream.current(self.device).record_for(self.params_unsharded_grad)
         self.params_unsharded_grad = None
+        del new_sharded_grad
 
         # At this point each param will be sharded again, and we set the grad for each param as a view
         # into the sharded grad.
