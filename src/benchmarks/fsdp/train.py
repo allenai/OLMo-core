@@ -78,6 +78,8 @@ def main(
             on_trace_ready=on_trace_ready,
         )
 
+        print_rank0(torch.cuda.memory_summary())
+
     print_rank0("Starting training...")
     batch_times: deque[float] = deque([], 50)
     with profiler as p:
@@ -86,7 +88,7 @@ def main(
             batch_start = time.monotonic()
 
             # Zero-gradients.
-            optim.zero_grad()
+            optim.zero_grad(set_to_none=True)
 
             # Run forward pass.
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=mixed_precision):
@@ -109,6 +111,9 @@ def main(
                 f"  loss={loss.item():.3f}\n"
                 f"  throughput/seconds_per_batch={batch_time:.3f}",
             )
+
+            if i == 2:
+                print_rank0(torch.cuda.memory_summary())
 
             if p is not None:
                 p.step()
