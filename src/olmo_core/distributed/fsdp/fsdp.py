@@ -657,6 +657,10 @@ class FSDP(Generic[M], nn.Module):
             for handle in self.state.flat_param_handles:
                 handle.reduce_scatter_grads_(grad_reduce_dtype=grad_reduce_dtype)
 
+        with self.state.post_backward_stream(wait_stream=self.state.reduce_stream):
+            for handle in self.state.flat_param_handles:
+                handle.post_reduce_scatter_grads_(grad_reduce_dtype=grad_reduce_dtype)
+
     def _deque_from(self, prefetch_queue: deque[FSDP]) -> Generator[FSDP, None, None]:
         count = 0
         while prefetch_queue and count < self.max_prefetch_count:

@@ -383,18 +383,29 @@ class FlatParamHandle:
 
         # Reduce the unsharded padded grad for all params.
         # NOTE: Only NCCL supports reduce-scatter. So with other backends we use all-reduce.
-        new_sharded_grad: torch.Tensor
         if dist.get_backend() == dist.Backend.NCCL:
             # Get chunks corresponding to each rank.
             grad_chunks = self.params_data.chunk_unsharded(self.params_unsharded_grad)
-            new_sharded_grad = grad_chunks[get_rank(group=self.process_group)]
-            dist.reduce_scatter(new_sharded_grad, grad_chunks, group=self.process_group)
+            dist.reduce_scatter(
+                grad_chunks[get_rank(group=self.process_group)], grad_chunks, group=self.process_group
+            )
         else:
             dist.all_reduce(self.params_unsharded_grad, group=self.process_group)
-            new_sharded_grad = self.params_data.sharded_chunk(self.params_unsharded_grad)
 
-        # Cast the reduce-scatter target to the right dtype, potentially accumulating it into
-        # the existing gradient.
+    def post_reduce_scatter_grads_(
+        self, grad_dtype: Optional[torch.dtype] = None, grad_reduce_dtype: Optional[torch.dtype] = None
+    ):
+        """
+        Finalize sharded gradients after the reduce-scatter.
+        """
+        grad_dtype = grad_dtype or self.params_data.dtype
+        grad_reduce_dtype = grad_reduce_dtype or grad_dtype
+
+        assert self.params_unsharded_grad is not None
+        new_sharded_grad = self.params_data.sharded_chunk(self.params_unsharded_grad)
+
+        # Cast the new sharded gradient to the right dtype, potentially accumulating it into
+        # the existing sharded gradient.
         if self.params_sharded_grad is None:
             if new_sharded_grad.dtype == grad_dtype:
                 self.params_sharded_grad = new_sharded_grad.clone()
@@ -404,8 +415,8 @@ class FlatParamHandle:
             self.params_sharded_grad.add_(new_sharded_grad)
 
         # Deallocate the unsharded padded grad.
-        # NOTE: Since we're potentially using a separate stream for this reduce-scatter, we need to make
-        # sure `params_unsharded_grad` is not deallocated before the reduce-scatter finishes.
+        # NOTE: Since we're potentially using a separate stream here, we need to make
+        # sure `params_unsharded_grad` is not deallocated before this finishes.
         Stream.current(self.device).record_for(self.params_unsharded_grad)
         self.params_unsharded_grad = None
         del new_sharded_grad
