@@ -24,8 +24,10 @@ def run_fsdp_against_non_distributed_model(model_factory, model_data_factory):
     model_data = model_data_factory().to(get_default_device())
 
     model = model_factory().to(get_default_device())
-    fsdp1 = FSDP(model_factory(), _debug_config=FSDPDebugConfig(no_reduce_grads=True))
-    fsdp2 = FSDP(model_factory())
+    fsdp1 = FSDP(
+        model_factory(), free_root_after_forward=True, _debug_config=FSDPDebugConfig(no_reduce_grads=True)
+    )
+    fsdp2 = FSDP(model_factory(), free_root_after_forward=True)
 
     # Ensure params for all models on all ranks match.
     for param in model.parameters():
@@ -109,7 +111,7 @@ def run_fsdp_against_ddp(model_factory, model_data_factory):
     model_data = model_data_factory().to(get_default_device())
 
     ddp_model = DDP(model_factory().to(get_default_device()))
-    fsdp_model = FSDP(model_factory())
+    fsdp_model = FSDP(model_factory(), free_root_after_forward=True)
 
     with fsdp_model.summon_full_params():
         fsdp_model.module.load_state_dict(ddp_model.module.state_dict())
