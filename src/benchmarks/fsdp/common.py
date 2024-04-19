@@ -151,7 +151,7 @@ def build_components(
     config: TransformerConfig,
     batch_size: int,
     num_batches: int = 100,
-    fsdp_wrapper: Literal["torch", "olmo_core"] = "olmo_core",
+    fsdp_wrapper: Literal["torch", "olmo_core", "ddp"] = "olmo_core",
     wrap_blocks: bool = True,
     mixed_precision: bool = True,
     max_prefetch_count: int = 1,
@@ -204,6 +204,11 @@ def build_components(
         )
 
         model.apply(init_function)  # just in case
+    elif fsdp_wrapper == "ddp":
+        from torch.nn.parallel import DistributedDataParallel as DDP
+
+        model.apply(lambda m: init_function(m.to_empty(device=get_default_device())))
+        model = DDP(model)
     else:
         raise NotImplementedError(fsdp_wrapper)
 

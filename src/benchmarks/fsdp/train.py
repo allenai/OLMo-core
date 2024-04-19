@@ -13,6 +13,7 @@ from typing import Literal, Optional
 
 import torch
 import torch.distributed as dist
+from torch.nn.utils import clip_grad_norm_
 
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
@@ -28,7 +29,7 @@ def main(
     config: TransformerConfig,
     batch_size: int,
     num_batches: int = 100,
-    fsdp_wrapper: Literal["torch", "olmo_core"] = "olmo_core",
+    fsdp_wrapper: Literal["torch", "olmo_core", "ddp"] = "olmo_core",
     dry_run: bool = False,
     save_path: Optional[str] = None,
     load_path: Optional[str] = None,
@@ -98,7 +99,10 @@ def main(
             loss.backward()
 
             # Clip gradient norms.
-            model.clip_grad_norm_(1.0)
+            if hasattr(model, "clip_grad_norm_"):
+                model.clip_grad_norm_(1.0)
+            else:
+                clip_grad_norm_(model.parameters(), 1.0)
 
             # Take optimizer step.
             optim.step()
@@ -134,7 +138,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="train.py", description="Train an FSDP model")
     parser.add_argument(
         "--fsdp",
-        choices=["torch", "olmo_core"],
+        choices=["torch", "olmo_core", "ddp"],
         default="olmo_core",
         help="""The FSDP implementation.""",
     )
