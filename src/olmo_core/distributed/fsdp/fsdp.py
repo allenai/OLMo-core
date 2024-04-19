@@ -165,7 +165,7 @@ class FSDP(Generic[M], nn.Module):
                 self.state.forward_prefetch_queue.append(module)
 
         # Unshard parameters in-place.
-        self._unshard()
+        self._unshard(set_grads=self.is_root and torch.is_grad_enabled())
 
         try:
             # Wait for unsharding stream before running the wrapped module's forward pass.
