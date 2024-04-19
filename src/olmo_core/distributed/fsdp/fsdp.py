@@ -74,6 +74,9 @@ class FSDP(Generic[M], nn.Module):
     :param precision: Mixed precision settings.
     :param max_prefetch_count: The number of nested FSDP modules that can be prefetched during the forward
         and backward passes. This is like PyTorch's ``limit_all_gathers`` except it allows more control.
+    :param free_root_after_forward: By default the root FSDP instance keeps its full params in memory after
+        the forward pass when grads are enabled to avoid immediately regathering during the backward
+        pass. Setting this to ``False`` can save some memory at the expense of throughput.
     """
 
     WRAPPED_MODULE_PREFIX = "_fsdp_wrapped_module"
@@ -84,6 +87,7 @@ class FSDP(Generic[M], nn.Module):
         process_group: Optional[dist.ProcessGroup] = None,
         precision: Optional[FSDPPrecision] = None,
         max_prefetch_count: int = 1,
+        free_root_after_forward: bool = False,
         _debug_config: Optional[FSDPDebugConfig] = None,
     ):
         super().__init__()
@@ -91,6 +95,7 @@ class FSDP(Generic[M], nn.Module):
         self.process_group = process_group
         self.precision = precision or FSDPPrecision()
         self.max_prefetch_count = max_prefetch_count
+        self.free_root_after_forward = free_root_after_forward
         self.debug_config = _debug_config or FSDPDebugConfig()
         self.device = get_default_device()
         self.state = FSDPState(device=self.device)
@@ -164,8 +169,12 @@ class FSDP(Generic[M], nn.Module):
             for module in self.state.forward_execution_order:
                 self.state.forward_prefetch_queue.append(module)
 
+        keep_full_params_with_grads = False
+        if self.is_root and not self.free_root_after_forward and torch.is_grad_enabled():
+            keep_full_params_with_grads = True
+
         # Unshard parameters in-place.
-        self._unshard(set_grads=self.is_root and torch.is_grad_enabled())
+        self._unshard(set_grads=keep_full_params_with_grads)
 
         try:
             # Wait for unsharding stream before running the wrapped module's forward pass.
@@ -196,7 +205,7 @@ class FSDP(Generic[M], nn.Module):
         finally:
             # Reshard parameters in-place, except potentially the root instance to avoid
             # immediately regathering in the backward pass.
-            if not (self.is_root and torch.is_grad_enabled()):
+            if not keep_full_params_with_grads:
                 self._reshard()
 
         if self.is_root:
