@@ -196,7 +196,7 @@ class FSDP(Generic[M], nn.Module):
         finally:
             # Reshard parameters in-place, except potentially the root instance to avoid
             # immediately regathering in the backward pass.
-            if self.is_root and torch.is_grad_enabled():
+            if not (self.is_root and torch.is_grad_enabled()):
                 self._reshard()
 
         if self.is_root:
