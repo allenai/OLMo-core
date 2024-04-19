@@ -412,7 +412,7 @@ class FlatParamHandle:
             assert self.params_unsharded_grad_reduce is not None
         else:
             assert self.params_unsharded_grad_reduce is not None
-            # Stream.current(self.device).record_for(self.params_unsharded_grad)
+            Stream.current(self.device).record_for(self.params_unsharded_grad)
             Stream.current(self.device).record_for(self.params_unsharded_grad_reduce)
 
         self._ran_pre_reduce_scatter_grads = False
