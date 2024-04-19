@@ -207,8 +207,8 @@ def build_components(
     elif fsdp_wrapper == "ddp":
         from torch.nn.parallel import DistributedDataParallel as DDP
 
-        model.apply(lambda m: init_function(m.to_empty(device=get_default_device())))
-        model = DDP(model, device_ids=[dist.get_rank()])
+        model = DDP(model.cuda(), device_ids=[dist.get_rank()])
+        model.apply(init_function)
     else:
         raise NotImplementedError(fsdp_wrapper)
 
