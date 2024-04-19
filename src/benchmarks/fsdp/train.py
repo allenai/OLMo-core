@@ -112,7 +112,7 @@ def main(
                 f"  throughput/seconds_per_batch={batch_time:.3f}",
             )
 
-            if i == 2:
+            if profile and i == 2:
                 print_rank0(torch.cuda.memory_summary())
 
             if p is not None:
