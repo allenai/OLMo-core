@@ -390,7 +390,7 @@ class FlatParamHandle:
                 self.params_unsharded_grad_reduce is None
                 or self.params_unsharded_grad_reduce.dtype != grad_reduce_dtype
             ):
-                self.params_unsharded_grad = self.params_unsharded_grad.to(dtype=grad_reduce_dtype)
+                self.params_unsharded_grad_reduce = self.params_unsharded_grad.to(dtype=grad_reduce_dtype)
             else:
                 alloc_storage(self.params_unsharded_grad_reduce, self.params_unsharded_grad.shape)
                 self.params_unsharded_grad_reduce.copy_(self.params_unsharded_grad)
