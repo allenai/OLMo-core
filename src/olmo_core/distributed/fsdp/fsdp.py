@@ -194,8 +194,10 @@ class FSDP(Generic[M], nn.Module):
                 # Register post-backward hooks to reshard the parameters in place and reduce gradients.
                 self._register_post_backward_hooks()
         finally:
-            # Reshard parameters in-place.
-            self._reshard()
+            # Reshard parameters in-place, except potentially the root instance to avoid
+            # immediately regathering in the backward pass.
+            if self.is_root and torch.is_grad_enabled():
+                self._reshard()
 
         if self.is_root:
             # At the end of the first forward pass, execution order is now finalized, meaning
