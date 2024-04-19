@@ -208,7 +208,7 @@ def build_components(
         from torch.nn.parallel import DistributedDataParallel as DDP
 
         model.apply(lambda m: init_function(m.to_empty(device=get_default_device())))
-        model = DDP(model, device_ids=list(range(dist.get_world_size())))
+        model = DDP(model, device_ids=[dist.get_rank()])
     else:
         raise NotImplementedError(fsdp_wrapper)
 
