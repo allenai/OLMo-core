@@ -33,10 +33,10 @@ class FSDPState:
     Backward hooks registered to the output tensors from the wrapped module's forward method.
     """
 
-    post_backward_hook_handles: List[Dict[str, RemovableHandle]] = field(default_factory=list)
+    post_backward_hook_handles: Dict[str, RemovableHandle] = field(default_factory=dict)
     """
-    Post-backward hooks registered to the next autograd function in the graph for each parameter
-    in each flat param handle. The dict keys are parameter FQNs.
+    Post-backward hooks registered to the next autograd function in the graph for each parameter.
+    The keys are parameter FQNs.
     """
 
     lazy_init_complete: bool = False

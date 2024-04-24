@@ -27,17 +27,10 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from torch.autograd import Variable
-from torch.autograd.graph import register_multi_grad_hook
 
 from olmo_core.distributed.tensors import ShardedFlatParameter
 from olmo_core.stream import Stream
-from olmo_core.utils import (
-    apply_to_tensors,
-    gc_cuda,
-    get_all_tensors,
-    get_default_device,
-    get_grad_norm,
-)
+from olmo_core.utils import apply_to_tensors, gc_cuda, get_default_device, get_grad_norm
 
 from .flat_param_handle import FlatParamHandle
 from .state import FSDPState
@@ -208,7 +201,7 @@ class FSDP(Generic[M], nn.Module):
                 self._register_pre_backward_hooks(output)
 
                 # Register post-backward hooks to reshard the parameters in place and reduce gradients.
-                self._register_post_backward_hooks(args, kwargs)
+                self._register_post_backward_hooks()
         finally:
             # Reshard parameters in-place, except potentially the root instance to avoid
             # immediately regathering in the backward pass.
@@ -560,7 +553,6 @@ class FSDP(Generic[M], nn.Module):
             )
 
         self.state.flat_param_handles = handles
-        self.state.post_backward_hook_handles = [{} for _ in handles]
 
         for module_name, module in self._named_children(recurse=lambda m: not isinstance(m, FSDP)):
             if isinstance(module, FSDP):
@@ -635,34 +627,24 @@ class FSDP(Generic[M], nn.Module):
             module._unshard(**kwargs)
 
     @torch.no_grad()
-    def _reshard(self, writeback: bool = False, recurse: bool = False, handle_idx: Optional[int] = None):
+    def _reshard(self, writeback: bool = False, recurse: bool = False):
         """
         Re-shard the wrapped module in place. Should be called after :meth:`unshard()`.
         """
         kwargs = dict(writeback=writeback, recurse=recurse)
 
+        log.debug("Resharding %s (%s)...", self.module.__class__.__name__, id(self.module))
         self.state.params_prefetched = False
 
-        handles: List[FlatParamHandle]
-        if handle_idx is not None:
-            handles = [self.state.flat_param_handles[handle_idx]]
-            log.debug(
-                "Resharding %s (%s) handle %s...", self.module.__class__.__name__, id(self.module), handle_idx
-            )
-        else:
-            handles = self.state.flat_param_handles
-            log.debug("Resharding %s (%s) all handles...", self.module.__class__.__name__, id(self.module))
-
-        for handle in handles:
+        for handle in self.state.flat_param_handles:
             handle.reshard_(writeback=writeback)
 
         if recurse:
-            assert handle_idx is None
             for module in self._fsdp_children():
                 module._reshard(**kwargs)
 
     @torch.no_grad()
-    def _reduce_scatter_grads(self, handle_idx: Optional[int] = None):
+    def _reduce_scatter_grads(self):
         """
         Reduce and scatter unsharded gradients across the process group, leaving only sharded
         gradients in their place. This also checks for cached sharded gradients
@@ -675,35 +657,19 @@ class FSDP(Generic[M], nn.Module):
             )
             return
 
-        handles: List[FlatParamHandle]
-        if handle_idx is not None:
-            handles = [self.state.flat_param_handles[handle_idx]]
-            log.debug(
-                "Reduce-scattering grads for %s (%s) handle %s...",
-                self.module.__class__.__name__,
-                id(self.module),
-                handle_idx,
-            )
-        else:
-            handles = self.state.flat_param_handles
-            log.debug(
-                "Reduce-scattering grads for %s (%s) all handles...",
-                self.module.__class__.__name__,
-                id(self.module),
-            )
-
+        log.debug("Reduce-scattering grads for %s (%s)", self.module.__class__.__name__, id(self.module))
         grad_reduce_dtype: Optional[torch.dtype] = self.precision.reduce_dtype or self.precision.param_dtype
 
         with self.state.post_backward_stream(wait_stream=self.state.current_stream):
-            for handle in handles:
+            for handle in self.state.flat_param_handles:
                 handle.pre_reduce_scatter_grads_(grad_reduce_dtype=grad_reduce_dtype)
 
         with self.state.reduce_stream(wait_stream=self.state.post_backward_stream):
-            for handle in handles:
+            for handle in self.state.flat_param_handles:
                 handle.reduce_scatter_grads_(grad_reduce_dtype=grad_reduce_dtype)
 
         with self.state.post_backward_stream(wait_stream=self.state.reduce_stream):
-            for handle in handles:
+            for handle in self.state.flat_param_handles:
                 handle.post_reduce_scatter_grads_(grad_reduce_dtype=grad_reduce_dtype)
 
     def _deque_from(self, prefetch_queue: deque[FSDP]) -> Generator[FSDP, None, None]:
@@ -763,88 +729,50 @@ class FSDP(Generic[M], nn.Module):
             self.state.pre_backward_hook_handles.clear()
         apply_to_tensors(self._register_pre_backward_hook, output)
 
-    ### Post-backward hooks to reshard parameters in-place and reduce-scatter gradients across
+    ### Post-backward hook to reshard parameters in-place and reduce-scatter gradients across
     ### the process group. Also accumulates any cached sharded gradients.
 
     @torch.no_grad()
-    def _post_backward_hook(self, handle_idx: int, param_name: str, *unused: Any):
+    def _post_backward_hook(self, param_name: str, *unused: Any):
         del unused
-        self.state.post_backward_hook_handles[handle_idx].pop(param_name).remove()
+        self.state.post_backward_hook_handles.pop(param_name).remove()
 
         # If there are still more handles then there are still more post-backward hooks to be ran
         # in the current FSDP node. Only the last handle should do the work.
-        if self.state.post_backward_hook_handles[handle_idx]:
+        if self.state.post_backward_hook_handles:
             return
 
-        log.debug(
-            "Running post-backward hook for %s (%s) handle %s",
-            self.module.__class__.__name__,
-            id(self.module),
-            handle_idx,
-        )
+        log.debug("Running post-backward hook for %s (%s)", self.module.__class__.__name__, id(self.module))
 
         # NOTE: reshard *before* reducing grads to correctly handle precision settings.
-        self._reshard(handle_idx=handle_idx)
-        self._reduce_scatter_grads(handle_idx=handle_idx)
+        self._reshard()
+        self._reduce_scatter_grads()
 
-    @torch.no_grad()
-    def _post_backward_reshard_only_hook(self, handle_idx: int, *unused: Any):
-        del unused
-        for hook_handle in self.state.post_backward_hook_handles[handle_idx].values():
-            hook_handle.remove()
-        self.state.post_backward_hook_handles[handle_idx].clear()
-
-        log.debug(
-            "Running post-backward hook for %s (%s) handle %s",
-            self.module.__class__.__name__,
-            id(self.module),
-            handle_idx,
-        )
-
-        self._reshard(handle_idx=handle_idx)
-
-    def _register_post_backward_hook(self, handle_idx: int, param_name: str, param: ShardedFlatParameter):
+    def _register_post_backward_hook(self, param_name: str, param: ShardedFlatParameter):
         # Force creation of a `grad_fn` in order to register a hook that will run *after* this param's
         # backward pass.
         tmp_param = param.expand_as(param)
         assert tmp_param.grad_fn is not None
         acc_grad = tmp_param.grad_fn.next_functions[0][0]
         assert acc_grad is not None
-        hook_handle = acc_grad.register_hook(partial(self._post_backward_hook, handle_idx, param_name))
-        self.state.post_backward_hook_handles[handle_idx][param_name] = hook_handle
+        handle = acc_grad.register_hook(partial(self._post_backward_hook, param_name))
+        self.state.post_backward_hook_handles[param_name] = handle
 
-    def _register_post_backward_reshard_only_hook(self, handle_idx: int, input_tensors: List[torch.Tensor]):
-        hook_handle = register_multi_grad_hook(
-            input_tensors, partial(self._post_backward_reshard_only_hook, handle_idx)
-        )
-        self.state.post_backward_hook_handles[handle_idx]["all"] = hook_handle
-
-    def _register_post_backward_hooks(self, input_args: Tuple[Any, ...], input_kwargs: Dict[str, Any]):
+    def _register_post_backward_hooks(self):
         log.debug(
             "Registering post-backward hooks for %s (%s)...", self.module.__class__.__name__, id(self.module)
         )
-
-        input_tensors = get_all_tensors(input_args, input_kwargs)
-
-        for handle_idx, handle in enumerate(self.state.flat_param_handles):
-            # Clear existing hooks if there are any.
-            if hook_handles := self.state.post_backward_hook_handles[handle_idx]:
-                log.debug(
-                    "Removing old post-backward hooks for %s (%s) handle %s...",
-                    self.module.__class__.__name__,
-                    id(self.module),
-                    handle_idx,
-                )
-                for hook_handle in hook_handles.values():
-                    hook_handle.remove()
-                hook_handles.clear()
-
-            # Register new hooks.
-            if handle.requires_grad:
-                for param_name, param in zip(handle.param_fqns, handle.params):
-                    self._register_post_backward_hook(handle_idx, param_name, param)
-            else:
-                self._register_post_backward_reshard_only_hook(handle_idx, input_tensors)
+        # Clear existing hooks if there are any.
+        if self.state.post_backward_hook_handles:
+            log.debug(
+                "Removing old post-backward hooks for %s (%s)...", self.module.__class__.__name__, id(self.module)
+            )
+            for handle in self.state.post_backward_hook_handles.values():
+                handle.remove()
+            self.state.post_backward_hook_handles.clear()
+        for param_name, param in self._managed_named_parameters():
+            if param.requires_grad:
+                self._register_post_backward_hook(param_name, param)
 
     @torch.no_grad()
     def _post_backward_final_hook(self):
