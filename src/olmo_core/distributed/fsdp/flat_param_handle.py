@@ -15,7 +15,11 @@ from olmo_core.distributed.tensors import (
     ShardedFlatTensor,
     ShardingSpec,
 )
-from olmo_core.distributed.utils import get_rank, get_world_size
+from olmo_core.distributed.utils import (
+    get_gradient_divide_factor,
+    get_rank,
+    get_world_size,
+)
 from olmo_core.stream import Stream
 from olmo_core.utils import get_default_device
 
@@ -67,9 +71,19 @@ class FlatParamHandle:
 
     requires_grad: bool = True
 
+    pre_reduce_grad_divide_factor: float = 1.0
+
+    post_reduce_grad_divide_factor: float = 1.0
+
     _ran_pre_unshard: bool = False
 
     _ran_pre_reduce_scatter_grads: bool = False
+
+    def __post_init__(self):
+        # TODO: handle hybrid sharding
+        data_parallel_world_size = get_world_size(self.process_group)
+        self.pre_reduce_grad_divide_factor = get_gradient_divide_factor(data_parallel_world_size)
+        self.post_reduce_grad_divide_factor = data_parallel_world_size / self.pre_reduce_grad_divide_factor
 
     @classmethod
     def shard_params(
@@ -361,6 +375,9 @@ class FlatParamHandle:
             Stream.current(self.device).record_for(self.params_unsharded_grad)
             self.params_unsharded_grad = self.params_unsharded_grad.to(dtype=grad_reduce_dtype)
 
+        if self.pre_reduce_grad_divide_factor > 1.0:
+            self.params_unsharded_grad.div_(self.pre_reduce_grad_divide_factor)
+
     def reduce_scatter_grads_(
         self, grad_dtype: Optional[torch.dtype] = None, grad_reduce_dtype: Optional[torch.dtype] = None
     ):
@@ -394,6 +411,8 @@ class FlatParamHandle:
         else:
             dist.all_reduce(self.params_unsharded_grad, group=self.process_group)
 
+        # TODO: handle hybrid sharding
+
     def post_reduce_scatter_grads_(
         self, grad_dtype: Optional[torch.dtype] = None, grad_reduce_dtype: Optional[torch.dtype] = None
     ):
@@ -407,6 +426,8 @@ class FlatParamHandle:
         grad_reduce_dtype = grad_reduce_dtype or grad_dtype
 
         new_sharded_grad = self.params_data.sharded_chunk(self.params_unsharded_grad)
+        if self.post_reduce_grad_divide_factor > 1.0:
+            new_sharded_grad.div_(self.post_reduce_grad_divide_factor)
 
         # Cast the new sharded gradient to the right dtype, potentially accumulating it into
         # the existing sharded gradient.

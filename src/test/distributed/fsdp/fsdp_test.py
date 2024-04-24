@@ -90,7 +90,9 @@ def run_fsdp_against_non_distributed_model(model_factory, model_data_factory):
         with torch.no_grad():
             dist.all_reduce(param1.grad, group=fsdp1.process_group)
             torch.testing.assert_close(
-                param2.sharded_chunk(param1.grad), param2.grad, msg=lambda m: f"On gradient for '{name}'. {m}"
+                param2.sharded_chunk(param1.grad) / dist.get_world_size(),
+                param2.grad,
+                msg=lambda m: f"On gradient for '{name}'. {m}",
             )
 
 
@@ -152,10 +154,9 @@ def run_fsdp_against_ddp(model_factory, model_data_factory):
         assert param.is_sharded
         assert param.grad is not None
         with torch.no_grad():
-            # NOTE: DDP *averages* gradients over ranks, FSDP just takes the sum.
             torch.testing.assert_close(
                 param.grad,
-                param.sharded_chunk(expected_grads[name] * dist.get_world_size()),
+                param.sharded_chunk(expected_grads[name]),
                 msg=lambda m: f"On gradient for '{name}'. {m}",
             )
 
@@ -218,7 +219,7 @@ def run_fsdp_with_gradient_accumulation(model_factory, model_data_factory):
         with torch.no_grad():
             torch.testing.assert_close(
                 param.grad,
-                param.sharded_chunk(expected_grads[name] * dist.get_world_size()),
+                param.sharded_chunk(expected_grads[name]),
                 msg=lambda m: f"On gradient for '{name}'. {m}",
             )
 
