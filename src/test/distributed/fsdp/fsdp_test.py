@@ -379,7 +379,7 @@ def test_nested_fsdp_api(backend, tiny_model_factory, tiny_model_data_factory):
     )
 
 
-def run_fsdp_with_frozen_params():
+def run_fsdp_with_mix_of_frozen_and_non_frozen_params():
     class Model(nn.Module):
         def __init__(self):
             super().__init__()
@@ -401,11 +401,16 @@ def run_fsdp_with_frozen_params():
     assert fsdp.module.ff1.weight.grad is not None
     assert fsdp.module.ff1.bias.grad is not None
 
+    # Make sure every param has been resharded.
+    for name, param in fsdp.module.named_parameters():
+        assert isinstance(param, ShardedFlatParameter)
+        assert param.is_sharded, f"param {name} has not been resharded!"
+
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_fsdp_with_frozen_params(backend):
+def test_fsdp_with_mix_of_frozen_and_non_frozen_params(backend):
     run_distributed_test(
-        run_fsdp_with_frozen_params,
+        run_fsdp_with_mix_of_frozen_and_non_frozen_params,
         backend=backend,
         start_method="spawn",
     )
