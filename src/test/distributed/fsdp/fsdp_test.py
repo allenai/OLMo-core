@@ -399,16 +399,37 @@ def run_fsdp_with_mix_of_frozen_and_non_frozen_params(case: int):
 
     fsdp = FSDP(Model())
 
+    # Check handles.
+    assert len(fsdp.state.flat_param_handles) == 2
+    assert fsdp.state.flat_param_handles[0].requires_grad
+    assert not fsdp.state.flat_param_handles[1].requires_grad
+
+    # Check params.
+    for name, param in fsdp.named_parameters():
+        assert param.grad is None, f"param {param} already has a grad!"
+
     # Run forward pass
     loss = fsdp(torch.rand(2, 8, device=fsdp.device)).sum()
 
     # Trigger backward pass.
     loss.backward()
-    assert fsdp.module.ff1.weight.grad is not None
-    assert fsdp.module.ff1.bias.grad is not None
+
+    # Check grads.
+    if case == 1:
+        assert fsdp.module.ff1.weight.grad is None
+        assert fsdp.module.ff1.bias.grad is None
+        assert fsdp.module.ff2.weight.grad is not None
+        assert fsdp.module.ff2.bias.grad is not None
+    elif case == 2:
+        assert fsdp.module.ff1.weight.grad is not None
+        assert fsdp.module.ff1.bias.grad is not None
+        assert fsdp.module.ff2.weight.grad is None
+        assert fsdp.module.ff2.bias.grad is None
+    else:
+        raise NotImplementedError
 
     # Make sure every param has been resharded.
-    for name, param in fsdp.module.named_parameters():
+    for name, param in fsdp.named_parameters():
         assert isinstance(param, ShardedFlatParameter)
         assert param.is_sharded, f"param {name} has not been resharded!"
 
@@ -418,6 +439,69 @@ def run_fsdp_with_mix_of_frozen_and_non_frozen_params(case: int):
 def test_fsdp_with_mix_of_frozen_and_non_frozen_params(backend, case):
     run_distributed_test(
         run_fsdp_with_mix_of_frozen_and_non_frozen_params,
+        backend=backend,
+        start_method="spawn",
+        func_args=(case,),
+    )
+
+
+def run_fsdp_with_frozen_fsdp_child(case: int):
+    class Model(nn.Module):
+        def __init__(self):
+            super().__init__()
+            ff1 = nn.Linear(8, 8)
+            ff2 = nn.Linear(8, 8)
+
+            if case == 1:
+                ff1.weight.requires_grad = False
+                ff1.bias.requires_grad = False
+                ff1 = FSDP(ff1)
+            elif case == 2:
+                ff2.weight.requires_grad = False
+                ff2.bias.requires_grad = False
+                ff2 = FSDP(ff2)
+            else:
+                raise NotImplementedError
+
+            self.ff1 = ff1
+            self.ff2 = ff2
+
+        def forward(self, x):
+            return self.ff2(self.ff1(x))
+
+    fsdp = FSDP(Model())
+
+    # Run forward pass
+    loss = fsdp(torch.rand(2, 8, device=fsdp.device)).sum()
+
+    # Trigger backward pass.
+    loss.backward()
+
+    # Check grads.
+    if case == 1:
+        assert fsdp.module.ff1.weight.grad is None
+        assert fsdp.module.ff1.bias.grad is None
+        assert fsdp.module.ff2.weight.grad is not None
+        assert fsdp.module.ff2.bias.grad is not None
+    elif case == 2:
+        assert fsdp.module.ff1.weight.grad is not None
+        assert fsdp.module.ff1.bias.grad is not None
+        assert fsdp.module.ff2.weight.grad is None
+        assert fsdp.module.ff2.bias.grad is None
+    else:
+        raise NotImplementedError
+
+    # Make sure every param has been resharded.
+    for name, param in fsdp.named_parameters():
+        assert isinstance(param, ShardedFlatParameter)
+        assert param.is_sharded, f"param {name} has not been resharded!"
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("case", (1, 2))
+def test_fsdp_with_frozen_fsdp_child(backend, case):
+    run_distributed_test(
+        run_fsdp_with_frozen_fsdp_child,
         backend=backend,
         start_method="spawn",
         func_args=(case,),

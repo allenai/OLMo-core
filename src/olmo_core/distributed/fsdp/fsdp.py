@@ -714,8 +714,9 @@ class FSDP(Generic[M], nn.Module):
             self.state.backward_execution_order.append(self)
 
     def _register_pre_backward_hook(self, x: torch.Tensor):
-        handle = x.register_hook(self._pre_backward_hook)
-        self.state.pre_backward_hook_handles.append(handle)
+        if x.requires_grad:
+            hook_handle = x.register_hook(self._pre_backward_hook)
+            self.state.pre_backward_hook_handles.append(hook_handle)
 
     def _register_pre_backward_hooks(self, output: Any):
         log.debug("Registering pre-backward hooks for %s (%s)...", self.module.__class__.__name__, id(self.module))
@@ -724,8 +725,8 @@ class FSDP(Generic[M], nn.Module):
             log.debug(
                 "Removing old pre-backward hooks for %s (%s)...", self.module.__class__.__name__, id(self.module)
             )
-            for handle in self.state.pre_backward_hook_handles:
-                handle.remove()
+            for hook_handle in self.state.pre_backward_hook_handles:
+                hook_handle.remove()
             self.state.pre_backward_hook_handles.clear()
         apply_to_tensors(self._register_pre_backward_hook, output)
 
@@ -742,7 +743,7 @@ class FSDP(Generic[M], nn.Module):
         if self.state.post_backward_hook_handles:
             return
 
-        log.debug("Running post-backward hook for %s (%s)", self.module.__class__.__name__, id(self.module))
+        log.debug("Running post-backward hook for %s (%s)...", self.module.__class__.__name__, id(self.module))
 
         # NOTE: reshard *before* reducing grads to correctly handle precision settings.
         self._reshard()
