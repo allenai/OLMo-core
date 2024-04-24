@@ -253,7 +253,7 @@ class FlatParamHandle:
             self.params_sharded_data_lp.copy_(self.params_data.sharded_data)
 
         # Initialize unsharded, padded gradient.
-        if set_grads and self.params_unsharded_grad is None:
+        if set_grads and self.requires_grad and self.params_unsharded_grad is None:
             self.params_unsharded_grad = torch.zeros_like(all_params_unsharded_data)
 
     def unshard_(
@@ -318,7 +318,7 @@ class FlatParamHandle:
 
             param.unshard_(unsharded_data, dtype=dtype, rank0_only=rank0_only)
 
-            if set_grads:
+            if set_grads and self.requires_grad:
                 if param.grad is None and self.params_sharded_grad is not None:
                     self.params_sharded_grad = None
                 assert self.params_unsharded_grad is not None
@@ -368,6 +368,7 @@ class FlatParamHandle:
         parameter as a view into the new sharded grad.
         """
         if not self.requires_grad or self.params_unsharded_grad is None:
+            self._ran_pre_reduce_scatter_grads = False
             return
 
         if not self._ran_pre_reduce_scatter_grads:
@@ -398,10 +399,12 @@ class FlatParamHandle:
         """
         Finalize sharded gradients after the reduce-scatter.
         """
+        if not self.requires_grad or self.params_unsharded_grad is None:
+            return
+
         grad_dtype = grad_dtype or self.params_data.dtype
         grad_reduce_dtype = grad_reduce_dtype or grad_dtype
 
-        assert self.params_unsharded_grad is not None
         new_sharded_grad = self.params_data.sharded_chunk(self.params_unsharded_grad)
 
         # Cast the new sharded gradient to the right dtype, potentially accumulating it into

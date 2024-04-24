@@ -3,7 +3,7 @@ import gc
 import os
 import time
 from enum import Enum
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, List
 
 import numpy as np
 import torch
@@ -115,6 +115,22 @@ def apply_to_tensors(fn, container: Any) -> None:
     elif hasattr(container, "__next__"):
         for x in container:
             apply_to_tensors(fn, x)
+
+
+def get_all_tensors(*args, **kwargs) -> List[torch.Tensor]:
+    """
+    Recursively attract all tensors within the given arguments.
+    """
+    tensors: List[torch.Tensor] = []
+
+    def _capture(tensor: torch.Tensor):
+        nonlocal tensors
+        tensors.append(tensor)
+
+    apply_to_tensors(_capture, args)
+    apply_to_tensors(_capture, kwargs)
+
+    return tensors
 
 
 def get_default_device() -> torch.device:
