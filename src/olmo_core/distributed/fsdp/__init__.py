@@ -77,6 +77,6 @@ API Reference
 -------------
 """
 
-from .fsdp import FSDP, FSDPDebugConfig, FSDPPrecision
+from .fsdp import FSDP, FSDPDebugConfig, FSDPPrecision, FSDPShardingStrategy
 
-__all__ = ["FSDP", "FSDPDebugConfig", "FSDPPrecision"]
+__all__ = ["FSDP", "FSDPDebugConfig", "FSDPPrecision", "FSDPShardingStrategy"]

@@ -66,6 +66,14 @@ class FlatParamHandle:
     """
 
     process_group: Optional[dist.ProcessGroup] = None
+    """
+    Process group containing all shards.
+    """
+
+    inter_group_process_group: Optional[dist.ProcessGroup] = None
+    """
+    Process group for between-group reductions with hybrid sharding.
+    """
 
     device: Optional[torch.device] = None
 
@@ -80,8 +88,9 @@ class FlatParamHandle:
     _ran_pre_reduce_scatter_grads: bool = False
 
     def __post_init__(self):
-        # TODO: handle hybrid sharding
         data_parallel_world_size = get_world_size(self.process_group)
+        if self.inter_group_process_group is not None:
+            data_parallel_world_size *= self.inter_group_process_group.size()
         self.pre_reduce_grad_divide_factor = get_gradient_divide_factor(data_parallel_world_size)
         self.post_reduce_grad_divide_factor = data_parallel_world_size / self.pre_reduce_grad_divide_factor
 
@@ -91,6 +100,7 @@ class FlatParamHandle:
         params: Iterable[nn.Parameter],
         param_fqns: Iterable[str],
         process_group: Optional[dist.ProcessGroup] = None,
+        inter_group_process_group: Optional[dist.ProcessGroup] = None,
         device: Optional[torch.device] = None,
     ) -> FlatParamHandle:
         """
@@ -239,6 +249,7 @@ class FlatParamHandle:
             param_fqns=list(param_fqns),
             params_data=params_data,
             process_group=process_group,
+            inter_group_process_group=inter_group_process_group,
             device=device,
             requires_grad=requires_grad,
         )
@@ -411,8 +422,6 @@ class FlatParamHandle:
         else:
             dist.all_reduce(self.params_unsharded_grad, group=self.process_group)
 
-        # TODO: handle hybrid sharding
-
     def post_reduce_scatter_grads_(
         self, grad_dtype: Optional[torch.dtype] = None, grad_reduce_dtype: Optional[torch.dtype] = None
     ):
@@ -426,6 +435,10 @@ class FlatParamHandle:
         grad_reduce_dtype = grad_reduce_dtype or grad_dtype
 
         new_sharded_grad = self.params_data.sharded_chunk(self.params_unsharded_grad)
+
+        if self.inter_group_process_group is not None:
+            dist.all_reduce(new_sharded_grad, group=self.inter_group_process_group)
+
         if self.post_reduce_grad_divide_factor > 1.0:
             new_sharded_grad.div_(self.post_reduce_grad_divide_factor)
 
