@@ -379,14 +379,20 @@ def test_nested_fsdp_api(backend, tiny_model_factory, tiny_model_data_factory):
     )
 
 
-def run_fsdp_with_mix_of_frozen_and_non_frozen_params():
+def run_fsdp_with_mix_of_frozen_and_non_frozen_params(case: int):
     class Model(nn.Module):
         def __init__(self):
             super().__init__()
             self.ff1 = nn.Linear(8, 8)
             self.ff2 = nn.Linear(8, 8)
-            self.ff2.weight.requires_grad = False
-            self.ff2.bias.requires_grad = False
+            if case == 1:
+                self.ff1.weight.requires_grad = False
+                self.ff1.bias.requires_grad = False
+            elif case == 2:
+                self.ff2.weight.requires_grad = False
+                self.ff2.bias.requires_grad = False
+            else:
+                raise NotImplementedError
 
         def forward(self, x):
             return self.ff2(self.ff1(x))
@@ -408,11 +414,13 @@ def run_fsdp_with_mix_of_frozen_and_non_frozen_params():
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_fsdp_with_mix_of_frozen_and_non_frozen_params(backend):
+@pytest.mark.parametrize("case", (1, 2))
+def test_fsdp_with_mix_of_frozen_and_non_frozen_params(backend, case):
     run_distributed_test(
         run_fsdp_with_mix_of_frozen_and_non_frozen_params,
         backend=backend,
         start_method="spawn",
+        func_args=(case,),
     )
 
 
