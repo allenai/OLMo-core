@@ -117,8 +117,8 @@ def main(
             print_rank0(
                 f"Batch [{i+1}/{num_batches}]:\n"
                 f"  loss={loss.item():.3f}\n"
-                f"  throughput/seconds_per_batch={batch_time:.3f}\n",
-                f"  grad/total_norm={norm_str}",
+                f"  throughput/seconds_per_batch={batch_time:.3f}\n"
+                f"  grad/total_norm={norm_str}"
             )
 
             if profile and i == 2:
