@@ -390,24 +390,32 @@ class FSDP(Generic[M], nn.Module):
         if not self.is_root:
             raise RuntimeError("`clip_grad_norm_()` should only be called on the root FSDP instance")
 
-        sharded_params: Set[ShardedFlatParameter] = set()
-        nonsharded_params: Set[nn.Parameter] = set()
         grads: List[torch.Tensor] = []
+        sharded_grads: List[torch.Tensor] = []
+        for fsdp_module in self._fsdp_modules():
+            for handle in fsdp_module.state.flat_param_handles:
+                if not handle.requires_grad:
+                    continue
+
+                sharded_grad = handle.params_sharded_unpadded_grad
+                assert sharded_grad is not None
+                sharded_grads.append(sharded_grad)
+                grads.append(sharded_grad)
+
+        nonsharded_grads: List[torch.Tensor] = []
         for param in self.parameters():
             if param.grad is None or param.grad.numel() == 0:
                 continue
 
-            if isinstance(param, ShardedFlatParameter):
-                sharded_params.add(param)
-            else:
-                nonsharded_params.add(param)
-            grads.append(param.grad)
+            if not isinstance(param, ShardedFlatParameter):
+                nonsharded_grads.append(param.grad)
+                grads.append(param.grad)
 
         if not grads:
             raise RuntimeError("`clip_grad_norm_()` was called but there are no gradients to clip!")
 
-        local_sharded_norm = get_grad_norm(sharded_params, norm_type).to(self.device)
-        global_nonsharded_norm = get_grad_norm(nonsharded_params, norm_type).to(self.device)
+        local_sharded_norm = get_grad_norm(sharded_grads, norm_type).to(self.device)
+        global_nonsharded_norm = get_grad_norm(nonsharded_grads, norm_type).to(self.device)
 
         # Reconstruct total gradient norm.
         total_norm: torch.Tensor
@@ -561,6 +569,15 @@ class FSDP(Generic[M], nn.Module):
         for _, module in self._named_children(recurse=recurse or (lambda m: not isinstance(m, FSDP))):
             if isinstance(module, FSDP):
                 yield module
+
+    def _fsdp_modules(self) -> Generator[FSDP, None, None]:
+        """
+        Returns a generator over all child FSDP instances of this module.
+
+        :recurse: Whether to recurse into each FSDP child.
+        """
+        yield self
+        yield from self._fsdp_children(recurse=True)
 
     @torch.no_grad()
     def _shard(self):

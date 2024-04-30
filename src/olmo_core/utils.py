@@ -140,14 +140,27 @@ def seed_all(seed: int):
     torch.cuda.manual_seed_all(seed)
 
 
-def get_grad_norm(params: Iterable[nn.Parameter], norm_type: float) -> torch.Tensor:
+def get_grad_norm_from_params(params: Iterable[nn.Parameter], norm_type: float) -> torch.Tensor:
     """
     Return the gradient norm of parameters, where the gradients are viewed as a single vector.
 
     The returned norm is in FP32 even if parameters/gradients are in a low precision. This is because the downstream
-    use of this return value is a reduction across ranks.
+    use of this return value is usually a reduction across ranks.
     """
     grads = [param.grad for param in params if param.grad is not None]
+    return get_grad_norm(grads, norm_type)
+
+
+def get_grad_norm(grads: Iterable[torch.Tensor], norm_type: float) -> torch.Tensor:
+    """
+    Return the gradient norm over an iterable of gradients, where the gradients are viewed as a single vector.
+
+    The returned norm is in FP32 even if gradients are in a low precision. This is because the downstream
+    use of this return value is usually a reduction across ranks.
+    """
+    if not isinstance(grads, list):
+        grads = list(grads)
+
     if not grads:
         return torch.tensor(0.0)
 

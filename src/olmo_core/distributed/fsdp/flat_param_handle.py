@@ -87,6 +87,14 @@ class FlatParamHandle:
 
     _ran_pre_reduce_scatter_grads: bool = False
 
+    @property
+    def params_sharded_unpadded_grad(self) -> Optional[torch.Tensor]:
+        if self.params_sharded_grad is None:
+            return None
+        else:
+            end_offset = sum(param.sharded_numel for param in self.params)
+            return self.params_sharded_grad[:end_offset]
+
     def __post_init__(self):
         data_parallel_world_size = get_world_size(self.process_group)
         if self.inter_group_process_group is not None:
