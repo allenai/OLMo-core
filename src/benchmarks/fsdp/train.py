@@ -103,9 +103,9 @@ def main(
             norm: Optional[torch.Tensor] = None
             if max_grad_norm is not None:
                 if hasattr(model, "clip_grad_norm_"):
-                    norm = model.clip_grad_norm_(1.0)
+                    norm = model.clip_grad_norm_(max_grad_norm)
                 else:
-                    norm = clip_grad_norm_(model.parameters(), 1.0)
+                    norm = clip_grad_norm_(model.parameters(), max_grad_norm)
 
             # Take optimizer step.
             optim.step()
