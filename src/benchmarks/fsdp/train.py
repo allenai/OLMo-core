@@ -13,6 +13,7 @@ from typing import Literal, Optional
 
 import torch
 import torch.distributed as dist
+from torch.nn.utils import clip_grad_norm_
 
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
@@ -28,13 +29,14 @@ def main(
     config: TransformerConfig,
     batch_size: int,
     num_batches: int = 100,
-    fsdp_wrapper: Literal["torch", "olmo_core"] = "olmo_core",
+    fsdp_wrapper: Literal["torch", "olmo_core", "ddp"] = "olmo_core",
     dry_run: bool = False,
     save_path: Optional[str] = None,
     load_path: Optional[str] = None,
     mixed_precision: bool = True,
     profile: bool = False,
     trace_output: str = "/tmp/traces/olmo_core.chrome_trace.json.gz",
+    max_grad_norm: Optional[float] = None,
     **kwargs,
 ):
     model, optim, dataloader = build_components(
@@ -98,7 +100,12 @@ def main(
             loss.backward()
 
             # Clip gradient norms.
-            model.clip_grad_norm_(1.0)
+            norm: Optional[torch.Tensor] = None
+            if max_grad_norm is not None:
+                if hasattr(model, "clip_grad_norm_"):
+                    norm = model.clip_grad_norm_(max_grad_norm)
+                else:
+                    norm = clip_grad_norm_(model.parameters(), max_grad_norm)
 
             # Take optimizer step.
             optim.step()
@@ -106,13 +113,15 @@ def main(
             batch_time = time.monotonic() - batch_start
             if i > 0:
                 batch_times.append(batch_time)
+            norm_str = f"{norm.item():.3f}" if norm is not None else "n/a"
             print_rank0(
                 f"Batch [{i+1}/{num_batches}]:\n"
                 f"  loss={loss.item():.3f}\n"
-                f"  throughput/seconds_per_batch={batch_time:.3f}",
+                f"  throughput/seconds_per_batch={batch_time:.3f}\n"
+                f"  grad/total_norm={norm_str}"
             )
 
-            if i == 2:
+            if profile and i == 2:
                 print_rank0(torch.cuda.memory_summary())
 
             if p is not None:
@@ -134,7 +143,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="train.py", description="Train an FSDP model")
     parser.add_argument(
         "--fsdp",
-        choices=["torch", "olmo_core"],
+        choices=["torch", "olmo_core", "ddp"],
         default="olmo_core",
         help="""The FSDP implementation.""",
     )
@@ -191,6 +200,10 @@ if __name__ == "__main__":
         default=1,
     )
     parser.add_argument(
+        "--max-grad-norm",
+        type=float,
+    )
+    parser.add_argument(
         "--lr",
         type=float,
         default=1e-4,
@@ -237,5 +250,6 @@ if __name__ == "__main__":
         mixed_precision=mixed_precision,
         max_prefetch_count=args.max_prefetch_count,
         learning_rate=args.lr,
+        max_grad_norm=args.max_grad_norm,
         seed=args.seed,
     )

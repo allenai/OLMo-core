@@ -76,3 +76,10 @@ def all_gather_object(obj: T, group: Optional[dist.ProcessGroup] = None) -> List
     output_list = [obj] * get_world_size(group)
     dist.all_gather_object(output_list, obj, group=group)
     return output_list
+
+
+def get_gradient_divide_factor(world_size: int) -> float:
+    factor: int = 1
+    while world_size % factor == 0 and world_size / factor > factor:
+        factor *= 2
+    return float(factor)

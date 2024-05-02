@@ -24,8 +24,10 @@ def run_fsdp_against_non_distributed_model(model_factory, model_data_factory):
     model_data = model_data_factory().to(get_default_device())
 
     model = model_factory().to(get_default_device())
-    fsdp1 = FSDP(model_factory(), _debug_config=FSDPDebugConfig(no_reduce_grads=True))
-    fsdp2 = FSDP(model_factory())
+    fsdp1 = FSDP(
+        model_factory(), free_root_after_forward=True, _debug_config=FSDPDebugConfig(no_reduce_grads=True)
+    )
+    fsdp2 = FSDP(model_factory(), free_root_after_forward=True)
 
     # Ensure params for all models on all ranks match.
     for param in model.parameters():
@@ -88,7 +90,9 @@ def run_fsdp_against_non_distributed_model(model_factory, model_data_factory):
         with torch.no_grad():
             dist.all_reduce(param1.grad, group=fsdp1.process_group)
             torch.testing.assert_close(
-                param2.sharded_chunk(param1.grad), param2.grad, msg=lambda m: f"On gradient for '{name}'. {m}"
+                param2.sharded_chunk(param1.grad) / dist.get_world_size(),
+                param2.grad,
+                msg=lambda m: f"On gradient for '{name}'. {m}",
             )
 
 
@@ -109,7 +113,7 @@ def run_fsdp_against_ddp(model_factory, model_data_factory):
     model_data = model_data_factory().to(get_default_device())
 
     ddp_model = DDP(model_factory().to(get_default_device()))
-    fsdp_model = FSDP(model_factory())
+    fsdp_model = FSDP(model_factory(), free_root_after_forward=True)
 
     with fsdp_model.summon_full_params():
         fsdp_model.module.load_state_dict(ddp_model.module.state_dict())
@@ -150,10 +154,9 @@ def run_fsdp_against_ddp(model_factory, model_data_factory):
         assert param.is_sharded
         assert param.grad is not None
         with torch.no_grad():
-            # NOTE: DDP *averages* gradients over ranks, FSDP just takes the sum.
             torch.testing.assert_close(
                 param.grad,
-                param.sharded_chunk(expected_grads[name] * dist.get_world_size()),
+                param.sharded_chunk(expected_grads[name]),
                 msg=lambda m: f"On gradient for '{name}'. {m}",
             )
 
@@ -216,7 +219,7 @@ def run_fsdp_with_gradient_accumulation(model_factory, model_data_factory):
         with torch.no_grad():
             torch.testing.assert_close(
                 param.grad,
-                param.sharded_chunk(expected_grads[name] * dist.get_world_size()),
+                param.sharded_chunk(expected_grads[name]),
                 msg=lambda m: f"On gradient for '{name}'. {m}",
             )
 
@@ -377,14 +380,92 @@ def test_nested_fsdp_api(backend, tiny_model_factory, tiny_model_data_factory):
     )
 
 
-def run_fsdp_with_frozen_params():
+def run_fsdp_with_mix_of_frozen_and_non_frozen_params(case: int):
     class Model(nn.Module):
         def __init__(self):
             super().__init__()
             self.ff1 = nn.Linear(8, 8)
             self.ff2 = nn.Linear(8, 8)
-            self.ff2.weight.requires_grad = False
-            self.ff2.bias.requires_grad = False
+            if case == 1:
+                self.ff1.weight.requires_grad = False
+                self.ff1.bias.requires_grad = False
+            elif case == 2:
+                self.ff2.weight.requires_grad = False
+                self.ff2.bias.requires_grad = False
+            else:
+                raise NotImplementedError
+
+        def forward(self, x):
+            return self.ff2(self.ff1(x))
+
+    fsdp = FSDP(Model())
+
+    # Check handles.
+    assert len(fsdp.state.flat_param_handles) == 2
+    assert fsdp.state.flat_param_handles[0].requires_grad
+    assert not fsdp.state.flat_param_handles[1].requires_grad
+
+    # Check params.
+    for name, param in fsdp.named_parameters():
+        assert param.grad is None, f"param {param} already has a grad!"
+
+    # Run forward pass
+    loss = fsdp(torch.rand(2, 8, device=fsdp.device)).sum()
+
+    # Trigger backward pass.
+    loss.backward()
+
+    # Check grads.
+    if case == 1:
+        assert fsdp.module.ff1.weight.grad is None
+        assert fsdp.module.ff1.bias.grad is None
+        assert fsdp.module.ff2.weight.grad is not None
+        assert fsdp.module.ff2.bias.grad is not None
+    elif case == 2:
+        assert fsdp.module.ff1.weight.grad is not None
+        assert fsdp.module.ff1.bias.grad is not None
+        assert fsdp.module.ff2.weight.grad is None
+        assert fsdp.module.ff2.bias.grad is None
+    else:
+        raise NotImplementedError
+
+    # Make sure every param has been resharded.
+    for name, param in fsdp.named_parameters():
+        assert isinstance(param, ShardedFlatParameter)
+        assert param.is_sharded, f"param {name} has not been resharded!"
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("case", (1, 2))
+def test_fsdp_with_mix_of_frozen_and_non_frozen_params(backend, case):
+    run_distributed_test(
+        run_fsdp_with_mix_of_frozen_and_non_frozen_params,
+        backend=backend,
+        start_method="spawn",
+        func_args=(case,),
+    )
+
+
+def run_fsdp_with_frozen_fsdp_child(case: int):
+    class Model(nn.Module):
+        def __init__(self):
+            super().__init__()
+            ff1 = nn.Linear(8, 8)
+            ff2 = nn.Linear(8, 8)
+
+            if case == 1:
+                ff1.weight.requires_grad = False
+                ff1.bias.requires_grad = False
+                ff1 = FSDP(ff1)
+            elif case == 2:
+                ff2.weight.requires_grad = False
+                ff2.bias.requires_grad = False
+                ff2 = FSDP(ff2)
+            else:
+                raise NotImplementedError
+
+            self.ff1 = ff1
+            self.ff2 = ff2
 
         def forward(self, x):
             return self.ff2(self.ff1(x))
@@ -396,16 +477,35 @@ def run_fsdp_with_frozen_params():
 
     # Trigger backward pass.
     loss.backward()
-    assert fsdp.module.ff1.weight.grad is not None
-    assert fsdp.module.ff1.bias.grad is not None
+
+    # Check grads.
+    if case == 1:
+        assert fsdp.module.ff1.weight.grad is None
+        assert fsdp.module.ff1.bias.grad is None
+        assert fsdp.module.ff2.weight.grad is not None
+        assert fsdp.module.ff2.bias.grad is not None
+    elif case == 2:
+        assert fsdp.module.ff1.weight.grad is not None
+        assert fsdp.module.ff1.bias.grad is not None
+        assert fsdp.module.ff2.weight.grad is None
+        assert fsdp.module.ff2.bias.grad is None
+    else:
+        raise NotImplementedError
+
+    # Make sure every param has been resharded.
+    for name, param in fsdp.named_parameters():
+        assert isinstance(param, ShardedFlatParameter)
+        assert param.is_sharded, f"param {name} has not been resharded!"
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_fsdp_with_frozen_params(backend):
+@pytest.mark.parametrize("case", (1, 2))
+def test_fsdp_with_frozen_fsdp_child(backend, case):
     run_distributed_test(
-        run_fsdp_with_frozen_params,
+        run_fsdp_with_frozen_fsdp_child,
         backend=backend,
         start_method="spawn",
+        func_args=(case,),
     )
 
 

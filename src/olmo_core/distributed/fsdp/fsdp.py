@@ -21,16 +21,24 @@ from typing import (
     Type,
     TypeVar,
     Union,
+    cast,
 )
 
 import torch
 import torch.distributed as dist
 import torch.nn as nn
 from torch.autograd import Variable
+from torch.distributed.device_mesh import DeviceMesh
 
 from olmo_core.distributed.tensors import ShardedFlatParameter
 from olmo_core.stream import Stream
-from olmo_core.utils import apply_to_tensors, gc_cuda, get_default_device, get_grad_norm
+from olmo_core.utils import (
+    StrEnum,
+    apply_to_tensors,
+    gc_cuda,
+    get_default_device,
+    get_grad_norm,
+)
 
 from .flat_param_handle import FlatParamHandle
 from .state import FSDPState
@@ -55,6 +63,28 @@ class FSDPPrecision:
     """
 
 
+class FSDPShardingStrategy(StrEnum):
+    """
+    Defines the sharding strategy used by :class:`FSDP`.
+    """
+
+    FULL_SHARD = "FULL_SHARD"
+    """
+    Parameters, gradients, and optimizer states are sharded. For the parameters, this strategy unshards
+    (via all-gather) before the forward, reshards after the forward (except potentially for the root FSDP instance),
+    unshards before the backward computation, and reshards after the backward computation.
+    For gradients, it synchronizes and shards them (via reduce-scatter) after the backward
+    computation. The sharded optimizer states are updated locally per rank.
+    """
+
+    HYBRID_SHARD = "HYBRID_SHARD"
+    """
+    Apply ``FULL_SHARD`` within a process group, and replicate parameters across process groups.
+    This results in reduced communication volume as expensive all-gathers and reduce-scatters are
+    only done within a node, which can be more performant for medium to large-sized models.
+    """
+
+
 @dataclass
 class FSDPDebugConfig:
     no_reduce_grads: bool = False
@@ -70,27 +100,62 @@ class FSDP(Generic[M], nn.Module):
     FSDP, a.k.a. Fully Sharded Data Parallel, a ZeRO-3 model wrapper.
 
     :param module: The module to wrap.
-    :param process_group: The distributed process group.
+    :param process_group: The distributed process group to shard across.
+    :param device_mesh: Mutually exclusive with ``process_group``.
+        This is required for :data:`FSDPShardingStrategy.HYBRID_SHARD`, in which case the first
+        dimension should specify the number of model replicas (hybrid groups), and the second
+        dimension should specify the number of shards within each replica.
+        If you're not using :data:`FSDPShardingStrategy.HYBRID_SHARD` and you specify ``device_mesh``,
+        the process group in the first dimension will be used.
     :param precision: Mixed precision settings.
+    :param sharding_strategy: The sharding strategy to use.
     :param max_prefetch_count: The number of nested FSDP modules that can be prefetched during the forward
         and backward passes. This is like PyTorch's ``limit_all_gathers`` except it allows more control.
+    :param free_root_after_forward: By default the root FSDP instance keeps its full params in memory after
+        the forward pass when grads are enabled to avoid immediately regathering during the backward
+        pass. Setting this to ``False`` can save some memory at the expense of throughput.
     """
 
     WRAPPED_MODULE_PREFIX = "_fsdp_wrapped_module"
+    """
+    The prefix the wrapped module is stored under. In general you don't need to know this as the wrapping
+    FSDP instance behaves like the wrapped module itself for most APIs, and otherwise you should
+    access the wrapped module through the :data:`module` property.
+    """
 
     def __init__(
         self,
         module: M,
         process_group: Optional[dist.ProcessGroup] = None,
+        device_mesh: Optional[DeviceMesh] = None,
         precision: Optional[FSDPPrecision] = None,
+        sharding_strategy: FSDPShardingStrategy = FSDPShardingStrategy.FULL_SHARD,
         max_prefetch_count: int = 1,
+        free_root_after_forward: bool = False,
         _debug_config: Optional[FSDPDebugConfig] = None,
     ):
         super().__init__()
+
+        # Validate process group and device mesh given the sharding strategy.
+        inter_group_process_group: Optional[dist.ProcessGroup] = None
+        if process_group is not None and device_mesh is not None:
+            raise ValueError("'process_group' and 'device_mesh' are mutually exclusive")
+        elif device_mesh is not None:
+            if sharding_strategy == FSDPShardingStrategy.HYBRID_SHARD:
+                inter_group_process_group = cast(dist.ProcessGroup, device_mesh.get_group(mesh_dim=0))
+                process_group = cast(dist.ProcessGroup, device_mesh.get_group(mesh_dim=1))
+            else:
+                process_group = cast(dist.ProcessGroup, device_mesh.get_group(mesh_dim=0))
+        elif sharding_strategy == FSDPShardingStrategy.HYBRID_SHARD:
+            raise ValueError("'device_mesh' is required for `HYBRID_SHARD`")
+
         self._fsdp_wrapped_module = module
         self.process_group = process_group
+        self.inter_group_process_group = inter_group_process_group
         self.precision = precision or FSDPPrecision()
+        self.sharding_strategy = sharding_strategy
         self.max_prefetch_count = max_prefetch_count
+        self.free_root_after_forward = free_root_after_forward
         self.debug_config = _debug_config or FSDPDebugConfig()
         self.device = get_default_device()
         self.state = FSDPState(device=self.device)
@@ -164,8 +229,12 @@ class FSDP(Generic[M], nn.Module):
             for module in self.state.forward_execution_order:
                 self.state.forward_prefetch_queue.append(module)
 
+        keep_full_params_with_grads = False
+        if self.is_root and not self.free_root_after_forward and torch.is_grad_enabled():
+            keep_full_params_with_grads = True
+
         # Unshard parameters in-place.
-        self._unshard()
+        self._unshard(set_grads=keep_full_params_with_grads)
 
         try:
             # Wait for unsharding stream before running the wrapped module's forward pass.
@@ -194,8 +263,10 @@ class FSDP(Generic[M], nn.Module):
                 # Register post-backward hooks to reshard the parameters in place and reduce gradients.
                 self._register_post_backward_hooks()
         finally:
-            # Reshard parameters in-place.
-            self._reshard()
+            # Reshard parameters in-place, except potentially the root instance to avoid
+            # immediately regathering in the backward pass.
+            if not keep_full_params_with_grads:
+                self._reshard()
 
         if self.is_root:
             # At the end of the first forward pass, execution order is now finalized, meaning
@@ -528,7 +599,11 @@ class FSDP(Generic[M], nn.Module):
         if params_with_grads:
             handles.append(
                 FlatParamHandle.shard_params(
-                    params_with_grads, params_with_grads_fqns, process_group=self.process_group, device=self.device
+                    params_with_grads,
+                    params_with_grads_fqns,
+                    process_group=self.process_group,
+                    inter_group_process_group=self.inter_group_process_group,
+                    device=self.device,
                 )
             )
         if params_without_grads:
@@ -537,6 +612,7 @@ class FSDP(Generic[M], nn.Module):
                     params_without_grads,
                     params_without_grads_fqns,
                     process_group=self.process_group,
+                    inter_group_process_group=self.inter_group_process_group,
                     device=self.device,
                 )
             )
@@ -703,8 +779,9 @@ class FSDP(Generic[M], nn.Module):
             self.state.backward_execution_order.append(self)
 
     def _register_pre_backward_hook(self, x: torch.Tensor):
-        handle = x.register_hook(self._pre_backward_hook)
-        self.state.pre_backward_hook_handles.append(handle)
+        if x.requires_grad:
+            hook_handle = x.register_hook(self._pre_backward_hook)
+            self.state.pre_backward_hook_handles.append(hook_handle)
 
     def _register_pre_backward_hooks(self, output: Any):
         log.debug("Registering pre-backward hooks for %s (%s)...", self.module.__class__.__name__, id(self.module))
@@ -713,8 +790,8 @@ class FSDP(Generic[M], nn.Module):
             log.debug(
                 "Removing old pre-backward hooks for %s (%s)...", self.module.__class__.__name__, id(self.module)
             )
-            for handle in self.state.pre_backward_hook_handles:
-                handle.remove()
+            for hook_handle in self.state.pre_backward_hook_handles:
+                hook_handle.remove()
             self.state.pre_backward_hook_handles.clear()
         apply_to_tensors(self._register_pre_backward_hook, output)
 
@@ -731,7 +808,7 @@ class FSDP(Generic[M], nn.Module):
         if self.state.post_backward_hook_handles:
             return
 
-        log.debug("Running post-backward hook for %s (%s)", self.module.__class__.__name__, id(self.module))
+        log.debug("Running post-backward hook for %s (%s)...", self.module.__class__.__name__, id(self.module))
 
         # NOTE: reshard *before* reducing grads to correctly handle precision settings.
         self._reshard()
