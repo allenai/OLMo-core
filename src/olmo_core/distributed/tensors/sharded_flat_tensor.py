@@ -30,8 +30,9 @@ class ShardingSpec:
     The ``(start_idx, end_idx)`` within the full unsharded flattened parameter that each local shard
     within the process group corresponds to.
 
-    This tuple is indexed by rank. For example, the ``(start_idx, end_idx)`` within the full unsharded flattened
-    parameter for the local shard of the current rank is given by ``unsharded_flattened_offsets[dist.get_rank(process_group)]``.
+    This tuple is indexed by rank within the process group.
+    For example, the ``(start_idx, end_idx)`` within the full unsharded flattened parameter for the
+    local shard of the current rank is given by ``unsharded_flattened_offsets[dist.get_rank(process_group)]``.
     """
 
     def __post_init__(self):
@@ -56,6 +57,11 @@ class ShardingSpec:
 
 
 class ShardedFlatTensor(torch.Tensor):
+    """
+    :class:`ShardedFlatTensor` represents a sharded tensor with the assumption that every shard is
+    a contiguous slice into the flattened unsharded tensor.
+    """
+
     SHARDED_FLAT_TENSOR_METADATA_NAME = "__sharded_metadata__"
     SHARDED_FLAT_TENSOR_SHARDING_SPEC_KEY = "sharding_spec"
     SHARDED_FLAT_TENSOR_PROCESS_GROUP_KEY = "process_group"
@@ -104,7 +110,7 @@ class ShardedFlatTensor(torch.Tensor):
         local_flat_padded_tensor = F.pad(self.data.to(dtype or self.dtype), local_padding)
 
         # Pad sharded tensors to the same size.
-        if not rank0_only or get_rank(group=self.process_group) == 0:
+        if not rank0_only or local_rank == 0:
             flat_sharded_tensor_list = [
                 torch.empty(max_numel, device=self.device, dtype=dtype or self.dtype)
                 for _ in range(len(self.sharding_spec.sharded_numels) - 1)
