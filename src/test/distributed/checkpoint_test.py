@@ -111,14 +111,14 @@ def save_and_load_checkpoint_with_different_sharding_spec(dir):
         state_dict_to_save = {
             "x": ShardedFlatParameter.shard(
                 torch.rand(2, 3, device=get_default_device()),
-                ShardingSpec(unsharded_shape=(2, 3), unsharded_flattened_offsets=offsets_to_save),
+                ShardingSpec(unsharded_shape=(2, 3), unsharded_flattened_offsets=(offsets_to_save,)),
             ),
         }
 
         state_dict_to_load = {
             "x": ShardedFlatParameter.shard(
                 torch.rand(2, 3, device=get_default_device()),
-                ShardingSpec(unsharded_shape=(2, 3), unsharded_flattened_offsets=offsets_to_load),
+                ShardingSpec(unsharded_shape=(2, 3), unsharded_flattened_offsets=(offsets_to_load,)),
             ),
         }
 
