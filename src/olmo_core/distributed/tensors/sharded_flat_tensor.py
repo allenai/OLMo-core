@@ -195,6 +195,8 @@ class ShardedFlatTensor(torch.Tensor):
             )
 
         tensor_is_initialized = tensor.device != torch.device("meta")
+        if device is None and tensor_is_initialized:
+            device = tensor.device
 
         if synchronize and tensor_is_initialized:
             if device is not None:
