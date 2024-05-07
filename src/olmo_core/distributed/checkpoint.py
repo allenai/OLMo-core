@@ -472,6 +472,7 @@ class Checkpointer:
         device: Optional[torch.device] = None,
         rank0_only: bool = False,
         no_dist: bool = False,
+        num_threads: Optional[int] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Unshard a checkpoint, returning the full state dict. This can be used in both distributed
@@ -506,7 +507,19 @@ class Checkpointer:
             state_dict[key] = tensor_metadata.materialize_empty(device=device)
 
         # Load the state dict in place.
-        self.load(dir, state_dict, metadata=metadata, no_dist=no_dist or rank0_only)
+        load_kwargs = dict(metadata=metadata, no_dist=no_dist or rank0_only)
+        if num_threads is None or num_threads <= 1:
+            self.load(dir, state_dict, **load_kwargs)
+        else:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            with ThreadPoolExecutor(max_workers=num_threads, thread_name_prefix="checkpointer") as ex:
+                futures = []
+                for k, v in state_dict.items():
+                    futures.append(ex.submit(self.load, dir, {k: v}, **load_kwargs))
+
+                for future in as_completed(futures):
+                    future.result()
 
         # Check for NaNs which would indicate we didn't fill the state dict correctly.
         for key, tensor in state_dict.items():
