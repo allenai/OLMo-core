@@ -258,7 +258,7 @@ class ShardedFlatTensor(torch.Tensor):
         """
         if unsharded_data is None:
             unsharded_data = (
-                self.data if self.is_sharded else self._gather_data(dtype=dtype, rank0_only=rank0_only)
+                self.data if not self.is_sharded else self._gather_data(dtype=dtype, rank0_only=rank0_only)
             )
         elif not rank0_only or get_rank(self.process_group) == 0:
             unsharded_data = unsharded_data.view(*self.unsharded_shape)

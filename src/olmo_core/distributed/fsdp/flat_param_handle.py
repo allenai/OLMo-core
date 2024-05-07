@@ -114,7 +114,7 @@ class FlatParamHandle:
         if not params:
             params_data = ShardedFlatTensor(torch.empty(0, device=device))
             params_data.mark_as_sharded(
-                ShardingSpec(unsharded_shape=(0,), unsharded_flattened_offsets=tuple([(0, 0)] * world_size))
+                ShardingSpec(unsharded_shape=(0,), unsharded_flattened_offsets=tuple([((0, 0),)] * world_size))
             )
             return FlatParamHandle(process_group=process_group, device=device)
 
@@ -151,7 +151,7 @@ class FlatParamHandle:
             flat_param_global_offsets = (numel_running_total, numel_running_total + param.numel())
 
             # First we need to determine which ranks will have a slice of the data.
-            unsharded_flattened_offsets: List[Tuple[int, int]] = []
+            unsharded_flattened_offsets: List[Tuple[Tuple[int, int], ...]] = []
             for rank in range(world_size):
                 rank_global_start = rank * padded_sharded_numel
                 rank_global_end = rank_global_start + padded_sharded_numel
@@ -159,26 +159,26 @@ class FlatParamHandle:
                     flat_param_global_offsets[1] <= rank_global_start
                 ):
                     # No overlap with this rank.
-                    unsharded_flattened_offsets.append((0, 0))
+                    unsharded_flattened_offsets.append(((0, 0),))
                 elif (
                     rank_global_start <= flat_param_global_offsets[0]
                     and flat_param_global_offsets[1] <= rank_global_end
                 ):
                     # Param is completely contained by this rank.
-                    unsharded_flattened_offsets.append((0, param.numel()))
+                    unsharded_flattened_offsets.append(((0, param.numel()),))
                 elif (
                     rank_global_start <= flat_param_global_offsets[0]
                     and rank_global_end < flat_param_global_offsets[1]
                 ):
                     # Param starts in this rank and ends in a subsequent rank.
-                    unsharded_flattened_offsets.append((0, rank_global_end - flat_param_global_offsets[0]))
+                    unsharded_flattened_offsets.append(((0, rank_global_end - flat_param_global_offsets[0]),))
                 elif (
                     flat_param_global_offsets[0] < rank_global_start
                     and flat_param_global_offsets[1] <= rank_global_end
                 ):
                     # Param starts in a previous rank and ends in this one.
                     unsharded_flattened_offsets.append(
-                        (rank_global_start - flat_param_global_offsets[0], param.numel())
+                        ((rank_global_start - flat_param_global_offsets[0], param.numel()),)
                     )
                 elif (
                     flat_param_global_offsets[0] < rank_global_start
@@ -187,8 +187,10 @@ class FlatParamHandle:
                     # Param spans this rank and overflows into other ranks.
                     unsharded_flattened_offsets.append(
                         (
-                            rank_global_start - flat_param_global_offsets[0],
-                            rank_global_end - flat_param_global_offsets[0],
+                            (
+                                rank_global_start - flat_param_global_offsets[0],
+                                rank_global_end - flat_param_global_offsets[0],
+                            ),
                         )
                     )
 
@@ -202,7 +204,9 @@ class FlatParamHandle:
                 else:
                     flat_param = ShardedFlatParameter(
                         param.data.flatten()[
-                            unsharded_flattened_offsets[local_rank][0] : unsharded_flattened_offsets[local_rank][1]
+                            unsharded_flattened_offsets[local_rank][0][0] : unsharded_flattened_offsets[
+                                local_rank
+                            ][0][1]
                         ].to(device)
                     )
             else:
@@ -229,7 +233,7 @@ class FlatParamHandle:
                 unsharded_shape=(padded_unsharded_numel,),
                 unsharded_flattened_offsets=tuple(
                     [
-                        (start_idx, end_idx)
+                        ((start_idx, end_idx),)
                         for start_idx, end_idx in zip(
                             range(0, padded_unsharded_numel, padded_sharded_numel),
                             range(padded_sharded_numel, padded_unsharded_numel + 1, padded_sharded_numel),
