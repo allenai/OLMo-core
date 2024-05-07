@@ -25,37 +25,58 @@ class ShardingSpec:
     The shape of the full unsharded (unflattened) parameter.
     """
 
-    unsharded_flattened_offsets: Tuple[Tuple[int, int], ...]
+    unsharded_flattened_offsets: Tuple[Tuple[Tuple[int, int], ...], ...]
     """
-    The ``(start_idx, end_idx)`` within the full unsharded flattened parameter that each local shard
-    within the process group corresponds to.
+    The offsets (``(start_idx, end_idx)``) within the full unsharded flattened parameter that each
+    local shard within the process group corresponds to.
 
-    This tuple is indexed by rank. For example, the ``(start_idx, end_idx)`` within the full unsharded flattened
-    parameter for the local shard of the current rank is given by ``unsharded_flattened_offsets[dist.get_rank(process_group)]``.
+    This tuple is indexed by rank within the process group.
+    For example, the offsets within the full unsharded flattened parameter for the
+    local shard of the current rank is given by ``unsharded_flattened_offsets[dist.get_rank(process_group)]``.
     """
 
     def __post_init__(self):
         numel_accounted_for = 0
-        for offsets in self.unsharded_flattened_offsets:
-            assert offsets[0] <= offsets[1]
-            numel_accounted_for += offsets[1] - offsets[0]
+        for rank_offsets in self.unsharded_flattened_offsets:
+            for start_idx, end_idx in rank_offsets:
+                assert start_idx <= end_idx
+                numel_accounted_for += end_idx - start_idx
         if numel_accounted_for != self.unsharded_numel:
             raise ValueError(f"invalid sharding spec {self}")
 
     @property
     def unsharded_numel(self) -> int:
+        """
+        The number of elements in the full unsharded tensor.
+        """
         return reduce(lambda x, y: x * y, self.unsharded_shape, 1)
 
     @property
     def sharded_numels(self) -> Tuple[int, ...]:
-        return tuple((offsets[1] - offsets[0] for offsets in self.unsharded_flattened_offsets))
+        """
+        The number of elements in each shard.
+        """
+        return tuple(
+            (
+                sum(end_idx - start_idx for start_idx, end_idx in offsets)
+                for offsets in self.unsharded_flattened_offsets
+            )
+        )
 
     @property
     def unsharded_flattened_shape(self) -> Tuple[int, ...]:
+        """
+        The shape of the unsharded flattened tensor.
+        """
         return (self.unsharded_numel,)
 
 
 class ShardedFlatTensor(torch.Tensor):
+    """
+    :class:`ShardedFlatTensor` represents a sharded tensor with the assumption that every shard is
+    a contiguous slice into the flattened unsharded tensor.
+    """
+
     SHARDED_FLAT_TENSOR_METADATA_NAME = "__sharded_metadata__"
     SHARDED_FLAT_TENSOR_SHARDING_SPEC_KEY = "sharding_spec"
     SHARDED_FLAT_TENSOR_PROCESS_GROUP_KEY = "process_group"
@@ -104,7 +125,7 @@ class ShardedFlatTensor(torch.Tensor):
         local_flat_padded_tensor = F.pad(self.data.to(dtype or self.dtype), local_padding)
 
         # Pad sharded tensors to the same size.
-        if not rank0_only or get_rank(group=self.process_group) == 0:
+        if not rank0_only or local_rank == 0:
             flat_sharded_tensor_list = [
                 torch.empty(max_numel, device=self.device, dtype=dtype or self.dtype)
                 for _ in range(len(self.sharding_spec.sharded_numels) - 1)
@@ -123,20 +144,37 @@ class ShardedFlatTensor(torch.Tensor):
             # Gather padded sharded tensors to rank 0.
             dist.gather(local_flat_padded_tensor, gather_list=flat_sharded_tensor_list, group=self.process_group)
 
-        # Unpad, sort by starting offset, and concatenate.
-        if flat_sharded_tensor_list is not None:
-            flat_tensor = torch.cat(
-                [
-                    flat_sharded_tensor_list[idx][: sharded_numels[idx]]
-                    for idx in sorted(
-                        range(len(sharded_numels)),
-                        key=lambda idx: self.sharding_spec.unsharded_flattened_offsets[idx][0],
-                    )
-                ]
-            )
-            return flat_tensor.reshape(self.sharding_spec.unsharded_shape)
-        else:
+        if flat_sharded_tensor_list is None:
+            # rank0_only=True and this is not rank 0.
             return torch.empty(0, dtype=dtype or self.dtype, device=self.device)
+
+        # Unpad and pull out contiguous sharded chunks from each ranks sharded flat tensor.
+        contiguous_flat_sharded_tensors = []
+        contiguous_offsets = []
+        for rank, rank_sharded_tensor in enumerate(flat_sharded_tensor_list):
+            rank_sharded_tensor = rank_sharded_tensor[: sharded_numels[rank]]
+            local_offset = 0
+            for start_idx, end_idx in self.sharding_spec.unsharded_flattened_offsets[rank]:
+                chunk_numel = end_idx - start_idx
+                contiguous_flat_sharded_tensors.append(
+                    rank_sharded_tensor[local_offset : local_offset + chunk_numel]
+                )
+                contiguous_offsets.append((start_idx, end_idx))
+                local_offset += chunk_numel
+
+        # Now sort by starting offset and concatenate together.
+        flat_tensor = torch.cat(
+            [
+                contiguous_flat_sharded_tensors[idx]
+                for idx in sorted(
+                    range(len(contiguous_offsets)),
+                    key=lambda idx: contiguous_offsets[idx][0],
+                )
+            ]
+        )
+
+        # Reshape and return.
+        return flat_tensor.reshape(self.sharding_spec.unsharded_shape)
 
     @classmethod
     def shard(
@@ -157,6 +195,8 @@ class ShardedFlatTensor(torch.Tensor):
             )
 
         tensor_is_initialized = tensor.device != torch.device("meta")
+        if device is None and tensor_is_initialized:
+            device = tensor.device
 
         if synchronize and tensor_is_initialized:
             if device is not None:
@@ -172,19 +212,23 @@ class ShardedFlatTensor(torch.Tensor):
             world_size = get_world_size(group=process_group)
             shard_max_numel = math.ceil(tensor.numel() / world_size)
             all_offsets = tuple(
-                (rank * shard_max_numel, min((rank + 1) * shard_max_numel, tensor.numel()))
+                ((rank * shard_max_numel, min((rank + 1) * shard_max_numel, tensor.numel())),)
                 for rank in range(world_size)
             )
             sharding_spec = ShardingSpec(
                 unsharded_shape=tuple(tensor.shape), unsharded_flattened_offsets=all_offsets
             )
 
-        offsets = sharding_spec.unsharded_flattened_offsets[get_rank(group=process_group)]
-
+        sharded_tensor = torch.empty(
+            sharding_spec.sharded_numels[get_rank(group=process_group)], device=device, dtype=tensor.dtype
+        )
         if tensor_is_initialized:
-            sharded_tensor = tensor.flatten()[offsets[0] : offsets[1]].clone().to(device=device)
-        else:
-            sharded_tensor = torch.empty(offsets[1] - offsets[0], device=device, dtype=tensor.dtype)
+            flat_tensor = tensor.flatten()
+            start_offset = 0
+            for start_idx, end_idx in sharding_spec.unsharded_flattened_offsets[get_rank(group=process_group)]:
+                chunk_numel = end_idx - start_idx
+                sharded_tensor[start_offset : start_offset + chunk_numel].copy_(flat_tensor[start_idx:end_idx])
+                start_offset += chunk_numel
 
         sharded_tensor = cls(  # type: ignore
             sharded_tensor, requires_grad=requires_grad if requires_grad is not None else tensor.requires_grad
@@ -196,8 +240,11 @@ class ShardedFlatTensor(torch.Tensor):
         """
         Gather the sharded flat parameter across a process group into a full unsharded parameter.
         """
-        unsharded_data = self._gather_data(dtype=dtype, rank0_only=rank0_only)
-        unsharded_data.requires_grad = self.requires_grad
+        if self.is_sharded:
+            unsharded_data = self._gather_data(dtype=dtype, rank0_only=rank0_only)
+            unsharded_data.requires_grad = self.requires_grad
+        else:
+            unsharded_data = self.data
         return unsharded_data
 
     def unshard_(
@@ -212,7 +259,9 @@ class ShardedFlatTensor(torch.Tensor):
         If ``rank0_only=True``, non rank 0 processes will have an empty tensor in their data.
         """
         if unsharded_data is None:
-            unsharded_data = self._gather_data(dtype=dtype, rank0_only=rank0_only)
+            unsharded_data = (
+                self.data if not self.is_sharded else self._gather_data(dtype=dtype, rank0_only=rank0_only)
+            )
         elif not rank0_only or get_rank(self.process_group) == 0:
             unsharded_data = unsharded_data.view(*self.unsharded_shape)
         self._set_metadata(self.SHARDED_FLAT_TENSOR_CACHED_SHARDED_DATA_KEY, self.data)
@@ -289,10 +338,13 @@ class ShardedFlatTensor(torch.Tensor):
         chunks = []
         flat_tensor = tensor.flatten()
         max_size = max(self.sharding_spec.sharded_numels)
-        for offsets in self.sharding_spec.unsharded_flattened_offsets:
-            chunk = flat_tensor[offsets[0] : offsets[1]]
+        for rank_offsets in self.sharding_spec.unsharded_flattened_offsets:
+            rank_chunks = []
+            for start_idx, end_idx in rank_offsets:
+                rank_chunks.append(flat_tensor[start_idx:end_idx])
+            chunk = rank_chunks[0] if len(rank_chunks) == 1 else torch.cat(rank_chunks)
             if pad:
-                chunk = F.pad(chunk, (0, max_size - (offsets[1] - offsets[0])))
+                chunk = F.pad(chunk, (0, max_size - chunk.numel()))
             chunks.append(chunk)
         return chunks
 
@@ -302,8 +354,11 @@ class ShardedFlatTensor(torch.Tensor):
         """
         if tensor.shape != self.unsharded_shape:
             raise ValueError(f"shape mismatched, expected {self.unsharded_shape}, got {tensor.shape}")
-        offset_start, offset_end = self.unsharded_flattened_offsets
-        return tensor.flatten()[offset_start:offset_end]
+        flat_tensor = tensor.flatten()
+        rank_chunks = []
+        for start_idx, end_idx in self.unsharded_flattened_offsets:
+            rank_chunks.append(flat_tensor[start_idx:end_idx])
+        return rank_chunks[0] if len(rank_chunks) == 1 else torch.cat(rank_chunks)
 
     @property
     def is_sharded(self) -> bool:
@@ -337,12 +392,8 @@ class ShardedFlatTensor(torch.Tensor):
             )
 
     @property
-    def unsharded_flattened_offsets(self) -> Tuple[int, int]:
-        # mypy is really bad some times
-        offsets: Tuple[int, int] = self.sharding_spec.unsharded_flattened_offsets[  # type: ignore[assignment]
-            get_rank(group=self.process_group)
-        ]
-        return offsets
+    def unsharded_flattened_offsets(self) -> Tuple[Tuple[int, int], ...]:
+        return self.sharding_spec.unsharded_flattened_offsets[get_rank(group=self.process_group)]
 
     @property
     def unsharded_numel(self) -> int:

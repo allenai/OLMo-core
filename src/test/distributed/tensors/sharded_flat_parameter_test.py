@@ -47,10 +47,10 @@ def shard_and_gather(init_device: torch.device):
     unsharded_shape = (2, 3)
 
     for unsharded_flattened_offsets in [
-        ((0, 3), (3, 6)),  # balanced sharding
-        ((0, 2), (2, 6)),  # unbalanced sharding
-        ((2, 6), (0, 2)),  # unordered, unbalanced sharding
-        ((0, 6), (6, 6)),  # some ranks empty
+        (((0, 3),), ((3, 6),)),  # balanced sharding
+        (((0, 2),), ((2, 6),)),  # unbalanced sharding
+        (((2, 6),), ((0, 2),)),  # unordered, unbalanced sharding
+        (((0, 6),), ((6, 6),)),  # some ranks empty
         None,  # let ShardedFlatParameter decide
     ]:
         tensor = torch.rand(*unsharded_shape, device=init_device)

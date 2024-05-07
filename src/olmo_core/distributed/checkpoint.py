@@ -291,7 +291,10 @@ class Checkpointer:
                 local_flat_tensor = flat_views[key]
 
                 if (local_offsets := tensor_save_plan.flattened_offsets_per_rank.get(local_rank)) is not None:
-                    assert local_offsets[1] - local_offsets[0] == local_flat_tensor.numel()
+                    local_numel = 0
+                    for start_idx, end_idx in local_offsets:
+                        local_numel += end_idx - start_idx
+                    assert local_numel == local_flat_tensor.numel()
                     local_state_dict[key] = local_flat_tensor
 
             # Save safetensors file.
@@ -336,6 +339,7 @@ class Checkpointer:
         no_dist: bool = False,
         metadata: Optional[StorageMetadata] = None,
         _safetensors_mfl: Optional[SafeTensorsMultiFileLoader] = None,
+        _check_for_nans: bool = False,
     ):
         """
         Load a state dict in-place.
@@ -351,113 +355,121 @@ class Checkpointer:
 
         # Load each tensor from the slices in each file.
         for key in state_dict.keys():
+            log.debug("Loading tensor '%s' from state dict...", key)
             tensor_storage_metadata = metadata.tensors[key]
             tensor = state_dict[key]
             flat_view = self._get_flat_view(tensor)
 
             # Rank 0 will always be present, other ranks will not be for regular unsharded tensors.
-            offsets: Tuple[int, int]
+            all_offsets: Tuple[Tuple[int, int], ...]
             if flat_view.is_sharded:
-                offsets = flat_view.flattened_offsets_per_rank[get_rank()]
+                all_offsets = flat_view.flattened_offsets_per_rank[get_rank()]
             else:
                 if get_rank() in flat_view.flattened_offsets_per_rank:
-                    offsets = flat_view.flattened_offsets_per_rank[get_rank()]
+                    all_offsets = flat_view.flattened_offsets_per_rank[get_rank()]
                 else:
-                    offsets = next(iter(flat_view.flattened_offsets_per_rank.values()))
+                    all_offsets = next(iter(flat_view.flattened_offsets_per_rank.values()))
 
             if flat_view.full_shape != tensor_storage_metadata.shape:
                 raise ValueError(
                     f"Shape mismatched for '{key}', expected {flat_view.full_shape}, found {tensor_storage_metadata.shape}"
                 )
 
-            for filename, offsets_in_file in tensor_storage_metadata.flattened_offsets_per_file.items():
-                # Check for overlap in offsets, and if there is overlap, load the slice from disk.
-                if (
-                    offsets_in_file[0] <= offsets[0] < offsets_in_file[1]
-                    or offsets_in_file[0] < offsets[1] <= offsets_in_file[1]
-                    or (offsets[0] < offsets_in_file[0] and offsets_in_file[1] < offsets[1])
-                ):
-                    with safetensors_mfl.open(f"{dir}/{filename}") as loader:
-                        if len((shape_in_file := loader.get_shape(key))) != 1:
-                            raise ValueError(
-                                f"Expected a 1D tensor at {key} in {filename}, found shape {shape_in_file}"
-                            )
-
-                        if (dtype := loader.get_dtype(key)) != tensor.dtype:
-                            raise ValueError(
-                                f"Data type mismatch between tensor to load ({dtype}) and to load into ({tensor.dtype})"
-                            )
-
-                        numel_in_file = loader.get_numel(key)
-                        if numel_in_file == 0:
-                            continue
-
-                        # Start and end index of the slice within `flat_tensor` that we're going to load
-                        # from a slice of `flat_tensor_to_load`.
-                        flat_tensor_start, flat_tensor_end = 0, flat_view.view.numel()
-                        # Start and end index of the slice within `flat_tensor_to_load` that we're going
-                        # to load into the slice of `flat_tensor`.
-                        flat_tensor_to_load_start, flat_tensor_to_load_end = 0, numel_in_file
-                        # There are 5 scenarios to consider in terms of where the tensors overlap.
-                        # Suppose the original flat tensor has 6 elements: 'x x x x x x'
-                        # -------------------------------------------
-                        # (A) flat_tensor_slice_to_load: [x x x]x x x  (0, 3)
-                        #     flat_tensor:                x x[x x x]x  (2, 5)
-                        # -------------------------------------------
-                        # (B) flat_tensor_slice_to_load:  x x[x x x]x  (2, 5)
-                        #     flat_tensor:               [x x x]x x x  (0, 3)
-                        # -------------------------------------------
-                        # (C) flat_tensor_slice_to_load:  x[x x x x]x  (1, 5)
-                        #     flat_tensor:                x x[x x]x x  (2, 4)
-                        # -------------------------------------------
-                        # (D) flat_tensor_slice_to_load:  x x[x x]x x  (2, 4)
-                        #     flat_tensor:                x[x x x x]x  (1, 5)
-                        # -------------------------------------------
-                        # (E) flat_tensor_slice_to_load:  x x[x x]x x  (2, 4)
-                        #     flat_tensor:                x x[x x]x x  (2, 4)
-                        # -------------------------------------------
-                        if offsets[0] <= offsets_in_file[0]:
-                            # Scenarios (B), (D), (E)
-                            flat_tensor_start = offsets_in_file[0] - offsets[0]
-                        else:
-                            # Scenarios (A), (C)
-                            flat_tensor_to_load_start = offsets[0] - offsets_in_file[0]
-
-                        if offsets[1] <= offsets_in_file[1]:
-                            # Scenarios (B), (C), (E)
-                            flat_tensor_to_load_end -= offsets_in_file[1] - offsets[1]
-                        else:
-                            # Scenarios (A), (D)
-                            flat_tensor_end -= offsets[1] - offsets_in_file[1]
-
-                        log.debug(
-                            "Loading '%s'\n  offsets: %s\n  offsets in file: %s\n  load into: (%s, %s)\n  load from: (%s, %s)",
-                            key,
-                            offsets,
-                            offsets_in_file,
-                            flat_tensor_start,
-                            flat_tensor_end,
-                            flat_tensor_to_load_start,
-                            flat_tensor_to_load_end,
-                        )
-
-                        # Load the slice.
-                        flat_tensor_to_load = loader.get_flat_slice(
-                            key, flat_tensor_to_load_start, flat_tensor_to_load_end
-                        )
+            for offsets in all_offsets:
+                for filename, all_offsets_in_file in tensor_storage_metadata.flattened_offsets_per_file.items():
+                    for offsets_in_file in all_offsets_in_file:
+                        # Check for overlap in offsets, and if there is overlap, load the slice from disk.
                         if (
-                            load_shape := flat_view.view[flat_tensor_start:flat_tensor_end].shape
-                        ) != flat_tensor_to_load.shape:
-                            raise RuntimeError(
-                                f"error loading {key} from {filename} with offsets ({flat_tensor_start}, {flat_tensor_end}), "
-                                f"expected {load_shape}, found {flat_tensor_to_load.shape}"
-                            )
-                        flat_view.view[flat_tensor_start:flat_tensor_end].copy_(flat_tensor_to_load)
+                            offsets_in_file[0] <= offsets[0] < offsets_in_file[1]
+                            or offsets_in_file[0] < offsets[1] <= offsets_in_file[1]
+                            or (offsets[0] < offsets_in_file[0] and offsets_in_file[1] < offsets[1])
+                        ):
+                            with safetensors_mfl.open(f"{dir}/{filename}") as loader:
+                                if len((shape_in_file := loader.get_shape(key))) != 1:
+                                    raise ValueError(
+                                        f"Expected a 1D tensor at {key} in {filename}, found shape {shape_in_file}"
+                                    )
 
-                        del flat_tensor_to_load
+                                if (dtype := loader.get_dtype(key)) != tensor.dtype:
+                                    raise ValueError(
+                                        f"Data type mismatch between tensor to load ({dtype}) and to load into ({tensor.dtype})"
+                                    )
+
+                                numel_in_file = loader.get_numel(key)
+                                if numel_in_file == 0:
+                                    continue
+
+                                # Start and end index of the slice within `flat_tensor` that we're going to load
+                                # from a slice of `flat_tensor_to_load`.
+                                flat_tensor_start, flat_tensor_end = 0, flat_view.view.numel()
+                                # Start and end index of the slice within `flat_tensor_to_load` that we're going
+                                # to load into the slice of `flat_tensor`.
+                                flat_tensor_to_load_start, flat_tensor_to_load_end = 0, numel_in_file
+                                # There are 5 scenarios to consider in terms of where the tensors overlap.
+                                # Suppose the original flat tensor has 6 elements: 'x x x x x x'
+                                # -------------------------------------------
+                                # (A) flat_tensor_slice_to_load: [x x x]x x x  (0, 3)
+                                #     flat_tensor:                x x[x x x]x  (2, 5)
+                                # -------------------------------------------
+                                # (B) flat_tensor_slice_to_load:  x x[x x x]x  (2, 5)
+                                #     flat_tensor:               [x x x]x x x  (0, 3)
+                                # -------------------------------------------
+                                # (C) flat_tensor_slice_to_load:  x[x x x x]x  (1, 5)
+                                #     flat_tensor:                x x[x x]x x  (2, 4)
+                                # -------------------------------------------
+                                # (D) flat_tensor_slice_to_load:  x x[x x]x x  (2, 4)
+                                #     flat_tensor:                x[x x x x]x  (1, 5)
+                                # -------------------------------------------
+                                # (E) flat_tensor_slice_to_load:  x x[x x]x x  (2, 4)
+                                #     flat_tensor:                x x[x x]x x  (2, 4)
+                                # -------------------------------------------
+                                if offsets[0] <= offsets_in_file[0]:
+                                    # Scenarios (B), (D), (E)
+                                    flat_tensor_start = offsets_in_file[0] - offsets[0]
+                                else:
+                                    # Scenarios (A), (C)
+                                    flat_tensor_to_load_start = offsets[0] - offsets_in_file[0]
+
+                                if offsets[1] <= offsets_in_file[1]:
+                                    # Scenarios (B), (C), (E)
+                                    flat_tensor_to_load_end -= offsets_in_file[1] - offsets[1]
+                                else:
+                                    # Scenarios (A), (D)
+                                    flat_tensor_end -= offsets[1] - offsets_in_file[1]
+
+                                log.debug(
+                                    "Loading '%s'\n  offsets: %s\n  offsets in file: %s\n  load into: (%s, %s)\n  load from: (%s, %s)",
+                                    key,
+                                    offsets,
+                                    offsets_in_file,
+                                    flat_tensor_start,
+                                    flat_tensor_end,
+                                    flat_tensor_to_load_start,
+                                    flat_tensor_to_load_end,
+                                )
+
+                                # Load the slice.
+                                flat_tensor_to_load = loader.get_flat_slice(
+                                    key, flat_tensor_to_load_start, flat_tensor_to_load_end
+                                )
+                                if (
+                                    load_shape := flat_view.view[flat_tensor_start:flat_tensor_end].shape
+                                ) != flat_tensor_to_load.shape:
+                                    raise RuntimeError(
+                                        f"error loading {key} from {filename} with offsets ({flat_tensor_start}, {flat_tensor_end}), "
+                                        f"expected {load_shape}, found {flat_tensor_to_load.shape}"
+                                    )
+                                flat_view.view[flat_tensor_start:flat_tensor_end].copy_(flat_tensor_to_load)
+
+                                del flat_tensor_to_load
 
             state_dict[key] = self._copy_into(tensor, flat_view.view)
             del flat_view
+
+            if _check_for_nans:
+                # Check for NaNs which would indicate we didn't fill the state dict correctly.
+                if state_dict[key].isnan().any().item():
+                    raise RuntimeError(f"error loading {key} from checkpoint, nans encountered")
 
     @torch.no_grad()
     def unshard(
@@ -466,6 +478,7 @@ class Checkpointer:
         device: Optional[torch.device] = None,
         rank0_only: bool = False,
         no_dist: bool = False,
+        num_threads: Optional[int] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Unshard a checkpoint, returning the full state dict. This can be used in both distributed
@@ -496,15 +509,23 @@ class Checkpointer:
         # Initialize state dict.
         state_dict = {}
         for key, tensor_metadata in metadata.tensors.items():
+            log.debug("Materializing full tensor for '%s' (shape %s)...", key, tensor_metadata.shape)
             state_dict[key] = tensor_metadata.materialize_empty(device=device)
 
         # Load the state dict in place.
-        self.load(dir, state_dict, metadata=metadata, no_dist=no_dist or rank0_only)
+        load_kwargs = dict(metadata=metadata, no_dist=no_dist or rank0_only, _check_for_nans=True)
+        if num_threads is None or num_threads <= 1:
+            self.load(dir, state_dict, **load_kwargs)
+        else:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        # Check for NaNs which would indicate we didn't fill the state dict correctly.
-        for key, tensor in state_dict.items():
-            if tensor.isnan().any().item():
-                raise RuntimeError("error loading {key} from checkpoint, nans encountered")
+            with ThreadPoolExecutor(max_workers=num_threads, thread_name_prefix="checkpointer") as ex:
+                futures = []
+                for k, v in state_dict.items():
+                    futures.append(ex.submit(self.load, dir, {k: v}, **load_kwargs))
+
+                for future in as_completed(futures):
+                    future.result()
 
         return state_dict
 
@@ -516,7 +537,14 @@ class Checkpointer:
         metadata: Optional[StorageMetadata] = None
         if no_dist or get_rank() == 0:
             with open(cached_path(f"{dir}/{self.METADATA_FILENAME}")) as f:
-                metadata = StorageMetadata(**json.load(f))
+                json_metadata = json.load(f)
+                # For backwards compat, covert offsets `tuple[int, int]` into `tuple[tuple[int, int], ...]`
+                for tensor_metadata in json_metadata["tensors"].values():
+                    for path in tensor_metadata["flattened_offsets_per_file"]:
+                        offsets = tensor_metadata["flattened_offsets_per_file"][path]
+                        if offsets and isinstance(offsets[0], int):
+                            tensor_metadata["flattened_offsets_per_file"][path] = [offsets]
+                metadata = StorageMetadata(**json_metadata)
         if not no_dist:
             metadata = scatter_object(metadata)
         assert metadata is not None
@@ -534,21 +562,21 @@ class Checkpointer:
     def _get_flat_view(self, tensor: torch.Tensor) -> TensorFlatView:
         full_shape: Tuple[int, ...]
         is_sharded: bool = False
-        flattened_offsets_per_rank: Dict[int, Tuple[int, int]] = {}
+        flattened_offsets_per_rank: Dict[int, Tuple[Tuple[int, int], ...]] = {}
         if isinstance(tensor, ShardedFlatTensor):
             full_shape = tensor.unsharded_shape
             is_sharded = True
-            for pg_rank, offset in enumerate(tensor.sharding_spec.unsharded_flattened_offsets):
+            for pg_rank, offsets in enumerate(tensor.sharding_spec.unsharded_flattened_offsets):
                 # Translate process group rank into global rank.
                 global_rank = (
                     pg_rank
                     if tensor.process_group is None
                     else dist.get_global_rank(tensor.process_group, pg_rank)
                 )
-                flattened_offsets_per_rank[global_rank] = offset
+                flattened_offsets_per_rank[global_rank] = offsets
         else:
             full_shape = tuple(tensor.shape)
-            flattened_offsets_per_rank = {get_rank(): (0, tensor.numel())}
+            flattened_offsets_per_rank = {get_rank(): ((0, tensor.numel()),)}
         return TensorFlatView(
             view=_get_local_tensor_data(tensor).view(-1),
             full_shape=full_shape,
@@ -642,7 +670,7 @@ class Checkpointer:
 
 
 class TensorStorageMetadata(BaseModel):
-    flattened_offsets_per_file: Dict[str, Tuple[int, int]]
+    flattened_offsets_per_file: Dict[str, Tuple[Tuple[int, int], ...]]
     """
     Maps file name to the offsets within the full flattened tensor that the shard in the file
     corresponds to.
@@ -696,7 +724,7 @@ class StorageMetadata(BaseModel):
 
 
 class TensorSavePlan(BaseModel):
-    flattened_offsets_per_rank: Dict[int, Tuple[int, int]]
+    flattened_offsets_per_rank: Dict[int, Tuple[Tuple[int, int], ...]]
     """
     Maps global process rank to the offsets within the full flattened tensor that the shard for the
     rank corresponds to. Some ranks may be omitted.
@@ -725,7 +753,7 @@ class TensorFlatView:
     If the tensor is sharded.
     """
 
-    flattened_offsets_per_rank: Dict[int, Tuple[int, int]]
+    flattened_offsets_per_rank: Dict[int, Tuple[Tuple[int, int], ...]]
     """
     A mapping of *global* rank to offsets into the full flattened tensor.
     """
@@ -999,9 +1027,11 @@ def _get_torch_fsdp_state_dict_for_checkpoint(model: nn.Module) -> Dict[str, tor
                     start_idx if start_idx is not None else 0,
                     end_idx + 1 if end_idx is not None else 0,
                 )
-                all_offsets: List[Tuple[int, int]] = [(0, 0)] * get_world_size(group=handle.process_group)
-                all_offsets[get_rank(group=handle.process_group)] = local_offsets
-                dist.all_gather_object(all_offsets, local_offsets, group=handle.process_group)
+                all_offsets: List[Tuple[Tuple[int, int], ...]] = [((0, 0),)] * get_world_size(
+                    group=handle.process_group
+                )
+                all_offsets[get_rank(group=handle.process_group)] = (local_offsets,)
+                dist.all_gather_object(all_offsets, (local_offsets,), group=handle.process_group)
 
                 # Wrap the parameter's data in a `ShardedFlatTensor`.
                 shard_spec = ShardingSpec(

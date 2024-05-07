@@ -545,8 +545,7 @@ class FSDP(Generic[M], nn.Module):
 
     def _managed_named_parameters(self) -> Generator[Tuple[str, ShardedFlatParameter], None, None]:
         """
-        Returns a generator over all parameters managed by this FSDP instance. This is equivalent
-        to `self.module.named_parameters()` except that parameters within nested FSDP instances are omitted.
+        Returns a generator over all parameters directly managed by this FSDP instance.
         """
         for handle in self.state.flat_param_handles:
             for param_name, param in zip(handle.param_fqns, handle.params):

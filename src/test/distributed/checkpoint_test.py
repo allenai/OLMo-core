@@ -97,13 +97,13 @@ def save_and_load_checkpoint_with_different_sharding_spec(dir):
         [
             # save_tensor: |x x x|x x x
             # load_tensor: |x x|x x x x
-            (((0, 3), (3, 6)), ((0, 2), (2, 6))),
+            ((((0, 3),), ((3, 6),)), (((0, 2),), ((2, 6),))),
             # save_tensor: |x x x|x x x
             # load_tensor: |x x x x|x x
-            (((0, 3), (3, 6)), ((0, 4), (4, 6))),
+            ((((0, 3),), ((3, 6),)), (((0, 4),), ((4, 6),))),
             # save_tensor: |x x x x x x|
             # load_tensor: |x x x x|x x
-            (((0, 6), (6, 6)), ((0, 4), (4, 6))),
+            ((((0, 6),), ((6, 6),)), (((0, 4),), ((4, 6),))),
         ]
     ):
         checkpointer = Checkpointer()
