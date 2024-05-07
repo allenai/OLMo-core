@@ -1015,7 +1015,7 @@ def _get_torch_fsdp_state_dict_for_checkpoint(model: nn.Module) -> Dict[str, tor
                     group=handle.process_group
                 )
                 all_offsets[get_rank(group=handle.process_group)] = (local_offsets,)
-                dist.all_gather_object(all_offsets, local_offsets, group=handle.process_group)
+                dist.all_gather_object(all_offsets, (local_offsets,), group=handle.process_group)
 
                 # Wrap the parameter's data in a `ShardedFlatTensor`.
                 shard_spec = ShardingSpec(
