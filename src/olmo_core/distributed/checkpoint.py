@@ -339,6 +339,7 @@ class Checkpointer:
         no_dist: bool = False,
         metadata: Optional[StorageMetadata] = None,
         _safetensors_mfl: Optional[SafeTensorsMultiFileLoader] = None,
+        _check_for_nans: bool = False,
     ):
         """
         Load a state dict in-place.
@@ -465,6 +466,11 @@ class Checkpointer:
             state_dict[key] = self._copy_into(tensor, flat_view.view)
             del flat_view
 
+            if _check_for_nans:
+                # Check for NaNs which would indicate we didn't fill the state dict correctly.
+                if state_dict[key].isnan().any().item():
+                    raise RuntimeError(f"error loading {key} from checkpoint, nans encountered")
+
     @torch.no_grad()
     def unshard(
         self,
@@ -507,7 +513,7 @@ class Checkpointer:
             state_dict[key] = tensor_metadata.materialize_empty(device=device)
 
         # Load the state dict in place.
-        load_kwargs = dict(metadata=metadata, no_dist=no_dist or rank0_only)
+        load_kwargs = dict(metadata=metadata, no_dist=no_dist or rank0_only, _check_for_nans=True)
         if num_threads is None or num_threads <= 1:
             self.load(dir, state_dict, **load_kwargs)
         else:
@@ -520,11 +526,6 @@ class Checkpointer:
 
                 for future in as_completed(futures):
                     future.result()
-
-        # Check for NaNs which would indicate we didn't fill the state dict correctly.
-        for key, tensor in state_dict.items():
-            if tensor.isnan().any().item():
-                raise RuntimeError("error loading {key} from checkpoint, nans encountered")
 
         return state_dict
 
