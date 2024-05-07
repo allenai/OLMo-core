@@ -354,7 +354,7 @@ class Checkpointer:
 
         # Load each tensor from the slices in each file.
         for key in state_dict.keys():
-            log.debug("Loading tensor '%s' from state dict...")
+            log.debug("Loading tensor '%s' from state dict...", key)
             tensor_storage_metadata = metadata.tensors[key]
             tensor = state_dict[key]
             flat_view = self._get_flat_view(tensor)
