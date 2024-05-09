@@ -608,8 +608,9 @@ class Checkpointer:
             full_shape = tuple(tensor.shape)
             is_sharded = True
             for global_rank in tensor.device_mesh.mesh.flatten():
+                global_rank = int(global_rank.item())
                 local_shape, global_offset = dtensor_utils.get_local_shape_and_global_offset(
-                    tensor, rank=int(global_rank.item())
+                    tensor, rank=global_rank
                 )
                 shard_spec_per_rank[global_rank] = TensorShardSpec(
                     local_shape=local_shape, global_offset=global_offset
