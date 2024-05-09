@@ -154,6 +154,7 @@ def save_and_load_checkpoint_with_dtensors(dir):
         "2d_rowwise": distribute_tensor(torch.randn(16, 8, device=get_default_device()), mesh, [Shard(dim=1)]),
     }
 
+    checkpointer.save(dir, state_dict_to_save)  # type: ignore[arg-type]
     checkpointer.load(dir, state_dict_to_load)  # type: ignore[arg-type]
 
     for key in state_dict_to_load:
