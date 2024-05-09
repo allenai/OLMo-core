@@ -353,6 +353,15 @@ class Checkpointer:
         metadata = metadata or self.get_metadata(dir, no_dist=no_dist)
         safetensors_mfl = _safetensors_mfl or SafeTensorsMultiFileLoader()
 
+        def validate_shard_in_file(tensor: torch.Tensor, loader: SafeTensorsLoader, key: str, filename: str):
+            if len((shape_in_file := loader.get_shape(key))) != 1:
+                raise ValueError(f"Expected a 1D tensor at {key} in {filename}, found shape {shape_in_file}")
+
+            if (dtype := loader.get_dtype(key)) != tensor.dtype:
+                raise ValueError(
+                    f"Data type mismatch between tensor to load ({dtype}) and to load into ({tensor.dtype})"
+                )
+
         # Load each tensor from the slices in each file.
         for key in state_dict.keys():
             log.debug("Loading tensor '%s' from state dict...", key)
@@ -360,24 +369,44 @@ class Checkpointer:
             tensor = state_dict[key]
             flat_view = self._get_flat_view(tensor)
 
-            # Rank 0 will always be present, other ranks will not be for regular unsharded tensors.
-            all_offsets: Tuple[Tuple[int, int], ...]
-            if flat_view.is_sharded:
-                all_offsets = flat_view.flattened_offsets_per_rank[get_rank()]
-            else:
-                if get_rank() in flat_view.flattened_offsets_per_rank:
-                    all_offsets = flat_view.flattened_offsets_per_rank[get_rank()]
-                else:
-                    all_offsets = next(iter(flat_view.flattened_offsets_per_rank.values()))
-
+            # Make sure full unsharded shapes match.
             if flat_view.full_shape != tensor_storage_metadata.shape:
                 raise ValueError(
                     f"Shape mismatched for '{key}', expected {flat_view.full_shape}, found {tensor_storage_metadata.shape}"
                 )
 
-            for offsets in all_offsets:
-                for filename, all_offsets_in_file in tensor_storage_metadata.flattened_offsets_per_file.items():
+            # Get the local offsets to load.
+            all_offsets: Tuple[Tuple[int, int], ...]
+            if flat_view.is_sharded:
+                all_offsets = flat_view.flattened_offsets_per_rank[get_rank()]
+            else:
+                # NOTE: Rank 0 will always be present, other ranks will not be for regular unsharded tensors.
+                if get_rank() in flat_view.flattened_offsets_per_rank:
+                    all_offsets = flat_view.flattened_offsets_per_rank[get_rank()]
+                else:
+                    all_offsets = next(iter(flat_view.flattened_offsets_per_rank.values()))
+
+            for filename, all_offsets_in_file in tensor_storage_metadata.flattened_offsets_per_file.items():
+                if not all_offsets_in_file:
+                    continue
+
+                if all_offsets == all_offsets_in_file:
+                    # Load the whole slice within the file at once.
+                    with safetensors_mfl.open(f"{dir}/{filename}") as loader:
+                        validate_shard_in_file(tensor, loader, key, filename)
+                        numel_in_file = loader.get_numel(key)
+                        if numel_in_file > 0:
+                            flat_view.view.copy_(loader.get_flat_slice(key))
+                    break
+
+                for offsets in all_offsets:
+                    if offsets[1] - offsets[0] == 0:
+                        continue
+
                     for offsets_in_file in all_offsets_in_file:
+                        if offsets_in_file[1] - offsets_in_file[0] == 0:
+                            continue
+
                         # Check for overlap in offsets, and if there is overlap, load the slice from disk.
                         if (
                             offsets_in_file[0] <= offsets[0] < offsets_in_file[1]
@@ -385,16 +414,7 @@ class Checkpointer:
                             or (offsets[0] < offsets_in_file[0] and offsets_in_file[1] < offsets[1])
                         ):
                             with safetensors_mfl.open(f"{dir}/{filename}") as loader:
-                                if len((shape_in_file := loader.get_shape(key))) != 1:
-                                    raise ValueError(
-                                        f"Expected a 1D tensor at {key} in {filename}, found shape {shape_in_file}"
-                                    )
-
-                                if (dtype := loader.get_dtype(key)) != tensor.dtype:
-                                    raise ValueError(
-                                        f"Data type mismatch between tensor to load ({dtype}) and to load into ({tensor.dtype})"
-                                    )
-
+                                validate_shard_in_file(tensor, loader, key, filename)
                                 numel_in_file = loader.get_numel(key)
                                 if numel_in_file == 0:
                                     continue
