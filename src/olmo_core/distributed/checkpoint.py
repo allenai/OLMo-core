@@ -47,8 +47,10 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from cached_path import cached_path
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
+from torch.distributed._tensor import DTensor
 
+import olmo_core.distributed.tensors.dtensor_utils as dtensor_utils
 from olmo_core.exceptions import OLMoUserError
 from olmo_core.io import (
     PathOrStr,
@@ -225,7 +227,8 @@ class Checkpointer:
     """
     A distributed checkpointer for saving and loading *non-nested* state dictionaries,
     i.e. where keys are strings and values are either regular :class:`torch.Tensor` instances,
-    :class:`torch.nn.Parameter` instances, or any sharded tensors from this library.
+    :class:`torch.nn.Parameter` instances, :class:`DTensor` instances, or any sharded tensors
+    from this library.
 
     For saving and loading model and optimizer states together, use :func:`save_model_and_optim_state()`
     and :func:`load_model_and_optim_state()` instead.
@@ -290,10 +293,8 @@ class Checkpointer:
                 tensor_save_plan = global_save_plan.tensors[key]
                 local_flat_tensor = flat_views[key]
 
-                if (local_offsets := tensor_save_plan.flattened_offsets_per_rank.get(local_rank)) is not None:
-                    local_numel = 0
-                    for start_idx, end_idx in local_offsets:
-                        local_numel += end_idx - start_idx
+                if (local_shard_spec := tensor_save_plan.shard_spec_per_rank.get(local_rank)) is not None:
+                    local_numel = local_shard_spec.local_numel
                     assert local_numel == local_flat_tensor.numel()
                     local_state_dict[key] = local_flat_tensor
 
@@ -378,15 +379,12 @@ class Checkpointer:
             # Get the local offsets to load.
             all_offsets: Tuple[Tuple[int, int], ...]
             if flat_view.is_sharded:
-                all_offsets = flat_view.flattened_offsets_per_rank[get_rank()]
+                all_offsets = flat_view.get_local_flattened_offsets()
             else:
-                # NOTE: Rank 0 will always be present, other ranks will not be for regular unsharded tensors.
-                if get_rank() in flat_view.flattened_offsets_per_rank:
-                    all_offsets = flat_view.flattened_offsets_per_rank[get_rank()]
-                else:
-                    all_offsets = next(iter(flat_view.flattened_offsets_per_rank.values()))
+                all_offsets = ((0, tensor.numel()),)
 
-            for filename, all_offsets_in_file in tensor_storage_metadata.flattened_offsets_per_file.items():
+            for filename in tensor_storage_metadata.shard_spec_per_file:
+                all_offsets_in_file = tensor_storage_metadata.get_flattened_offsets_in_file(filename)
                 if not all_offsets_in_file:
                     continue
 
@@ -554,19 +552,31 @@ class Checkpointer:
         Get the storage metadata from a checkpoint directory.
         """
         dir = self._normalize_dir(dir)
+
         metadata: Optional[StorageMetadata] = None
         if no_dist or get_rank() == 0:
             with open(cached_path(f"{dir}/{self.METADATA_FILENAME}")) as f:
                 json_metadata = json.load(f)
-                # For backwards compat, covert offsets `tuple[int, int]` into `tuple[tuple[int, int], ...]`
+
+                # Coerce fields if needed for backwards compatibility.
                 for tensor_metadata in json_metadata["tensors"].values():
-                    for path in tensor_metadata["flattened_offsets_per_file"]:
-                        offsets = tensor_metadata["flattened_offsets_per_file"][path]
-                        if offsets and isinstance(offsets[0], int):
-                            tensor_metadata["flattened_offsets_per_file"][path] = [offsets]
+                    if "flattened_offsets_per_file" in tensor_metadata:
+                        for path in tensor_metadata["flattened_offsets_per_file"]:
+                            offsets = tensor_metadata["flattened_offsets_per_file"][path]
+                            # covert offsets `tuple[int, int]` into `tuple[tuple[int, int], ...]`
+                            if offsets and isinstance(offsets[0], int):
+                                tensor_metadata["flattened_offsets_per_file"][path] = [offsets]
+
+                        tensor_metadata["shard_spec_per_file"] = {
+                            path: {"flattened_offsets": offsets}
+                            for path, offsets in tensor_metadata.pop("flattened_offsets_per_file").items()
+                        }
+
                 metadata = StorageMetadata(**json_metadata)
+
         if not no_dist:
             metadata = scatter_object(metadata)
+
         assert metadata is not None
         return metadata
 
@@ -582,7 +592,7 @@ class Checkpointer:
     def _get_flat_view(self, tensor: torch.Tensor) -> TensorFlatView:
         full_shape: Tuple[int, ...]
         is_sharded: bool = False
-        flattened_offsets_per_rank: Dict[int, Tuple[Tuple[int, int], ...]] = {}
+        shard_spec_per_rank: Dict[int, TensorShardSpec] = {}
         if isinstance(tensor, ShardedFlatTensor):
             full_shape = tensor.unsharded_shape
             is_sharded = True
@@ -593,15 +603,25 @@ class Checkpointer:
                     if tensor.process_group is None
                     else dist.get_global_rank(tensor.process_group, pg_rank)
                 )
-                flattened_offsets_per_rank[global_rank] = offsets
+                shard_spec_per_rank[global_rank] = TensorShardSpec(flattened_offsets=offsets)
+        elif isinstance(tensor, DTensor):
+            full_shape = tuple(tensor.shape)
+            is_sharded = True
+            for global_rank in tensor.device_mesh.mesh.flatten():
+                local_shape, global_offset = dtensor_utils.get_local_shape_and_global_offset(
+                    tensor, rank=int(global_rank.item())
+                )
+                shard_spec_per_rank[global_rank] = TensorShardSpec(
+                    local_shape=local_shape, global_offset=global_offset
+                )
         else:
             full_shape = tuple(tensor.shape)
-            flattened_offsets_per_rank = {get_rank(): ((0, tensor.numel()),)}
+            shard_spec_per_rank[get_rank()] = TensorShardSpec(flattened_offsets=((0, tensor.numel()),))
         return TensorFlatView(
             view=_get_local_tensor_data(tensor).view(-1),
             full_shape=full_shape,
             is_sharded=is_sharded,
-            flattened_offsets_per_rank=flattened_offsets_per_rank,
+            shard_spec_per_rank=shard_spec_per_rank,
         )
 
     def _get_global_save_plan_and_metadata(
@@ -614,16 +634,17 @@ class Checkpointer:
             flat_view = self._get_flat_view(tensor)
             tensors_flat_view[key] = flat_view.view
             tensors_save_plan[key] = TensorSavePlan(
-                flattened_offsets_per_rank=flat_view.flattened_offsets_per_rank, is_sharded=flat_view.is_sharded
+                is_sharded=flat_view.is_sharded,
+                shard_spec_per_rank=flat_view.shard_spec_per_rank,
             )
             tensors_metadata[key] = TensorStorageMetadata(
-                flattened_offsets_per_file={
-                    self._filename_for_rank(rank): offsets
-                    for rank, offsets in flat_view.flattened_offsets_per_rank.items()
-                },
                 shape=flat_view.full_shape,
                 is_sharded=flat_view.is_sharded,
                 dtype=TORCH_DTYPE_TO_STR[tensor.dtype],
+                shard_spec_per_file={
+                    self._filename_for_rank(rank): shard_spec
+                    for rank, shard_spec in flat_view.shard_spec_per_rank.items()
+                },
             )
 
         # All-gather save plans across ranks, merge and validate.
@@ -639,9 +660,7 @@ class Checkpointer:
                     if not plan.is_sharded and not final_plan.is_sharded:
                         # default to first rank with a save plan for this tensor
                         pass
-                    elif not set(plan.flattened_offsets_per_rank).intersection(
-                        final_plan.flattened_offsets_per_rank
-                    ):
+                    elif not set(plan.shard_spec_per_rank).intersection(final_plan.shard_spec_per_rank):
                         # tensor may be sharded in separate process groups, that's okay.
                         pass
                     else:
@@ -664,9 +683,7 @@ class Checkpointer:
                     if not metadata.is_sharded and not final_metadata.is_sharded:
                         # default to first rank with metadata for this tensor
                         pass
-                    elif not set(metadata.flattened_offsets_per_file).intersection(
-                        final_metadata.flattened_offsets_per_file
-                    ):
+                    elif not set(metadata.shard_spec_per_file).intersection(final_metadata.shard_spec_per_file):
                         # tensor may be sharded in separate process groups, that's okay.
                         pass
                     else:
@@ -689,13 +706,59 @@ class Checkpointer:
         return dir
 
 
-class TensorStorageMetadata(BaseModel):
-    flattened_offsets_per_file: Dict[str, Tuple[Tuple[int, int], ...]]
+class TensorShardSpec(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    flattened_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
     """
-    Maps file name to the offsets within the full flattened tensor that the shard in the file
-    corresponds to.
+    Offsets within the full flattened tensor that the given shard corresponds to.
     """
 
+    local_shape: Optional[Tuple[int, ...]] = None
+    """
+    The (unflattened) shape of the local shard.
+    """
+
+    global_offset: Optional[Tuple[int, ...]] = None
+    """
+    The starting offset for each dimension in the global unsharded (unflattened) tensor that the
+    local shard corresponds to.
+    """
+
+    @property
+    def local_numel(self) -> int:
+        if self.local_shape is not None:
+            return reduce(lambda x, y: x * y, self.local_shape, 1)
+        elif self.flattened_offsets is not None:
+            local_numel = 0
+            for start_idx, end_idx in self.flattened_offsets:
+                local_numel += end_idx - start_idx
+            return local_numel
+        else:
+            raise ValueError("missing required fields to determine local numel")
+
+    def get_flattened_offsets(self, full_shape: Tuple[int, ...]) -> Tuple[Tuple[int, int], ...]:
+        if self.flattened_offsets is not None:
+            return self.flattened_offsets
+        elif self.local_shape is not None and self.global_offset is not None:
+            assert len(self.local_shape) == len(self.global_offset) == len(full_shape)
+            if len(full_shape) == 1:  # 1D tensor
+                return ((self.global_offset[0], self.global_offset[0] + self.local_numel),)
+            elif len(full_shape) == 2:
+                offsets = []
+                for row in range(self.global_offset[0], self.global_offset[0] + self.local_shape[0]):
+                    offset_start = row * full_shape[1] + self.global_offset[1]
+                    offset_end = offset_start + self.local_shape[1]
+                    offsets.append((offset_start, offset_end))
+                return tuple(offsets)
+            else:
+                # TODO: generalize
+                raise NotImplementedError("only 1D and 2D DTensors are supported")
+        else:
+            raise ValueError("missing required fields to produce flattened offsets")
+
+
+class TensorStorageMetadata(BaseModel):
     shape: Tuple[int, ...]
     """
     The shape of the full (unflattened) tensor.
@@ -711,6 +774,11 @@ class TensorStorageMetadata(BaseModel):
     The data type of the tensor.
     """
 
+    shard_spec_per_file: Dict[str, TensorShardSpec]
+    """
+    Maps each filename to the sharding spec of the local shard within that file.
+    """
+
     @property
     def torch_dtype(self) -> torch.dtype:
         return TORCH_DTYPES[self.dtype]
@@ -723,20 +791,11 @@ class TensorStorageMetadata(BaseModel):
             tensor.fill_(torch.nan)
         return tensor
 
-    def materialize_from_sharded(
-        self, tensor: torch.Tensor, device: Optional[torch.device] = None
-    ) -> torch.Tensor:
-        if isinstance(tensor, ShardedFlatTensor):
-            if tensor.unsharded_shape != self.shape:
-                raise ValueError(
-                    f"unexpected shape for sharded tensor, expected {self.shape}, got {tensor.unsharded_shape}"
-                )
-            tensor = torch.empty(tensor.shape, device=device, dtype=self.torch_dtype)
-            if tensor.dtype.is_floating_point:
-                tensor.fill_(torch.nan)
-            return tensor
+    def get_flattened_offsets_in_file(self, filename: str) -> Optional[Tuple[Tuple[int, int], ...]]:
+        if (shard_spec := self.shard_spec_per_file.get(filename)) is not None:
+            return shard_spec.get_flattened_offsets(self.shape)
         else:
-            raise NotImplementedError(f"`materialize_from_sharded()` not implemented for {tensor}")
+            return None
 
 
 class StorageMetadata(BaseModel):
@@ -744,15 +803,14 @@ class StorageMetadata(BaseModel):
 
 
 class TensorSavePlan(BaseModel):
-    flattened_offsets_per_rank: Dict[int, Tuple[Tuple[int, int], ...]]
-    """
-    Maps global process rank to the offsets within the full flattened tensor that the shard for the
-    rank corresponds to. Some ranks may be omitted.
-    """
-
     is_sharded: bool
     """
     If the tensor is sharded.
+    """
+
+    shard_spec_per_rank: Dict[int, TensorShardSpec]
+    """
+    Maps each rank to the sharding spec of the local shard from that rank. Some ranks may be omitted.
     """
 
 
@@ -773,10 +831,19 @@ class TensorFlatView:
     If the tensor is sharded.
     """
 
-    flattened_offsets_per_rank: Dict[int, Tuple[Tuple[int, int], ...]]
+    shard_spec_per_rank: Dict[int, TensorShardSpec]
     """
-    A mapping of *global* rank to offsets into the full flattened tensor.
+    Maps each rank to the sharding spec of the local shard from that rank.
     """
+
+    def get_flattened_offsets_for_rank(self, rank: int) -> Optional[Tuple[Tuple[int, int], ...]]:
+        if (shard_spec := self.shard_spec_per_rank.get(rank)) is not None:
+            return shard_spec.get_flattened_offsets(self.full_shape)
+        else:
+            return None
+
+    def get_local_flattened_offsets(self) -> Tuple[Tuple[int, int], ...]:
+        return self.shard_spec_per_rank[get_rank()].get_flattened_offsets(self.full_shape)
 
 
 class SavePlan(BaseModel):
@@ -1105,11 +1172,26 @@ def _patch_key(model: nn.Module, key: str) -> str:
 
 
 def _get_local_tensor_data(tensor: torch.Tensor) -> torch.Tensor:
-    return tensor.data
+    if isinstance(tensor, DTensor):
+        return tensor.to_local()
+    else:
+        return tensor.data
 
 
 def _wrap_tensor_for_sharded_parameter(tensor: torch.Tensor, param: Optional[torch.Tensor]) -> torch.Tensor:
     if isinstance(param, ShardedFlatTensor):
         return param.wrap(tensor, requires_grad=False)
+    elif isinstance(param, DTensor):
+        return DTensor(  # type: ignore
+            tensor,
+            param.device_mesh,
+            param.placements,
+            shape=param.size(),
+            dtype=tensor.dtype,
+            requires_grad=False,
+            stride=param.stride(),
+        )
+    elif isinstance(param, nn.Parameter) and isinstance(param.data, DTensor):
+        return _wrap_tensor_for_sharded_parameter(tensor, param.data)
     else:
         return tensor

@@ -4,12 +4,24 @@ Helper functions for dealing with PyTorch's :class:`DTensor`.
 
 from typing import Optional, Sequence, Tuple
 
+from torch.distributed._tensor import DTensor
 from torch.distributed._tensor.placement_types import Placement, Shard
 from torch.distributed.device_mesh import DeviceMesh
 
 from olmo_core.utils import ShapeType
 
 from ..utils import get_mesh_coordinates
+
+
+def get_local_shape_and_global_offset(
+    dtensor: DTensor, rank: Optional[int] = None
+) -> Tuple[Tuple[int, ...], Tuple[int, ...]]:
+    global_shape = dtensor.shape
+    mesh = dtensor.device_mesh
+    placements = dtensor.placements
+    local_shape, global_offset = compute_local_shape_and_global_offset(global_shape, mesh, placements, rank=rank)
+    assert local_shape == dtensor.to_local().shape
+    return local_shape, global_offset
 
 
 # Adapted from `torch.distributed._tensor._utils.py`.

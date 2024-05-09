@@ -5,11 +5,13 @@ import pytest
 import torch
 import torch.distributed as dist
 from cached_path import cached_path
+from torch.distributed._tensor import Shard, distribute_tensor, init_device_mesh
 
 from olmo_core.distributed.checkpoint import (
     Checkpointer,
     OptimStateDict,
     SafeTensorsLoader,
+    TensorShardSpec,
     _flatten_optimizer_state,
     _get_model_state_dict_for_checkpoint,
     _unflatten_optimizer_state,
@@ -33,6 +35,49 @@ from .utils import (
     requires_multi_gpu,
     run_distributed_test,
 )
+
+
+def test_tensor_shard_spec_for_dtensor_1D():
+    full_shape = (16,)
+    shard_spec = TensorShardSpec(local_shape=(8,), global_offset=(0,))
+    assert shard_spec.get_flattened_offsets(full_shape) == ((0, 8),)
+
+
+def test_tensor_shard_spec_for_dtensor_2D_colwise():
+    # For example:
+    #  from torch.distributed._tensor import Shard, distribute_tensor, init_device_mesh
+    #  mesh = init_device_mesh("cuda", (dist.get_world_size(),))
+    #  distribute_tensor(torch.randn(16, 8), mesh, [Shard(dim=0)])
+    full_shape = (16, 8)
+    shard_spec = TensorShardSpec(local_shape=(4, 8), global_offset=(4, 0))
+    assert shard_spec.get_flattened_offsets(full_shape) == ((32, 40), (40, 48), (48, 56), (56, 64))
+
+
+def test_tensor_shard_spec_for_dtensor_2D_rowwise():
+    # For example:
+    #  from torch.distributed._tensor import Shard, distribute_tensor, init_device_mesh
+    #  mesh = init_device_mesh("cuda", (dist.get_world_size(),))
+    #  distribute_tensor(torch.randn(16, 8), mesh, [Shard(dim=1)])
+    full_shape = (16, 8)
+    shard_spec = TensorShardSpec(local_shape=(16, 2), global_offset=(0, 2))
+    assert shard_spec.get_flattened_offsets(full_shape) == (
+        (2, 4),  # row 0
+        (10, 12),  # row 1
+        (18, 20),  # row 2
+        (26, 28),  # row 3
+        (34, 36),  # row 4
+        (42, 44),  # row 5
+        (50, 52),  # row 6
+        (58, 60),  # row 7
+        (66, 68),  # row 8
+        (74, 76),  # row 9
+        (82, 84),  # row 10
+        (90, 92),  # row 11
+        (98, 100),  # row 12
+        (106, 108),  # row 13
+        (114, 116),  # row 14
+        (122, 124),  # row 15
+    )
 
 
 def save_and_load_checkpoint_with_regular_and_sharded_tensors(dir):
@@ -90,6 +135,34 @@ def test_save_and_load_checkpoint_with_regular_and_sharded_tensors(backend, tmp_
     full_state_dict = Checkpointer().unshard(tmp_path)
     assert full_state_dict["x"].shape == (2, 3)
     assert full_state_dict["y"].shape == (2, 3)
+
+
+def save_and_load_checkpoint_with_dtensors(dir):
+    checkpointer = Checkpointer()
+
+    mesh = init_device_mesh("cuda", (dist.get_world_size(),))
+
+    state_dict_to_save = {
+        "1d": distribute_tensor(torch.randn(16, device=get_default_device()), mesh, [Shard(dim=0)]),
+        "2d_colwise": distribute_tensor(torch.randn(16, 8, device=get_default_device()), mesh, [Shard(dim=0)]),
+        "2d_rowwise": distribute_tensor(torch.randn(16, 8, device=get_default_device()), mesh, [Shard(dim=1)]),
+    }
+
+    state_dict_to_load = {
+        "1d": distribute_tensor(torch.randn(16, device=get_default_device()), mesh, [Shard(dim=0)]),
+        "2d_colwise": distribute_tensor(torch.randn(16, 8, device=get_default_device()), mesh, [Shard(dim=0)]),
+        "2d_rowwise": distribute_tensor(torch.randn(16, 8, device=get_default_device()), mesh, [Shard(dim=1)]),
+    }
+
+    checkpointer.load(dir, state_dict_to_load)  # type: ignore[arg-type]
+
+    for key in state_dict_to_load:
+        torch.testing.assert_close(state_dict_to_save[key], state_dict_to_load[key])
+
+
+@requires_multi_gpu
+def test_save_and_load_checkpoint_with_dtensors(tmp_path):
+    run_distributed_test(save_and_load_checkpoint_with_dtensors, backend="nccl", func_args=(tmp_path,))
 
 
 def save_and_load_checkpoint_with_different_sharding_spec(dir):
