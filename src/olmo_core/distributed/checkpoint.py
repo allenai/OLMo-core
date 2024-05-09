@@ -376,19 +376,14 @@ class Checkpointer:
                     f"Shape mismatched for '{key}', expected {flat_view.full_shape}, found {tensor_storage_metadata.shape}"
                 )
 
-            # Get the local offsets to load.
-            all_offsets: Tuple[Tuple[int, int], ...]
-            if flat_view.is_sharded:
-                all_offsets = flat_view.get_local_flattened_offsets()
-            else:
-                all_offsets = ((0, tensor.numel()),)
+            if flat_view.shard_spec.local_numel == 0:
+                continue  # nothing to load
 
-            for filename in tensor_storage_metadata.shard_spec_per_file:
-                all_offsets_in_file = tensor_storage_metadata.get_flattened_offsets_in_file(filename)
-                if not all_offsets_in_file:
+            for filename, shard_spec_in_file in tensor_storage_metadata.shard_spec_per_file.items():
+                if shard_spec_in_file.local_numel == 0:
                     continue
 
-                if all_offsets == all_offsets_in_file:
+                if flat_view.shard_spec == shard_spec_in_file:
                     # Load the whole slice within the file at once.
                     with safetensors_mfl.open(f"{dir}/{filename}") as loader:
                         validate_shard_in_file(tensor, loader, key, filename)
@@ -397,7 +392,11 @@ class Checkpointer:
                             flat_view.view.copy_(loader.get_flat_slice(key))
                     break
 
-                for offsets in all_offsets:
+                all_offsets_in_file = tensor_storage_metadata.get_flattened_offsets_in_file(filename)
+                if not all_offsets_in_file:
+                    continue
+
+                for offsets in flat_view.local_flattened_offsets:
                     if offsets[1] - offsets[0] == 0:
                         continue
 
@@ -837,14 +836,19 @@ class TensorFlatView:
     Maps each rank to the sharding spec of the local shard from that rank.
     """
 
+    @property
+    def shard_spec(self) -> TensorShardSpec:
+        return self.shard_spec_per_rank[get_rank()]
+
+    @cached_property
+    def local_flattened_offsets(self) -> Tuple[Tuple[int, int], ...]:
+        return self.shard_spec_per_rank[get_rank()].get_flattened_offsets(self.full_shape)
+
     def get_flattened_offsets_for_rank(self, rank: int) -> Optional[Tuple[Tuple[int, int], ...]]:
         if (shard_spec := self.shard_spec_per_rank.get(rank)) is not None:
             return shard_spec.get_flattened_offsets(self.full_shape)
         else:
             return None
-
-    def get_local_flattened_offsets(self) -> Tuple[Tuple[int, int], ...]:
-        return self.shard_spec_per_rank[get_rank()].get_flattened_offsets(self.full_shape)
 
 
 class SavePlan(BaseModel):
