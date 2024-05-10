@@ -401,8 +401,10 @@ class Checkpointer:
                     if offsets[1] - offsets[0] == 0:
                         continue
 
+                    numel_in_file_so_far = 0
                     for offsets_in_file in all_offsets_in_file:
-                        if offsets_in_file[1] - offsets_in_file[0] == 0:
+                        numel_in_file_slice = offsets_in_file[1] - offsets_in_file[0]
+                        if numel_in_file_slice == 0:
                             continue
 
                         # Check for overlap in offsets, and if there is overlap, load the slice from disk.
@@ -422,7 +424,10 @@ class Checkpointer:
                                 flat_tensor_start, flat_tensor_end = 0, flat_view_slice.numel()
                                 # Start and end index of the slice within `flat_tensor_to_load` that we're going
                                 # to load into the slice of `flat_tensor`.
-                                flat_tensor_to_load_start, flat_tensor_to_load_end = 0, numel_in_file
+                                flat_tensor_to_load_start, flat_tensor_to_load_end = (
+                                    numel_in_file_so_far,
+                                    numel_in_file_so_far + numel_in_file_slice,
+                                )
                                 # There are 5 scenarios to consider in terms of where the tensors overlap.
                                 # Suppose the original flat tensor has 6 elements: 'x x x x x x'
                                 # -------------------------------------------
@@ -481,6 +486,7 @@ class Checkpointer:
                                 flat_view_slice[flat_tensor_start:flat_tensor_end].copy_(flat_tensor_to_load)
 
                                 del flat_tensor_to_load
+                        numel_in_file_so_far += numel_in_file_slice
 
             state_dict[key] = self._copy_into(tensor, flat_view.view)
             del flat_view
