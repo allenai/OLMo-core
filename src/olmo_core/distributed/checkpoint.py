@@ -495,7 +495,7 @@ class Checkpointer:
             if _check_for_nans:
                 # Check for NaNs which would indicate we didn't fill the state dict correctly.
                 if state_dict[key].isnan().any().item():
-                    raise RuntimeError(f"error loading {key} from checkpoint, nans encountered")
+                    raise RuntimeError(f"error loading '{key}' from checkpoint, nans encountered")
 
     @torch.no_grad()
     def unshard(
