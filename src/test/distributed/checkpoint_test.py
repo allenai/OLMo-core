@@ -860,6 +860,11 @@ def run_save_and_load_tensor_parallel_model(dir, take_step_before_checkpoint):
     # Save checkpoint.
     save_model_and_optim_state(dir, feed_forward, optim)
 
+    # Now load the checkpoint with a different topology, in this case an unsharded model.
+    unsharded_feed_forward = FeedForward().cuda()
+    unsharded_optim = torch.optim.AdamW(unsharded_feed_forward.parameters())
+    load_model_and_optim_state(dir, unsharded_feed_forward, unsharded_optim)
+
 
 @requires_multi_gpu
 @pytest.mark.parametrize(
