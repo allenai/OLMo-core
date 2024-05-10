@@ -73,7 +73,7 @@ def test_tensor_shard_spec_get_merged_flattened_offsets():
     ) == [(0, 3), (6, 12), (15, 18)]
 
 
-def test_tensor_shard_spec_compute_overlap():
+def test_tensor_shard_spec_compute_overlap_with_flattened_offsets():
     assert (
         TensorShardSpec(flattened_offsets=((0, 3), (3, 6))).compute_overlap_with(
             TensorShardSpec(flattened_offsets=((0, 6),)), (128, 256)
@@ -107,6 +107,50 @@ def test_tensor_shard_spec_compute_overlap():
             TensorShardSpec(flattened_offsets=((12, 15),)), (128, 256)
         )
         is None
+    )
+
+
+def test_tensor_shard_spec_compute_overlap_with_dtensor_fields():
+    assert (
+        TensorShardSpec(local_shape=(2, 8), global_offset=(0, 0)).compute_overlap_with(
+            TensorShardSpec(local_shape=(2, 8), global_offset=(0, 0)), (16, 8)
+        )
+        == OverlapType.EQUAL
+    )
+
+    assert (
+        TensorShardSpec(local_shape=(4, 8), global_offset=(0, 0)).compute_overlap_with(
+            TensorShardSpec(local_shape=(2, 8), global_offset=(1, 0)), (16, 8)
+        )
+        == OverlapType.SUPERSET
+    )
+
+    assert (
+        TensorShardSpec(local_shape=(2, 8), global_offset=(1, 0)).compute_overlap_with(
+            TensorShardSpec(local_shape=(4, 8), global_offset=(0, 0)), (16, 8)
+        )
+        == OverlapType.SUBSET
+    )
+
+    assert (
+        TensorShardSpec(local_shape=(2, 8), global_offset=(0, 0)).compute_overlap_with(
+            TensorShardSpec(local_shape=(4, 4), global_offset=(0, 0)), (16, 8)
+        )
+        == OverlapType.MIXED
+    )
+
+    assert (
+        TensorShardSpec(local_shape=(2, 4), global_offset=(1, 2)).compute_overlap_with(
+            TensorShardSpec(local_shape=(4, 8), global_offset=(0, 0)), (16, 8)
+        )
+        == OverlapType.SUBSET
+    )
+
+    assert (
+        TensorShardSpec(local_shape=(2, 4), global_offset=(1, 2)).compute_overlap_with(
+            TensorShardSpec(local_shape=(2, 4), global_offset=(0, 0)), (16, 8)
+        )
+        == OverlapType.MIXED
     )
 
 
@@ -269,6 +313,30 @@ def test_save_and_load_checkpoint_with_different_dtensor_topology(tmp_path):
     run_distributed_test(
         save_and_load_checkpoint_with_different_dtensor_topology, backend="nccl", func_args=(tmp_path,)
     )
+
+
+def save_and_unshard_dtensor(dir):
+    checkpointer = Checkpointer()
+
+    mesh = init_device_mesh("cuda", (dist.get_world_size(),))
+
+    og_tensor = torch.randn(8, 6, device=get_default_device())
+
+    # Ensure tensor matches on all ranks (could use scatter here too, but whatever).
+    dist.all_reduce(og_tensor)
+
+    state_dict_to_save = {
+        "x": distribute_tensor(og_tensor, mesh, [Shard(dim=0)]),
+    }
+    checkpointer.save(dir, state_dict_to_save)  # type: ignore[arg-type]
+
+    full_state_dict = checkpointer.unshard(dir, device=get_default_device())
+    torch.testing.assert_close(og_tensor, full_state_dict["x"])
+
+
+@requires_multi_gpu
+def test_save_and_unshard_dtensor(tmp_path):
+    run_distributed_test(save_and_unshard_dtensor, backend="nccl", func_args=(tmp_path,))
 
 
 def save_and_load_checkpoint_with_different_sharding_spec(dir):

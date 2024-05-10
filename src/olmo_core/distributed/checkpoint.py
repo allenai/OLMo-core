@@ -376,6 +376,8 @@ class Checkpointer:
             if flat_view.shard_spec.local_numel == 0:
                 continue  # nothing to load into
 
+            # Loop over each file and load from the file if there is any overlap between the shard
+            # in the file and the shard in the local state dict.
             for filename, shard_spec_in_file in tensor_storage_metadata.shard_spec_per_file.items():
                 if shard_spec_in_file.local_numel == 0:
                     continue  # nothing to load from
@@ -400,9 +402,11 @@ class Checkpointer:
                         flat_view.view.copy_(loader.get_flat_slice(key))
                         break
 
-                    # TODO: (optimization) if the offsets in the file are a subset of the offsets in the
-                    # flat view, load the entire slice from the file all at once and then copy into the
-                    # flat view slice-by-slice.
+                    slice_in_file: Optional[torch.Tensor] = None
+                    if overlap == OverlapType.SUPERSET:
+                        # Optimization: pre-load the entire slice in the file when the slice to load
+                        # is a superset of the slice in the file.
+                        slice_in_file = loader.get_flat_slice(key)
 
                     for offsets, flat_view_slice in flat_view.get_local_flattened_offsets_with_slice():
                         if offsets[1] - offsets[0] == 0:
@@ -466,11 +470,19 @@ class Checkpointer:
                                 )
 
                                 # Load the slice.
-                                flat_tensor_to_load = loader.get_flat_slice(
-                                    key,
-                                    numel_in_file_so_far + flat_tensor_to_load_start,
-                                    numel_in_file_so_far + flat_tensor_to_load_end,
-                                )
+                                if slice_in_file is not None:
+                                    flat_tensor_to_load = slice_in_file[
+                                        numel_in_file_so_far
+                                        + flat_tensor_to_load_start : numel_in_file_so_far
+                                        + flat_tensor_to_load_end
+                                    ]
+                                else:
+                                    flat_tensor_to_load = loader.get_flat_slice(
+                                        key,
+                                        numel_in_file_so_far + flat_tensor_to_load_start,
+                                        numel_in_file_so_far + flat_tensor_to_load_end,
+                                    )
+
                                 if (
                                     load_shape := flat_view_slice[flat_tensor_start:flat_tensor_end].shape
                                 ) != flat_tensor_to_load.shape:
@@ -479,10 +491,12 @@ class Checkpointer:
                                         f"({flat_tensor_start}, {flat_tensor_end}), "
                                         f"expected shape {tuple(load_shape)}, found {tuple(flat_tensor_to_load.shape)}"
                                     )
+
                                 flat_view_slice[flat_tensor_start:flat_tensor_end].copy_(flat_tensor_to_load)
 
                                 del flat_tensor_to_load
                             numel_in_file_so_far += numel_in_file_slice
+                    del slice_in_file
 
             state_dict[key] = self._copy_into(tensor, flat_view.view)
             del flat_view
@@ -825,6 +839,41 @@ class TensorShardSpec(BaseModel):
             else:
                 return OverlapType.MIXED
 
+        if (
+            self.local_shape is not None
+            and self.global_offset is not None
+            and other.local_shape is not None
+            and other.global_offset is not None
+        ):
+            results_per_dim: Set[Optional[OverlapType]] = set()
+            for dim in range(len(self.local_shape)):
+                dim_offsets = (self.global_offset[dim], self.global_offset[dim] + self.local_shape[dim])
+                other_dim_offsets = (other.global_offset[dim], other.global_offset[dim] + other.local_shape[dim])
+                if dim_offsets == other_dim_offsets:
+                    results_per_dim.add(OverlapType.EQUAL)
+                elif dim_offsets[0] <= other_dim_offsets[0] and other_dim_offsets[1] <= dim_offsets[1]:
+                    results_per_dim.add(OverlapType.SUPERSET)
+                elif other_dim_offsets[0] <= dim_offsets[0] and dim_offsets[1] <= other_dim_offsets[1]:
+                    results_per_dim.add(OverlapType.SUBSET)
+                elif _offsets_overlap(dim_offsets, other_dim_offsets):
+                    results_per_dim.add(OverlapType.MIXED)
+                else:
+                    results_per_dim.add(None)
+
+            if None in results_per_dim:
+                # At least one dimension doesn't have any overlap between `self` and `other`,
+                # which means no overlap at all.
+                return None
+            elif len(results_per_dim) == 1:
+                return list(results_per_dim)[0]
+            elif results_per_dim == {OverlapType.EQUAL, OverlapType.SUPERSET}:
+                return OverlapType.SUPERSET
+            elif results_per_dim == {OverlapType.EQUAL, OverlapType.SUBSET}:
+                return OverlapType.SUBSET
+            else:
+                return OverlapType.MIXED
+
+        # Fall back to mixed to be safe.
         return OverlapType.MIXED
 
 
