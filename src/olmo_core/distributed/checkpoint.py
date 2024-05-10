@@ -40,7 +40,7 @@ import tempfile
 from dataclasses import dataclass
 from functools import cached_property, reduce
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, TypedDict
+from typing import Any, Dict, Generator, List, Optional, Set, Tuple, TypedDict
 
 import safetensors as sft
 import safetensors.torch as sft_torch
@@ -397,7 +397,7 @@ class Checkpointer:
                 if not all_offsets_in_file:
                     continue
 
-                for offsets in flat_view.local_flattened_offsets:
+                for offsets, flat_view_slice in flat_view.get_local_flattened_offsets_with_slice():
                     if offsets[1] - offsets[0] == 0:
                         continue
 
@@ -419,7 +419,7 @@ class Checkpointer:
 
                                 # Start and end index of the slice within `flat_tensor` that we're going to load
                                 # from a slice of `flat_tensor_to_load`.
-                                flat_tensor_start, flat_tensor_end = 0, flat_view.view.numel()
+                                flat_tensor_start, flat_tensor_end = 0, flat_view_slice.numel()
                                 # Start and end index of the slice within `flat_tensor_to_load` that we're going
                                 # to load into the slice of `flat_tensor`.
                                 flat_tensor_to_load_start, flat_tensor_to_load_end = 0, numel_in_file
@@ -471,13 +471,14 @@ class Checkpointer:
                                     key, flat_tensor_to_load_start, flat_tensor_to_load_end
                                 )
                                 if (
-                                    load_shape := flat_view.view[flat_tensor_start:flat_tensor_end].shape
+                                    load_shape := flat_view_slice[flat_tensor_start:flat_tensor_end].shape
                                 ) != flat_tensor_to_load.shape:
                                     raise RuntimeError(
-                                        f"error loading {key} from {filename} with offsets ({flat_tensor_start}, {flat_tensor_end}), "
-                                        f"expected {load_shape}, found {flat_tensor_to_load.shape}"
+                                        f"error loading tensor '{key}' from file '{filename}' with offsets "
+                                        f"({flat_tensor_start}, {flat_tensor_end}), "
+                                        f"expected shape {tuple(load_shape)}, found {tuple(flat_tensor_to_load.shape)}"
                                     )
-                                flat_view.view[flat_tensor_start:flat_tensor_end].copy_(flat_tensor_to_load)
+                                flat_view_slice[flat_tensor_start:flat_tensor_end].copy_(flat_tensor_to_load)
 
                                 del flat_tensor_to_load
 
@@ -848,6 +849,15 @@ class TensorFlatView:
     @cached_property
     def local_flattened_offsets(self) -> Tuple[Tuple[int, int], ...]:
         return self.shard_spec_per_rank[get_rank()].get_flattened_offsets(self.full_shape)
+
+    def get_local_flattened_offsets_with_slice(
+        self,
+    ) -> Generator[Tuple[Tuple[int, int], torch.Tensor], None, None]:
+        numel_so_far = 0
+        for offset_start, offset_end in self.local_flattened_offsets:
+            numel_in_slice = offset_end - offset_start
+            yield (offset_start, offset_end), self.view[numel_so_far : numel_so_far + numel_in_slice]
+            numel_so_far += numel_in_slice
 
     def get_flattened_offsets_for_rank(self, rank: int) -> Optional[Tuple[Tuple[int, int], ...]]:
         if (shard_spec := self.shard_spec_per_rank.get(rank)) is not None:
