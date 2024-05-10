@@ -30,7 +30,6 @@ def get_local_shape_and_global_offset(
     mesh = dtensor.device_mesh
     placements = dtensor.placements
     local_shape, global_offset = compute_local_shape_and_global_offset(global_shape, mesh, placements, rank=rank)
-    assert local_shape == dtensor.to_local().shape
     return local_shape, global_offset
 
 
