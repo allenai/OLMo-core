@@ -1120,8 +1120,7 @@ def init_optimizer_state(optim: torch.optim.Optimizer):
             # Some parameters may be empty for sharded models, in which case the state does not need
             # to be initialized.
             if p.numel() > 0:
-                p.grad = p.data.new(p.size()).zero_()
-                p.grad.requires_grad_(False)
+                p.grad = torch.zeros_like(p, memory_format=torch.preserve_format)
     optim.step()
     optim.zero_grad()
 
