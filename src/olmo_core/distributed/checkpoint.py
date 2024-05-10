@@ -64,7 +64,12 @@ from olmo_core.io import (
     serialize_to_tensor,
     upload,
 )
-from olmo_core.utils import TORCH_DTYPE_TO_STR, TORCH_DTYPES, default_thread_count
+from olmo_core.utils import (
+    TORCH_DTYPE_TO_STR,
+    TORCH_DTYPES,
+    StrEnum,
+    default_thread_count,
+)
 
 from .tensors import ShardedFlatTensor, ShardingSpec
 from .utils import all_gather_object, barrier, get_rank, get_world_size, scatter_object
@@ -378,50 +383,40 @@ class Checkpointer:
                 )
 
             if flat_view.shard_spec.local_numel == 0:
-                continue  # nothing to load
+                continue  # nothing to load into
 
             for filename, shard_spec_in_file in tensor_storage_metadata.shard_spec_per_file.items():
                 if shard_spec_in_file.local_numel == 0:
-                    continue
+                    continue  # nothing to load from
 
-                if flat_view.shard_spec == shard_spec_in_file:
-                    # Load the whole slice within the file at once.
-                    with safetensors_mfl.open(f"{dir}/{filename}") as loader:
-                        validate_shard_in_file(tensor, loader, key, filename)
-                        numel_in_file = loader.get_numel(key)
-                        if numel_in_file > 0:
-                            flat_view.view.copy_(loader.get_flat_slice(key))
-                    break
+                # Compute overlap between the slice we want to load and the slice in the given file.
+                overlap = flat_view.compute_overlap_with(shard_spec_in_file)
+                if overlap is None:
+                    continue  # no overlap with data in file, so nothing to load
 
-                if tensor_storage_metadata.get_numel_in_file(filename) == 0:
-                    continue
+                with safetensors_mfl.open(f"{dir}/{filename}") as loader:
+                    validate_shard_in_file(tensor, loader, key, filename)
 
-                # TODO: (optimization) if the offsets in the file are a subset of the offsets in the
-                # flat view, load the entire slice from the file all at once and then copy into the
-                # flat view slice-by-slice.
+                    if overlap == OverlapType.EQUAL:
+                        flat_view.view.copy_(loader.get_flat_slice(key))
+                        break
 
-                for offsets, flat_view_slice in flat_view.get_local_flattened_offsets_with_slice():
-                    if offsets[1] - offsets[0] == 0:
-                        continue
+                    # TODO: (optimization) if the offsets in the file are a subset of the offsets in the
+                    # flat view, load the entire slice from the file all at once and then copy into the
+                    # flat view slice-by-slice.
 
-                    numel_in_file_so_far = 0
-                    for offsets_in_file in tensor_storage_metadata.get_flattened_offsets_in_file(filename):
-                        numel_in_file_slice = offsets_in_file[1] - offsets_in_file[0]
-                        if numel_in_file_slice == 0:
+                    for offsets, flat_view_slice in flat_view.get_local_flattened_offsets_with_slice():
+                        if offsets[1] - offsets[0] == 0:
                             continue
 
-                        # Check for overlap in offsets, and if there is overlap, load the slice from disk.
-                        if (
-                            offsets_in_file[0] <= offsets[0] < offsets_in_file[1]
-                            or offsets_in_file[0] < offsets[1] <= offsets_in_file[1]
-                            or (offsets[0] < offsets_in_file[0] and offsets_in_file[1] < offsets[1])
-                        ):
-                            with safetensors_mfl.open(f"{dir}/{filename}") as loader:
-                                validate_shard_in_file(tensor, loader, key, filename)
-                                numel_in_file = loader.get_numel(key)
-                                if numel_in_file == 0:
-                                    continue
+                        numel_in_file_so_far = 0
+                        for offsets_in_file in tensor_storage_metadata.get_flattened_offsets_in_file(filename):
+                            numel_in_file_slice = offsets_in_file[1] - offsets_in_file[0]
+                            if numel_in_file_slice == 0:
+                                continue
 
+                            # Check for overlap in offsets, and if there is overlap, load the slice from disk.
+                            if _offsets_overlap(offsets, offsets_in_file):
                                 # Start and end index of the slice within `flat_tensor` that we're going to load
                                 # from a slice of `flat_tensor_to_load`.
                                 flat_tensor_start, flat_tensor_end = 0, flat_view_slice.numel()
@@ -488,7 +483,7 @@ class Checkpointer:
                                 flat_view_slice[flat_tensor_start:flat_tensor_end].copy_(flat_tensor_to_load)
 
                                 del flat_tensor_to_load
-                        numel_in_file_so_far += numel_in_file_slice
+                            numel_in_file_so_far += numel_in_file_slice
 
             state_dict[key] = self._copy_into(tensor, flat_view.view)
             del flat_view
@@ -720,6 +715,13 @@ class Checkpointer:
         return dir
 
 
+class OverlapType(StrEnum):
+    EQUAL = "EQUAL"
+    SUPERSET = "SUPERSET"
+    SUBSET = "SUBSET"
+    MIXED = "MIXED"
+
+
 class TensorShardSpec(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -752,6 +754,11 @@ class TensorShardSpec(BaseModel):
             raise ValueError("missing required fields to determine local numel")
 
     def get_flattened_offsets(self, full_shape: Tuple[int, ...]) -> Generator[Tuple[int, int], None, None]:
+        """
+        Get flattened offsets into the full flattened tensor that the given shard corresponds to.
+        If ``self.flattened_offsets`` is set, this just returns a generator over those, otherwise
+        it computes them from ``self.local_shape`` and ``self.global_offset``.
+        """
         if self.flattened_offsets is not None:
             yield from self.flattened_offsets
         elif self.local_shape is not None and self.global_offset is not None:
@@ -768,6 +775,72 @@ class TensorShardSpec(BaseModel):
                 raise NotImplementedError("only 1D and 2D DTensors are supported")
         else:
             raise ValueError("missing required fields to produce flattened offsets")
+
+    def get_merged_flattened_offsets(self, full_shape: Tuple[int, int]) -> Generator[Tuple[int, int], None, None]:
+        """
+        Like :meth:`get_flattened_offset` but it merges consecutive offsets that are contiguous.
+        """
+        current_start: Optional[int] = None
+        current_end: Optional[int] = None
+        for offset_start, offset_end in self.get_flattened_offsets(full_shape):
+            if offset_end - offset_start == 0:
+                continue
+            if current_start is None or current_end is None:
+                current_start = offset_start
+                current_end = offset_end
+            elif current_end == offset_start:
+                current_end = offset_end
+            else:
+                yield (current_start, current_end)
+                current_start = offset_start
+                current_end = offset_end
+
+        if current_start is not None and current_end is not None:
+            yield (current_start, current_end)
+
+    def compute_overlap_with(self, other: TensorShardSpec, full_shape: Tuple[int, ...]) -> Optional[OverlapType]:
+        if self == other:
+            return OverlapType.EQUAL
+
+        if self.flattened_offsets is not None or other.flattened_offsets is not None:
+            results: Set[OverlapType] = set()
+            for offsets in self.get_merged_flattened_offsets(full_shape):
+                for other_offsets in other.get_merged_flattened_offsets(full_shape):
+                    if offsets == other_offsets:
+                        results.add(OverlapType.EQUAL)
+                    elif offsets[0] <= other_offsets[0] and other_offsets[1] <= offsets[1]:
+                        results.add(OverlapType.SUPERSET)
+                    elif other_offsets[0] <= offsets[0] and offsets[1] <= other_offsets[1]:
+                        results.add(OverlapType.SUBSET)
+                    elif _offsets_overlap(offsets, other_offsets):
+                        results.add(OverlapType.MIXED)
+
+            if not results:
+                return None
+            elif len(results) == 1:
+                return list(results)[0]
+            elif results == {OverlapType.EQUAL, OverlapType.SUPERSET}:
+                return OverlapType.SUPERSET
+            elif results == {OverlapType.EQUAL, OverlapType.SUBSET}:
+                return OverlapType.SUBSET
+            else:
+                return OverlapType.MIXED
+
+        return None
+
+
+def _offsets_overlap(offsets: Tuple[int, int], other_offsets: Tuple[int, int]) -> bool:
+    """
+    Check if a pair of offsets have any overlap.
+    """
+    if (
+        other_offsets[0] <= offsets[0] < other_offsets[1]
+        or other_offsets[0] < offsets[1] <= other_offsets[1]
+        or (offsets[0] < other_offsets[0] and other_offsets[1] < offsets[1])
+    ):
+        return True
+    else:
+        return False
 
 
 class TensorStorageMetadata(BaseModel):
@@ -869,6 +942,9 @@ class TensorFlatView:
             numel_in_slice = offset_end - offset_start
             yield (offset_start, offset_end), self.view[numel_so_far : numel_so_far + numel_in_slice]
             numel_so_far += numel_in_slice
+
+    def compute_overlap_with(self, other: TensorShardSpec) -> Optional[OverlapType]:
+        return self.shard_spec.compute_overlap_with(other, self.full_shape)
 
 
 class SavePlan(BaseModel):

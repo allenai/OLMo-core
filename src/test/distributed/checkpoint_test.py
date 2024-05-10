@@ -10,10 +10,12 @@ from torch.distributed._tensor import Shard, distribute_tensor, init_device_mesh
 from olmo_core.distributed.checkpoint import (
     Checkpointer,
     OptimStateDict,
+    OverlapType,
     SafeTensorsLoader,
     TensorShardSpec,
     _flatten_optimizer_state,
     _get_model_state_dict_for_checkpoint,
+    _offsets_overlap,
     _unflatten_optimizer_state,
     init_optimizer_state,
     load_model_and_optim_state,
@@ -35,6 +37,77 @@ from .utils import (
     requires_multi_gpu,
     run_distributed_test,
 )
+
+
+def test_offsets_overlap():
+    assert _offsets_overlap((0, 3), (1, 4))
+    assert _offsets_overlap((0, 6), (0, 6))
+    assert _offsets_overlap((0, 6), (0, 12))
+    assert _offsets_overlap((1, 6), (0, 12))
+    assert _offsets_overlap((0, 6), (2, 4))
+    assert _offsets_overlap((0, 6), (5, 6))
+    assert _offsets_overlap((0, 6), (0, 2))
+
+    assert _offsets_overlap((1, 4), (0, 3))
+    assert _offsets_overlap((0, 6), (0, 6))
+    assert _offsets_overlap((0, 12), (0, 6))
+    assert _offsets_overlap((0, 12), (1, 6))
+    assert _offsets_overlap((2, 4), (0, 6))
+    assert _offsets_overlap((5, 6), (0, 6))
+    assert _offsets_overlap((0, 2), (0, 6))
+
+    assert not _offsets_overlap((2, 5), (7, 9))
+
+
+def test_tensor_shard_spec_get_merged_flattened_offsets():
+    assert list(TensorShardSpec(flattened_offsets=((0, 3),)).get_merged_flattened_offsets((128, 256))) == [(0, 3)]
+
+    assert list(TensorShardSpec(flattened_offsets=((0, 3), (3, 6))).get_merged_flattened_offsets((128, 256))) == [
+        (0, 6)
+    ]
+
+    assert list(
+        TensorShardSpec(flattened_offsets=((0, 3), (6, 9), (9, 12), (15, 18))).get_merged_flattened_offsets(
+            (128, 256)
+        )
+    ) == [(0, 3), (6, 12), (15, 18)]
+
+
+def test_tensor_shard_spec_compute_overlap():
+    assert (
+        TensorShardSpec(flattened_offsets=((0, 3), (3, 6))).compute_overlap_with(
+            TensorShardSpec(flattened_offsets=((0, 6),)), (128, 256)
+        )
+        == OverlapType.EQUAL
+    )
+
+    assert (
+        TensorShardSpec(flattened_offsets=((0, 3), (6, 12))).compute_overlap_with(
+            TensorShardSpec(flattened_offsets=((0, 3), (6, 9))), (128, 256)
+        )
+        == OverlapType.SUPERSET
+    )
+
+    assert (
+        TensorShardSpec(flattened_offsets=((0, 3), (6, 12))).compute_overlap_with(
+            TensorShardSpec(flattened_offsets=((0, 15),)), (128, 256)
+        )
+        == OverlapType.SUBSET
+    )
+
+    assert (
+        TensorShardSpec(flattened_offsets=((0, 3), (6, 12))).compute_overlap_with(
+            TensorShardSpec(flattened_offsets=((2, 5),)), (128, 256)
+        )
+        == OverlapType.MIXED
+    )
+
+    assert (
+        TensorShardSpec(flattened_offsets=((0, 3), (6, 12))).compute_overlap_with(
+            TensorShardSpec(flattened_offsets=((12, 15),)), (128, 256)
+        )
+        is None
+    )
 
 
 def test_tensor_shard_spec_for_dtensor_1D():
