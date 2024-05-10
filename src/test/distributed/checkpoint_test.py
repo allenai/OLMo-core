@@ -4,8 +4,15 @@ from typing import Dict
 import pytest
 import torch
 import torch.distributed as dist
+import torch.nn as nn
+import torch.nn.functional as F
 from cached_path import cached_path
 from torch.distributed._tensor import Shard, distribute_tensor, init_device_mesh
+from torch.distributed.tensor.parallel import (
+    ColwiseParallel,
+    RowwiseParallel,
+    parallelize_module,
+)
 
 from olmo_core.distributed.checkpoint import (
     Checkpointer,
@@ -812,4 +819,51 @@ def test_save_and_load_torch_fsdp_model(
             pre_init_optim_state_to_load,
             use_orig_params,
         ),
+    )
+
+
+def run_save_and_load_tensor_parallel_model(dir):
+    tp_mesh = init_device_mesh("cuda", (dist.get_world_size(),))
+
+    class FeedForward(nn.Module):
+        def __init__(self, dim: int = 16):
+            super().__init__()
+            self.dim = dim
+            self.w1 = nn.Linear(dim, dim)
+            self.w2 = nn.Linear(dim, dim)
+            self.w3 = nn.Linear(dim, dim)
+
+        def forward(self, x):
+            return self.w2(F.silu(self.w1(x)) * self.w3(x))
+
+    feed_forward = FeedForward().cuda()
+    parallelize_module(
+        feed_forward,
+        tp_mesh,
+        {
+            # by default ColwiseParallel input layouts is replicated
+            # and RowwiseParallel output layouts is replicated
+            "w1": ColwiseParallel(),
+            "w2": RowwiseParallel(),
+            "w3": ColwiseParallel(),
+        },
+    )
+    optim = torch.optim.AdamW(feed_forward.parameters())
+
+    # Take a forward and backward pass.
+    feed_forward(torch.rand((2, feed_forward.dim), device="cuda")).sum().backward()
+
+    # Take an optimizer step.
+
+    # Save checkpoint.
+    save_model_and_optim_state(dir, feed_forward, optim)
+
+
+@requires_multi_gpu
+def test_save_and_load_tensor_parallel_model(tmp_path):
+    run_distributed_test(
+        run_save_and_load_tensor_parallel_model,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(tmp_path,),
     )
