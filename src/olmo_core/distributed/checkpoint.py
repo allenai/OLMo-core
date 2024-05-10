@@ -458,17 +458,6 @@ class Checkpointer:
                                     # Scenarios (A), (D)
                                     flat_tensor_end -= offsets[1] - offsets_in_file[1]
 
-                                log.debug(
-                                    "Loading '%s'\n  offsets: %s\n  offsets in file: %s\n  load into: (%s, %s)\n  load from: (%s, %s)",
-                                    key,
-                                    offsets,
-                                    offsets_in_file,
-                                    flat_tensor_start,
-                                    flat_tensor_end,
-                                    flat_tensor_to_load_start,
-                                    flat_tensor_to_load_end,
-                                )
-
                                 # Load the slice.
                                 if slice_in_file is not None:
                                     flat_tensor_to_load = slice_in_file[
@@ -487,9 +476,11 @@ class Checkpointer:
                                     load_shape := flat_view_slice[flat_tensor_start:flat_tensor_end].shape
                                 ) != flat_tensor_to_load.shape:
                                     raise RuntimeError(
-                                        f"error loading tensor '{key}' from file '{filename}' with offsets "
-                                        f"({flat_tensor_start}, {flat_tensor_end}), "
-                                        f"expected shape {tuple(load_shape)}, found {tuple(flat_tensor_to_load.shape)}"
+                                        f"Error loading tensor '{key}' with offsets {offsets} "
+                                        f"from file '{filename}' with offsets {offsets_in_file}.\n"
+                                        f"Loading into slice ({flat_tensor_start}, {flat_tensor_end}) from "
+                                        f"slice ({flat_tensor_to_load_start}, {flat_tensor_to_load_end}) failed, "
+                                        f"expected shape {tuple(load_shape)}, found {tuple(flat_tensor_to_load.shape)}."
                                     )
 
                                 flat_view_slice[flat_tensor_start:flat_tensor_end].copy_(flat_tensor_to_load)
