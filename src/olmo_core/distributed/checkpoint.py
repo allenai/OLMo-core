@@ -424,10 +424,7 @@ class Checkpointer:
                                 flat_tensor_start, flat_tensor_end = 0, flat_view_slice.numel()
                                 # Start and end index of the slice within `flat_tensor_to_load` that we're going
                                 # to load into the slice of `flat_tensor`.
-                                flat_tensor_to_load_start, flat_tensor_to_load_end = (
-                                    numel_in_file_so_far,
-                                    numel_in_file_so_far + numel_in_file_slice,
-                                )
+                                flat_tensor_to_load_start, flat_tensor_to_load_end = 0, numel_in_file_slice
                                 # There are 5 scenarios to consider in terms of where the tensors overlap.
                                 # Suppose the original flat tensor has 6 elements: 'x x x x x x'
                                 # -------------------------------------------
@@ -473,7 +470,9 @@ class Checkpointer:
 
                                 # Load the slice.
                                 flat_tensor_to_load = loader.get_flat_slice(
-                                    key, flat_tensor_to_load_start, flat_tensor_to_load_end
+                                    key,
+                                    numel_in_file_so_far + flat_tensor_to_load_start,
+                                    numel_in_file_so_far + flat_tensor_to_load_end,
                                 )
                                 if (
                                     load_shape := flat_view_slice[flat_tensor_start:flat_tensor_end].shape
