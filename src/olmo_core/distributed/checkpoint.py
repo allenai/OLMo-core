@@ -789,7 +789,7 @@ class TensorShardSpec(BaseModel):
         else:
             raise ValueError("missing required fields to produce flattened offsets")
 
-    def get_merged_flattened_offsets(self, full_shape: Tuple[int, int]) -> Generator[Tuple[int, int], None, None]:
+    def get_merged_flattened_offsets(self, full_shape: Tuple[int, ...]) -> Generator[Tuple[int, int], None, None]:
         """
         Like :meth:`get_flattened_offset` but it merges consecutive offsets that are contiguous.
         """
