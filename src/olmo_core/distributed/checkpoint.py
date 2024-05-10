@@ -8,7 +8,8 @@ Features
 --------
 
 - Sharded distributed models, such OLMo-core's :class:`~olmo_core.distributed.fsdp.FSDP` or PyTorch's
-  :class:`~torch.distributed.fsdp.FullyShardedDataParallel` are supported out-of-the-box.
+  :class:`~torch.distributed.fsdp.FullyShardedDataParallel` (with ``use_orig_params=True``)
+  are supported out-of-the-box.
 - Utilizes `safetensors <https://huggingface.co/docs/safetensors/>`_ under the hood for fast, efficient, and
   safe serialization/deserialization.
 - Save with one distributed topology, seamlessly load with a different one. For example,
