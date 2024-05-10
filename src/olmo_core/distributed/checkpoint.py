@@ -1319,6 +1319,9 @@ def _get_local_tensor_data(tensor: torch.Tensor) -> torch.Tensor:
 
 
 def _wrap_tensor_for_sharded_parameter(tensor: torch.Tensor, param: Optional[torch.Tensor]) -> torch.Tensor:
+    if isinstance(tensor, (ShardedFlatTensor, DTensor)):
+        return tensor
+
     if isinstance(param, ShardedFlatTensor):
         return param.wrap(tensor, requires_grad=False)
     elif isinstance(param, DTensor):
