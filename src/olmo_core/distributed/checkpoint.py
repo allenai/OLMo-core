@@ -393,16 +393,19 @@ class Checkpointer:
                             flat_view.view.copy_(loader.get_flat_slice(key))
                     break
 
-                all_offsets_in_file = tensor_storage_metadata.get_flattened_offsets_in_file(filename)
-                if not all_offsets_in_file:
+                if tensor_storage_metadata.get_numel_in_file(filename) == 0:
                     continue
+
+                # TODO: (optimization) if the offsets in the file are a subset of the offsets in the
+                # flat view, load the entire slice from the file all at once and then copy into the
+                # flat view slice-by-slice.
 
                 for offsets, flat_view_slice in flat_view.get_local_flattened_offsets_with_slice():
                     if offsets[1] - offsets[0] == 0:
                         continue
 
                     numel_in_file_so_far = 0
-                    for offsets_in_file in all_offsets_in_file:
+                    for offsets_in_file in tensor_storage_metadata.get_flattened_offsets_in_file(filename):
                         numel_in_file_slice = offsets_in_file[1] - offsets_in_file[0]
                         if numel_in_file_slice == 0:
                             continue
@@ -748,20 +751,18 @@ class TensorShardSpec(BaseModel):
         else:
             raise ValueError("missing required fields to determine local numel")
 
-    def get_flattened_offsets(self, full_shape: Tuple[int, ...]) -> Tuple[Tuple[int, int], ...]:
+    def get_flattened_offsets(self, full_shape: Tuple[int, ...]) -> Generator[Tuple[int, int], None, None]:
         if self.flattened_offsets is not None:
-            return self.flattened_offsets
+            yield from self.flattened_offsets
         elif self.local_shape is not None and self.global_offset is not None:
             assert len(self.local_shape) == len(self.global_offset) == len(full_shape)
             if len(full_shape) == 1:  # 1D tensor
-                return ((self.global_offset[0], self.global_offset[0] + self.local_numel),)
+                yield (self.global_offset[0], self.global_offset[0] + self.local_numel)
             elif len(full_shape) == 2:
-                offsets = []
                 for row in range(self.global_offset[0], self.global_offset[0] + self.local_shape[0]):
                     offset_start = row * full_shape[1] + self.global_offset[1]
                     offset_end = offset_start + self.local_shape[1]
-                    offsets.append((offset_start, offset_end))
-                return tuple(offsets)
+                    yield (offset_start, offset_end)
             else:
                 # TODO: generalize
                 raise NotImplementedError("only 1D and 2D DTensors are supported")
@@ -802,11 +803,17 @@ class TensorStorageMetadata(BaseModel):
             tensor.fill_(torch.nan)
         return tensor
 
-    def get_flattened_offsets_in_file(self, filename: str) -> Optional[Tuple[Tuple[int, int], ...]]:
+    def get_flattened_offsets_in_file(self, filename: str) -> Generator[Tuple[int, int], None, None]:
         if (shard_spec := self.shard_spec_per_file.get(filename)) is not None:
-            return shard_spec.get_flattened_offsets(self.shape)
+            yield from shard_spec.get_flattened_offsets(self.shape)
         else:
-            return None
+            yield from []
+
+    def get_numel_in_file(self, filename: str) -> int:
+        if (shard_spec := self.shard_spec_per_file.get(filename)) is not None:
+            return shard_spec.local_numel
+        else:
+            return 0
 
 
 class StorageMetadata(BaseModel):
@@ -851,24 +858,17 @@ class TensorFlatView:
     def shard_spec(self) -> TensorShardSpec:
         return self.shard_spec_per_rank[get_rank()]
 
-    @cached_property
-    def local_flattened_offsets(self) -> Tuple[Tuple[int, int], ...]:
-        return self.shard_spec_per_rank[get_rank()].get_flattened_offsets(self.full_shape)
+    def get_local_flattened_offsets(self) -> Generator[Tuple[int, int], None, None]:
+        yield from self.shard_spec_per_rank[get_rank()].get_flattened_offsets(self.full_shape)
 
     def get_local_flattened_offsets_with_slice(
         self,
     ) -> Generator[Tuple[Tuple[int, int], torch.Tensor], None, None]:
         numel_so_far = 0
-        for offset_start, offset_end in self.local_flattened_offsets:
+        for offset_start, offset_end in self.get_local_flattened_offsets():
             numel_in_slice = offset_end - offset_start
             yield (offset_start, offset_end), self.view[numel_so_far : numel_so_far + numel_in_slice]
             numel_so_far += numel_in_slice
-
-    def get_flattened_offsets_for_rank(self, rank: int) -> Optional[Tuple[Tuple[int, int], ...]]:
-        if (shard_spec := self.shard_spec_per_rank.get(rank)) is not None:
-            return shard_spec.get_flattened_offsets(self.full_shape)
-        else:
-            return None
 
 
 class SavePlan(BaseModel):

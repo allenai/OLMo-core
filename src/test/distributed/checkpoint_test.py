@@ -40,7 +40,7 @@ from .utils import (
 def test_tensor_shard_spec_for_dtensor_1D():
     full_shape = (16,)
     shard_spec = TensorShardSpec(local_shape=(8,), global_offset=(0,))
-    assert shard_spec.get_flattened_offsets(full_shape) == ((0, 8),)
+    assert list(shard_spec.get_flattened_offsets(full_shape)) == [(0, 8)]
 
 
 def test_tensor_shard_spec_for_dtensor_2D_colwise():
@@ -50,7 +50,7 @@ def test_tensor_shard_spec_for_dtensor_2D_colwise():
     #  distribute_tensor(torch.randn(16, 8), mesh, [Shard(dim=0)])
     full_shape = (16, 8)
     shard_spec = TensorShardSpec(local_shape=(4, 8), global_offset=(4, 0))
-    assert shard_spec.get_flattened_offsets(full_shape) == ((32, 40), (40, 48), (48, 56), (56, 64))
+    assert list(shard_spec.get_flattened_offsets(full_shape)) == [(32, 40), (40, 48), (48, 56), (56, 64)]
 
 
 def test_tensor_shard_spec_for_dtensor_2D_rowwise():
@@ -60,7 +60,7 @@ def test_tensor_shard_spec_for_dtensor_2D_rowwise():
     #  distribute_tensor(torch.randn(16, 8), mesh, [Shard(dim=1)])
     full_shape = (16, 8)
     shard_spec = TensorShardSpec(local_shape=(16, 2), global_offset=(0, 2))
-    assert shard_spec.get_flattened_offsets(full_shape) == (
+    assert list(shard_spec.get_flattened_offsets(full_shape)) == [
         (2, 4),  # row 0
         (10, 12),  # row 1
         (18, 20),  # row 2
@@ -77,7 +77,7 @@ def test_tensor_shard_spec_for_dtensor_2D_rowwise():
         (106, 108),  # row 13
         (114, 116),  # row 14
         (122, 124),  # row 15
-    )
+    ]
 
 
 def save_and_load_checkpoint_with_regular_and_sharded_tensors(dir):
