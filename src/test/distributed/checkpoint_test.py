@@ -166,6 +166,38 @@ def test_save_and_load_checkpoint_with_dtensors(tmp_path):
     run_distributed_test(save_and_load_checkpoint_with_dtensors, backend="nccl", func_args=(tmp_path,))
 
 
+def save_and_load_checkpoint_with_different_dtensor_topology(dir):
+    checkpointer = Checkpointer()
+
+    mesh = init_device_mesh("cuda", (dist.get_world_size(),))
+
+    og_tensor = torch.randn(8, 6, device=get_default_device())
+
+    # Ensure tensor matches on all ranks (could use scatter here too, but whatever).
+    dist.all_reduce(og_tensor)
+
+    state_dict_to_save = {
+        "x": distribute_tensor(og_tensor, mesh, [Shard(dim=0)]),
+    }
+    checkpointer.save(dir, state_dict_to_save)  # type: ignore[arg-type]
+
+    state_dict_to_load = {
+        "x": distribute_tensor(torch.randn(8, 6, device=get_default_device()), mesh, [Shard(dim=1)]),
+    }
+    checkpointer.load(dir, state_dict_to_load)  # type: ignore[arg-type]
+
+    # Gather full tensor from the state dict to load and make sure it matches the full OG tensor.
+    full_loaded_tensor = state_dict_to_load["x"].full_tensor()
+    torch.testing.assert_close(og_tensor, full_loaded_tensor)
+
+
+@requires_multi_gpu
+def test_save_and_load_checkpoint_with_different_dtensor_topology(tmp_path):
+    run_distributed_test(
+        save_and_load_checkpoint_with_different_dtensor_topology, backend="nccl", func_args=(tmp_path,)
+    )
+
+
 def save_and_load_checkpoint_with_different_sharding_spec(dir):
     for idx, (offsets_to_save, offsets_to_load) in enumerate(
         [
