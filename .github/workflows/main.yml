@@ -146,7 +146,7 @@ jobs:
                 image:
                   beaker: ${{ env.BEAKER_IMAGE }}
                 context:
-                  priority: normal
+                  priority: low
                   preemptible: true
                 resources:
                   gpuCount: 2
