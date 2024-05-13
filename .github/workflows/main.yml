@@ -101,3 +101,77 @@ jobs:
         run: |
           . .venv/bin/activate
           pip uninstall -y ai2-olmo-core
+
+  gpu_checks:
+    name: ${{ matrix.task.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      BEAKER_TOKEN: ${{ secrets.BEAKER_TOKEN }}
+      BEAKER_IMAGE: olmo-torch2-test
+      BEAKER_WORKSPACE: ai2/llm-testing
+    strategy:
+      fail-fast: false
+      matrix:
+        task:
+          - name: Test (GPU)
+            run: pytest -v --color=yes --durations=3 -m gpu src/test/ --ignore-glob='src/test/distributed/fsdp*' --ignore-glob='src/test/distributed/checkpoint*'
+
+          - name: Test checkpoint (GPU)
+            run: pytest -v --color=yes --durations=3 -m gpu src/test/distributed/checkpoint*
+
+          - name: Test FSDP (GPU)
+            run: pytest -v --color=yes --durations=3 -m gpu src/test/distributed/fsdp/
+    steps:
+      - name: Determine current commit SHA (pull request)
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "COMMIT_SHA=${{ github.event.pull_request.head.sha }}" >> $GITHUB_ENV
+
+      - name: Determine current commit SHA (push)
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "COMMIT_SHA=$GITHUB_SHA" >> $GITHUB_ENV
+
+      - name: GPU Tests
+        uses: allenai/beaker-run-action@v1.2
+        if: env.BEAKER_TOKEN != ''
+        with:
+          spec: |
+            version: v2
+            description: OLMo-core ${{ matrix.task.name }}
+            budget: ai2/oe-training
+            tasks:
+              - name: tests
+                image:
+                  beaker: ${{ env.BEAKER_IMAGE }}
+                context:
+                  priority: normal
+                  preemptible: true
+                resources:
+                  gpuCount: 2
+                constraints:
+                  cluster:
+                    - ai2/general-cirrascale
+                    - ai2/general-cirrascale-a100-80g-ib
+                    - ai2/allennlp-cirrascale
+                    - ai2/allennlp-elanding-a100-40g
+                    - ai2/pluto-cirrascale
+                    - ai2/jupiter-cirrascale
+                envVars:
+                  - name: CUBLAS_WORKSPACE_CONFIG
+                    value: ":16:8"
+                  - name: TOKENIZERS_PARALLELISM
+                    value: "false"
+                  - name: AWS_ACCESS_KEY_ID
+                    secret: AWS_ACCESS_KEY_ID
+                  - name: AWS_SECRET_ACCESS_KEY
+                    secret: AWS_SECRET_ACCESS_KEY
+                command:
+                  - "bash"
+                  - "-c"
+                  - "git clone https://github.com/allenai/OLMo-core.git && cd OLMo-core && git checkout ${{ env.COMMIT_SHA }} && pip install -e .[all] && ${{ matrix.task.run }}"
+                result:
+                  path: /unused
+          token: ${{ env.BEAKER_TOKEN }}
+          workspace: ${{ env.BEAKER_WORKSPACE }}

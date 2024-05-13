@@ -4,14 +4,25 @@ from typing import Dict
 import pytest
 import torch
 import torch.distributed as dist
+import torch.nn as nn
+import torch.nn.functional as F
 from cached_path import cached_path
+from torch.distributed._tensor import Shard, distribute_tensor, init_device_mesh
+from torch.distributed.tensor.parallel import (
+    ColwiseParallel,
+    RowwiseParallel,
+    parallelize_module,
+)
 
 from olmo_core.distributed.checkpoint import (
     Checkpointer,
     OptimStateDict,
+    OverlapType,
     SafeTensorsLoader,
+    TensorShardSpec,
     _flatten_optimizer_state,
     _get_model_state_dict_for_checkpoint,
+    _offsets_overlap,
     _unflatten_optimizer_state,
     init_optimizer_state,
     load_model_and_optim_state,
@@ -33,6 +44,164 @@ from .utils import (
     requires_multi_gpu,
     run_distributed_test,
 )
+
+
+def test_offsets_overlap():
+    assert _offsets_overlap((0, 3), (1, 4))
+    assert _offsets_overlap((0, 6), (0, 6))
+    assert _offsets_overlap((0, 6), (0, 12))
+    assert _offsets_overlap((1, 6), (0, 12))
+    assert _offsets_overlap((0, 6), (2, 4))
+    assert _offsets_overlap((0, 6), (5, 6))
+    assert _offsets_overlap((0, 6), (0, 2))
+
+    assert _offsets_overlap((1, 4), (0, 3))
+    assert _offsets_overlap((0, 6), (0, 6))
+    assert _offsets_overlap((0, 12), (0, 6))
+    assert _offsets_overlap((0, 12), (1, 6))
+    assert _offsets_overlap((2, 4), (0, 6))
+    assert _offsets_overlap((5, 6), (0, 6))
+    assert _offsets_overlap((0, 2), (0, 6))
+
+    assert not _offsets_overlap((2, 5), (7, 9))
+
+
+def test_tensor_shard_spec_get_merged_flattened_offsets():
+    assert list(TensorShardSpec(flattened_offsets=((0, 3),)).get_merged_flattened_offsets((128, 256))) == [(0, 3)]
+
+    assert list(TensorShardSpec(flattened_offsets=((0, 3), (3, 6))).get_merged_flattened_offsets((128, 256))) == [
+        (0, 6)
+    ]
+
+    assert list(
+        TensorShardSpec(flattened_offsets=((0, 3), (6, 9), (9, 12), (15, 18))).get_merged_flattened_offsets(
+            (128, 256)
+        )
+    ) == [(0, 3), (6, 12), (15, 18)]
+
+
+def test_tensor_shard_spec_compute_overlap_with_flattened_offsets():
+    assert (
+        TensorShardSpec(flattened_offsets=((0, 3), (3, 6))).compute_overlap_with(
+            TensorShardSpec(flattened_offsets=((0, 6),)), (128, 256)
+        )
+        == OverlapType.EQUAL
+    )
+
+    assert (
+        TensorShardSpec(flattened_offsets=((0, 3), (6, 12))).compute_overlap_with(
+            TensorShardSpec(flattened_offsets=((0, 3), (6, 9))), (128, 256)
+        )
+        == OverlapType.SUPERSET
+    )
+
+    assert (
+        TensorShardSpec(flattened_offsets=((0, 3), (6, 12))).compute_overlap_with(
+            TensorShardSpec(flattened_offsets=((0, 15),)), (128, 256)
+        )
+        == OverlapType.SUBSET
+    )
+
+    assert (
+        TensorShardSpec(flattened_offsets=((0, 3), (6, 12))).compute_overlap_with(
+            TensorShardSpec(flattened_offsets=((2, 5),)), (128, 256)
+        )
+        == OverlapType.MIXED
+    )
+
+    assert (
+        TensorShardSpec(flattened_offsets=((0, 3), (6, 12))).compute_overlap_with(
+            TensorShardSpec(flattened_offsets=((12, 15),)), (128, 256)
+        )
+        is None
+    )
+
+
+def test_tensor_shard_spec_compute_overlap_with_dtensor_fields():
+    assert (
+        TensorShardSpec(local_shape=(2, 8), global_offset=(0, 0)).compute_overlap_with(
+            TensorShardSpec(local_shape=(2, 8), global_offset=(0, 0)), (16, 8)
+        )
+        == OverlapType.EQUAL
+    )
+
+    assert (
+        TensorShardSpec(local_shape=(4, 8), global_offset=(0, 0)).compute_overlap_with(
+            TensorShardSpec(local_shape=(2, 8), global_offset=(1, 0)), (16, 8)
+        )
+        == OverlapType.SUPERSET
+    )
+
+    assert (
+        TensorShardSpec(local_shape=(2, 8), global_offset=(1, 0)).compute_overlap_with(
+            TensorShardSpec(local_shape=(4, 8), global_offset=(0, 0)), (16, 8)
+        )
+        == OverlapType.SUBSET
+    )
+
+    assert (
+        TensorShardSpec(local_shape=(2, 8), global_offset=(0, 0)).compute_overlap_with(
+            TensorShardSpec(local_shape=(4, 4), global_offset=(0, 0)), (16, 8)
+        )
+        == OverlapType.MIXED
+    )
+
+    assert (
+        TensorShardSpec(local_shape=(2, 4), global_offset=(1, 2)).compute_overlap_with(
+            TensorShardSpec(local_shape=(4, 8), global_offset=(0, 0)), (16, 8)
+        )
+        == OverlapType.SUBSET
+    )
+
+    assert (
+        TensorShardSpec(local_shape=(2, 4), global_offset=(1, 2)).compute_overlap_with(
+            TensorShardSpec(local_shape=(2, 4), global_offset=(0, 0)), (16, 8)
+        )
+        == OverlapType.MIXED
+    )
+
+
+def test_tensor_shard_spec_for_dtensor_1D():
+    full_shape = (16,)
+    shard_spec = TensorShardSpec(local_shape=(8,), global_offset=(0,))
+    assert list(shard_spec.get_flattened_offsets(full_shape)) == [(0, 8)]
+
+
+def test_tensor_shard_spec_for_dtensor_2D_colwise():
+    # For example:
+    #  from torch.distributed._tensor import Shard, distribute_tensor, init_device_mesh
+    #  mesh = init_device_mesh("cuda", (dist.get_world_size(),))
+    #  distribute_tensor(torch.randn(16, 8), mesh, [Shard(dim=0)])
+    full_shape = (16, 8)
+    shard_spec = TensorShardSpec(local_shape=(4, 8), global_offset=(4, 0))
+    assert list(shard_spec.get_flattened_offsets(full_shape)) == [(32, 40), (40, 48), (48, 56), (56, 64)]
+
+
+def test_tensor_shard_spec_for_dtensor_2D_rowwise():
+    # For example:
+    #  from torch.distributed._tensor import Shard, distribute_tensor, init_device_mesh
+    #  mesh = init_device_mesh("cuda", (dist.get_world_size(),))
+    #  distribute_tensor(torch.randn(16, 8), mesh, [Shard(dim=1)])
+    full_shape = (16, 8)
+    shard_spec = TensorShardSpec(local_shape=(16, 2), global_offset=(0, 2))
+    assert list(shard_spec.get_flattened_offsets(full_shape)) == [
+        (2, 4),  # row 0
+        (10, 12),  # row 1
+        (18, 20),  # row 2
+        (26, 28),  # row 3
+        (34, 36),  # row 4
+        (42, 44),  # row 5
+        (50, 52),  # row 6
+        (58, 60),  # row 7
+        (66, 68),  # row 8
+        (74, 76),  # row 9
+        (82, 84),  # row 10
+        (90, 92),  # row 11
+        (98, 100),  # row 12
+        (106, 108),  # row 13
+        (114, 116),  # row 14
+        (122, 124),  # row 15
+    ]
 
 
 def save_and_load_checkpoint_with_regular_and_sharded_tensors(dir):
@@ -90,6 +259,91 @@ def test_save_and_load_checkpoint_with_regular_and_sharded_tensors(backend, tmp_
     full_state_dict = Checkpointer().unshard(tmp_path)
     assert full_state_dict["x"].shape == (2, 3)
     assert full_state_dict["y"].shape == (2, 3)
+
+
+def save_and_load_checkpoint_with_dtensors(dir):
+    checkpointer = Checkpointer()
+
+    mesh = init_device_mesh("cuda", (dist.get_world_size(),))
+
+    state_dict_to_save = {
+        "1d": distribute_tensor(torch.randn(16, device=get_default_device()), mesh, [Shard(dim=0)]),
+        "2d_colwise": distribute_tensor(torch.randn(16, 8, device=get_default_device()), mesh, [Shard(dim=0)]),
+        "2d_rowwise": distribute_tensor(torch.randn(16, 8, device=get_default_device()), mesh, [Shard(dim=1)]),
+    }
+
+    state_dict_to_load = {
+        "1d": distribute_tensor(torch.randn(16, device=get_default_device()), mesh, [Shard(dim=0)]),
+        "2d_colwise": distribute_tensor(torch.randn(16, 8, device=get_default_device()), mesh, [Shard(dim=0)]),
+        "2d_rowwise": distribute_tensor(torch.randn(16, 8, device=get_default_device()), mesh, [Shard(dim=1)]),
+    }
+
+    checkpointer.save(dir, state_dict_to_save)  # type: ignore[arg-type]
+    checkpointer.load(dir, state_dict_to_load)  # type: ignore[arg-type]
+
+    for key in state_dict_to_load:
+        torch.testing.assert_close(state_dict_to_save[key], state_dict_to_load[key])
+
+
+@requires_multi_gpu
+def test_save_and_load_checkpoint_with_dtensors(tmp_path):
+    run_distributed_test(save_and_load_checkpoint_with_dtensors, backend="nccl", func_args=(tmp_path,))
+
+
+def save_and_load_checkpoint_with_different_dtensor_topology(dir):
+    checkpointer = Checkpointer()
+
+    mesh = init_device_mesh("cuda", (dist.get_world_size(),))
+
+    og_tensor = torch.randn(8, 6, device=get_default_device())
+
+    # Ensure tensor matches on all ranks (could use scatter here too, but whatever).
+    dist.all_reduce(og_tensor)
+
+    state_dict_to_save = {
+        "x": distribute_tensor(og_tensor, mesh, [Shard(dim=0)]),
+    }
+    checkpointer.save(dir, state_dict_to_save)  # type: ignore[arg-type]
+
+    state_dict_to_load = {
+        "x": distribute_tensor(torch.randn(8, 6, device=get_default_device()), mesh, [Shard(dim=1)]),
+    }
+    checkpointer.load(dir, state_dict_to_load)  # type: ignore[arg-type]
+
+    # Gather full tensor from the state dict to load and make sure it matches the full OG tensor.
+    full_loaded_tensor = state_dict_to_load["x"].full_tensor()
+    torch.testing.assert_close(og_tensor, full_loaded_tensor)
+
+
+@requires_multi_gpu
+def test_save_and_load_checkpoint_with_different_dtensor_topology(tmp_path):
+    run_distributed_test(
+        save_and_load_checkpoint_with_different_dtensor_topology, backend="nccl", func_args=(tmp_path,)
+    )
+
+
+def save_and_unshard_dtensor(dir):
+    checkpointer = Checkpointer()
+
+    mesh = init_device_mesh("cuda", (dist.get_world_size(),))
+
+    og_tensor = torch.randn(8, 6, device=get_default_device())
+
+    # Ensure tensor matches on all ranks (could use scatter here too, but whatever).
+    dist.all_reduce(og_tensor)
+
+    state_dict_to_save = {
+        "x": distribute_tensor(og_tensor, mesh, [Shard(dim=0)]),
+    }
+    checkpointer.save(dir, state_dict_to_save)  # type: ignore[arg-type]
+
+    full_state_dict = checkpointer.unshard(dir, device=get_default_device())
+    torch.testing.assert_close(og_tensor, full_state_dict["x"])
+
+
+@requires_multi_gpu
+def test_save_and_unshard_dtensor(tmp_path):
+    run_distributed_test(save_and_unshard_dtensor, backend="nccl", func_args=(tmp_path,))
 
 
 def save_and_load_checkpoint_with_different_sharding_spec(dir):
@@ -565,4 +819,61 @@ def test_save_and_load_torch_fsdp_model(
             pre_init_optim_state_to_load,
             use_orig_params,
         ),
+    )
+
+
+def run_save_and_load_tensor_parallel_model(dir, take_step_before_checkpoint):
+    tp_mesh = init_device_mesh("cuda", (dist.get_world_size(),))
+
+    class FeedForward(nn.Module):
+        def __init__(self, dim: int = 16):
+            super().__init__()
+            self.dim = dim
+            self.w1 = nn.Linear(dim, dim)
+            self.w2 = nn.Linear(dim, dim)
+            self.w3 = nn.Linear(dim, dim)
+
+        def forward(self, x):
+            return self.w2(F.silu(self.w1(x)) * self.w3(x))
+
+    feed_forward = FeedForward().cuda()
+    parallelize_module(
+        feed_forward,
+        tp_mesh,
+        {
+            # by default ColwiseParallel input layouts is replicated
+            # and RowwiseParallel output layouts is replicated
+            "w1": ColwiseParallel(),
+            "w2": RowwiseParallel(),
+            "w3": ColwiseParallel(),
+        },
+    )
+    optim = torch.optim.AdamW(feed_forward.parameters())
+
+    # Take a forward and backward pass.
+    feed_forward(torch.rand((2, feed_forward.dim), device="cuda")).sum().backward()
+
+    if take_step_before_checkpoint:
+        # Take an optimizer step.
+        optim.step()
+
+    # Save checkpoint.
+    save_model_and_optim_state(dir, feed_forward, optim)
+
+    # Now load the checkpoint with a different topology, in this case an unsharded model.
+    unsharded_feed_forward = FeedForward().cuda()
+    unsharded_optim = torch.optim.AdamW(unsharded_feed_forward.parameters())
+    load_model_and_optim_state(dir, unsharded_feed_forward, unsharded_optim)
+
+
+@requires_multi_gpu
+@pytest.mark.parametrize(
+    "take_step_before_checkpoint", [pytest.param(True, id="after-step"), pytest.param(False, id="pre-step")]
+)
+def test_save_and_load_tensor_parallel_model(tmp_path, take_step_before_checkpoint):
+    run_distributed_test(
+        run_save_and_load_tensor_parallel_model,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(tmp_path, take_step_before_checkpoint),
     )

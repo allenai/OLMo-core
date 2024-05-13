@@ -3,6 +3,7 @@ from typing import List, Optional, TypeVar
 
 import torch
 import torch.distributed as dist
+from torch.distributed.device_mesh import DeviceMesh
 
 
 def is_distributed() -> bool:
@@ -83,3 +84,18 @@ def get_gradient_divide_factor(world_size: int) -> float:
     while world_size % factor == 0 and world_size / factor > factor:
         factor *= 2
     return float(factor)
+
+
+def get_mesh_coordinates(mesh: DeviceMesh, rank: Optional[int] = None) -> Optional[List[int]]:
+    """
+    Calculate the coordinates of a global rank on a device mesh.
+
+    :param mesh: The device mesh.
+    :param rank: The global rank. If ``None``, the current global rank is used.
+
+    :return: The coordinates or ``None`` if the rank is not part of the mesh.
+    """
+    rank = rank if rank is not None else get_rank()
+    rank_coords = (mesh.mesh == rank).nonzero()
+    assert rank_coords.size(0) in (0, 1)
+    return rank_coords[0].tolist() if rank_coords.size(0) > 0 else None

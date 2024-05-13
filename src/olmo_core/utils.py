@@ -3,7 +3,7 @@ import gc
 import os
 import time
 from enum import Enum
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, List, Tuple, Union
 
 import numpy as np
 import torch
@@ -27,6 +27,8 @@ class StrEnum(str, Enum):
     def __repr__(self) -> str:
         return f"'{str(self)}'"
 
+
+ShapeType = Union[torch.Size, List[int], Tuple[int, ...]]
 
 # torch.float8 formats require 2.1; we do not support these dtypes on earlier versions
 _float8_e4m3fn = getattr(torch, "float8_e4m3fn", None)
