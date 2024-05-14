@@ -132,6 +132,7 @@ def load_model_and_optim_state(
     dir: PathOrStr,
     model: nn.Module,
     optim: Optional[torch.optim.Optimizer] = None,
+    validate: bool = True,
 ):
     """
     Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
@@ -150,13 +151,18 @@ def load_model_and_optim_state(
     :param dir: Path/URL to the checkpoint saved via :func:`save_model_and_optim_state()`.
     :param model: The model to load the state into.
     :param optim: The optimizer to load the state into.
+    :param validate: Validate that all tensors have been loaded completely from the checkpoint.
     """
     dir = str(dir).rstrip("/")
     checkpointer = Checkpointer()
 
-    # Get model state in-place.
+    # Get model state and load in-place.
     model_state = _get_model_state_dict_for_checkpoint(model)
-    checkpointer.load(f"{dir}/model", model_state)
+    if validate:
+        for tensor in model_state.values():
+            if tensor.dtype.is_floating_point:
+                tensor.fill_(torch.nan)
+    checkpointer.load(f"{dir}/model", model_state, _check_for_nans=validate)
     _load_model_state_dict(model, model_state)
 
     if optim is not None:
@@ -173,9 +179,13 @@ def load_model_and_optim_state(
         for i in range(len(optim.param_groups)):
             flat_optim_state[f"param_group{i}"] = metadata.tensors[f"param_group{i}"].materialize_empty()
         flat_optim_state["state_keys"] = metadata.tensors["state_keys"].materialize_empty()
+        if validate:
+            for tensor in flat_optim_state.values():
+                if tensor.dtype.is_floating_point:
+                    tensor.fill_(torch.nan)
 
         # Load flattened optimizer state in place.
-        checkpointer.load(f"{dir}/optim", flat_optim_state, metadata=metadata)
+        checkpointer.load(f"{dir}/optim", flat_optim_state, metadata=metadata, _check_for_nans=validate)
 
         # Unflatten optimizer state and pass to optimizer.
         optim_state_to_load = _unflatten_optimizer_state(flat_optim_state)
