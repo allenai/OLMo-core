@@ -151,7 +151,9 @@ def load_model_and_optim_state(
     :param dir: Path/URL to the checkpoint saved via :func:`save_model_and_optim_state()`.
     :param model: The model to load the state into.
     :param optim: The optimizer to load the state into.
-    :param validate: Validate that all tensors have been loaded completely from the checkpoint.
+    :param validate: Validate that all tensors have been loaded completely from the checkpoint by
+        pre-filling each tensor with NaNs prior to loading in-place, then checking afterwards
+        that there are no NaNs remaining.
     """
     dir = str(dir).rstrip("/")
     checkpointer = Checkpointer()
