@@ -338,7 +338,7 @@ class FlatParamHandle:
             self.params_sharded_data_lp = None
             del local_shard
 
-        # Set the data for each param as a view into `all_params_unsharded_data`.
+        # Set the data for each param as a view into `self.params_data`.
         offset = 0
         for param in self.params:
             if rank0_only and local_rank != 0:
