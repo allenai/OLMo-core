@@ -159,9 +159,7 @@ def load_model_and_optim_state(
     # Get model state and load in-place.
     model_state = _get_model_state_dict_for_checkpoint(model)
     if validate:
-        for tensor in model_state.values():
-            if tensor.dtype.is_floating_point:
-                tensor.fill_(torch.nan)
+        _fill_state_dict_with_nan(model_state)
     checkpointer.load(f"{dir}/model", model_state, _check_for_nans=validate)
     _load_model_state_dict(model, model_state)
 
@@ -180,9 +178,7 @@ def load_model_and_optim_state(
             flat_optim_state[f"param_group{i}"] = metadata.tensors[f"param_group{i}"].materialize_empty()
         flat_optim_state["state_keys"] = metadata.tensors["state_keys"].materialize_empty()
         if validate:
-            for tensor in flat_optim_state.values():
-                if tensor.dtype.is_floating_point:
-                    tensor.fill_(torch.nan)
+            _fill_state_dict_with_nan(flat_optim_state)
 
         # Load flattened optimizer state in place.
         checkpointer.load(f"{dir}/optim", flat_optim_state, metadata=metadata, _check_for_nans=validate)
@@ -1347,3 +1343,9 @@ def _wrap_tensor_for_sharded_parameter(tensor: torch.Tensor, param: Optional[tor
         return _wrap_tensor_for_sharded_parameter(tensor, param.data)
     else:
         return tensor
+
+
+def _fill_state_dict_with_nan(state_dict: Dict[str, torch.Tensor]):
+    for tensor in state_dict.values():
+        if tensor.dtype.is_floating_point:
+            _get_local_tensor_data(tensor).fill_(torch.nan)
