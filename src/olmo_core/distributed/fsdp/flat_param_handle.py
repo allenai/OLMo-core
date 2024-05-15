@@ -308,7 +308,7 @@ class FlatParamHandle:
         else:
             # The following tensors were potentially created in a different stream, so we need
             # to make sure they're not deallocated prematurely.
-            Stream.current(self.device).record_for(self.params_data.data)
+            Stream.current(self.device).record_for(self.params_data)
             if self.params_sharded_data_lp is not None:
                 Stream.current(self.device).record_for(self.params_sharded_data_lp)
 
@@ -331,7 +331,7 @@ class FlatParamHandle:
             else:
                 local_shard = self.params_data.sharded_data
             dist.all_gather_into_tensor(
-                self.params_data.data,
+                self.params_data,
                 local_shard,
                 group=self.process_group,
             )
