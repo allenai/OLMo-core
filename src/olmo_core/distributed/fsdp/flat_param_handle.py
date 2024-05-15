@@ -323,7 +323,7 @@ class FlatParamHandle:
             if set_grads and self.requires_grad:
                 self.params_unsharded_grad = torch.zeros_like(self.params_data.unsharded_data)
         else:
-            assert not self.params_data.is_sharded
+            assert self.params_data.unsharded_data is not None
             # We prefer to use `all_gather_into_tensor()` directly when possible as it involves
             # fewer allocations.
             local_shard: torch.Tensor
@@ -344,9 +344,9 @@ class FlatParamHandle:
         offset = 0
         for param in self.params:
             if rank0_only and local_rank != 0:
-                unsharded_data = torch.empty_like(self.params_data.data)
+                unsharded_data = torch.empty_like(self.params_data.unsharded_data)
             else:
-                unsharded_data = self.params_data.data[offset : offset + param.unsharded_numel]
+                unsharded_data = self.params_data.unsharded_data[offset : offset + param.unsharded_numel]
 
             param.unshard_(unsharded_data, dtype=dtype, rank0_only=rank0_only)
 
