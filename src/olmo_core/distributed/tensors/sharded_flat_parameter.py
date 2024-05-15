@@ -15,6 +15,7 @@ class ShardedFlatParameter(ShardedFlatTensor, nn.Parameter):
     A :class:`~torch.nn.parameter.Parameter` version of :class:`ShardedFlatTensor`.
     """
 
+    @staticmethod
     def __new__(cls, data: Optional[torch.Tensor] = None, requires_grad: bool = True) -> ShardedFlatParameter:
         if data is not None and data.ndim != 1:
             raise ValueError(f"{cls.__name__} requires flat data! Got {data.shape}")
