@@ -687,6 +687,13 @@ class FSDP(Generic[M], nn.Module):
                     set_grads=set_grads,
                 )
 
+        # Record the current stream for the unsharded parameter data to make sure it's not
+        # deallocated prematurely.
+        for handle in self.state.flat_param_handles:
+            self.state.current_stream.record_for(handle.params_data)
+            if handle.params_unsharded_grad is not None:
+                self.state.current_stream.record_for(handle.params_unsharded_grad)
+
         if recurse:
             for module in self._fsdp_children():
                 module._unshard(**kwargs)
