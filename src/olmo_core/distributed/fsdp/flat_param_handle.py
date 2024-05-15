@@ -319,8 +319,9 @@ class FlatParamHandle:
         if rank0_only or dist.get_backend() == dist.Backend.GLOO:
             assert self.params_data.is_sharded
             self.params_data.unshard_(dtype=dtype, rank0_only=rank0_only)
+            assert self.params_data.unsharded_data is not None
             if set_grads and self.requires_grad:
-                self.params_unsharded_grad = torch.zeros_like(self.params_data.data)
+                self.params_unsharded_grad = torch.zeros_like(self.params_data.unsharded_data)
         else:
             assert not self.params_data.is_sharded
             # We prefer to use `all_gather_into_tensor()` directly when possible as it involves
@@ -332,7 +333,7 @@ class FlatParamHandle:
             else:
                 local_shard = self.params_data.sharded_data
             dist.all_gather_into_tensor(
-                self.params_data.data,
+                self.params_data.unsharded_data,
                 local_shard,
                 group=self.process_group,
             )
