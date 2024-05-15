@@ -82,8 +82,6 @@ class ShardedFlatTensor(torch.Tensor):
     SHARDED_FLAT_TENSOR_PROCESS_GROUP_KEY = "process_group"
     SHARDED_FLAT_TENSOR_CACHED_SHARDED_DATA_KEY = "sharded_data"
 
-    __slots__ = ["__sharded_metadata__"]
-
     @staticmethod
     def __new__(cls, data: torch.Tensor, requires_grad: bool = False) -> ShardedFlatTensor:
         if data.ndim != 1:
