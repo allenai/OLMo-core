@@ -17,8 +17,7 @@ def test_init_sharded():
     assert isinstance(tensor, ShardedFlatTensor)
     assert isinstance(tensor, ShardedFlatTensor)
     assert isinstance(tensor, torch.Tensor)
-    assert repr(tensor) == "ShardedFlatTensor([0])"
-    assert not tensor.is_sharded  # hasn't been marked sharded yet
+    assert repr(tensor) == "ShardedFlatTensor(local_tensor=tensor([0]))"
 
 
 def test_init_sharded_tensor_from_tensor():
@@ -26,6 +25,23 @@ def test_init_sharded_tensor_from_tensor():
     assert isinstance(tensor, torch.Tensor)
     assert isinstance(tensor, ShardedFlatTensor)
     assert tensor.shape == (6,)
+
+
+def test_init_new_tensor_from_sharded_tensor():
+    x = ShardedFlatTensor(torch.rand(6))
+    x.mark_as_sharded(ShardingSpec(unsharded_shape=(2, 6), unsharded_flattened_offsets=(((0, 6),), ((6, 12),))))
+
+    y1 = torch.empty_like(x)
+    assert isinstance(y1, ShardedFlatTensor)
+    assert y1.is_sharded
+
+    y2 = torch.zeros_like(x)
+    assert isinstance(y2, ShardedFlatTensor)
+    assert y2.is_sharded
+
+    y3 = torch.ones_like(x)
+    assert isinstance(y3, ShardedFlatTensor)
+    assert y3.is_sharded
 
 
 def test_init_sharded_tensor_from_param():

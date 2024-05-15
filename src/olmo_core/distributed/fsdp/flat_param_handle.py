@@ -223,7 +223,7 @@ class FlatParamHandle:
 
         # Now that we have all of the flat parameters we need to collate all of their data into a single
         # sharded flat tensor, then set the data for each flat parameter as a view into that flat tensor.
-        local_flat_sharded_data = torch.cat([flat_param.data for flat_param in flat_params])
+        local_flat_sharded_data = torch.cat([flat_param.sharded_data for flat_param in flat_params])
         params_data = ShardedFlatTensor(
             F.pad(local_flat_sharded_data, (0, padded_sharded_numel - local_flat_sharded_data.numel()))
         )
@@ -245,7 +245,7 @@ class FlatParamHandle:
         )
         offset = 0
         for flat_param in flat_params:
-            flat_param.data = params_data[offset : offset + flat_param.numel()]
+            flat_param.sharded_data = params_data[offset : offset + flat_param.numel()]
             offset += flat_param.numel()
 
         return cls(
@@ -369,7 +369,7 @@ class FlatParamHandle:
             flat_param.reshard_(writeback=False)
             if writeback:
                 # Reset the view into the new `params_data`.
-                flat_param.data = self.params_data[offset : offset + flat_param.sharded_numel]
+                flat_param.sharded_data = self.params_data[offset : offset + flat_param.sharded_numel]
             offset += flat_param.sharded_numel
 
     def pre_reduce_scatter_grads_(
