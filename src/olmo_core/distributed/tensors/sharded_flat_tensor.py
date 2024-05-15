@@ -105,26 +105,20 @@ class ShardedFlatTensor(torch.Tensor):
 
         return tensor
 
-    @classmethod
-    def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
+    def __torch_dispatch__(self, func, types, args=(), kwargs=None):
         del types
         kwargs = kwargs or {}
 
-        sharded_flat_tensors: List[ShardedFlatTensor] = []
-
         def unwrap(x):
-            nonlocal sharded_flat_tensors
             if isinstance(x, ShardedFlatTensor):
-                sharded_flat_tensors.append(x)
                 return x._global_tensor if x._global_tensor is not None else x._local_tensor
             else:
                 return x
 
         def wrap(x):
             if isinstance(x, torch.Tensor):
-                for sharded_flat_tensor in sharded_flat_tensors:
-                    if x.shape == sharded_flat_tensor.shape:
-                        return sharded_flat_tensor.wrap(x, requires_grad=x.requires_grad)
+                if x.shape == self.shape:
+                    return self.wrap(x, requires_grad=x.requires_grad)
             return x
 
         out = func(*pytree.tree_map(unwrap, args), **pytree.tree_map(unwrap, kwargs))
