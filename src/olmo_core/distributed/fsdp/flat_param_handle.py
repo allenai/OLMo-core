@@ -308,8 +308,7 @@ class FlatParamHandle:
         else:
             # The following tensors were potentially created in a different stream, so we need
             # to make sure they're not deallocated prematurely.
-            assert self.params_data.unsharded_data is not None
-            Stream.current(self.device).record_for(self.params_data.unsharded_data)
+            Stream.current(self.device).record_for(self.params_data.data)
             if self.params_sharded_data_lp is not None:
                 Stream.current(self.device).record_for(self.params_sharded_data_lp)
 
@@ -319,11 +318,10 @@ class FlatParamHandle:
         if rank0_only or dist.get_backend() == dist.Backend.GLOO:
             assert self.params_data.is_sharded
             self.params_data.unshard_(dtype=dtype, rank0_only=rank0_only)
-            assert self.params_data.unsharded_data is not None
             if set_grads and self.requires_grad:
-                self.params_unsharded_grad = torch.zeros_like(self.params_data.unsharded_data)
+                self.params_unsharded_grad = torch.zeros_like(self.params_data.data)
         else:
-            assert self.params_data.unsharded_data is not None
+            assert not self.params_data.is_sharded
             # We prefer to use `all_gather_into_tensor()` directly when possible as it involves
             # fewer allocations.
             local_shard: torch.Tensor
@@ -333,7 +331,7 @@ class FlatParamHandle:
             else:
                 local_shard = self.params_data.sharded_data
             dist.all_gather_into_tensor(
-                self.params_data.unsharded_data,
+                self.params_data.data,
                 local_shard,
                 group=self.process_group,
             )
@@ -344,9 +342,9 @@ class FlatParamHandle:
         offset = 0
         for param in self.params:
             if rank0_only and local_rank != 0:
-                unsharded_data = torch.empty_like(self.params_data.unsharded_data)
+                unsharded_data = torch.empty_like(self.params_data.data)
             else:
-                unsharded_data = self.params_data.unsharded_data[offset : offset + param.unsharded_numel]
+                unsharded_data = self.params_data.data[offset : offset + param.unsharded_numel]
 
             param.unshard_(unsharded_data, dtype=dtype, rank0_only=rank0_only)
 
