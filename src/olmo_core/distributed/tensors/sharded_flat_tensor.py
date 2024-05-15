@@ -438,3 +438,7 @@ class ShardedFlatTensor(torch.Tensor):
     def sharded_data(self, sharded_data: torch.Tensor):
         self._local_tensor = sharded_data
         self.data = sharded_data
+
+    @property
+    def unsharded_data(self) -> Optional[torch.Tensor]:
+        return self._global_tensor

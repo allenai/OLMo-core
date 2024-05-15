@@ -308,7 +308,8 @@ class FlatParamHandle:
         else:
             # The following tensors were potentially created in a different stream, so we need
             # to make sure they're not deallocated prematurely.
-            Stream.current(self.device).record_for(self.params_data.data)
+            assert self.params_data.unsharded_data is not None
+            Stream.current(self.device).record_for(self.params_data.unsharded_data)
             if self.params_sharded_data_lp is not None:
                 Stream.current(self.device).record_for(self.params_sharded_data_lp)
 
