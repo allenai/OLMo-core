@@ -35,8 +35,8 @@ runs:
       with:
         path: .venv
         key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ inputs.torch-version }}-${{ hashFiles('*requirements.txt', '*pyproject.toml') }}
-        restore-keys:
-          - ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ inputs.torch-version }}
+        restore-keys: |
+          ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ inputs.torch-version }}
 
     - if: steps.virtualenv-cache.outputs.cache-hit != 'true'
       shell: bash
