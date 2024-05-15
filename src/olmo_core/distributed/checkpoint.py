@@ -1326,8 +1326,15 @@ def _get_local_tensor_data(tensor: torch.Tensor) -> torch.Tensor:
 
 
 def _wrap_tensor_for_sharded_parameter(tensor: torch.Tensor, param: Optional[torch.Tensor]) -> torch.Tensor:
-    if isinstance(tensor, (ShardedFlatTensor, DTensor)):
+    if isinstance(tensor, DTensor):
         return tensor
+
+    # TODO: (fixme) when you call `torch.empty_like(x)` on a `ShardedFlatTensor`, `x`, you get
+    # a `ShardedFlatTensor` without the metadata. Since PyTorch optimizer's use `torch.empty_like()`
+    # on each param to initialize its state, we run into an issue unless we still call `ShardedFlatTensor.wrap()`
+    # below.
+    #  if isinstance(tensor, ShardedFlatTensor):
+    #      return tensor
 
     if isinstance(param, ShardedFlatTensor):
         return param.wrap(tensor, requires_grad=False)

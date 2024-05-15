@@ -82,6 +82,7 @@ class ShardedFlatTensor(torch.Tensor):
     SHARDED_FLAT_TENSOR_PROCESS_GROUP_KEY = "process_group"
     SHARDED_FLAT_TENSOR_CACHED_SHARDED_DATA_KEY = "sharded_data"
 
+    @staticmethod
     def __new__(cls, data: torch.Tensor, requires_grad: bool = False) -> ShardedFlatTensor:
         if data.ndim != 1:
             raise ValueError(f"{cls.__name__} requires flat data! Got {data.shape}")
@@ -362,18 +363,21 @@ class ShardedFlatTensor(torch.Tensor):
 
     @property
     def is_sharded(self) -> bool:
-        metadata = getattr(self, self.SHARDED_FLAT_TENSOR_METADATA_NAME)
-        return (
-            self.SHARDED_FLAT_TENSOR_SHARDING_SPEC_KEY in metadata
-            and self.SHARDED_FLAT_TENSOR_CACHED_SHARDED_DATA_KEY not in metadata
-        )
+        try:
+            metadata = getattr(self, self.SHARDED_FLAT_TENSOR_METADATA_NAME)
+            return (
+                self.SHARDED_FLAT_TENSOR_SHARDING_SPEC_KEY in metadata
+                and self.SHARDED_FLAT_TENSOR_CACHED_SHARDED_DATA_KEY not in metadata
+            )
+        except AttributeError:
+            return False
 
     @property
     def sharding_spec(self) -> ShardingSpec:
-        metadata = getattr(self, self.SHARDED_FLAT_TENSOR_METADATA_NAME)
         try:
+            metadata = getattr(self, self.SHARDED_FLAT_TENSOR_METADATA_NAME)
             return metadata[self.SHARDED_FLAT_TENSOR_SHARDING_SPEC_KEY]
-        except KeyError:
+        except (KeyError, AttributeError):
             raise ValueError(
                 f"{self.__class__.__name__} has not been marked as sharded yet, "
                 "did you forget to class '.mark_as_sharded()'?"
