@@ -123,8 +123,8 @@ class ShardedFlatTensor(torch.Tensor):
         def wrap(x):
             if isinstance(x, torch.Tensor):
                 for sharded_flat_tensor in sharded_flat_tensors:
-                    if x.shape == sharded_flat_tensor.sharded_shape:
-                        return sharded_flat_tensor.wrap(x)
+                    if x.shape == sharded_flat_tensor.shape:
+                        return sharded_flat_tensor.wrap(x, requires_grad=x.requires_grad)
             return x
 
         out = func(*pytree.tree_map(unwrap, args), **pytree.tree_map(unwrap, kwargs))
@@ -343,13 +343,20 @@ class ShardedFlatTensor(torch.Tensor):
     def wrap(self, tensor: torch.Tensor, requires_grad: Optional[bool] = None) -> ShardedFlatTensor:
         """
         Wrap another tensor and mark as sharded with the same sharding spec.
-        ``tensor`` should have the same shape as ``self.sharded_data``.
+        ``tensor`` should have the same shape.
         """
-        if tensor.shape != self._local_tensor.shape:
-            raise ValueError(f"shape mismatched, expected {self._local_tensor.shape}, got {tensor.shape}")
+        if self.is_sharded and tensor.shape != self.sharded_shape:
+            raise ValueError(f"shape mismatched, expected {self.sharded_shape}, got {tensor.shape}")
+        elif not self.is_sharded and tensor.shape != self.unsharded_shape:
+            raise ValueError(f"shape mismatched, expected {self.unsharded_shape}, got {tensor.shape}")
         requires_grad = requires_grad if requires_grad is not None else tensor.requires_grad
-        wrapped = ShardedFlatTensor(tensor.data, requires_grad=requires_grad)  # type: ignore
-        wrapped.mark_as_sharded(self.sharding_spec, process_group=self.process_group)
+        if self.is_sharded:
+            wrapped = ShardedFlatTensor(tensor.data, requires_grad=requires_grad)  # type: ignore
+            wrapped.mark_as_sharded(self.sharding_spec, process_group=self.process_group)
+        else:
+            wrapped = ShardedFlatTensor(self.sharded_chunk(tensor), requires_grad=requires_grad)  # type: ignore
+            wrapped.mark_as_sharded(self.sharding_spec, process_group=self.process_group)
+            wrapped.unshard_(tensor)
         return wrapped
 
     def chunk_unsharded(self, tensor: torch.Tensor, pad: bool = False) -> List[torch.Tensor]:
