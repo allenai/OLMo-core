@@ -29,7 +29,7 @@ class ShardedFlatParameter(ShardedFlatTensor, nn.Parameter):
             setattr(
                 param,
                 cls.SHARDED_FLAT_TENSOR_METADATA_NAME,
-                getattr(data, cls.SHARDED_FLAT_TENSOR_METADATA_NAME).copy(),
+                getattr(data, cls.SHARDED_FLAT_TENSOR_METADATA_NAME, {}).copy(),
             )
         else:
             setattr(param, cls.SHARDED_FLAT_TENSOR_METADATA_NAME, {})
