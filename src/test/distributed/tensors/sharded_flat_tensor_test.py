@@ -17,7 +17,14 @@ def test_init_sharded():
     assert isinstance(tensor, ShardedFlatTensor)
     assert isinstance(tensor, ShardedFlatTensor)
     assert isinstance(tensor, torch.Tensor)
+    assert tensor.metadata_set
     assert repr(tensor) == "ShardedFlatTensor(local_tensor=tensor([0]))"
+
+
+def test_not_has_metadata():
+    tensor = torch.Tensor._make_subclass(ShardedFlatTensor, torch.rand(3), False)
+    assert isinstance(tensor, ShardedFlatTensor)
+    assert not tensor.metadata_set
 
 
 def test_init_sharded_tensor_from_tensor():

@@ -388,6 +388,13 @@ class ShardedFlatTensor(torch.Tensor):
         return rank_chunks[0] if len(rank_chunks) == 1 else torch.cat(rank_chunks)
 
     @property
+    def metadata_set(self) -> bool:
+        for slot in self.__slots__:
+            if not hasattr(self, slot):
+                return False
+        return True
+
+    @property
     def is_sharded(self) -> bool:
         return self._global_tensor is None
 

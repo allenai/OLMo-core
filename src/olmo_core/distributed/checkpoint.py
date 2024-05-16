@@ -1328,7 +1328,7 @@ def _get_local_tensor_data(tensor: torch.Tensor) -> torch.Tensor:
 
 
 def _wrap_tensor_for_sharded_parameter(tensor: torch.Tensor, param: Optional[torch.Tensor]) -> torch.Tensor:
-    if isinstance(tensor, (ShardedFlatTensor, DTensor)):
+    if isinstance(tensor, DTensor) or (isinstance(tensor, ShardedFlatTensor) and tensor.metadata_set):
         return tensor
 
     if isinstance(param, ShardedFlatTensor):
