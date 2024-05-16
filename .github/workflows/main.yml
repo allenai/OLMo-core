@@ -24,9 +24,7 @@ env:
 jobs:
   checks:
     name: ${{ matrix.task.name }}
-    # TODO: change to 'ubuntu-latest' once repo is public (will have more RAM then), and update the torch
-    # install command in the setup-venv action.
-    runs-on: [macos-13]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 5
     strategy:
       fail-fast: false

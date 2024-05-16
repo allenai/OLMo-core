@@ -19,8 +19,7 @@ def test_init_empty_sharded_parameter():
     assert isinstance(sp, torch.nn.Parameter)
     assert isinstance(sp, ShardedFlatTensor)
     assert isinstance(sp, torch.Tensor)
-    assert repr(sp) == "ShardedFlatParameter([], requires_grad=True)"
-    assert not sp.is_sharded  # hasn't been marked sharded yet
+    assert repr(sp) == "ShardedFlatParameter(local_tensor=None, requires_grad=True)"
 
 
 def test_init_sharded_parameter_from_tensor():

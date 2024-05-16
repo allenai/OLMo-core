@@ -223,7 +223,7 @@ class FlatParamHandle:
 
         # Now that we have all of the flat parameters we need to collate all of their data into a single
         # sharded flat tensor, then set the data for each flat parameter as a view into that flat tensor.
-        local_flat_sharded_data = torch.cat([flat_param.data for flat_param in flat_params])
+        local_flat_sharded_data = torch.cat([flat_param.sharded_data for flat_param in flat_params])
         params_data = ShardedFlatTensor(
             F.pad(local_flat_sharded_data, (0, padded_sharded_numel - local_flat_sharded_data.numel()))
         )
@@ -245,7 +245,7 @@ class FlatParamHandle:
         )
         offset = 0
         for flat_param in flat_params:
-            flat_param.data = params_data[offset : offset + flat_param.numel()]
+            flat_param.sharded_data = params_data[offset : offset + flat_param.numel()]
             offset += flat_param.numel()
 
         return cls(
@@ -319,7 +319,7 @@ class FlatParamHandle:
             assert self.params_data.is_sharded
             self.params_data.unshard_(dtype=dtype, rank0_only=rank0_only)
             if set_grads and self.requires_grad:
-                self.params_unsharded_grad = torch.zeros_like(self.params_data)
+                self.params_unsharded_grad = torch.zeros_like(self.params_data.data)
         else:
             assert not self.params_data.is_sharded
             # We prefer to use `all_gather_into_tensor()` directly when possible as it involves
@@ -342,9 +342,9 @@ class FlatParamHandle:
         offset = 0
         for param in self.params:
             if rank0_only and local_rank != 0:
-                unsharded_data = torch.empty_like(self.params_data)
+                unsharded_data = torch.empty_like(self.params_data.data)
             else:
-                unsharded_data = self.params_data[offset : offset + param.unsharded_numel]
+                unsharded_data = self.params_data.data[offset : offset + param.unsharded_numel]
 
             param.unshard_(unsharded_data, dtype=dtype, rank0_only=rank0_only)
 
@@ -369,7 +369,7 @@ class FlatParamHandle:
             flat_param.reshard_(writeback=False)
             if writeback:
                 # Reset the view into the new `params_data`.
-                flat_param.data = self.params_data[offset : offset + flat_param.sharded_numel]
+                flat_param.sharded_data = self.params_data[offset : offset + flat_param.sharded_numel]
             offset += flat_param.sharded_numel
 
     def pre_reduce_scatter_grads_(

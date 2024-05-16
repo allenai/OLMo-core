@@ -27,19 +27,20 @@ class ShardedFlatParameter(ShardedFlatTensor, nn.Parameter):
         )
 
         if isinstance(data, ShardedFlatTensor):
-            setattr(
-                param,
-                cls.SHARDED_FLAT_TENSOR_METADATA_NAME,
-                getattr(data, cls.SHARDED_FLAT_TENSOR_METADATA_NAME, {}).copy(),
-            )
+            param._local_tensor = data._local_tensor
+            param._sharding_spec = data._sharding_spec
+            param._process_group = data._process_group
         else:
-            setattr(param, cls.SHARDED_FLAT_TENSOR_METADATA_NAME, {})
+            param._local_tensor = None if data is None else data.data.detach()
+            param._sharding_spec = None  # type: ignore[assignment]
+            param._process_group = None
+
+        param._global_tensor = None
 
         return param
 
     def __repr__(self) -> str:
-        r = torch.Tensor.__repr__(self)
-        if r.startswith("Parameter("):  # )  -- the open parenthesis confuses treesitter sometimes
-            r = r.replace("Parameter(", "", 1)  # )  -- the open parenthesis confuses treesitter sometimes
-            r = r[:-1]
-        return r
+        if self._global_tensor is not None:
+            return f"ShardedFlatParameter(local_tensor={self._local_tensor}, global_tensor={self._global_tensor}, requires_grad={self.requires_grad})"
+        else:
+            return f"ShardedFlatParameter(local_tensor={self._local_tensor}, requires_grad={self.requires_grad})"

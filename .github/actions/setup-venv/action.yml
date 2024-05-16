@@ -11,7 +11,7 @@ inputs:
   torch-version:
     description: The PyTorch version to install
     required: false
-    default: '==2.2.1'
+    default: '==2.3.0'
 runs:
   using: composite
   steps:
@@ -34,7 +34,9 @@ runs:
       id: virtualenv-cache
       with:
         path: .venv
-        key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ hashFiles('*requirements.txt', '*pyproject.toml') }}
+        key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ inputs.torch-version }}-${{ hashFiles('*requirements.txt', '*pyproject.toml') }}
+        restore-keys: |
+          ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ inputs.torch-version }}
 
     - if: steps.virtualenv-cache.outputs.cache-hit != 'true'
       shell: bash
@@ -42,8 +44,7 @@ runs:
         # Set up virtual environment without cache hit.
         test -d .venv || virtualenv -p $(which python) --copies --reset-app-data .venv
         . .venv/bin/activate
-        #pip install 'torch${{ inputs.torch-version }}' --extra-index-url https://download.pytorch.org/whl/cpu
-        pip install 'torch${{ inputs.torch-version }}'
+        pip install 'torch${{ inputs.torch-version }}' --extra-index-url https://download.pytorch.org/whl/cpu
         pip install -e .[all]
 
     - if: steps.virtualenv-cache.outputs.cache-hit == 'true'

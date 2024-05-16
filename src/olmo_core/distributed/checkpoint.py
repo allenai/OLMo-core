@@ -1321,33 +1321,20 @@ def _patch_key(model: nn.Module, key: str) -> str:
 def _get_local_tensor_data(tensor: torch.Tensor) -> torch.Tensor:
     if isinstance(tensor, DTensor):
         return tensor.to_local()
+    elif isinstance(tensor, ShardedFlatTensor):
+        return tensor.sharded_data
     else:
         return tensor.data
 
 
 def _wrap_tensor_for_sharded_parameter(tensor: torch.Tensor, param: Optional[torch.Tensor]) -> torch.Tensor:
-    if isinstance(tensor, DTensor):
+    if isinstance(tensor, DTensor) or (isinstance(tensor, ShardedFlatTensor) and tensor.metadata_set):
         return tensor
-
-    # TODO: (fixme) when you call `torch.empty_like(x)` on a `ShardedFlatTensor`, `x`, you get
-    # a `ShardedFlatTensor` without the metadata. Since PyTorch optimizer's use `torch.empty_like()`
-    # on each param to initialize its state, we run into an issue unless we still call `ShardedFlatTensor.wrap()`
-    # below.
-    #  if isinstance(tensor, ShardedFlatTensor):
-    #      return tensor
 
     if isinstance(param, ShardedFlatTensor):
         return param.wrap(tensor, requires_grad=False)
     elif isinstance(param, DTensor):
-        return DTensor(  # type: ignore
-            tensor,
-            param.device_mesh,
-            param.placements,
-            shape=param.size(),
-            dtype=tensor.dtype,
-            requires_grad=False,
-            stride=param.stride(),
-        )
+        return DTensor.from_local(tensor, device_mesh=param.device_mesh, placements=param.placements)
     elif isinstance(param, nn.Parameter) and isinstance(param.data, DTensor):
         return _wrap_tensor_for_sharded_parameter(tensor, param.data)
     else:

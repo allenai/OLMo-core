@@ -3,12 +3,16 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from functools import reduce
-from typing import Any, List, Optional, Tuple, Type, TypeVar
+from typing import List, Optional, Tuple, Type, TypeVar
 
 import torch
 import torch.distributed as dist
-import torch.nn as nn
 import torch.nn.functional as F
+
+try:
+    from torch.utils import _cxx_pytree as pytree
+except ImportError:
+    from torch.utils import _pytree as pytree  # type: ignore[no-redef]
 
 from ..utils import get_rank, get_world_size
 
@@ -77,43 +81,58 @@ class ShardedFlatTensor(torch.Tensor):
     a contiguous slice into the flattened unsharded tensor.
     """
 
-    SHARDED_FLAT_TENSOR_METADATA_NAME = "__sharded_metadata__"
-    SHARDED_FLAT_TENSOR_SHARDING_SPEC_KEY = "sharding_spec"
-    SHARDED_FLAT_TENSOR_PROCESS_GROUP_KEY = "process_group"
-    SHARDED_FLAT_TENSOR_CACHED_SHARDED_DATA_KEY = "sharded_data"
+    __slots__ = ["_local_tensor", "_global_tensor", "_sharding_spec", "_process_group"]
 
     @staticmethod
     def __new__(cls, data: torch.Tensor, requires_grad: bool = False) -> ShardedFlatTensor:
         if data.ndim != 1:
             raise ValueError(f"{cls.__name__} requires flat data! Got {data.shape}")
 
+        sharding_spec: Optional[ShardingSpec] = None
+        process_group: Optional[dist.ProcessGroup] = None
+
         tensor: ShardedFlatTensor
         if isinstance(data, ShardedFlatTensor):
-            tensor = data
-            setattr(
-                tensor,
-                cls.SHARDED_FLAT_TENSOR_METADATA_NAME,
-                getattr(data, cls.SHARDED_FLAT_TENSOR_METADATA_NAME, {}).copy(),
-            )
-        elif type(data) is torch.Tensor or type(data) is nn.Parameter:
-            # For ease of BC maintenance, keep this path for standard Tensor.
-            # Eventually (tm), we should change the behavior for standard Tensor to match.
-            tensor = torch.Tensor._make_subclass(cls, data, requires_grad)
-            setattr(tensor, cls.SHARDED_FLAT_TENSOR_METADATA_NAME, {})
-        else:
-            raise TypeError(f"found unexpected type for {cls.__name__} data: {type(data)}")
+            sharding_spec = data._sharding_spec
+            process_group = data._process_group
+            data = data._local_tensor
+
+        tensor = torch.Tensor._make_subclass(cls, data, requires_grad)
+        tensor._local_tensor = data
+        tensor._global_tensor = None
+        tensor._sharding_spec = sharding_spec  # type: ignore[assignment]
+        tensor._process_group = process_group
 
         return tensor
 
-    def __repr__(self) -> str:
-        return torch.Tensor.__repr__(self)
+    def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+        del types
+        kwargs = kwargs or {}
 
-    def _set_metadata(self, key: str, value: Any, force: bool = False):
-        metadata = getattr(self, self.SHARDED_FLAT_TENSOR_METADATA_NAME)
-        if not force and key in metadata:
-            raise ValueError(f"Metadata key '{key}' already exists in {self.__class__.__name__}")
+        def unwrap(x):
+            if isinstance(x, ShardedFlatTensor):
+                return x._global_tensor if x._global_tensor is not None else x._local_tensor
+            else:
+                return x
+
+        def wrap(x):
+            if isinstance(x, torch.Tensor):
+                if x.shape == self.shape:
+                    return self.wrap(x, requires_grad=x.requires_grad)
+            return x
+
+        out = func(*pytree.tree_map(unwrap, args), **pytree.tree_map(unwrap, kwargs))
+
+        if func in {torch.ops.aten.empty_like.default, torch.ops.aten.zeros_like.default, torch.ops.aten.ones_like.default}:  # type: ignore
+            out = pytree.tree_map(wrap, out)
+
+        return out
+
+    def __repr__(self) -> str:
+        if self._global_tensor is not None:
+            return f"ShardedFlatTensor(local_tensor={self._local_tensor}, global_tensor={self._global_tensor})"
         else:
-            metadata[key] = value
+            return f"ShardedFlatTensor(local_tensor={self._local_tensor})"
 
     def _gather_data(self, dtype: Optional[torch.dtype] = None, rank0_only: bool = False) -> torch.Tensor:
         # NOTE: ``all_gather_into_tensor`` is not supported on Gloo.
@@ -123,7 +142,7 @@ class ShardedFlatTensor(torch.Tensor):
         local_padding = (0, max_numel - sharded_numels[local_rank])
 
         flat_sharded_tensor_list: Optional[List[torch.Tensor]] = None
-        local_flat_padded_tensor = F.pad(self.data.to(dtype or self.dtype), local_padding)
+        local_flat_padded_tensor = F.pad(self._local_tensor.to(dtype or self.dtype), local_padding)
 
         # Pad sharded tensors to the same size.
         if not rank0_only or local_rank == 0:
@@ -241,11 +260,11 @@ class ShardedFlatTensor(torch.Tensor):
         """
         Gather the sharded flat parameter across a process group into a full unsharded parameter.
         """
-        if self.is_sharded:
+        if self._global_tensor is not None:
+            unsharded_data = self._global_tensor
+        else:
             unsharded_data = self._gather_data(dtype=dtype, rank0_only=rank0_only)
             unsharded_data.requires_grad = self.requires_grad
-        else:
-            unsharded_data = self.data
         return unsharded_data
 
     def unshard_(
@@ -261,12 +280,17 @@ class ShardedFlatTensor(torch.Tensor):
         """
         if unsharded_data is None:
             unsharded_data = (
-                self.data if not self.is_sharded else self._gather_data(dtype=dtype, rank0_only=rank0_only)
+                self._global_tensor
+                if self._global_tensor is not None
+                else self._gather_data(dtype=dtype, rank0_only=rank0_only)
             )
         elif not rank0_only or get_rank(self.process_group) == 0:
             unsharded_data = unsharded_data.view(*self.unsharded_shape)
-        self._set_metadata(self.SHARDED_FLAT_TENSOR_CACHED_SHARDED_DATA_KEY, self.data)
-        self.data = unsharded_data
+        self._global_tensor = unsharded_data
+        # NOTE: despite `__torch_dispatch__`, we still need to set `self.data` to the unsharded
+        # data in order for `self.shape()`, `self.numel()`, and other methods to return the
+        # right values corresponding to the unsharded data.
+        self.data = unsharded_data  # type: ignore[misc]
 
     def reshard_(self, writeback: bool = False):
         """
@@ -274,20 +298,10 @@ class ShardedFlatTensor(torch.Tensor):
         This does *not* do anything with the parameter's gradient, if it has one. That should
         be handled separately by the calling code.
         """
-        if self.is_sharded:
+        if (unsharded_data := self._global_tensor) is None:
             return
 
-        metadata = getattr(self, self.SHARDED_FLAT_TENSOR_METADATA_NAME)
-        try:
-            sharded_data = metadata[self.SHARDED_FLAT_TENSOR_CACHED_SHARDED_DATA_KEY]
-        except KeyError:
-            raise ValueError(
-                f"{self.__class__.__name__} has not been unsharded in place yet, "
-                "did you forget to class '.unshard_()'?"
-            )
-
         if writeback:
-            unsharded_data = self.data
             if unsharded_data.shape != self.unsharded_shape:
                 # unsharded data could be empty if `.unshard_` was called with `rank0_only=True`.
                 if unsharded_data.numel() > 0:
@@ -303,28 +317,40 @@ class ShardedFlatTensor(torch.Tensor):
                 0 if self.process_group is None else dist.get_global_rank(self.process_group, 0),
                 group=self.process_group,
             )
-            self.data = self.sharded_chunk(unsharded_data).to(dtype=sharded_data.dtype).clone()
-        else:
-            self.data = sharded_data
-        del metadata[self.SHARDED_FLAT_TENSOR_CACHED_SHARDED_DATA_KEY]
+            self._local_tensor = self.sharded_chunk(unsharded_data).to(dtype=self._local_tensor.dtype).clone()
+
+        self._global_tensor = None
+
+        # NOTE: despite `__torch_dispatch__`, we still need to set `self.data` back to the sharded
+        # data in order for `self.shape()`, `self.numel()`, and other methods to return the
+        # right values corresponding to the sharded data.
+        self.data = self._local_tensor  # type: ignore[misc]
 
     def mark_as_sharded(self, sharding_spec: ShardingSpec, process_group: Optional[dist.ProcessGroup] = None):
         if self.numel() != (shard_numel := sharding_spec.sharded_numels[get_rank(group=process_group)]):
             raise ValueError(
                 f"invalid sharding spec, numel in spec ({shard_numel}) does not match numel in shard ({self.numel()})"
             )
-        self._set_metadata(self.SHARDED_FLAT_TENSOR_SHARDING_SPEC_KEY, sharding_spec)
-        self._set_metadata(self.SHARDED_FLAT_TENSOR_PROCESS_GROUP_KEY, process_group)
+        self._sharding_spec = sharding_spec
+        self._process_group = process_group
 
-    def wrap(self, tensor: torch.Tensor, requires_grad: bool = True) -> ShardedFlatTensor:
+    def wrap(self, tensor: torch.Tensor, requires_grad: Optional[bool] = None) -> ShardedFlatTensor:
         """
         Wrap another tensor and mark as sharded with the same sharding spec.
-        ``tensor`` should have the same shape as ``self.data``, the sharded data.
+        ``tensor`` should have the same shape.
         """
-        if tensor.shape != self.data.shape:
-            raise ValueError(f"shape mismatched, expected {self.data.shape}, got {tensor.shape}")
-        wrapped = ShardedFlatTensor(tensor.data, requires_grad=requires_grad)  # type: ignore
-        wrapped.mark_as_sharded(self.sharding_spec, process_group=self.process_group)
+        if self.is_sharded and tensor.shape != self.sharded_shape:
+            raise ValueError(f"shape mismatched, expected {self.sharded_shape}, got {tensor.shape}")
+        elif not self.is_sharded and tensor.shape != self.unsharded_shape:
+            raise ValueError(f"shape mismatched, expected {self.unsharded_shape}, got {tensor.shape}")
+        requires_grad = requires_grad if requires_grad is not None else tensor.requires_grad
+        if self.is_sharded:
+            wrapped = ShardedFlatTensor(tensor.data, requires_grad=requires_grad)  # type: ignore
+            wrapped.mark_as_sharded(self.sharding_spec, process_group=self.process_group)
+        else:
+            wrapped = ShardedFlatTensor(self.sharded_chunk(tensor), requires_grad=requires_grad)  # type: ignore
+            wrapped.mark_as_sharded(self.sharding_spec, process_group=self.process_group)
+            wrapped.unshard_(tensor)
         return wrapped
 
     def chunk_unsharded(self, tensor: torch.Tensor, pad: bool = False) -> List[torch.Tensor]:
@@ -362,38 +388,28 @@ class ShardedFlatTensor(torch.Tensor):
         return rank_chunks[0] if len(rank_chunks) == 1 else torch.cat(rank_chunks)
 
     @property
+    def metadata_set(self) -> bool:
+        for slot in self.__slots__:
+            if not hasattr(self, slot):
+                return False
+        return True
+
+    @property
     def is_sharded(self) -> bool:
-        try:
-            metadata = getattr(self, self.SHARDED_FLAT_TENSOR_METADATA_NAME)
-            return (
-                self.SHARDED_FLAT_TENSOR_SHARDING_SPEC_KEY in metadata
-                and self.SHARDED_FLAT_TENSOR_CACHED_SHARDED_DATA_KEY not in metadata
-            )
-        except AttributeError:
-            return False
+        return self._global_tensor is None
 
     @property
     def sharding_spec(self) -> ShardingSpec:
-        try:
-            metadata = getattr(self, self.SHARDED_FLAT_TENSOR_METADATA_NAME)
-            return metadata[self.SHARDED_FLAT_TENSOR_SHARDING_SPEC_KEY]
-        except (KeyError, AttributeError):
+        if self._sharding_spec is None:
             raise ValueError(
                 f"{self.__class__.__name__} has not been marked as sharded yet, "
                 "did you forget to class '.mark_as_sharded()'?"
             )
+        return self._sharding_spec
 
     @property
     def process_group(self) -> Optional[dist.ProcessGroup]:
-        try:
-            return getattr(self, self.SHARDED_FLAT_TENSOR_METADATA_NAME)[
-                self.SHARDED_FLAT_TENSOR_PROCESS_GROUP_KEY
-            ]
-        except KeyError:
-            raise ValueError(
-                f"{self.__class__.__name__} has not been marked as sharded yet, "
-                "did you forget to class '.mark_as_sharded()'?"
-            )
+        return self._process_group
 
     @property
     def unsharded_flattened_offsets(self) -> Tuple[Tuple[int, int], ...]:
@@ -417,8 +433,13 @@ class ShardedFlatTensor(torch.Tensor):
 
     @property
     def sharded_data(self) -> torch.Tensor:
-        metadata = getattr(self, self.SHARDED_FLAT_TENSOR_METADATA_NAME)
-        try:
-            return metadata[self.SHARDED_FLAT_TENSOR_CACHED_SHARDED_DATA_KEY]
-        except KeyError:
-            return self.data
+        return self._local_tensor
+
+    @sharded_data.setter
+    def sharded_data(self, sharded_data: torch.Tensor):
+        self._local_tensor = sharded_data
+        self.data = sharded_data
+
+    @property
+    def unsharded_data(self) -> Optional[torch.Tensor]:
+        return self._global_tensor
