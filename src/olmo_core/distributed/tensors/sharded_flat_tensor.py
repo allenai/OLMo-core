@@ -8,6 +8,7 @@ from typing import List, Optional, Tuple, Type, TypeVar
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+from packaging import version
 
 try:
     from torch.utils import _cxx_pytree as pytree
@@ -105,30 +106,36 @@ class ShardedFlatTensor(torch.Tensor):
 
         return tensor
 
-    def __torch_dispatch__(self, func, types, args=(), kwargs=None):
-        del types
-        kwargs = kwargs or {}
+    if version.parse(torch.__version__) >= version.parse("2.3.0"):
+        # There are some bugs with __torch_dispatch__ in earlier versions.
 
-        def unwrap(x):
-            if isinstance(x, ShardedFlatTensor):
-                return x._global_tensor if x._global_tensor is not None else x._local_tensor
-            else:
+        def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+            del types
+            kwargs = kwargs or {}
+
+            def unwrap(x):
+                if isinstance(x, ShardedFlatTensor):
+                    return x._global_tensor if x._global_tensor is not None else x._local_tensor
+                else:
+                    return x
+
+            def wrap(x):
+                if isinstance(x, torch.Tensor):
+                    if x.shape == self.shape:
+                        return self.wrap(x, requires_grad=x.requires_grad)
                 return x
 
-        def wrap(x):
-            if isinstance(x, torch.Tensor):
-                if x.shape == self.shape:
-                    return self.wrap(x, requires_grad=x.requires_grad)
-            return x
+            out = func(*pytree.tree_map(unwrap, args), **pytree.tree_map(unwrap, kwargs))
 
-        out = func(*pytree.tree_map(unwrap, args), **pytree.tree_map(unwrap, kwargs))
+            if func in {torch.ops.aten.empty_like.default, torch.ops.aten.zeros_like.default, torch.ops.aten.ones_like.default}:  # type: ignore
+                out = pytree.tree_map(wrap, out)
 
-        if func in {torch.ops.aten.empty_like.default, torch.ops.aten.zeros_like.default, torch.ops.aten.ones_like.default}:  # type: ignore
-            out = pytree.tree_map(wrap, out)
-
-        return out
+            return out
 
     def __repr__(self) -> str:
+        if not self.metadata_set:
+            return super().__repr__()
+
         if self._global_tensor is not None:
             return f"ShardedFlatTensor(local_tensor={self._local_tensor}, global_tensor={self._global_tensor})"
         else:
