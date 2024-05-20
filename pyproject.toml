@@ -19,6 +19,7 @@ dependencies = [
     "pydantic>=2.0,<3.0",
     "cached-path",
     "requests",
+    "packaging",
 ]
 
 [project.optional-dependencies]

@@ -205,6 +205,22 @@ def test_tensor_shard_spec_for_dtensor_2D_rowwise():
     ]
 
 
+def run_get_local_tensor_data_with_dtensor():
+    mesh = init_device_mesh("cuda", (dist.get_world_size(),))
+    dtensor = distribute_tensor(torch.randn(16, device=get_default_device()), mesh, [Shard(dim=0)])
+
+    # Make sure modifying the data returned from `_get_local_tensor_data` will modify the data
+    # in the actual tensor.
+    _get_local_tensor_data(dtensor).fill_(torch.nan)
+    assert _get_local_tensor_data(dtensor).isnan().all()
+    assert dtensor.full_tensor().isnan().all()
+
+
+@requires_multi_gpu
+def test_get_local_tensor_data_with_dtensor():
+    run_distributed_test(run_get_local_tensor_data_with_dtensor, backend="nccl")
+
+
 def save_and_load_checkpoint_with_regular_and_sharded_tensors(dir):
     checkpointer = Checkpointer()
 
@@ -249,22 +265,6 @@ def save_and_load_checkpoint_with_regular_and_sharded_tensors(dir):
         full_state_dict = checkpointer.unshard(dir, no_dist=True)
         assert full_state_dict["x"].shape == (2, 3)
         assert full_state_dict["y"].shape == (2, 3)
-
-
-def run_get_local_tensor_data_with_dtensor():
-    mesh = init_device_mesh("cuda", (dist.get_world_size(),))
-    dtensor = distribute_tensor(torch.randn(16, device=get_default_device()), mesh, [Shard(dim=0)])
-
-    # Make sure modifying the data returned from `_get_local_tensor_data` will modify the data
-    # in the actual tensor.
-    _get_local_tensor_data(dtensor).fill_(torch.nan)
-    assert _get_local_tensor_data(dtensor).isnan().all()
-    assert dtensor.full_tensor().isnan().all()
-
-
-@requires_multi_gpu
-def test_get_local_tensor_data_with_dtensor():
-    run_distributed_test(run_get_local_tensor_data_with_dtensor, backend="nccl")
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
