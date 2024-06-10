@@ -48,10 +48,10 @@ def run_flat_param_handle_case1():
         handle.params[0].fill_(torch.tensor(0.0, device=get_default_device()))
         assert (handle.params_data[0 : handle.params[0].numel()] == 0).all()
         handle.unshard_()
-        assert (handle.params[0] == 0).all()
+        assert (handle.params[0] == 0).all()  # type: ignore[attr-defined]
         handle.params[0].fill_(torch.tensor(1.0, device=get_default_device()))
         handle.reshard_(writeback=True)
-        assert (handle.params[0] == 1).all()
+        assert (handle.params[0] == 1).all()  # type: ignore[attr-defined]
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
