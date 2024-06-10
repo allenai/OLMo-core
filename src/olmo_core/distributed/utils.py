@@ -1,9 +1,11 @@
 import gc
-from typing import List, Optional, TypeVar
+from typing import TYPE_CHECKING, List, Optional, TypeVar
 
 import torch
 import torch.distributed as dist
-from torch.distributed.device_mesh import DeviceMesh
+
+if TYPE_CHECKING:
+    from torch.distributed.device_mesh import DeviceMesh
 
 
 def is_distributed() -> bool:
@@ -86,7 +88,7 @@ def get_gradient_divide_factor(world_size: int) -> float:
     return float(factor)
 
 
-def get_mesh_coordinates(mesh: DeviceMesh, rank: Optional[int] = None) -> Optional[List[int]]:
+def get_mesh_coordinates(mesh: "DeviceMesh", rank: Optional[int] = None) -> Optional[List[int]]:
     """
     Calculate the coordinates of a global rank on a device mesh.
 
