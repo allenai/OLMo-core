@@ -8,6 +8,12 @@
 
 **OLMo-core** is a Python library that provides building blocks for large-scale distributed training with PyTorch.
 
+To get started, install OLMo-core from PyPI with:
+
+.. code-block:: bash
+
+    pip install ai2-olmo-core
+
 .. toctree::
    :hidden:
    :maxdepth: 2
@@ -25,6 +31,7 @@
    :caption: Development
 
    License <https://raw.githubusercontent.com/allenai/OLMo-core/main/LICENSE>
+   CHANGELOG <https://github.com/allenai/OLMo-core/blob/main/CHANGELOG.md>
    GitHub Repository <https://github.com/allenai/OLMo-core>
 
 Team
