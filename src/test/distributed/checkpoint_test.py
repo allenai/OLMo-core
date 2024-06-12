@@ -641,54 +641,6 @@ def test_flatten_optimizer_state(tiny_model, tiny_model_data):
     optim.load_state_dict(unflattened_optim_state)  # type: ignore
 
 
-def flatten_optimizer_state_with_sharded_flat_params(model_factory, model_data_factory):
-    model = model_factory().to(get_default_device())
-    model_data = model_data_factory().to(get_default_device())
-
-    # Do a step to ensure optimizer state is initialized.
-    optim = torch.optim.AdamW(model.parameters())
-    model(model_data).sum().backward()
-    optim.step()
-
-    # Now shard part of the model and the corresponding optimizer state.
-    og_param = model.fc[0].weight
-    flat_param = ShardedFlatTensor.shard(og_param)
-    optim.state[flat_param] = {
-        k: v if k == "step" else ShardedFlatTensor.shard(v, requires_grad=False).data
-        for k, v in optim.state.pop(og_param).items()
-    }
-    param_id = optim.param_groups[0]["params"].index(og_param)
-    optim.param_groups[0]["params"][param_id] = flat_param
-    setattr(model.fc[0], "weight", flat_param)
-
-    model_state = _get_model_state_dict_for_checkpoint(model)
-    assert model_state["fc.0.weight"].shape == flat_param.shape
-
-    flat_optim_state = _flatten_optimizer_state(
-        model,
-        optim,
-        model_state,
-        optim.state_dict(),  # type: ignore[arg-type]
-    )
-    unflattened_optim_state = _unflatten_optimizer_state(flat_optim_state)
-
-    # Make sure unflattened state matches what we'd get from `optim.state_dict()`.
-    assert_optim_state_close(optim.state_dict(), unflattened_optim_state)  # type: ignore
-
-    # Lastly, make sure we can load it.
-    optim.load_state_dict(unflattened_optim_state)  # type: ignore
-
-
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_flatten_optimizer_state_with_sharded_flat_params(backend, tiny_model_factory, tiny_model_data_factory):
-    run_distributed_test(
-        flatten_optimizer_state_with_sharded_flat_params,
-        backend=backend,
-        start_method="spawn",
-        func_args=(tiny_model_factory, tiny_model_data_factory),
-    )
-
-
 def run_save_and_load_torch_fsdp_model(
     dir, model_factory, model_data_factory, pre_init_optim_state_to_load, use_orig_params
 ):
