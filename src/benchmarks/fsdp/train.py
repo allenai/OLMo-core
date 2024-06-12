@@ -29,7 +29,7 @@ def main(
     config: TransformerConfig,
     batch_size: int,
     num_batches: int = 100,
-    fsdp_wrapper: Literal["torch", "olmo_core", "ddp"] = "olmo_core",
+    model_wrapper: Literal["fsdp", "ddp"] = "fsdp",
     dry_run: bool = False,
     save_path: Optional[str] = None,
     load_path: Optional[str] = None,
@@ -43,7 +43,7 @@ def main(
         config,
         batch_size,
         num_batches=num_batches,
-        fsdp_wrapper=fsdp_wrapper,
+        model_wrapper=model_wrapper,
         mixed_precision=mixed_precision,
         **kwargs,
     )
@@ -140,10 +140,10 @@ def main(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(prog="train.py", description="Train an FSDP model")
+    parser = argparse.ArgumentParser(prog="train.py", description="Train a distributed model")
     parser.add_argument(
-        "--fsdp",
-        choices=["torch", "olmo_core", "ddp"],
+        "--wrapper",
+        choices=["fsdp", "ddp"],
         default="olmo_core",
         help="""The FSDP implementation.""",
     )
@@ -241,7 +241,7 @@ if __name__ == "__main__":
         config,
         args.batch_size,
         num_batches=args.num_batches,
-        fsdp_wrapper=args.fsdp,
+        model_wrapper=args.fsdp,
         dry_run=args.dry_run,
         save_path=args.save_path,
         load_path=args.load_path,

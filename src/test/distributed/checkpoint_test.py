@@ -29,14 +29,8 @@ from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
     unshard_model_state,
-    unshard_optim_state,
 )
-from olmo_core.distributed.fsdp import FSDP
-from olmo_core.distributed.tensors import (
-    ShardedFlatParameter,
-    ShardedFlatTensor,
-    ShardingSpec,
-)
+from olmo_core.distributed.tensors import ShardedFlatTensor, ShardingSpec
 
 from .utils import (
     BACKENDS,
@@ -226,12 +220,12 @@ def save_and_load_checkpoint_with_regular_and_sharded_tensors(dir):
 
     state_dict_to_save = {
         "x": torch.tensor([[1, 2, 3], [2, 2, 2]], device=get_default_device()),
-        "y": ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device())),
+        "y": ShardedFlatTensor.shard(torch.rand(2, 3, device=get_default_device())),
     }
 
     state_dict_to_load = {
         "x": torch.zeros_like(state_dict_to_save["x"]),
-        "y": ShardedFlatParameter.shard(torch.zeros(2, 3, device=get_default_device())),
+        "y": ShardedFlatTensor.shard(torch.zeros(2, 3, device=get_default_device())),
     }
 
     _, files = checkpointer.save(dir, state_dict_to_save)
@@ -380,14 +374,14 @@ def save_and_load_checkpoint_with_different_sharding_spec(dir):
         checkpointer = Checkpointer()
 
         state_dict_to_save = {
-            "x": ShardedFlatParameter.shard(
+            "x": ShardedFlatTensor.shard(
                 torch.rand(2, 3, device=get_default_device()),
                 ShardingSpec(unsharded_shape=(2, 3), unsharded_flattened_offsets=offsets_to_save),
             ),
         }
 
         state_dict_to_load = {
-            "x": ShardedFlatParameter.shard(
+            "x": ShardedFlatTensor.shard(
                 torch.rand(2, 3, device=get_default_device()),
                 ShardingSpec(unsharded_shape=(2, 3), unsharded_flattened_offsets=offsets_to_load),
             ),
@@ -417,7 +411,7 @@ def save_and_load_checkpoint_from_regular_to_sharded_tensor(dir):
     }
 
     state_dict_to_load = {
-        "x": ShardedFlatParameter.shard(torch.zeros(2, 3, device=get_default_device())),
+        "x": ShardedFlatTensor.shard(torch.zeros(2, 3, device=get_default_device())),
     }
 
     checkpointer.save(dir, state_dict_to_save)  # type: ignore
@@ -440,7 +434,7 @@ def save_and_load_checkpoint_from_sharded_to_regular_tensor(dir):
     checkpointer = Checkpointer()
 
     state_dict_to_save = {
-        "x": ShardedFlatParameter.shard(torch.zeros(2, 3, device=get_default_device())),
+        "x": ShardedFlatTensor.shard(torch.zeros(2, 3, device=get_default_device())),
     }
 
     state_dict_to_load = {
@@ -506,12 +500,12 @@ def save_and_load_remote_checkpoint(remote_dir):
 
     state_dict_to_save = {
         "x": torch.tensor([[1, 2, 3], [2, 2, 2]], device=get_default_device()),
-        "y": ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device())),
+        "y": ShardedFlatTensor.shard(torch.rand(2, 3, device=get_default_device())),
     }
 
     state_dict_to_load = {
         "x": torch.zeros_like(state_dict_to_save["x"]),
-        "y": ShardedFlatParameter.shard(torch.zeros(2, 3, device=get_default_device())),
+        "y": ShardedFlatTensor.shard(torch.zeros(2, 3, device=get_default_device())),
     }
 
     checkpointer.save(remote_dir, state_dict_to_save)
@@ -529,17 +523,17 @@ def run_save_and_load_with_different_data_across_ranks(dir):
     checkpointer = Checkpointer()
 
     state_dict_to_save: Dict[str, torch.Tensor] = {
-        "x": ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device()))
+        "x": ShardedFlatTensor.shard(torch.rand(2, 3, device=get_default_device()))
     }
-    y_to_save = ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device()))
+    y_to_save = ShardedFlatTensor.shard(torch.rand(2, 3, device=get_default_device()))
     if dist.get_rank() == 1:
         state_dict_to_save["y"] = y_to_save
         state_dict_to_save["z"] = torch.rand(2, 3)
 
     state_dict_to_load: Dict[str, torch.Tensor] = {
-        "x": ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device()))
+        "x": ShardedFlatTensor.shard(torch.rand(2, 3, device=get_default_device()))
     }
-    y_to_load = ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device()))
+    y_to_load = ShardedFlatTensor.shard(torch.rand(2, 3, device=get_default_device()))
     if dist.get_rank() == 0:
         state_dict_to_load["z"] = torch.rand(2, 3)
     else:
@@ -645,123 +639,6 @@ def test_flatten_optimizer_state(tiny_model, tiny_model_data):
 
     # Lastly, make sure we can load it.
     optim.load_state_dict(unflattened_optim_state)  # type: ignore
-
-
-def flatten_optimizer_state_with_sharded_flat_params(model_factory, model_data_factory):
-    model = model_factory().to(get_default_device())
-    model_data = model_data_factory().to(get_default_device())
-
-    # Do a step to ensure optimizer state is initialized.
-    optim = torch.optim.AdamW(model.parameters())
-    model(model_data).sum().backward()
-    optim.step()
-
-    # Now shard part of the model and the corresponding optimizer state.
-    og_param = model.fc[0].weight
-    flat_param = ShardedFlatParameter.shard(og_param)
-    optim.state[flat_param] = {
-        k: v if k == "step" else ShardedFlatParameter.shard(v, requires_grad=False).data
-        for k, v in optim.state.pop(og_param).items()
-    }
-    param_id = optim.param_groups[0]["params"].index(og_param)
-    optim.param_groups[0]["params"][param_id] = flat_param
-    setattr(model.fc[0], "weight", flat_param)
-
-    model_state = _get_model_state_dict_for_checkpoint(model)
-    assert model_state["fc.0.weight"].shape == flat_param.shape
-
-    flat_optim_state = _flatten_optimizer_state(
-        model,
-        optim,
-        model_state,
-        optim.state_dict(),  # type: ignore[arg-type]
-    )
-    unflattened_optim_state = _unflatten_optimizer_state(flat_optim_state)
-
-    # Make sure unflattened state matches what we'd get from `optim.state_dict()`.
-    assert_optim_state_close(optim.state_dict(), unflattened_optim_state)  # type: ignore
-
-    # Lastly, make sure we can load it.
-    optim.load_state_dict(unflattened_optim_state)  # type: ignore
-
-
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_flatten_optimizer_state_with_sharded_flat_params(backend, tiny_model_factory, tiny_model_data_factory):
-    run_distributed_test(
-        flatten_optimizer_state_with_sharded_flat_params,
-        backend=backend,
-        start_method="spawn",
-        func_args=(tiny_model_factory, tiny_model_data_factory),
-    )
-
-
-def run_save_and_load_fsdp_model(dir, model_factory, model_data_factory, pre_init_optim_state_to_load):
-    fsdp_model = FSDP(model_factory())
-    optim = torch.optim.AdamW(fsdp_model.parameters())
-
-    # Take a train step to initialize optimizer state.
-    fsdp_model(model_data_factory().to(fsdp_model.device)).sum().backward()
-    optim.step()
-
-    # Save checkpoint.
-    save_model_and_optim_state(dir, fsdp_model, optim)
-    dist.barrier()
-
-    # Now create a new fsdp model and load that state.
-    fsdp_model2 = FSDP(model_factory())
-    optim2 = torch.optim.AdamW(fsdp_model2.parameters())
-    if pre_init_optim_state_to_load:
-        init_optimizer_state(optim2)
-    load_model_and_optim_state(dir, fsdp_model2, optim2)
-
-    # Check model parameters.
-    with fsdp_model.summon_full_params(recurse=True), fsdp_model2.summon_full_params(recurse=True):
-        torch.testing.assert_close(fsdp_model.state_dict(), fsdp_model2.state_dict())
-
-    # Check optimizer state.
-    for p1, p2 in zip(fsdp_model.parameters(), fsdp_model2.parameters()):
-        if p1.numel() > 0:
-            torch.testing.assert_close(optim.state[p1], optim2.state[p2])
-        else:
-            for key in ("exp_avg", "exp_avg_sq"):
-                assert key not in optim.state or optim.state[p1][key].numel() == 0
-                assert key not in optim2.state or optim2.state[p2][key].numel() == 0
-
-    # Check unsharding model state.
-    full_model_state = unshard_model_state(dir)
-    assert full_model_state
-    for name, param in fsdp_model.named_parameters():
-        assert isinstance(param, ShardedFlatParameter)
-        assert name in full_model_state
-        assert full_model_state[name].shape == param.unsharded_shape
-
-    # Check unsharding optim state.
-    full_optim_state = unshard_optim_state(dir)
-    assert full_optim_state
-    assert len(full_optim_state["param_groups"]) == len(optim.param_groups)
-    for i, param in enumerate(fsdp_model.parameters()):
-        assert isinstance(param, ShardedFlatParameter)
-        assert i in full_optim_state["state"]
-        state = full_optim_state["state"][i]
-        assert state["step"].numel() == 1
-        assert state["exp_avg"].shape == param.unsharded_shape
-        assert state["exp_avg_sq"].shape == param.unsharded_shape
-
-
-@pytest.mark.parametrize("backend", BACKENDS)
-@pytest.mark.parametrize(
-    "pre_init_optim_state_to_load",
-    (pytest.param(True, id="initialized_optim"), pytest.param(False, id="uninitialized_optim")),
-)
-def test_save_and_load_fsdp_model(
-    backend, tmp_path, tiny_model_factory, tiny_model_data_factory, pre_init_optim_state_to_load
-):
-    run_distributed_test(
-        run_save_and_load_fsdp_model,
-        backend=backend,
-        start_method="spawn",
-        func_args=(tmp_path, tiny_model_factory, tiny_model_data_factory, pre_init_optim_state_to_load),
-    )
 
 
 def run_save_and_load_torch_fsdp_model(

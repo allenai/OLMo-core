@@ -37,16 +37,11 @@ jobs:
           - name: Test
             run: |
               pytest -v --color=yes --durations=3 src/test/ \
-                --ignore-glob='src/test/distributed/fsdp*' \
                 --ignore-glob='src/test/distributed/checkpoint*'
 
           - name: Test checkpoint
             run: |
               pytest -v --color=yes --durations=3 src/test/distributed/checkpoint*
-
-          - name: Test FSDP
-            run: |
-              pytest -v --color=yes --durations=3 src/test/distributed/fsdp/
 
           - name: Type check
             run: make type-check
@@ -113,13 +108,10 @@ jobs:
       matrix:
         task:
           - name: Test (GPU)
-            run: pytest -v --color=yes --durations=3 -m gpu src/test/ --ignore-glob='src/test/distributed/fsdp*' --ignore-glob='src/test/distributed/checkpoint*'
+            run: pytest -v --color=yes --durations=3 -m gpu src/test/ --ignore-glob='src/test/distributed/checkpoint*'
 
           - name: Test checkpoint (GPU)
             run: pytest -v --color=yes --durations=3 -m gpu src/test/distributed/checkpoint*
-
-          - name: Test FSDP (GPU)
-            run: pytest -v --color=yes --durations=3 -m gpu src/test/distributed/fsdp/
     steps:
       - name: Determine current commit SHA (pull request)
         if: github.event_name == 'pull_request'
