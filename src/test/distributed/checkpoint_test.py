@@ -30,11 +30,7 @@ from olmo_core.distributed.checkpoint import (
     save_model_and_optim_state,
     unshard_model_state,
 )
-from olmo_core.distributed.tensors import (
-    ShardedFlatParameter,
-    ShardedFlatTensor,
-    ShardingSpec,
-)
+from olmo_core.distributed.tensors import ShardedFlatTensor, ShardingSpec
 
 from .utils import (
     BACKENDS,
@@ -224,12 +220,12 @@ def save_and_load_checkpoint_with_regular_and_sharded_tensors(dir):
 
     state_dict_to_save = {
         "x": torch.tensor([[1, 2, 3], [2, 2, 2]], device=get_default_device()),
-        "y": ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device())),
+        "y": ShardedFlatTensor.shard(torch.rand(2, 3, device=get_default_device())),
     }
 
     state_dict_to_load = {
         "x": torch.zeros_like(state_dict_to_save["x"]),
-        "y": ShardedFlatParameter.shard(torch.zeros(2, 3, device=get_default_device())),
+        "y": ShardedFlatTensor.shard(torch.zeros(2, 3, device=get_default_device())),
     }
 
     _, files = checkpointer.save(dir, state_dict_to_save)
@@ -378,14 +374,14 @@ def save_and_load_checkpoint_with_different_sharding_spec(dir):
         checkpointer = Checkpointer()
 
         state_dict_to_save = {
-            "x": ShardedFlatParameter.shard(
+            "x": ShardedFlatTensor.shard(
                 torch.rand(2, 3, device=get_default_device()),
                 ShardingSpec(unsharded_shape=(2, 3), unsharded_flattened_offsets=offsets_to_save),
             ),
         }
 
         state_dict_to_load = {
-            "x": ShardedFlatParameter.shard(
+            "x": ShardedFlatTensor.shard(
                 torch.rand(2, 3, device=get_default_device()),
                 ShardingSpec(unsharded_shape=(2, 3), unsharded_flattened_offsets=offsets_to_load),
             ),
@@ -415,7 +411,7 @@ def save_and_load_checkpoint_from_regular_to_sharded_tensor(dir):
     }
 
     state_dict_to_load = {
-        "x": ShardedFlatParameter.shard(torch.zeros(2, 3, device=get_default_device())),
+        "x": ShardedFlatTensor.shard(torch.zeros(2, 3, device=get_default_device())),
     }
 
     checkpointer.save(dir, state_dict_to_save)  # type: ignore
@@ -438,7 +434,7 @@ def save_and_load_checkpoint_from_sharded_to_regular_tensor(dir):
     checkpointer = Checkpointer()
 
     state_dict_to_save = {
-        "x": ShardedFlatParameter.shard(torch.zeros(2, 3, device=get_default_device())),
+        "x": ShardedFlatTensor.shard(torch.zeros(2, 3, device=get_default_device())),
     }
 
     state_dict_to_load = {
@@ -504,12 +500,12 @@ def save_and_load_remote_checkpoint(remote_dir):
 
     state_dict_to_save = {
         "x": torch.tensor([[1, 2, 3], [2, 2, 2]], device=get_default_device()),
-        "y": ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device())),
+        "y": ShardedFlatTensor.shard(torch.rand(2, 3, device=get_default_device())),
     }
 
     state_dict_to_load = {
         "x": torch.zeros_like(state_dict_to_save["x"]),
-        "y": ShardedFlatParameter.shard(torch.zeros(2, 3, device=get_default_device())),
+        "y": ShardedFlatTensor.shard(torch.zeros(2, 3, device=get_default_device())),
     }
 
     checkpointer.save(remote_dir, state_dict_to_save)
@@ -527,17 +523,17 @@ def run_save_and_load_with_different_data_across_ranks(dir):
     checkpointer = Checkpointer()
 
     state_dict_to_save: Dict[str, torch.Tensor] = {
-        "x": ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device()))
+        "x": ShardedFlatTensor.shard(torch.rand(2, 3, device=get_default_device()))
     }
-    y_to_save = ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device()))
+    y_to_save = ShardedFlatTensor.shard(torch.rand(2, 3, device=get_default_device()))
     if dist.get_rank() == 1:
         state_dict_to_save["y"] = y_to_save
         state_dict_to_save["z"] = torch.rand(2, 3)
 
     state_dict_to_load: Dict[str, torch.Tensor] = {
-        "x": ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device()))
+        "x": ShardedFlatTensor.shard(torch.rand(2, 3, device=get_default_device()))
     }
-    y_to_load = ShardedFlatParameter.shard(torch.rand(2, 3, device=get_default_device()))
+    y_to_load = ShardedFlatTensor.shard(torch.rand(2, 3, device=get_default_device()))
     if dist.get_rank() == 0:
         state_dict_to_load["z"] = torch.rand(2, 3)
     else:
@@ -656,9 +652,9 @@ def flatten_optimizer_state_with_sharded_flat_params(model_factory, model_data_f
 
     # Now shard part of the model and the corresponding optimizer state.
     og_param = model.fc[0].weight
-    flat_param = ShardedFlatParameter.shard(og_param)
+    flat_param = ShardedFlatTensor.shard(og_param)
     optim.state[flat_param] = {
-        k: v if k == "step" else ShardedFlatParameter.shard(v, requires_grad=False).data
+        k: v if k == "step" else ShardedFlatTensor.shard(v, requires_grad=False).data
         for k, v in optim.state.pop(og_param).items()
     }
     param_id = optim.param_groups[0]["params"].index(og_param)
