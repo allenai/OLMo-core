@@ -151,10 +151,9 @@ def build_components(
     config: TransformerConfig,
     batch_size: int,
     num_batches: int = 100,
-    fsdp_wrapper: Literal["torch", "olmo_core", "ddp"] = "olmo_core",
+    model_wrapper: Literal["fsdp", "ddp"] = "fsdp",
     wrap_blocks: bool = True,
     mixed_precision: bool = True,
-    max_prefetch_count: int = 1,
     learning_rate: float = 1e-4,
     seed: int = 4634534,
 ) -> Tuple[nn.Module, torch.optim.Optimizer, Dataloader]:
@@ -163,20 +162,7 @@ def build_components(
     model = Transformer(config)
 
     print_rank0("Wrapping model...")
-    if fsdp_wrapper == "olmo_core":
-        from olmo_core.distributed.fsdp import FSDP, FSDPPrecision
-
-        model = FSDP.auto_wrap(
-            model,
-            [nn.TransformerEncoderLayer] if wrap_blocks else [],
-            precision=FSDPPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32)
-            if mixed_precision
-            else None,
-            max_prefetch_count=max_prefetch_count,
-        )
-
-        model.apply(init_function)
-    elif fsdp_wrapper == "torch":
+    if model_wrapper == "fsdp":
         from torch.distributed.fsdp import FullyShardedDataParallel, MixedPrecision
 
         def auto_wrap_policy(module: nn.Module, recurse: bool, *args, **kwargs) -> bool:
@@ -204,13 +190,13 @@ def build_components(
         )
 
         model.apply(init_function)  # just in case
-    elif fsdp_wrapper == "ddp":
+    elif model_wrapper == "ddp":
         from torch.nn.parallel import DistributedDataParallel as DDP
 
         model = DDP(model.cuda(), device_ids=[dist.get_rank()])
         model.apply(init_function)
     else:
-        raise NotImplementedError(fsdp_wrapper)
+        raise NotImplementedError(model_wrapper)
 
     model.train()
     print_rank0(model)

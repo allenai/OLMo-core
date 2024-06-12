@@ -29,9 +29,7 @@ from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
     unshard_model_state,
-    unshard_optim_state,
 )
-from olmo_core.distributed.fsdp import FSDP
 from olmo_core.distributed.tensors import (
     ShardedFlatParameter,
     ShardedFlatTensor,
@@ -692,75 +690,6 @@ def test_flatten_optimizer_state_with_sharded_flat_params(backend, tiny_model_fa
         backend=backend,
         start_method="spawn",
         func_args=(tiny_model_factory, tiny_model_data_factory),
-    )
-
-
-def run_save_and_load_fsdp_model(dir, model_factory, model_data_factory, pre_init_optim_state_to_load):
-    fsdp_model = FSDP(model_factory())
-    optim = torch.optim.AdamW(fsdp_model.parameters())
-
-    # Take a train step to initialize optimizer state.
-    fsdp_model(model_data_factory().to(fsdp_model.device)).sum().backward()
-    optim.step()
-
-    # Save checkpoint.
-    save_model_and_optim_state(dir, fsdp_model, optim)
-    dist.barrier()
-
-    # Now create a new fsdp model and load that state.
-    fsdp_model2 = FSDP(model_factory())
-    optim2 = torch.optim.AdamW(fsdp_model2.parameters())
-    if pre_init_optim_state_to_load:
-        init_optimizer_state(optim2)
-    load_model_and_optim_state(dir, fsdp_model2, optim2)
-
-    # Check model parameters.
-    with fsdp_model.summon_full_params(recurse=True), fsdp_model2.summon_full_params(recurse=True):
-        torch.testing.assert_close(fsdp_model.state_dict(), fsdp_model2.state_dict())
-
-    # Check optimizer state.
-    for p1, p2 in zip(fsdp_model.parameters(), fsdp_model2.parameters()):
-        if p1.numel() > 0:
-            torch.testing.assert_close(optim.state[p1], optim2.state[p2])
-        else:
-            for key in ("exp_avg", "exp_avg_sq"):
-                assert key not in optim.state or optim.state[p1][key].numel() == 0
-                assert key not in optim2.state or optim2.state[p2][key].numel() == 0
-
-    # Check unsharding model state.
-    full_model_state = unshard_model_state(dir)
-    assert full_model_state
-    for name, param in fsdp_model.named_parameters():
-        assert isinstance(param, ShardedFlatParameter)
-        assert name in full_model_state
-        assert full_model_state[name].shape == param.unsharded_shape
-
-    # Check unsharding optim state.
-    full_optim_state = unshard_optim_state(dir)
-    assert full_optim_state
-    assert len(full_optim_state["param_groups"]) == len(optim.param_groups)
-    for i, param in enumerate(fsdp_model.parameters()):
-        assert isinstance(param, ShardedFlatParameter)
-        assert i in full_optim_state["state"]
-        state = full_optim_state["state"][i]
-        assert state["step"].numel() == 1
-        assert state["exp_avg"].shape == param.unsharded_shape
-        assert state["exp_avg_sq"].shape == param.unsharded_shape
-
-
-@pytest.mark.parametrize("backend", BACKENDS)
-@pytest.mark.parametrize(
-    "pre_init_optim_state_to_load",
-    (pytest.param(True, id="initialized_optim"), pytest.param(False, id="uninitialized_optim")),
-)
-def test_save_and_load_fsdp_model(
-    backend, tmp_path, tiny_model_factory, tiny_model_data_factory, pre_init_optim_state_to_load
-):
-    run_distributed_test(
-        run_save_and_load_fsdp_model,
-        backend=backend,
-        start_method="spawn",
-        func_args=(tmp_path, tiny_model_factory, tiny_model_data_factory, pre_init_optim_state_to_load),
     )
 
 

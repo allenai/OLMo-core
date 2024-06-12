@@ -8,7 +8,6 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from olmo_core.distributed.fsdp import FSDPPrecision
 from olmo_core.distributed.utils import is_distributed
 
 from ..utils import (
@@ -32,7 +31,6 @@ __all__ = [
     "INIT_DEVICES",
     "BACKENDS",
     "LOW_PRECISION_DTYPES",
-    "FSDP_MIXED_PRECISION",
     "GPU_MARKS",
     "MULTI_GPU_MARKS",
 ]
@@ -53,33 +51,6 @@ BACKENDS = [
     pytest.param(
         "nccl",
         id="backend=NCCL",
-        marks=MULTI_GPU_MARKS,
-    ),
-]
-
-FSDP_MIXED_PRECISION = [
-    pytest.param(FSDPPrecision(param_dtype=torch.float16, reduce_dtype=None), id="param_dtype=FP16"),
-    pytest.param(
-        FSDPPrecision(param_dtype=torch.float16, reduce_dtype=torch.float16),
-        id="param_dtype=FP16,reduce_dtype=FP16",
-    ),
-    pytest.param(
-        FSDPPrecision(param_dtype=torch.float16, reduce_dtype=torch.float32),
-        id="param_dtype=FP16,reduce_dtype=FP32",
-    ),
-    pytest.param(
-        FSDPPrecision(param_dtype=torch.bfloat16, reduce_dtype=None),
-        id="param_dtype=BF16",
-        marks=MULTI_GPU_MARKS,
-    ),
-    pytest.param(
-        FSDPPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.bfloat16),
-        id="param_dtype=BF16,reduce_dtype=BF16",
-        marks=MULTI_GPU_MARKS,
-    ),
-    pytest.param(
-        FSDPPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32),
-        id="param_dtype=BF16,reduce_dtype=FP32",
         marks=MULTI_GPU_MARKS,
     ),
 ]

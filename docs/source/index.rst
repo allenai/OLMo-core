@@ -23,7 +23,6 @@ To get started, install OLMo-core from PyPI with:
    io.rst
    utils.rst
    distributed/checkpoint.rst
-   distributed/fsdp.rst
    distributed/tensors.rst
 
 .. toctree::

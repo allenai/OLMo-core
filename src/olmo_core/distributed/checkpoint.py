@@ -7,7 +7,7 @@ optimizer state without unnecessary distributed communication and GPU allocation
 Features
 --------
 
-- Sharded distributed models, such OLMo-core's :class:`~olmo_core.distributed.fsdp.FSDP` or PyTorch's
+- Sharded distributed models, such as PyTorch's
   :class:`~torch.distributed.fsdp.FullyShardedDataParallel` (with ``use_orig_params=True``)
   are supported out-of-the-box.
 - Utilizes `safetensors <https://huggingface.co/docs/safetensors/>`_ under the hood for fast, efficient, and
