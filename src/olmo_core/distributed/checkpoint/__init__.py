@@ -24,6 +24,7 @@ API Reference
 from __future__ import annotations
 
 import logging
+from concurrent.futures import Future
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -47,6 +48,7 @@ from .filesystem import RemoteFileSystemReader, RemoteFileSystemWriter
 __all__ = [
     "save_model_and_optim_state",
     "load_model_and_optim_state",
+    "async_save_model_and_optim_state",
     "RemoteFileSystemWriter",
     "RemoteFileSystemReader",
 ]
@@ -54,13 +56,38 @@ __all__ = [
 log = logging.getLogger(__name__)
 
 
+def _prepare_env_for_save(
+    dir: PathOrStr, process_group: Optional[dist.ProcessGroup] = None, save_overwrite: bool = False
+) -> str:
+    dir = normalize_path(dir)
+
+    # Prepare checkpoint folder.
+    if save_overwrite:
+        if get_fs_local_rank(process_group) == 0:
+            clear_directory(dir)
+    elif not dir_is_empty(dir):
+        raise FileExistsError(dir)
+
+    barrier(process_group)
+
+    if not is_url(dir):
+        if get_fs_local_rank(process_group) == 0:
+            Path(dir).mkdir(exist_ok=True, parents=True)
+        # Ensure the dir exists for all ranks before continuing. This might take a second if we're
+        # saving to an NFS drive or something like that.
+        wait_for(Path(dir).exists, description=f"Waiting on '{dir}' to be created...")
+        barrier(process_group)
+
+    return dir
+
+
 @torch.no_grad()
 def save_model_and_optim_state(
     dir: PathOrStr,
     model: nn.Module,
     optim: Optional[torch.optim.Optimizer] = None,
-    save_overwrite: bool = False,
     process_group: Optional[dist.ProcessGroup] = None,
+    save_overwrite: bool = False,
 ) -> None:
     """
     Save model and optimizer state dictionaries. The model state can be a sharded model, in which
@@ -70,29 +97,12 @@ def save_model_and_optim_state(
     :param dir: Path/URL to save to.
     :param model: The model to save state from.
     :param optim: The optimizer to save state from.
-    :param save_overwrite: Overwrite existing files.
     :param process_group: The process group to use for distributed collectives.
+    :param save_overwrite: Overwrite existing files.
 
     :raises FileExistsError: If the checkpoint dir exists and is non-empty unless ``save_overwrite=True``.
     """
-    dir = normalize_path(dir)
-
-    # Prepare checkpoint folder.
-    if save_overwrite:
-        if get_fs_local_rank() == 0:
-            clear_directory(dir)
-    elif not dir_is_empty(dir):
-        raise FileExistsError(dir)
-
-    barrier(process_group)
-
-    if not is_url(dir):
-        if get_fs_local_rank() == 0:
-            Path(dir).mkdir(exist_ok=True, parents=True)
-        # Ensure the dir exists for all ranks before continuing. This might take a second if we're
-        # saving to an NFS drive or something like that.
-        wait_for(Path(dir).exists, description=f"Waiting on '{dir}' to be created...")
-        barrier(process_group)
+    dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
 
     # Prepare state dict to save.
     model_and_optim_state: Dict[str, Any] = {
@@ -102,9 +112,40 @@ def save_model_and_optim_state(
         model_and_optim_state["optim"] = optim
 
     # Save the state dict.
-    storage_writer = RemoteFileSystemWriter(dir)
     dist_cp.state_dict_saver.save(
-        model_and_optim_state, storage_writer=storage_writer, process_group=process_group
+        model_and_optim_state,
+        storage_writer=RemoteFileSystemWriter(dir),
+        process_group=process_group,
+    )
+
+
+@torch.no_grad()
+def async_save_model_and_optim_state(
+    dir: PathOrStr,
+    model: nn.Module,
+    optim: Optional[torch.optim.Optimizer] = None,
+    process_group: Optional[dist.ProcessGroup] = None,
+    save_overwrite: bool = False,
+) -> Future[None]:
+    """
+    An async version of :func:`save_model_and_optim_state()`.
+
+    This code first de-stages the state dict on the CPU, then writes it in a separate thread.
+    """
+    dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
+
+    # Prepare state dict to save.
+    model_and_optim_state: Dict[str, Any] = {
+        "model": model,
+    }
+    if optim is not None:
+        model_and_optim_state["optim"] = optim
+
+    # Save the state dict.
+    return dist_cp.state_dict_saver.async_save(
+        model_and_optim_state,
+        storage_writer=RemoteFileSystemWriter(dir),
+        process_group=process_group,
     )
 
 
@@ -137,10 +178,9 @@ def load_model_and_optim_state(
     if optim is not None:
         model_and_optim_state["optim"] = optim
 
-    storage_reader = RemoteFileSystemReader(dir)
     dist_cp.load(
         model_and_optim_state,
         checkpoint_id=dir,
-        storage_reader=storage_reader,
+        storage_reader=RemoteFileSystemReader(dir),
         process_group=process_group,
     )

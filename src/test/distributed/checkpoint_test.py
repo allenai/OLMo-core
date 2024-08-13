@@ -11,6 +11,7 @@ from torch.distributed.tensor.parallel import (
 )
 
 from olmo_core.distributed.checkpoint import (
+    async_save_model_and_optim_state,
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
@@ -87,7 +88,7 @@ def test_save_and_load_torch_fsdp_model(
     )
 
 
-def run_save_and_load_tensor_parallel_model(dir, take_step_before_checkpoint):
+def run_save_and_load_tensor_parallel_model(dir, take_step_before_checkpoint, run_async):
     tp_mesh = init_device_mesh(get_default_device().type, (dist.get_world_size(),))
 
     class FeedForward(nn.Module):
@@ -123,7 +124,10 @@ def run_save_and_load_tensor_parallel_model(dir, take_step_before_checkpoint):
         optim.step()
 
     # Save checkpoint.
-    save_model_and_optim_state(dir, feed_forward, optim)
+    if run_async:
+        async_save_model_and_optim_state(dir, feed_forward, optim).result()
+    else:
+        save_model_and_optim_state(dir, feed_forward, optim)
 
     # Now load the checkpoint with a different topology, in this case an unsharded model.
     unsharded_feed_forward = FeedForward().to(get_default_device())
@@ -136,10 +140,16 @@ def run_save_and_load_tensor_parallel_model(dir, take_step_before_checkpoint):
     "take_step_before_checkpoint",
     [pytest.param(True, id="after-step"), pytest.param(False, id="pre-step")],
 )
-def test_save_and_load_tensor_parallel_model(backend, tmp_path, take_step_before_checkpoint):
+@pytest.mark.parametrize(
+    "run_async",
+    [pytest.param(True, id="async"), pytest.param(False, id="sync")],
+)
+def test_save_and_load_tensor_parallel_model(
+    backend, tmp_path, take_step_before_checkpoint, run_async
+):
     run_distributed_test(
         run_save_and_load_tensor_parallel_model,
         backend=backend,
         start_method="spawn",
-        func_args=(tmp_path, take_step_before_checkpoint),
+        func_args=(tmp_path, take_step_before_checkpoint, run_async),
     )
