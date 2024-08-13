@@ -101,7 +101,7 @@ jobs:
     timeout-minutes: 8
     env:
       BEAKER_TOKEN: ${{ secrets.BEAKER_TOKEN }}
-      BEAKER_IMAGE: olmo-torch2-test
+      BEAKER_IMAGE: ai2/pytorch2.4.0-cuda12.1-python3.11
       BEAKER_WORKSPACE: ai2/llm-testing
     strategy:
       fail-fast: false

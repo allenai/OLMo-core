@@ -26,6 +26,24 @@ PathOrStr = Union[Path, PathLike, str]
 ############################################
 
 
+def normalize_path(path: PathOrStr) -> str:
+    return str(path).rstrip("/").replace("file://", "")
+
+
+def resource_path(folder: PathOrStr, fname: str, local_cache: Optional[PathOrStr] = None) -> Path:
+    """
+    Returns an actual path for local or remote file, potentially downloading it if a copy doesn't
+    exist locally yet.
+    """
+    if local_cache is not None and (local_path := Path(local_cache) / fname).is_file():
+        log.info(f"Found local cache of {fname} at {local_path}")
+        return local_path
+    else:
+        from cached_path import cached_path
+
+        return cached_path(f"{str(folder).rstrip('/')}/{fname}", quiet=True)
+
+
 def is_url(path: PathOrStr) -> bool:
     """
     Check if a path is a URL.
@@ -72,7 +90,9 @@ def get_bytes_range(path: PathOrStr, bytes_start: int, num_bytes: int) -> bytes:
 
         parsed = urlparse(str(path))
         if parsed.scheme == "gs":
-            return _gcs_get_bytes_range(parsed.netloc, parsed.path.strip("/"), bytes_start, num_bytes)
+            return _gcs_get_bytes_range(
+                parsed.netloc, parsed.path.strip("/"), bytes_start, num_bytes
+            )
         elif parsed.scheme in ("s3", "r2", "weka"):
             return _s3_get_bytes_range(
                 parsed.scheme, parsed.netloc, parsed.path.strip("/"), bytes_start, num_bytes
@@ -107,7 +127,13 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
     if parsed.scheme == "gs":
         _gcs_upload(source, parsed.netloc, parsed.path.strip("/"), save_overwrite=save_overwrite)
     elif parsed.scheme in ("s3", "r2", "weka"):
-        _s3_upload(source, parsed.scheme, parsed.netloc, parsed.path.strip("/"), save_overwrite=save_overwrite)
+        _s3_upload(
+            source,
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path.strip("/"),
+            save_overwrite=save_overwrite,
+        )
     else:
         raise NotImplementedError(f"Upload not implemented for '{parsed.scheme}' scheme")
 
@@ -177,9 +203,24 @@ def clear_directory(dir: PathOrStr):
         elif parsed.scheme == "file":
             return clear_directory(str(dir).replace("file://", "", 1))
         else:
-            raise NotImplementedError(f"clear_directory not implemented for '{parsed.scheme}' folders")
+            raise NotImplementedError(
+                f"clear_directory not implemented for '{parsed.scheme}' folders"
+            )
     elif Path(dir).is_dir():
         shutil.rmtree(dir, ignore_errors=True)
+
+
+def init_client(remote_path: str):
+    """
+    Initialize the right client for the given remote resource. This is helpful to avoid threading issues
+    with boto3.
+    """
+    if remote_path.startswith("s3://"):
+        _get_s3_client("s3")
+    elif remote_path.startswith("r2://"):
+        _get_s3_client("r2")
+    elif remote_path.startswith("weka://"):
+        _get_s3_client("weka")
 
 
 ###################################
@@ -241,7 +282,9 @@ def _http_file_size(url: str) -> int:
 def _http_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
     import requests
 
-    response = requests.get(url, headers={"Range": f"bytes={bytes_start}-{bytes_start+num_bytes-1}"})
+    response = requests.get(
+        url, headers={"Range": f"bytes={bytes_start}-{bytes_start+num_bytes-1}"}
+    )
     if response.status_code == 404:
         raise FileNotFoundError(url)
 
@@ -309,7 +352,9 @@ def _gcs_upload(source: Path, bucket_name: str, key: str, save_overwrite: bool =
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(key)
     if not save_overwrite and blob.exists():
-        raise FileExistsError(f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it.")
+        raise FileExistsError(
+            f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
+        )
     blob.upload_from_filename(source)
 
 
@@ -392,7 +437,12 @@ def _s3_file_size(scheme: str, bucket_name: str, key: str, max_attempts: int = 3
             err = e
 
         if attempt < max_attempts:
-            log.warning("%s failed attempt %d with retriable error: %s", _s3_file_size.__name__, attempt, err)
+            log.warning(
+                "%s failed attempt %d with retriable error: %s",
+                _s3_file_size.__name__,
+                attempt,
+                err,
+            )
             _wait_before_retry(attempt)
 
     raise OLMoNetworkError("Failed to get s3 file size") from err
@@ -409,7 +459,9 @@ def _s3_get_bytes_range(
             return (
                 _get_s3_client(scheme)
                 .get_object(
-                    Bucket=bucket_name, Key=key, Range=f"bytes={bytes_start}-{bytes_start + num_bytes - 1}"
+                    Bucket=bucket_name,
+                    Key=key,
+                    Range=f"bytes={bytes_start}-{bytes_start + num_bytes - 1}",
                 )["Body"]
                 .read()
             )
@@ -425,7 +477,10 @@ def _s3_get_bytes_range(
 
         if attempt < max_attempts:
             log.warning(
-                "%s failed attempt %d with retriable error: %s", _s3_get_bytes_range.__name__, attempt, err
+                "%s failed attempt %d with retriable error: %s",
+                _s3_get_bytes_range.__name__,
+                attempt,
+                err,
             )
             _wait_before_retry(attempt)
 
@@ -440,7 +495,12 @@ def _s3_get_bytes_range(
 
 
 def _s3_upload(
-    source: Path, scheme: str, bucket_name: str, key: str, save_overwrite: bool = False, max_attempts: int = 3
+    source: Path,
+    scheme: str,
+    bucket_name: str,
+    key: str,
+    save_overwrite: bool = False,
+    max_attempts: int = 3,
 ):
     from botocore.exceptions import ClientError
 
@@ -459,7 +519,12 @@ def _s3_upload(
                 err = e
 
             if attempt < max_attempts:
-                log.warning("%s failed attempt %d with retriable error: %s", _s3_upload.__name__, attempt, err)
+                log.warning(
+                    "%s failed attempt %d with retriable error: %s",
+                    _s3_upload.__name__,
+                    attempt,
+                    err,
+                )
                 _wait_before_retry(attempt)
 
         if err is not None:
@@ -480,16 +545,22 @@ def _s3_clear_directory(scheme: str, bucket_name: str, prefix: str, max_attempts
     err: Optional[Exception] = None
     for attempt in range(1, max_attempts + 1):
         try:
-            for o in _get_s3_client(scheme).list_objects_v2(Bucket=bucket_name, Prefix=prefix)["Contents"]:
+            for o in _get_s3_client(scheme).list_objects_v2(Bucket=bucket_name, Prefix=prefix)[
+                "Contents"
+            ]:
                 _get_s3_client(scheme).delete_object(Bucket=bucket_name, Key=o["Key"])
             return
         except ClientError as e:
             if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
                 return
             err = e
+        except KeyError:
+            return
 
         if attempt < max_attempts:
-            log.warning("%s failed attempt %d with retriable error: %s", _s3_upload.__name__, attempt, err)
+            log.warning(
+                "%s failed attempt %d with retriable error: %s", _s3_upload.__name__, attempt, err
+            )
             _wait_before_retry(attempt)
 
     raise OLMoNetworkError("Failed to remove S3 directory") from err

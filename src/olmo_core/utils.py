@@ -2,10 +2,10 @@ import dataclasses
 import gc
 import os
 import time
+import uuid
 from enum import Enum
-from typing import Any, Callable, Iterable, List, Tuple, Union
+from typing import Any, Callable, Iterable
 
-import numpy as np
 import torch
 import torch.nn as nn
 from pydantic import BaseModel
@@ -28,52 +28,11 @@ class StrEnum(str, Enum):
         return f"'{str(self)}'"
 
 
-ShapeType = Union[torch.Size, List[int], Tuple[int, ...]]
-
-# torch.float8 formats require 2.1; we do not support these dtypes on earlier versions
-_float8_e4m3fn = getattr(torch, "float8_e4m3fn", None)
-_float8_e5m2 = getattr(torch, "float8_e5m2", None)
-
-TORCH_TO_NP_DTYPES = {
-    torch.int64: np.int64,
-    torch.float32: np.float32,
-    torch.int32: np.int32,
-    # XXX: This is ok because both have the same width
-    torch.bfloat16: np.float16,
-    torch.float16: np.float16,
-    torch.int16: np.int16,
-    torch.uint8: np.uint8,
-    torch.int8: np.int8,
-    torch.bool: bool,
-    torch.float64: np.float64,
-    # XXX: This is ok because both have the same width and byteswap is a no-op anyway
-    _float8_e4m3fn: np.uint8,
-    _float8_e5m2: np.uint8,
-}
-
-TORCH_DTYPES = {
-    "F64": torch.float64,
-    "F32": torch.float32,
-    "F16": torch.float16,
-    "BF16": torch.bfloat16,
-    "I64": torch.int64,
-    # "U64": torch.uint64,
-    "I32": torch.int32,
-    # "U32": torch.uint32,
-    "I16": torch.int16,
-    # "U16": torch.uint16,
-    "I8": torch.int8,
-    "U8": torch.uint8,
-    "BOOL": torch.bool,
-    "F8_E4M3": _float8_e4m3fn,
-    "F8_E5M2": _float8_e5m2,
-}
+def generate_uuid() -> str:
+    return str(uuid.uuid4())
 
 
-TORCH_DTYPE_TO_STR = {v: k for k, v in TORCH_DTYPES.items()}
-
-
-def default_thread_count() -> int:
+def get_default_thread_count() -> int:
     env_val = os.environ.get(OLMO_NUM_THREADS_ENV_VAR)
     if env_val is not None:
         try:

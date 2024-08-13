@@ -12,7 +12,7 @@ lint-check :
 
 .PHONY : type-check
 type-check :
-	mypy .
+	mypy src/
 
 .PHONY : docs
 docs :

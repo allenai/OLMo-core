@@ -14,8 +14,7 @@ requires-python = ">=3.8"
 license = { file = "LICENSE" }
 dependencies = [
     "numpy",
-    "torch>=2.1",
-    "safetensors",
+    "torch>=2.4,<2.5",
     "pydantic>=2.0,<3.0",
     "cached-path",
     "requests",
@@ -63,7 +62,7 @@ include = ["olmo_core*"]
 exclude = []
 
 [tool.black]
-line-length = 115
+line-length = 100
 include = '\.pyi?$'
 exclude = '''
 (

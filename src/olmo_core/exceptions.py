@@ -14,3 +14,7 @@ class OLMoEnvironmentError(OLMoError):
 
 class OLMoUserError(OLMoError):
     pass
+
+
+class OLMoCheckpointError(Exception):
+    pass
