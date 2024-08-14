@@ -62,10 +62,10 @@ BACKENDS = [
 def get_default_device():
     if is_distributed():
         backend = dist.get_backend()
-        if backend == dist.Backend.GLOO:
-            return torch.device("cpu")
-        elif backend == dist.Backend.NCCL:
+        if dist.Backend.NCCL in backend:
             return torch.device("cuda")
+        elif backend == dist.Backend.GLOO:
+            return torch.device("cpu")
         else:
             raise NotImplementedError(backend)
     elif torch.cuda.is_available():
