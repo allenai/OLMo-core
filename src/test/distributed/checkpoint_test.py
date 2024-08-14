@@ -66,7 +66,7 @@ def run_save_and_load_torch_fsdp_model(dir, model_factory, model_data_factory, u
     "use_orig_params",
     (
         pytest.param(True, id="use_orig_params=True"),
-        pytest.param(False, id="use_orig_param=False"),
+        pytest.param(False, id="use_orig_params=False"),
     ),
 )
 def test_save_and_load_torch_fsdp_model(

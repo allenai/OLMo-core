@@ -302,7 +302,9 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
             if read_item.type == LoadItemType.BYTE_IO:
                 planner.load_bytes(read_item, bytes)
             else:
-                tensor = cast(torch.Tensor, torch.load(bytes, map_location="cpu"))
+                tensor = cast(
+                    torch.Tensor, torch.load(bytes, map_location="cpu", weights_only=True)
+                )
                 tensor = narrow_tensor_by_index(
                     tensor, read_item.storage_offsets, read_item.lengths
                 )
