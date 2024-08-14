@@ -196,6 +196,8 @@ def unshard_checkpoint(
 
     :raises FileExistsError: If the ``target_dir`` is non-empty and ``save_overwrite=False``.
     """
+    # Adapted from `torch.distributed.checkpoint.format_utils.dcp_to_torch_save()`.
+
     from torch.distributed.checkpoint.default_planner import _EmptyStateDictLoadPlanner
     from torch.distributed.checkpoint.state_dict_loader import _load_state_dict
 
