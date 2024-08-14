@@ -129,6 +129,24 @@ def run_save_and_load_tensor_parallel_model(dir, take_step_before_checkpoint, ru
     else:
         save_model_and_optim_state(dir, feed_forward, optim)
 
+    # Create another sharded model, load the checkpoint and make sure the state matches.
+    feed_forward2 = FeedForward().to(get_default_device())
+    parallelize_module(
+        feed_forward2,
+        tp_mesh,
+        {
+            # by default ColwiseParallel input layouts is replicated
+            # and RowwiseParallel output layouts is replicated
+            "w1": ColwiseParallel(),
+            "w2": RowwiseParallel(),
+            "w3": ColwiseParallel(),
+        },
+    )
+    optim2 = torch.optim.AdamW(feed_forward2.parameters())
+    load_model_and_optim_state(dir, feed_forward2, optim2)
+    torch.testing.assert_close(feed_forward.state_dict(), feed_forward2.state_dict())
+    torch.testing.assert_close(optim.state_dict(), optim2.state_dict())
+
     # Now load the checkpoint with a different topology, in this case an unsharded model.
     unsharded_feed_forward = FeedForward().to(get_default_device())
     unsharded_optim = torch.optim.AdamW(unsharded_feed_forward.parameters())
