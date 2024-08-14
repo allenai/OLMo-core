@@ -14,6 +14,7 @@ from olmo_core.distributed.checkpoint import (
     async_save_model_and_optim_state,
     load_model_and_optim_state,
     save_model_and_optim_state,
+    unshard_checkpoint,
 )
 
 from .utils import (
@@ -88,19 +89,20 @@ def test_save_and_load_torch_fsdp_model(
     )
 
 
+class FeedForward(nn.Module):
+    def __init__(self, dim: int = 16):
+        super().__init__()
+        self.dim = dim
+        self.w1 = nn.Linear(dim, dim)
+        self.w2 = nn.Linear(dim, dim)
+        self.w3 = nn.Linear(dim, dim)
+
+    def forward(self, x):
+        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+
+
 def run_save_and_load_tensor_parallel_model(dir, take_step_before_checkpoint, run_async):
     tp_mesh = init_device_mesh(get_default_device().type, (dist.get_world_size(),))
-
-    class FeedForward(nn.Module):
-        def __init__(self, dim: int = 16):
-            super().__init__()
-            self.dim = dim
-            self.w1 = nn.Linear(dim, dim)
-            self.w2 = nn.Linear(dim, dim)
-            self.w3 = nn.Linear(dim, dim)
-
-        def forward(self, x):
-            return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
     feed_forward = FeedForward().to(get_default_device())
     parallelize_module(
@@ -174,6 +176,77 @@ def test_save_and_load_tensor_parallel_model(
         start_method="spawn",
         func_args=(tmp_path, take_step_before_checkpoint, run_async),
     )
+
+
+def run_save_sharded_checkpoint(dir):
+    tp_mesh = init_device_mesh(get_default_device().type, (dist.get_world_size(),))
+
+    feed_forward = FeedForward().to(get_default_device())
+    parallelize_module(
+        feed_forward,
+        tp_mesh,
+        {
+            # by default ColwiseParallel input layouts is replicated
+            # and RowwiseParallel output layouts is replicated
+            "w1": ColwiseParallel(),
+            "w2": RowwiseParallel(),
+            "w3": ColwiseParallel(),
+        },
+    )
+    optim = torch.optim.AdamW(feed_forward.parameters())
+
+    # Take a forward and backward pass.
+    feed_forward(torch.rand((2, feed_forward.dim), device=get_default_device())).sum().backward()
+
+    # Take an optimizer step.
+    optim.step()
+    optim.zero_grad(set_to_none=True)
+
+    save_model_and_optim_state(dir, feed_forward, optim)
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_unshard_checkpoint(backend, tmp_path):
+    sharded_checkpoint_dir = tmp_path / "sharded"
+    unsharded_checkpoint_dir = tmp_path / "unsharded"
+
+    run_distributed_test(
+        run_save_sharded_checkpoint,
+        backend=backend,
+        func_args=(sharded_checkpoint_dir,),
+        start_method="spawn",
+    )
+
+    assert sharded_checkpoint_dir.is_dir()
+    model_path, optim_path = unshard_checkpoint(sharded_checkpoint_dir, unsharded_checkpoint_dir)
+    assert model_path.is_file()
+    assert optim_path is not None and optim_path.is_file()
+
+    model_state = torch.load(model_path, map_location="cpu", weights_only=True)
+    assert model_state
+    assert model_state.keys() == {
+        "w1.weight",
+        "w1.bias",
+        "w2.weight",
+        "w2.bias",
+        "w3.weight",
+        "w3.bias",
+    }
+    assert model_state["w1.weight"].shape == (16, 16)
+
+    optim_state = torch.load(optim_path, map_location="cpu", weights_only=False)
+    assert optim_state
+    assert optim_state.keys() == {"param_groups", "state"}
+    assert optim_state["state"].keys() == {
+        "w1.weight",
+        "w1.bias",
+        "w2.weight",
+        "w2.bias",
+        "w3.weight",
+        "w3.bias",
+    }
+    assert optim_state["state"]["w1.weight"].keys() == {"step", "exp_avg", "exp_avg_sq"}
+    assert optim_state["state"]["w1.weight"]["exp_avg"].shape == (16, 16)
 
 
 def run_load_checkpoint_with_missing_keys(dir):
