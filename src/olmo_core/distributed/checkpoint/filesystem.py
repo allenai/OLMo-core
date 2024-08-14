@@ -8,11 +8,10 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, cast
+from typing import Dict, List, Optional, Sequence, Tuple, cast
 
 import torch
 import torch.distributed.checkpoint as dist_cp
-from torch.distributed._shard._utils import narrow_tensor_by_index
 from torch.distributed.checkpoint.filesystem import WriteResult
 from torch.distributed.checkpoint.metadata import Metadata, MetadataIndex, StorageMeta
 from torch.distributed.checkpoint.planner import (
@@ -125,6 +124,22 @@ def _write_items(
         tmp_path.unlink(missing_ok=True)
 
     return results
+
+
+def _narrow_tensor_by_index(
+    tensor: torch.Tensor, offsets: Sequence[int], sizes: Sequence[int]
+) -> torch.Tensor:
+    """
+    Narrow the tensor according to ``offsets`` and ``sizes``.
+    """
+    narrowed_tensor = tensor
+    for idx, (offset, size) in enumerate(zip(offsets, sizes)):
+        if size < tensor.size(idx):
+            # Reshape to get shard for this rank and we don't want autograd
+            # recording here for the narrow op and 'local_shard' should be a
+            # leaf variable in the autograd graph.
+            narrowed_tensor = narrowed_tensor.narrow(idx, offset, size)
+    return narrowed_tensor
 
 
 class RemoteFileSystemWriter(dist_cp.StorageWriter):
@@ -305,7 +320,7 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
                 tensor = cast(
                     torch.Tensor, torch.load(bytes, map_location="cpu", weights_only=True)
                 )
-                tensor = narrow_tensor_by_index(
+                tensor = _narrow_tensor_by_index(
                     tensor, read_item.storage_offsets, read_item.lengths
                 )
                 target_tensor = planner.resolve_tensor(read_item).detach()
