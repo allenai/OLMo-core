@@ -50,8 +50,6 @@ __all__ = [
     "save_model_and_optim_state",
     "async_save_model_and_optim_state",
     "load_model_and_optim_state",
-    "RemoteFileSystemWriter",
-    "RemoteFileSystemReader",
 ]
 
 log = logging.getLogger(__name__)
@@ -139,7 +137,7 @@ def load_model_and_optim_state(
 
     .. tip::
         With :class:`~torch.distributed.fsdp.FullyShardedDataParallel` models it's not necessary
-        to set the state dict type before calling this (or :func:`load_model_and_optim_state()`) via
+        to set the state dict type before calling this (or :func:`save_model_and_optim_state()`) via
         :meth:`~torch.distributed.fsdp.FullyShardedDataParallel.state_dict_type()` or other methods.
         This function handles that internally.
 
