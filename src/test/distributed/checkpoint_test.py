@@ -174,3 +174,92 @@ def test_save_and_load_tensor_parallel_model(
         start_method="spawn",
         func_args=(tmp_path, take_step_before_checkpoint, run_async),
     )
+
+
+def run_load_checkpoint_with_missing_keys(dir):
+    class FF1(nn.Module):
+        def __init__(self, dim: int = 16):
+            super().__init__()
+            self.dim = dim
+            self.w1 = nn.Linear(dim, dim)
+            self.w2 = nn.Linear(dim, dim)
+            self.w3 = nn.Linear(dim, dim)
+
+        def forward(self, x):
+            return self.w2(F.silu(self.w1(x)) * self.w3(x))
+
+    class FF2(nn.Module):
+        def __init__(self, dim: int = 16):
+            super().__init__()
+            self.dim = dim
+            self.w1 = nn.Linear(dim, dim)
+            self.w2 = nn.Linear(dim, dim)
+            self.w3 = nn.Linear(dim, dim)
+            self.w4 = nn.Linear(dim, dim)
+
+        def forward(self, x):
+            return self.w4(self.w2(F.silu(self.w1(x)) * self.w3(x)))
+
+    ff1 = FF1()
+    ff2 = FF2()
+
+    save_model_and_optim_state(dir, ff1)
+
+    # NOTE: this raises a `RuntimeError`, but for some reason catching a `RuntimeError` doesn't
+    # work here so we catch `BaseException` instead.
+    with pytest.raises(
+        BaseException, match="Missing key in checkpoint state_dict: model.w4.weight."
+    ):
+        load_model_and_optim_state(dir, ff2)
+
+
+def test_load_checkpoint_with_missing_keys(tmp_path):
+    run_distributed_test(
+        run_load_checkpoint_with_missing_keys,
+        backend="gloo",
+        func_args=(tmp_path,),
+    )
+
+
+def run_load_checkpoint_with_extra_keys(dir):
+    class FF1(nn.Module):
+        def __init__(self, dim: int = 16):
+            super().__init__()
+            self.dim = dim
+            self.w1 = nn.Linear(dim, dim)
+            self.w2 = nn.Linear(dim, dim)
+            self.w3 = nn.Linear(dim, dim)
+
+        def forward(self, x):
+            return self.w2(F.silu(self.w1(x)) * self.w3(x))
+
+    class FF2(nn.Module):
+        def __init__(self, dim: int = 16):
+            super().__init__()
+            self.dim = dim
+            self.w1 = nn.Linear(dim, dim)
+            self.w3 = nn.Linear(dim, dim)
+
+        def forward(self, x):
+            return F.silu(self.w1(x)) * self.w3(x)
+
+    ff1 = FF1()
+    ff2 = FF2()
+
+    save_model_and_optim_state(dir, ff1)
+
+    # NOTE: this raises a `RuntimeError`, but for some reason catching a `RuntimeError` doesn't
+    # work here so we catch `BaseException` instead.
+    with pytest.raises(
+        BaseException, match='Unexpected key(s) in state_dict: "w2.weight", "w2.bias".'
+    ):
+        load_model_and_optim_state(dir, ff2)
+
+
+@pytest.mark.xfail(reason="current limitation with torch.distributed.checkpoint module")
+def test_load_checkpoint_with_extra_keys(tmp_path):
+    run_distributed_test(
+        run_load_checkpoint_with_extra_keys,
+        backend="gloo",
+        func_args=(tmp_path,),
+    )
