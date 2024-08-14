@@ -48,8 +48,8 @@ from .filesystem import RemoteFileSystemReader, RemoteFileSystemWriter
 
 __all__ = [
     "save_model_and_optim_state",
-    "load_model_and_optim_state",
     "async_save_model_and_optim_state",
+    "load_model_and_optim_state",
     "RemoteFileSystemWriter",
     "RemoteFileSystemReader",
 ]
@@ -69,6 +69,10 @@ def save_model_and_optim_state(
     Save model and optimizer state dictionaries. The model state can be a sharded model, in which
     case this method will correctly handle the optimizer state to ensure it can be loaded again with
     a different distributed topology through :func:`load_model_and_optim_state()`.
+
+    .. seealso::
+        - :func:`load_model_and_optim_state()`
+        - :func:`async_save_model_and_optim_state()`
 
     .. tip::
         With :class:`~torch.distributed.fsdp.FullyShardedDataParallel` models it's not necessary
