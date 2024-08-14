@@ -138,6 +138,7 @@ def load_model_and_optim_state(
 
     .. seealso::
         - :func:`save_model_and_optim_state()`
+        - :func:`unshard_checkpoint()`
 
     .. tip::
         With :class:`~torch.distributed.fsdp.FullyShardedDataParallel` models it's not necessary
