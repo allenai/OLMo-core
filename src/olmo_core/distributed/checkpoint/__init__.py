@@ -211,7 +211,7 @@ def unshard_checkpoint(
     model_path = target_dir / "model.pt"
     optim_path = target_dir / "optim.pt" if optim else None
 
-    model_sd = {}
+    model_sd: Dict[str, Any] = {}
     _load_state_dict(
         model_sd,
         storage_reader=RemoteFileSystemReader(dir),
@@ -225,7 +225,7 @@ def unshard_checkpoint(
     gc_cuda()
 
     if optim_path is not None:
-        optim_sd = {}
+        optim_sd: Dict[str, Any] = {}
         _load_state_dict(
             optim_sd,
             storage_reader=RemoteFileSystemReader(dir),
