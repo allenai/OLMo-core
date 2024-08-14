@@ -1,15 +1,19 @@
+import pytest
 import torch
 
 from olmo_core.nn.complex_rope import ComplexRotaryEmbedding
 
+from ..utils import DEVICES
 
-def test_complex_rope_head_first_vs_seq_first():
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_complex_rope_head_first_vs_seq_first(device):
     B, T, d_model, n_heads = 2, 12, 16, 4
     c_rope = ComplexRotaryEmbedding(head_shape=d_model // n_heads)
 
     with torch.no_grad():
-        q = torch.rand(B, n_heads, T, d_model // n_heads)
-        k = torch.rand(B, n_heads, T, d_model // n_heads)
+        q = torch.rand(B, n_heads, T, d_model // n_heads, device=device)
+        k = torch.rand(B, n_heads, T, d_model // n_heads, device=device)
 
         q1, k1 = c_rope(q, k, head_first=True)
 
