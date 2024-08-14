@@ -22,6 +22,7 @@ To get started, install OLMo-core from PyPI with:
    exceptions.rst
    io.rst
    utils.rst
+   nn.rst
    distributed/checkpoint.rst
    distributed/utils.rst
 
