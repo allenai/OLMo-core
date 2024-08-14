@@ -42,7 +42,7 @@ from olmo_core.io import (
     is_url,
     normalize_path,
 )
-from olmo_core.utils import wait_for
+from olmo_core.utils import gc_cuda, wait_for
 
 from .filesystem import RemoteFileSystemReader, RemoteFileSystemWriter
 
@@ -280,13 +280,29 @@ def _load_optim_state(
             optimizer_key="optim",
             storage_reader=RemoteFileSystemReader(dir),
         )
+        del model_state_dict
+        # Make sure tensors are on CPU! PyTorch puts them on GPU even if we have `offload_to_cpu=True`.
+        _move_optim_state_to_cpu(optim_state["optim"])
 
         flattened_osd = FSDP.optim_state_dict_to_load(model, optim, optim_state["optim"])
+        del optim_state
+        # Put flattened optim state on CPU since `Optimizer.load_state_dict()` will create a deepcopy
+        # of the whole state dict which takes up unnecessary GPU memory.
+        _move_optim_state_to_cpu(flattened_osd)
+
         optim.load_state_dict(flattened_osd)
     else:
+        del model_state_dict
         dist_cp.load(
             {"optim": optim},
             checkpoint_id=dir,
             storage_reader=RemoteFileSystemReader(dir),
             process_group=process_group,
         )
+
+
+def _move_optim_state_to_cpu(optim_state: Dict[str, Any]):
+    for state in optim_state["state"].values():
+        for k in state.keys():
+            state[k] = state[k].cpu()
+    gc_cuda()
