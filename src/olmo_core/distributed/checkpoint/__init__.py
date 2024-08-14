@@ -109,6 +109,7 @@ def save_model_and_optim_state(
         "model": model,
     }
     if optim is not None:
+        init_optimizer_state(optim)
         model_and_optim_state["optim"] = optim
 
     # Save the state dict.
@@ -139,6 +140,7 @@ def async_save_model_and_optim_state(
         "model": model,
     }
     if optim is not None:
+        init_optimizer_state(optim)
         model_and_optim_state["optim"] = optim
 
     # Save the state dict.
@@ -176,6 +178,7 @@ def load_model_and_optim_state(
         "model": model,
     }
     if optim is not None:
+        init_optimizer_state(optim)
         model_and_optim_state["optim"] = optim
 
     dist_cp.load(
@@ -184,3 +187,20 @@ def load_model_and_optim_state(
         storage_reader=RemoteFileSystemReader(dir),
         process_group=process_group,
     )
+
+
+@torch.no_grad()
+def init_optimizer_state(optim: torch.optim.Optimizer):
+    """
+    Ensure optimizer state is initialized for checkpointing.
+    """
+    if optim.state:
+        return
+    for group in optim.param_groups:
+        for p in group["params"]:
+            # Some parameters may be empty for sharded models, in which case the state does not need
+            # to be initialized.
+            if p.numel() > 0:
+                p.grad = torch.zeros_like(p, memory_format=torch.preserve_format)
+    optim.step()
+    optim.zero_grad()
