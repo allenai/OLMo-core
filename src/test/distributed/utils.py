@@ -37,7 +37,10 @@ __all__ = [
 
 has_multiple_gpus = has_cuda and torch.cuda.device_count() > 1
 
-MULTI_GPU_MARKS = (pytest.mark.gpu, pytest.mark.skipif(not has_multiple_gpus, reason="Requires multiple GPUs"))
+MULTI_GPU_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_multiple_gpus, reason="Requires multiple GPUs"),
+)
 
 
 def requires_multi_gpu(func):
@@ -49,7 +52,7 @@ def requires_multi_gpu(func):
 BACKENDS = [
     pytest.param("gloo", id="backend=GLOO"),
     pytest.param(
-        "nccl",
+        "cuda:nccl,cpu:gloo",
         id="backend=NCCL",
         marks=MULTI_GPU_MARKS,
     ),
@@ -93,7 +96,9 @@ def init_process(
 
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(
-        logging.Formatter("[rank %(local_rank)s] %(asctime)s:%(name)s:%(lineno)s:%(levelname)s: %(message)s")
+        logging.Formatter(
+            "[rank %(local_rank)s] %(asctime)s:%(name)s:%(lineno)s:%(levelname)s: %(message)s"
+        )
     )
     logging.setLogRecordFactory(log_record_factory)
 
