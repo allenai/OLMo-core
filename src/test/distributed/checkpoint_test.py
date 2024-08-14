@@ -116,12 +116,15 @@ def run_save_and_load_tensor_parallel_model(dir, take_step_before_checkpoint, ru
     )
     optim = torch.optim.AdamW(feed_forward.parameters())
 
-    # Take a forward and backward pass.
-    feed_forward(torch.rand((2, feed_forward.dim), device=get_default_device())).sum().backward()
-
     if take_step_before_checkpoint:
+        # Take a forward and backward pass.
+        feed_forward(
+            torch.rand((2, feed_forward.dim), device=get_default_device())
+        ).sum().backward()
+
         # Take an optimizer step.
         optim.step()
+        optim.zero_grad(set_to_none=True)
 
     # Save checkpoint.
     if run_async:

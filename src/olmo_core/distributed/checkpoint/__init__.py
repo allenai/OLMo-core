@@ -32,6 +32,13 @@ import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint as dist_cp
 import torch.nn as nn
+from torch.distributed.checkpoint.state_dict import (
+    StateDictOptions,
+    get_model_state_dict,
+    get_state_dict,
+    set_model_state_dict,
+    set_state_dict,
+)
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 from olmo_core.distributed.utils import barrier, get_fs_local_rank
@@ -91,7 +98,7 @@ def save_model_and_optim_state(
     dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
 
     with _checkpoint_context(model):
-        state_dict = _prepare_state_dict_to_save(model, optim=optim, process_group=process_group)
+        state_dict = _prepare_state_dict(model, optim=optim, process_group=process_group)
         dist_cp.state_dict_saver.save(
             state_dict,
             storage_writer=RemoteFileSystemWriter(dir),
@@ -115,7 +122,7 @@ def async_save_model_and_optim_state(
     dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
 
     with _checkpoint_context(model):
-        state_dict = _prepare_state_dict_to_save(model, optim=optim, process_group=process_group)
+        state_dict = _prepare_state_dict(model, optim=optim, process_group=process_group)
         return dist_cp.state_dict_saver.async_save(
             state_dict,
             storage_writer=RemoteFileSystemWriter(dir),
@@ -152,12 +159,32 @@ def load_model_and_optim_state(
     dir = normalize_path(dir)
 
     with _checkpoint_context(model):
-        # Load model state.
-        model_state_dict = _load_model_state(dir, model, process_group=process_group)
+        state_dict = _prepare_state_dict(model, optim, process_group=process_group)
 
-        # Maybe load optim state.
+        dist_cp.load(
+            state_dict,
+            checkpoint_id=dir,
+            storage_reader=RemoteFileSystemReader(dir),
+            process_group=process_group,
+        )
+
         if optim is not None:
-            _load_optim_state(dir, model, optim, model_state_dict, process_group=process_group)
+            set_state_dict(
+                model,
+                optim,
+                model_state_dict=state_dict["model"],
+                optim_state_dict=state_dict["optim"],
+                options=StateDictOptions(strict=True),
+            )
+        else:
+            set_model_state_dict(model, state_dict["model"], options=StateDictOptions(strict=True))
+
+        #  # Load model state.
+        #  model_state_dict = _load_model_state(dir, model, process_group=process_group)
+
+        #  # Maybe load optim state.
+        #  if optim is not None:
+        #      _load_optim_state(dir, model, optim, model_state_dict, process_group=process_group)
 
 
 def _prepare_env_for_save(
@@ -185,35 +212,44 @@ def _prepare_env_for_save(
     return dir
 
 
-def _prepare_state_dict_to_save(
+def _prepare_state_dict(
     model: nn.Module,
     optim: Optional[torch.optim.Optimizer] = None,
     process_group: Optional[dist.ProcessGroup] = None,
 ) -> Dict[str, Any]:
-    state_dict: Dict[str, Any]
-    if isinstance(model, FSDP):
-        state_dict = {"model": model.state_dict()}
-    else:
-        state_dict = {"model": model}
+    del process_group  # I feel like these torch functions should take a process group argument.
+    sd_options = StateDictOptions(full_state_dict=False, cpu_offload=True)
 
     if optim is not None:
-        state_dict["optim"] = _prepare_optimizer_state_to_save(
-            model, optim, process_group=process_group
-        )
-
-    return state_dict
-
-
-def _prepare_optimizer_state_to_save(
-    model: nn.Module,
-    optim: torch.optim.Optimizer,
-    process_group: Optional[dist.ProcessGroup] = None,
-) -> Any:
-    _init_optimizer_state(optim)
-    if isinstance(model, FSDP):
-        return FSDP.optim_state_dict(model, optim, group=process_group)
+        model_state, optim_state = get_state_dict(model, optim, options=sd_options)
+        return {"model": model_state, "optim": optim_state}
     else:
-        return optim
+        return {"model": get_model_state_dict(model, options=sd_options)}
+
+    #  state_dict: Dict[str, Any]
+    #  if isinstance(model, FSDP):
+    #      state_dict = {"model": model.state_dict()}
+    #  else:
+    #      state_dict = {"model": model}
+
+    #  if optim is not None:
+    #      state_dict["optim"] = _prepare_optimizer_state_to_save(
+    #          model, optim, process_group=process_group
+    #      )
+
+    #  return state_dict
+
+
+#  def _prepare_optimizer_state_to_save(
+#      model: nn.Module,
+#      optim: torch.optim.Optimizer,
+#      process_group: Optional[dist.ProcessGroup] = None,
+#  ) -> Any:
+#      _init_optimizer_state(optim)
+#      if isinstance(model, FSDP):
+#          return FSDP.optim_state_dict(model, optim, group=process_group)
+#      else:
+#          return optim
 
 
 @torch.no_grad()
