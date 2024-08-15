@@ -9,7 +9,7 @@ from ...utils import DEVICES, requires_flash_attn, requires_gpu
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("reduction", ["sum", "mean"])
 def test_cross_entropy_loss(device, reduction):
-    vocab_size = 256
+    vocab_size = 4096
     N = 32
 
     logits = torch.rand(N, vocab_size, device=device)
@@ -37,7 +37,7 @@ def test_cross_entropy_loss(device, reduction):
 @pytest.mark.parametrize("reduction", ["sum", "mean"])
 def test_fused_cross_entropy_loss(reduction):
     device = torch.device("cuda")
-    vocab_size = 256
+    vocab_size = 4096
     N = 32
 
     logits = torch.rand(N, vocab_size, device=device)

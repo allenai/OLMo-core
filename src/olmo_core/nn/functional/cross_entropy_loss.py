@@ -21,10 +21,8 @@ def cross_entropy_loss(
     .. seealso::
         :func:`fused_cross_entropy_loss()`.
 
-    :param logits: Predicted unnormalized logits. See :func:`torch.nn.functional.cross_entropy`
-        for allowed shapes.
-    :param labels: Ground truth class indices. See :func:`torch.nn.functional.cross_entropy`
-        for allowed shapes.
+    :param logits: Predicted unnormalized logits with shape ``(N, vocab_size)``.
+    :param labels: Ground truth class indices with shape ``(N,)``.
     :param ignore_index: Specifies a target value that is ignored and does not contribute to
         the input gradient.
     :param reduction: Specifies the reduction to apply to the output.
