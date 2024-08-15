@@ -54,9 +54,9 @@ class RMSNorm(nn.Module):
 
             if self.weight is not None:
                 if self.bias is not None:
-                    return self.weight.type_as(x) * x + self.bias.type_as(x)
+                    x = self.weight.type_as(x) * x + self.bias.type_as(x)
                 else:
-                    return self.weight.type_as(x) * x
+                    x = self.weight.type_as(x) * x
 
             return x.to(og_dtype)
 
@@ -104,6 +104,9 @@ class FusedRMSNorm(nn.Module):
         og_dtype = x.dtype
         if self.full_precision:
             x = x.float()
-        return self._rms_norm_fn(x, self.weight.type_as(x), self.bias.type_as(x), eps=self.eps).to(
-            og_dtype
-        )
+        return self._rms_norm_fn(
+            x,
+            self.weight.type_as(x),
+            None if self.bias is None else self.bias.type_as(x),
+            eps=self.eps,
+        ).to(og_dtype)
