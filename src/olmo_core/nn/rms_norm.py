@@ -16,6 +16,7 @@ class RMSNorm(nn.Module):
         bias: bool = True,
         init_device: str = "cpu",
     ):
+        super().__init__()
         self.normalized_shape = (size,)
         self.eps = eps
         if elementwise_affine:
