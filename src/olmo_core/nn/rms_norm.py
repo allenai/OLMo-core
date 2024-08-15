@@ -14,11 +14,13 @@ class RMSNorm(nn.Module):
         eps: float = 1e-5,
         elementwise_affine: bool = True,
         bias: bool = True,
+        full_precision: bool = True,
         init_device: str = "cpu",
     ):
         super().__init__()
         self.normalized_shape = (size,)
         self.eps = eps
+        self.full_precision = full_precision
         if elementwise_affine:
             self.weight = nn.Parameter(torch.ones(self.normalized_shape, device=init_device))
             if bias:
@@ -43,18 +45,20 @@ class RMSNorm(nn.Module):
         """
         with torch.autocast(enabled=False, device_type=x.device.type):
             og_dtype = x.dtype
-            x = x.to(torch.float32)
+
+            if self.full_precision:
+                x = x.float()
+
             variance = x.pow(2).mean(-1, keepdim=True)
             x = x * torch.rsqrt(variance + self.eps)
-            x = x.to(og_dtype)
 
-        if self.weight is not None:
-            if self.bias is not None:
-                return self.weight * x + self.bias
-            else:
-                return self.weight * x
-        else:
-            return x
+            if self.weight is not None:
+                if self.bias is not None:
+                    return self.weight.type_as(x) * x + self.bias.type_as(x)
+                else:
+                    return self.weight.type_as(x) * x
+
+            return x.to(og_dtype)
 
 
 class FusedRMSNorm(nn.Module):
@@ -66,12 +70,19 @@ class FusedRMSNorm(nn.Module):
     """
 
     def __init__(
-        self, *, size: int, eps: float = 1e-5, bias: bool = True, init_device: str = "cpu"
+        self,
+        *,
+        size: int,
+        eps: float = 1e-5,
+        bias: bool = True,
+        full_precision: bool = True,
+        init_device: str = "cpu",
     ):
         from flash_attn.ops.triton.layer_norm import rms_norm_fn  # type: ignore
 
         super().__init__()
         self.eps = eps
+        self.full_precision = full_precision
         self.weight = nn.Parameter(torch.ones(size, device=init_device))
         if bias:
             self.bias = nn.Parameter(torch.zeros(size, device=init_device))
@@ -90,4 +101,9 @@ class FusedRMSNorm(nn.Module):
 
         :param x: The input.
         """
-        return self._rms_norm_fn(x, self.weight, self.bias, eps=self.eps)
+        og_dtype = x.dtype
+        if self.full_precision:
+            x = x.float()
+        return self._rms_norm_fn(x, self.weight.type_as(x), self.bias.type_as(x), eps=self.eps).to(
+            og_dtype
+        )
