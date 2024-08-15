@@ -81,18 +81,17 @@ class RMSNorm(nn.Module):
             return x.to(og_dtype)
 
 
-class FusedRMSNorm(nn.Module):
+class FusedRMSNorm(RMSNorm):
     """
     A fused version of :class:`RMSNorm`.
 
     .. warning::
         This requires `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ to be installed.
 
-    .. tip::
-        This version of RMS norm always includes an element-wise affine.
-
     :param size: The hidden size / dimensionality of the input.
     :param eps: The epsilon used for numerical stability.
+    :param elementwise_affine: Whether to include an element-wise affine transform.
+        Currently only ``elementwise_affine=True`` is supported.
     :param bias: Whether the element-wise affine should include an element-wise bias.
     :param full_precision: Force the operation to run in full precision regardless of the input
         data type.
@@ -106,6 +105,7 @@ class FusedRMSNorm(nn.Module):
         *,
         size: int,
         eps: float = 1e-5,
+        elementwise_affine: bool = True,
         bias: bool = True,
         full_precision: bool = True,
         init_device: str = "cpu",
@@ -113,27 +113,23 @@ class FusedRMSNorm(nn.Module):
     ):
         from flash_attn.ops.triton.layer_norm import rms_norm_fn  # type: ignore
 
-        super().__init__()
-        self.eps = eps
-        self.full_precision = full_precision
-        self.weight = nn.Parameter(torch.ones(size, dtype=dtype, device=init_device))
-        if bias:
-            self.bias = nn.Parameter(torch.zeros(size, dtype=dtype, device=init_device))
-        else:
-            self.register_parameter("bias", None)
+        if not elementwise_affine:
+            raise NotImplementedError(
+                f"Currently only 'elementwise_affine=True' is supported for {self.__class__.__name__}"
+            )
+
+        super().__init__(
+            size=size,
+            eps=eps,
+            elementwise_affine=elementwise_affine,
+            bias=bias,
+            full_precision=full_precision,
+            dtype=dtype,
+            init_device=init_device,
+        )
         self._rms_norm_fn = rms_norm_fn
 
-    def reset_parameters(self):
-        torch.nn.init.ones_(self.weight)
-        if self.bias is not None:
-            torch.nn.init.zeros_(self.bias)
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Apply RMS norm.
-
-        :param x: The input.
-        """
         og_dtype = x.dtype
         if self.full_precision:
             x = x.float()
