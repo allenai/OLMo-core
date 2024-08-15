@@ -63,7 +63,9 @@ def test_rope_with_past_key_values(device, head_first):
 
 @requires_gpu
 @requires_flash_attn
-@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
+@pytest.mark.parametrize(
+    "dtype", [pytest.param(torch.bfloat16, id="bf16"), pytest.param(torch.float32, id="fp32")]
+)
 def test_fused_rope(dtype):
     B, T, d_model, n_heads = 2, 12, 32, 4
     fused_rope = FusedRotaryEmbedding(head_shape=d_model // n_heads)
