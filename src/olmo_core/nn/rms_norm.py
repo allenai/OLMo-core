@@ -28,11 +28,17 @@ class RMSNorm(nn.Module):
             self.register_parameter("bias", None)
             self.register_parameter("weight", None)
 
+    def reset_parameters(self):
+        if self.weight is not None:
+            torch.nn.init.ones_(self.weight)
+        if self.bias is not None:
+            torch.nn.init.zeros_(self.bias)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Apply RMS norm.
 
-        :param x: torch.Tensor
+        :param x: The input.
         """
         with torch.autocast(enabled=False, device_type=x.device.type):
             og_dtype = x.dtype
@@ -48,3 +54,39 @@ class RMSNorm(nn.Module):
                 return self.weight * x
         else:
             return x
+
+
+class FusedRMSNorm(nn.Module):
+    """
+    A fused version of :class:`RMSNorm`.
+
+    .. warning::
+        This requires `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ to be installed.
+    """
+
+    def __init__(
+        self, *, size: int, eps: float = 1e-5, bias: bool = True, init_device: str = "cpu"
+    ):
+        from flash_attn.ops.triton.layer_norm import rms_norm_fn  # type: ignore
+
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(size, device=init_device))
+        if bias:
+            self.bias = nn.Parameter(torch.zeros(size, device=init_device))
+        else:
+            self.register_parameter("bias", None)
+        self._rms_norm_fn = rms_norm_fn
+
+    def reset_parameters(self):
+        torch.nn.init.ones_(self.weight)
+        if self.bias is not None:
+            torch.nn.init.zeros_(self.bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Apply RMS norm.
+
+        :param x: The input.
+        """
+        return self._rms_norm_fn(x, self.weight, self.bias, eps=self.eps)
