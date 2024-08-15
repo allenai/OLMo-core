@@ -38,18 +38,22 @@ def test_cross_entropy_loss(device, reduction):
 def test_fused_cross_entropy_loss(reduction):
     device = torch.device("cuda")
     vocab_size = 50257
-    N = 32
+    N = 1024
 
     logits = torch.randn(N, vocab_size, device=device)
     labels = torch.randint(0, vocab_size, (N,), device=device)
 
     # Make sure the outputs match those from the non-fused cross entropy loss function.
-    ce_loss, z_loss = cross_entropy_loss(logits.clone(), labels.clone(), reduction=reduction, compute_z_loss=True)
+    ce_loss, z_loss = cross_entropy_loss(
+        logits.clone(), labels.clone(), reduction=reduction, compute_z_loss=True
+    )
     assert z_loss is not None
+
     ce_loss_fused, z_loss_fused = fused_cross_entropy_loss(
-        logits, labels, reduction=reduction, compute_z_loss=True
+        logits.clone(), labels.clone(), reduction=reduction, compute_z_loss=True
     )
     assert z_loss_fused is not None
+
     torch.testing.assert_close(ce_loss, ce_loss_fused)
     torch.testing.assert_close(z_loss, z_loss_fused)
 
