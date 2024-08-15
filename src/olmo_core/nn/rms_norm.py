@@ -115,7 +115,7 @@ class FusedRMSNorm(RMSNorm):
 
         if not elementwise_affine:
             raise NotImplementedError(
-                f"Currently only 'elementwise_affine=True' is supported for {self.__class__.__name__}"
+                f"Currently only 'elementwise_affine=True' is supported with '{self.__class__.__name__}'"
             )
 
         super().__init__(
