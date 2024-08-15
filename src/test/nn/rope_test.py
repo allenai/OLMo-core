@@ -65,11 +65,17 @@ def test_rope_with_past_key_values(device, head_first):
 @requires_flash_attn
 def test_fused_rope():
     B, T, d_model, n_heads = 2, 12, 32, 4
-    rope = FusedRotaryEmbedding(head_shape=d_model // n_heads)
+    fused_rope = FusedRotaryEmbedding(head_shape=d_model // n_heads)
+    rope = RotaryEmbedding(head_shape=d_model // n_heads)
 
     with torch.no_grad():
         qkv = torch.rand(B, T, 3, n_heads, d_model // n_heads, device="cuda")
-        qkv = rope(qkv)
+        q, k, _ = qkv.split(1, dim=2)
+        q, k = q.squeeze(2), k.squeeze(2)
+        qkv = fused_rope(qkv.clone())
+        q, k = rope(q, k, head_first=False)
+        torch.testing.assert_close(q, qkv[:, :, 0, :])
+        torch.testing.assert_close(k, qkv[:, :, 1, :])
 
 
 @pytest.mark.parametrize("device", DEVICES)

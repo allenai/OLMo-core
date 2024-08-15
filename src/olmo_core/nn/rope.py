@@ -137,6 +137,7 @@ class FusedRotaryEmbedding(nn.Module):
         *,
         head_shape: int,
         theta: int = 500_000,
+        full_precision: bool = True,
         cache: Optional[BufferCache] = None,
     ):
         from flash_attn.layers.rotary import apply_rotary_emb_qkv_  # type: ignore
@@ -144,6 +145,7 @@ class FusedRotaryEmbedding(nn.Module):
         super().__init__()
         self.dim = head_shape
         self.theta = theta
+        self.full_precision = full_precision
         self._apply_rotary_emb_qkv_ = apply_rotary_emb_qkv_
         self._cache = cache or BufferCache()
 
@@ -178,15 +180,26 @@ class FusedRotaryEmbedding(nn.Module):
 
     def forward(self, qkv: torch.Tensor) -> torch.Tensor:
         """
-        Apply RoPE *in place* to ``qkv``.
+        Apply RoPE to ``qkv``.
+
+        .. warning::
+            This operates on ``qkv`` *in place* unless ``full_precision=True`` and ``qkv``
+            is not in full precision.
 
         :param qkv: The query, key, and value matrix of shape
             ``(batch_size, seq_len, 3, n_heads, head_shape)``.
         """
-        pos_sin, pos_cos = self._get_rotary_embedding(qkv.size(1), qkv.device)
-        return self._apply_rotary_emb_qkv_(
-            qkv, pos_cos, pos_sin, interleaved=False, seqlen_offsets=0
+        if self.full_precision:
+            qkv_ = qkv.float()
+        else:
+            qkv_ = qkv
+
+        pos_sin, pos_cos = self._get_rotary_embedding(qkv_.size(1), qkv_.device)
+        pos_sin, pos_cos = pos_sin.type_as(qkv_), pos_cos.type_as(qkv_)
+        qkv_ = self._apply_rotary_emb_qkv_(
+            qkv_, pos_cos, pos_sin, interleaved=False, seqlen_offsets=0
         )
+        return qkv_.type_as(qkv)
 
 
 class ComplexRotaryEmbedding(nn.Module):
