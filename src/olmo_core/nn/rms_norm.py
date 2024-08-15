@@ -29,6 +29,11 @@ class RMSNorm(nn.Module):
             self.register_parameter("weight", None)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Apply RMS norm.
+
+        :param x: torch.Tensor
+        """
         with torch.autocast(enabled=False, device_type=x.device.type):
             og_dtype = x.dtype
             x = x.to(torch.float32)
