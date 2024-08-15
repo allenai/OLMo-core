@@ -5,6 +5,4 @@
 
 .. automodule:: olmo_core.nn.rope
    :members:
-
-.. automodule:: olmo_core.nn.complex_rope
-   :members:
+   :member-order: bysource
