@@ -124,7 +124,7 @@ class RotaryEmbedding(nn.Module):
         return q_.type_as(q), k_.type_as(k)
 
 
-class FusedRotaryEmbedding(RotaryEmbedding):
+class FusedRotaryEmbedding(nn.Module):
     """
     A fused version of :class:`RotaryEmbedding`.
 
@@ -141,8 +141,40 @@ class FusedRotaryEmbedding(RotaryEmbedding):
     ):
         from flash_attn.layers.rotary import apply_rotary_emb_qkv_  # type: ignore
 
-        super().__init__(head_shape=head_shape, theta=theta, full_precision=True, cache=cache)
+        super().__init__()
+        self.dim = head_shape
+        self.theta = theta
         self._apply_rotary_emb_qkv_ = apply_rotary_emb_qkv_
+        self._cache = cache or BufferCache()
+
+    def _get_rotary_embedding(
+        self, seq_len: int, device: torch.device
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if (
+            (pos_sin := self._cache.get("rope_pos_sin")) is not None
+            and (pos_cos := self._cache.get("rope_pos_cos")) is not None
+            and pos_sin.shape[-2] >= seq_len
+            and pos_cos.shape[-2] >= seq_len
+        ):
+            if pos_sin.device != device:
+                pos_sin = pos_sin.to(device)
+                self._cache["rope_pos_sin"] = pos_sin
+            if pos_cos.device != device:
+                pos_cos = pos_cos.to(device)
+                self._cache["rope_pos_cos"] = pos_cos
+            return pos_sin[:seq_len, :], pos_cos[:seq_len, :]
+
+        with torch.autocast(device.type, enabled=False):
+            inv_freq = 1.0 / (
+                self.theta
+                ** (torch.arange(0, self.dim, 2, device=device, dtype=torch.float) / self.dim)
+            )
+            seq = torch.arange(seq_len, device=device, dtype=torch.float)
+            freqs = torch.einsum("i , j -> i j", seq, inv_freq)
+            pos_sin, pos_cos = freqs.sin(), freqs.cos()
+        self._cache["rope_pos_sin"] = pos_sin
+        self._cache["rope_pos_cos"] = pos_cos
+        return pos_sin, pos_cos
 
     def forward(self, qkv: torch.Tensor) -> torch.Tensor:
         """
