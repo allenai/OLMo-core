@@ -15,6 +15,10 @@ class RotaryEmbedding(nn.Module):
     .. seealso::
         - :class:`ComplexRotaryEmbedding`
         - :class:`FusedRotaryEmbedding`
+
+    :param head_shape: The dimensionality of the attention heads.
+    :param theta: The theta base value to use.
+    :param full_precision: Always apply RoPE in full precision regardless of the input data type.
     """
 
     def __init__(
@@ -130,6 +134,10 @@ class FusedRotaryEmbedding(nn.Module):
 
     .. warning::
         This requires `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ to be installed.
+
+    :param head_shape: The dimensionality of the attention heads.
+    :param theta: The theta base value to use.
+    :param full_precision: Always apply RoPE in full precision regardless of the input data type.
     """
 
     def __init__(
@@ -205,6 +213,10 @@ class FusedRotaryEmbedding(nn.Module):
 class ComplexRotaryEmbedding(nn.Module):
     """
     An implementation of `RoPE <https://arxiv.org/abs/2104.09864>`_ as a rotation in complex space.
+
+    :param head_shape: The dimensionality of the attention heads.
+    :param theta: The theta base value to use.
+    :param full_precision: Always apply RoPE in full precision regardless of the input data type.
     """
 
     def __init__(

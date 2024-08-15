@@ -67,12 +67,23 @@ def fused_cross_entropy_loss(
     reduction: Literal["mean", "sum", "none"] = "mean",
     compute_z_loss: bool = False,
     z_loss_multiplier: float = 1e-4,
-):
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     """
     A "fused" triton-based implementation of :func:`cross_entropy_loss`.
 
     .. warning::
         This requires `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ to be installed.
+
+    :param logits: Predicted unnormalized logits with shape ``(N, vocab_size)``.
+    :param labels: Ground truth class indices with shape ``(N,)``.
+    :param ignore_index: Specifies a target value that is ignored and does not contribute to
+        the input gradient.
+    :param reduction: Specifies the reduction to apply to the output.
+        Can be "none", "mean", or "sum".
+    :param compute_z_loss: Compute the softmax auxiliary loss as well.
+    :param z_loss_multiplier: The multiplier to apply to the z-loss.
+
+    :returns: The cross entropy loss and optionally the z-loss.
     """
     if flash_cross_entropy_loss is None:
         raise RuntimeError("flash-attn is required for fused_cross_entropy_loss")

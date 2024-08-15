@@ -186,8 +186,9 @@ def unshard_checkpoint(
     .. warning::
         This should only be called in a non-distributed context. Otherwise a RuntimeError is raised.
 
-    :param dir: The path to the original checkpoint created via :func:`save_model_and_optim_state()`.
+    :param dir: The path/URL to the original checkpoint created via :func:`save_model_and_optim_state()`.
     :param target_dir: The directory to save the unsharded model/optimizer checkpoint files to.
+        This must be a local directory. URLs are not supported.
     :param optim: Whether to unshard the optimizer state.
     :param save_overwrite: Overwrite any existing files in ``target_dir``.
 
