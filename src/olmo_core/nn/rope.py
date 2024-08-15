@@ -5,7 +5,7 @@ import torch.nn as nn
 
 from .buffer_cache import BufferCache
 
-__all__ = ["RotaryEmbedding", "ComplexRotaryEmbedding"]
+__all__ = ["RotaryEmbedding", "FusedRotaryEmbedding", "ComplexRotaryEmbedding"]
 
 
 class RotaryEmbedding(nn.Module):
@@ -13,7 +13,8 @@ class RotaryEmbedding(nn.Module):
     `Rotary positional embeddings (RoPE) <https://arxiv.org/abs/2104.09864>`_.
 
     .. seealso::
-        :class:`ComplexRotaryEmbedding`
+        - :class:`ComplexRotaryEmbedding`
+        - :class:`FusedRotaryEmbedding`
     """
 
     def __init__(
@@ -123,12 +124,42 @@ class RotaryEmbedding(nn.Module):
         return q_.type_as(q), k_.type_as(k)
 
 
+class FusedRotaryEmbedding(RotaryEmbedding):
+    """
+    A fused version of :class:`RotaryEmbedding`.
+
+    .. warning::
+        This requires `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ to be installed.
+    """
+
+    def __init__(
+        self,
+        *,
+        head_shape: int,
+        theta: int = 500_000,
+        cache: Optional[BufferCache] = None,
+    ):
+        from flash_attn.layers.rotary import apply_rotary_emb_qkv_  # type: ignore
+
+        super().__init__(head_shape=head_shape, theta=theta, full_precision=True, cache=cache)
+        self._apply_rotary_emb_qkv_ = apply_rotary_emb_qkv_
+
+    def forward(self, qkv: torch.Tensor) -> torch.Tensor:
+        """
+        Apply RoPE *in place* to ``qkv``.
+
+        :param qkv: The query, key, and value matrix of shape
+            ``(batch_size, seq_len, 3, n_heads, head_shape)``.
+        """
+        pos_sin, pos_cos = self._get_rotary_embedding(qkv.size(1), qkv.device)
+        return self._apply_rotary_emb_qkv_(
+            qkv, pos_cos, pos_sin, interleaved=False, seqlen_offsets=0
+        )
+
+
 class ComplexRotaryEmbedding(nn.Module):
     """
     An implementation of `RoPE <https://arxiv.org/abs/2104.09864>`_ as a rotation in complex space.
-
-    .. seealso::
-        :class:`RotaryEmbedding`
     """
 
     def __init__(

@@ -1,9 +1,13 @@
 import pytest
 import torch
 
-from olmo_core.nn.rope import ComplexRotaryEmbedding, RotaryEmbedding
+from olmo_core.nn.rope import (
+    ComplexRotaryEmbedding,
+    FusedRotaryEmbedding,
+    RotaryEmbedding,
+)
 
-from ..utils import DEVICES
+from ..utils import DEVICES, requires_flash_attn, requires_gpu
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -55,6 +59,17 @@ def test_rope_with_past_key_values(device, head_first):
 
         torch.testing.assert_close(q_full[:, :, -1:, :], q_part)
         torch.testing.assert_close(k_full, k_part)
+
+
+@requires_gpu
+@requires_flash_attn
+def test_fused_rope():
+    B, T, d_model, n_heads = 2, 12, 16, 4
+    rope = FusedRotaryEmbedding(head_shape=d_model // n_heads)
+
+    with torch.no_grad():
+        qkv = torch.rand(B, T, 3, n_heads, d_model // n_heads, device="cuda")
+        qkv = rope(qkv)
 
 
 @pytest.mark.parametrize("device", DEVICES)
