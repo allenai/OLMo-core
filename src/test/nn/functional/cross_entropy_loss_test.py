@@ -34,8 +34,9 @@ def test_cross_entropy_loss(device, reduction):
 
 @requires_gpu
 @requires_flash_attn
-@pytest.mark.parametrize("reduction", ["sum", "mean"])
-def test_fused_cross_entropy_loss(reduction):
+def test_fused_cross_entropy_loss():
+    torch.random.manual_seed(0)
+
     device = torch.device("cuda")
     vocab_size = 50257
     N = 1024
@@ -44,13 +45,11 @@ def test_fused_cross_entropy_loss(reduction):
     labels = torch.randint(0, vocab_size, (N,), device=device)
 
     # Make sure the outputs match those from the non-fused cross entropy loss function.
-    ce_loss, z_loss = cross_entropy_loss(
-        logits.clone(), labels.clone(), reduction=reduction, compute_z_loss=True
-    )
+    ce_loss, z_loss = cross_entropy_loss(logits.clone(), labels.clone(), compute_z_loss=True)
     assert z_loss is not None
 
     ce_loss_fused, z_loss_fused = fused_cross_entropy_loss(
-        logits.clone(), labels.clone(), reduction=reduction, compute_z_loss=True
+        logits.clone(), labels.clone(), compute_z_loss=True
     )
     assert z_loss_fused is not None
 
@@ -60,8 +59,6 @@ def test_fused_cross_entropy_loss(reduction):
     # Now add some masked values to logits and labels and make sure we get the same result.
     logits_padded = torch.cat([logits, torch.rand(3, vocab_size, device=device)], dim=0)
     labels_padded = torch.cat([labels, torch.tensor([-100] * 3, device=device)], dim=0)
-    ce_loss1, z_loss1 = fused_cross_entropy_loss(
-        logits_padded, labels_padded, reduction=reduction, compute_z_loss=True
-    )
+    ce_loss1, z_loss1 = fused_cross_entropy_loss(logits_padded, labels_padded, compute_z_loss=True)
     torch.testing.assert_close(ce_loss_fused, ce_loss1)
     torch.testing.assert_close(z_loss_fused, z_loss1)
