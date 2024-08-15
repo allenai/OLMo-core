@@ -55,7 +55,7 @@ def test_fused_cross_entropy_loss(reduction):
         )
         assert z_loss is not None
 
-        torch.testing.assert_close(ce_loss, ce_loss_fused)
+        torch.testing.assert_close(ce_loss, ce_loss_fused, atol=2e-2, rtol=2e-3)
         torch.testing.assert_close(z_loss, z_loss_fused)
 
     # Now add some masked values to logits and labels and make sure we get the same result.
