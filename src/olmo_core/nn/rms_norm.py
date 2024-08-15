@@ -4,7 +4,22 @@ import torch.nn as nn
 
 class RMSNorm(nn.Module):
     """
-    RMS norm, a simplified layer norm implementation
+    RMS norm, a simplified layer norm implementation.
+
+    .. seealso::
+        :class:`FusedRMSNorm`
+
+    :param size: The hidden size / dimensionality of the input.
+    :param eps: The epsilon used for numerical stability.
+    :param elementwise_affine: Whether to include an element-wise affine transform.
+    :param bias: Whether the element-wise affine should include an element-wise bias.
+        Ignored if ``elementwise_affine=False``.
+    :param full_precision: Force the operation to run in full precision regardless of the input
+        data type.
+    :param dtype: The default data type to use for the weight and bias in the element-wise affine.
+        If ``full_precision=False`` it can be useful to set this to the expected input data type.
+        Ignored if ``elementwise_affine=False``.
+    :param init_device: The device used when initializing the element-wise weight/bias.
     """
 
     def __init__(
@@ -15,6 +30,7 @@ class RMSNorm(nn.Module):
         elementwise_affine: bool = True,
         bias: bool = True,
         full_precision: bool = True,
+        dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
     ):
         super().__init__()
@@ -22,9 +38,13 @@ class RMSNorm(nn.Module):
         self.eps = eps
         self.full_precision = full_precision
         if elementwise_affine:
-            self.weight = nn.Parameter(torch.ones(self.normalized_shape, device=init_device))
+            self.weight = nn.Parameter(
+                torch.ones(self.normalized_shape, dtype=dtype, device=init_device)
+            )
             if bias:
-                self.bias = nn.Parameter(torch.zeros(self.normalized_shape, device=init_device))
+                self.bias = nn.Parameter(
+                    torch.zeros(self.normalized_shape, dtype=dtype, device=init_device)
+                )
             else:
                 self.register_parameter("bias", None)
         else:
@@ -67,6 +87,18 @@ class FusedRMSNorm(nn.Module):
 
     .. warning::
         This requires `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ to be installed.
+
+    .. tip::
+        This version of RMS norm always includes an element-wise affine.
+
+    :param size: The hidden size / dimensionality of the input.
+    :param eps: The epsilon used for numerical stability.
+    :param bias: Whether the element-wise affine should include an element-wise bias.
+    :param full_precision: Force the operation to run in full precision regardless of the input
+        data type.
+    :param dtype: The default data type to use for the weight and bias in the element-wise affine.
+        If ``full_precision=False`` it can be useful to set this to the expected input data type.
+    :param init_device: The device used when initializing the element-wise weight/bias.
     """
 
     def __init__(
@@ -77,15 +109,16 @@ class FusedRMSNorm(nn.Module):
         bias: bool = True,
         full_precision: bool = True,
         init_device: str = "cpu",
+        dtype: torch.dtype = torch.float32,
     ):
         from flash_attn.ops.triton.layer_norm import rms_norm_fn  # type: ignore
 
         super().__init__()
         self.eps = eps
         self.full_precision = full_precision
-        self.weight = nn.Parameter(torch.ones(size, device=init_device))
+        self.weight = nn.Parameter(torch.ones(size, dtype=dtype, device=init_device))
         if bias:
-            self.bias = nn.Parameter(torch.zeros(size, device=init_device))
+            self.bias = nn.Parameter(torch.zeros(size, dtype=dtype, device=init_device))
         else:
             self.register_parameter("bias", None)
         self._rms_norm_fn = rms_norm_fn
