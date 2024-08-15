@@ -64,7 +64,7 @@ def test_rope_with_past_key_values(device, head_first):
 @requires_gpu
 @requires_flash_attn
 def test_fused_rope():
-    B, T, d_model, n_heads = 2, 12, 16, 4
+    B, T, d_model, n_heads = 2, 12, 32, 4
     rope = FusedRotaryEmbedding(head_shape=d_model // n_heads)
 
     with torch.no_grad():
