@@ -48,6 +48,8 @@ def test_fused_cross_entropy_loss(reduction):
     )
     assert z_loss_fused is not None
 
+    # TODO: only comparing when reduction is "mean" since results from "sum" are too far
+    # apart (see note below as well). This is potentially an issue.
     if reduction == "mean":
         # Make sure the outputs match those from the non-fused cross entropy loss function.
         ce_loss, z_loss = cross_entropy_loss(
@@ -55,6 +57,8 @@ def test_fused_cross_entropy_loss(reduction):
         )
         assert z_loss is not None
 
+        # TODO: I'm not sure why these aren't closer. We shouldn't need to relax atol/rtol for
+        # this to pass.
         torch.testing.assert_close(ce_loss, ce_loss_fused, atol=2e-2, rtol=2e-3)
         torch.testing.assert_close(z_loss, z_loss_fused)
 
