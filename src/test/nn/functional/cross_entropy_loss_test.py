@@ -12,7 +12,7 @@ def test_cross_entropy_loss(device, reduction):
     vocab_size = 4096
     N = 32
 
-    logits = torch.rand(N, vocab_size, device=device)
+    logits = torch.randn(N, vocab_size, device=device)
     labels = torch.randint(0, vocab_size, (N,), device=device)
 
     ce_loss, z_loss = cross_entropy_loss(logits, labels, reduction=reduction, compute_z_loss=True)
@@ -40,7 +40,7 @@ def test_fused_cross_entropy_loss(reduction):
     vocab_size = 4096
     N = 32
 
-    logits = torch.rand(N, vocab_size, device=device)
+    logits = torch.randn(N, vocab_size, device=device)
     labels = torch.randint(0, vocab_size, (N,), device=device)
 
     # Make sure the outputs match those from the non-fused cross entropy loss function.
@@ -59,5 +59,5 @@ def test_fused_cross_entropy_loss(reduction):
     ce_loss1, z_loss1 = fused_cross_entropy_loss(
         logits_padded, labels_padded, reduction=reduction, compute_z_loss=True
     )
-    torch.testing.assert_close(ce_loss, ce_loss1)
-    torch.testing.assert_close(z_loss, z_loss1)
+    torch.testing.assert_close(ce_loss_fused, ce_loss1)
+    torch.testing.assert_close(z_loss_fused, z_loss1)
