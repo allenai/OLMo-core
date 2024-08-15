@@ -69,7 +69,7 @@ def fused_cross_entropy_loss(
     z_loss_multiplier: float = 1e-4,
 ):
     """
-    A fused version of :func:`cross_entropy_loss`.
+    A "fused" triton-based implementation of :func:`cross_entropy_loss`.
 
     .. warning::
         This requires `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ to be installed.

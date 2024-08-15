@@ -83,7 +83,7 @@ class RMSNorm(nn.Module):
 
 class FusedRMSNorm(RMSNorm):
     """
-    A fused version of :class:`RMSNorm`.
+    A "fused" triton-based implementation of :class:`RMSNorm`.
 
     .. warning::
         This requires `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ to be installed.

@@ -126,7 +126,7 @@ class RotaryEmbedding(nn.Module):
 
 class FusedRotaryEmbedding(nn.Module):
     """
-    A fused version of :class:`RotaryEmbedding`.
+    A "fused" triton-based implementation of :class:`RotaryEmbedding`.
 
     .. warning::
         This requires `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ to be installed.
