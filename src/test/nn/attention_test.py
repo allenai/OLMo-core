@@ -45,6 +45,9 @@ def test_attention(
     if use_flash and dtype == torch.float32:
         pytest.skip("flash requires a low precision dtype")
 
+    if dtype == torch.bfloat16 and device.type == "cpu":
+        pytest.skip("bf16 requires GPU")
+
     torch.random.manual_seed(0)
 
     d_model = 128
