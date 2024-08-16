@@ -88,9 +88,13 @@ class Attention(nn.Module):
 
         self._flash_attn_func = None
         if use_flash:
-            from flash_attn import flash_attn_func  # type: ignore
+            from flash_attn import (  # type: ignore
+                flash_attn_func,
+                flash_attn_varlen_func,
+            )
 
             self._flash_attn_func = flash_attn_func
+            self._flash_attn_varlen_func = flash_attn_varlen_func
 
     def reset_parameters(self):
         for w in (self.w_q, self.w_k, self.w_v, self.w_out):
@@ -98,11 +102,21 @@ class Attention(nn.Module):
             if w.bias is not None:
                 nn.init.zeros_(w.bias)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        max_doc_len: Optional[int] = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """
         Apply attention to the input.
 
         :param x: The input of shape ``(batch_size, seq_len, d_model)``.
+        :param max_doc_len: The maximum document length in the input ``x``.
+            Required together with ``cu_doc_lens`` when using intra-document masking.
+        :param cu_doc_lens: Cumulative document lengths in the input ``x``, a tensor
+            of shape ``(batch_size + 1,)`` (the first element in the tensor should always be ``0``).
+            Required together with ``max_doc_len`` when using intra-document masking.
 
         :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
         """
@@ -132,7 +146,26 @@ class Attention(nn.Module):
         if self.rope is not None:
             q, k = self.rope(q, k, head_first=False)
 
-        if self._flash_attn_func is not None:
+        if max_doc_len is not None and cu_doc_lens is not None:
+            if self._flash_attn_varlen_func is None:
+                raise RuntimeError(
+                    "flash-attn (use_flash=True) is required for intra-document masking"
+                )
+            # shape: (batch_size * seq_len, n_heads, head_dim)
+            att = self._flash_attn_varlen_func(
+                q.view(B * T, self.n_heads, self.head_dim),
+                k.view(B * T, self.n_kv_heads, self.head_dim),
+                v.view(B * T, self.n_kv_heads, self.head_dim),
+                cu_doc_lens,
+                cu_doc_lens,
+                max_doc_len,
+                max_doc_len,
+                dropout_p=self.dropout_p,
+                causal=True,
+            )
+            # shape: (batch_size, seq_len, n_heads, head_dim)
+            att = att.view(B, T, -1, self.head_dim)
+        elif self._flash_attn_func is not None:
             # shape: (batch_size, seq_len, n_heads, head_dim)
             att = self._flash_attn_func(q, k, v, dropout_p=self.dropout_p, causal=True)
         else:
@@ -198,7 +231,10 @@ class FusedAttention(nn.Module):
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
-        from flash_attn import flash_attn_qkvpacked_func  # type: ignore
+        from flash_attn import (  # type: ignore
+            flash_attn_qkvpacked_func,
+            flash_attn_varlen_qkvpacked_func,
+        )
 
         super().__init__()
 
@@ -217,6 +253,7 @@ class FusedAttention(nn.Module):
             self.rope = rope_class
 
         self._flash_attn_qkvpacked_func = flash_attn_qkvpacked_func
+        self._flash_attn_varlen_qkvpacked_func = flash_attn_varlen_qkvpacked_func
 
     def reset_parameters(self):
         for w in (self.w_qkv, self.w_out):
@@ -224,11 +261,21 @@ class FusedAttention(nn.Module):
             if w.bias is not None:
                 nn.init.zeros_(w.bias)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        max_doc_len: Optional[int] = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """
         Apply attention to the input.
 
         :param x: The input of shape ``(batch_size, seq_len, d_model)``.
+        :param max_doc_len: The maximum document length in the input ``x``.
+            Required together with ``cu_doc_lens`` when using intra-document masking.
+        :param cu_doc_lens: Cumulative document lengths in the input ``x``, a tensor
+            of shape ``(batch_size + 1,)`` (the first element in the tensor should always be ``0``).
+            Required together with ``max_doc_len`` when using intra-document masking.
 
         :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
         """
@@ -243,8 +290,21 @@ class FusedAttention(nn.Module):
         if self.rope is not None:
             qkv = self.rope(qkv)
 
-        # shape: (batch_size, seq_len, n_heads, head_dim)
-        att = self._flash_attn_qkvpacked_func(qkv, dropout_p=self.dropout_p, causal=True)
+        if max_doc_len is not None and cu_doc_lens is not None:
+            # shape: (batch_size * seq_len, n_heads, head_dim)
+            att = self._flash_attn_varlen_qkvpacked_func(
+                qkv.view(B * T, 3, self.n_heads, self.head_dim),
+                cu_doc_lens,
+                max_doc_len,
+                dropout_p=self.dropout_p,
+                causal=True,
+            )
+            # shape: (batch_size * seq_len, n_heads, head_dim)
+            att = att.view(B, T, self.n_heads, self.head_dim)
+        else:
+            # shape: (batch_size, seq_len, n_heads, head_dim)
+            att = self._flash_attn_qkvpacked_func(qkv, dropout_p=self.dropout_p, causal=True)
+
         # shape: (batch_size, seq_len, d_model)
         att = att.view(B, T, -1)
 
