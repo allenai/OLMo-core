@@ -1,13 +1,15 @@
 from dataclasses import dataclass
-from typing import Any, Dict, Literal
+from typing import Literal
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ..config import Config
+
 
 @dataclass
-class LayerNormConfig:
+class LayerNormConfig(Config):
     """
     A config for conveniently building any one of the different layer norm classes.
 
@@ -32,15 +34,15 @@ class LayerNormConfig:
 
         See :class:`LayerNorm` for a description of the parameters.
         """
-        kwargs: Dict[str, Any] = dict(
-            size=size,
-            init_device=init_device,
-            eps=self.eps,
-            elementwise_affine=self.elementwise_affine,
-            bias=self.bias,
-            full_precision=self.full_precision,
-            dtype=self.dtype,
+        kwargs = self.as_dict(exclude_none=True)
+        kwargs.pop("name")
+        kwargs.update(
+            dict(
+                size=size,
+                init_device=init_device,
+            )
         )
+
         if self.name == "default":
             return LayerNorm(**kwargs)
         elif self.name == "rms":

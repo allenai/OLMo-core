@@ -1,9 +1,11 @@
-from typing import Optional, Union
+from dataclasses import dataclass
+from typing import Literal, Optional, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ..config import Config
 from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
 from .layer_norm import LayerNorm, LayerNormConfig
@@ -15,13 +17,67 @@ from .rope import (
 )
 
 
+@dataclass
+class AttentionConfig(Config):
+    """
+    A configuration class for easily building any of the different attention modules.
+
+    See :class:`Attention` for a description of the parameters.
+    """
+
+    name: Literal["default", "fused"] = "default"
+    """
+    - "default" ➡️ :class:`Attention`
+    - "fused" ➡️ :class:`FusedAttention`
+    """
+    n_heads: int = 16
+    n_kv_heads: Optional[int] = None
+    bias: bool = True
+    rope: Optional[RoPEConfig] = None
+    clip_qkv: Optional[float] = None
+    qk_norm: Optional[LayerNormConfig] = None
+    dropout: float = 0.0
+    use_flash: Optional[bool] = None
+    dtype: torch.dtype = torch.float32
+
+    def build(
+        self, d_model: int, init_device: str = "cpu", cache: Optional[BufferCache] = None, **kwargs
+    ) -> Union["Attention", "FusedAttention"]:
+        """
+        Build the corresponding attention module.
+
+        See :class:`Attention` for a description of the parameters.
+        """
+        all_kwargs = self.as_dict(exclude_none=True)
+        all_kwargs.pop("name")
+        all_kwargs.update(kwargs)
+        all_kwargs.update(
+            dict(
+                d_model=d_model,
+                init_device=init_device,
+                cache=cache,
+            )
+        )
+
+        if self.name == "default":
+            return Attention(**all_kwargs)
+        elif self.name == "fused":
+            return FusedAttention(**all_kwargs)
+        else:
+            raise NotImplementedError(self.name)
+
+
 class Attention(nn.Module):
     """
     An implementation of multi-head self-attention with support for multi-query (MQA)
     and grouped-query (GQA) attention.
 
+    Intra-document masking is also supported by passing in the
+    ``max_doc_len`` and ``cu_doc_lens`` parameters to :meth:`forward()`. Currently this requires
+    `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ (``use_flash=True``).
+
     .. seealso::
-        :class:`FusedAttention` if you're not using MQA or GQA.
+        :class:`FusedAttention` if you have flash-attn installed and you're not using MQA or GQA.
 
     :param d_model: The model hidden size.
     :param n_heads: The number of attention heads.
@@ -32,6 +88,7 @@ class Attention(nn.Module):
     :param qk_norm: Configuration a layer norm for queries and keys.
     :param dropout: Dropout probability.
     :param use_flash: Use flash attention.
+        This requires `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ to be installed.
     :param dtype: The default data type to use for parameters.
     :param init_device: The device to initialize weights on.
     """
@@ -114,9 +171,9 @@ class Attention(nn.Module):
         :param x: The input of shape ``(batch_size, seq_len, d_model)``.
         :param max_doc_len: The maximum document length in the input ``x``.
             Required together with ``cu_doc_lens`` when using intra-document masking.
-        :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D int32 tensor that
-            should always have one more element than there are documents
-            (the first element in the tensor should always be ``0``).
+        :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D
+            :class:`torch.int32` tensor that should always have one more element than there
+            are documents (the first element in the tensor should always be ``0``).
             Required together with ``max_doc_len`` when using intra-document masking.
 
         :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
@@ -201,11 +258,15 @@ class FusedAttention(nn.Module):
     """
     An "fused" implementation of multi-head self-attention.
 
+    Intra-document masking is supported by passing in the ``max_doc_len`` and ``cu_doc_lens``
+    parameters to :meth:`forward()`.
+
     .. warning::
         This requires `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ to be installed.
 
     .. warning::
-        If using RoPE, this requires that you use the "fused" RoPE implementation.
+        If using RoPE, this requires that you use the "fused" RoPE implementation
+        (:class:`~olmo_core.nn.rope.FusedRotaryEmbedding`).
 
     :param d_model: The model hidden size.
     :param n_heads: The number of attention heads.
@@ -272,9 +333,9 @@ class FusedAttention(nn.Module):
         :param x: The input of shape ``(batch_size, seq_len, d_model)``.
         :param max_doc_len: The maximum document length in the input ``x``.
             Required together with ``cu_doc_lens`` when using intra-document masking.
-        :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D int32 tensor that
-            should always have one more element than there are documents
-            (the first element in the tensor should always be ``0``).
+        :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D
+            :class:`torch.int32` tensor that should always have one more element than there
+            are documents (the first element in the tensor should always be ``0``).
             Required together with ``max_doc_len`` when using intra-document masking.
 
         :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.

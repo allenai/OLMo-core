@@ -10,6 +10,13 @@ Attention
    :members:
    :member-order: bysource
 
+FeedForward
+-----------
+
+.. automodule:: olmo_core.nn.feed_forward
+   :members:
+   :member-order: bysource
+
 RoPE
 ----
 

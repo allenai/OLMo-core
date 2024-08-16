@@ -4,13 +4,14 @@ from typing import Any, Dict, Literal, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 
+from ..config import Config
 from .buffer_cache import BufferCache
 
 __all__ = ["RoPEConfig", "RotaryEmbedding", "FusedRotaryEmbedding", "ComplexRotaryEmbedding"]
 
 
 @dataclass
-class RoPEConfig:
+class RoPEConfig(Config):
     """
     A config for conveniently building any one of the different RoPE classes.
 
