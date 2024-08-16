@@ -52,7 +52,7 @@ class Attention(nn.Module):
     ):
         super().__init__()
 
-        self.n_heads
+        self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads or n_heads
         self.head_dim = d_model // n_heads
         self.w_q = nn.Linear(d_model, d_model, bias=bias, device=init_device)
@@ -198,7 +198,7 @@ class FusedAttention(nn.Module):
 
         super().__init__()
 
-        self.n_heads
+        self.n_heads = n_heads
         self.head_dim = d_model // n_heads
         self.w_qkv = nn.Linear(d_model, 3 * d_model, bias=bias, device=init_device)
         self.w_out = nn.Linear(d_model, d_model, bias=bias, device=init_device)
