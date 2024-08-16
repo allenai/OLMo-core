@@ -11,7 +11,10 @@ from ..utils import requires_flash_attn, requires_gpu
 @requires_gpu
 @requires_flash_attn
 @pytest.mark.parametrize("dtype", [pytest.param(torch.bfloat16, id="bf16")])
-def test_fused_attention_against_non_fused(dtype):
+@pytest.mark.parametrize(
+    "use_flash", [pytest.param(True, id="flash"), pytest.param(False, id="torch-SDPA")]
+)
+def test_fused_attention_against_non_fused(dtype, use_flash):
     torch.random.manual_seed(0)
 
     d_model = 128
@@ -23,7 +26,7 @@ def test_fused_attention_against_non_fused(dtype):
         init_device="cuda",
     )
 
-    attention = Attention(**kwargs)
+    attention = Attention(use_flash=use_flash, **kwargs)
     fused_att = FusedAttention(**kwargs)
 
     # Make sure weights match.
