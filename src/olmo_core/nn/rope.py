@@ -1,11 +1,54 @@
-from typing import Optional, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, Literal, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 
 from .buffer_cache import BufferCache
 
-__all__ = ["RotaryEmbedding", "FusedRotaryEmbedding", "ComplexRotaryEmbedding"]
+__all__ = ["RoPEConfig", "RotaryEmbedding", "FusedRotaryEmbedding", "ComplexRotaryEmbedding"]
+
+
+@dataclass
+class RoPEConfig:
+    """
+    A config for conveniently building any one of the different RoPE classes.
+    """
+
+    name: Literal["default", "fused", "complex"] = "default"
+    """
+    - "default" ➡️ :class:`RotaryEmbedding`
+    - "fused" ➡️ :class:`FusedRotaryEmbedding`
+    - "complex" ➡️ :class:`ComplexRotaryEmbedding`
+    """
+    theta: int = 500_000
+    full_precision: bool = True
+
+    def build(
+        self,
+        head_shape: int,
+        cache: Optional[BufferCache] = None,
+    ) -> Union["RotaryEmbedding", "FusedRotaryEmbedding", "ComplexRotaryEmbedding"]:
+        """
+        Construct the corresponding RoPE class.
+
+        :param head_shape: The dimensionality of the attention heads.
+        """
+        kwargs: Dict[str, Any] = dict(
+            head_shape=head_shape,
+            theta=self.theta,
+            full_precision=self.full_precision,
+            cache=cache,
+        )
+
+        if self.name == "default":
+            return RotaryEmbedding(**kwargs)
+        elif self.name == "fused":
+            return FusedRotaryEmbedding(**kwargs)
+        elif self.name == "complex":
+            return ComplexRotaryEmbedding(**kwargs)
+        else:
+            raise NotImplementedError(self.name)
 
 
 class RotaryEmbedding(nn.Module):

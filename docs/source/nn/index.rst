@@ -3,6 +3,10 @@
 
 .. automodule:: olmo_core.nn
 
+.. automodule:: olmo_core.nn.attention
+   :members:
+   :member-order: bysource
+
 .. automodule:: olmo_core.nn.rope
    :members:
    :member-order: bysource

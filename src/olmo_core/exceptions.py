@@ -16,5 +16,9 @@ class OLMoUserError(OLMoError):
     pass
 
 
-class OLMoCheckpointError(Exception):
+class OLMoCheckpointError(OLMoError):
+    pass
+
+
+class OLMoConfigurationError(OLMoError):
     pass
