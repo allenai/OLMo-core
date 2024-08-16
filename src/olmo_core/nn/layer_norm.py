@@ -1,13 +1,63 @@
+from dataclasses import dataclass
+from typing import Any, Dict, Literal
+
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
-class RMSNorm(nn.Module):
+@dataclass
+class LayerNormConfig:
     """
-    RMS norm, a simplified layer norm implementation.
+    A config for conveniently building any one of the different layer norm classes.
+
+    See :class:`LayerNorm` for a description of the parameters.
+    """
+
+    name: Literal["default", "rms", "fused_fms"] = "default"
+    """
+    - "default" ➡️ :class:`LayerNorm`
+    - "rms" ➡️ :class:`RMSNorm`
+    - "fused_rms" ➡️ :class:`FusedRMSNorm`
+    """
+    eps: float = 1e-5
+    elementwise_affine: bool = True
+    bias: bool = True
+    full_precision: bool = True
+    dtype: torch.dtype = torch.float32
+
+    def build(self, size: int, init_device: str = "cpu") -> "LayerNorm":
+        """
+        Construct the corresponding LayerNorm class.
+
+        See :class:`LayerNorm` for a description of the parameters.
+        """
+        kwargs: Dict[str, Any] = dict(
+            size=size,
+            init_device=init_device,
+            eps=self.eps,
+            elementwise_affine=self.elementwise_affine,
+            bias=self.bias,
+            full_precision=self.full_precision,
+            dtype=self.dtype,
+        )
+        if self.name == "default":
+            return LayerNorm(**kwargs)
+        elif self.name == "rms":
+            return RMSNorm(**kwargs)
+        elif self.name == "fused_fms":
+            return FusedRMSNorm(**kwargs)
+        else:
+            raise NotImplementedError(self.name)
+
+
+class LayerNorm(nn.Module):
+    """
+    Layer normalization.
 
     .. seealso::
-        :class:`FusedRMSNorm`
+        - :class:`RMSNorm`
+        - :class:`FusedRMSNorm`
 
     :param size: The hidden size / dimensionality of the input.
     :param eps: The epsilon used for numerical stability.
@@ -59,6 +109,41 @@ class RMSNorm(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
+        Apply layer norm.
+
+        :param x: The input.
+        """
+        with torch.autocast(enabled=False, device_type=x.device.type):
+            og_dtype = x.dtype
+
+            if self.full_precision:
+                x = x.float()
+
+            variance = x.pow(2).mean(-1, keepdim=True)
+            x = x * torch.rsqrt(variance + self.eps)
+
+            x = F.layer_norm(
+                x,
+                self.normalized_shape,
+                weight=None if self.weight is None else self.weight.type_as(x),
+                bias=None if self.bias is None else self.bias.type_as(x),
+                eps=self.eps,
+            )
+
+            return x.to(og_dtype)
+
+
+class RMSNorm(LayerNorm):
+    """
+    RMS norm, a simplified layer norm implementation.
+
+    .. seealso::
+        - :class:`LayerNorm`
+        - :class:`FusedRMSNorm`
+    """
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
         Apply RMS norm.
 
         :param x: The input.
@@ -88,16 +173,8 @@ class FusedRMSNorm(RMSNorm):
     .. warning::
         This requires `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ to be installed.
 
-    :param size: The hidden size / dimensionality of the input.
-    :param eps: The epsilon used for numerical stability.
-    :param elementwise_affine: Whether to include an element-wise affine transform.
+    .. warning::
         Currently only ``elementwise_affine=True`` is supported.
-    :param bias: Whether the element-wise affine should include an element-wise bias.
-    :param full_precision: Force the operation to run in full precision regardless of the input
-        data type.
-    :param dtype: The default data type to use for the weight and bias in the element-wise affine.
-        If ``full_precision=False`` it can be useful to set this to the expected input data type.
-    :param init_device: The device used when initializing the element-wise weight/bias.
     """
 
     def __init__(

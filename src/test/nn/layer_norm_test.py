@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from olmo_core.nn.rms_norm import FusedRMSNorm, RMSNorm
+from olmo_core.nn.layer_norm import FusedRMSNorm, RMSNorm
 
 from ..utils import requires_flash_attn, requires_gpu
 

@@ -3,14 +3,23 @@
 
 .. automodule:: olmo_core.nn
 
+Attention
+---------
+
 .. automodule:: olmo_core.nn.attention
    :members:
    :member-order: bysource
+
+RoPE
+----
 
 .. automodule:: olmo_core.nn.rope
    :members:
    :member-order: bysource
 
-.. automodule:: olmo_core.nn.rms_norm
+LayerNorms
+----------
+
+.. automodule:: olmo_core.nn.layer_norm
    :members:
    :member-order: bysource

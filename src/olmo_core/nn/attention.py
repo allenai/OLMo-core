@@ -6,6 +6,7 @@ import torch.nn.functional as F
 
 from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
+from .layer_norm import LayerNorm, LayerNormConfig
 from .rope import (
     ComplexRotaryEmbedding,
     FusedRotaryEmbedding,
@@ -28,6 +29,7 @@ class Attention(nn.Module):
     :param bias: Include biases with linear layers.
     :param rope: The config for RoPE, if RoPE should be used.
     :param clip_qkv: Clip QKV to this value, if set.
+    :param qk_norm: Configuration a layer norm for queries and keys.
     :param dropout: Dropout probability.
     :param use_flash: Use flash attention.
     :param init_device: The device to initialize weights on.
@@ -42,6 +44,7 @@ class Attention(nn.Module):
         bias: bool = True,
         rope: Optional[RoPEConfig] = None,
         clip_qkv: Optional[float] = None,
+        qk_norm: Optional[LayerNormConfig] = None,
         dropout: float = 0.0,
         use_flash: bool = False,
         init_device: str = "cpu",
@@ -62,6 +65,15 @@ class Attention(nn.Module):
         self.w_out = nn.Linear(d_model, d_model, bias=bias, device=init_device)
         self.clip_qkv = clip_qkv
         self.dropout_p = dropout
+
+        self.q_norm: Optional[LayerNorm] = None
+        self.k_norm: Optional[LayerNorm] = None
+        if qk_norm is not None:
+            self.q_norm = qk_norm.build(size=d_model, init_device=init_device)
+            self.k_norm = qk_norm.build(
+                size=self.n_kv_heads * self.head_dim, init_device=init_device
+            )
+
         self.rope: Optional[Union[RotaryEmbedding, ComplexRotaryEmbedding]] = None
         if rope is not None:
             if rope.name == "fused":
@@ -99,17 +111,21 @@ class Attention(nn.Module):
         #        (batch_size, seq_len, n_kv_heads * head_dim)
         q, k, v = self.w_q(x), self.w_k(x), self.w_v(x)
 
+        if self.clip_qkv is not None:
+            q.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
+            k.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
+            v.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
+
+        if self.q_norm is not None and self.k_norm is not None:
+            q = self.q_norm(q)
+            k = self.k_norm(k)
+
         # shape: (batch_size, seq_len, n_heads, head_dim)
         q = q.view(B, T, self.n_heads, self.head_dim)
         # shape: (batch_size, seq_len, n_kv_heads, head_dim)
         k = k.view(B, T, self.n_kv_heads, self.head_dim)
         # shape: (batch_size, seq_len, n_kv_heads, head_dim)
         v = v.view(B, T, self.n_kv_heads, self.head_dim)
-
-        if self.clip_qkv is not None:
-            q.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
-            k.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
-            v.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
 
         if self.rope is not None:
             q, k = self.rope(q, k, head_first=False)

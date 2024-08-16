@@ -13,6 +13,8 @@ __all__ = ["RoPEConfig", "RotaryEmbedding", "FusedRotaryEmbedding", "ComplexRota
 class RoPEConfig:
     """
     A config for conveniently building any one of the different RoPE classes.
+
+    See :class:`RotaryEmbedding` for a description of the parameters.
     """
 
     name: Literal["default", "fused", "complex"] = "default"
@@ -32,7 +34,7 @@ class RoPEConfig:
         """
         Construct the corresponding RoPE class.
 
-        :param head_shape: The dimensionality of the attention heads.
+        See :class:`RotaryEmbedding` for a description of the parameters.
         """
         kwargs: Dict[str, Any] = dict(
             head_shape=head_shape,
