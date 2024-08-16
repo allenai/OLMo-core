@@ -15,7 +15,7 @@ from ..utils import DEVICES, FLASH_MARKS, GPU_MARKS, requires_flash_attn, requir
     "dtype",
     [
         pytest.param(torch.bfloat16, id="bf16", marks=GPU_MARKS),
-        pytest.param(torch.float32, id="fp16"),
+        pytest.param(torch.float32, id="fp32"),
     ],
 )
 @pytest.mark.parametrize(
@@ -42,6 +42,9 @@ def test_attention(
     use_flash: bool,
     kwargs: Dict[str, Any],
 ):
+    if use_flash and dtype == torch.float32:
+        pytest.skip("flash requires a low precision dtype")
+
     torch.random.manual_seed(0)
 
     d_model = 128
