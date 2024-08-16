@@ -115,3 +115,27 @@ def test_fused_attention_against_non_fused(dtype: torch.dtype, use_flash: bool):
         y2 = fused_att(x2)
 
     torch.testing.assert_close(y1, y2)
+
+
+@requires_gpu
+@requires_flash_attn
+def test_fused_attention_with_rope():
+    torch.random.manual_seed(0)
+
+    d_model = 128
+    seq_len = 32
+
+    fused_att = FusedAttention(d_model=d_model, n_heads=8, rope=RoPEConfig(name="fused"))
+
+    x1 = torch.randn(1, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
+    x2 = torch.randn(1, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
+    x = torch.cat([x1, x2])
+
+    # Make sure batch outputs match individual outputs.
+    with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+        y1 = fused_att(x1)
+        y2 = fused_att(x2)
+        y = fused_att(x)
+
+    torch.testing.assert_close(y[0:1, :, :], y1)
+    torch.testing.assert_close(y[1:, :, :], y2)
