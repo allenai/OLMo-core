@@ -119,7 +119,10 @@ def get_grad_norm(params: Iterable[nn.Parameter], norm_type: float) -> torch.Ten
     # single vector
     grad_norm = torch.linalg.vector_norm(
         torch.stack(
-            [torch.linalg.vector_norm(grad.detach(), norm_type, dtype=torch.float32) for grad in grads],
+            [
+                torch.linalg.vector_norm(grad.detach(), norm_type, dtype=torch.float32)
+                for grad in grads
+            ],
         ),
         norm_type,
         dtype=torch.float32,
@@ -156,7 +159,9 @@ def alloc_storage(tensor: torch.Tensor, size: torch.Size) -> None:
     if not already_allocated:
         tensor_storage_size = tensor._typed_storage()._size()
         if tensor_storage_size != 0:
-            raise RuntimeError(f"Tensor storage should have been resized to be 0 but got {tensor_storage_size}")
+            raise RuntimeError(
+                f"Tensor storage should have been resized to be 0 but got {tensor_storage_size}"
+            )
         tensor._typed_storage()._resize_(size.numel())
 
 
@@ -177,3 +182,29 @@ def free_storage(tensor: torch.Tensor) -> None:
                 f"tensor shape: {tensor.shape}",
             )
         tensor._typed_storage()._resize_(0)
+
+
+def get_document_lengths(input_ids: torch.Tensor, eos_token_id: int) -> torch.Tensor:
+    doc_boundaries = torch.cat(
+        [
+            torch.tensor([-1], dtype=torch.int32),
+            (input_ids == eos_token_id).nonzero(as_tuple=True)[0].to(dtype=torch.int32),
+            torch.tensor(
+                [] if input_ids[-1] == eos_token_id else [input_ids.shape[0] - 1], dtype=torch.int32
+            ),
+        ]
+    )
+    return doc_boundaries[1:] - doc_boundaries[:-1]
+
+
+def get_cumulative_document_lengths(doc_lens: torch.Tensor) -> torch.Tensor:
+    """
+    Transform a batched tensor of document lengths into a 1D tensor of cumulative document
+    lengths for the whole batch.
+    """
+    return torch.cat(
+        [
+            torch.tensor([0], dtype=torch.int32, device=doc_lens.device),
+            torch.cumsum(doc_lens.masked_select(doc_lens != 0), 0, dtype=torch.int32),
+        ]
+    )
