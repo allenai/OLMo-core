@@ -140,7 +140,7 @@ class Attention(nn.Module):
             # shape: (batch_size, n_heads, seq_len, head_dim),
             #        (batch_size, n_kv_heads, seq_len, head_dim),
             #        (batch_size, n_kv_heads, seq_len, head_dim)
-            q, k, v = q.transpose(1, 2), k.tranpose(1, 2), v.transpose(1, 2)
+            q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
             # PyTorch's SDPA doesn't support GQA, so we have to do this.
             if self.n_heads != self.n_kv_heads and self.n_kv_heads > 1:
