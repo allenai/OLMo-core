@@ -1,7 +1,9 @@
-from typing import Optional
+from typing import Optional, Sequence
 
 import torch
 import torch.nn as nn
+
+from olmo_core.utils import get_cumulative_document_lengths
 
 from ..attention import AttentionConfig
 from ..buffer_cache import BufferCache
@@ -13,6 +15,18 @@ from .block import TransformerBlock
 class Transformer(nn.Module):
     """
     A typical "Llama-style" transformer implementation.
+
+    :param n_layers: The number of transformer layers/blocks.
+    :param d_model: The model dimensionality.
+    :param vocab_size: The vocab size.
+    :param attention: The attention module config for each block.
+    :param feed_forward: The feed forward module config for each block.
+    :param layer_norm: The layer norm config for both the attention LN and the feed forward LN
+        in each block.
+    :param dropout: Dropout probability in each block.
+    :param bias: Whether to use biases in the linear output layer.
+    :param dtype: The datatype to use for the linear output layer.
+    :param init_device: The device used when initializing parameters.
     """
 
     def __init__(
@@ -59,18 +73,34 @@ class Transformer(nn.Module):
         if self.w_out.bias is not None:
             nn.init.zeros_(self.bias)
 
-    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        doc_lens: Optional[torch.Tensor] = None,
+        max_doc_lens: Optional[Sequence[int]] = None,
+    ) -> torch.Tensor:
         """
         Run the transformer on the token input IDs.
 
         :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
+        :param doc_lens: Document lengths to use in attention for intra-document masking.
+            Shape ``(batch_size, max_docs)``.
+            Required together with ``max_doc_lens`` when using intra-document masking.
+        :param max_doc_lens: Maximum document length for each instance in the batch.
+            Required together with ``doc_lens`` when using intra-document masking.
 
         :returns: The output logits.
         """
+        max_doc_len: Optional[int] = None
+        cu_doc_lens: Optional[torch.Tensor] = None
+        if doc_lens is not None and max_doc_lens is not None:
+            max_doc_len = max(max_doc_lens)
+            cu_doc_lens = get_cumulative_document_lengths(doc_lens)
+
         h = self.embeddings(input_ids)
 
         for block in self.blocks:
-            h = block(h)
+            h = block(h, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
 
         h = self.norm(h)
         return self.w_out(h).float()
