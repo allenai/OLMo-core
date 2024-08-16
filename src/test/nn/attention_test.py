@@ -145,22 +145,43 @@ def test_fused_attention_with_rope():
 
 @requires_gpu
 @requires_flash_attn
-def test_fused_attention_with_intra_document_masking():
+def test_attention_with_intra_document_masking():
     torch.random.manual_seed(0)
 
     d_model = 128
     seq_len = 32
 
+    attention = Attention(d_model=d_model, n_heads=8, init_device="cuda", use_flash=True)
     fused_att = FusedAttention(d_model=d_model, n_heads=8, init_device="cuda")
+
+    # Make sure weights match.
+    with torch.no_grad():
+        fused_att.w_out.load_state_dict(attention.w_out.state_dict())
+        fused_att.w_qkv.weight.copy_(
+            torch.cat([attention.w_q.weight, attention.w_k.weight, attention.w_v.weight])
+        )
+        fused_att.w_qkv.bias.copy_(
+            torch.cat([attention.w_q.bias, attention.w_k.bias, attention.w_v.bias])
+        )
 
     x = torch.randn(2, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
 
     with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
-        y1 = fused_att(x)
-        y2 = fused_att(
-            x,
+        y1 = attention(x.clone())
+        y2 = attention(
+            x.clone(),
+            max_doc_len=seq_len,
+            cu_doc_lens=torch.tensor([0, seq_len, 2 * seq_len], dtype=torch.int32, device="cuda"),
+        )
+
+        y1_fused = fused_att(x.clone())
+        y2_fused = fused_att(
+            x.clone(),
             max_doc_len=seq_len,
             cu_doc_lens=torch.tensor([0, seq_len, 2 * seq_len], dtype=torch.int32, device="cuda"),
         )
 
     torch.testing.assert_close(y1, y2)
+    torch.testing.assert_close(y1_fused, y2_fused)
+    torch.testing.assert_close(y1, y1_fused)
+    torch.testing.assert_close(y2, y2_fused)
