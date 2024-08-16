@@ -67,7 +67,7 @@ def test_attention(
     x = torch.cat([x1, x2])
 
     # Make sure batch outputs match individual outputs.
-    with torch.no_grad():
+    with torch.no_grad(), torch.autocast(device.type, dtype=dtype):
         y1 = attention(x1)
         y2 = attention(x2)
         y = attention(x)
