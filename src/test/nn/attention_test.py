@@ -151,19 +151,16 @@ def test_fused_attention_with_intra_document_masking():
     d_model = 128
     seq_len = 32
 
-    fused_att = FusedAttention(
-        d_model=d_model, n_heads=8, rope=RoPEConfig(name="fused"), init_device="cuda"
-    )
+    fused_att = FusedAttention(d_model=d_model, n_heads=8, init_device="cuda")
 
     x = torch.randn(2, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
 
-    # Make sure batch outputs match individual outputs.
     with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
         y1 = fused_att(x)
         y2 = fused_att(
             x,
             max_doc_len=seq_len,
-            cu_doc_lens=torch.tensor([0, seq_len, seq_len], dtype=torch.int32, device="cuda"),
+            cu_doc_lens=torch.tensor([0, seq_len, 2 * seq_len], dtype=torch.int32, device="cuda"),
         )
 
     torch.testing.assert_close(y1, y2)
