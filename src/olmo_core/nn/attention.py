@@ -32,6 +32,7 @@ class Attention(nn.Module):
     :param qk_norm: Configuration a layer norm for queries and keys.
     :param dropout: Dropout probability.
     :param use_flash: Use flash attention.
+    :param dtype: The default data type to use for parameters.
     :param init_device: The device to initialize weights on.
     """
 
@@ -47,6 +48,7 @@ class Attention(nn.Module):
         qk_norm: Optional[LayerNormConfig] = None,
         dropout: float = 0.0,
         use_flash: bool = False,
+        dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
@@ -55,14 +57,14 @@ class Attention(nn.Module):
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads or n_heads
         self.head_dim = d_model // n_heads
-        self.w_q = nn.Linear(d_model, d_model, bias=bias, device=init_device)
+        self.w_q = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
         self.w_k = nn.Linear(
-            d_model, self.n_kv_heads * self.head_dim, bias=bias, device=init_device
+            d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
         )
         self.w_v = nn.Linear(
-            d_model, self.n_kv_heads * self.head_dim, bias=bias, device=init_device
+            d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
         )
-        self.w_out = nn.Linear(d_model, d_model, bias=bias, device=init_device)
+        self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
         self.clip_qkv = clip_qkv
         self.dropout_p = dropout
 
@@ -179,6 +181,7 @@ class FusedAttention(nn.Module):
     :param rope: The config for RoPE, if RoPE should be used.
     :param clip_qkv: Clip QKV to this value, if set.
     :param dropout: Dropout probability.
+    :param dtype: The default data type to use for parameters.
     :param init_device: The device to initialize weights on.
     """
 
@@ -191,6 +194,7 @@ class FusedAttention(nn.Module):
         rope: Optional[RoPEConfig] = None,
         clip_qkv: Optional[float] = None,
         dropout: float = 0.0,
+        dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
@@ -200,8 +204,8 @@ class FusedAttention(nn.Module):
 
         self.n_heads = n_heads
         self.head_dim = d_model // n_heads
-        self.w_qkv = nn.Linear(d_model, 3 * d_model, bias=bias, device=init_device)
-        self.w_out = nn.Linear(d_model, d_model, bias=bias, device=init_device)
+        self.w_qkv = nn.Linear(d_model, 3 * d_model, bias=bias, dtype=dtype, device=init_device)
+        self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
         self.clip_qkv = clip_qkv
         self.dropout_p = dropout
         self.rope: Optional[FusedRotaryEmbedding] = None

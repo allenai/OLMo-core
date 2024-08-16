@@ -26,6 +26,16 @@ def test_fused_attention_against_non_fused(dtype):
     attention = Attention(**kwargs)
     fused_att = FusedAttention(**kwargs)
 
+    # Make sure weights match.
+    with torch.no_grad():
+        fused_att.w_out.load_state_dict(attention.w_out.state_dict())
+        fused_att.w_qkv.weight.copy_(
+            torch.cat([attention.w_q.weight, attention.w_k.weight, attention.w_v.weight])
+        )
+        fused_att.w_qkv.bias.copy_(
+            torch.cat([attention.w_q.bias, attention.w_k.bias, attention.w_v.bias])
+        )
+
     x1 = torch.randn(batch_size, seq_len, d_model, dtype=dtype, device="cuda")
     x2 = x1.clone()
 
