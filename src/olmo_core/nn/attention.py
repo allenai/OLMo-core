@@ -114,8 +114,9 @@ class Attention(nn.Module):
         :param x: The input of shape ``(batch_size, seq_len, d_model)``.
         :param max_doc_len: The maximum document length in the input ``x``.
             Required together with ``cu_doc_lens`` when using intra-document masking.
-        :param cu_doc_lens: Cumulative document lengths in the input ``x``, a tensor
-            of shape ``(batch_size + 1,)`` (the first element in the tensor should always be ``0``).
+        :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D int32 tensor that
+            should always have one more element than there are documents
+            (the first element in the tensor should always be ``0``).
             Required together with ``max_doc_len`` when using intra-document masking.
 
         :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
@@ -271,8 +272,9 @@ class FusedAttention(nn.Module):
         :param x: The input of shape ``(batch_size, seq_len, d_model)``.
         :param max_doc_len: The maximum document length in the input ``x``.
             Required together with ``cu_doc_lens`` when using intra-document masking.
-        :param cu_doc_lens: Cumulative document lengths in the input ``x``, a tensor
-            of shape ``(batch_size + 1,)`` (the first element in the tensor should always be ``0``).
+        :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D int32 tensor that
+            should always have one more element than there are documents
+            (the first element in the tensor should always be ``0``).
             Required together with ``max_doc_len`` when using intra-document masking.
 
         :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.

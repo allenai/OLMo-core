@@ -141,3 +141,29 @@ def test_fused_attention_with_rope():
 
     torch.testing.assert_close(y[0:1, :, :], y1)
     torch.testing.assert_close(y[1:, :, :], y2)
+
+
+@requires_gpu
+@requires_flash_attn
+def test_fused_attention_with_intra_document_masking():
+    torch.random.manual_seed(0)
+
+    d_model = 128
+    seq_len = 32
+
+    fused_att = FusedAttention(
+        d_model=d_model, n_heads=8, rope=RoPEConfig(name="fused"), init_device="cuda"
+    )
+
+    x = torch.randn(2, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
+
+    # Make sure batch outputs match individual outputs.
+    with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+        y1 = fused_att(x)
+        y2 = fused_att(
+            x,
+            max_doc_len=seq_len,
+            cu_doc_lens=torch.tensor([0, seq_len, seq_len], dtype=torch.int32, device="cuda"),
+        )
+
+    torch.testing.assert_close(y1, y2)
