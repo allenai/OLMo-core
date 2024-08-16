@@ -163,8 +163,6 @@ class Attention(nn.Module):
                 dropout_p=self.dropout_p,
                 causal=True,
             )
-            # shape: (batch_size, seq_len, n_heads, head_dim)
-            att = att.view(B, T, -1, self.head_dim)
         elif self._flash_attn_func is not None:
             # shape: (batch_size, seq_len, n_heads, head_dim)
             att = self._flash_attn_func(q, k, v, dropout_p=self.dropout_p, causal=True)
@@ -299,8 +297,6 @@ class FusedAttention(nn.Module):
                 dropout_p=self.dropout_p,
                 causal=True,
             )
-            # shape: (batch_size * seq_len, n_heads, head_dim)
-            att = att.view(B, T, self.n_heads, self.head_dim)
         else:
             # shape: (batch_size, seq_len, n_heads, head_dim)
             att = self._flash_attn_qkvpacked_func(qkv, dropout_p=self.dropout_p, causal=True)
