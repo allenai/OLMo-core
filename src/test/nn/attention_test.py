@@ -7,7 +7,7 @@ from olmo_core.nn.attention import Attention, FusedAttention
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.rope import RoPEConfig
 
-from ..utils import DEVICES, GPU_MARKS, requires_flash_attn, requires_gpu
+from ..utils import DEVICES, FLASH_MARKS, GPU_MARKS, requires_flash_attn, requires_gpu
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -23,7 +23,8 @@ from ..utils import DEVICES, GPU_MARKS, requires_flash_attn, requires_gpu
     [pytest.param(None, id="MHA"), pytest.param(1, id="MQA"), pytest.param(4, id="GQA")],
 )
 @pytest.mark.parametrize(
-    "use_flash", [pytest.param(True, id="flash"), pytest.param(False, id="torch-SDPA")]
+    "use_flash",
+    [pytest.param(True, id="flash", marks=FLASH_MARKS), pytest.param(False, id="torch-SDPA")],
 )
 @pytest.mark.parametrize(
     "kwargs",
