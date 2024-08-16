@@ -125,7 +125,9 @@ def test_fused_attention_with_rope():
     d_model = 128
     seq_len = 32
 
-    fused_att = FusedAttention(d_model=d_model, n_heads=8, rope=RoPEConfig(name="fused"))
+    fused_att = FusedAttention(
+        d_model=d_model, n_heads=8, rope=RoPEConfig(name="fused"), init_device="cuda"
+    )
 
     x1 = torch.randn(1, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
     x2 = torch.randn(1, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
