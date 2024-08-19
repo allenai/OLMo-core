@@ -4,10 +4,13 @@ Distributed helpers, most of which work in a non-distributed context as well for
 
 import gc
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, TypeVar
 
 import torch
 import torch.distributed as dist
+
+from olmo_core.io import PathOrStr, clear_directory
 
 if TYPE_CHECKING:
     from torch.distributed.device_mesh import DeviceMesh
@@ -48,7 +51,9 @@ def get_local_rank() -> int:
         return 0
 
 
-def get_fs_local_rank(group: Optional[dist.ProcessGroup] = None) -> int:
+def get_fs_local_rank(
+    *, dir: Optional[PathOrStr] = None, group: Optional[dist.ProcessGroup] = None
+) -> int:
     """
     Get the local rank per filesystem, meaning that, regardless of the number of nodes,
     if all ranks share the same filesystem then :func:`get_fs_local_rank()` will be equivalent
@@ -57,6 +62,32 @@ def get_fs_local_rank(group: Optional[dist.ProcessGroup] = None) -> int:
     """
     if os.environ.get("OLMO_SHARED_FS"):
         return int(os.environ.get("FS_LOCAL_RANK") or get_rank(group))
+    elif dir is not None:
+        global _fs_local_rank_check_results
+
+        if not Path(dir).is_dir():
+            raise FileNotFoundError(dir)
+
+        rank_check_dir = Path(dir) / ".rank_check"
+        rank_check_dir.mkdir(exist_ok=True)
+        rank_check_file = rank_check_dir / f"rank{get_rank()}.tmp"
+        rank_check_file.touch()
+
+        # Wait for all ranks to write their file.
+        barrier()
+
+        # Find FS local rank.
+        local_ranks = [
+            int(p.name.replace("rank", "").replace(".tmp", "")) for p in rank_check_dir.iterdir()
+        ]
+        fs_local_rank = get_rank() - min(local_ranks)
+
+        # Clean up.
+        barrier()
+        if fs_local_rank == 0:
+            clear_directory(rank_check_dir)
+
+        return fs_local_rank
     else:
         return int(os.environ.get("FS_LOCAL_RANK") or get_local_rank())
 

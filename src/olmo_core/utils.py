@@ -1,17 +1,31 @@
 import dataclasses
 import gc
+import logging
 import os
+import socket
+import sys
 import time
 import uuid
-from typing import Any, Callable, Iterable
+import warnings
+from datetime import datetime
+from typing import Any, Callable, Dict, Iterable, Optional, Union
 
+import rich
 import torch
 import torch.nn as nn
-from pydantic import BaseModel
+from rich.console import Console, ConsoleRenderable
+from rich.highlighter import NullHighlighter
+from rich.text import Text
+from rich.traceback import Traceback
 
-from .exceptions import OLMoEnvironmentError
+from .config import StrEnum
+from .exceptions import OLMoCLIError, OLMoEnvironmentError, OLMoError
 
 OLMO_NUM_THREADS_ENV_VAR = "OLMO_NUM_THREADS"
+
+
+_log_extra_fields: Dict[str, Any] = {}
+log = logging.getLogger(__name__)
 
 
 def generate_uuid() -> str:
@@ -57,8 +71,6 @@ def apply_to_tensors(fn, container: Any) -> None:
         for f in dataclasses.fields(container):
             name = f.name
             apply_to_tensors(fn, getattr(container, name))
-    elif isinstance(container, BaseModel):
-        apply_to_tensors(fn, container.model_dump())
     elif hasattr(container, "__next__"):
         for x in container:
             apply_to_tensors(fn, x)
@@ -134,42 +146,6 @@ def gc_cuda():
         torch.cuda.empty_cache()
 
 
-@torch.no_grad()
-def alloc_storage(tensor: torch.Tensor, size: torch.Size) -> None:
-    """
-    Allocate storage for ``tensor`` with the given size.
-
-    Returns ``True`` if this method allocated storage and ``False`` if the storage was already allocated.
-    """
-    already_allocated = tensor._typed_storage()._size() == size.numel()
-    if not already_allocated:
-        tensor_storage_size = tensor._typed_storage()._size()
-        if tensor_storage_size != 0:
-            raise RuntimeError(
-                f"Tensor storage should have been resized to be 0 but got {tensor_storage_size}"
-            )
-        tensor._typed_storage()._resize_(size.numel())
-
-
-@torch.no_grad()
-def free_storage(tensor: torch.Tensor) -> None:
-    """
-    Frees the underlying storage of ``tensor``.
-
-    Returns ``True`` if the method freed the storage and ``False`` if the storage was already freed.
-    """
-    already_freed = tensor._typed_storage()._size() == 0
-    if not already_freed:
-        if tensor.storage_offset() != 0:
-            raise RuntimeError(
-                "Freeing a tensor's storage is unsafe when it is not the sole occupant\n"
-                f"storage offset: {tensor.storage_offset()}\n"
-                f"storage size: {tensor._typed_storage()._size()}\n"
-                f"tensor shape: {tensor.shape}",
-            )
-        tensor._typed_storage()._resize_(0)
-
-
 def get_document_lengths(input_ids: torch.Tensor, eos_token_id: int) -> torch.Tensor:
     doc_boundaries = torch.cat(
         [
@@ -207,3 +183,216 @@ def has_flash_attn() -> bool:
         return True
     except ModuleNotFoundError:
         return False
+
+
+class LogFilterType(StrEnum):
+    rank0_only = "rank0_only"
+    local_rank0_only = "local_rank0_only"
+    all_ranks = "all_ranks"
+
+
+def log_extra_field(field_name: str, field_value: Any) -> None:
+    global _log_extra_fields
+    if field_value is None:
+        if field_name in _log_extra_fields:
+            del _log_extra_fields[field_name]
+    else:
+        _log_extra_fields[field_name] = field_value
+
+
+def setup_logging(log_filter_type: LogFilterType = LogFilterType.rank0_only) -> None:
+    """
+    :param rank0_only: INFO and below messages will only be emitted on the rank0 process.
+    """
+    from .distributed.utils import get_local_rank, get_rank
+
+    log_extra_field("hostname", socket.gethostname())
+    log_extra_field("local_rank", get_local_rank())
+    log_extra_field("global_rank", get_rank())
+
+    old_log_record_factory = logging.getLogRecordFactory()
+
+    def log_record_factory(*args, **kwargs) -> logging.LogRecord:
+        record = old_log_record_factory(*args, **kwargs)
+        for field_name, field_value in _log_extra_fields.items():
+            setattr(record, field_name, field_value)
+        return record
+
+    logging.setLogRecordFactory(log_record_factory)
+
+    handler: logging.Handler
+    if (
+        os.environ.get("OLMo_NONINTERACTIVE", False)
+        or os.environ.get("DEBIAN_FRONTEND", None) == "noninteractive"
+        or not sys.stdout.isatty()
+    ):
+        handler = logging.StreamHandler(sys.stdout)
+        formatter = logging.Formatter(
+            "%(asctime)s\t%(hostname)s:%(local_rank)s\t%(name)s:%(lineno)s\t%(levelname)s\t%(message)s"
+        )
+        formatter.default_time_format = "%Y-%m-%d %H:%M:%S"
+        formatter.default_msec_format = "%s.%03d"
+        handler.setFormatter(formatter)
+    else:
+        handler = RichHandler()
+
+    def rank0_filter(record: logging.LogRecord) -> int:
+        if record.levelno > logging.INFO:
+            return 1
+        if getattr(record, "global_rank", 0) == 0:
+            return 1
+        else:
+            return 0
+
+    def local_rank0_filter(record: logging.LogRecord) -> int:
+        if record.levelno > logging.INFO:
+            return 1
+        if getattr(record, "local_rank", 0) == 0:
+            return 1
+        else:
+            return 0
+
+    if log_filter_type == LogFilterType.rank0_only:
+        filter = rank0_filter
+    elif log_filter_type == LogFilterType.local_rank0_only:
+        filter = local_rank0_filter  # type: ignore
+    elif log_filter_type == LogFilterType.all_ranks:
+        filter = None
+    else:
+        raise ValueError(log_filter_type)
+
+    if filter is not None:
+        handler.addFilter(filter)  # type: ignore
+    logging.basicConfig(handlers=[handler], level=logging.INFO)
+
+    logging.captureWarnings(True)
+    logging.getLogger("urllib3").setLevel(logging.ERROR)
+
+
+def excepthook(exctype, value, traceback):
+    """
+    Used to patch `sys.excepthook` in order to log exceptions.
+    """
+    if issubclass(exctype, KeyboardInterrupt):
+        sys.__excepthook__(exctype, value, traceback)
+    elif issubclass(exctype, OLMoCLIError):
+        rich.get_console().print(f"[yellow]{value}[/]", highlight=False)
+    elif issubclass(exctype, OLMoError):
+        rich.get_console().print(Text(f"{exctype.__name__}:", style="red"), value, highlight=False)
+    else:
+        log.critical(
+            "Uncaught %s: %s", exctype.__name__, value, exc_info=(exctype, value, traceback)
+        )
+
+
+def install_excepthook():
+    sys.excepthook = excepthook
+
+
+def filter_warnings():
+    # Filter internal deprecation warnings from torch
+    warnings.filterwarnings(
+        action="ignore",
+        category=UserWarning,
+        message="torch.distributed.*_base is a private function and will be deprecated.*",
+    )
+    warnings.filterwarnings(
+        action="ignore",
+        category=UserWarning,
+        message="TypedStorage is deprecated.*",
+    )
+    warnings.filterwarnings(
+        action="ignore",
+        category=UserWarning,
+        message="Please use DTensor instead.*",
+    )
+    # Torchvision warnings. We don't actually use torchvision.
+    warnings.filterwarnings(
+        action="ignore",
+        message="failed to load.*",
+        module="torchvision.io.image",
+    )
+
+
+def set_env_variables():
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    # to mitigate the memory issue that collectives using async_op=True hold memory longer
+    # than they should such as those in tensor parallelism
+    os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
+
+
+def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
+    if log_filter_type is None:
+        log_filter_type = LogFilterType(os.environ.get("LOG_FILTER_TYPE", "rank0_only"))
+    rich.reconfigure(width=max(rich.get_console().width, 180), soft_wrap=True)
+    setup_logging(log_filter_type=log_filter_type)
+    install_excepthook()
+    filter_warnings()
+    set_env_variables()
+
+
+class RichHandler(logging.Handler):
+    """
+    A simplified version of rich.logging.RichHandler from
+    https://github.com/Textualize/rich/blob/master/rich/logging.py
+    """
+
+    def __init__(
+        self,
+        *,
+        level: Union[int, str] = logging.NOTSET,
+        console: Optional[Console] = None,
+        markup: bool = False,
+    ) -> None:
+        super().__init__(level=level)
+        self.console = console or rich.get_console()
+        self.highlighter = NullHighlighter()
+        self.markup = markup
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            if hasattr(record.msg, "__rich__") or hasattr(record.msg, "__rich_console__"):
+                self.console.print(record.msg)
+            else:
+                msg: Any = record.msg
+                if isinstance(record.msg, str):
+                    msg = self.render_message(record=record, message=record.getMessage())
+                renderables = [
+                    self.get_time_text(record),
+                    self.get_level_text(record),
+                    self.get_location_text(record),
+                    msg,
+                ]
+                if record.exc_info is not None:
+                    tb = Traceback.from_exception(*record.exc_info)  # type: ignore
+                    renderables.append(tb)
+                self.console.print(*renderables)
+        except Exception:
+            self.handleError(record)
+
+    def render_message(self, *, record: logging.LogRecord, message: str) -> ConsoleRenderable:
+        use_markup = getattr(record, "markup", self.markup)
+        message_text = Text.from_markup(message) if use_markup else Text(message)
+
+        highlighter = getattr(record, "highlighter", self.highlighter)
+        if highlighter:
+            message_text = highlighter(message_text)
+
+        return message_text
+
+    def get_time_text(self, record: logging.LogRecord) -> Text:
+        log_time = datetime.fromtimestamp(record.created)
+        time_str = log_time.strftime("[%Y-%m-%d %X]")
+        return Text(time_str, style="log.time", end=" ")
+
+    def get_level_text(self, record: logging.LogRecord) -> Text:
+        level_name = record.levelname
+        level_text = Text.styled(level_name.ljust(8), f"logging.level.{level_name.lower()}")
+        level_text.style = "log.level"
+        level_text.end = " "
+        return level_text
+
+    def get_location_text(self, record: logging.LogRecord) -> Text:
+        name_and_line = f"{record.name}:{record.lineno}" if record.name != "root" else "root"
+        text = f"[{name_and_line}, rank={record.local_rank}]"  # type: ignore
+        return Text(text, style="log.path")

@@ -7,6 +7,7 @@ from olmo_core.nn.transformer import TransformerConfig
 def test_small_llama2_config_builder():
     config = TransformerConfig.llama2_271M(vocab_size=50257)
     model = config.build()
+    model.init_weights()
 
     # Make sure num params estimate is correct.
     num_actual_params = 0

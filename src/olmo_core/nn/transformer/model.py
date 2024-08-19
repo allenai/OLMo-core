@@ -357,6 +357,17 @@ class Transformer(nn.Module):
         self.w_out = nn.Linear(d_model, vocab_size, bias=bias, dtype=dtype, device=init_device)
         self._cache = cache
 
+    def init_weights(self):
+        """
+        Initialize the model weights.
+        """
+
+        def reset_params(m: nn.Module):
+            if hasattr(m, "reset_parameters"):
+                m.reset_parameters()
+
+        self.apply(reset_params)
+
     def reset_parameters(self):
         nn.init.trunc_normal_(self.embeddings.weight, mean=0.0, std=0.02)
         nn.init.trunc_normal_(self.w_out.weight, mean=0.0, std=0.02)
@@ -387,10 +398,12 @@ class Transformer(nn.Module):
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
 
-        h = self.embeddings(input_ids)
+        # passthrough for non-existent layers, allows easy pipeline parallel configuration
+        h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
         for block in self.blocks:
             h = block(h, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
 
-        h = self.norm(h)
-        return self.w_out(h).float()
+        h = self.norm(h) if self.norm is not None else h
+        out = self.w_out(h).float() if self.w_out is not None else h
+        return out

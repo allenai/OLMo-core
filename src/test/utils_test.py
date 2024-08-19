@@ -2,7 +2,6 @@ from dataclasses import dataclass
 
 import pytest
 import torch
-from pydantic import BaseModel, ConfigDict
 
 from olmo_core.utils import (
     apply_to_tensors,
@@ -16,16 +15,10 @@ class Foo:
     x: torch.Tensor
 
 
-class Bar(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-    x: torch.Tensor
-
-
 @pytest.mark.parametrize(
     "container, tensor_count",
     [
         (Foo(x=torch.rand(2, 2)), 1),
-        (Bar(x=torch.rand(2, 2)), 1),
         ({"x": torch.rand(2, 2)}, 1),
         ((torch.rand(2, 2),), 1),
         ([torch.rand(2, 2)], 1),

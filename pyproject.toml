@@ -15,7 +15,6 @@ license = { file = "LICENSE" }
 dependencies = [
     "numpy",
     "torch>=2.4,<2.5",
-    "pydantic>=2.0,<3.0",
     "cached-path",
     "requests",
     "packaging",

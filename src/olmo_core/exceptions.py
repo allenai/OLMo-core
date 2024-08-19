@@ -22,3 +22,7 @@ class OLMoCheckpointError(OLMoError):
 
 class OLMoConfigurationError(OLMoError):
     pass
+
+
+class OLMoCLIError(OLMoError):
+    pass
