@@ -322,6 +322,8 @@ def set_env_variables():
 
 
 def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
+    from olmo_core.distributed.utils import validate_env_vars
+
     if log_filter_type is None:
         log_filter_type = LogFilterType(os.environ.get("LOG_FILTER_TYPE", "rank0_only"))
     rich.reconfigure(width=max(rich.get_console().width, 180), soft_wrap=True)
@@ -329,6 +331,7 @@ def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
     install_excepthook()
     filter_warnings()
     set_env_variables()
+    validate_env_vars()
 
 
 class RichHandler(logging.Handler):

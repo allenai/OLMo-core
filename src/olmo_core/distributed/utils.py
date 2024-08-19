@@ -10,10 +10,15 @@ from typing import TYPE_CHECKING, List, Optional, TypeVar
 import torch
 import torch.distributed as dist
 
+from olmo_core.exceptions import OLMoEnvironmentError
 from olmo_core.io import PathOrStr, clear_directory
 
 if TYPE_CHECKING:
     from torch.distributed.device_mesh import DeviceMesh
+
+OLMO_SHARED_FS_ENV_VAR = "OLMO_SHARED_FS"
+OLMO_FS_LOCAL_RANK_ENV_VAR = "FS_LOCAL_RANK"
+OLMO_LOCAL_RANK_ENV_VAR = "LOCAL_RANK"
 
 
 def is_distributed() -> bool:
@@ -46,7 +51,7 @@ def get_local_rank() -> int:
     Get the local rank within the current node. Relies on the environment variable "LOCAL_RANK".
     """
     if is_distributed():
-        return int(os.environ.get("LOCAL_RANK") or 0)
+        return int(os.environ.get(OLMO_LOCAL_RANK_ENV_VAR) or 0)
     else:
         return 0
 
@@ -60,8 +65,8 @@ def get_fs_local_rank(
     to :func:`get_rank()`, but if nodes do not share the same filesystem then
     :func:`get_fs_local_rank()` will be equivalent to :func:`get_local_rank()`.
     """
-    if os.environ.get("OLMO_SHARED_FS"):
-        return int(os.environ.get("FS_LOCAL_RANK") or get_rank(group))
+    if os.environ.get(OLMO_SHARED_FS_ENV_VAR) == "1":
+        return int(os.environ.get(OLMO_FS_LOCAL_RANK_ENV_VAR) or get_rank(group))
     elif dir is not None:
         global _fs_local_rank_check_results
 
@@ -89,7 +94,7 @@ def get_fs_local_rank(
 
         return fs_local_rank
     else:
-        return int(os.environ.get("FS_LOCAL_RANK") or get_local_rank())
+        return int(os.environ.get(OLMO_FS_LOCAL_RANK_ENV_VAR) or get_local_rank())
 
 
 def get_world_size(group: Optional[dist.ProcessGroup] = None) -> int:
@@ -100,6 +105,17 @@ def get_world_size(group: Optional[dist.ProcessGroup] = None) -> int:
         return dist.get_world_size(group)
     else:
         return 0
+
+
+def validate_env_vars():
+    if (
+        os.environ.get(OLMO_SHARED_FS_ENV_VAR) != "1"
+        and os.environ.get(OLMO_FS_LOCAL_RANK_ENV_VAR) is None
+        and os.environ.get(OLMO_LOCAL_RANK_ENV_VAR) is None
+    ):
+        raise OLMoEnvironmentError(
+            f"Missing env var '{OLMO_FS_LOCAL_RANK_ENV_VAR}' or '{OLMO_LOCAL_RANK_ENV_VAR}' for non-shared filesystem"
+        )
 
 
 V = TypeVar("V", bool, int, float)
