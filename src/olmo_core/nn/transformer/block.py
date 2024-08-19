@@ -1,12 +1,61 @@
+from dataclasses import dataclass
 from typing import Optional
 
 import torch
 import torch.nn as nn
 
+from olmo_core.config import Config, StrEnum
+
 from ..attention import AttentionConfig
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig
 from ..layer_norm import LayerNormConfig
+
+
+class TransformerBlockType(StrEnum):
+    """
+    An enumeration of the different transformer block implementations.
+    """
+
+    default = "default"
+
+
+@dataclass
+class TransformerBlockConfig(Config):
+    """
+    A configuration class for easily building transformer blocks.
+    """
+
+    attention: AttentionConfig
+    feed_forward: FeedForwardConfig
+    layer_norm: LayerNormConfig
+    dropout: float = 0.0
+    name: TransformerBlockType = TransformerBlockType.default
+    dropout: float = 0.0
+
+    def build(
+        self,
+        d_model: int,
+        *,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ) -> "TransformerBlock":
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
+        kwargs.pop("name")
+        kwargs.update(
+            dict(
+                d_model=d_model,
+                init_device=init_device,
+                cache=cache,
+            )
+        )
+
+        if self.name == TransformerBlockType.default:
+            return TransformerBlock(
+                **kwargs,
+            )
+        else:
+            raise NotImplementedError(self.name)
 
 
 class TransformerBlock(nn.Module):

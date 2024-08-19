@@ -1,11 +1,26 @@
 from dataclasses import dataclass
-from typing import Literal
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..config import Config
+from ..config import Config, StrEnum
+
+__all__ = ["LayerNormType", "LayerNormConfig", "LayerNorm", "RMSNorm", "FusedRMSNorm"]
+
+
+class LayerNormType(StrEnum):
+    """
+    An enumeration of the different layer norm implementations.
+
+    - "default" ➡️ :class:`LayerNorm`
+    - "rms" ➡️ :class:`RMSNorm`
+    - "fused_rms" ➡️ :class:`FusedRMSNorm`
+    """
+
+    default = "default"
+    rms = "rms"
+    fused_rms = "fused_rms"
 
 
 @dataclass
@@ -16,7 +31,7 @@ class LayerNormConfig(Config):
     See :class:`LayerNorm` for a description of the parameters.
     """
 
-    name: Literal["default", "rms", "fused_fms"] = "default"
+    name: LayerNormType = LayerNormType.default
     """
     - "default" ➡️ :class:`LayerNorm`
     - "rms" ➡️ :class:`RMSNorm`

@@ -2,7 +2,13 @@
 Transformer building blocks.
 """
 
-from .block import TransformerBlock
-from .model import Transformer
+from .block import TransformerBlock, TransformerBlockConfig, TransformerBlockType
+from .model import Transformer, TransformerConfig
 
-__all__ = ["TransformerBlock", "Transformer"]
+__all__ = [
+    "TransformerBlockType",
+    "TransformerBlockConfig",
+    "TransformerBlock",
+    "TransformerConfig",
+    "Transformer",
+]

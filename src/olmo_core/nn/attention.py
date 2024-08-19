@@ -1,11 +1,11 @@
 from dataclasses import dataclass
-from typing import Literal, Optional, Union
+from typing import Optional, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..config import Config
+from ..config import Config, StrEnum
 from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
 from .layer_norm import LayerNorm, LayerNormConfig
@@ -16,6 +16,20 @@ from .rope import (
     RotaryEmbedding,
 )
 
+__all__ = ["AttentionType", "AttentionConfig", "Attention", "FusedAttention"]
+
+
+class AttentionType(StrEnum):
+    """
+    An enumeration of the different attention implementations.
+
+    - "default" ➡️ :class:`Attention`
+    - "fused" ➡️ :class:`FusedAttention`
+    """
+
+    default = "default"
+    fused = "fused"
+
 
 @dataclass
 class AttentionConfig(Config):
@@ -25,7 +39,7 @@ class AttentionConfig(Config):
     See :class:`Attention` for a description of the parameters.
     """
 
-    name: Literal["default", "fused"] = "default"
+    name: AttentionType = AttentionType.default
     """
     - "default" ➡️ :class:`Attention`
     - "fused" ➡️ :class:`FusedAttention`
@@ -41,17 +55,20 @@ class AttentionConfig(Config):
     dtype: torch.dtype = torch.float32
 
     def build(
-        self, d_model: int, init_device: str = "cpu", cache: Optional[BufferCache] = None, **kwargs
+        self,
+        d_model: int,
+        *,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
     ) -> Union["Attention", "FusedAttention"]:
         """
         Build the corresponding attention module.
 
         See :class:`Attention` for a description of the parameters.
         """
-        all_kwargs = self.as_dict(exclude_none=True)
-        all_kwargs.pop("name")
-        all_kwargs.update(kwargs)
-        all_kwargs.update(
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
+        kwargs.pop("name")
+        kwargs.update(
             dict(
                 d_model=d_model,
                 init_device=init_device,
@@ -60,9 +77,9 @@ class AttentionConfig(Config):
         )
 
         if self.name == "default":
-            return Attention(**all_kwargs)
+            return Attention(**kwargs)
         elif self.name == "fused":
-            return FusedAttention(**all_kwargs)
+            return FusedAttention(**kwargs)
         else:
             raise NotImplementedError(self.name)
 

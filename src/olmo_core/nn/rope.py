@@ -1,13 +1,33 @@
 from dataclasses import dataclass
-from typing import Any, Dict, Literal, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 
-from ..config import Config
+from ..config import Config, StrEnum
 from .buffer_cache import BufferCache
 
-__all__ = ["RoPEConfig", "RotaryEmbedding", "FusedRotaryEmbedding", "ComplexRotaryEmbedding"]
+__all__ = [
+    "RoPEType",
+    "RoPEConfig",
+    "RotaryEmbedding",
+    "FusedRotaryEmbedding",
+    "ComplexRotaryEmbedding",
+]
+
+
+class RoPEType(StrEnum):
+    """
+    An enumeration of the different RoPE implementations.
+
+    - "default" ➡️ :class:`RotaryEmbedding`
+    - "fused" ➡️ :class:`FusedRotaryEmbedding`
+    - "complex" ➡️ :class:`ComplexRotaryEmbedding`
+    """
+
+    default = "default"
+    fused = "fused"
+    complex = "complex"
 
 
 @dataclass
@@ -18,7 +38,7 @@ class RoPEConfig(Config):
     See :class:`RotaryEmbedding` for a description of the parameters.
     """
 
-    name: Literal["default", "fused", "complex"] = "default"
+    name: RoPEType = RoPEType.default
     """
     - "default" ➡️ :class:`RotaryEmbedding`
     - "fused" ➡️ :class:`FusedRotaryEmbedding`

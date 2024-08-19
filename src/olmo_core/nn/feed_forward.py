@@ -6,6 +6,8 @@ import torch.nn.functional as F
 
 from ..config import Config
 
+__all__ = ["FeedForwardConfig", "FeedForward"]
+
 
 @dataclass
 class FeedForwardConfig(Config):

@@ -3,7 +3,6 @@ import gc
 import os
 import time
 import uuid
-from enum import Enum
 from typing import Any, Callable, Iterable
 
 import torch
@@ -13,19 +12,6 @@ from pydantic import BaseModel
 from .exceptions import OLMoEnvironmentError
 
 OLMO_NUM_THREADS_ENV_VAR = "OLMO_NUM_THREADS"
-
-
-class StrEnum(str, Enum):
-    """
-    This is equivalent to Python's :class:`enum.StrEnum` since version 3.11.
-    We include this here for compatibility with older version of Python.
-    """
-
-    def __str__(self) -> str:
-        return self.value
-
-    def __repr__(self) -> str:
-        return f"'{str(self)}'"
 
 
 def generate_uuid() -> str:
@@ -208,3 +194,16 @@ def get_cumulative_document_lengths(doc_lens: torch.Tensor) -> torch.Tensor:
             torch.cumsum(doc_lens.masked_select(doc_lens != 0), 0, dtype=torch.int32),
         ]
     )
+
+
+def has_flash_attn() -> bool:
+    """
+    Check if flash-attn is available.
+    """
+    try:
+        import flash_attn  # type: ignore
+
+        del flash_attn
+        return True
+    except ModuleNotFoundError:
+        return False
