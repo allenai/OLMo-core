@@ -9,6 +9,14 @@ from .callback import Callback
 
 @dataclass
 class SpeedMonitorCallback(Callback):
+    """
+    Monitors throughput.
+
+    .. important::
+        This callback gets added automatically if you don't explicitly configure it.
+        If you want to override this callback you should subclass it.
+    """
+
     _total_steps: int = 0
     _total_tokens: int = 0
     _start_time: float = 0.0

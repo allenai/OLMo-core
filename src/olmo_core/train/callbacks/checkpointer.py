@@ -13,6 +13,14 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class CheckpointerCallback(Callback):
+    """
+    Used to configure checkpointing during training.
+
+    .. important::
+        This callback gets added automatically if you don't explicitly configure it.
+        If you want to override this callback you should subclass it.
+    """
+
     save_interval: int = 250
     ephemeral_save_interval: Optional[int] = None
     pre_train_checkpoint: bool = True

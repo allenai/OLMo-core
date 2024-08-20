@@ -26,6 +26,7 @@ from .callbacks import (
     Callback,
     CheckpointerCallback,
     ConsoleLoggerCallback,
+    GarbageCollectorCallback,
     SpeedMonitorCallback,
 )
 from .checkpoint import Checkpointer
@@ -172,6 +173,7 @@ class Trainer:
         has_console_logger_callback = False
         has_checkpointer_callback = False
         has_speed_monitor_callback = False
+        has_gc_collector_callback = False
         for callback in self.callbacks:
             if isinstance(callback, ConsoleLoggerCallback):
                 has_console_logger_callback = True
@@ -179,12 +181,16 @@ class Trainer:
                 has_checkpointer_callback = True
             elif isinstance(callback, SpeedMonitorCallback):
                 has_speed_monitor_callback = True
+            elif isinstance(callback, GarbageCollectorCallback):
+                has_gc_collector_callback = True
         if not has_console_logger_callback:
             self.callbacks.append(ConsoleLoggerCallback(log_interval=self.metrics_log_interval))
         if not has_checkpointer_callback:
             self.callbacks.append(CheckpointerCallback())
         if not has_speed_monitor_callback:
             self.callbacks.append(SpeedMonitorCallback())
+        if not has_gc_collector_callback:
+            self.callbacks.append(GarbageCollectorCallback())
 
         # Set pointer to self in all callbacks.
         for callback in self.callbacks:

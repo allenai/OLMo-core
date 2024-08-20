@@ -5,13 +5,25 @@ from typing import Optional
 
 
 class Scheduler(metaclass=ABCMeta):
+    """
+    Learning rate scheduler base class.
+    """
+
     @abstractmethod
     def get_lr(self, initial_lr: float, step: int, max_steps: int) -> float:
+        """
+        Get the learning rate for a step given the initial/max learning rate and the maximum
+        number of steps.
+        """
         raise NotImplementedError
 
 
 @dataclass
 class ConstantScheduler(Scheduler):
+    """
+    Constant learning rate schedule, basically a no-op.
+    """
+
     def get_lr(self, initial_lr: float, step: int, max_steps: int) -> float:
         del step, max_steps
         return initial_lr
@@ -19,6 +31,10 @@ class ConstantScheduler(Scheduler):
 
 @dataclass
 class CosWithWarmup(Scheduler):
+    """
+    Cosine learning rate schedule with a warmup.
+    """
+
     warmup_steps: int
     alpha_f: float = 0.1
     t_max: Optional[int] = None

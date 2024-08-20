@@ -25,6 +25,14 @@ def format_float(value: float) -> str:
 
 @dataclass
 class ConsoleLoggerCallback(Callback):
+    """
+    Logs progress and a subset of metrics to the console.
+
+    .. important::
+        This callback gets added automatically if you don't explicitly configure it.
+        If you want to override this callback you should subclass it.
+    """
+
     log_interval: int = 1
     metrics: List[str] = field(
         default_factory=lambda: ["train/*", "sys/*", "optim/total_grad_norm"]

@@ -9,6 +9,10 @@ from .callback import Callback
 
 @dataclass
 class GradClipperCallback(Callback):
+    """
+    Enables gradient clipping during training.
+    """
+
     max_grad_norm: float = 1.0
 
     def pre_optim_step(self):

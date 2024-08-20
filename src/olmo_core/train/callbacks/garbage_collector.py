@@ -10,6 +10,10 @@ class GarbageCollectorCallback(Callback):
     """
     Disables automatic garbage collection during training and runs gen1 collection
     on a set schedule instead.
+
+    .. important::
+        This callback gets added automatically if you don't explicitly configure it.
+        If you want to override this callback you should subclass it.
     """
 
     gc_interval: int = 100

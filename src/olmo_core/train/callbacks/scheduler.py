@@ -7,6 +7,10 @@ from .callback import Callback
 
 @dataclass
 class SchedulerCallback(Callback):
+    """
+    Introduces a learning rate :class:`~olmo_core.optim.Scheduler` to the training loop.
+    """
+
     scheduler: Scheduler = ConstantScheduler()
 
     def pre_optim_step(self):

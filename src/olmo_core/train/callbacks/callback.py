@@ -9,6 +9,10 @@ if TYPE_CHECKING:
 class Callback:
     """
     Trainer callback base class.
+
+    Callbacks can be used to modify and extend the behavior of the trainer loop.
+    This module contains a number of useful :class:`Callback` implementations, but you can
+    always add your own.
     """
 
     _trainer: Optional["Trainer"] = None
