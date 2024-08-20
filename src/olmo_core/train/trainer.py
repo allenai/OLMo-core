@@ -386,31 +386,22 @@ class Trainer:
         # shape: (batch_size * (seq_len - 1), vocab_size)
         logits_for_loss = logits_for_loss.view(-1, logits_for_loss.size(-1))
         # shape: (batch_size, seq_len - 1)
-        labels = self._get_labels(batch)
+        labels = batch.get("labels", self._get_labels(batch))
         # shape: (batch_size * (seq_len - 1),)
         labels = labels.view(-1)
 
-        if self.fused_loss:
-            ce_loss, z_loss = fused_cross_entropy_loss(
-                logits,
-                labels,
-                ignore_index=-100,
-                reduction=loss_reduction,
-                compute_z_loss=compute_z_loss,
-                z_loss_multiplier=self.z_loss_multiplier or 1e-4,
-            )
-        else:
-            ce_loss, z_loss = cross_entropy_loss(
-                logits,
-                labels,
-                ignore_index=-100,
-                reduction=loss_reduction,
-                compute_z_loss=compute_z_loss,
-                z_loss_multiplier=self.z_loss_multiplier or 1e-4,
-            )
+        loss_fn = cross_entropy_loss if not self.fused_loss else fused_cross_entropy_loss
+        ce_loss, z_loss = loss_fn(
+            logits,
+            labels,
+            ignore_index=-100,
+            reduction=loss_reduction,
+            compute_z_loss=compute_z_loss,
+            z_loss_multiplier=self.z_loss_multiplier or 1e-4,
+        )
 
         if loss_reduction == "none":
-            # Reshape (batch_size * seq_len,) -> (batch_size, seq_len)
+            # Reshape (batch_size * (seq_len - 1),) -> (batch_size, seq_len - 1)
             ce_loss = ce_loss.view(batch["input_ids"].shape[0], -1)
             if z_loss is not None:
                 z_loss = z_loss.view(batch["input_ids"].shape[0], -1)
@@ -418,12 +409,15 @@ class Trainer:
         return ce_loss, z_loss, logits
 
     def _train_micro_batch(
-        self, micro_batch: Dict[str, Any], batch_size_in_tokens: int
+        self, micro_batch: Dict[str, Any], batch_num_tokens_for_loss: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        # NOTE: we use the "sum" loss reduction and then divide by 'batch_num_tokens_for_loss'
+        # (the total number of tokens used in the loss across the whole batch, not just the micro batch)
+        # to avoid biasing the loss in the case where micro-batches might not be the same size.
         ce_loss, z_loss, logits = self._model_forward(
             micro_batch, compute_z_loss=self.z_loss_multiplier is not None, loss_reduction="sum"
         )
-        ce_loss = ce_loss / batch_size_in_tokens
+        ce_loss = ce_loss / batch_num_tokens_for_loss
 
         # In case this helps with memory utilization.
         del micro_batch
@@ -431,7 +425,7 @@ class Trainer:
         # Get loss to optimize for.
         if self.z_loss_multiplier is not None:
             assert z_loss is not None
-            z_loss = z_loss / batch_size_in_tokens
+            z_loss = z_loss / batch_num_tokens_for_loss
             loss = ce_loss + z_loss
         else:
             loss = ce_loss
@@ -443,9 +437,14 @@ class Trainer:
     def _forward_backward(
         self, batch: Dict[str, Any]
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        # Generate labels, calculate how many tokens are going to be use in the loss.
+        if "labels" not in batch:
+            batch["labels"] = self._get_labels(batch)
+        batch_num_tokens_for_loss = (batch["labels"] != -100).sum()
+
         # Split into micro-batches.
         micro_batches = self._split_batch(batch)
-        batch_size_in_tokens = batch["input_ids"].numel()
+        num_micro_batches = len(micro_batches)
 
         # In case this helps with memory utilization.
         del batch
@@ -454,7 +453,6 @@ class Trainer:
         z_batch_loss = (
             None if self.z_loss_multiplier is None else torch.tensor(0.0, device=self.device)
         )
-        num_micro_batches = len(micro_batches)
 
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
             # setup sync context for DDP for all micro-batches except the last
@@ -470,7 +468,7 @@ class Trainer:
                 ):
                     # Run forward pass.
                     loss, ce_loss, z_loss = self._train_micro_batch(
-                        micro_batch, batch_size_in_tokens
+                        micro_batch, batch_num_tokens_for_loss
                     )
 
                     # Update overall CE batch loss.
