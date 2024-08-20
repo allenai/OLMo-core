@@ -82,6 +82,12 @@ class Callback:
 
     def post_train(self):
         """
-        Runs after the training loop is complete.
+        Runs after the training loop successfully completes.
         """
         pass
+
+    def on_error(self, exc: BaseException):
+        """
+        Called when the training loop exits with an error.
+        """
+        del exc

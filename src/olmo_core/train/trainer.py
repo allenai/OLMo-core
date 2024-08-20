@@ -247,8 +247,13 @@ class Trainer:
         for callback in self.callbacks:
             callback.pre_train()
 
-        while not self.training_complete:
-            self._fit_epoch()
+        try:
+            while not self.training_complete:
+                self._fit_epoch()
+        except BaseException as exc:
+            for callback in self.callbacks:
+                callback.on_error(exc)
+            raise
 
         for callback in self.callbacks:
             callback.post_train()
