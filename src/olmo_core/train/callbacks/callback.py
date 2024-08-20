@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:
     from ..trainer import Trainer
@@ -44,11 +44,11 @@ class Callback:
         """
         pass
 
-    def pre_step(self):
+    def pre_step(self, batch: Dict[str, Any]):
         """
         Runs right before a training batch is processed.
         """
-        pass
+        del batch
 
     def pre_optim_step(self):
         """

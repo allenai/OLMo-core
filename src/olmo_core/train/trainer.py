@@ -22,12 +22,21 @@ from ..nn.functional.cross_entropy_loss import (
     fused_cross_entropy_loss,
 )
 from ..utils import gc_cuda, move_to_device
-from .callbacks import Callback, CheckpointerCallback, ConsoleLoggerCallback
+from .callbacks import (
+    Callback,
+    CheckpointerCallback,
+    ConsoleLoggerCallback,
+    SpeedMonitorCallback,
+)
 from .checkpoint import Checkpointer
 from .duration import Duration, DurationUnit
 from .utils import EnvRngStates, ReduceType, reduce_metrics
 
 log = logging.getLogger(__name__)
+
+TRAIN_CE_LOSS_METRIC = "train/ce_loss"
+TRAIN_PPL_METRIC = "train/ppl"
+TRAIN_Z_LOSS_METRIC = "train/z_loss"
 
 
 @dataclass
@@ -101,6 +110,7 @@ class Trainer:
     metrics_log_interval: int = 1
     """
     How often (in steps) to collect and log metrics.
+    Increasing this can improve throughput.
     """
 
     fused_loss: bool = False
@@ -161,15 +171,20 @@ class Trainer:
         # Ensure we have necessary callbacks.
         has_console_logger_callback = False
         has_checkpointer_callback = False
+        has_speed_monitor_callback = False
         for callback in self.callbacks:
             if isinstance(callback, ConsoleLoggerCallback):
                 has_console_logger_callback = True
             elif isinstance(callback, CheckpointerCallback):
                 has_checkpointer_callback = True
+            elif isinstance(callback, SpeedMonitorCallback):
+                has_speed_monitor_callback = True
         if not has_console_logger_callback:
             self.callbacks.append(ConsoleLoggerCallback(log_interval=self.metrics_log_interval))
         if not has_checkpointer_callback:
             self.callbacks.append(CheckpointerCallback())
+        if not has_speed_monitor_callback:
+            self.callbacks.append(SpeedMonitorCallback())
 
         # Set pointer to self in all callbacks.
         for callback in self.callbacks:
@@ -339,6 +354,15 @@ class Trainer:
             raise NotImplementedError
 
     def _log_metrics(self):
+        if not self._metrics:
+            return
+
+        # Check for NaN loss. We can afford the host-device sync here.
+        for step in sorted(self._metrics.keys()):
+            if TRAIN_CE_LOSS_METRIC in self._metrics[step]:
+                if self._metrics[step][TRAIN_CE_LOSS_METRIC].isnan():
+                    raise RuntimeError(f"NaN loss encountered at step {step}")
+
         metrics: Dict[int, Dict[str, float]] = reduce_metrics(
             self._metrics, self._metrics_reduce_type, self.device
         )
@@ -347,6 +371,9 @@ class Trainer:
         gc_cuda()
 
         for step in sorted(metrics.keys()):
+            # Add perplexity.
+            if TRAIN_CE_LOSS_METRIC in metrics[step]:
+                metrics[step][TRAIN_PPL_METRIC] = math.exp(metrics[step][TRAIN_CE_LOSS_METRIC])
             for callback in self.callbacks:
                 callback.log_metrics(step, metrics[step])
 
@@ -485,6 +512,10 @@ class Trainer:
         return ce_batch_loss, z_batch_loss
 
     def _train_batch(self, batch: Dict[str, Any]):
+        # Record how many instances are going to be skipped (masked out).
+        if (instance_mask := batch.get("instance_mask")) is not None:
+            self.record_metric("train/masked_instances", (~instance_mask).sum(), ReduceType.sum)
+
         # Zero-gradients.
         self.optim.zero_grad(set_to_none=True)
 
@@ -493,9 +524,9 @@ class Trainer:
 
         # Run forward-backward pass.
         ce_batch_loss, z_batch_loss = self._forward_backward(batch)
-        self.record_metric("train/CrossEntropyLoss", ce_batch_loss, ReduceType.mean)
+        self.record_metric(TRAIN_CE_LOSS_METRIC, ce_batch_loss, ReduceType.mean)
         if z_batch_loss is not None:
-            self.record_metric("train/ZLoss", z_batch_loss, ReduceType.mean)
+            self.record_metric(TRAIN_Z_LOSS_METRIC, z_batch_loss, ReduceType.mean)
 
         # Run through callbacks.
         for callback in self.callbacks:
@@ -529,7 +560,7 @@ class Trainer:
             self.global_train_tokens_seen += self.global_batch_size * seq_len
 
             for callback in self.callbacks:
-                callback.pre_step()
+                callback.pre_step(batch)
 
             self._train_batch(batch)
 
