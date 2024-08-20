@@ -5,7 +5,7 @@ import torch
 
 from olmo_core.nn.attention import Attention, FusedAttention
 from olmo_core.nn.layer_norm import LayerNormConfig
-from olmo_core.nn.rope import RoPEConfig
+from olmo_core.nn.rope import RoPEConfig, RoPEType
 
 from ..utils import DEVICES, FLASH_MARKS, GPU_MARKS, requires_flash_attn, requires_gpu
 
@@ -31,7 +31,7 @@ from ..utils import DEVICES, FLASH_MARKS, GPU_MARKS, requires_flash_attn, requir
     [
         pytest.param({"clip_qkv": 8.0}, id="QKV-clip"),
         pytest.param({"rope": RoPEConfig()}, id="rope"),
-        pytest.param({"rope": RoPEConfig(name="complex")}, id="complex-rope"),
+        pytest.param({"rope": RoPEConfig(name=RoPEType.complex)}, id="complex-rope"),
         pytest.param({"qk_norm": LayerNormConfig()}, id="qk-norm"),
     ],
 )
@@ -126,7 +126,7 @@ def test_fused_attention_with_rope():
     seq_len = 32
 
     fused_att = FusedAttention(
-        d_model=d_model, n_heads=8, rope=RoPEConfig(name="fused"), init_device="cuda"
+        d_model=d_model, n_heads=8, rope=RoPEConfig(name=RoPEType.fused), init_device="cuda"
     )
 
     x1 = torch.randn(1, seq_len, d_model, dtype=torch.bfloat16, device="cuda")

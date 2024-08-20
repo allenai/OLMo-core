@@ -8,7 +8,10 @@ import time
 import uuid
 import warnings
 from datetime import datetime
-from typing import Any, Callable, Dict, Iterable, Optional, Union
+from itertools import cycle, islice
+from queue import Queue
+from threading import Thread
+from typing import Any, Callable, Dict, Iterable, Optional, TypeVar, Union
 
 import rich
 import torch
@@ -19,7 +22,7 @@ from rich.text import Text
 from rich.traceback import Traceback
 
 from .config import StrEnum
-from .exceptions import OLMoCLIError, OLMoEnvironmentError, OLMoError
+from .exceptions import OLMoCLIError, OLMoEnvironmentError, OLMoError, OLMoThreadError
 
 OLMO_NUM_THREADS_ENV_VAR = "OLMO_NUM_THREADS"
 
@@ -74,6 +77,22 @@ def apply_to_tensors(fn, container: Any) -> None:
     elif hasattr(container, "__next__"):
         for x in container:
             apply_to_tensors(fn, x)
+
+
+T = TypeVar("T")
+
+
+def move_to_device(o: T, device: torch.device) -> T:
+    if isinstance(o, torch.Tensor):
+        return o.to(device)  # type: ignore[return-value]
+    elif isinstance(o, dict):
+        return {k: move_to_device(v, device) for k, v in o.items()}  # type: ignore[return-value]
+    elif isinstance(o, list):
+        return [move_to_device(x, device) for x in o]  # type: ignore[return-value]
+    elif isinstance(o, tuple):
+        return tuple((move_to_device(x, device) for x in o))  # type: ignore[return-value]
+    else:
+        return o
 
 
 def get_default_device() -> torch.device:
@@ -399,3 +418,46 @@ class RichHandler(logging.Handler):
         name_and_line = f"{record.name}:{record.lineno}" if record.name != "root" else "root"
         text = f"[{name_and_line}, rank={record.local_rank}]"  # type: ignore
         return Text(text, style="log.path")
+
+
+def threaded_generator(g, maxsize: int = 16, thread_name: Optional[str] = None):
+    q: Queue = Queue(maxsize=maxsize)
+
+    sentinel = object()
+
+    def fill_queue():
+        try:
+            for value in g:
+                q.put(value)
+        except Exception as e:
+            q.put(e)
+        finally:
+            q.put(sentinel)
+
+    thread_name = thread_name or repr(g)
+    thread = Thread(name=thread_name, target=fill_queue, daemon=True)
+    thread.start()
+
+    for x in iter(q.get, sentinel):
+        if isinstance(x, Exception):
+            raise OLMoThreadError(f"generator thread {thread_name} failed") from x
+        else:
+            yield x
+
+
+def roundrobin(*iterables):
+    """
+    Call the given iterables in a round-robin fashion. For example:
+    ``roundrobin('ABC', 'D', 'EF') --> A D E B F C``
+    """
+    # Adapted from https://docs.python.org/3/library/itertools.html#itertools-recipes
+    num_active = len(iterables)
+    nexts = cycle(iter(it).__next__ for it in iterables)
+    while num_active:
+        try:
+            for next in nexts:
+                yield next()
+        except StopIteration:
+            # Remove the iterator we just exhausted from the cycle.
+            num_active -= 1
+            nexts = cycle(islice(nexts, num_active))

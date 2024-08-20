@@ -6,7 +6,7 @@ from .callback import Callback
 
 
 @dataclass
-class GarbageCollector(Callback):
+class GarbageCollectorCallback(Callback):
     """
     Disables automatic garbage collection during training and runs gen1 collection
     on a set schedule instead.
@@ -19,8 +19,8 @@ class GarbageCollector(Callback):
         self._start_state = gc.isenabled()
         gc.disable()
 
-    def post_step(self, step: int):
-        if step % self.gc_interval == 0:
+    def post_step(self):
+        if self.step % self.gc_interval == 0:
             gc.collect(1)
 
     def post_train(self):

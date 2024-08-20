@@ -4,7 +4,6 @@ import pickle
 import re
 import shutil
 import time
-from os import PathLike
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -15,11 +14,10 @@ except ImportError:
 
 import torch
 
+from .aliases import PathOrStr
 from .exceptions import OLMoEnvironmentError, OLMoNetworkError
 
 log = logging.getLogger(__name__)
-
-PathOrStr = Union[Path, PathLike, str]
 
 ############################################
 ## Unified API for local and remote files ##

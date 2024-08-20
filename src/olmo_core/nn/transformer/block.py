@@ -29,7 +29,6 @@ class TransformerBlockConfig(Config):
     attention: AttentionConfig
     feed_forward: FeedForwardConfig
     layer_norm: LayerNormConfig
-    dropout: float = 0.0
     name: TransformerBlockType = TransformerBlockType.default
     dropout: float = 0.0
 

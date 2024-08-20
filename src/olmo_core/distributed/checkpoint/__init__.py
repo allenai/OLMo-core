@@ -36,16 +36,11 @@ import torch.distributed.checkpoint as dist_cp
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
 
-from olmo_core.distributed.utils import barrier, get_fs_local_rank, is_distributed
-from olmo_core.io import (
-    PathOrStr,
-    clear_directory,
-    dir_is_empty,
-    is_url,
-    normalize_path,
-)
+from olmo_core.aliases import PathOrStr
+from olmo_core.io import clear_directory, dir_is_empty, is_url, normalize_path
 from olmo_core.utils import gc_cuda, wait_for
 
+from ..utils import barrier, get_fs_local_rank, is_distributed
 from .filesystem import RemoteFileSystemReader, RemoteFileSystemWriter
 
 __all__ = [

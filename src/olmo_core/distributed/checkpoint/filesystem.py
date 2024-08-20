@@ -24,9 +24,9 @@ from torch.distributed.checkpoint.planner import (
 )
 from torch.futures import Future
 
+from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoCheckpointError
 from olmo_core.io import (
-    PathOrStr,
     get_bytes_range,
     init_client,
     is_url,

@@ -11,21 +11,15 @@ import torch.nn as nn
 from cached_path import cached_path
 from torch.optim import Optimizer
 
-from olmo_core.distributed.checkpoint import (
+from ..aliases import PathOrStr
+from ..distributed.checkpoint import (
     async_save_model_and_optim_state,
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
-from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_rank
-from olmo_core.io import (
-    PathOrStr,
-    clear_directory,
-    dir_is_empty,
-    is_url,
-    normalize_path,
-    upload,
-)
-from olmo_core.utils import wait_for
+from ..distributed.utils import barrier, get_fs_local_rank, get_rank
+from ..io import clear_directory, dir_is_empty, is_url, normalize_path, upload
+from ..utils import wait_for
 
 
 @dataclass

@@ -10,8 +10,9 @@ from typing import TYPE_CHECKING, List, Optional, TypeVar
 import torch
 import torch.distributed as dist
 
-from olmo_core.exceptions import OLMoEnvironmentError
-from olmo_core.io import PathOrStr, clear_directory
+from ..aliases import PathOrStr
+from ..exceptions import OLMoEnvironmentError
+from ..io import clear_directory
 
 if TYPE_CHECKING:
     from torch.distributed.device_mesh import DeviceMesh

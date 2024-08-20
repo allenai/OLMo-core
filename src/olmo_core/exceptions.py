@@ -26,3 +26,7 @@ class OLMoConfigurationError(OLMoError):
 
 class OLMoCLIError(OLMoError):
     pass
+
+
+class OLMoThreadError(OLMoError):
+    pass
