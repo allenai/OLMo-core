@@ -13,8 +13,9 @@ from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 
 from ..aliases import PathOrStr
-from ..data.iterable_dataset import IterableDataset
+from ..data import IterableDataset, MemMapDataset
 from ..distributed.utils import get_fs_local_rank, get_world_size
+from ..exceptions import OLMoConfigurationError
 from ..io import normalize_path
 from ..nn.functional.cross_entropy_loss import (
     cross_entropy_loss,
@@ -173,6 +174,11 @@ class Trainer:
         # Set pointer to self in all callbacks.
         for callback in self.callbacks:
             callback.trainer = self
+
+        # Other validation.
+        if isinstance(self.dataset.dataset, MemMapDataset):
+            if self.dataset.dataset.sequence_length != self.train_sequence_length:
+                raise OLMoConfigurationError("trainer and dataset sequence length does not match")
 
     @property
     def dataset(self) -> IterableDataset:
@@ -497,9 +503,10 @@ class Trainer:
 
     def _fit_epoch(self):
         # Prepare dataset.
-        self.dataset.reshuffle(self.epoch)
         self.dataset.set_start_offset(self.global_train_examples_seen_this_epoch)
         self.dataset.rank_batch_size = self.rank_batch_size
+        self.dataset.work_dir = self.work_dir
+        self.dataset.reshuffle(self.epoch)
 
         for callback in self.callbacks:
             callback.pre_epoch()
