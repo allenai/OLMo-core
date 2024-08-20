@@ -16,6 +16,10 @@ from ..distributed.utils import get_world_size, is_distributed
 
 
 class ReduceType(StrEnum):
+    """
+    An enumeration of the allowed ways to reduce a metric across ranks.
+    """
+
     mean = "mean"
     sum = "sum"
     max = "max"

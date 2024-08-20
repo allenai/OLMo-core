@@ -20,8 +20,8 @@ from ..nn.functional.cross_entropy_loss import (
     cross_entropy_loss,
     fused_cross_entropy_loss,
 )
-from ..utils import move_to_device
-from .callbacks import Callback
+from ..utils import gc_cuda, move_to_device
+from .callbacks import Callback, CheckpointerCallback, ConsoleLoggerCallback
 from .checkpoint import Checkpointer
 from .duration import Duration, DurationUnit
 from .utils import EnvRngStates, ReduceType, reduce_metrics
@@ -31,47 +31,146 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class Trainer:
+    """
+    A language model trainer.
+    """
+
     work_dir: PathOrStr
+    """
+    A local directory to use for temporary files needed during training.
+    """
+
     model: nn.Module
+    """
+    The model to fit.
+    """
+
     optim: Optimizer
+    """
+    The optimizer to use.
+    """
+
     train_loader: DataLoader[IterableDataset]
+    """
+    The training data loader.
+    """
+
     device: torch.device
+    """
+    The default device to use. Should match the device the model is on and be appropriate for the
+    distributed backend, if there is one.
+    """
 
     save_folder: str
+    """
+    The folder to save all checkpoints to. Could be a local directory (if using a shared filesytem)
+    or a URL.
+    """
+
     checkpointer: Checkpointer
+    """
+    The checkpointer.
+    """
+
     callbacks: List[Callback]
+    """
+    Trainer callbacks.
+    """
+
     max_duration: Duration
+    """
+    The duration to train for.
+    """
 
     train_sequence_length: int
+    """
+    Training sequence length.
+    """
+
     global_batch_size: int
+    """
+    Global training batch size (in terms of instances, not tokens).
+    """
+
     microbatch_size: int
+    """
+    Microbatch size per rank, i.e. the number of instances to process at a time from each rank.
+    """
 
     metrics_log_interval: int = 1
-    metrics: Dict[int, Dict[str, torch.Tensor]] = field(default_factory=lambda: defaultdict(dict))
-    metrics_reduce_type: Dict[str, Optional[ReduceType]] = field(default_factory=dict)
+    """
+    How often (in steps) to collect and log metrics.
+    """
 
     fused_loss: bool = False
+    """
+    Used the fused cross-entropy loss function.
+    """
+
     z_loss_multiplier: Optional[float] = None
+    """
+    Use Z-loss with this multiplier.
+    """
 
     autocast_precision: Optional[torch.dtype] = None
+    """
+    Enable AMP with this data type.
+    """
 
     # Bookkeeping
 
     global_step: int = 0
+    """
+    The current step (1-based), though it's initialized to 0 before the first step.
+    """
+
     global_train_tokens_seen: int = 0
+    """
+    The total number of training tokens seen.
+    """
+
     global_train_tokens_seen_this_epoch: int = 0
+    """
+    The total number of training tokens seen in the current epoch.
+    """
+
     global_train_examples_seen_this_epoch: int = 0
-    epoch: int = 0
+    """
+    The total number of examples seen in the current epoch.
+    """
+
+    epoch: int = 1
+    """
+    The current epoch (1-based).
+    """
+
+    _metrics: Dict[int, Dict[str, torch.Tensor]] = field(default_factory=lambda: defaultdict(dict))
+    _metrics_reduce_type: Dict[str, Optional[ReduceType]] = field(default_factory=dict)
     _canceled: bool = False
     _rank_batch_size: Optional[int] = None
 
     def __post_init__(self):
         self.save_folder = normalize_path(self.save_folder)
 
+        # Configure working directory.
         self.work_dir = Path(self.work_dir)
         if get_fs_local_rank() == 0:
             self.work_dir.mkdir(parents=True, exist_ok=True)
 
+        # Ensure we have necessary callbacks.
+        has_console_logger_callback = False
+        has_checkpointer_callback = False
+        for callback in self.callbacks:
+            if isinstance(callback, ConsoleLoggerCallback):
+                has_console_logger_callback = True
+            elif isinstance(callback, CheckpointerCallback):
+                has_checkpointer_callback = True
+        if not has_console_logger_callback:
+            self.callbacks.append(ConsoleLoggerCallback(log_interval=self.metrics_log_interval))
+        if not has_checkpointer_callback:
+            self.callbacks.append(CheckpointerCallback())
+
+        # Set pointer to self in all callbacks.
         for callback in self.callbacks:
             callback.trainer = self
 
@@ -91,7 +190,7 @@ class Trainer:
     def training_complete(self) -> bool:
         if self._canceled:
             return True
-        elif self.duration_due(self.max_duration):
+        elif self._duration_due(self.max_duration):
             return True
         else:
             return False
@@ -132,17 +231,28 @@ class Trainer:
         else:
             raise NotImplementedError
 
-    def duration_due(self, duration: Duration) -> bool:
-        if duration.unit == DurationUnit.steps:
-            return self.global_step >= duration.value
-        elif duration.unit == DurationUnit.epochs:
-            return self.epoch >= duration.value
-        elif duration.unit == DurationUnit.tokens:
-            return self.global_train_tokens_seen >= duration.value
-        else:
-            raise NotImplementedError
+    def fit(self):
+        """
+        Fit the model.
+        """
+        self._canceled = False
+        self.model.train()
+
+        for callback in self.callbacks:
+            callback.pre_train()
+
+        while not self.training_complete:
+            self._fit_epoch()
+
+        for callback in self.callbacks:
+            callback.post_train()
+
+        log.info("Training complete")
 
     def state_dict(self) -> Dict[str, Any]:
+        """
+        Get the trainer state to save.
+        """
         return dict(
             global_step=self.global_step,
             global_train_tokens_seen=self.global_train_tokens_seen,
@@ -155,6 +265,9 @@ class Trainer:
         )
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
+        """
+        Load trainer state (not model or optimizer state).
+        """
         if state_dict["train_sequence_length"] != self.train_sequence_length:
             raise NotImplementedError(
                 "Restoring training state with a different sequence length is not supported"
@@ -184,6 +297,9 @@ class Trainer:
     def load_checkpoint(
         self, dir: PathOrStr, load_optimizer_state: bool = True, load_trainer_state: bool = True
     ):
+        """
+        Load a checkpoint.
+        """
         self.checkpointer.load(
             dir,
             self.model,
@@ -195,36 +311,35 @@ class Trainer:
     def record_metric(
         self, name: str, value: torch.Tensor, reduce_type: Optional[ReduceType] = None
     ):
-        self.metrics[self.global_step][name] = value
-        self.metrics_reduce_type[name] = reduce_type
+        """
+        Record a new metric for the current step.
+        """
+        self._metrics[self.global_step][name] = value
+        self._metrics_reduce_type[name] = reduce_type
 
-    def log_metrics(self):
+    def _duration_due(self, duration: Duration) -> bool:
+        if duration.unit == DurationUnit.steps:
+            return self.global_step >= duration.value
+        elif duration.unit == DurationUnit.epochs:
+            return self.epoch >= duration.value
+        elif duration.unit == DurationUnit.tokens:
+            return self.global_train_tokens_seen >= duration.value
+        else:
+            raise NotImplementedError
+
+    def _log_metrics(self):
         metrics: Dict[int, Dict[str, float]] = reduce_metrics(
-            self.metrics, self.metrics_reduce_type, self.device
+            self._metrics, self._metrics_reduce_type, self.device
         )
-        self.metrics.clear()
-        self.metrics_reduce_type.clear()
+        self._metrics.clear()
+        self._metrics_reduce_type.clear()
+        gc_cuda()
 
         for step in sorted(metrics.keys()):
             for callback in self.callbacks:
                 callback.log_metrics(step, metrics[step])
 
-    def fit(self):
-        self._canceled = False
-        self.model.train()
-
-        for callback in self.callbacks:
-            callback.pre_train()
-
-        while not self.training_complete:
-            self._fit_epoch()
-
-        for callback in self.callbacks:
-            callback.post_train()
-
-        log.info("Training complete")
-
-    def get_labels(self, batch: Dict[str, Any]) -> torch.Tensor:
+    def _get_labels(self, batch: Dict[str, Any]) -> torch.Tensor:
         # Labels are just input IDs shifted to the left (first item is ignored).
         labels, label_mask, attention_mask, instance_mask = (
             batch["input_ids"].clone(),
@@ -240,7 +355,7 @@ class Trainer:
             labels.masked_fill_(~instance_mask.unsqueeze(-1), value=-100)
         return labels[..., 1:].contiguous()
 
-    def model_forward(
+    def _model_forward(
         self,
         batch: Dict[str, Any],
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
@@ -260,7 +375,7 @@ class Trainer:
         # shape: (batch_size * (seq_len - 1), vocab_size)
         logits_for_loss = logits_for_loss.view(-1, logits_for_loss.size(-1))
         # shape: (batch_size, seq_len - 1)
-        labels = self.get_labels(batch)
+        labels = self._get_labels(batch)
         # shape: (batch_size * (seq_len - 1),)
         labels = labels.view(-1)
 
@@ -291,10 +406,10 @@ class Trainer:
 
         return ce_loss, z_loss, logits
 
-    def train_micro_batch(
+    def _train_micro_batch(
         self, micro_batch: Dict[str, Any], batch_size_in_tokens: int
     ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-        ce_loss, z_loss, logits = self.model_forward(
+        ce_loss, z_loss, logits = self._model_forward(
             micro_batch, compute_z_loss=self.z_loss_multiplier is not None, loss_reduction="sum"
         )
         ce_loss = ce_loss / batch_size_in_tokens
@@ -314,11 +429,11 @@ class Trainer:
 
         return loss, ce_loss, z_loss
 
-    def forward_backward(
+    def _forward_backward(
         self, batch: Dict[str, Any]
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         # Split into micro-batches.
-        micro_batches = self.split_batch(batch)
+        micro_batches = self._split_batch(batch)
         batch_size_in_tokens = batch["input_ids"].numel()
 
         # In case this helps with memory utilization.
@@ -343,7 +458,7 @@ class Trainer:
                     dtype=self.autocast_precision,
                 ):
                     # Run forward pass.
-                    loss, ce_loss, z_loss = self.train_micro_batch(
+                    loss, ce_loss, z_loss = self._train_micro_batch(
                         micro_batch, batch_size_in_tokens
                     )
 
@@ -360,7 +475,7 @@ class Trainer:
 
         return ce_batch_loss, z_batch_loss
 
-    def train_batch(self, batch: Dict[str, Any]):
+    def _train_batch(self, batch: Dict[str, Any]):
         # Zero-gradients.
         self.optim.zero_grad(set_to_none=True)
 
@@ -368,7 +483,7 @@ class Trainer:
         batch = move_to_device(batch, self.device)
 
         # Run forward-backward pass.
-        ce_batch_loss, z_batch_loss = self.forward_backward(batch)
+        ce_batch_loss, z_batch_loss = self._forward_backward(batch)
         self.record_metric("train/CrossEntropyLoss", ce_batch_loss, ReduceType.mean)
         if z_batch_loss is not None:
             self.record_metric("train/ZLoss", z_batch_loss, ReduceType.mean)
@@ -406,7 +521,7 @@ class Trainer:
             for callback in self.callbacks:
                 callback.pre_step()
 
-            self.train_batch(batch)
+            self._train_batch(batch)
 
             for callback in self.callbacks:
                 callback.post_train_batch()
@@ -417,7 +532,11 @@ class Trainer:
                 callback.post_step()
 
             if self.global_step % self.metrics_log_interval == 0:
-                self.log_metrics()
+                self._log_metrics()
+
+        # Log any remaining metrics.
+        if self._metrics:
+            self._log_metrics()
 
         for callback in self.callbacks:
             callback.post_epoch()
@@ -428,7 +547,7 @@ class Trainer:
         self.global_train_examples_seen_this_epoch = 0
         self.dataset.start_index = 0
 
-    def split_batch(self, batch: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _split_batch(self, batch: Dict[str, Any]) -> List[Dict[str, Any]]:
         batch_size = batch["input_ids"].shape[0]
         if batch_size <= self.microbatch_size:
             return [batch]

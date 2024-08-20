@@ -27,6 +27,12 @@ To get started, install OLMo-core from PyPI with:
    nn/functional.rst
    distributed/checkpoint.rst
    distributed/utils.rst
+   train/trainer.rst
+   train/config.rst
+   train/callbacks.rst
+   train/checkpoint.rst
+   train/duration.rst
+   train/utils.rst
 
 .. toctree::
    :hidden:
