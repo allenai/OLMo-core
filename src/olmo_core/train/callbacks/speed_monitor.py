@@ -25,7 +25,7 @@ class SpeedMonitorCallback(Callback):
         self._step_start_time = time.monotonic()
         self._step_tokens = batch["input_ids"].numel()
         self._total_steps += 1
-        self._total_tokens += 1
+        self._total_tokens += self._step_tokens
 
     def post_step(self):
         step_time = time.monotonic() - self._step_start_time
