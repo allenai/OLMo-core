@@ -22,6 +22,7 @@ To get started, install OLMo-core from PyPI with:
    exceptions.rst
    io.rst
    utils.rst
+   data.rst
    nn/index.rst
    nn/transformer.rst
    nn/functional.rst

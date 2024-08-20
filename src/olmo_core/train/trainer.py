@@ -498,7 +498,7 @@ class Trainer:
     def _fit_epoch(self):
         # Prepare dataset.
         self.dataset.reshuffle(self.epoch)
-        self.dataset.start_index = self.global_train_examples_seen_this_epoch
+        self.dataset.set_start_offset(self.global_train_examples_seen_this_epoch)
         self.dataset.rank_batch_size = self.rank_batch_size
 
         for callback in self.callbacks:
@@ -545,7 +545,7 @@ class Trainer:
         self.epoch += 1
         self.global_train_tokens_seen_this_epoch = 0
         self.global_train_examples_seen_this_epoch = 0
-        self.dataset.start_index = 0
+        self.dataset.set_start_offset(0)
 
     def _split_batch(self, batch: Dict[str, Any]) -> List[Dict[str, Any]]:
         batch_size = batch["input_ids"].shape[0]

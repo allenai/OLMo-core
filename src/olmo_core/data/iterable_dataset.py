@@ -19,8 +19,8 @@ log = logging.getLogger(__name__)
 class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
     """
     Adapted from PyTorch's ``DistributedSampler``, this wraps a ``Dataset`` or arbitrary sequence
-    as an ``IterableDataset`` that can be deterministically restarted at any point by setting
-    ``start_index``.
+    as an ``IterableDataset`` that can be deterministically restarted at any point by using
+    :meth:`set_start_offset()`.
     """
 
     def __init__(
@@ -107,7 +107,18 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
         assert len(indices) == self.total_size
         return indices
 
+    def set_start_offset(self, offset: int):
+        """
+        Set the starting instance offset.
+
+        :param offset: The instance offset.
+        """
+        self.start_index = offset
+
     def get_global_indices(self) -> np.ndarray:
+        """
+        Get the shuffled instance indices.
+        """
         if self.global_indices_file is None and self.work_dir is not None:
             self._build_and_save_global_indices()
 
@@ -117,6 +128,11 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
             return self._build_global_indices()
 
     def reshuffle(self, epoch: int):
+        """
+        Reshuffle for the given epoch.
+
+        :param epoch: The epoch number.
+        """
         self.epoch = epoch
         if self.work_dir is not None:
             self._build_and_save_global_indices()
