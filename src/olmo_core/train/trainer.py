@@ -1,10 +1,10 @@
+import contextlib
 import logging
 import math
 from collections import defaultdict
-from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, Generator, List, Literal, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -441,7 +441,7 @@ class Trainer:
 
         return ce_loss, z_loss, logits
 
-    def _train_micro_batch(
+    def _get_micro_batch_loss(
         self, micro_batch: Dict[str, Any], batch_num_tokens_for_loss: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         # NOTE: we use the "sum" loss reduction and then divide by 'batch_num_tokens_for_loss'
@@ -467,7 +467,24 @@ class Trainer:
 
         return loss, ce_loss, z_loss
 
-    def _forward_backward(
+    @contextlib.contextmanager
+    def _train_microbatch_context(
+        self, micro_batch_idx: int, num_micro_batches: int
+    ) -> Generator[None, None, None]:
+        with contextlib.ExitStack() as stack:
+            if isinstance(self.model, DDP) and micro_batch_idx != num_micro_batches - 1:
+                # For DDP, only sync gradients on the final micro batch.
+                stack.enter_context(self.model.no_sync())
+            yield
+
+    @contextlib.contextmanager
+    def _model_forward_context(self) -> Generator[None, None, None]:
+        with contextlib.ExitStack() as stack:
+            if self.autocast_precision is not None:
+                stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
+            yield
+
+    def _model_forward_backward(
         self, batch: Dict[str, Any]
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         # Generate labels, calculate how many tokens are going to be use in the loss.
@@ -488,19 +505,10 @@ class Trainer:
         )
 
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
-            # setup sync context for DDP for all micro-batches except the last
-            grad_sync_context = nullcontext
-            if isinstance(self.model, DDP) and micro_batch_idx != num_micro_batches - 1:
-                grad_sync_context = self.model.no_sync
-
-            with grad_sync_context():
-                with torch.autocast(
-                    self.device.type,
-                    enabled=self.autocast_precision is not None,
-                    dtype=self.autocast_precision,
-                ):
+            with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
+                with self._model_forward_context():
                     # Run forward pass.
-                    loss, ce_loss, z_loss = self._train_micro_batch(
+                    loss, ce_loss, z_loss = self._get_micro_batch_loss(
                         micro_batch, batch_num_tokens_for_loss
                     )
 
@@ -529,7 +537,7 @@ class Trainer:
         batch = move_to_device(batch, self.device)
 
         # Run forward-backward pass.
-        ce_batch_loss, z_batch_loss = self._forward_backward(batch)
+        ce_batch_loss, z_batch_loss = self._model_forward_backward(batch)
         self.record_metric(TRAIN_CE_LOSS_METRIC, ce_batch_loss, ReduceType.mean)
         if z_batch_loss is not None:
             self.record_metric(TRAIN_Z_LOSS_METRIC, z_batch_loss, ReduceType.mean)
