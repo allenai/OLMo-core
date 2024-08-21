@@ -1,4 +1,8 @@
-from olmo_core.train.utils import prepare_training_environment
+"""
+Example of how to train a transformer language model.
+"""
+
+from olmo_core.train import prepare_training_environment
 
 BACKEND = "nccl"
 

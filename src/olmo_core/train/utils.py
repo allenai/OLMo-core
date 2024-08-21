@@ -3,23 +3,31 @@ import random
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
 import torch.nn.functional as F
 import torch.version
 from packaging.version import parse as parse_version
 
 from ..config import Config, StrEnum
-from ..distributed.utils import get_world_size, init_distributed, is_distributed
-from ..io import add_cached_path_clients
-from ..utils import prepare_cli_environment
+from ..distributed.utils import get_world_size, is_distributed
 
 log = logging.getLogger(__name__)
+
+
+class DurationUnit(StrEnum):
+    steps = "steps"
+    epochs = "epochs"
+    tokens = "tokens"
+
+
+@dataclass
+class Duration:
+    value: int
+    unit: DurationUnit
 
 
 class ReduceType(StrEnum):
@@ -188,34 +196,3 @@ def reduce_metrics(
             out[step][name] = item
 
     return out
-
-
-def prepare_training_environment(
-    backend: Optional[str] = "nccl", timeout: timedelta = timedelta(minutes=30)
-):
-    """
-    Prepare the environment for training, including setting up the distributed process group
-    for distributed training.
-
-    .. important::
-        This should be invoked at the very start of your training script, such as at the beginning
-        of the ``if __name__ == "__main__": ...`` block.
-
-    :param backend: The distributed backend to use, if any. Set to ``None`` for non-distributed training.
-    :param timeout: The timeout for initializing the distributed process group.
-    """
-    # Setting the mp start method to "spawn" avoids some data loader segfaults on LUMI.
-    try:
-        mp.set_start_method("spawn", force=True)
-    except RuntimeError as e:
-        print(f"failed to set multiprocessing start method: {e}")
-
-    # Initialize process group.
-    if backend is not None:
-        init_distributed(backend=backend, timeout=timeout)
-
-    # Configure logging, warning filters, exception hooks, and other CLI settings.
-    prepare_cli_environment()
-
-    # Add custom cached-path clients.
-    add_cached_path_clients()

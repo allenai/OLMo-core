@@ -12,8 +12,8 @@ from ..data.iterable_dataset import IterableDataset
 from ..utils import get_default_device
 from .callbacks import Callback
 from .checkpoint import Checkpointer
-from .duration import Duration, DurationUnit
 from .trainer import Trainer
+from .utils import Duration, DurationUnit
 
 
 @dataclass

@@ -30,8 +30,7 @@ from .callbacks import (
     SpeedMonitorCallback,
 )
 from .checkpoint import Checkpointer
-from .duration import Duration, DurationUnit
-from .utils import EnvRngStates, ReduceType, reduce_metrics
+from .utils import Duration, DurationUnit, EnvRngStates, ReduceType, reduce_metrics
 
 log = logging.getLogger(__name__)
 
