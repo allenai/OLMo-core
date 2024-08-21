@@ -7,13 +7,14 @@ from pathlib import Path
 from typing import Any, Dict, Generator, List, Literal, Optional, Tuple, Union
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 
 from ..aliases import PathOrStr
-from ..data import IterableDataset, MemMapDataset
+from ..data import DataCollator, IterableDataset, MemMapDataset
 from ..distributed.utils import get_fs_local_rank, get_world_size, is_distributed
 from ..exceptions import OLMoConfigurationError
 from ..io import normalize_path
@@ -60,9 +61,14 @@ class Trainer:
     The optimizer to use.
     """
 
-    train_loader: DataLoader[IterableDataset]
+    dataset: IterableDataset
     """
-    The training data loader.
+    The training dataset.
+    """
+
+    collator: DataCollator
+    """
+    The data collator.
     """
 
     device: torch.device
@@ -126,6 +132,21 @@ class Trainer:
     autocast_precision: Optional[torch.dtype] = None
     """
     Enable AMP with this data type.
+    """
+
+    dp_process_group: Optional[dist.ProcessGroup] = None
+    """
+    The distributed process group for all data parallel ranks.
+    """
+
+    data_loader_workers: int = 0
+    """
+    The number of data loading workers to use.
+    """
+
+    data_loader_prefetch_factor: Optional[int] = None
+    """
+    The number of batches to prefetch.
     """
 
     # Bookkeeping
@@ -201,15 +222,10 @@ class Trainer:
                 raise OLMoConfigurationError("trainer and dataset sequence length does not match")
 
     @property
-    def dataset(self) -> IterableDataset:
-        assert isinstance(self.train_loader.dataset, IterableDataset)
-        return self.train_loader.dataset
-
-    @property
     def rank_batch_size(self) -> int:
         if self._rank_batch_size is None:
-            assert self.global_batch_size % get_world_size() == 0
-            self._rank_batch_size = self.global_batch_size // get_world_size()
+            assert self.global_batch_size % get_world_size(self.dp_process_group) == 0
+            self._rank_batch_size = self.global_batch_size // get_world_size(self.dp_process_group)
         return self._rank_batch_size
 
     @property
@@ -290,7 +306,7 @@ class Trainer:
             global_train_tokens_seen_this_epoch=self.global_train_tokens_seen_this_epoch,
             global_train_examples_seen_this_epoch=self.global_train_examples_seen_this_epoch,
             epoch=self.epoch,
-            world_size=get_world_size(),
+            world_size=get_world_size(),  # global world size here on purpose
             train_sequence_length=self.train_sequence_length,
             rng=EnvRngStates.current_state().as_dict(),
         )
@@ -313,7 +329,7 @@ class Trainer:
         ]
         self.epoch = state_dict["epoch"]
 
-        if state_dict["world_size"] == get_world_size():
+        if state_dict["world_size"] == get_world_size():  # global world size here on purpose
             rng_state = EnvRngStates.from_dict(state_dict["rng"])
             if not rng_state.restore():
                 log.warning(
@@ -380,7 +396,10 @@ class Trainer:
                     raise RuntimeError(f"NaN loss encountered at step {step}")
 
         metrics: Dict[int, Dict[str, float]] = reduce_metrics(
-            self._metrics, self._metrics_reduce_type, self.device
+            self._metrics,
+            self._metrics_reduce_type,
+            self.device,
+            process_group=self.dp_process_group,
         )
         self._metrics.clear()
         self._metrics_reduce_type.clear()
@@ -559,17 +578,31 @@ class Trainer:
         # Optimizer steps.
         self.optim.step()
 
+    def _get_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.dataset,
+            batch_size=self.rank_batch_size,
+            drop_last=True,
+            collate_fn=self.collator,
+            num_workers=self.data_loader_workers,
+            pin_memory=True,
+            prefetch_factor=self.data_loader_prefetch_factor,
+            persistent_workers=False,
+            timeout=0,
+        )
+
     def _fit_epoch(self):
         # Prepare dataset.
         self.dataset.set_start_offset(self.global_train_examples_seen_this_epoch)
         self.dataset.rank_batch_size = self.rank_batch_size
         self.dataset.work_dir = self.work_dir
+        self.dataset.dp_process_group = self.dp_process_group
         self.dataset.reshuffle(self.epoch)
 
         for callback in self.callbacks:
             callback.pre_epoch()
 
-        for batch in self.train_loader:
+        for batch in self._get_dataloader():
             # Bookkeeping.
             # NOTE: To track the global batch size / number of tokens per batch we make the
             # assumption that all batches see the same number of tokens, which should always be

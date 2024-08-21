@@ -120,6 +120,7 @@ def reduce_metrics(
     metrics: Dict[int, Dict[str, torch.Tensor]],
     metrics_reduce_type: Dict[str, Optional[ReduceType]],
     device: torch.device,
+    process_group: Optional[dist.ProcessGroup] = None,
 ) -> Dict[int, Dict[str, float]]:
     out: Dict[int, Dict[str, float]] = defaultdict(dict)
 
@@ -182,8 +183,8 @@ def reduce_metrics(
         [F.pad(t, (0, max_num_max_metrics - t.numel()), value=0.0) for t in max_metric_values]
     )
 
-    dist.reduce(all_sum_metrics, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(all_max_metrics, 0, op=dist.ReduceOp.MAX)
+    dist.reduce(all_sum_metrics, 0, op=dist.ReduceOp.SUM, group=process_group)
+    dist.reduce(all_max_metrics, 0, op=dist.ReduceOp.MAX, group=process_group)
 
     for i, step in enumerate(sorted(metrics.keys())):
         step_sum_metric_names = sum_metric_names[i]

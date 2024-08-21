@@ -1,15 +1,19 @@
 import logging
 import math
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Sequence, Union
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.utils.data
 
 from ..aliases import PathOrStr
 from ..distributed.utils import barrier, get_fs_local_rank, get_rank, get_world_size
 from ..utils import roundrobin, threaded_generator
+
+if TYPE_CHECKING:
+    from .memmap_dataset import MemMapDataset
 
 __all__ = ["IterableDataset"]
 
@@ -25,7 +29,9 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
 
     def __init__(
         self,
-        dataset: Union[Sequence[List[int]], Sequence[torch.Tensor], Sequence[Dict[str, Any]]],
+        dataset: Union[
+            Sequence[List[int]], Sequence[torch.Tensor], Sequence[Dict[str, Any]], MemMapDataset
+        ],
         *,
         seed: int = 0,
         epoch: int = 0,
@@ -33,12 +39,10 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
         start_index: int = 0,
         max_examples: Optional[int] = None,
         shuffle: bool = True,
-        drop_last: bool = False,
-        world_size: Optional[int] = None,
-        rank: Optional[int] = None,
-        fs_local_rank: Optional[int] = None,
+        drop_last: bool = True,
         work_dir: Optional[PathOrStr] = None,
         num_threads: Optional[int] = None,
+        dp_process_group: Optional[dist.ProcessGroup] = None,
     ):
         self.dataset = dataset
         self.seed = seed
@@ -47,29 +51,38 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
         self.max_examples = max_examples
         self.shuffle = shuffle
         self.drop_last = drop_last
-        self.rank = rank if rank is not None else get_rank()
-        self.fs_local_rank = fs_local_rank if fs_local_rank is not None else get_fs_local_rank()
-        self.world_size = world_size if world_size is not None else get_world_size()
-        # If the dataset length is evenly divisible by # of replicas, then there
-        # is no need to drop any data, since the dataset will be split equally.
-        if self.drop_last and len(self.dataset) % self.world_size != 0:  # type: ignore[arg-type]
-            # Split to nearest available length that is evenly divisible by world size.
-            # This is to ensure each rank receives the same amount of data.
-            num_samples = math.ceil(
-                (len(self.dataset) - self.world_size) / self.world_size  # type: ignore[arg-type]
-            )
-        else:
-            num_samples = math.ceil(len(self.dataset) / self.world_size)  # type: ignore[arg-type]
-        self.total_size = num_samples * self.world_size
         self.num_threads = num_threads
         self.rank_batch_size = rank_batch_size
         self.global_indices_file: Optional[Path] = None
         self.work_dir = work_dir
+        self.dp_process_group = dp_process_group
+
+    @property
+    def dp_world_size(self) -> int:
+        return get_world_size(self.dp_process_group)
+
+    @property
+    def dp_rank(self) -> int:
+        return get_rank(self.dp_process_group)
+
+    @property
+    def total_size(self) -> int:
+        # If the dataset length is evenly divisible by # of replicas, then there
+        # is no need to drop any data, since the dataset will be split equally.
+        if self.drop_last and len(self.dataset) % self.dp_world_size != 0:  # type: ignore[arg-type]
+            # Split to nearest available length that is evenly divisible by world size.
+            # This is to ensure each rank receives the same amount of data.
+            num_samples = math.ceil(
+                (len(self.dataset) - self.dp_world_size) / self.dp_world_size  # type: ignore[arg-type]
+            )
+        else:
+            num_samples = math.ceil(len(self.dataset) / self.dp_world_size)  # type: ignore[arg-type]
+        return num_samples
 
     def _build_and_save_global_indices(self):
         assert self.work_dir is not None
         self.global_indices_file = Path(self.work_dir) / "global_indices.npy"
-        if self.fs_local_rank == 0:
+        if get_fs_local_rank() == 0:
             log.info("Saving global data order indices...")
             self.global_indices_file.parent.mkdir(parents=True, exist_ok=True)
             global_indices = self._build_global_indices()
@@ -142,16 +155,16 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
 
         # Truncate to max_examples.
         if self.max_examples is not None:
-            assert self.max_examples % self.world_size == 0
+            assert self.max_examples % self.dp_world_size == 0
             indices = indices[: self.max_examples]
 
         # Start at the specified index.
         if self.start_index > 0:
-            #  assert self.start_index % self.world_size == 0
+            #  assert self.start_index % self.dp_world_size == 0
             indices = indices[self.start_index :]
 
         # Slice indices by rank to avoid duplicates.
-        indices = indices[self.rank : self.total_size : self.world_size]
+        indices = indices[self.dp_rank : self.total_size : self.dp_world_size]
 
         # Separate from data loading workers (which use multiprocessing), we also have the option
         # to use multi-threading (within workers).

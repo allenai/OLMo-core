@@ -5,7 +5,7 @@ import torch.multiprocessing as mp
 
 from ..distributed.utils import init_distributed
 from ..io import add_cached_path_clients
-from ..utils import prepare_cli_environment
+from ..utils import prepare_cli_environment, seed_all
 from .config import TrainerConfig
 from .trainer import Trainer
 
@@ -13,7 +13,7 @@ __all__ = ["prepare_training_environment", "TrainerConfig", "Trainer"]
 
 
 def prepare_training_environment(
-    backend: Optional[str] = "nccl", timeout: timedelta = timedelta(minutes=30)
+    seed: int = 0, backend: Optional[str] = "nccl", timeout: timedelta = timedelta(minutes=30)
 ):
     """
     Prepare the environment for training, including setting up the distributed process group
@@ -23,6 +23,7 @@ def prepare_training_environment(
         This should be invoked at the very start of your training script, such as at the beginning
         of the ``if __name__ == "__main__": ...`` block.
 
+    :param seed: The seed to initialize RNG states with.
     :param backend: The distributed backend to use, if any. Set to ``None`` for non-distributed training.
     :param timeout: The timeout for initializing the distributed process group.
     """
@@ -41,3 +42,6 @@ def prepare_training_environment(
 
     # Add custom cached-path clients.
     add_cached_path_clients()
+
+    # Init RNG states.
+    seed_all(seed)

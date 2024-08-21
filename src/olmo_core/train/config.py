@@ -2,13 +2,13 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from torch.optim import Optimizer
-from torch.utils.data import DataLoader
 
 from ..aliases import PathOrStr
 from ..config import Config
-from ..data.iterable_dataset import IterableDataset
+from ..data import DataCollator, IterableDataset
 from ..utils import get_default_device
 from .callbacks import Callback
 from .checkpoint import Checkpointer
@@ -36,15 +36,18 @@ class TrainerConfig(Config):
     fused_loss: bool = False
     z_loss_multiplier: Optional[float] = None
     autocast_precision: Optional[torch.dtype] = None
+    dp_process_group: Optional[dist.ProcessGroup] = None
+    data_loader_workers: int = 0
+    data_loader_prefetch_factor: Optional[int] = None
 
     def build(
-        self, model: nn.Module, optim: Optimizer, train_loader: DataLoader[IterableDataset]
+        self, model: nn.Module, optim: Optimizer, dataset: IterableDataset, collator: DataCollator
     ) -> Trainer:
         """
         Build the corresponding trainer.
         """
         kwargs = self.as_dict(recurse=False)
-        return Trainer(model=model, optim=optim, train_loader=train_loader, **kwargs)
+        return Trainer(model=model, optim=optim, dataset=dataset, collator=collator, **kwargs)
 
     def with_callback(self, callback: Callback) -> "TrainerConfig":
         """

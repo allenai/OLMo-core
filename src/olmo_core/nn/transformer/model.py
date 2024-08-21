@@ -1,8 +1,10 @@
+import logging
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Literal, Optional, Sequence, Union
 
 import torch
 import torch.nn as nn
+from torch.distributed import DeviceMesh
 
 from olmo_core.config import Config
 from olmo_core.utils import get_cumulative_document_lengths, has_flash_attn
@@ -13,8 +15,12 @@ from ..feed_forward import FeedForwardConfig
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..rope import RoPEConfig, RoPEType
 from .block import TransformerBlockConfig, TransformerBlockType
+from .utils import apply_activation_checkpointing_to_transformer_block
 
 __all__ = ["TransformerConfig", "Transformer"]
+
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -109,7 +115,9 @@ class TransformerConfig(Config):
         return num_params
 
     @classmethod
-    def llama2_271M(cls, vocab_size: int, fused_ops: bool = False) -> "TransformerConfig":
+    def llama2_271M(
+        cls, vocab_size: int, fused_ops: bool = False, dtype: torch.dtype = torch.float32
+    ) -> "TransformerConfig":
         """
         A 271M Llama2 model config.
         """
@@ -120,10 +128,13 @@ class TransformerConfig(Config):
             n_heads=8,
             rope_theta=10_000,
             fused_ops=fused_ops,
+            dtype=dtype,
         )
 
     @classmethod
-    def llama2_1B(cls, vocab_size: int, fused_ops: bool = False) -> "TransformerConfig":
+    def llama2_1B(
+        cls, vocab_size: int, fused_ops: bool = False, dtype: torch.dtype = torch.float32
+    ) -> "TransformerConfig":
         """
         A 1B Llama2 model config.
         """
@@ -134,10 +145,13 @@ class TransformerConfig(Config):
             n_heads=16,
             rope_theta=10_000,
             fused_ops=fused_ops,
+            dtype=dtype,
         )
 
     @classmethod
-    def llama2_7B(cls, vocab_size: int, fused_ops: bool = False) -> "TransformerConfig":
+    def llama2_7B(
+        cls, vocab_size: int, fused_ops: bool = False, dtype: torch.dtype = torch.float32
+    ) -> "TransformerConfig":
         """
         A 7B Llama2 model config.
         """
@@ -148,10 +162,13 @@ class TransformerConfig(Config):
             n_heads=32,
             rope_theta=10_000,
             fused_ops=fused_ops,
+            dtype=dtype,
         )
 
     @classmethod
-    def llama2_13B(cls, vocab_size: int, fused_ops: bool = False) -> "TransformerConfig":
+    def llama2_13B(
+        cls, vocab_size: int, fused_ops: bool = False, dtype: torch.dtype = torch.float32
+    ) -> "TransformerConfig":
         """
         A 7B Llama2 model config.
         """
@@ -162,10 +179,13 @@ class TransformerConfig(Config):
             n_heads=40,
             rope_theta=10_000,
             fused_ops=fused_ops,
+            dtype=dtype,
         )
 
     @classmethod
-    def llama2_26B(cls, vocab_size: int, fused_ops: bool = False) -> "TransformerConfig":
+    def llama2_26B(
+        cls, vocab_size: int, fused_ops: bool = False, dtype: torch.dtype = torch.float32
+    ) -> "TransformerConfig":
         """
         A 26B Llama2 model config.
         """
@@ -176,10 +196,13 @@ class TransformerConfig(Config):
             n_heads=40,
             rope_theta=10_000,
             fused_ops=fused_ops,
+            dtype=dtype,
         )
 
     @classmethod
-    def llama2_70B(cls, vocab_size: int, fused_ops: bool = False) -> "TransformerConfig":
+    def llama2_70B(
+        cls, vocab_size: int, fused_ops: bool = False, dtype: torch.dtype = torch.float32
+    ) -> "TransformerConfig":
         """
         A 70B Llama2 model config.
         """
@@ -193,10 +216,13 @@ class TransformerConfig(Config):
             hidden_size_multiplier=1.3,
             hidden_size_multiple_of=4096,
             fused_ops=fused_ops,
+            dtype=dtype,
         )
 
     @classmethod
-    def llama3_8B(cls, vocab_size: int, fused_ops: bool = False) -> "TransformerConfig":
+    def llama3_8B(
+        cls, vocab_size: int, fused_ops: bool = False, dtype: torch.dtype = torch.float32
+    ) -> "TransformerConfig":
         """
         An 8B Llama3 model config.
         """
@@ -210,10 +236,13 @@ class TransformerConfig(Config):
             hidden_size_multiplier=1.3,
             hidden_size_multiple_of=1024,
             fused_ops=fused_ops,
+            dtype=dtype,
         )
 
     @classmethod
-    def llama3_70B(cls, vocab_size: int, fused_ops: bool = False) -> "TransformerConfig":
+    def llama3_70B(
+        cls, vocab_size: int, fused_ops: bool = False, dtype: torch.dtype = torch.float32
+    ) -> "TransformerConfig":
         """
         A 70B Llama3 model config.
         """
@@ -227,10 +256,13 @@ class TransformerConfig(Config):
             hidden_size_multiplier=1.3,
             hidden_size_multiple_of=4096,
             fused_ops=fused_ops,
+            dtype=dtype,
         )
 
     @classmethod
-    def llama3_405B(cls, vocab_size: int, fused_ops: bool = False) -> "TransformerConfig":
+    def llama3_405B(
+        cls, vocab_size: int, fused_ops: bool = False, dtype: torch.dtype = torch.float32
+    ) -> "TransformerConfig":
         """
         A 405B Llama3 model config.
         """
@@ -244,6 +276,7 @@ class TransformerConfig(Config):
             hidden_size_multiplier=1.2,
             hidden_size_multiple_of=4096,
             fused_ops=fused_ops,
+            dtype=dtype,
         )
 
     @classmethod
@@ -259,6 +292,7 @@ class TransformerConfig(Config):
         hidden_size_multiple_of: int = 256,
         hidden_size_multiplier: Optional[float] = None,
         fused_ops: bool = False,
+        dtype: torch.dtype = torch.float32,
     ) -> "TransformerConfig":
         """
         Create a Llama-like configuration.
@@ -266,6 +300,7 @@ class TransformerConfig(Config):
         :param hidden_size_multiple_of: Ensure the FFN hidden size is a multiple of this value.
         :param hidden_size_multiplier: Custom multiplier for the FFN hidden size.
         :param fused_ops: Use fused operations where possible.
+        :param dtype: The default data type to use for all parameters.
         """
         # Resolve hidden size of FFN in blocks.
         hidden_size = int(8 * d_model / 3)
@@ -277,7 +312,10 @@ class TransformerConfig(Config):
 
         # Configure global layer norm.
         layer_norm = LayerNormConfig(
-            name=LayerNormType.fused_rms if fused_ops else LayerNormType.rms, eps=1e-5, bias=False
+            name=LayerNormType.fused_rms if fused_ops else LayerNormType.rms,
+            eps=1e-5,
+            bias=False,
+            #  dtype=dtype,  # TODO: allow low precision LN?
         )
 
         # Decide on attention/rope implementations.
@@ -297,8 +335,9 @@ class TransformerConfig(Config):
                 bias=False,
                 rope=RoPEConfig(name=rope_type, theta=rope_theta),
                 use_flash=has_flash_attn(),
+                dtype=dtype,
             ),
-            feed_forward=FeedForwardConfig(hidden_size=hidden_size, bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype),
             layer_norm=layer_norm,
         )
 
@@ -309,6 +348,7 @@ class TransformerConfig(Config):
             block=block,
             layer_norm=layer_norm,
             bias=False,
+            dtype=dtype,
         )
 
 
@@ -407,3 +447,100 @@ class Transformer(nn.Module):
         h = self.norm(h) if self.norm is not None else h
         out = self.w_out(h).float() if self.w_out is not None else h
         return out
+
+    def apply_activation_checkpointing(
+        self, mode: Literal["full", "selective"], selective_option: Union[Literal["op"], int] = "op"
+    ):
+        """
+        Apply activation checkpointing to the model.
+
+        :param mode: Either "full" for apply AC to each block, or "selective" which depends on
+            the value of ``selective_option``.
+        :param selective_option: If "op", AC is applied individual operations. If an int, it's
+            applied to each block with this frequency.
+        """
+        for block_id, block in self.blocks.named_children():
+            block = apply_activation_checkpointing_to_transformer_block(
+                block, mode, selective_option
+            )
+            self.blocks.register_module(block_id, block)
+
+        log.info(f"Applied {mode} activation checkpointing to the model")
+
+    def apply_compile(self):
+        """
+        Apply ``torch.compile()`` to each transformer block, which makes compilation efficient
+        due to repeated structure.
+
+        .. warning::
+            This should be called after :meth:`apply_activation_checkpointing()` but before
+            :meth:`apply_fsdp2()` or :meth:`apply_ddp2()`.
+        """
+        for block_id, block in self.blocks.named_children():
+            block = torch.compile(block, fullgraph=False)
+            self.blocks.register_module(block_id, block)  # type: ignore
+
+        log.info("Compiling each transformer block with torch.compile")
+
+    def apply_fsdp2(
+        self,
+        dp_mesh: Optional[DeviceMesh] = None,
+        param_dtype: Optional[torch.dtype] = None,
+        reduce_dtype: torch.dtype = torch.float32,
+        pp_enabled: bool = False,
+    ):
+        """
+        Apply FSDP2 to the model.
+
+        :param dp_mesh: The data parallel device mesh.
+        :param param_dtype: The data type to materialize params in. Defaults to the current param dtype.
+        :param reduce_dtype: The data type for gradient reduction.
+        :pp_enabled: If pipeline parallelism is also enabled.
+        """
+        # Adapted from
+        # https://github.com/pytorch/torchtitan/blob/90c889e972b56b9faadebbb78fc985dedc537ed9/torchtitan/parallelisms/parallelize_llama.py#L289
+
+        from torch.distributed._composable.fsdp import MixedPrecisionPolicy, fully_shard
+
+        mp_policy = MixedPrecisionPolicy(
+            param_dtype=param_dtype or self.w_out.weight.dtype, reduce_dtype=reduce_dtype
+        )
+        fsdp_config = dict(mesh=dp_mesh, mp_policy=mp_policy)
+
+        for block_id, block in enumerate(self.blocks):
+            if pp_enabled:
+                # For PP, do not reshard after forward to avoid per-microbatch
+                # all-gathers, which can be expensive and non-overlapped
+                reshard_after_forward = False
+            else:
+                # As an optimization, do not reshard after forward for the last
+                # transformer block since FSDP would prefetch it immediately
+                reshard_after_forward = int(block_id) < len(self.blocks) - 1
+            fully_shard(block, reshard_after_forward=reshard_after_forward, **fsdp_config)
+
+        fully_shard(self, reshard_after_forward=not pp_enabled, **fsdp_config)
+
+        log.info("Applied FSDP2 to the model")
+
+    def apply_ddp2(
+        self,
+        dp_mesh: Optional[DeviceMesh] = None,
+        compile_enabled: bool = False,
+        autograd_compile_enabled: bool = False,
+    ):
+        """
+        Apply DDP to the model.
+        """
+        from torch.distributed._composable.replicate import replicate
+
+        # Adapted from
+        # https://github.com/pytorch/torchtitan/blob/90c889e972b56b9faadebbb78fc985dedc537ed9/torchtitan/parallelisms/parallelize_llama.py#L328
+        if compile_enabled:
+            if autograd_compile_enabled:
+                torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
+            else:
+                torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
+
+        replicate(self, device_mesh=dp_mesh, bucket_cap_mb=100)
+
+        log.info("Applied DDP to the model")
