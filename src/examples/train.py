@@ -44,7 +44,7 @@ SAVE_FOLDER = "/tmp/run01"
 DATA_FILES = "/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy"
 SEQUENCE_LENGTH = 1024
 BATCH_SIZE = 256
-DEVICE_MICRO_BATCH_SIZE = 32
+DEVICE_MICRO_BATCH_SIZE = 16
 SEED = 3423
 
 
