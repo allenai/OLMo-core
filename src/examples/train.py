@@ -106,5 +106,7 @@ def main():
 
 if __name__ == "__main__":
     prepare_training_environment(seed=SEED, backend="nccl")
-    main()
-    teardown_training_environment()
+    try:
+        main()
+    finally:
+        teardown_training_environment()

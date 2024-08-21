@@ -81,18 +81,31 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
 
     def _build_and_save_global_indices(self):
         assert self.work_dir is not None
-        self.global_indices_file = Path(self.work_dir) / "global_indices.npy"
+        self.global_indices_file = (
+            Path(self.work_dir) / f"global_indices_seed{self.seed}_epoch{self.epoch}.npy"
+        )
         if get_fs_local_rank() == 0:
-            log.info("Saving global data order indices...")
-            self.global_indices_file.parent.mkdir(parents=True, exist_ok=True)
-            global_indices = self._build_global_indices()
-            global_indices_mmap = np.memmap(
-                self.global_indices_file, dtype=np.uint32, mode="w+", shape=(len(global_indices),)
-            )
-            global_indices_mmap[:] = global_indices
-            global_indices_mmap.flush()
-            del global_indices_mmap
-            log.info("Global data order indices saved to '%s'", self.global_indices_file)
+            if self.global_indices_file.is_file():
+                log.info(
+                    f"Using existing global indices file for seed {self.seed} and epoch {self.epoch} "
+                    f"at '{self.global_indices_file}'"
+                )
+            else:
+                log.info(
+                    f"Saving global data order indices for seed {self.seed} and epoch {self.epoch}..."
+                )
+                self.global_indices_file.parent.mkdir(parents=True, exist_ok=True)
+                global_indices = self._build_global_indices()
+                global_indices_mmap = np.memmap(
+                    self.global_indices_file,
+                    dtype=np.uint32,
+                    mode="w+",
+                    shape=(len(global_indices),),
+                )
+                global_indices_mmap[:] = global_indices
+                global_indices_mmap.flush()
+                del global_indices_mmap
+                log.info(f"Global data order indices saved to '{self.global_indices_file}'")
         barrier()
 
     def _build_global_indices(self) -> np.ndarray:
