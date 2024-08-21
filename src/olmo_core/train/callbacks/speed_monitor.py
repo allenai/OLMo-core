@@ -34,7 +34,7 @@ class SpeedMonitorCallback(Callback):
             # unusually long.
             return
 
-        self._step_start_time = time.monotonic()
+        self._step_start_time = time.perf_counter()
         self._step_tokens = batch["input_ids"].numel()
         self._total_steps += 1
         self._total_tokens += self._step_tokens
@@ -44,11 +44,11 @@ class SpeedMonitorCallback(Callback):
             # Now we can start recording.
             self._total_steps = 0
             self._total_tokens = 0
-            self._start_time = time.monotonic()
+            self._start_time = time.perf_counter()
             self._first_step = False
 
-        step_time = time.monotonic() - self._step_start_time
-        total_time = time.monotonic() - self._start_time
+        step_time = time.perf_counter() - self._step_start_time
+        total_time = time.perf_counter() - self._start_time
         self.trainer.record_metric(
             "throughput/total_tokens", torch.tensor(self.trainer.global_train_tokens_seen)
         )
