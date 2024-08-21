@@ -12,6 +12,7 @@ from typing import Tuple
 import torch
 
 from olmo_core.data import DataCollator, IterableDataset, MemMapDataset
+from olmo_core.nn.rope import RoPEType
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.optim import CosWithWarmup
 from olmo_core.train import (
@@ -34,6 +35,7 @@ PAD_TOKEN_ID = 50256
 # Model settings.
 COMPILE = False
 FUSED_OPS = not COMPILE and has_flash_attn()
+ROPE_TYPE = RoPEType.default if COMPILE else None
 
 # Trainer settings.
 SAVE_FOLDER = "/tmp/run01"
@@ -44,9 +46,9 @@ SEED = 3423
 
 
 def build_model() -> Transformer:
-    model = TransformerConfig.llama2_271M(VOCAB_SIZE, fused_ops=FUSED_OPS and not COMPILE).build(
-        init_device="meta"
-    )
+    model = TransformerConfig.llama2_271M(
+        VOCAB_SIZE, fused_ops=FUSED_OPS, rope_type=ROPE_TYPE
+    ).build(init_device="meta")
 
     # Activation checkpointing:
     #  model.apply_activation_checkpointing("full")

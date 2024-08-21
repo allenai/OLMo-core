@@ -115,26 +115,16 @@ class TransformerConfig(Config):
         return num_params
 
     @classmethod
-    def llama2_271M(
-        cls, vocab_size: int, fused_ops: bool = False, dtype: torch.dtype = torch.float32
-    ) -> "TransformerConfig":
+    def llama2_271M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 271M Llama2 model config.
         """
         return cls.llama_like(
-            d_model=1024,
-            vocab_size=vocab_size,
-            n_layers=16,
-            n_heads=8,
-            rope_theta=10_000,
-            fused_ops=fused_ops,
-            dtype=dtype,
+            d_model=1024, vocab_size=vocab_size, n_layers=16, n_heads=8, rope_theta=10_000, **kwargs
         )
 
     @classmethod
-    def llama2_1B(
-        cls, vocab_size: int, fused_ops: bool = False, dtype: torch.dtype = torch.float32
-    ) -> "TransformerConfig":
+    def llama2_1B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 1B Llama2 model config.
         """
@@ -144,14 +134,11 @@ class TransformerConfig(Config):
             n_layers=18,
             n_heads=16,
             rope_theta=10_000,
-            fused_ops=fused_ops,
-            dtype=dtype,
+            **kwargs,
         )
 
     @classmethod
-    def llama2_7B(
-        cls, vocab_size: int, fused_ops: bool = False, dtype: torch.dtype = torch.float32
-    ) -> "TransformerConfig":
+    def llama2_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 7B Llama2 model config.
         """
@@ -161,14 +148,11 @@ class TransformerConfig(Config):
             n_layers=32,
             n_heads=32,
             rope_theta=10_000,
-            fused_ops=fused_ops,
-            dtype=dtype,
+            **kwargs,
         )
 
     @classmethod
-    def llama2_13B(
-        cls, vocab_size: int, fused_ops: bool = False, dtype: torch.dtype = torch.float32
-    ) -> "TransformerConfig":
+    def llama2_13B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 7B Llama2 model config.
         """
@@ -178,14 +162,11 @@ class TransformerConfig(Config):
             n_layers=40,
             n_heads=40,
             rope_theta=10_000,
-            fused_ops=fused_ops,
-            dtype=dtype,
+            **kwargs,
         )
 
     @classmethod
-    def llama2_26B(
-        cls, vocab_size: int, fused_ops: bool = False, dtype: torch.dtype = torch.float32
-    ) -> "TransformerConfig":
+    def llama2_26B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 26B Llama2 model config.
         """
@@ -195,14 +176,11 @@ class TransformerConfig(Config):
             n_layers=80,
             n_heads=40,
             rope_theta=10_000,
-            fused_ops=fused_ops,
-            dtype=dtype,
+            **kwargs,
         )
 
     @classmethod
-    def llama2_70B(
-        cls, vocab_size: int, fused_ops: bool = False, dtype: torch.dtype = torch.float32
-    ) -> "TransformerConfig":
+    def llama2_70B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 70B Llama2 model config.
         """
@@ -215,14 +193,11 @@ class TransformerConfig(Config):
             rope_theta=10_000,
             hidden_size_multiplier=1.3,
             hidden_size_multiple_of=4096,
-            fused_ops=fused_ops,
-            dtype=dtype,
+            **kwargs,
         )
 
     @classmethod
-    def llama3_8B(
-        cls, vocab_size: int, fused_ops: bool = False, dtype: torch.dtype = torch.float32
-    ) -> "TransformerConfig":
+    def llama3_8B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         An 8B Llama3 model config.
         """
@@ -235,14 +210,11 @@ class TransformerConfig(Config):
             rope_theta=500_000,
             hidden_size_multiplier=1.3,
             hidden_size_multiple_of=1024,
-            fused_ops=fused_ops,
-            dtype=dtype,
+            **kwargs,
         )
 
     @classmethod
-    def llama3_70B(
-        cls, vocab_size: int, fused_ops: bool = False, dtype: torch.dtype = torch.float32
-    ) -> "TransformerConfig":
+    def llama3_70B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 70B Llama3 model config.
         """
@@ -255,13 +227,14 @@ class TransformerConfig(Config):
             rope_theta=500_000,
             hidden_size_multiplier=1.3,
             hidden_size_multiple_of=4096,
-            fused_ops=fused_ops,
-            dtype=dtype,
+            **kwargs,
         )
 
     @classmethod
     def llama3_405B(
-        cls, vocab_size: int, fused_ops: bool = False, dtype: torch.dtype = torch.float32
+        cls,
+        vocab_size: int,
+        **kwargs,
     ) -> "TransformerConfig":
         """
         A 405B Llama3 model config.
@@ -275,8 +248,7 @@ class TransformerConfig(Config):
             rope_theta=500_000,
             hidden_size_multiplier=1.2,
             hidden_size_multiple_of=4096,
-            fused_ops=fused_ops,
-            dtype=dtype,
+            **kwargs,
         )
 
     @classmethod
@@ -289,9 +261,11 @@ class TransformerConfig(Config):
         n_heads: int,
         n_kv_heads: Optional[int] = None,
         rope_theta: int = 500_000,
+        rope_type: Optional[RoPEType] = None,
         hidden_size_multiple_of: int = 256,
         hidden_size_multiplier: Optional[float] = None,
         fused_ops: bool = False,
+        use_flash: Optional[bool] = None,
         dtype: torch.dtype = torch.float32,
     ) -> "TransformerConfig":
         """
@@ -300,6 +274,7 @@ class TransformerConfig(Config):
         :param hidden_size_multiple_of: Ensure the FFN hidden size is a multiple of this value.
         :param hidden_size_multiplier: Custom multiplier for the FFN hidden size.
         :param fused_ops: Use fused operations where possible.
+        :param use_flash: Use flash-attn.
         :param dtype: The default data type to use for all parameters.
         """
         # Resolve hidden size of FFN in blocks.
@@ -320,10 +295,15 @@ class TransformerConfig(Config):
 
         # Decide on attention/rope implementations.
         att_type = AttentionType.default
-        rope_type = RoPEType.complex
-        if fused_ops and n_kv_heads is None:  # fused attention not compatible with MQA/GQA.
-            att_type = AttentionType.fused
-            rope_type = RoPEType.fused
+        if rope_type is None:
+            if fused_ops and n_kv_heads is None:  # fused attention not compatible with MQA/GQA.
+                att_type = AttentionType.fused
+                rope_type = RoPEType.fused
+            else:
+                rope_type = RoPEType.complex
+
+        if use_flash is None and not fused_ops:
+            use_flash = has_flash_attn()
 
         # Configure blocks.
         block = TransformerBlockConfig(
@@ -334,7 +314,7 @@ class TransformerConfig(Config):
                 n_kv_heads=n_kv_heads,
                 bias=False,
                 rope=RoPEConfig(name=rope_type, theta=rope_theta),
-                use_flash=None if fused_ops else has_flash_attn(),
+                use_flash=use_flash,
                 dtype=dtype,
             ),
             feed_forward=FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype),
