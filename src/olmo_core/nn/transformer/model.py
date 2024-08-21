@@ -334,7 +334,7 @@ class TransformerConfig(Config):
                 n_kv_heads=n_kv_heads,
                 bias=False,
                 rope=RoPEConfig(name=rope_type, theta=rope_theta),
-                use_flash=has_flash_attn(),
+                use_flash=None if fused_ops else has_flash_attn(),
                 dtype=dtype,
             ),
             feed_forward=FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype),
