@@ -25,4 +25,4 @@ class GradClipperCallback(Callback):
             )
 
         # NOTE: grad norm is already reduced over ranks, so we set `reduce_type` to `None`.
-        self.trainer.record_metric("optim/total_grad_norm", grad_norm, reduce_type=None)
+        self.trainer.record_metric("optim/total grad norm", grad_norm, reduce_type=None)

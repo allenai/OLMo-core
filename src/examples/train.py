@@ -13,7 +13,7 @@ import torch
 
 from olmo_core.data import DataCollator, IterableDataset, MemMapDataset
 from olmo_core.nn.transformer import Transformer, TransformerConfig
-from olmo_core.optim import ConstantScheduler
+from olmo_core.optim import CosWithWarmup
 from olmo_core.train import (
     TrainerConfig,
     prepare_training_environment,
@@ -96,7 +96,7 @@ def main():
             autocast_precision=torch.bfloat16,
             save_overwrite=True,
         )
-        .with_callback(SchedulerCallback(scheduler=ConstantScheduler()))
+        .with_callback(SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=100)))
         .with_callback(GPUMemoryMonitorCallback())
         .with_callback(GradClipperCallback(max_grad_norm=1.0))
     ).build(model, optim, dataset, collator)

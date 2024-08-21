@@ -20,4 +20,4 @@ class SchedulerCallback(Callback):
             group["lr"] = self.scheduler.get_lr(
                 group["initial_lr"], self.step, self.trainer.max_steps
             )
-            self.trainer.record_metric(f"optim/learning_rate_group{group_idx}", group["lr"])
+            self.trainer.record_metric(f"optim/LR (group {group_idx})", group["lr"])

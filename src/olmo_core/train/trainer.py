@@ -35,9 +35,9 @@ from .utils import Duration, DurationUnit, EnvRngStates, ReduceType, reduce_metr
 
 log = logging.getLogger(__name__)
 
-TRAIN_CE_LOSS_METRIC = "train/ce_loss"
-TRAIN_PPL_METRIC = "train/ppl"
-TRAIN_Z_LOSS_METRIC = "train/z_loss"
+TRAIN_CE_LOSS_METRIC = "train/CE loss"
+TRAIN_PPL_METRIC = "train/PPL"
+TRAIN_Z_LOSS_METRIC = "train/Z loss"
 
 
 @dataclass
@@ -557,7 +557,7 @@ class Trainer:
     def _train_batch(self, batch: Dict[str, Any]):
         # Record how many instances are going to be skipped (masked out).
         if (instance_mask := batch.get("instance_mask")) is not None:
-            self.record_metric("train/masked_instances", (~instance_mask).sum(), ReduceType.sum)
+            self.record_metric("train/masked instances", (~instance_mask).sum(), ReduceType.sum)
 
         # Zero-gradients.
         self.optim.zero_grad(set_to_none=True)
