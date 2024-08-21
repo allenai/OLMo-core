@@ -21,6 +21,7 @@ from olmo_core.train import (
     teardown_training_environment,
 )
 from olmo_core.train.callbacks import (
+    CheckpointerCallback,
     GPUMemoryMonitorCallback,
     GradClipperCallback,
     SchedulerCallback,
@@ -106,6 +107,7 @@ def main():
         .with_callback(SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=100)))
         .with_callback(GPUMemoryMonitorCallback())
         .with_callback(GradClipperCallback(max_grad_norm=1.0))
+        .with_callback(CheckpointerCallback(save_interval=10_000, ephemeral_save_interval=250))
     ).build(model, optim, dataset, collator)
 
     trainer.fit()

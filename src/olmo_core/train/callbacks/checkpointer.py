@@ -80,6 +80,7 @@ class CheckpointerCallback(Callback):
             self._ephemeral_checkpoints.append(self._save_checkpoint())
             while len(self._ephemeral_checkpoints) > 1:
                 oldest_path = self._ephemeral_checkpoints.pop(0)
+                log.info(f"Removing old ephemeral checkpoint at '{oldest_path}'...")
                 if get_fs_local_rank() == 0:
                     clear_directory(oldest_path)
 
