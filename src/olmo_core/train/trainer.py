@@ -4,7 +4,7 @@ import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Literal, Optional, Tuple
+from typing import Any, Dict, Generator, List, Literal, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 
 from ..aliases import PathOrStr
 from ..data import IterableDataset, MemMapDataset
-from ..distributed.utils import get_fs_local_rank, get_world_size
+from ..distributed.utils import get_fs_local_rank, get_world_size, is_distributed
 from ..exceptions import OLMoConfigurationError
 from ..io import normalize_path
 from ..nn.functional.cross_entropy_loss import (
@@ -188,7 +188,7 @@ class Trainer:
             self.callbacks.append(CheckpointerCallback())
         if not has_speed_monitor_callback:
             self.callbacks.append(SpeedMonitorCallback())
-        if not has_gc_collector_callback:
+        if is_distributed() and not has_gc_collector_callback:
             self.callbacks.append(GarbageCollectorCallback())
 
         # Set pointer to self in all callbacks.
@@ -330,6 +330,10 @@ class Trainer:
     ):
         """
         Load a checkpoint.
+
+        :param dir: The path/URL to the checkpoint.
+        :param load_optimizer_state: Load optimizer state.
+        :param load_trainer_state: Load trainer state.
         """
         self.checkpointer.load(
             dir,
@@ -340,11 +344,18 @@ class Trainer:
         )
 
     def record_metric(
-        self, name: str, value: torch.Tensor, reduce_type: Optional[ReduceType] = None
+        self, name: str, value: Union[float, torch.Tensor], reduce_type: Optional[ReduceType] = None
     ):
         """
         Record a new metric for the current step.
+
+        :param name: The name of the metric.
+        :param value: The value of the metric.
+        :param reduce_type: Specifies how to reduce the metric across the distributed process group.
+            ``None`` means no reduction.
         """
+        if not isinstance(value, torch.Tensor):
+            value = torch.tensor(value)
         self._metrics[self.global_step][name] = value
         self._metrics_reduce_type[name] = reduce_type
 

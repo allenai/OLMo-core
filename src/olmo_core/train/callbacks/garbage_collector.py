@@ -12,7 +12,8 @@ class GarbageCollectorCallback(Callback):
     on a set schedule instead.
 
     .. important::
-        This callback gets added automatically if you don't explicitly configure it.
+        This callback gets added automatically in a distributed training setting if you
+        don't explicitly configure it.
         If you want to override this callback you should subclass it.
     """
 

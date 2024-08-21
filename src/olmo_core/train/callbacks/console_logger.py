@@ -35,7 +35,7 @@ class ConsoleLoggerCallback(Callback):
 
     log_interval: int = 1
     metrics: List[str] = field(
-        default_factory=lambda: ["train/*", "sys/*", "optim/total_grad_norm"]
+        default_factory=lambda: ["train/*", "system/*", "optim/total_grad_norm"]
     )
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):

@@ -2,8 +2,6 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict
 
-import torch
-
 from .callback import Callback
 
 
@@ -49,18 +47,14 @@ class SpeedMonitorCallback(Callback):
 
         step_time = time.perf_counter() - self._step_start_time
         total_time = time.perf_counter() - self._start_time
+        self.trainer.record_metric("throughput/total_tokens", self.trainer.global_train_tokens_seen)
         self.trainer.record_metric(
-            "throughput/total_tokens", torch.tensor(self.trainer.global_train_tokens_seen)
+            "throughput/device/tokens_per_second", self._step_tokens / step_time
         )
         self.trainer.record_metric(
-            "throughput/device/tokens_per_second", torch.tensor(self._step_tokens / step_time)
+            "throughput/device/tokens_per_second.avg", self._total_tokens / total_time
         )
+        self.trainer.record_metric("throughput/device/batches_per_second", 1 / step_time)
         self.trainer.record_metric(
-            "throughput/device/tokens_per_second.avg", torch.tensor(self._total_tokens / total_time)
-        )
-        self.trainer.record_metric(
-            "throughput/device/batches_per_second", torch.tensor(1 / step_time)
-        )
-        self.trainer.record_metric(
-            "throughput/device/batches_per_second.avg", torch.tensor(self._total_steps / total_time)
+            "throughput/device/batches_per_second.avg", self._total_steps / total_time
         )
