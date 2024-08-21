@@ -30,7 +30,7 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
     def __init__(
         self,
         dataset: Union[
-            Sequence[List[int]], Sequence[torch.Tensor], Sequence[Dict[str, Any]], MemMapDataset
+            Sequence[List[int]], Sequence[torch.Tensor], Sequence[Dict[str, Any]], "MemMapDataset"
         ],
         *,
         seed: int = 0,

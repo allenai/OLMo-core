@@ -1,5 +1,9 @@
 """
 Example of how to train a transformer language model.
+
+Launch this with torchrun:
+
+    torchrun --nproc-per-node=4 src/examples/train.py
 """
 
 from glob import glob
@@ -86,6 +90,7 @@ def main():
             microbatch_size=16,
             fused_loss=FUSED_OPS,
             autocast_precision=torch.bfloat16,
+            save_overwrite=True,
         )
         .with_callback(SchedulerCallback(scheduler=ConstantScheduler()))
         .with_callback(GPUMemoryMonitorCallback())

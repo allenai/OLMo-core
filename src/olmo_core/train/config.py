@@ -29,7 +29,8 @@ class TrainerConfig(Config):
     microbatch_size: int
 
     device: torch.device = field(default_factory=get_default_device)
-    checkpointer: Checkpointer = Checkpointer()
+    save_overwrite: bool = False
+    checkpointer_pg: Optional[dist.ProcessGroup] = None
     max_duration: Duration = Duration(value=1, unit=DurationUnit.epochs)
     metrics_log_interval: int = 1
     callbacks: List[Callback] = field(default_factory=list)
@@ -47,7 +48,17 @@ class TrainerConfig(Config):
         Build the corresponding trainer.
         """
         kwargs = self.as_dict(recurse=False)
-        return Trainer(model=model, optim=optim, dataset=dataset, collator=collator, **kwargs)
+        checkpointer = Checkpointer(
+            save_overwrite=kwargs.pop("save_overwrite"), process_group=kwargs.pop("checkpointer_pg")
+        )
+        return Trainer(
+            model=model,
+            optim=optim,
+            dataset=dataset,
+            collator=collator,
+            checkpointer=checkpointer,
+            **kwargs,
+        )
 
     def with_callback(self, callback: Callback) -> "TrainerConfig":
         """
