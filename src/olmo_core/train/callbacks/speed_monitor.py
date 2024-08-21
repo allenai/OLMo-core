@@ -44,11 +44,16 @@ class SpeedMonitorCallback(Callback):
             self._total_tokens = 0
             self._start_time = time.perf_counter()
             self._first_step = False
+            return
 
         step_time = time.perf_counter() - self._step_start_time
         total_time = time.perf_counter() - self._start_time
         self.trainer.record_metric("throughput/total tokens", self.trainer.global_train_tokens_seen)
         self.trainer.record_metric("throughput/device/TPS", self._step_tokens / step_time)
-        self.trainer.record_metric("throughput/device/TPS (avg)", self._total_tokens / total_time)
+        self.trainer.record_metric(
+            "throughput/device/TPS (actual avg)", self._total_tokens / total_time
+        )
         self.trainer.record_metric("throughput/device/BPS", 1 / step_time)
-        self.trainer.record_metric("throughput/device/BPS (avg)", self._total_steps / total_time)
+        self.trainer.record_metric(
+            "throughput/device/BPS (actual avg)", self._total_steps / total_time
+        )
