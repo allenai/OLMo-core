@@ -95,6 +95,7 @@ def main():
             fused_loss=FUSED_OPS,
             autocast_precision=torch.bfloat16,
             save_overwrite=True,
+            data_loader_workers=4,
         )
         .with_callback(SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=100)))
         .with_callback(GPUMemoryMonitorCallback())
