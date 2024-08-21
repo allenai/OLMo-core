@@ -5,11 +5,10 @@ from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Sequence,
 
 import numpy as np
 import torch
-import torch.distributed as dist
 import torch.utils.data
 
 from ..aliases import PathOrStr
-from ..distributed.utils import barrier, get_fs_local_rank, get_rank, get_world_size
+from ..distributed.utils import barrier
 from ..utils import roundrobin, threaded_generator
 
 if TYPE_CHECKING:
@@ -42,7 +41,9 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
         drop_last: bool = True,
         work_dir: Optional[PathOrStr] = None,
         num_threads: Optional[int] = None,
-        dp_process_group: Optional[dist.ProcessGroup] = None,
+        dp_world_size: int = 0,
+        dp_rank: int = 0,
+        fs_local_rank: int = 0,
     ):
         self.dataset = dataset
         self.seed = seed
@@ -55,15 +56,9 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
         self.rank_batch_size = rank_batch_size
         self.global_indices_file: Optional[Path] = None
         self.work_dir = work_dir
-        self.dp_process_group = dp_process_group
-
-    @property
-    def dp_world_size(self) -> int:
-        return get_world_size(self.dp_process_group)
-
-    @property
-    def dp_rank(self) -> int:
-        return get_rank(self.dp_process_group)
+        self.dp_world_size = dp_world_size
+        self.dp_rank = dp_rank
+        self.fs_local_rank = fs_local_rank
 
     @property
     def total_size(self) -> int:
@@ -84,7 +79,7 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
         self.global_indices_file = (
             Path(self.work_dir) / f"global_indices_seed{self.seed}_epoch{self.epoch}.npy"
         )
-        if get_fs_local_rank() == 0:
+        if self.fs_local_rank == 0:
             if self.global_indices_file.is_file():
                 log.info(
                     f"Using existing global indices file for seed {self.seed} and epoch {self.epoch} "

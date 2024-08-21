@@ -15,7 +15,12 @@ from torch.utils.data import DataLoader
 
 from ..aliases import PathOrStr
 from ..data import DataCollator, IterableDataset, MemMapDataset
-from ..distributed.utils import get_world_size, is_distributed
+from ..distributed.utils import (
+    get_fs_local_rank,
+    get_rank,
+    get_world_size,
+    is_distributed,
+)
 from ..exceptions import OLMoConfigurationError
 from ..io import normalize_path
 from ..nn.functional.cross_entropy_loss import (
@@ -589,13 +594,18 @@ class Trainer:
             timeout=0,
         )
 
-    def _fit_epoch(self):
-        # Prepare dataset.
-        self.dataset.set_start_offset(self.global_train_examples_seen_this_epoch)
+    def _prepare_dataset_for_epoch(self):
         self.dataset.rank_batch_size = self.rank_batch_size
         self.dataset.work_dir = self.work_dir
-        self.dataset.dp_process_group = self.dp_process_group
+        self.dataset.dp_world_size = get_world_size(self.dp_process_group)
+        self.dataset.dp_rank = get_rank(self.dp_process_group)
+        self.dataset.fs_local_rank = get_fs_local_rank()
+        self.dataset.set_start_offset(self.global_train_examples_seen_this_epoch)
         self.dataset.reshuffle(self.epoch)
+
+    def _fit_epoch(self):
+        # Prepare dataset.
+        self._prepare_dataset_for_epoch()
 
         for callback in self.callbacks:
             callback.pre_epoch()
@@ -641,7 +651,6 @@ class Trainer:
         self.epoch += 1
         self.global_train_tokens_seen_this_epoch = 0
         self.global_train_examples_seen_this_epoch = 0
-        self.dataset.set_start_offset(0)
 
     def _split_batch(self, batch: Dict[str, Any]) -> List[Dict[str, Any]]:
         batch_size = batch["input_ids"].shape[0]
