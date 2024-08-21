@@ -335,14 +335,9 @@ def filter_warnings():
 
 def set_env_variables():
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
-    # to mitigate the memory issue that collectives using async_op=True hold memory longer
-    # than they should such as those in tensor parallelism
-    os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
 
 
 def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
-    from olmo_core.distributed.utils import validate_env_vars
-
     if log_filter_type is None:
         log_filter_type = LogFilterType(os.environ.get("LOG_FILTER_TYPE", "rank0_only"))
     rich.reconfigure(width=max(rich.get_console().width, 180), soft_wrap=True)
@@ -350,7 +345,6 @@ def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
     install_excepthook()
     filter_warnings()
     set_env_variables()
-    validate_env_vars()
 
 
 class RichHandler(logging.Handler):

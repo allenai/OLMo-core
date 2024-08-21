@@ -4,6 +4,7 @@ Distributed helpers, most of which work in a non-distributed context as well for
 
 import gc
 import os
+from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, TypeVar
 
@@ -20,6 +21,19 @@ if TYPE_CHECKING:
 OLMO_SHARED_FS_ENV_VAR = "OLMO_SHARED_FS"
 OLMO_FS_LOCAL_RANK_ENV_VAR = "FS_LOCAL_RANK"
 OLMO_LOCAL_RANK_ENV_VAR = "LOCAL_RANK"
+
+
+def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minutes=30)):
+    """
+    Initialize the distributed backend(s).
+    """
+    # to mitigate the memory issue that collectives using async_op=True hold memory longer
+    # than they should such as those in tensor parallelism
+    os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
+
+    validate_env_vars()
+
+    dist.init_process_group(backend, timeout=timeout)
 
 
 def is_distributed() -> bool:
