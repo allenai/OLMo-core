@@ -249,7 +249,7 @@ def _prepare_env_for_save(
 
     # Prepare checkpoint folder.
     if save_overwrite:
-        if no_dist or get_fs_local_rank(group=process_group) == 0:
+        if no_dist or get_fs_local_rank(process_group) == 0:
             clear_directory(dir)
     elif not dir_is_empty(dir):
         raise FileExistsError(dir)
@@ -258,7 +258,7 @@ def _prepare_env_for_save(
         barrier(process_group)
 
     if not is_url(dir):
-        if no_dist or get_fs_local_rank(group=process_group) == 0:
+        if no_dist or get_fs_local_rank(process_group) == 0:
             Path(dir).mkdir(exist_ok=True, parents=True)
         # Ensure the dir exists for all ranks before continuing. This might take a second if we're
         # saving to an NFS drive or something like that.

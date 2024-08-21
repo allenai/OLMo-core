@@ -5,15 +5,12 @@ Distributed helpers, most of which work in a non-distributed context as well for
 import gc
 import os
 from datetime import timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, TypeVar
 
 import torch
 import torch.distributed as dist
 
-from ..aliases import PathOrStr
 from ..exceptions import OLMoEnvironmentError
-from ..io import clear_directory
 
 if TYPE_CHECKING:
     from torch.distributed.device_mesh import DeviceMesh
@@ -21,6 +18,19 @@ if TYPE_CHECKING:
 OLMO_SHARED_FS_ENV_VAR = "OLMO_SHARED_FS"
 OLMO_FS_LOCAL_RANK_ENV_VAR = "FS_LOCAL_RANK"
 OLMO_LOCAL_RANK_ENV_VAR = "LOCAL_RANK"
+
+
+def validate_env_vars():
+    if OLMO_LOCAL_RANK_ENV_VAR not in os.environ:
+        raise OLMoEnvironmentError(f"Missing env var '{OLMO_LOCAL_RANK_ENV_VAR}'")
+    elif (
+        os.environ.get(OLMO_SHARED_FS_ENV_VAR) != "1"
+        and os.environ.get(OLMO_FS_LOCAL_RANK_ENV_VAR) is None
+    ):
+        raise OLMoEnvironmentError(
+            f"Missing env var '{OLMO_FS_LOCAL_RANK_ENV_VAR}' for non-shared filesystem. "
+            f"If this is a shared filesystem you can set '{OLMO_SHARED_FS_ENV_VAR}=1' instead."
+        )
 
 
 def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minutes=30)):
@@ -34,6 +44,10 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
     validate_env_vars()
 
     dist.init_process_group(backend, timeout=timeout)
+
+    if "nccl" in backend:
+        # Set CUDA device.
+        torch.cuda.set_device(f"cuda:{get_local_rank()}")
 
 
 def is_distributed() -> bool:
@@ -71,43 +85,17 @@ def get_local_rank() -> int:
         return 0
 
 
-def get_fs_local_rank(
-    *, dir: Optional[PathOrStr] = None, group: Optional[dist.ProcessGroup] = None
-) -> int:
+def get_fs_local_rank(group: Optional[dist.ProcessGroup] = None) -> int:
     """
     Get the local rank per filesystem, meaning that, regardless of the number of nodes,
     if all ranks share the same filesystem then :func:`get_fs_local_rank()` will be equivalent
     to :func:`get_rank()`, but if nodes do not share the same filesystem then
     :func:`get_fs_local_rank()` will be equivalent to :func:`get_local_rank()`.
     """
-    if os.environ.get(OLMO_SHARED_FS_ENV_VAR) == "1":
+    if not is_distributed():
+        return 0
+    elif os.environ.get(OLMO_SHARED_FS_ENV_VAR) == "1":
         return int(os.environ.get(OLMO_FS_LOCAL_RANK_ENV_VAR) or get_rank(group))
-    elif dir is not None:
-        global _fs_local_rank_check_results
-
-        if not Path(dir).is_dir():
-            raise FileNotFoundError(dir)
-
-        rank_check_dir = Path(dir) / ".rank_check"
-        rank_check_dir.mkdir(exist_ok=True)
-        rank_check_file = rank_check_dir / f"rank{get_rank()}.tmp"
-        rank_check_file.touch()
-
-        # Wait for all ranks to write their file.
-        barrier()
-
-        # Find FS local rank.
-        local_ranks = [
-            int(p.name.replace("rank", "").replace(".tmp", "")) for p in rank_check_dir.iterdir()
-        ]
-        fs_local_rank = get_rank() - min(local_ranks)
-
-        # Clean up.
-        barrier()
-        if fs_local_rank == 0:
-            clear_directory(rank_check_dir)
-
-        return fs_local_rank
     else:
         return int(os.environ.get(OLMO_FS_LOCAL_RANK_ENV_VAR) or get_local_rank())
 
@@ -120,17 +108,6 @@ def get_world_size(group: Optional[dist.ProcessGroup] = None) -> int:
         return dist.get_world_size(group)
     else:
         return 0
-
-
-def validate_env_vars():
-    if (
-        os.environ.get(OLMO_SHARED_FS_ENV_VAR) != "1"
-        and os.environ.get(OLMO_FS_LOCAL_RANK_ENV_VAR) is None
-        and os.environ.get(OLMO_LOCAL_RANK_ENV_VAR) is None
-    ):
-        raise OLMoEnvironmentError(
-            f"Missing env var '{OLMO_FS_LOCAL_RANK_ENV_VAR}' or '{OLMO_LOCAL_RANK_ENV_VAR}' for non-shared filesystem"
-        )
 
 
 V = TypeVar("V", bool, int, float)
