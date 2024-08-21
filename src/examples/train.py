@@ -96,6 +96,7 @@ def main():
             autocast_precision=torch.bfloat16,
             save_overwrite=True,
             data_loader_workers=4,
+            metrics_log_interval=5,
         )
         .with_callback(SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=100)))
         .with_callback(GPUMemoryMonitorCallback())
