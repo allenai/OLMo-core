@@ -10,7 +10,7 @@ log = logging.getLogger(__name__)
 
 def format_float(value: float) -> str:
     if value < 0.0001:
-        return str(value)  # scientific notation
+        return f"{value:.2E}"
     elif value > 1000:
         return f"{int(value):,d}"
     elif value > 100:
