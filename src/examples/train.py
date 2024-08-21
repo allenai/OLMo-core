@@ -43,7 +43,8 @@ ROPE_TYPE = RoPEType.default if COMPILE else None
 SAVE_FOLDER = "/tmp/run01"
 DATA_FILES = "/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy"
 SEQUENCE_LENGTH = 1024
-BATCH_SIZE = 128
+BATCH_SIZE = 256
+DEVICE_MICRO_BATCH_SIZE = 32
 SEED = 3423
 
 
@@ -101,7 +102,7 @@ def main():
             save_folder=SAVE_FOLDER,
             train_sequence_length=SEQUENCE_LENGTH,
             global_batch_size=BATCH_SIZE,
-            microbatch_size=16,
+            microbatch_size=DEVICE_MICRO_BATCH_SIZE,
             fused_loss=FUSED_OPS,
             autocast_precision=torch.bfloat16,
             save_overwrite=True,
