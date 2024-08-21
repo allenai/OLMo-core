@@ -47,6 +47,7 @@ class CheckpointerCallback(Callback):
         self._await_last_checkpoint()
         self._latest_checkpoint = self.step
         path = f"{self.trainer.save_folder}/step{self.step}"
+        log.info(f"Saving checkpoint for step {self.step} to {path}...")
         if self.save_async:
             self._future = self.trainer.checkpointer.save_async(
                 path,
@@ -61,6 +62,7 @@ class CheckpointerCallback(Callback):
                 self.trainer.optim,
                 self.trainer.state_dict(),
             )
+            log.info("Checkpoint saved")
         return path
 
     def pre_train(self):

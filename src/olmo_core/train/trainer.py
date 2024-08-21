@@ -377,9 +377,9 @@ class Trainer:
 
     def _duration_due(self, duration: Duration) -> bool:
         if duration.unit == DurationUnit.steps:
-            return self.global_step >= duration.value
+            return self.global_step > duration.value
         elif duration.unit == DurationUnit.epochs:
-            return self.epoch >= duration.value
+            return self.epoch > duration.value
         elif duration.unit == DurationUnit.tokens:
             return self.global_train_tokens_seen >= duration.value
         else:
