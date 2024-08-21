@@ -74,7 +74,7 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
             num_samples = math.ceil(len(self.dataset) / self.dp_world_size)  # type: ignore[arg-type]
         return num_samples
 
-    def _build_and_save_global_indices(self):
+    def build_and_save_global_indices(self):
         assert self.work_dir is not None
         self.global_indices_file = (
             Path(self.work_dir) / f"global_indices_seed{self.seed}_epoch{self.epoch}.npy"
@@ -141,7 +141,7 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
         Get the shuffled instance indices.
         """
         if self.global_indices_file is None and self.work_dir is not None:
-            self._build_and_save_global_indices()
+            self.build_and_save_global_indices()
 
         if self.global_indices_file is not None:
             return np.memmap(self.global_indices_file, mode="r", dtype=np.uint32)  # type: ignore
@@ -156,7 +156,7 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
         """
         self.epoch = epoch
         if self.work_dir is not None:
-            self._build_and_save_global_indices()
+            self.build_and_save_global_indices()
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         indices = self.get_global_indices()

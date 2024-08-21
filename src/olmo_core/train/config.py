@@ -8,7 +8,7 @@ from torch.optim import Optimizer
 
 from ..aliases import PathOrStr
 from ..config import Config
-from ..data import DataCollator, IterableDataset
+from ..data import DataCollator, MemMapDataset
 from ..utils import get_default_device
 from .callbacks import Callback
 from .checkpoint import Checkpointer
@@ -38,11 +38,12 @@ class TrainerConfig(Config):
     z_loss_multiplier: Optional[float] = None
     autocast_precision: Optional[torch.dtype] = None
     dp_process_group: Optional[dist.ProcessGroup] = None
+    data_seed: int = 0
     data_loader_workers: int = 0
     data_loader_prefetch_factor: Optional[int] = None
 
     def build(
-        self, model: nn.Module, optim: Optimizer, dataset: IterableDataset, collator: DataCollator
+        self, model: nn.Module, optim: Optimizer, dataset: MemMapDataset, collator: DataCollator
     ) -> Trainer:
         """
         Build the corresponding trainer.

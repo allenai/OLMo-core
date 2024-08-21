@@ -11,7 +11,7 @@ from typing import Tuple
 
 import torch
 
-from olmo_core.data import DataCollator, IterableDataset, MemMapDataset
+from olmo_core.data import DataCollator, MemMapDataset
 from olmo_core.nn.rope import RoPEType
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.optim import CosWithWarmup
@@ -78,7 +78,7 @@ def build_model() -> Tuple[Transformer, int]:
     return model, flops_per_token
 
 
-def build_dataset() -> Tuple[IterableDataset, DataCollator]:
+def build_dataset() -> Tuple[MemMapDataset, DataCollator]:
     paths = sorted(glob(DATA_FILES))
     assert paths
     collator = DataCollator(pad_token_id=PAD_TOKEN_ID)
@@ -88,7 +88,7 @@ def build_dataset() -> Tuple[IterableDataset, DataCollator]:
         eos_token_id=EOS_TOKEN_ID,
         pad_token_id=PAD_TOKEN_ID,
     )
-    return IterableDataset(dataset, seed=SEED, drop_last=True), collator
+    return dataset, collator
 
 
 def main():
@@ -106,6 +106,7 @@ def main():
             fused_loss=FUSED_OPS,
             autocast_precision=torch.bfloat16,
             save_overwrite=True,
+            data_seed=SEED,
             data_loader_workers=4,
             metrics_log_interval=5,
         )

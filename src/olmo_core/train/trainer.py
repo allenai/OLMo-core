@@ -66,7 +66,7 @@ class Trainer:
     The optimizer to use.
     """
 
-    dataset: IterableDataset
+    dataset: MemMapDataset
     """
     The training dataset.
     """
@@ -142,6 +142,11 @@ class Trainer:
     dp_process_group: Optional[dist.ProcessGroup] = None
     """
     The distributed process group for all data parallel ranks.
+    """
+
+    data_seed: int = 0
+    """
+    The seed to use to shuffle the dataset.
     """
 
     data_loader_workers: int = 0
@@ -220,8 +225,8 @@ class Trainer:
             callback.trainer = self
 
         # Other validation.
-        if isinstance(self.dataset.dataset, MemMapDataset):
-            if self.dataset.dataset.sequence_length != self.train_sequence_length:
+        if isinstance(self.dataset, MemMapDataset):
+            if self.dataset.sequence_length != self.train_sequence_length:
                 raise OLMoConfigurationError("trainer and dataset sequence length does not match")
 
     @property
@@ -246,11 +251,19 @@ class Trainer:
 
     @property
     def steps_per_epoch(self) -> int:
-        return self.dataset.total_size // self.global_batch_size
+        return self.dataset_total_size // self.global_batch_size
 
     @property
     def tokens_per_epoch(self) -> int:
-        return self.dataset.total_size * self.train_sequence_length
+        return self.dataset_total_size * self.train_sequence_length
+
+    @property
+    def dataset_total_size(self) -> int:
+        dp_world_size = get_world_size(self.dp_process_group)
+        if len(self.dataset) % dp_world_size == 0:
+            return len(self.dataset) // dp_world_size
+        else:
+            return math.ceil((len(self.dataset) - dp_world_size) / dp_world_size)
 
     @property
     def max_steps(self) -> int:
@@ -582,8 +595,21 @@ class Trainer:
         self.optim.step()
 
     def _get_dataloader(self) -> DataLoader:
-        return DataLoader(
+        iterable_dataset = IterableDataset(
             self.dataset,
+            seed=self.data_seed,
+            epoch=self.epoch,
+            start_index=self.global_train_examples_seen_this_epoch,
+            rank_batch_size=self.rank_batch_size,
+            dp_world_size=get_world_size(self.dp_process_group),
+            dp_rank=get_rank(self.dp_process_group),
+            fs_local_rank=get_fs_local_rank(),
+            drop_last=True,
+            work_dir=self.work_dir,
+        )
+        iterable_dataset.build_and_save_global_indices()
+        return DataLoader(
+            iterable_dataset,
             batch_size=self.rank_batch_size,
             drop_last=True,
             collate_fn=self.collator,
@@ -594,19 +620,7 @@ class Trainer:
             timeout=0,
         )
 
-    def _prepare_dataset_for_epoch(self):
-        self.dataset.rank_batch_size = self.rank_batch_size
-        self.dataset.work_dir = self.work_dir
-        self.dataset.dp_world_size = get_world_size(self.dp_process_group)
-        self.dataset.dp_rank = get_rank(self.dp_process_group)
-        self.dataset.fs_local_rank = get_fs_local_rank()
-        self.dataset.set_start_offset(self.global_train_examples_seen_this_epoch)
-        self.dataset.reshuffle(self.epoch)
-
     def _fit_epoch(self):
-        # Prepare dataset.
-        self._prepare_dataset_for_epoch()
-
         for callback in self.callbacks:
             callback.pre_epoch()
 
