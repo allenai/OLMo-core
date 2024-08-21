@@ -2,4 +2,4 @@
 ===============
 
 .. automodule:: olmo_core.train.utils
-   :members: ReduceType
+   :members: ReduceType, prepare_training_environment
