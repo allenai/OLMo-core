@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 
 from ..aliases import PathOrStr
 from ..data import DataCollator, IterableDataset, MemMapDataset
-from ..distributed.utils import get_fs_local_rank, get_world_size, is_distributed
+from ..distributed.utils import get_world_size, is_distributed
 from ..exceptions import OLMoConfigurationError
 from ..io import normalize_path
 from ..nn.functional.cross_entropy_loss import (
@@ -186,8 +186,6 @@ class Trainer:
 
         # Configure working directory.
         self.work_dir = Path(self.work_dir)
-        if get_fs_local_rank() == 0:
-            self.work_dir.mkdir(parents=True, exist_ok=True)
 
         # Ensure we have necessary callbacks.
         has_console_logger_callback = False
