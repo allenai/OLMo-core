@@ -1,15 +1,21 @@
 from datetime import timedelta
 from typing import Optional
 
+import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from ..distributed.utils import init_distributed
+from ..distributed.utils import init_distributed, is_distributed
 from ..io import add_cached_path_clients
 from ..utils import prepare_cli_environment, seed_all
 from .config import TrainerConfig
 from .trainer import Trainer
 
-__all__ = ["prepare_training_environment", "TrainerConfig", "Trainer"]
+__all__ = [
+    "prepare_training_environment",
+    "teardown_training_environment",
+    "TrainerConfig",
+    "Trainer",
+]
 
 
 def prepare_training_environment(
@@ -45,3 +51,11 @@ def prepare_training_environment(
 
     # Init RNG states.
     seed_all(seed)
+
+
+def teardown_training_environment():
+    """
+    To be run at the end of training.
+    """
+    if is_distributed():
+        dist.destroy_process_group()

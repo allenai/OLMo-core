@@ -14,7 +14,11 @@ import torch
 from olmo_core.data import DataCollator, IterableDataset, MemMapDataset
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.optim import ConstantScheduler
-from olmo_core.train import TrainerConfig, prepare_training_environment
+from olmo_core.train import (
+    TrainerConfig,
+    prepare_training_environment,
+    teardown_training_environment,
+)
 from olmo_core.train.callbacks import (
     GPUMemoryMonitorCallback,
     GradClipperCallback,
@@ -103,3 +107,4 @@ def main():
 if __name__ == "__main__":
     prepare_training_environment(seed=SEED, backend="nccl")
     main()
+    teardown_training_environment()
