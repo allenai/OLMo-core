@@ -58,11 +58,11 @@ class LayerNormConfig(Config):
             )
         )
 
-        if self.name == "default":
+        if self.name == LayerNormType.default:
             return LayerNorm(**kwargs)
-        elif self.name == "rms":
+        elif self.name == LayerNormType.rms:
             return RMSNorm(**kwargs)
-        elif self.name == "fused_fms":
+        elif self.name == LayerNormType.fused_rms:
             return FusedRMSNorm(**kwargs)
         else:
             raise NotImplementedError(self.name)
