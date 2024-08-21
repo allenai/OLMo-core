@@ -24,7 +24,7 @@ from olmo_core.train.callbacks import (
     GradClipperCallback,
     SchedulerCallback,
 )
-from olmo_core.utils import get_default_device
+from olmo_core.utils import get_default_device, has_flash_attn
 
 # Tokenizer settings.
 VOCAB_SIZE = 50304
@@ -33,7 +33,7 @@ PAD_TOKEN_ID = 50256
 
 # Model settings.
 COMPILE = False
-FUSED_OPS = False
+FUSED_OPS = not COMPILE and has_flash_attn()
 
 # Trainer settings.
 SAVE_FOLDER = "/tmp/run01"
