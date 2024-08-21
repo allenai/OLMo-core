@@ -1,6 +1,8 @@
 import time
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+
+import torch
 
 from .callback import Callback
 
@@ -15,6 +17,9 @@ class SpeedMonitorCallback(Callback):
         If you want to override this callback you should subclass it.
     """
 
+    num_flops_per_token: Optional[int] = None
+    device_peak_flops: Optional[int] = None
+
     _total_steps: int = 0
     _total_tokens: int = 0
     _start_time: float = 0.0
@@ -25,6 +30,23 @@ class SpeedMonitorCallback(Callback):
 
     def pre_train(self):
         self._first_step = True
+
+        if self.device_peak_flops is None and self.trainer.device.type == "cuda":
+            device_name = torch.cuda.get_device_name(self.trainer.device)
+            if self.trainer.autocast_precision == torch.bfloat16:
+                if "A100" in device_name:
+                    self.device_peak_flops = int(312e12)
+                elif "H100" in device_name:
+                    # data from https://www.nvidia.com/en-us/data-center/h100/
+                    # NOTE: Specifications are one-half lower without sparsity.
+                    if "NVL" in device_name:
+                        self.device_peak_flops = int(1979e12)
+                    elif "PCIe" in device_name:
+                        self.device_peak_flops = int(756e12)
+                    else:  # for SXM and other variants
+                        self.device_peak_flops = int(989e12)
+                else:  # for other GPU types, assume A100
+                    self.device_peak_flops = int(312e12)
 
     def pre_step(self, batch: Dict[str, Any]):
         if self._first_step:
@@ -48,12 +70,22 @@ class SpeedMonitorCallback(Callback):
 
         step_time = time.perf_counter() - self._step_start_time
         total_time = time.perf_counter() - self._start_time
+        tps = self._step_tokens / step_time
+        tps_avg = self._total_tokens / total_time
+        bps = 1 / step_time
+        bps_avg = self._total_steps / total_time
+
         self.trainer.record_metric("throughput/total tokens", self.trainer.global_train_tokens_seen)
-        self.trainer.record_metric("throughput/device/TPS", self._step_tokens / step_time)
-        self.trainer.record_metric(
-            "throughput/device/TPS (actual avg)", self._total_tokens / total_time
-        )
-        self.trainer.record_metric("throughput/device/BPS", 1 / step_time)
-        self.trainer.record_metric(
-            "throughput/device/BPS (actual avg)", self._total_steps / total_time
-        )
+        self.trainer.record_metric("throughput/device/TPS", tps)
+        self.trainer.record_metric("throughput/device/TPS (actual avg)", tps_avg)
+        self.trainer.record_metric("throughput/device/BPS", bps)
+        self.trainer.record_metric("throughput/device/BPS (actual avg)", bps_avg)
+
+        if self.num_flops_per_token is not None and self.device_peak_flops is not None:
+            # model FLOPS utilization
+            # For its definition and calculation, please refer to the PaLM paper:
+            # https://arxiv.org/abs/2204.02311
+            mfu = 100 * self.num_flops_per_token * tps / self.device_peak_flops
+            mfu_avg = 100 * self.num_flops_per_token * tps_avg / self.device_peak_flops
+            self.trainer.record_metric("throughput/device/MFU", mfu)
+            self.trainer.record_metric("throughput/device/MFU (actual avg)", mfu_avg)

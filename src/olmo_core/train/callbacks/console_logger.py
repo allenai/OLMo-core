@@ -42,6 +42,7 @@ class ConsoleLoggerCallback(Callback):
             "optim/LR*",
             "throughput/total tokens",
             "throughput/device/TPS*",
+            "throughput/device/MFU*",
         ]
     )
 

@@ -43,13 +43,19 @@ class TransformerConfig(Config):
         """
         Build the model corresponding to this config.
         """
+        log.info(
+            f"Building transformer with {self.num_params:,d} total params, "
+            f"{self.num_non_embedding_params:,d} non-embedding params"
+        )
         kwargs = self.as_dict(exclude_none=True, recurse=False)
-        return Transformer(init_device=init_device, **kwargs)
+        model = Transformer(init_device=init_device, **kwargs)
+        log.info("%s", model)
+        return model
 
     @property
     def num_params(self) -> int:
         """
-        The number of parameters that a model from this config would have.
+        The total number of parameters that a model from this config would have.
         """
 
         def layer_norm_params(layer_norm: LayerNormConfig) -> int:
@@ -113,6 +119,33 @@ class TransformerConfig(Config):
             num_params += self.vocab_size
 
         return num_params
+
+    @property
+    def num_non_embedding_params(self) -> int:
+        """
+        The number of parameters excluding embedding parameters.
+        """
+        return self.num_params - self.d_model * self.vocab_size
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        """
+        Get the approximate number of flops per token.
+        """
+        l, h, q, t = (
+            self.n_layers,
+            self.block.attention.n_heads,
+            self.d_model // self.block.attention.n_heads,
+            seq_len,
+        )
+        # Reasoning behind the factor of 12 for the self-attention part of the formula:
+        # 1. each self-attention has 2 matmul in the forward and 4 in the backward (6)
+        # 2. the flash attention does 1 more matmul recomputation in the backward
+        #    but recomputation should not be counted in calculating MFU           (+0)
+        # 3. each matmul performs 1 multiplication and 1 addition                 (*2)
+        # 4. we follow the convention and do not account for sparsity in causal attention
+        flop_per_token = 6 * self.num_non_embedding_params + 12 * l * h * q * t
+
+        return flop_per_token
 
     @classmethod
     def llama2_271M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":

@@ -79,6 +79,7 @@ class AttentionConfig(Config):
         if self.name == "default":
             return Attention(**kwargs)
         elif self.name == "fused":
+            kwargs.pop("use_flash", None)
             return FusedAttention(**kwargs)
         else:
             raise NotImplementedError(self.name)

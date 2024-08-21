@@ -25,6 +25,7 @@ from olmo_core.train.callbacks import (
     GPUMemoryMonitorCallback,
     GradClipperCallback,
     SchedulerCallback,
+    SpeedMonitorCallback,
 )
 from olmo_core.utils import get_default_device, has_flash_attn
 
@@ -46,13 +47,16 @@ BATCH_SIZE = 128
 SEED = 3423
 
 
-def build_model() -> Transformer:
-    model = TransformerConfig.llama2_271M(
+def build_model() -> Tuple[Transformer, int]:
+    model_config = TransformerConfig.llama2_271M(
         VOCAB_SIZE,
         fused_ops=FUSED_OPS,
         use_flash=not COMPILE,
         rope_type=ROPE_TYPE,
-    ).build(init_device="meta")
+    )
+
+    flops_per_token = model_config.num_flops_per_token(SEQUENCE_LENGTH)
+    model = model_config.build(init_device="meta")
 
     # Activation checkpointing:
     #  model.apply_activation_checkpointing("full")
@@ -70,7 +74,7 @@ def build_model() -> Transformer:
     model.to_empty(device=get_default_device())
     model.init_weights()
 
-    return model
+    return model, flops_per_token
 
 
 def build_dataset() -> Tuple[IterableDataset, DataCollator]:
@@ -87,7 +91,7 @@ def build_dataset() -> Tuple[IterableDataset, DataCollator]:
 
 
 def main():
-    model = build_model()
+    model, model_flops_per_token = build_model()
     optim = torch.optim.AdamW(model.parameters(), lr=1e-3)
     dataset, collator = build_dataset()
 
@@ -108,6 +112,7 @@ def main():
         .with_callback(GPUMemoryMonitorCallback())
         .with_callback(GradClipperCallback(max_grad_norm=1.0))
         .with_callback(CheckpointerCallback(save_interval=10_000, ephemeral_save_interval=250))
+        .with_callback(SpeedMonitorCallback(num_flops_per_token=model_flops_per_token))
     ).build(model, optim, dataset, collator)
 
     trainer.fit()
