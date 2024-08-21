@@ -302,7 +302,9 @@ class TransformerConfig(Config):
             else:
                 rope_type = RoPEType.complex
 
-        if use_flash is None and not fused_ops:
+        if fused_ops:
+            use_flash = None
+        elif use_flash is None:
             use_flash = has_flash_attn()
 
         # Configure blocks.

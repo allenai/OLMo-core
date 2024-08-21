@@ -47,7 +47,10 @@ SEED = 3423
 
 def build_model() -> Transformer:
     model = TransformerConfig.llama2_271M(
-        VOCAB_SIZE, fused_ops=FUSED_OPS, rope_type=ROPE_TYPE
+        VOCAB_SIZE,
+        fused_ops=FUSED_OPS,
+        use_flash=not COMPILE,
+        rope_type=ROPE_TYPE,
     ).build(init_device="meta")
 
     # Activation checkpointing:
