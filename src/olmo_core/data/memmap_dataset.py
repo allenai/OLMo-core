@@ -98,20 +98,25 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
 
     @property
     def offsets(self) -> List[Tuple[int, int]]:
-        # Create the global S3 client up front to work around a threading issue in boto.
-        _get_s3_client("s3")
-        try:
-            _get_s3_client("r2")
-        except OLMoEnvironmentError:
-            # R2 might not be needed, so ignore this error. We will get an error
-            # later if R2 is needed.
-            pass
-        try:
-            _get_s3_client("weka")
-        except OLMoEnvironmentError:
-            # Weka might not be needed, so ignore this error. We will get an error
-            # later if Weka is needed.
-            pass
+        # Maybe create client up front to work around a threading issue in boto.
+        if any(str(p).startswith("s3://") for p in self._memmap_paths):
+            _get_s3_client("s3")
+
+        if any(str(p).startswith("r2://") for p in self._memmap_paths):
+            try:
+                _get_s3_client("r2")
+            except OLMoEnvironmentError:
+                # R2 might not be needed, so ignore this error. We will get an error
+                # later if R2 is needed.
+                pass
+
+        if any(str(p).startswith("weka://") for p in self._memmap_paths):
+            try:
+                _get_s3_client("weka")
+            except OLMoEnvironmentError:
+                # Weka might not be needed, so ignore this error. We will get an error
+                # later if Weka is needed.
+                pass
 
         if self._mmap_offsets is None:
             import concurrent.futures

@@ -454,7 +454,7 @@ class Trainer:
 
         loss_fn = cross_entropy_loss if not self.fused_loss else fused_cross_entropy_loss
         ce_loss, z_loss = loss_fn(
-            logits,
+            logits_for_loss,
             labels,
             ignore_index=-100,
             reduction=loss_reduction,
