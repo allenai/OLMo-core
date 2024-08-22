@@ -356,8 +356,12 @@ class Trainer:
 
         self.model.train()
 
+        barrier()
+
         for callback in self.callbacks:
             callback.pre_train()
+
+        barrier()
 
         try:
             while not self.training_complete:
