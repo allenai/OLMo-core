@@ -110,20 +110,20 @@ def get_world_size(group: Optional[dist.ProcessGroup] = None) -> int:
         return 0
 
 
-V = TypeVar("V", bool, int, float)
+V = TypeVar("V", bool, int, float, torch.Tensor)
 
 
 def synchronize_value(
-    value: V, device: torch.device, group: Optional[dist.ProcessGroup] = None
+    value: V, device: torch.device, src: int = 0, group: Optional[dist.ProcessGroup] = None
 ) -> V:
     """
-    Synchronize an object across the distributed process group. The object can be anything that's
-    serializable.
+    Synchronize a value across the distributed process group.
     """
     if dist.is_available() and dist.is_initialized():
-        value_tensor = torch.tensor(value, device=device)
-        dist.broadcast(value_tensor, 0, group=group)
-        return value_tensor.item()  # type: ignore
+        is_tensor = isinstance(value, torch.Tensor)
+        value_tensor = value.to(device) if is_tensor else torch.tensor(value, device=device)
+        dist.broadcast(value_tensor, src, group=group)
+        return value_tensor if is_tensor else value_tensor.item()  # type: ignore
     else:
         return value
 
@@ -135,6 +135,21 @@ def synchronize_flag(
     Synchronize a boolean across the distributed process group.
     """
     return synchronize_value(flag, device, group=group)
+
+
+def all_reduce_value(
+    value: V, device: torch.device, op=dist.ReduceOp.SUM, group: Optional[dist.ProcessGroup] = None
+) -> V:
+    """
+    All reduce a value across the distributed process group.
+    """
+    if dist.is_available() and dist.is_initialized():
+        is_tensor = isinstance(value, torch.Tensor)
+        value_tensor = value.to(device) if is_tensor else torch.tensor(value, device=device)
+        dist.all_reduce(value_tensor, op=op, group=group)
+        return value_tensor if is_tensor else value_tensor.item()  # type: ignore
+    else:
+        return value
 
 
 def gc_cuda():

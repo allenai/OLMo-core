@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 from ..aliases import PathOrStr
 from ..data import DataCollator, IterableDataset, MemMapDataset
 from ..distributed.utils import (
+    all_reduce_value,
     get_fs_local_rank,
     get_rank,
     get_world_size,
@@ -190,9 +191,16 @@ class Trainer:
     The current epoch (1-based).
     """
 
+    cancel_check_interval: int = 50
+    """
+    The interval (in steps) to check if the run is canceled. Checking requires distributed comms.
+    """
+
     _metrics: Dict[int, Dict[str, torch.Tensor]] = field(default_factory=lambda: defaultdict(dict))
     _metrics_reduce_type: Dict[str, Optional[ReduceType]] = field(default_factory=dict)
     _canceled: bool = False
+    _cancel_reason: Optional[str] = None
+    _canceling_rank: Optional[int] = None
     _rank_batch_size: Optional[int] = None
 
     def __post_init__(self):
@@ -250,6 +258,15 @@ class Trainer:
 
     @property
     def training_complete(self) -> bool:
+        if not self._canceled and self.global_step % self.cancel_check_interval == 0:
+            cancellation = self._check_if_canceled()
+            if cancellation is not None:
+                self._canceled = True
+                self._canceling_rank, self._cancel_reason = cancellation
+                log.warning(
+                    f"Run canceled from rank {self._canceling_rank}. Reason: {self._cancel_reason}"
+                )
+
         if self._canceled:
             return True
         elif self._duration_due(self.max_duration):
@@ -301,11 +318,24 @@ class Trainer:
         else:
             raise NotImplementedError
 
+    def cancel_run(self, reason: str):
+        """
+        Mark the run canceled.
+
+        :param reason: The reason for canceling.
+        """
+        #  self._canceled = True  # NOTE: important not to set this!! Leads to distributed hang.
+        self._canceling_rank = get_rank()
+        self._cancel_reason = reason
+
     def fit(self):
         """
         Fit the model.
         """
         self._canceled = False
+        self._cancel_reason = None
+        self._canceling_rank = None
+
         self.model.train()
 
         for callback in self.callbacks:
@@ -426,6 +456,16 @@ class Trainer:
             return self.global_train_tokens_seen >= duration.value
         else:
             raise NotImplementedError
+
+    def _check_if_canceled(self) -> Optional[Tuple[int, str]]:
+        canceling_rank = self._canceling_rank if self._canceling_rank is not None else -1
+        canceling_rank = all_reduce_value(canceling_rank, self.device, op=dist.ReduceOp.MAX)
+        if canceling_rank >= 0:
+            canceling_reason = scatter_object(self._cancel_reason, src=canceling_rank)
+            assert canceling_reason is not None
+            return canceling_rank, canceling_reason
+        else:
+            return None
 
     def _log_metrics(self):
         if not self._metrics:
@@ -680,9 +720,14 @@ class Trainer:
             if self.global_step % self.metrics_log_interval == 0:
                 self._log_metrics()
 
+            if self.training_complete:
+                # Finishing before the epoch is complete.
+                # Log any remaining metrics.
+                self._log_metrics()
+                return
+
         # Log any remaining metrics.
-        if self._metrics:
-            self._log_metrics()
+        self._log_metrics()
 
         for callback in self.callbacks:
             callback.post_epoch()
