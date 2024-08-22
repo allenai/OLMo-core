@@ -368,13 +368,16 @@ class Trainer:
         :param load_trainer_state: Load trainer state.
         """
         log.info(f"Loading checkpoint from '{dir}'...")
-        self.checkpointer.load(
+        trainer_state = self.checkpointer.load(
             dir,
             self.model,
             self.optim,
             load_optimizer_state=load_optimizer_state,
             load_trainer_state=load_trainer_state,
         )
+        if load_trainer_state:
+            assert trainer_state is not None
+            self.load_state_dict(trainer_state)
         log.info("Checkpoint successfully loaded")
 
     def record_metric(
