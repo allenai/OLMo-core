@@ -18,7 +18,7 @@ WANDB_API_KEY_ENV_VAR = "WANDB_API_KEY"
 @dataclass
 class WandBCallback(Callback):
     """
-    Logs metrics to Weights & Biases.
+    Logs metrics to Weights & Biases from rank 0.
 
     .. important::
         Requires the ``wandb`` package and the environment variable ``WANDB_API_KEY``.

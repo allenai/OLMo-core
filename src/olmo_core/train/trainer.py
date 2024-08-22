@@ -193,7 +193,7 @@ class Trainer:
     The current epoch (1-based).
     """
 
-    cancel_check_interval: int = 50
+    cancel_check_interval: int = 25
     """
     The interval (in steps) to check if the run is canceled. Checking requires distributed comms.
     """
@@ -454,6 +454,10 @@ class Trainer:
         """
         Record a new metric for the current step.
 
+        .. important::
+            Metrics added with a ``reduce_type`` are reduced across the data parallel process group,
+            which is not necessarily the default process group.
+
         :param name: The name of the metric.
         :param value: The value of the metric.
         :param reduce_type: Specifies how to reduce the metric across the distributed process group.
@@ -497,6 +501,8 @@ class Trainer:
         metrics: Dict[int, Dict[str, float]] = reduce_metrics(
             self._metrics,
             self._metrics_reduce_type,
+            # NOTE: using `self.bookkeeping_device` would probably be slower here since some
+            # metrics (like loss) are on GPU at this point.
             self.device,
             process_group=self.dp_process_group,
         )
