@@ -255,14 +255,9 @@ class Trainer:
                 raise OLMoConfigurationError("trainer and dataset sequence length does not match")
 
         # Create separate process group for bookkeeping.
-        if self._bookkeeping_pg is None:
-            if (
-                self.bookkeeping_device != self.device
-                and is_distributed()
-                and backend_supports_cpu()
-            ):
-                log.info("Creating new process group for bookkeeping")
-                self._bookkeeping_pg = dist.new_group()
+        if self._bookkeeping_pg is None and is_distributed():
+            log.info("Creating new process group for bookkeeping")
+            self._bookkeeping_pg = dist.new_group()
 
     @property
     def rank_batch_size(self) -> int:
@@ -278,6 +273,8 @@ class Trainer:
             and self.global_step > 0
             and self.global_step % self.cancel_check_interval == 0
         ):
+            # NOTE: any collective operations done in a separate thread should use the bookkeeping
+            # process group to avoid race conditions.
             self.thread_pool.submit(self._check_if_canceled)
 
         if self._canceled:
@@ -346,6 +343,9 @@ class Trainer:
     def bookkeeping_pg(self) -> Optional[dist.ProcessGroup]:
         """
         The process group used for bookkeeping collectives.
+
+        Since bookkeeping collectives might be done in a separate thread, we need a separate process
+        group to avoid potential race conditions.
         """
         return self._bookkeeping_pg
 
@@ -377,8 +377,6 @@ class Trainer:
         self._canceling_rank = None
 
         self.model.train()
-
-        barrier()
 
         for callback in self.callbacks:
             callback.pre_train()
