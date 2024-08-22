@@ -624,7 +624,7 @@ class _WekaClient(SchemeClient):
 
     def __init__(self, resource: str) -> None:
         super().__init__(resource)
-        self.bucket_name, self.path = WekaClient._split_cloud_path(resource, "weka")
+        self.bucket_name, self.path = _WekaClient._split_cloud_path(resource, "weka")
         self.s3 = _get_s3_client("weka")
         self.object_info = None
 

@@ -85,12 +85,8 @@ class WandBCallback(Callback):
 
     @property
     def api(self):
-        if (
-            self.run is not None
-            and self._api is None
-            and (api_key := os.environ.get(WANDB_API_KEY_ENV_VAR)) is not None
-        ):
-            self._api = self.wandb.Api(api_key=api_key)
+        if self._api is None:
+            self._api = self.wandb.Api(api_key=os.environ[WANDB_API_KEY_ENV_VAR])
         return self._api
 
     def pre_train(self):
@@ -108,25 +104,25 @@ class WandBCallback(Callback):
             )
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):
-        if self.run is not None:
+        if get_rank() == 0:
             self.wandb.log(metrics, step=step)
 
     def post_step(self):
-        if self.step % self.trainer.cancel_check_interval == 0:
+        if get_rank() == 0 and self.step % self.trainer.cancel_check_interval == 0:
             if self.check_if_canceled():
                 self.trainer.cancel_run("canceled from W&B tag")
 
     def post_train(self):
-        if self.run is not None:
+        if get_rank() == 0 and self.run is not None:
             self.wandb.finish(exit_code=0, quiet=True)
 
     def on_error(self, exc: BaseException):
         del exc
-        if self.run is not None:
+        if get_rank() == 0 and self.run is not None:
             self.wandb.finish(exit_code=1, quiet=True)
 
     def check_if_canceled(self) -> bool:
-        if self.cancel_tags and self.run is not None and self.api is not None:
+        if self.cancel_tags:
             from requests.exceptions import RequestException
             from wandb.errors import CommError  # type: ignore
 
@@ -136,6 +132,6 @@ class WandBCallback(Callback):
                     if tag.lower() in self.cancel_tags:
                         return True
             except (RequestException, CommError):
-                log.warning("Failed to check if W&B run is cancelled, continuing run.")
+                log.warning("Failed to communicate with W&B API")
 
         return False
