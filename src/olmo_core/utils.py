@@ -330,6 +330,7 @@ def filter_warnings():
         category=FutureWarning,
         message="You are using `torch.load` with `weights_only=False`.*",
     )
+    # flash_attn warnings.
     warnings.filterwarnings(
         action="ignore",
         category=FutureWarning,
