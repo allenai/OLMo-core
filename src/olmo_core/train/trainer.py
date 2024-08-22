@@ -20,6 +20,7 @@ from ..distributed.utils import (
     get_rank,
     get_world_size,
     is_distributed,
+    scatter_object,
 )
 from ..exceptions import OLMoConfigurationError
 from ..io import normalize_path
@@ -367,6 +368,14 @@ class Trainer:
         :param load_optimizer_state: Load optimizer state.
         :param load_trainer_state: Load trainer state.
         """
+        if not self.checkpointer.dir_is_checkpoint(dir):
+            latest_checkpoint: Optional[str] = None
+            if get_rank() == 0:
+                latest_checkpoint = self.checkpointer.latest_checkpoint(dir)
+            latest_checkpoint = scatter_object(latest_checkpoint)
+            assert latest_checkpoint is not None
+            dir = latest_checkpoint
+
         log.info(f"Loading checkpoint from '{dir}'...")
         trainer_state = self.checkpointer.load(
             dir,

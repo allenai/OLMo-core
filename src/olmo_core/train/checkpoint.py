@@ -1,3 +1,4 @@
+import os
 import tempfile
 from concurrent.futures import Future
 from contextlib import contextmanager
@@ -18,7 +19,15 @@ from ..distributed.checkpoint import (
     save_model_and_optim_state,
 )
 from ..distributed.utils import barrier, get_fs_local_rank, get_rank
-from ..io import clear_directory, dir_is_empty, is_url, normalize_path, upload
+from ..io import (
+    clear_directory,
+    dir_is_empty,
+    file_exists,
+    is_url,
+    list_directory,
+    normalize_path,
+    upload,
+)
 from ..utils import wait_for
 
 
@@ -111,6 +120,49 @@ class Checkpointer:
         )
 
         return trainer_state
+
+    @classmethod
+    def dir_is_checkpoint(cls, dir: PathOrStr) -> bool:
+        """
+        Check if a directory contains a checkpoint.
+        """
+        dir = normalize_path(dir)
+        paths_to_check = [f"{dir}/train/rank0.pt", f"{dir}/model_and_optim/.metadata"]
+        for path in paths_to_check:
+            if not file_exists(path):
+                return False
+        return True
+
+    @classmethod
+    def latest_checkpoint(cls, dir: PathOrStr) -> str:
+        """
+        Find the latest checkpoint in a directory of checkpoints.
+        """
+        dir = normalize_path(dir)
+        latest_step: Optional[int] = None
+        latest_checkpoint: Optional[str] = None
+        for path in list_directory(dir):
+            name = os.path.basename(path)
+            if not name.startswith("step"):
+                continue
+
+            try:
+                step = int(name.replace("step", ""))
+            except ValueError:
+                continue
+
+            # Make sure the directory is a valid checkpoint dir.
+            if not cls.dir_is_checkpoint(path):
+                continue
+
+            if latest_step is None or step > latest_step:
+                latest_step = step
+                latest_checkpoint = path
+
+        if latest_checkpoint is None:
+            raise FileNotFoundError(f"No checkpoints found in '{dir}'")
+        else:
+            return latest_checkpoint
 
     def _prepare_dir(self, dir: PathOrStr, ensure_exists: bool = True) -> str:
         dir = normalize_path(dir)

@@ -6,7 +6,7 @@ import re
 import shutil
 import time
 from pathlib import Path
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Generator, Optional, Tuple, Union
 
 try:
     from functools import cache
@@ -207,6 +207,24 @@ def clear_directory(dir: PathOrStr):
             )
     elif Path(dir).is_dir():
         shutil.rmtree(dir, ignore_errors=True)
+
+
+def list_directory(dir: PathOrStr) -> Generator[str, None, None]:
+    dir = normalize_path(dir)
+
+    if not is_url(dir):
+        for p in Path(dir).iterdir():
+            yield str(p)
+    else:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(dir)
+        if parsed.scheme in ("s3", "r2", "weka"):
+            yield from _s3_list_directory(parsed.scheme, parsed.netloc, parsed.path.strip("/"))
+        else:
+            raise NotImplementedError(
+                f"list_directory size not implemented for '{parsed.scheme}' URLs"
+            )
 
 
 def init_client(remote_path: str):
@@ -563,6 +581,14 @@ def _s3_clear_directory(scheme: str, bucket_name: str, prefix: str, max_attempts
             _wait_before_retry(attempt)
 
     raise OLMoNetworkError("Failed to remove S3 directory") from err
+
+
+def _s3_list_directory(scheme: str, bucket_name: str, prefix: str) -> Generator[str, None, None]:
+    response = _get_s3_client(scheme).list_objects(Bucket=bucket_name, Prefix=prefix, Delimiter="/")
+    assert not response["IsTruncated"]  # need to handle this if it happens
+    for item in response.get("CommonPrefixes", []):
+        prefix = item["Prefix"].strip("/")
+        yield f"{scheme}://{bucket_name}/{prefix}"
 
 
 #############################################
