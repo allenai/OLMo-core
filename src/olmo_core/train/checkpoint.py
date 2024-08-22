@@ -18,7 +18,8 @@ from ..distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
-from ..distributed.utils import barrier, get_fs_local_rank, get_rank
+from ..distributed.utils import barrier, get_fs_local_rank, get_rank, is_distributed
+from ..exceptions import OLMoConfigurationError
 from ..io import (
     clear_directory,
     dir_is_empty,
@@ -67,7 +68,13 @@ class Checkpointer:
         """
         An async version of :meth:`save()`.
         """
+        if is_distributed() and self.process_group is None:
+            raise OLMoConfigurationError(
+                "a checkointer process group is required for async checkointing!"
+            )
+
         dir = normalize_path(dir)
+
         with self._temporary_wd(dir) as wd:
             # Save trainer state.
             self._save_train_state(wd, train_state)
