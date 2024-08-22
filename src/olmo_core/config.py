@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
 from typing import Any, Dict, Type, TypeVar, cast
 
@@ -33,30 +33,40 @@ class Config:
         When you subclass this you should still decorate your subclasses with ``@dataclass``.
     """
 
-    def as_dict(self, exclude_none: bool = False, recurse: bool = True) -> Dict[str, Any]:
+    def as_dict(
+        self,
+        *,
+        exclude_none: bool = False,
+        exclude_private_fields: bool = False,
+        recurse: bool = True,
+    ) -> Dict[str, Any]:
         """
         Convert into a regular Python dictionary.
 
-        :param exclude_none: Don't exclude values that are ``None``.
+        :param exclude_none: Don't include values that are ``None``.
+        :param exclude_private_fields: Don't include private fields.
         :param recurse: Recurse into fields that are also configs/dataclasses.
         """
-        if recurse:
-            out = asdict(self)  # type: ignore
-        else:
-            out = {field.name: getattr(self, field.name) for field in fields(self)}
-        if exclude_none:
+
+        def dict_factory(d) -> Dict[str, Any]:
+            out = dict(d)
             for k in list(out.keys()):
                 v = out[k]
-                if v is None:
+                if (exclude_none and v is None) or (exclude_private_fields and k.startswith("_")):
                     del out[k]
-        return out
+            return out
+
+        if recurse:
+            return asdict(self, dict_factory=dict_factory)
+        else:
+            return dict_factory(self)
 
     def as_config_dict(self) -> Dict[str, Any]:
         """
         A convenience wrapper around :meth:`as_dict()` for creating dictionaries suitable
-        for recording the config. The output will also include the name the class.
+        for recording the config.
         """
-        out = self.as_dict(exclude_none=True, recurse=True)
+        out = self.as_dict(exclude_none=True, exclude_private_fields=True, recurse=True)
         out["CLASS"] = self.__class__.__name__
         return out
 

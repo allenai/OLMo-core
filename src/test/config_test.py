@@ -20,6 +20,7 @@ def test_nested_configs():
     class Bar:
         x: int
         y: int
+        _z: int = 0
 
     @dataclass
     class Foo(Config):
@@ -33,3 +34,12 @@ def test_nested_configs():
     foo1 = Foo.from_dict(data)
     assert foo1 == foo
     assert isinstance(foo1.bar, Bar)
+
+    assert foo.as_config_dict() == {
+        "CLASS": "Foo",
+        "z": "z",
+        "bar": {
+            "x": 1,
+            "y": 2,
+        },
+    }
