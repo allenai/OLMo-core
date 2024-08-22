@@ -14,7 +14,13 @@ def test_mmap_dataset(tmp_path: Path):
     mmap2[:] = np.array(list(range(16, 32)), dtype=np.uint16)
     mmap2.flush()
 
-    ds = MemMapDataset(tmp_path / "mmap1.npy", tmp_path / "mmap2.npy", sequence_length=4)
+    ds = MemMapDataset(
+        tmp_path / "mmap1.npy",
+        tmp_path / "mmap2.npy",
+        sequence_length=4,
+        pad_token_id=-1,
+        eos_token_id=-1,
+    )
     assert ds[0]["input_ids"].tolist() == [0, 1, 2, 3]
     assert ds[1]["input_ids"].tolist() == [4, 5, 6, 7]
     assert ds[7]["input_ids"].tolist() == [28, 29, 30, 31]
@@ -46,6 +52,8 @@ def test_mmap_dataset_with_label_mask(tmp_path: Path):
         tmp_path / "mmap2.npy",
         sequence_length=4,
         label_mask_paths=[tmp_path / "mask_mmap1.npy", tmp_path / "mask_mmap2.npy"],
+        pad_token_id=-1,
+        eos_token_id=-1,
     )
     assert ds[0]["input_ids"].tolist() == [0, 1, 2, 3]
     assert ds[0]["label_mask"].tolist() == [True, False, True, True]
@@ -65,9 +73,21 @@ def test_concat_mmap_datasets(tmp_path: Path):
     del mmap1, mmap2
 
     # Initialize two datasets, one for each file.
-    ds1 = MemMapDataset(tmp_path / "tokens1.npy", sequence_length=3, metadata={"label": "test1"})
+    ds1 = MemMapDataset(
+        tmp_path / "tokens1.npy",
+        sequence_length=3,
+        metadata={"label": "test1"},
+        pad_token_id=-1,
+        eos_token_id=-1,
+    )
     assert len(ds1) == 5
-    ds2 = MemMapDataset(tmp_path / "tokens2.npy", sequence_length=3, metadata={"label": "test2"})
+    ds2 = MemMapDataset(
+        tmp_path / "tokens2.npy",
+        sequence_length=3,
+        metadata={"label": "test2"},
+        pad_token_id=-1,
+        eos_token_id=-1,
+    )
     assert len(ds2) == 2
 
     # Now concatenate them.
