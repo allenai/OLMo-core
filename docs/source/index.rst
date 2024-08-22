@@ -23,6 +23,7 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
    exceptions.rst
    io.rst
    utils.rst
+   config.rst
    data.rst
    optim.rst
    nn/index.rst

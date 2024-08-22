@@ -2,7 +2,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from olmo_core.distributed.utils import get_rank
 from olmo_core.exceptions import OLMoEnvironmentError
@@ -49,6 +49,11 @@ class WandBCallback(Callback):
     Tags to assign the run.
     """
 
+    config: Optional[Dict[str, Any]] = None
+    """
+    The config to load to W&B.
+    """
+
     cancel_tags: Optional[List[str]] = field(
         default_factory=lambda: ["cancel", "canceled", "cancelled"]
     )
@@ -88,7 +93,7 @@ class WandBCallback(Callback):
                 group=self.group,
                 name=self.name,
                 tags=self.tags,
-                # config={},  # TODO: figure out how to log settings
+                config=self.config,
             )
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):

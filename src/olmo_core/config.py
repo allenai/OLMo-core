@@ -26,9 +26,19 @@ C = TypeVar("C", bound="Config")
 
 @dataclass
 class Config:
+    """
+    A base class for configuration dataclasses.
+
+    .. important::
+        When you subclass this you should still decorate your subclasses with ``@dataclass``.
+    """
+
     def as_dict(self, exclude_none: bool = False, recurse: bool = True) -> Dict[str, Any]:
         """
         Convert into a regular Python dictionary.
+
+        :param exclude_none: Don't exclude values that are ``None``.
+        :param recurse: Recurse into fields that are also configs/dataclasses.
         """
         if recurse:
             out = asdict(self)  # type: ignore
@@ -41,8 +51,20 @@ class Config:
                     del out[k]
         return out
 
+    def as_config_dict(self) -> Dict[str, Any]:
+        """
+        A convenience wrapper around :meth:`as_dict()` for creating dictionaries suitable
+        for recording the config. The output will also include the name the class.
+        """
+        out = self.as_dict(exclude_none=True, recurse=True)
+        out["CLASS"] = self.__class__.__name__
+        return out
+
     @classmethod
     def from_dict(cls: Type[C], data: Dict[str, Any]) -> C:
+        """
+        Initialize from a raw Python dictionary.
+        """
         schema = om.structured(cls)
         try:
             return cast(C, om.to_object(om.merge(schema, data)))

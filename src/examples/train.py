@@ -7,14 +7,13 @@ Launch this with torchrun:
 """
 
 from glob import glob
-from typing import Tuple
 
 import torch
 
 from olmo_core.data import MemMapDataset
 from olmo_core.nn.rope import RoPEType
 from olmo_core.nn.transformer import Transformer, TransformerConfig
-from olmo_core.optim import CosWithWarmup
+from olmo_core.optim import AdamWConfig, CosWithWarmup
 from olmo_core.train import (
     TrainerConfig,
     prepare_training_environment,
@@ -52,15 +51,7 @@ DEVICE_MICRO_BATCH_SIZE = 16
 SEED = 3423
 
 
-def build_model() -> Tuple[Transformer, int]:
-    model_config = TransformerConfig.llama2_271M(
-        VOCAB_SIZE,
-        fused_ops=FUSED_OPS,
-        use_flash=not COMPILE,
-        rope_type=ROPE_TYPE,
-    )
-
-    flops_per_token = model_config.num_flops_per_token(SEQUENCE_LENGTH)
+def build_model(model_config: TransformerConfig) -> Transformer:
     model = model_config.build(init_device="meta")
 
     # Activation checkpointing:
@@ -79,7 +70,7 @@ def build_model() -> Tuple[Transformer, int]:
     model.to_empty(device=get_default_device())
     model.init_weights()
 
-    return model, flops_per_token
+    return model
 
 
 def build_dataset() -> MemMapDataset:
@@ -95,9 +86,14 @@ def build_dataset() -> MemMapDataset:
 
 
 def main():
-    model, model_flops_per_token = build_model()
-    optim = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    dataset = build_dataset()
+    model_config = TransformerConfig.llama2_271M(
+        VOCAB_SIZE,
+        fused_ops=FUSED_OPS,
+        use_flash=not COMPILE,
+        rope_type=ROPE_TYPE,
+    )
+
+    optim_config = AdamWConfig(lr=1e-3)
 
     trainer_config = (
         TrainerConfig(
@@ -116,12 +112,28 @@ def main():
         .with_callback(GPUMemoryMonitorCallback())
         .with_callback(GradClipperCallback(max_grad_norm=1.0))
         .with_callback(CheckpointerCallback(save_interval=10_000, ephemeral_save_interval=250))
-        .with_callback(SpeedMonitorCallback(num_flops_per_token=model_flops_per_token))
+        .with_callback(
+            SpeedMonitorCallback(
+                num_flops_per_token=model_config.num_flops_per_token(SEQUENCE_LENGTH)
+            )
+        )
     )
 
     if WANDB_RUN is not None:
-        trainer_config.with_callback(WandBCallback(name=WANDB_RUN))
+        trainer_config.with_callback(
+            WandBCallback(
+                name=WANDB_RUN,
+                config=dict(
+                    model=model_config.as_config_dict(),
+                    optim=optim_config.as_config_dict(),
+                    trainer=trainer_config.as_config_dict(),
+                ),
+            )
+        )
 
+    model = build_model(model_config)
+    optim = optim_config.build(model)
+    dataset = build_dataset()
     trainer = trainer_config.build(model, optim, dataset)
 
     if LOAD_PATH is not None:
