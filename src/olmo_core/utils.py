@@ -325,6 +325,16 @@ def filter_warnings():
         category=UserWarning,
         message="Please use DTensor instead.*",
     )
+    warnings.filterwarnings(
+        action="ignore",
+        category=FutureWarning,
+        message="You are using `torch.load` with `weights_only=False`.*",
+    )
+    warnings.filterwarnings(
+        action="ignore",
+        category=FutureWarning,
+        module="flash_attn.ops.triton.layer_norm",
+    )
     # Torchvision warnings. We don't actually use torchvision.
     warnings.filterwarnings(
         action="ignore",
