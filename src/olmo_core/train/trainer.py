@@ -206,6 +206,7 @@ class Trainer:
     _canceling_rank: Optional[int] = None
     _rank_batch_size: Optional[int] = None
     _thread_pool: Optional[ThreadPoolExecutor] = None
+    _bookkeeping_pg: Optional[dist.ProcessGroup] = None
 
     def __post_init__(self):
         self.save_folder = normalize_path(self.save_folder)
@@ -330,6 +331,21 @@ class Trainer:
             return torch.device("cpu")
         else:
             return self.device
+
+    @property
+    def bookkeeping_pg(self) -> Optional[dist.ProcessGroup]:
+        """
+        The process group used for bookkeeping collectives.
+        """
+        if self._bookkeeping_pg is None:
+            if (
+                self.bookkeeping_device != self.device
+                and is_distributed()
+                and backend_supports_cpu()
+            ):
+                log.info("Creating new process group for bookkeeping")
+                self._bookkeeping_pg = dist.new_group()
+        return self._bookkeeping_pg
 
     @property
     def thread_pool(self) -> ThreadPoolExecutor:
@@ -493,7 +509,7 @@ class Trainer:
 
         canceling_rank = self._canceling_rank if self._canceling_rank is not None else -1
         canceling_rank = all_reduce_value(
-            canceling_rank, self.bookkeeping_device, op=dist.ReduceOp.MAX
+            canceling_rank, self.bookkeeping_device, op=dist.ReduceOp.MAX, group=self.bookkeeping_pg
         )
         if canceling_rank >= 0:
             cancel_reason = scatter_object(self._cancel_reason, src=canceling_rank)
