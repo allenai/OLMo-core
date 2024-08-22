@@ -254,6 +254,16 @@ class Trainer:
             if self.dataset.sequence_length != self.train_sequence_length:
                 raise OLMoConfigurationError("trainer and dataset sequence length does not match")
 
+        # Create separate process group for bookkeeping.
+        if self._bookkeeping_pg is None:
+            if (
+                self.bookkeeping_device != self.device
+                and is_distributed()
+                and backend_supports_cpu()
+            ):
+                log.info("Creating new process group for bookkeeping")
+                self._bookkeeping_pg = dist.new_group()
+
     @property
     def rank_batch_size(self) -> int:
         if self._rank_batch_size is None:
@@ -337,14 +347,6 @@ class Trainer:
         """
         The process group used for bookkeeping collectives.
         """
-        if self._bookkeeping_pg is None:
-            if (
-                self.bookkeeping_device != self.device
-                and is_distributed()
-                and backend_supports_cpu()
-            ):
-                log.info("Creating new process group for bookkeeping")
-                self._bookkeeping_pg = dist.new_group()
         return self._bookkeeping_pg
 
     @property
