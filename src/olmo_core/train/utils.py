@@ -92,6 +92,17 @@ class EnvRngStates(Config):
             cuda_rng = LibRngState(version=cuda_version, state=torch.cuda.get_rng_state())
         return cls(python=python_rng, numpy=numpy_rng, torch=torch_rng, cuda=cuda_rng)
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "EnvRngStates":
+        # overriding this from the base class since omegaconf doesn't like whatever objects
+        # we get for the states, like numpy ndarrays.
+        return cls(
+            python=LibRngState(**data["python"]),
+            numpy=LibRngState(**data["numpy"]),
+            torch=LibRngState(**data["torch"]),
+            cuda=None if data.get("cuda") is None else LibRngState(**data["cuda"]),
+        )
+
 
 def _get_python_version() -> Tuple[int, int]:
     return sys.version_info[0:2]
