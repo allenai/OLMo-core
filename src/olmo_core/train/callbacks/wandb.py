@@ -83,7 +83,6 @@ class WandBCallback(Callback):
     def run(self):
         return self.wandb.run
 
-    @property
     def pre_train(self):
         if get_rank() == 0:
             wandb_dir = Path(self.trainer.save_folder) / "wandb"
