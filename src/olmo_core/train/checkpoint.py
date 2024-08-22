@@ -253,4 +253,6 @@ class Checkpointer:
 
         yield tmp_dir
 
+        barrier()
+
         self._teardown_tmp_dir(dir, tmp_dir)
