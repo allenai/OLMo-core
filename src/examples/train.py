@@ -78,29 +78,29 @@ def build_model() -> Tuple[Transformer, int]:
     return model, flops_per_token
 
 
-def build_dataset() -> Tuple[MemMapDataset, DataCollator]:
+def build_dataset() -> MemMapDataset:
     paths = sorted(glob(DATA_FILES))
     assert paths
-    collator = DataCollator(pad_token_id=PAD_TOKEN_ID)
     dataset = MemMapDataset(
         *paths,
         sequence_length=SEQUENCE_LENGTH,
         eos_token_id=EOS_TOKEN_ID,
         pad_token_id=PAD_TOKEN_ID,
     )
-    return dataset, collator
+    return dataset
 
 
 def main():
     model, model_flops_per_token = build_model()
     optim = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    dataset, collator = build_dataset()
+    dataset = build_dataset()
 
     trainer = (
         TrainerConfig(
             work_dir=SAVE_FOLDER,
             save_folder=SAVE_FOLDER,
             train_sequence_length=SEQUENCE_LENGTH,
+            pad_token_id=PAD_TOKEN_ID,
             global_batch_size=BATCH_SIZE,
             microbatch_size=DEVICE_MICRO_BATCH_SIZE,
             fused_loss=FUSED_OPS,
@@ -115,7 +115,7 @@ def main():
         .with_callback(GradClipperCallback(max_grad_norm=1.0))
         .with_callback(CheckpointerCallback(save_interval=10_000, ephemeral_save_interval=250))
         .with_callback(SpeedMonitorCallback(num_flops_per_token=model_flops_per_token))
-    ).build(model, optim, dataset, collator)
+    ).build(model, optim, dataset)
 
     trainer.fit()
 

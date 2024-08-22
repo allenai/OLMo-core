@@ -8,7 +8,7 @@ from torch.optim import Optimizer
 
 from ..aliases import PathOrStr
 from ..config import Config
-from ..data import DataCollator, MemMapDataset
+from ..data import DataCollator, MemMapDataset, PaddingDirection
 from ..utils import get_default_device
 from .callbacks import Callback
 from .checkpoint import Checkpointer
@@ -27,6 +27,7 @@ class TrainerConfig(Config):
     train_sequence_length: int
     global_batch_size: int
     microbatch_size: int
+    pad_token_id: int
 
     device: torch.device = field(default_factory=get_default_device)
     save_overwrite: bool = False
@@ -41,17 +42,22 @@ class TrainerConfig(Config):
     data_seed: int = 0
     data_loader_workers: int = 0
     data_loader_prefetch_factor: Optional[int] = None
+    pad_direction: PaddingDirection = PaddingDirection.right
 
-    def build(
-        self, model: nn.Module, optim: Optimizer, dataset: MemMapDataset, collator: DataCollator
-    ) -> Trainer:
+    def build(self, model: nn.Module, optim: Optimizer, dataset: MemMapDataset) -> Trainer:
         """
         Build the corresponding trainer.
         """
         kwargs = self.as_dict(recurse=False)
+
         checkpointer = Checkpointer(
             save_overwrite=kwargs.pop("save_overwrite"), process_group=kwargs.pop("checkpointer_pg")
         )
+
+        collator = DataCollator(
+            pad_token_id=kwargs.pop("pad_token_id"), pad_direction=kwargs.pop("pad_direction")
+        )
+
         return Trainer(
             model=model,
             optim=optim,
