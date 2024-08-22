@@ -259,14 +259,8 @@ class Trainer:
 
     @property
     def training_complete(self) -> bool:
-        if not self._canceled and self.global_step % self.cancel_check_interval == 0:
-            cancellation = self._check_if_canceled()
-            if cancellation is not None:
-                self._canceled = True
-                self._canceling_rank, self._cancel_reason = cancellation
-                log.warning(
-                    f"Run canceled from rank {self._canceling_rank}. Reason: {self._cancel_reason}"
-                )
+        if self.global_step % self.cancel_check_interval == 0:
+            self._check_if_canceled()
 
         if self._canceled:
             return True
@@ -469,17 +463,21 @@ class Trainer:
         else:
             raise NotImplementedError
 
-    def _check_if_canceled(self) -> Optional[Tuple[int, str]]:
+    def _check_if_canceled(self):
+        if self._canceled:
+            return
+
         canceling_rank = self._canceling_rank if self._canceling_rank is not None else -1
         canceling_rank = all_reduce_value(
             canceling_rank, self.bookkeeping_device, op=dist.ReduceOp.MAX
         )
         if canceling_rank >= 0:
-            canceling_reason = scatter_object(self._cancel_reason, src=canceling_rank)
-            assert canceling_reason is not None
-            return canceling_rank, canceling_reason
-        else:
-            return None
+            cancel_reason = scatter_object(self._cancel_reason, src=canceling_rank)
+            assert cancel_reason is not None
+            self._canceled = True
+            self._canceling_rank = canceling_rank
+            self._cancel_reason = cancel_reason
+            log.warning(f"Run canceled from rank {canceling_rank}. Reason: {cancel_reason}")
 
     def _log_metrics(self):
         if not self._metrics:

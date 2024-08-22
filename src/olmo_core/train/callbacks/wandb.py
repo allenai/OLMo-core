@@ -63,6 +63,7 @@ class WandBCallback(Callback):
     """
 
     _wandb = None
+    _api = None
 
     def __post_init__(self):
         if get_rank() == 0:
@@ -81,6 +82,16 @@ class WandBCallback(Callback):
     @property
     def run(self):
         return self.wandb.run
+
+    @property
+    def api(self):
+        if (
+            self.run is not None
+            and self._api is None
+            and (api_key := os.environ.get(WANDB_API_KEY_ENV_VAR)) is not None
+        ):
+            self._api = self.wandb.Api(api_key=api_key)
+        return self._api
 
     def pre_train(self):
         if get_rank() == 0:
@@ -115,17 +126,12 @@ class WandBCallback(Callback):
             self.wandb.finish(exit_code=1, quiet=True)
 
     def check_if_canceled(self) -> bool:
-        if (
-            self.cancel_tags
-            and self.run is not None
-            and (api_key := os.environ.get(WANDB_API_KEY_ENV_VAR)) is not None
-        ):
+        if self.cancel_tags and self.run is not None and self.api is not None:
             from requests.exceptions import RequestException
             from wandb.errors import CommError  # type: ignore
 
             try:
-                api = self.wandb.Api(api_key=api_key)
-                run = api.run(self.run.path)
+                run = self.api.run(self.run.path)
                 for tag in run.tags or []:
                     if tag.lower() in self.cancel_tags:
                         return True
