@@ -23,7 +23,7 @@ from ..distributed.utils import (
     scatter_object,
 )
 from ..exceptions import OLMoConfigurationError
-from ..io import normalize_path
+from ..io import is_url, normalize_path
 from ..nn.functional.cross_entropy_loss import (
     cross_entropy_loss,
     fused_cross_entropy_loss,
@@ -194,6 +194,14 @@ class Trainer:
 
     def __post_init__(self):
         self.save_folder = normalize_path(self.save_folder)
+
+        # If save folder is a local directory, make sure we're using a shared filesystem.
+        if not is_url(self.save_folder) and get_fs_local_rank() != get_rank():
+            raise OLMoConfigurationError(
+                "Checkpointing to a local directory requires a shared filesystem. "
+                "If you do have shared filesystem make sure you have the env var 'OLMO_SHARED_FS=1' set "
+                "or 'FS_LOCAL_RANK' set to the global rank."
+            )
 
         # Configure working directory.
         self.work_dir = Path(self.work_dir)
@@ -369,6 +377,7 @@ class Trainer:
         :param load_trainer_state: Load trainer state.
         """
         if not self.checkpointer.dir_is_checkpoint(dir):
+            # Try to find the latest checkpoint in the directory.
             latest_checkpoint: Optional[str] = None
             if get_rank() == 0:
                 latest_checkpoint = self.checkpointer.latest_checkpoint(dir)
