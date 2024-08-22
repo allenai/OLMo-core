@@ -19,6 +19,7 @@ from ..data import DataCollator, IterableDataset, MemMapDataset
 from ..distributed.utils import (
     all_reduce_value,
     backend_supports_cpu,
+    barrier,
     get_fs_local_rank,
     get_rank,
     get_world_size,
@@ -715,8 +716,13 @@ class Trainer:
         for callback in self.callbacks:
             callback.pre_epoch()
 
+        log.info("Launching data loader...")
+        data_iter = iter(self._get_dataloader())
+
+        barrier()
         log.info(f"Starting epoch {self.epoch}...")
-        for batch in self._get_dataloader():
+
+        for batch in data_iter:
             # Bookkeeping.
             # NOTE: To track the global batch size / number of tokens per batch we make the
             # assumption that all batches see the same number of tokens, which should always be
