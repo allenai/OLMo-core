@@ -713,16 +713,12 @@ class Trainer:
         )
 
     def _fit_epoch(self):
+        log.info(f"Starting epoch {self.epoch}...")
+
         for callback in self.callbacks:
             callback.pre_epoch()
 
-        log.info("Launching data loader...")
-        data_iter = iter(self._get_dataloader())
-
-        barrier()
-        log.info(f"Starting epoch {self.epoch}...")
-
-        for batch in data_iter:
+        for batch in self._get_dataloader():
             # Bookkeeping.
             # NOTE: To track the global batch size / number of tokens per batch we make the
             # assumption that all batches see the same number of tokens, which should always be
