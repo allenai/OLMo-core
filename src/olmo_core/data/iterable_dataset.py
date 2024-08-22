@@ -22,8 +22,8 @@ log = logging.getLogger(__name__)
 class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
     """
     Adapted from PyTorch's ``DistributedSampler``, this wraps a ``Dataset`` or arbitrary sequence
-    as an ``IterableDataset`` that can be deterministically restarted at any point by using
-    :meth:`set_start_offset()`.
+    as an ``IterableDataset`` that can be deterministically restarted at any point by setting
+    ``start_index`` accordingly.
     """
 
     def __init__(
@@ -102,39 +102,6 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
                 del global_indices_mmap
                 log.info(f"Global data order indices saved to '{self.global_indices_file}'")
         barrier()
-
-    def _build_global_indices(self) -> np.ndarray:
-        assert len(self.dataset) < np.iinfo(np.uint32).max
-        indices = np.arange(len(self.dataset), dtype=np.uint32)
-        if self.shuffle:
-            # Deterministically shuffle based on epoch and seed
-            # Torch built-in randomness is not very random, so we use numpy.
-            rng = np.random.Generator(np.random.PCG64(seed=self.seed + self.epoch))
-            rng.shuffle(indices)
-
-        if not self.drop_last:
-            # Add extra samples to make it evenly divisible
-            padding_size = self.total_size - len(indices)
-            arrays_to_concatenate = [indices]
-            while padding_size > 0:
-                array_to_concatenate = indices[: min(padding_size, len(indices))]
-                arrays_to_concatenate.append(array_to_concatenate)
-                padding_size -= len(array_to_concatenate)
-                del array_to_concatenate
-            indices = np.concatenate(arrays_to_concatenate)
-        else:
-            # Remove tail of data to make it evenly divisible.
-            indices = indices[: self.total_size]
-        assert len(indices) == self.total_size
-        return indices
-
-    def set_start_offset(self, offset: int):
-        """
-        Set the starting instance offset.
-
-        :param offset: The instance offset.
-        """
-        self.start_index = offset
 
     def get_global_indices(self) -> np.ndarray:
         """
@@ -225,3 +192,28 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
             return dict(**item, index=idx)
         else:
             return {"input_ids": item, "index": idx}
+
+    def _build_global_indices(self) -> np.ndarray:
+        assert len(self.dataset) < np.iinfo(np.uint32).max
+        indices = np.arange(len(self.dataset), dtype=np.uint32)
+        if self.shuffle:
+            # Deterministically shuffle based on epoch and seed
+            # Torch built-in randomness is not very random, so we use numpy.
+            rng = np.random.Generator(np.random.PCG64(seed=self.seed + self.epoch))
+            rng.shuffle(indices)
+
+        if not self.drop_last:
+            # Add extra samples to make it evenly divisible
+            padding_size = self.total_size - len(indices)
+            arrays_to_concatenate = [indices]
+            while padding_size > 0:
+                array_to_concatenate = indices[: min(padding_size, len(indices))]
+                arrays_to_concatenate.append(array_to_concatenate)
+                padding_size -= len(array_to_concatenate)
+                del array_to_concatenate
+            indices = np.concatenate(arrays_to_concatenate)
+        else:
+            # Remove tail of data to make it evenly divisible.
+            indices = indices[: self.total_size]
+        assert len(indices) == self.total_size
+        return indices
