@@ -159,13 +159,15 @@ def reduce_metrics(
             reduce_type = metrics_reduce_type[name]
             if reduce_type == ReduceType.mean:
                 step_sum_metric_names.append(name)
-                step_sum_metric_values.append((value / get_world_size()).to(device))
+                step_sum_metric_values.append(
+                    (value / get_world_size()).to(device, non_blocking=True)
+                )
             elif reduce_type == ReduceType.sum:
                 step_sum_metric_names.append(name)
-                step_sum_metric_values.append(value.to(device))
+                step_sum_metric_values.append(value.to(device, non_blocking=True))
             elif reduce_type == ReduceType.max:
                 step_max_metric_names.append(name)
-                step_max_metric_values.append(value.to(device))
+                step_max_metric_values.append(value.to(device, non_blocking=True))
             elif reduce_type is None:
                 out[step][name] = value.item()
             else:
@@ -175,13 +177,13 @@ def reduce_metrics(
         sum_metric_values.append(
             torch.stack(step_sum_metric_values)
             if step_sum_metric_values
-            else torch.tensor([], device=device)
+            else torch.tensor([]).to(device=device, non_blocking=True)
         )
         max_metric_names.append(step_max_metric_names)
         max_metric_values.append(
             torch.stack(step_max_metric_values)
             if step_max_metric_values
-            else torch.tensor([], device=device)
+            else torch.tensor([]).to(device=device, non_blocking=True)
         )
 
     max_num_sum_metrics = max(t.numel() for t in sum_metric_values)
