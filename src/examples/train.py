@@ -26,10 +26,12 @@ from olmo_core.train.callbacks import (
     GradClipperCallback,
     SchedulerCallback,
     SpeedMonitorCallback,
+    WandBCallback,
 )
 from olmo_core.utils import get_default_device, has_flash_attn
 
-LOAD_PATH = None
+LOAD_PATH = None  # path to a checkpoint folder
+WANDB_RUN = None  # name of W&B run
 
 # Tokenizer settings.
 VOCAB_SIZE = 50304
@@ -97,7 +99,7 @@ def main():
     optim = torch.optim.AdamW(model.parameters(), lr=1e-3)
     dataset = build_dataset()
 
-    trainer = (
+    trainer_config = (
         TrainerConfig(
             work_dir=SAVE_FOLDER,
             save_folder=SAVE_FOLDER,
@@ -115,7 +117,12 @@ def main():
         .with_callback(GradClipperCallback(max_grad_norm=1.0))
         .with_callback(CheckpointerCallback(save_interval=10_000, ephemeral_save_interval=250))
         .with_callback(SpeedMonitorCallback(num_flops_per_token=model_flops_per_token))
-    ).build(model, optim, dataset)
+    )
+
+    if WANDB_RUN is not None:
+        trainer_config.with_callback(WandBCallback(name=WANDB_RUN))
+
+    trainer = trainer_config.build(model, optim, dataset)
 
     if LOAD_PATH is not None:
         trainer.load_checkpoint(LOAD_PATH)
