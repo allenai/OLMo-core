@@ -38,9 +38,10 @@ def test_nested_configs():
     assert foo.as_dict(recurse=False) == {"z": "z", "bar": foo.bar}
 
     assert foo.as_config_dict() == {
-        "CLASS": "Foo",
+        Config.CLASS_NAME_FIELD: "Foo",
         "z": "z",
         "bar": {
+            Config.CLASS_NAME_FIELD: "Bar",
             "x": 1,
             "y": 2,
         },

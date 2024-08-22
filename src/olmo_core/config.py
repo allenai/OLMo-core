@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass, fields
+from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 from typing import Any, Dict, Type, TypeVar, cast
 
@@ -33,11 +33,18 @@ class Config:
         When you subclass this you should still decorate your subclasses with ``@dataclass``.
     """
 
+    CLASS_NAME_FIELD = "_CLASS_"
+    """
+    The name of the class name field inject into the dictionary from :meth:`as_dict()` or
+    :meth:`as_config_dict()`.
+    """
+
     def as_dict(
         self,
         *,
         exclude_none: bool = False,
         exclude_private_fields: bool = False,
+        include_class_name: bool = False,
         recurse: bool = True,
     ) -> Dict[str, Any]:
         """
@@ -45,30 +52,46 @@ class Config:
 
         :param exclude_none: Don't include values that are ``None``.
         :param exclude_private_fields: Don't include private fields.
+        :param include_class_name: Include a field for the name of the class.
         :param recurse: Recurse into fields that are also configs/dataclasses.
         """
 
-        def dict_factory(d) -> Dict[str, Any]:
-            out = dict(d)
-            for k in list(out.keys()):
-                v = out[k]
-                if (exclude_none and v is None) or (exclude_private_fields and k.startswith("_")):
-                    del out[k]
-            return out
+        def as_dict(d: Any, recurse: bool = True) -> Any:
+            if is_dataclass(d):
+                if recurse:
+                    out = {field.name: as_dict(getattr(d, field.name)) for field in fields(d)}
+                else:
+                    out = {field.name: getattr(d, field.name) for field in fields(d)}
+                for k in list(out.keys()):
+                    v = out[k]
+                    if (exclude_none and v is None) or (
+                        exclude_private_fields and k.startswith("_")
+                    ):
+                        del out[k]
+                if include_class_name:
+                    out[self.CLASS_NAME_FIELD] = d.__class__.__name__
+                return out
+            elif isinstance(d, dict):
+                return {k: as_dict(v) for k, v in d.items()}
+            elif isinstance(d, list):
+                return [as_dict(x) for x in d]
+            elif isinstance(d, tuple):
+                return tuple((as_dict(x) for x in d))
+            elif isinstance(d, set):
+                return set((as_dict(x) for x in d))
+            else:
+                return d
 
-        if recurse:
-            return asdict(self, dict_factory=dict_factory)
-        else:
-            return dict_factory({field.name: getattr(self, field.name) for field in fields(self)})
+        return as_dict(self, recurse=recurse)
 
     def as_config_dict(self) -> Dict[str, Any]:
         """
         A convenience wrapper around :meth:`as_dict()` for creating dictionaries suitable
         for recording the config.
         """
-        out = self.as_dict(exclude_none=True, exclude_private_fields=True, recurse=True)
-        out["CLASS"] = self.__class__.__name__
-        return out
+        return self.as_dict(
+            exclude_none=True, exclude_private_fields=True, include_class_name=True, recurse=True
+        )
 
     @classmethod
     def from_dict(cls: Type[C], data: Dict[str, Any]) -> C:
