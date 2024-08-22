@@ -47,9 +47,7 @@ class Checkpointer:
         dir = normalize_path(dir)
         with self._temporary_wd(dir) as wd:
             # Save trainer state.
-            train_dir = wd / "train"
-            train_dir.mkdir(exist_ok=True, parents=True)
-            torch.save(train_state, train_dir / f"rank{get_rank()}.pt")
+            self._save_train_state(wd, train_state)
 
             # Save model and optim state.
             model_and_optim_dir = (
@@ -72,9 +70,7 @@ class Checkpointer:
         dir = normalize_path(dir)
         with self._temporary_wd(dir) as wd:
             # Save trainer state.
-            train_dir = wd / "train"
-            train_dir.mkdir(exist_ok=True, parents=True)
-            torch.save(train_state, train_dir / f"rank{get_rank()}.pt")
+            self._save_train_state(wd, train_state)
 
         # Save model and optim state.
         model_and_optim_dir = f"{dir}/model_and_optim"
@@ -163,6 +159,13 @@ class Checkpointer:
             raise FileNotFoundError(f"No checkpoints found in '{dir}'")
         else:
             return latest_checkpoint
+
+    def _save_train_state(self, wd: Path, train_state: Dict[str, Any]):
+        train_dir = wd / "train"
+        if get_fs_local_rank() == 0:
+            train_dir.mkdir(exist_ok=True, parents=True)
+        wait_for(train_dir.exists, description=f"Waiting on '{train_dir}' to be created...")
+        torch.save(train_state, train_dir / f"rank{get_rank()}.pt")
 
     def _prepare_dir(self, dir: PathOrStr, ensure_exists: bool = True) -> str:
         dir = normalize_path(dir)

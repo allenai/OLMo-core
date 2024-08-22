@@ -715,6 +715,7 @@ class Trainer:
         for callback in self.callbacks:
             callback.pre_epoch()
 
+        log.info(f"Starting epoch {self.epoch}...")
         for batch in self._get_dataloader():
             # Bookkeeping.
             # NOTE: To track the global batch size / number of tokens per batch we make the
