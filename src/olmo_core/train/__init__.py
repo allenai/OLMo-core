@@ -72,7 +72,7 @@ def prepare_training_environment(
 
 def teardown_training_environment():
     """
-    To be run at the end of training. Tears down the distributed process group.
+    To be run at the end of training. Tears down all distributed process groups.
     """
     if is_distributed():
         dist.destroy_process_group()

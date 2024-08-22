@@ -117,6 +117,7 @@ def main():
                 save_interval=10_000,
                 ephemeral_save_interval=250,
                 save_async=ASYNC_CHECKPOINTS,
+                pre_train_checkpoint=LOAD_PATH is None,
             )
         )
         .with_callback(
@@ -134,6 +135,7 @@ def main():
                     model=model_config.as_config_dict(),
                     optim=optim_config.as_config_dict(),
                     trainer=trainer_config.as_config_dict(),
+                    load_path=LOAD_PATH,
                 ),
             )
         )
