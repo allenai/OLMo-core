@@ -66,7 +66,7 @@ class CheckpointerCallback(Callback):
         return path
 
     def pre_train(self):
-        if self.pre_train_checkpoint:
+        if self.step == 0 and self.pre_train_checkpoint:
             self._checkpoints.append(self._save_checkpoint())
 
     def post_train_batch(self):
