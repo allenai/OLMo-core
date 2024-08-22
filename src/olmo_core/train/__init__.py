@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 from typing import Optional
 
@@ -16,6 +17,9 @@ __all__ = [
     "TrainerConfig",
     "Trainer",
 ]
+
+
+log = logging.getLogger(__name__)
 
 
 def prepare_training_environment(
@@ -61,6 +65,9 @@ def prepare_training_environment(
 
     # Init RNG states.
     seed_all(seed)
+
+    if is_distributed():
+        log.info(f"Using distributed backend {dist.get_backend()}")
 
 
 def teardown_training_environment():
