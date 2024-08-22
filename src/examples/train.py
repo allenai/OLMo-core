@@ -101,8 +101,6 @@ def main():
         TrainerConfig(
             work_dir=SAVE_FOLDER,
             save_folder=SAVE_FOLDER,
-            train_sequence_length=SEQUENCE_LENGTH,
-            pad_token_id=PAD_TOKEN_ID,
             global_batch_size=BATCH_SIZE,
             microbatch_size=DEVICE_MICRO_BATCH_SIZE,
             fused_loss=FUSED_OPS,
