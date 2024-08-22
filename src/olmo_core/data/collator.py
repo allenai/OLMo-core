@@ -12,12 +12,20 @@ __all__ = ["DataCollator"]
 
 
 class PaddingDirection(StrEnum):
+    """
+    Specifies the direction to pad instances when needed.
+    """
+
     left = "left"
     right = "right"
 
 
 @dataclass
 class DataCollator:
+    """
+    The default data collator used by the :class:`~olmo_core.train.Trainer`.
+    """
+
     pad_token_id: int
     pad_direction: PaddingDirection = PaddingDirection.right
 

@@ -50,6 +50,9 @@ TRAIN_Z_LOSS_METRIC = "train/Z loss"
 class Trainer:
     """
     A language model trainer.
+
+    .. tip::
+        Use :class:`TrainerConfig` instead of constructing this class directly.
     """
 
     work_dir: PathOrStr

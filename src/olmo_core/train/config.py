@@ -44,6 +44,10 @@ class TrainerConfig(Config):
     def build(self, model: nn.Module, optim: Optimizer, dataset: MemMapDataset) -> Trainer:
         """
         Build the corresponding trainer.
+
+        :param model: The model to train.
+        :param optim: The optimizer to use.
+        :param dataset: The dataset to train on.
         """
         kwargs = self.as_dict(recurse=False)
 
@@ -66,6 +70,8 @@ class TrainerConfig(Config):
     def with_callback(self, callback: Callback) -> "TrainerConfig":
         """
         Add another callback.
+
+        :param callback: The callback to add.
         """
         self.callbacks.append(callback)
         return self

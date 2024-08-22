@@ -8,7 +8,8 @@
 
 **OLMo-core** is a Python library that provides building blocks for large-scale distributed training with PyTorch.
 
-To get started, install OLMo-core from PyPI with:
+To get started first install `PyTorch <https://pytorch.org>`_ according to the official instructions
+specific to your environment. Then you can install OLMo-core from PyPI with:
 
 .. code-block:: bash
 

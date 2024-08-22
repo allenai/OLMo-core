@@ -24,6 +24,11 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
     Adapted from PyTorch's ``DistributedSampler``, this wraps a ``Dataset`` or arbitrary sequence
     as an ``IterableDataset`` that can be deterministically restarted at any point by setting
     ``start_index`` accordingly.
+
+    .. warning::
+        This is used internally by the :class:`~olmo_core.train.Trainer`.
+        In general you shouldn't be using this class directly unless you really know what you're
+        doing! It's easy to misuse, resulting in incorrect data order.
     """
 
     def __init__(

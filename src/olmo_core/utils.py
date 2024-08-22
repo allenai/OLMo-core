@@ -25,6 +25,7 @@ from .config import StrEnum
 from .exceptions import OLMoCLIError, OLMoEnvironmentError, OLMoError, OLMoThreadError
 
 OLMO_NUM_THREADS_ENV_VAR = "OLMO_NUM_THREADS"
+LOG_FILTER_TYPE_ENV_VAR = "LOG_FILTER_TYPE"
 
 
 _log_extra_fields: Dict[str, Any] = {}
@@ -32,10 +33,16 @@ log = logging.getLogger(__name__)
 
 
 def generate_uuid() -> str:
+    """
+    Generate a unique ID.
+    """
     return str(uuid.uuid4())
 
 
 def get_default_thread_count() -> int:
+    """
+    Get the default maximum number of threads allowed.
+    """
     env_val = os.environ.get(OLMO_NUM_THREADS_ENV_VAR)
     if env_val is not None:
         try:
@@ -83,6 +90,12 @@ T = TypeVar("T")
 
 
 def move_to_device(o: T, device: torch.device) -> T:
+    """
+    Move a tensor or container of tensors to the given device.
+
+    :param o: The object to move.
+    :param device: The device to move to.
+    """
     if isinstance(o, torch.Tensor):
         return o.to(device)  # type: ignore[return-value]
     elif isinstance(o, dict):
@@ -96,6 +109,9 @@ def move_to_device(o: T, device: torch.device) -> T:
 
 
 def get_default_device() -> torch.device:
+    """
+    Get the default device.
+    """
     if torch.cuda.is_available() and torch.cuda.is_initialized():
         return torch.device("cuda")
     else:
@@ -103,7 +119,9 @@ def get_default_device() -> torch.device:
 
 
 def seed_all(seed: int):
-    """Seed all rng objects."""
+    """
+    Seed all RNG states.
+    """
     import random
 
     import numpy as np
@@ -116,35 +134,6 @@ def seed_all(seed: int):
     # torch.manual_seed may call manual_seed_all but calling it again here
     # to make sure it gets called at least once
     torch.cuda.manual_seed_all(seed)
-
-
-def get_grad_norm(params: Iterable[nn.Parameter], norm_type: float) -> torch.Tensor:
-    """
-    Return the gradient norm of parameters, where the gradients are viewed as a single vector.
-
-    The returned norm is in FP32 even if parameters/gradients are in a low precision. This is because the downstream
-    use of this return value is a reduction across ranks.
-    """
-    grads = [param.grad for param in params if param.grad is not None]
-    if not grads:
-        return torch.tensor(0.0)
-
-    grad_dtypes = {grad.dtype for grad in grads}
-    if len(grad_dtypes) != 1:
-        raise ValueError(f"Requires uniform dtype across all gradients but got {grad_dtypes}")
-    # Compute the gradient norm in FP32, where we treat the gradients as a
-    # single vector
-    grad_norm = torch.linalg.vector_norm(
-        torch.stack(
-            [
-                torch.linalg.vector_norm(grad.detach(), norm_type, dtype=torch.float32)
-                for grad in grads
-            ],
-        ),
-        norm_type,
-        dtype=torch.float32,
-    )
-    return grad_norm
 
 
 def same_storage(x: torch.Tensor, y: torch.Tensor) -> bool:
@@ -166,6 +155,12 @@ def gc_cuda():
 
 
 def get_document_lengths(input_ids: torch.Tensor, eos_token_id: int) -> torch.Tensor:
+    """
+    Get the length of documents.
+
+    :param input_ids: An integer-type tensor of token IDs.
+    :param eos_token_id: The ID of the EOS token (use to denote document boundaries).
+    """
     doc_boundaries = torch.cat(
         [
             torch.tensor([-1], dtype=torch.int32),
@@ -182,6 +177,8 @@ def get_cumulative_document_lengths(doc_lens: torch.Tensor) -> torch.Tensor:
     """
     Transform a batched tensor of document lengths into a 1D tensor of cumulative document
     lengths for the whole batch.
+
+    :param doc_lens: The document lengths, such as those returned by :func:`get_document_lengths`.
     """
     return torch.cat(
         [
@@ -205,12 +202,37 @@ def has_flash_attn() -> bool:
 
 
 class LogFilterType(StrEnum):
+    """
+    Determines which ranks emit INFO and below messages.
+    """
+
     rank0_only = "rank0_only"
+    """
+    INFO and below are only emitted from the global rank 0.
+    """
+
     local_rank0_only = "local_rank0_only"
+    """
+    INFO and below are only emitted from the local (node) rank 0.
+    """
+
     all_ranks = "all_ranks"
+    """
+    All ranks emit INFO and below messages.
+    """
 
 
 def log_extra_field(field_name: str, field_value: Any) -> None:
+    """
+    Add an additional field to each log record.
+
+    .. note::
+        For these fields to actually show up in the logs you need to use a formatter/handler
+        that displays them.
+
+    :param field_name: The name of the field to attach.
+    :param field_value: The value of the field to attach.
+    """
     global _log_extra_fields
     if field_value is None:
         if field_name in _log_extra_fields:
@@ -221,7 +243,12 @@ def log_extra_field(field_name: str, field_value: Any) -> None:
 
 def setup_logging(log_filter_type: LogFilterType = LogFilterType.rank0_only) -> None:
     """
-    :param rank0_only: INFO and below messages will only be emitted on the rank0 process.
+    Configure logging.
+
+    .. seealso::
+        :func:`prepare_cli_environment()`
+
+    :param log_filter_type: Which ranks emit INFO and below messages.
     """
     from .distributed.utils import get_local_rank, get_rank
 
@@ -253,7 +280,7 @@ def setup_logging(log_filter_type: LogFilterType = LogFilterType.rank0_only) -> 
         formatter.default_msec_format = "%s.%03d"
         handler.setFormatter(formatter)
     else:
-        handler = RichHandler()
+        handler = _RichHandler()
 
     def rank0_filter(record: logging.LogRecord) -> int:
         if record.levelno > logging.INFO:
@@ -290,7 +317,8 @@ def setup_logging(log_filter_type: LogFilterType = LogFilterType.rank0_only) -> 
 
 def excepthook(exctype, value, traceback):
     """
-    Used to patch `sys.excepthook` in order to log exceptions.
+    Used to patch ``sys.excepthook`` in order to log exceptions. Use :func:`install_excepthook()`
+    to install this.
     """
     if issubclass(exctype, KeyboardInterrupt):
         sys.__excepthook__(exctype, value, traceback)
@@ -305,10 +333,22 @@ def excepthook(exctype, value, traceback):
 
 
 def install_excepthook():
+    """
+    Install the custom :func:`excepthook`.
+
+    .. seealso::
+        :func:`prepare_cli_environment()`
+    """
     sys.excepthook = excepthook
 
 
 def filter_warnings():
+    """
+    Configure warning filters for warnings we don't need to see.
+
+    .. seealso::
+        :func:`prepare_cli_environment()`
+    """
     # Filter internal deprecation warnings from torch
     warnings.filterwarnings(
         action="ignore",
@@ -345,12 +385,36 @@ def filter_warnings():
 
 
 def set_env_variables():
-    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    """
+    Set common needed env vars if they're not already set.
+
+    .. seealso::
+        :func:`prepare_cli_environment()`
+    """
+    if "OMP_NUM_THREADS" not in os.environ:
+        os.environ["OMP_NUM_THREADS"] = "8"
+    if "TOKENIZERS_PARALLELISM" not in os.environ:
+        os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
+    """
+    Prepare the environment for a script/CLI.
+    This should be called at the very beginning of the script/command, like at the top
+    of the ``if __name__ == "__main__": ...`` block.
+
+    Internally this calls:
+
+    - :func:`setup_logging()`
+    - :func:`install_excepthook()`
+    - :func:`filter_warnings()`
+    - :func:`set_env_variables()`
+
+    :param log_filter_type: Which ranks emit INFO and below messages. You can also configure this
+        through the env var ``LOG_FILTER_TYPE``. If neither are set, this defaults to "rank0_only".
+    """
     if log_filter_type is None:
-        log_filter_type = LogFilterType(os.environ.get("LOG_FILTER_TYPE", "rank0_only"))
+        log_filter_type = LogFilterType(os.environ.get(LOG_FILTER_TYPE_ENV_VAR, "rank0_only"))
     rich.reconfigure(width=max(rich.get_console().width, 180), soft_wrap=True)
     setup_logging(log_filter_type=log_filter_type)
     install_excepthook()
@@ -358,7 +422,7 @@ def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
     set_env_variables()
 
 
-class RichHandler(logging.Handler):
+class _RichHandler(logging.Handler):
     """
     A simplified version of rich.logging.RichHandler from
     https://github.com/Textualize/rich/blob/master/rich/logging.py
@@ -426,6 +490,9 @@ class RichHandler(logging.Handler):
 
 
 def threaded_generator(g, maxsize: int = 16, thread_name: Optional[str] = None):
+    """
+    Wraps a generator ``g`` and runs it in a thread.
+    """
     q: Queue = Queue(maxsize=maxsize)
 
     sentinel = object()
