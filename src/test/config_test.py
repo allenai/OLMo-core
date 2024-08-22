@@ -35,6 +35,8 @@ def test_nested_configs():
     assert foo1 == foo
     assert isinstance(foo1.bar, Bar)
 
+    assert foo.as_dict(recurse=False) == {"z": "z", "bar": foo.bar}
+
     assert foo.as_config_dict() == {
         "CLASS": "Foo",
         "z": "z",

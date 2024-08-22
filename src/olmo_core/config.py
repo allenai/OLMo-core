@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, fields
 from enum import Enum
 from typing import Any, Dict, Type, TypeVar, cast
 
@@ -59,7 +59,7 @@ class Config:
         if recurse:
             return asdict(self, dict_factory=dict_factory)
         else:
-            return dict_factory(self)
+            return dict_factory({field.name: getattr(self, field.name) for field in fields(self)})
 
     def as_config_dict(self) -> Dict[str, Any]:
         """
