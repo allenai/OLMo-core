@@ -109,8 +109,7 @@ class WandBCallback(Callback):
 
     def post_step(self):
         if get_rank() == 0 and self.step % self.trainer.cancel_check_interval == 0:
-            if self.check_if_canceled():
-                self.trainer.cancel_run("canceled from W&B tag")
+            self.check_if_canceled()
 
     def post_train(self):
         if get_rank() == 0 and self.run is not None:
@@ -121,7 +120,7 @@ class WandBCallback(Callback):
         if get_rank() == 0 and self.run is not None:
             self.wandb.finish(exit_code=1, quiet=True)
 
-    def check_if_canceled(self) -> bool:
+    def check_if_canceled(self):
         if self.cancel_tags:
             from requests.exceptions import RequestException
             from wandb.errors import CommError  # type: ignore
@@ -130,8 +129,7 @@ class WandBCallback(Callback):
                 run = self.api.run(self.run.path)
                 for tag in run.tags or []:
                     if tag.lower() in self.cancel_tags:
-                        return True
+                        self.trainer.cancel_run("canceled from W&B tag")
+                        return
             except (RequestException, CommError):
                 log.warning("Failed to communicate with W&B API")
-
-        return False

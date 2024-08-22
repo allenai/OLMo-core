@@ -2,6 +2,7 @@ import contextlib
 import logging
 import math
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Literal, Optional, Tuple, Union
@@ -203,6 +204,7 @@ class Trainer:
     _cancel_reason: Optional[str] = None
     _canceling_rank: Optional[int] = None
     _rank_batch_size: Optional[int] = None
+    _thread_pool: Optional[ThreadPoolExecutor] = None
 
     def __post_init__(self):
         self.save_folder = normalize_path(self.save_folder)
@@ -259,8 +261,8 @@ class Trainer:
 
     @property
     def training_complete(self) -> bool:
-        if self.global_step % self.cancel_check_interval == 0:
-            self._check_if_canceled()
+        if not self._canceled and self.global_step % self.cancel_check_interval == 0:
+            self.thread_pool.submit(self._check_if_canceled)
 
         if self._canceled:
             return True
@@ -323,6 +325,15 @@ class Trainer:
             return torch.device("cpu")
         else:
             return self.device
+
+    @property
+    def thread_pool(self) -> ThreadPoolExecutor:
+        """
+        A thread that can be used by callbacks to run bookkeeping tasks without blocking training.
+        """
+        if self._thread_pool is None:
+            self._thread_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="trainer")
+        return self._thread_pool
 
     def cancel_run(self, reason: str):
         """
