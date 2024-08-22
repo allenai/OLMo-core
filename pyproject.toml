@@ -149,4 +149,5 @@ filterwarnings = [
     'ignore::FutureWarning:huggingface_hub\.file_download',
     'ignore::DeprecationWarning:pkg_resources',
     'ignore::DeprecationWarning:google\.rpc',
+    'ignore::FutureWarning:torch\.distributed\.checkpoint\.default_planner',
 ]
