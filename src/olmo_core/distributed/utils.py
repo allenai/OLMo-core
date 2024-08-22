@@ -202,3 +202,14 @@ def get_mesh_coordinates(mesh: "DeviceMesh", rank: Optional[int] = None) -> Opti
     rank_coords = (mesh.mesh == rank).nonzero()
     assert rank_coords.size(0) in (0, 1)
     return rank_coords[0].tolist() if rank_coords.size(0) > 0 else None
+
+
+def backend_supports_cpu():
+    if not is_distributed():
+        return True
+
+    backend = dist.get_backend()
+    if "gloo" in backend or "mpi" in backend:
+        return True
+    else:
+        return False

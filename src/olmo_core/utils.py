@@ -11,11 +11,10 @@ from datetime import datetime
 from itertools import cycle, islice
 from queue import Queue
 from threading import Thread
-from typing import Any, Callable, Dict, Iterable, Optional, TypeVar, Union
+from typing import Any, Callable, Dict, Optional, TypeVar, Union
 
 import rich
 import torch
-import torch.nn as nn
 from rich.console import Console, ConsoleRenderable
 from rich.highlighter import NullHighlighter
 from rich.text import Text
@@ -89,7 +88,7 @@ def apply_to_tensors(fn, container: Any) -> None:
 T = TypeVar("T")
 
 
-def move_to_device(o: T, device: torch.device) -> T:
+def move_to_device(o: T, device: torch.device, non_blocking: bool = False) -> T:
     """
     Move a tensor or container of tensors to the given device.
 
@@ -97,7 +96,7 @@ def move_to_device(o: T, device: torch.device) -> T:
     :param device: The device to move to.
     """
     if isinstance(o, torch.Tensor):
-        return o.to(device)  # type: ignore[return-value]
+        return o.to(device, non_blocking=non_blocking)  # type: ignore[return-value]
     elif isinstance(o, dict):
         return {k: move_to_device(v, device) for k, v in o.items()}  # type: ignore[return-value]
     elif isinstance(o, list):

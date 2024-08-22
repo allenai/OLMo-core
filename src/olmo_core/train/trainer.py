@@ -17,6 +17,7 @@ from ..aliases import PathOrStr
 from ..data import DataCollator, IterableDataset, MemMapDataset
 from ..distributed.utils import (
     all_reduce_value,
+    backend_supports_cpu,
     get_fs_local_rank,
     get_rank,
     get_world_size,
@@ -321,9 +322,10 @@ class Trainer:
     @property
     def bookkeeping_device(self) -> torch.device:
         """
-        The device used for collective bookkeeping (non-training) operations, like reducing metrics.
+        The device used for collective bookkeeping (non-training) operations that can potentially.
+        use a different backend.
         """
-        if dist.is_gloo_available() or dist.is_mpi_available():
+        if backend_supports_cpu():
             return torch.device("cpu")
         else:
             return self.device
@@ -492,7 +494,7 @@ class Trainer:
         metrics: Dict[int, Dict[str, float]] = reduce_metrics(
             self._metrics,
             self._metrics_reduce_type,
-            self.bookkeeping_device,
+            self.device,
             process_group=self.dp_process_group,
         )
         self._metrics.clear()
@@ -657,7 +659,7 @@ class Trainer:
         self.optim.zero_grad(set_to_none=True)
 
         # Move tensors to the right device.
-        batch = move_to_device(batch, self.device)
+        batch = move_to_device(batch, self.device, non_blocking=True)
 
         # Run forward-backward pass.
         ce_batch_loss, z_batch_loss = self._model_forward_backward(batch)
