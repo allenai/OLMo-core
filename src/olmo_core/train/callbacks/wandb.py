@@ -63,7 +63,7 @@ class WandBCallback(Callback):
     """
 
     _wandb = None
-    _api = None
+    _run_path = None
 
     def __post_init__(self):
         if get_rank() == 0:
@@ -83,6 +83,10 @@ class WandBCallback(Callback):
     def run(self):
         return self.wandb.run
 
+    @property
+    def run_path(self):
+        return self._run_path
+
     def pre_train(self):
         if get_rank() == 0:
             wandb_dir = Path(self.trainer.save_folder) / "wandb"
@@ -96,6 +100,7 @@ class WandBCallback(Callback):
                 tags=self.tags,
                 config=self.config,
             )
+            self._run_path = self.run.path
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):
         if get_rank() == 0:
@@ -103,7 +108,7 @@ class WandBCallback(Callback):
 
     def post_step(self):
         if get_rank() == 0 and self.step % self.trainer.cancel_check_interval == 0:
-            self.check_if_canceled()
+            self.trainer.thread_pool.submit(self.check_if_canceled)
 
     def post_train(self):
         if get_rank() == 0 and self.run is not None:
@@ -120,8 +125,10 @@ class WandBCallback(Callback):
             from wandb.errors import CommError  # type: ignore
 
             try:
+                # NOTE: need to re-initialize the API client every time, otherwise
+                # I guess it return cached run data.
                 api = self.wandb.Api(api_key=os.environ[WANDB_API_KEY_ENV_VAR])
-                run = api.run(self.run.path)
+                run = api.run(self.run_path)
                 for tag in run.tags or []:
                     if tag.lower() in self.cancel_tags:
                         self.trainer.cancel_run("canceled from W&B tag")
