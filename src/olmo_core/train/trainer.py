@@ -367,6 +367,7 @@ class Trainer:
         :param load_optimizer_state: Load optimizer state.
         :param load_trainer_state: Load trainer state.
         """
+        log.info(f"Loading checkpoint from '{dir}'...")
         self.checkpointer.load(
             dir,
             self.model,
@@ -374,6 +375,7 @@ class Trainer:
             load_optimizer_state=load_optimizer_state,
             load_trainer_state=load_trainer_state,
         )
+        log.info("Checkpoint successfully loaded")
 
     def record_metric(
         self, name: str, value: Union[float, torch.Tensor], reduce_type: Optional[ReduceType] = None

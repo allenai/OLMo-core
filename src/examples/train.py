@@ -11,7 +11,7 @@ from typing import Tuple
 
 import torch
 
-from olmo_core.data import DataCollator, MemMapDataset
+from olmo_core.data import MemMapDataset
 from olmo_core.nn.rope import RoPEType
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.optim import CosWithWarmup
@@ -28,6 +28,8 @@ from olmo_core.train.callbacks import (
     SpeedMonitorCallback,
 )
 from olmo_core.utils import get_default_device, has_flash_attn
+
+LOAD_PATH = None
 
 # Tokenizer settings.
 VOCAB_SIZE = 50304
@@ -116,6 +118,9 @@ def main():
         .with_callback(CheckpointerCallback(save_interval=10_000, ephemeral_save_interval=250))
         .with_callback(SpeedMonitorCallback(num_flops_per_token=model_flops_per_token))
     ).build(model, optim, dataset)
+
+    if LOAD_PATH is not None:
+        trainer.load_checkpoint(LOAD_PATH)
 
     trainer.fit()
 
