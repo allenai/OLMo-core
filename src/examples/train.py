@@ -143,7 +143,7 @@ def main():
 
 
 if __name__ == "__main__":
-    prepare_training_environment(seed=SEED, backend="nccl")
+    prepare_training_environment(seed=SEED)
     try:
         main()
     finally:

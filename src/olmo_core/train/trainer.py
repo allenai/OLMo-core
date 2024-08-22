@@ -318,6 +318,16 @@ class Trainer:
         else:
             raise NotImplementedError
 
+    @property
+    def bookkeeping_device(self) -> torch.device:
+        """
+        The device used for collective bookkeeping (non-training) operations, like reducing metrics.
+        """
+        if dist.is_gloo_available() or dist.is_mpi_available():
+            return torch.device("cpu")
+        else:
+            return self.device
+
     def cancel_run(self, reason: str):
         """
         Mark the run canceled.
@@ -459,7 +469,9 @@ class Trainer:
 
     def _check_if_canceled(self) -> Optional[Tuple[int, str]]:
         canceling_rank = self._canceling_rank if self._canceling_rank is not None else -1
-        canceling_rank = all_reduce_value(canceling_rank, self.device, op=dist.ReduceOp.MAX)
+        canceling_rank = all_reduce_value(
+            canceling_rank, self.bookkeeping_device, op=dist.ReduceOp.MAX
+        )
         if canceling_rank >= 0:
             canceling_reason = scatter_object(self._cancel_reason, src=canceling_rank)
             assert canceling_reason is not None
@@ -480,7 +492,7 @@ class Trainer:
         metrics: Dict[int, Dict[str, float]] = reduce_metrics(
             self._metrics,
             self._metrics_reduce_type,
-            self.device,
+            self.bookkeeping_device,
             process_group=self.dp_process_group,
         )
         self._metrics.clear()
