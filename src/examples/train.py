@@ -111,7 +111,9 @@ def main():
         .with_callback(SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=100)))
         .with_callback(GPUMemoryMonitorCallback())
         .with_callback(GradClipperCallback(max_grad_norm=1.0))
-        .with_callback(CheckpointerCallback(save_interval=10_000, ephemeral_save_interval=250))
+        .with_callback(
+            CheckpointerCallback(save_interval=10_000, ephemeral_save_interval=250, save_async=True)
+        )
         .with_callback(
             SpeedMonitorCallback(
                 num_flops_per_token=model_config.num_flops_per_token(SEQUENCE_LENGTH)
