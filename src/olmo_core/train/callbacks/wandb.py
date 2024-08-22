@@ -84,11 +84,6 @@ class WandBCallback(Callback):
         return self.wandb.run
 
     @property
-    def api(self):
-        if self._api is None:
-            self._api = self.wandb.Api(api_key=os.environ[WANDB_API_KEY_ENV_VAR])
-        return self._api
-
     def pre_train(self):
         if get_rank() == 0:
             wandb_dir = Path(self.trainer.save_folder) / "wandb"
@@ -126,7 +121,8 @@ class WandBCallback(Callback):
             from wandb.errors import CommError  # type: ignore
 
             try:
-                run = self.api.run(self.run.path)
+                api = self.wandb.Api(api_key=os.environ[WANDB_API_KEY_ENV_VAR])
+                run = api.run(self.run.path)
                 for tag in run.tags or []:
                     if tag.lower() in self.cancel_tags:
                         self.trainer.cancel_run("canceled from W&B tag")
