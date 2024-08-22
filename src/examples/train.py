@@ -7,10 +7,8 @@ Launch this with torchrun:
 """
 
 from glob import glob
-from typing import Optional
 
 import torch
-import torch.distributed as dist
 
 from olmo_core.data import MemMapDataset
 from olmo_core.nn.rope import RoPEType
@@ -98,10 +96,6 @@ def main():
 
     optim_config = AdamWConfig(lr=1e-3)
 
-    checkpoint_pg: Optional[dist.ProcessGroup] = None
-    if ASYNC_CHECKPOINTS:
-        checkpoint_pg = dist.new_group()
-
     trainer_config = (
         TrainerConfig(
             work_dir=SAVE_FOLDER,
@@ -123,7 +117,6 @@ def main():
                 save_interval=10_000,
                 ephemeral_save_interval=250,
                 save_async=ASYNC_CHECKPOINTS,
-                process_group=checkpoint_pg,
             )
         )
         .with_callback(

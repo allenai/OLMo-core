@@ -6,7 +6,6 @@ from typing import List, Optional
 import torch.distributed as dist
 
 from olmo_core.distributed.utils import get_fs_local_rank, is_distributed
-from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.io import clear_directory
 
 from .callback import Callback
@@ -28,7 +27,6 @@ class CheckpointerCallback(Callback):
     ephemeral_save_interval: Optional[int] = None
     pre_train_checkpoint: bool = True
     save_async: bool = False
-    process_group: Optional[dist.ProcessGroup] = None
 
     # Bookkeeping
 
@@ -38,10 +36,11 @@ class CheckpointerCallback(Callback):
     _ephemeral_checkpoints: List[str] = field(default_factory=list)
 
     def __post_init__(self):
-        if is_distributed() and self.save_async and self.process_group is None:
-            raise OLMoConfigurationError(
-                "a checkointer process group is required for async checkointing!"
+        if is_distributed() and self.save_async and self.trainer.checkpointer.process_group is None:
+            log.info(
+                "Creating new process group for checkpointing (needed for async checkpointing)"
             )
+            self.trainer.checkpointer.process_group = dist.new_group()
 
     def _await_last_checkpoint(self, blocking: bool = True) -> Optional[Future]:
         if (fut := self._future) is not None:
@@ -76,9 +75,6 @@ class CheckpointerCallback(Callback):
         return path
 
     def pre_train(self):
-        if self.process_group is not None and self.trainer.checkpointer.process_group is None:
-            self.trainer.checkpointer.process_group = self.process_group
-
         if self.step == 0 and self.pre_train_checkpoint:
             self._checkpoints.append(self._save_checkpoint())
 
