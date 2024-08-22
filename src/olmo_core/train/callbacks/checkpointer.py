@@ -35,13 +35,6 @@ class CheckpointerCallback(Callback):
     _checkpoints: List[str] = field(default_factory=list)
     _ephemeral_checkpoints: List[str] = field(default_factory=list)
 
-    def __post_init__(self):
-        if is_distributed() and self.save_async and self.trainer.checkpointer.process_group is None:
-            log.info(
-                "Creating new process group for checkpointing (needed for async checkpointing)"
-            )
-            self.trainer.checkpointer.process_group = dist.new_group()
-
     def _await_last_checkpoint(self, blocking: bool = True) -> Optional[Future]:
         if (fut := self._future) is not None:
             # Wait for last async checkpoint to finish.
@@ -75,6 +68,12 @@ class CheckpointerCallback(Callback):
         return path
 
     def pre_train(self):
+        if is_distributed() and self.save_async and self.trainer.checkpointer.process_group is None:
+            log.info(
+                "Creating new process group for checkpointing (needed for async checkpointing)"
+            )
+            self.trainer.checkpointer.process_group = dist.new_group()
+
         if self.step == 0 and self.pre_train_checkpoint:
             self._checkpoints.append(self._save_checkpoint())
 
