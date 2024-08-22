@@ -485,12 +485,6 @@ class Trainer:
         if not self._metrics:
             return
 
-        # Check for NaN loss. We can afford the host-device sync here.
-        for step in sorted(self._metrics.keys()):
-            if TRAIN_CE_LOSS_METRIC in self._metrics[step]:
-                if self._metrics[step][TRAIN_CE_LOSS_METRIC].isnan():
-                    raise RuntimeError(f"NaN loss encountered at step {step}")
-
         metrics: Dict[int, Dict[str, float]] = reduce_metrics(
             self._metrics,
             self._metrics_reduce_type,
@@ -502,9 +496,11 @@ class Trainer:
         gc_cuda()
 
         for step in sorted(metrics.keys()):
-            # Add perplexity.
-            if TRAIN_CE_LOSS_METRIC in metrics[step]:
-                metrics[step][TRAIN_PPL_METRIC] = math.exp(metrics[step][TRAIN_CE_LOSS_METRIC])
+            # Check for NaN loss and add perplexity.
+            if (ce_loss := metrics[step].get(TRAIN_CE_LOSS_METRIC)) is not None:
+                if math.isnan(ce_loss):
+                    raise RuntimeError(f"NaN loss encountered at step {step}")
+                metrics[step][TRAIN_PPL_METRIC] = math.exp(ce_loss)
             for callback in self.callbacks:
                 callback.log_metrics(step, metrics[step])
 
