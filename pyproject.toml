@@ -19,6 +19,7 @@ dependencies = [
     "requests",
     "packaging",
     "rich",
+    "omegaconf",
 ]
 
 [project.optional-dependencies]

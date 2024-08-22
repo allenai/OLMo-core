@@ -1,6 +1,11 @@
-from dataclasses import Field, asdict, dataclass, fields, is_dataclass
+from dataclasses import asdict, dataclass, fields
 from enum import Enum
-from typing import Any, Dict, Type, TypeVar
+from typing import Any, Dict, Type, TypeVar, cast
+
+from omegaconf import OmegaConf as om
+from omegaconf.errors import OmegaConfBaseException
+
+from .exceptions import OLMoConfigurationError
 
 
 class StrEnum(str, Enum):
@@ -38,20 +43,8 @@ class Config:
 
     @classmethod
     def from_dict(cls: Type[C], data: Dict[str, Any]) -> C:
-        def init_field_from_data(field: Field, d: Any) -> Any:
-            if is_dataclass(field.type) and isinstance(d, dict):
-                return field.type(
-                    **{
-                        field.name: init_field_from_data(field, d.get(field.name))
-                        for field in fields(field.type)
-                    }
-                )
-            else:
-                return d
-
-        return cls(
-            **{
-                field.name: init_field_from_data(field, data.get(field.name))
-                for field in fields(cls)
-            }
-        )
+        schema = om.structured(cls)
+        try:
+            return cast(C, om.to_object(om.merge(schema, data)))
+        except OmegaConfBaseException as e:
+            raise OLMoConfigurationError(str(e))
