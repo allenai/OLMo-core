@@ -262,7 +262,11 @@ class Trainer:
 
     @property
     def training_complete(self) -> bool:
-        if not self._canceled and self.global_step % self.cancel_check_interval == 0:
+        if (
+            not self._canceled
+            and self.global_step > 0
+            and self.global_step % self.cancel_check_interval == 0
+        ):
             self.thread_pool.submit(self._check_if_canceled)
 
         if self._canceled:
