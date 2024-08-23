@@ -1,5 +1,6 @@
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import Optional
 
 import torch
 
@@ -14,11 +15,23 @@ class GPUMemoryMonitorCallback(Callback):
     Adds metrics for GPU memory statistics.
     """
 
-    device: torch.device = field(default_factory=lambda: torch.device("cuda"))
-    device_name: str = field(default_factory=torch.cuda.get_device_name)
-    device_capacity: int = field(
-        default_factory=lambda: torch.cuda.get_device_properties("cuda").total_memory
-    )
+    device_id: Optional[int] = None
+
+    @property
+    def device(self) -> torch.device:
+        return (
+            torch.device("cuda")
+            if self.device_id is None
+            else torch.device(f"cuda:{self.device_id}")
+        )
+
+    @property
+    def device_name(self) -> str:
+        return torch.cuda.get_device_name(self.device)
+
+    @property
+    def device_capacity(self) -> int:
+        return torch.cuda.get_device_properties(self.device).total_memory
 
     def pre_train(self):
         torch.cuda.reset_peak_memory_stats()

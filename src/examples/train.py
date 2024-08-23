@@ -32,25 +32,49 @@ from olmo_core.utils import get_default_device, has_flash_attn
 
 LOAD_PATH = None  # path to a checkpoint folder
 WANDB_RUN = None  # name of W&B run
-
-# Tokenizer settings.
-VOCAB_SIZE = 50304
-EOS_TOKEN_ID = 50256
-PAD_TOKEN_ID = 50256
-
-# Model settings.
-COMPILE = False
-FUSED_OPS = not COMPILE and has_flash_attn()
-ROPE_TYPE = RoPEType.default if COMPILE else None
-
-# Trainer settings.
 SAVE_FOLDER = "/tmp/run01"
-DATA_FILES = "/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy"
+DATA_FILES = "/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy"  # a glob
 SEQUENCE_LENGTH = 1024
-BATCH_SIZE = 256
-DEVICE_MICRO_BATCH_SIZE = 16
 SEED = 3423
-ASYNC_CHECKPOINTS = True
+COMPILE = False
+
+MODEL_CONFIG = TransformerConfig.llama2_271M(
+    vocab_size=50304,
+    fused_ops=not COMPILE and has_flash_attn(),
+    use_flash=not COMPILE and has_flash_attn(),
+    rope_type=RoPEType.default if COMPILE else None,
+)
+
+OPTIM_CONFIG = AdamWConfig(lr=1e-3)
+
+TRAINER_CONFIG = (
+    TrainerConfig(
+        work_dir=SAVE_FOLDER,
+        save_folder=SAVE_FOLDER,
+        global_batch_size=256,
+        microbatch_size=16,
+        fused_loss=has_flash_attn(),
+        autocast_precision=torch.bfloat16,
+        save_overwrite=True,
+        data_seed=SEED,
+        data_loader_workers=4,
+        metrics_log_interval=5,
+    )
+    .with_callback(SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=100)))
+    .with_callback(GPUMemoryMonitorCallback())
+    .with_callback(GradClipperCallback(max_grad_norm=1.0))
+    .with_callback(
+        CheckpointerCallback(
+            save_interval=10_000,
+            ephemeral_save_interval=250,
+            save_async=True,
+            pre_train_checkpoint=LOAD_PATH is None,
+        )
+    )
+    .with_callback(
+        SpeedMonitorCallback(num_flops_per_token=MODEL_CONFIG.num_flops_per_token(SEQUENCE_LENGTH))
+    )
+)
 
 
 def build_model(model_config: TransformerConfig) -> Transformer:
@@ -81,63 +105,23 @@ def build_dataset() -> MemMapDataset:
     dataset = MemMapDataset(
         *paths,
         sequence_length=SEQUENCE_LENGTH,
-        eos_token_id=EOS_TOKEN_ID,
-        pad_token_id=PAD_TOKEN_ID,
+        eos_token_id=50256,
+        pad_token_id=50256,
     )
     return dataset
 
 
 def main():
-    model_config = TransformerConfig.llama2_271M(
-        VOCAB_SIZE,
-        fused_ops=FUSED_OPS,
-        use_flash=not COMPILE,
-        rope_type=ROPE_TYPE,
-    )
-
-    optim_config = AdamWConfig(lr=1e-3)
-
-    trainer_config = (
-        TrainerConfig(
-            work_dir=SAVE_FOLDER,
-            save_folder=SAVE_FOLDER,
-            global_batch_size=BATCH_SIZE,
-            microbatch_size=DEVICE_MICRO_BATCH_SIZE,
-            fused_loss=FUSED_OPS,
-            autocast_precision=torch.bfloat16,
-            save_overwrite=True,
-            data_seed=SEED,
-            data_loader_workers=4,
-            metrics_log_interval=5,
-        )
-        .with_callback(SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=100)))
-        .with_callback(GPUMemoryMonitorCallback())
-        .with_callback(GradClipperCallback(max_grad_norm=1.0))
-        .with_callback(
-            CheckpointerCallback(
-                save_interval=10_000,
-                ephemeral_save_interval=250,
-                save_async=ASYNC_CHECKPOINTS,
-                pre_train_checkpoint=LOAD_PATH is None,
-            )
-        )
-        .with_callback(
-            SpeedMonitorCallback(
-                num_flops_per_token=model_config.num_flops_per_token(SEQUENCE_LENGTH)
-            )
-        )
-    )
-
     config_dict = dict(
-        model=model_config.as_config_dict(),
-        optim=optim_config.as_config_dict(),
-        trainer=trainer_config.as_config_dict(),
+        model=MODEL_CONFIG.as_config_dict(),
+        optim=OPTIM_CONFIG.as_config_dict(),
+        trainer=TRAINER_CONFIG.as_config_dict(),
         load_path=LOAD_PATH,
     )
 
     # Maybe add W&B callback.
     if WANDB_RUN is not None:
-        trainer_config.with_callback(
+        TRAINER_CONFIG.with_callback(
             WandBCallback(
                 name=WANDB_RUN,
                 config=config_dict,
@@ -145,10 +129,10 @@ def main():
         )
 
     # Build components.
-    model = build_model(model_config)
-    optim = optim_config.build(model)
+    model = build_model(MODEL_CONFIG)
+    optim = OPTIM_CONFIG.build(model)
     dataset = build_dataset()
-    trainer = trainer_config.build(model, optim, dataset)
+    trainer = TRAINER_CONFIG.build(model, optim, dataset)
 
     # Save config to file.
     trainer.checkpointer.write_file(SAVE_FOLDER, "config.json", json.dumps(config_dict, indent=2))
