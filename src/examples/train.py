@@ -12,8 +12,9 @@ from glob import glob
 import torch
 
 from olmo_core.data import MemMapDataset
+from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.nn.rope import RoPEType
-from olmo_core.nn.transformer import Transformer, TransformerConfig
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup
 from olmo_core.train import (
     TrainerConfig,
@@ -43,6 +44,10 @@ MODEL_CONFIG = TransformerConfig.llama2_271M(
     fused_ops=not COMPILE and has_flash_attn(),
     use_flash=not COMPILE and has_flash_attn(),
     rope_type=RoPEType.default if COMPILE else None,
+    compile=COMPILE,
+    dp_config=DataParallelConfig(
+        name=DataParallelType.fsdp, param_dtype=torch.bfloat16, reduce_dtype=torch.float32
+    ),
 )
 
 OPTIM_CONFIG = AdamWConfig(lr=1e-3)
@@ -77,28 +82,6 @@ TRAINER_CONFIG = (
 )
 
 
-def build_model(model_config: TransformerConfig) -> Transformer:
-    model = model_config.build(init_device="meta")
-
-    # Activation checkpointing:
-    #  model.apply_activation_checkpointing("full")
-
-    # Maybe compile.
-    if COMPILE:
-        model.apply_compile()
-
-    # FSDP or DDP.
-    model.apply_fsdp2(param_dtype=torch.bfloat16)
-    # OR
-    #  model.apply_ddp2(compile_enabled=COMPILE)
-
-    # Materialize and init parameters.
-    model.to_empty(device=get_default_device())
-    model.init_weights()
-
-    return model
-
-
 def build_dataset() -> MemMapDataset:
     paths = sorted(glob(DATA_FILES))
     assert paths
@@ -129,7 +112,7 @@ def main():
         )
 
     # Build components.
-    model = build_model(MODEL_CONFIG)
+    model = MODEL_CONFIG.build(init_device="meta", device=get_default_device())
     optim = OPTIM_CONFIG.build(model)
     dataset = build_dataset()
     trainer = TRAINER_CONFIG.build(model, optim, dataset)

@@ -7,7 +7,12 @@ import torch.nn as nn
 from torch.distributed import DeviceMesh
 
 from olmo_core.config import Config
-from olmo_core.utils import get_cumulative_document_lengths, has_flash_attn
+from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
+from olmo_core.utils import (
+    get_cumulative_document_lengths,
+    get_default_device,
+    has_flash_attn,
+)
 
 from ..attention import AttentionConfig, AttentionType
 from ..buffer_cache import BufferCache
@@ -21,6 +26,23 @@ __all__ = ["TransformerConfig", "Transformer"]
 
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class TransformerActivationCheckpointingConfig(Config):
+    """
+    Defines the activation checkpointing strategy for a transformer model.
+    """
+
+    mode: Literal["full", "selective"]
+    """
+    - "full" ➡️ checkpoint every block
+    - "selective" ➡️ checkpoint a subset of blocks or operations according to ``selective_option``.
+    """
+    selective_option: Union[Literal["op"], int] = 1
+    """
+    If "op", only checkpoint certain operations. If an integer, checkpoint blocks with this frequency.
+    """
 
 
 @dataclass
@@ -38,11 +60,22 @@ class TransformerConfig(Config):
     layer_norm: LayerNormConfig
     bias: bool = True
     dtype: torch.dtype = torch.float32
+    compile: bool = False
+    dp_config: Optional[DataParallelConfig] = None
+    ac_config: Optional[TransformerActivationCheckpointingConfig] = None
 
-    def build(self, init_device: str = "cpu") -> "Transformer":
+    def build(
+        self,
+        *,
+        init_device: str = "cpu",
+        device: Optional[torch.device] = None,
+        dp_mesh: Optional[DeviceMesh] = None,
+    ) -> "Transformer":
         """
         Build the model corresponding to this config.
         """
+        device = device or get_default_device()
+
         log.info(
             f"Building transformer with {self.num_params:,d} total params, "
             f"{self.num_non_embedding_params:,d} non-embedding params"
@@ -50,6 +83,35 @@ class TransformerConfig(Config):
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         model = Transformer(init_device=init_device, **kwargs)
         log.info("%s", model)
+
+        # Maybe apply activation checkpointing.
+        if self.ac_config is not None:
+            model.apply_activation_checkpointing(
+                self.ac_config.mode, selective_option=self.ac_config.selective_option
+            )
+
+        # Maybe compile.
+        if self.compile:
+            model.apply_compile()
+
+        # Maybe wrap for data parallel.
+        if self.dp_config is not None:
+            if self.dp_config.name == DataParallelType.fsdp:
+                model.apply_fsdp(
+                    dp_mesh=dp_mesh,
+                    param_dtype=self.dp_config.param_dtype,
+                    reduce_dtype=self.dp_config.reduce_dtype,
+                )
+            elif self.dp_config.name == DataParallelType.ddp:
+                model.apply_ddp(dp_mesh=dp_mesh, compile_enabled=self.compile)
+            else:
+                raise NotImplementedError(self.dp_config.name)
+
+        # Materialize and init parameters.
+        if device != torch.device(init_device):
+            model.to_empty(device=device)
+        model.init_weights()
+
         return model
 
     @property
@@ -300,6 +362,8 @@ class TransformerConfig(Config):
         fused_ops: bool = False,
         use_flash: Optional[bool] = None,
         dtype: torch.dtype = torch.float32,
+        compile: bool = False,
+        **kwargs,
     ) -> "TransformerConfig":
         """
         Create a Llama-like configuration.
@@ -364,6 +428,8 @@ class TransformerConfig(Config):
             layer_norm=layer_norm,
             bias=False,
             dtype=dtype,
+            compile=compile,
+            **kwargs,
         )
 
 
@@ -497,7 +563,7 @@ class Transformer(nn.Module):
 
         log.info("Compiling each transformer block with torch.compile")
 
-    def apply_fsdp2(
+    def apply_fsdp(
         self,
         dp_mesh: Optional[DeviceMesh] = None,
         param_dtype: Optional[torch.dtype] = None,
@@ -505,7 +571,7 @@ class Transformer(nn.Module):
         pp_enabled: bool = False,
     ):
         """
-        Apply FSDP2 to the model.
+        Apply FSDP(2) to the model.
 
         :param dp_mesh: The data parallel device mesh.
         :param param_dtype: The data type to materialize params in. Defaults to the current param dtype.
@@ -537,7 +603,7 @@ class Transformer(nn.Module):
 
         log.info("Applied FSDP2 to the model")
 
-    def apply_ddp2(
+    def apply_ddp(
         self,
         dp_mesh: Optional[DeviceMesh] = None,
         compile_enabled: bool = False,

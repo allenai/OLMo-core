@@ -37,6 +37,7 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
    nn/transformer.rst
    nn/functional.rst
    distributed/checkpoint.rst
+   distributed/parallel.rst
    distributed/utils.rst
    train/index.rst
    train/callbacks.rst
