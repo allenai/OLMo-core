@@ -55,7 +55,7 @@ class TrainerConfig(Config):
             save_overwrite=kwargs.pop("save_overwrite"),
             process_group=kwargs.pop("checkpointer_pg", None),
         )
-
+        device = kwargs.pop("device", get_default_device())
         collator = DataCollator(pad_token_id=dataset.pad_token_id)
 
         return Trainer(
@@ -63,6 +63,7 @@ class TrainerConfig(Config):
             optim=optim,
             dataset=dataset,
             collator=collator,
+            device=device,
             checkpointer=checkpointer,
             train_sequence_length=dataset.sequence_length,
             **kwargs,
