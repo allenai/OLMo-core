@@ -80,8 +80,16 @@ class TransformerConfig(Config):
             f"Building transformer with {self.num_params:,d} total params, "
             f"{self.num_non_embedding_params:,d} non-embedding params"
         )
-        kwargs = self.as_dict(exclude_none=True, recurse=False)
-        model = Transformer(init_device=init_device, **kwargs)
+        model = Transformer(
+            d_model=self.d_model,
+            vocab_size=self.vocab_size,
+            n_layers=self.n_layers,
+            block=self.block,
+            layer_norm=self.layer_norm,
+            bias=self.bias,
+            dtype=self.dtype,
+            init_device=init_device,
+        )
         log.info("%s", model)
 
         # Maybe apply activation checkpointing.
