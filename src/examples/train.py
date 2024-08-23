@@ -7,11 +7,10 @@ Launch this with torchrun:
 """
 
 import json
-from glob import glob
 
 import torch
 
-from olmo_core.data import MemMapDataset
+from olmo_core.data import MemMapDatasetConfig
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup
@@ -34,7 +33,6 @@ LOAD_PATH = None  # path to a checkpoint folder
 WANDB_RUN = None  # name of W&B run
 SAVE_FOLDER = "/tmp/run01"
 DATA_FILES = "/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy"  # a glob
-SEQUENCE_LENGTH = 1024
 SEED = 3423
 
 MODEL_CONFIG = TransformerConfig.llama2_271M(
@@ -46,6 +44,13 @@ MODEL_CONFIG = TransformerConfig.llama2_271M(
 )
 
 OPTIM_CONFIG = AdamWConfig(lr=1e-3)
+
+DATASET_CONFIG = MemMapDatasetConfig.glob(
+    DATA_FILES,
+    sequence_length=1024,
+    eos_token_id=50256,
+    pad_token_id=50256,
+)
 
 TRAINER_CONFIG = (
     TrainerConfig(
@@ -72,21 +77,11 @@ TRAINER_CONFIG = (
         )
     )
     .with_callback(
-        SpeedMonitorCallback(num_flops_per_token=MODEL_CONFIG.num_flops_per_token(SEQUENCE_LENGTH))
+        SpeedMonitorCallback(
+            num_flops_per_token=MODEL_CONFIG.num_flops_per_token(DATASET_CONFIG.sequence_length)
+        )
     )
 )
-
-
-def build_dataset() -> MemMapDataset:
-    paths = sorted(glob(DATA_FILES))
-    assert paths
-    dataset = MemMapDataset(
-        *paths,
-        sequence_length=SEQUENCE_LENGTH,
-        eos_token_id=50256,
-        pad_token_id=50256,
-    )
-    return dataset
 
 
 def main():
@@ -109,7 +104,7 @@ def main():
     # Build components.
     model = MODEL_CONFIG.build(init_device="meta", device=get_default_device())
     optim = OPTIM_CONFIG.build(model)
-    dataset = build_dataset()
+    dataset = DATASET_CONFIG.build()
     trainer = TRAINER_CONFIG.build(model, optim, dataset)
 
     # Save config to file.

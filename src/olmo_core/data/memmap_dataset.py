@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import numpy as np
@@ -10,10 +11,74 @@ from torch.utils.data import Dataset
 from olmo_core.exceptions import OLMoEnvironmentError
 
 from ..aliases import PathOrStr
+from ..config import Config, StrEnum
 from ..io import _get_s3_client, file_size, get_bytes_range
 from ..utils import get_document_lengths
 
-__all__ = ["MemMapDataset"]
+__all__ = ["MemMapDatasetConfig", "MemMapDataset"]
+
+
+class MemMapDType(StrEnum):
+    uint8 = "uint8"
+    uint16 = "uint16"
+    uint32 = "uint32"
+    uint64 = "uint64"
+
+    def as_np_dtype(
+        self,
+    ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
+        return getattr(np, str(self))
+
+
+@dataclass
+class MemMapDatasetConfig(Config):
+    """
+    A config class for easily building :class:`MemMapDataset` classes.
+    """
+
+    paths: List[str]
+    sequence_length: int
+    pad_token_id: int
+    eos_token_id: int
+    memmap_dtype: MemMapDType = MemMapDType.uint16
+    metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None
+    include_instance_metadata: bool = True
+    generate_attention_mask: bool = False
+    generate_doc_lengths: bool = False
+    label_mask_paths: Optional[List[PathOrStr]] = None
+
+    @classmethod
+    def glob(cls, *glob_paths, **kwargs) -> "MemMapDatasetConfig":
+        """
+        Initialize a dataset config with glob paths.
+        """
+        from glob import glob
+
+        paths = []
+        for glob_path in glob_paths:
+            matches = sorted(glob(glob_path))
+            if not matches:
+                raise FileNotFoundError(glob_path)
+            paths.extend(matches)
+
+        return cls(paths=paths, **kwargs)
+
+    def build(self) -> MemMapDataset:
+        """
+        Construct the corresponding :class:`MemMapDataset`.
+        """
+        return MemMapDataset(
+            *self.paths,
+            sequence_length=self.sequence_length,
+            pad_token_id=self.pad_token_id,
+            eos_token_id=self.eos_token_id,
+            memmap_dtype=MemMapDType(self.memmap_dtype).as_np_dtype(),
+            metadata=self.metadata,
+            include_instance_metadata=self.include_instance_metadata,
+            generate_attention_mask=self.generate_attention_mask,
+            generate_doc_lengths=self.generate_doc_lengths,
+            label_mask_paths=self.label_mask_paths,
+        )
 
 
 class MemMapDataset(Dataset[Dict[str, Any]]):

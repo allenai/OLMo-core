@@ -378,8 +378,10 @@ class TransformerConfig(Config):
 
         :param hidden_size_multiple_of: Ensure the FFN hidden size is a multiple of this value.
         :param hidden_size_multiplier: Custom multiplier for the FFN hidden size.
-        :param fused_ops: Use fused operations where possible.
-        :param use_flash: Use flash-attn.
+        :param fused_ops: Use fused operations where possible. Defaults to ``True`` if flash-attn is
+            installed and ``compile=False``, otherwise ``False``.
+        :param use_flash: Use flash-attn. Defaults to ``True`` if flash-attn is
+            installed and ``compile=False``, otherwise ``False``.
         :param dtype: The default data type to use for all parameters.
         """
         if fused_ops is None:
