@@ -52,7 +52,8 @@ class TrainerConfig(Config):
         kwargs = self.as_dict(exclude_none=True, recurse=False)
 
         checkpointer = Checkpointer(
-            save_overwrite=kwargs.pop("save_overwrite"), process_group=kwargs.pop("checkpointer_pg")
+            save_overwrite=kwargs.pop("save_overwrite"),
+            process_group=kwargs.pop("checkpointer_pg", None),
         )
 
         collator = DataCollator(pad_token_id=dataset.pad_token_id)
