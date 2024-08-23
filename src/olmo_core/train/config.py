@@ -30,7 +30,9 @@ class TrainerConfig(Config):
     device: Optional[torch.device] = None
     save_overwrite: bool = False
     checkpointer_pg: Optional[dist.ProcessGroup] = None
-    max_duration: Duration = Duration(value=1, unit=DurationUnit.epochs)
+    max_duration: Duration = field(
+        default_factory=lambda: Duration(value=1, unit=DurationUnit.epochs)
+    )
     metrics_log_interval: int = 1
     callbacks: List[Callback] = field(default_factory=list)
     fused_loss: bool = False

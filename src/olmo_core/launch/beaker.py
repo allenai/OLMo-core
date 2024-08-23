@@ -13,6 +13,7 @@ from beaker import (
     DatasetNotFound,
     Experiment,
     ExperimentSpec,
+    Job,
     Priority,
     TaskResources,
     TaskSpec,
@@ -302,7 +303,7 @@ class BeakerLaunchConfig(Config):
 
         return ExperimentSpec(description=self.description, budget=self.budget, tasks=[task_spec])
 
-    def launch(self) -> Experiment:
+    def launch(self, follow: bool = False) -> Experiment:
         """
         Launch a Beaker experiment using this config.
 
@@ -310,9 +311,55 @@ class BeakerLaunchConfig(Config):
             You can preview what the Beaker experiment spec would like using
             :meth:`build_experiment_spec()`.
 
+        :param follow: Stream the logs and follow the experiment until completion.
+
         :returns: The Beaker experiment.
         """
         spec = self.build_experiment_spec()
         experiment = self.beaker.experiment.create(self.name, spec)
         log.info(f"Experiment submitted, see progress at {self.beaker.experiment.url(experiment)}")
+
+        if not follow:
+            return experiment
+
+        print("-------------------- Logs ----------------------")
+
+        # Wait for job to start...
+        job: Optional[Job] = self.beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
+        if job is None:
+            print("Waiting for job to launch..", end="")
+            while job is None:
+                time.sleep(1.0)
+                print(".", end="")
+                job = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
+
+        exit_code: Optional[int] = job.status.exit_code
+        stream_logs = exit_code is None and not job.is_finalized
+        if stream_logs:
+            print()
+            for line_bytes in self.beaker.job.follow(
+                job,
+                include_timestamps=False,
+            ):
+                line = line_bytes.decode(errors="ignore")
+                if line.endswith("\n"):
+                    line = line[:-1]
+                print(line)
+            print("-------------------- End logs ----------------------")
+            print()
+
+            # Refresh the job.
+            job = self.beaker.job.get(job.id)
+            exit_code = job.status.exit_code
+
+        if exit_code is None:
+            raise RuntimeError(
+                f"Experiment failed, see {self.beaker.experiment.url(experiment)} for details"
+            )
+        elif exit_code > 0:
+            raise RuntimeError(
+                f"Experiment exited with non-zero code ({exit_code}), "
+                f"see {self.beaker.experiment.url(experiment)} for details"
+            )
+
         return experiment

@@ -25,4 +25,4 @@ LAUNCH_CONFIG = BeakerLaunchConfig(
 
 if __name__ == "__main__":
     prepare_cli_environment()
-    LAUNCH_CONFIG.launch()
+    LAUNCH_CONFIG.launch(follow=True)
