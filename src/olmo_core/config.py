@@ -1,6 +1,6 @@
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
-from typing import Any, Dict, Generator, Tuple, Type, TypeVar, cast
+from typing import Any, Dict, Generator, List, Optional, Tuple, Type, TypeVar, cast
 
 from omegaconf import OmegaConf as om
 from omegaconf.errors import OmegaConfBaseException
@@ -107,12 +107,18 @@ class Config:
         )
 
     @classmethod
-    def from_dict(cls: Type[C], data: Dict[str, Any]) -> C:
+    def from_dict(cls: Type[C], data: Dict[str, Any], overrides: Optional[List[str]] = None) -> C:
         """
-        Initialize from a raw Python dictionary.
+        Initialize from a regular Python dictionary.
+
+        :param data: A Python dictionary.
+        :param overrides: A list of field overrides with dot notation, e.g. ``foo.bar=1``.
         """
         schema = om.structured(cls)
         try:
-            return cast(C, om.to_object(om.merge(schema, data)))
+            conf = om.merge(schema, data)
+            if overrides:
+                conf = om.merge(conf, om.from_dotlist(overrides))
+            return cast(C, om.to_object(conf))
         except OmegaConfBaseException as e:
             raise OLMoConfigurationError(str(e))

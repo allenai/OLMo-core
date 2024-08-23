@@ -35,6 +35,9 @@ def test_nested_configs():
     assert foo1 == foo
     assert isinstance(foo1.bar, Bar)
 
+    foo2 = Foo.from_dict(data, overrides=["bar.x=0"])
+    assert foo2.bar.x == 0
+
     assert foo.as_dict(recurse=False) == {"z": "z", "bar": foo.bar}
 
     assert foo.as_config_dict() == {

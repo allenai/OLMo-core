@@ -98,7 +98,10 @@ class Trainer:
 
     checkpointer: Checkpointer
     """
-    The checkpointer.
+    The checkpointer. This is a wrapper around the functionality in
+    :mod:`olmo_core.distributed.checkpoint`, which means you can use
+    :func:`~olmo_core.distributed.checkpoint.unshard_checkpoint` to unshard the model and optimizer
+    state from a trainer checkpoint.
     """
 
     callbacks: List[Callback]

@@ -27,22 +27,23 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
    :maxdepth: 2
    :caption: API Reference
 
-   exceptions.rst
-   io.rst
-   utils.rst
    config.rst
    data.rst
-   optim.rst
-   nn/index.rst
-   nn/transformer.rst
-   nn/functional.rst
    distributed/checkpoint.rst
    distributed/parallel.rst
    distributed/utils.rst
+   exceptions.rst
+   io.rst
+   launch.rst
+   nn/index.rst
+   nn/functional.rst
+   nn/transformer.rst
+   optim.rst
    train/index.rst
    train/callbacks.rst
    train/checkpoint.rst
    train/utils.rst
+   utils.rst
 
 .. toctree::
    :hidden:

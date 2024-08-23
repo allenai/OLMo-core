@@ -44,8 +44,12 @@ dev = [
     "sphinx-autobuild==2021.3.14",
     "sphinx-autodoc-typehints==1.23.3",
 ]
+beaker = [
+    "beaker-py",
+    "GitPython>=3.0,<4.0",
+]
 all = [
-    "ai2-olmo-core[dev]",
+    "ai2-olmo-core[dev,beaker]",
 ]
 
 [tool.setuptools]

@@ -41,6 +41,9 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
     # than they should such as those in tensor parallelism
     os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
 
+    # Force processes to synchronize at init process group.
+    os.environ["TORCH_DIST_INIT_BARRIER"] = "1"
+
     validate_env_vars()
 
     dist.init_process_group(backend, timeout=timeout)
