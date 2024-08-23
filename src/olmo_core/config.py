@@ -87,7 +87,7 @@ class Config:
             elif d is None or isinstance(d, (float, int, bool, str)):
                 return d
             elif json_safe:
-                raise TypeError(f"Cannot convert type '{type(d)}' to a JSON-safe representation")
+                return str(d)
             else:
                 return d
 
