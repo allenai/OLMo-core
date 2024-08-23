@@ -13,7 +13,6 @@ import torch
 
 from olmo_core.data import MemMapDataset
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
-from olmo_core.nn.rope import RoPEType
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup
 from olmo_core.train import (
@@ -37,14 +36,10 @@ SAVE_FOLDER = "/tmp/run01"
 DATA_FILES = "/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy"  # a glob
 SEQUENCE_LENGTH = 1024
 SEED = 3423
-COMPILE = False
 
 MODEL_CONFIG = TransformerConfig.llama2_271M(
     vocab_size=50304,
-    fused_ops=not COMPILE and has_flash_attn(),
-    use_flash=not COMPILE and has_flash_attn(),
-    rope_type=RoPEType.default if COMPILE else None,
-    compile=COMPILE,
+    compile=False,
     dp_config=DataParallelConfig(
         name=DataParallelType.fsdp, param_dtype=torch.bfloat16, reduce_dtype=torch.float32
     ),

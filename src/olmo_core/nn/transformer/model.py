@@ -367,7 +367,7 @@ class TransformerConfig(Config):
         rope_type: Optional[RoPEType] = None,
         hidden_size_multiple_of: int = 256,
         hidden_size_multiplier: Optional[float] = None,
-        fused_ops: bool = False,
+        fused_ops: Optional[bool] = None,
         use_flash: Optional[bool] = None,
         dtype: torch.dtype = torch.float32,
         compile: bool = False,
@@ -382,6 +382,11 @@ class TransformerConfig(Config):
         :param use_flash: Use flash-attn.
         :param dtype: The default data type to use for all parameters.
         """
+        if fused_ops is None:
+            fused_ops = False if compile else has_flash_attn()
+        if use_flash is None:
+            use_flash = False if compile else has_flash_attn()
+
         # Resolve hidden size of FFN in blocks.
         hidden_size = int(8 * d_model / 3)
         if hidden_size_multiplier is not None:
@@ -401,16 +406,10 @@ class TransformerConfig(Config):
         # Decide on attention/rope implementations.
         att_type = AttentionType.default
         if rope_type is None:
+            rope_type = RoPEType.default
             if fused_ops and n_kv_heads is None:  # fused attention not compatible with MQA/GQA.
                 att_type = AttentionType.fused
                 rope_type = RoPEType.fused
-            else:
-                rope_type = RoPEType.complex
-
-        if fused_ops:
-            use_flash = None
-        elif use_flash is None:
-            use_flash = has_flash_attn()
 
         # Configure blocks.
         block = TransformerBlockConfig(
