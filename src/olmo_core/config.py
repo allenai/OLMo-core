@@ -1,6 +1,6 @@
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
-from typing import Any, Dict, Type, TypeVar, cast
+from typing import Any, Dict, Generator, Tuple, Type, TypeVar, cast
 
 from omegaconf import OmegaConf as om
 from omegaconf.errors import OmegaConfBaseException
@@ -58,18 +58,22 @@ class Config:
         :param recurse: Recurse into fields that are also configs/dataclasses.
         """
 
+        def iter_fields(d) -> Generator[Tuple[str, Any], None, None]:
+            for field in fields(d):
+                value = getattr(d, field.name)
+                if exclude_none and value is None:
+                    continue
+                elif exclude_private_fields and field.name.startswith("_"):
+                    continue
+                else:
+                    yield (field.name, value)
+
         def as_dict(d: Any, recurse: bool = True) -> Any:
             if is_dataclass(d):
                 if recurse:
-                    out = {field.name: as_dict(getattr(d, field.name)) for field in fields(d)}
+                    out = {k: as_dict(v) for k, v in iter_fields(d)}
                 else:
-                    out = {field.name: getattr(d, field.name) for field in fields(d)}
-                for k in list(out.keys()):
-                    v = out[k]
-                    if (exclude_none and v is None) or (
-                        exclude_private_fields and k.startswith("_")
-                    ):
-                        del out[k]
+                    out = {k: v for k, v in iter_fields(d)}
                 if include_class_name:
                     out[self.CLASS_NAME_FIELD] = d.__class__.__name__
                 return out
@@ -80,7 +84,7 @@ class Config:
                     return [as_dict(x) for x in d]
                 else:
                     return d.__class__((as_dict(x) for x in d))
-            elif isinstance(d, (float, int, bool, str)):
+            elif d is None or isinstance(d, (float, int, bool, str)):
                 return d
             elif json_safe:
                 raise TypeError(f"Cannot convert type '{type(d)}' to a JSON-safe representation")
