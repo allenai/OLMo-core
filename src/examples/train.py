@@ -147,7 +147,7 @@ def main():
     optim = optim_config.build(model)
     dataset = build_dataset()
     trainer = trainer_config.build(model, optim, dataset)
-    trainer.checkpointer.write_file(SAVE_FOLDER, "config.json", json.dumps(config_dict))
+    trainer.checkpointer.write_file(SAVE_FOLDER, "config.json", json.dumps(config_dict, indent=2))
 
     if LOAD_PATH is not None:
         trainer.load_checkpoint(LOAD_PATH)
