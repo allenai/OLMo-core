@@ -26,7 +26,7 @@ def prepare_training_environment(
     *,
     seed: int = 0,
     backend: Optional[str] = "cpu:gloo,cuda:nccl",
-    timeout: timedelta = timedelta(minutes=30),
+    timeout: timedelta = timedelta(minutes=5),
     log_filter_type: Optional[LogFilterType] = None,
 ):
     """
