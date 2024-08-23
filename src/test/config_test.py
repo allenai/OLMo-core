@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional, Set, Tuple
 
 from olmo_core.config import Config
 
@@ -45,4 +45,20 @@ def test_nested_configs():
             "x": 1,
             "y": 2,
         },
+    }
+
+
+def test_json_safe_dump():
+    @dataclass
+    class Foo(Config):
+        x_list: List[int]
+        x_tuple: Tuple[int, ...]
+        x_set: Set[str]
+
+    foo = Foo(x_list=[0, 1], x_tuple=(0, 1), x_set={"a"})
+    assert foo.as_config_dict() == {
+        Config.CLASS_NAME_FIELD: "Foo",
+        "x_list": [0, 1],
+        "x_tuple": [0, 1],
+        "x_set": ["a"],
     }

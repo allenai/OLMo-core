@@ -6,6 +6,7 @@ Launch this with torchrun:
     torchrun --nproc-per-node=4 src/examples/train.py
 """
 
+import json
 from glob import glob
 
 import torch
@@ -127,16 +128,18 @@ def main():
         )
     )
 
+    config_dict = dict(
+        model=model_config.as_config_dict(),
+        optim=optim_config.as_config_dict(),
+        trainer=trainer_config.as_config_dict(),
+        load_path=LOAD_PATH,
+    )
+
     if WANDB_RUN is not None:
         trainer_config.with_callback(
             WandBCallback(
                 name=WANDB_RUN,
-                config=dict(
-                    model=model_config.as_config_dict(),
-                    optim=optim_config.as_config_dict(),
-                    trainer=trainer_config.as_config_dict(),
-                    load_path=LOAD_PATH,
-                ),
+                config=config_dict,
             )
         )
 
@@ -144,6 +147,7 @@ def main():
     optim = optim_config.build(model)
     dataset = build_dataset()
     trainer = trainer_config.build(model, optim, dataset)
+    trainer.checkpointer.write_file(SAVE_FOLDER, "config.json", json.dumps(config_dict))
 
     if LOAD_PATH is not None:
         trainer.load_checkpoint(LOAD_PATH)

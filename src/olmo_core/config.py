@@ -45,6 +45,7 @@ class Config:
         exclude_none: bool = False,
         exclude_private_fields: bool = False,
         include_class_name: bool = False,
+        json_safe: bool = False,
         recurse: bool = True,
     ) -> Dict[str, Any]:
         """
@@ -53,6 +54,7 @@ class Config:
         :param exclude_none: Don't include values that are ``None``.
         :param exclude_private_fields: Don't include private fields.
         :param include_class_name: Include a field for the name of the class.
+        :param json_safe: Output only JSON-safe types if possible.
         :param recurse: Recurse into fields that are also configs/dataclasses.
         """
 
@@ -73,12 +75,15 @@ class Config:
                 return out
             elif isinstance(d, dict):
                 return {k: as_dict(v) for k, v in d.items()}
-            elif isinstance(d, list):
-                return [as_dict(x) for x in d]
-            elif isinstance(d, tuple):
-                return tuple((as_dict(x) for x in d))
-            elif isinstance(d, set):
-                return set((as_dict(x) for x in d))
+            elif isinstance(d, (list, tuple, set)):
+                if json_safe:
+                    return [as_dict(x) for x in d]
+                else:
+                    return d.__class__((as_dict(x) for x in d))
+            elif isinstance(d, (float, int, bool, str)):
+                return d
+            elif json_safe:
+                raise TypeError(f"Cannot convert type '{type(d)}' to a JSON-safe representation")
             else:
                 return d
 
@@ -86,11 +91,15 @@ class Config:
 
     def as_config_dict(self) -> Dict[str, Any]:
         """
-        A convenience wrapper around :meth:`as_dict()` for creating dictionaries suitable
+        A convenience wrapper around :meth:`as_dict()` for creating JSON-safe dictionaries suitable
         for recording the config.
         """
         return self.as_dict(
-            exclude_none=True, exclude_private_fields=True, include_class_name=True, recurse=True
+            exclude_none=True,
+            exclude_private_fields=True,
+            include_class_name=True,
+            json_safe=True,
+            recurse=True,
         )
 
     @classmethod

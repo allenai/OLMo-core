@@ -4,7 +4,7 @@ from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Generator, Optional
+from typing import Any, Dict, Generator, Optional, Union
 
 import torch
 import torch.distributed as dist
@@ -123,6 +123,39 @@ class Checkpointer:
         )
 
         return trainer_state
+
+    def write_file(self, dir: PathOrStr, fname: str, contents: Union[str, bytes]) -> PathOrStr:
+        """
+        Write something to a file in a local or remote directory.
+
+        :param dir: The path/URL of the directory to write the file to.
+        :param fname: The name of the file to write.
+        :param contents: The contents of the file to write.
+
+        :returns: The path of the file.
+        """
+        dir = normalize_path(dir)
+
+        mode = "wb" if isinstance(contents, bytes) else "wt"
+        tmp_file = tempfile.NamedTemporaryFile(mode=mode, delete=False)
+        tmp_path = Path(tmp_file.name)
+        try:
+            tmp_file.write(contents)
+            tmp_file.flush()
+
+            target: PathOrStr
+            if is_url(dir):
+                target = f"{dir}/{fname}"
+                upload(tmp_path, target, save_overwrite=self.save_overwrite)
+            else:
+                target = Path(dir) / fname
+                if target.is_file() and not self.save_overwrite:
+                    raise FileExistsError(target)
+                tmp_path.rename(target)
+
+            return target
+        finally:
+            tmp_path.unlink(missing_ok=True)
 
     @classmethod
     def dir_is_checkpoint(cls, dir: PathOrStr) -> bool:
