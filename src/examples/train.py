@@ -32,11 +32,11 @@ from olmo_core.utils import get_default_device, has_flash_attn
 LOAD_PATH = None  # path to a checkpoint folder
 WANDB_RUN = None  # name of W&B run
 SAVE_FOLDER = "/tmp/run01"
-DATA_FILES = "/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy"  # a glob
+DATA_FILES = ["/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy"]  # can be globs
 SEED = 3423
 
 MODEL_CONFIG = TransformerConfig.llama2_271M(
-    vocab_size=50304,
+    vocab_size=50304,  # a little big than actual vocab size to make it a multiple of 128
     compile=False,
     dp_config=DataParallelConfig(
         name=DataParallelType.fsdp, param_dtype=torch.bfloat16, reduce_dtype=torch.float32
@@ -46,7 +46,7 @@ MODEL_CONFIG = TransformerConfig.llama2_271M(
 OPTIM_CONFIG = AdamWConfig(lr=1e-3)
 
 DATASET_CONFIG = MemMapDatasetConfig.glob(
-    DATA_FILES,
+    *DATA_FILES,
     sequence_length=1024,
     eos_token_id=50256,
     pad_token_id=50256,
