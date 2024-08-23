@@ -369,8 +369,9 @@ class BeakerLaunchConfig(Config):
         try:
             self._follow_experiment(experiment)
         except KeyboardInterrupt:
-            print(
-                f"You can cancel the experiment on the Beaker UI: {self.beaker.experiment.url(experiment)}"
+            log.warning(
+                "Caught keyboard interrupt, you can cancel the experiment on the Beaker UI: "
+                f"{self.beaker.experiment.url(experiment)}"
             )
             raise
 
