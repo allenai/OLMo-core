@@ -27,7 +27,7 @@ class TrainerConfig(Config):
     global_batch_size: int
     microbatch_size: int
 
-    device: torch.device = field(default_factory=get_default_device)
+    device: Optional[torch.device] = None
     save_overwrite: bool = False
     checkpointer_pg: Optional[dist.ProcessGroup] = None
     max_duration: Duration = Duration(value=1, unit=DurationUnit.epochs)
@@ -49,7 +49,7 @@ class TrainerConfig(Config):
         :param optim: The optimizer to use.
         :param dataset: The dataset to train on.
         """
-        kwargs = self.as_dict(recurse=False)
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
 
         checkpointer = Checkpointer(
             save_overwrite=kwargs.pop("save_overwrite"), process_group=kwargs.pop("checkpointer_pg")
