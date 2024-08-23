@@ -15,11 +15,12 @@ LAUNCH_CONFIG = BeakerLaunchConfig(
     task_name="train",
     workspace="ai2/OLMo-training",
     description="Testing OLMo-core launch utilities",
-    clusters=["allennlp-cirrascale-50.reviz.ai2.in"],
+    clusters=["ai2/allennlp-cirrascale"],
     num_nodes=1,
     num_gpus=4,
     shared_filesystem=True,
     nfs=True,
+    allow_dirty=True,
 )
 
 if __name__ == "__main__":

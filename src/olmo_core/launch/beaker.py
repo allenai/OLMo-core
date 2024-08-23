@@ -153,13 +153,18 @@ class BeakerLaunchConfig(Config):
         """
         env_vars = [
             ("NCCL_DEBUG", "INFO"),
-            ("NCCL_IB_HCA", "^=mlx5_bond_0"),
-            ("NCCL_SOCKET_IFNAME", "ib"),
             (LOG_FILTER_TYPE_ENV_VAR, LogFilterType.local_rank0_only),
             ("OMP_NUM_THREADS", "8"),
         ]
         if self.shared_filesystem:
             env_vars.append((OLMO_SHARED_FS_ENV_VAR, "1"))
+        if self.num_nodes > 1:
+            env_vars.extend(
+                [
+                    ("NCCL_IB_HCA", "^=mlx5_bond_0"),
+                    ("NCCL_SOCKET_IFNAME", "ib"),
+                ]
+            )
         return env_vars
 
     @property
