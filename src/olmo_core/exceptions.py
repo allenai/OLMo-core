@@ -30,3 +30,7 @@ class OLMoCLIError(OLMoError):
 
 class OLMoThreadError(OLMoError):
     pass
+
+
+class BeakerExperimentFailedError(OLMoError):
+    pass

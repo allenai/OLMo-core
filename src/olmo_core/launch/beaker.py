@@ -21,7 +21,7 @@ from beaker import (
 
 from ..config import Config
 from ..distributed.utils import OLMO_SHARED_FS_ENV_VAR
-from ..exceptions import OLMoConfigurationError
+from ..exceptions import BeakerExperimentFailedError, OLMoConfigurationError
 from ..utils import LOG_FILTER_TYPE_ENV_VAR, LogFilterType
 from ..version import VERSION
 from .utils import ensure_repo
@@ -304,25 +304,7 @@ class BeakerLaunchConfig(Config):
 
         return ExperimentSpec(description=self.description, budget=self.budget, tasks=[task_spec])
 
-    def launch(self, follow: bool = False) -> Experiment:
-        """
-        Launch a Beaker experiment using this config.
-
-        .. tip::
-            You can preview what the Beaker experiment spec would like using
-            :meth:`build_experiment_spec()`.
-
-        :param follow: Stream the logs and follow the experiment until completion.
-
-        :returns: The Beaker experiment.
-        """
-        spec = self.build_experiment_spec()
-        experiment = self.beaker.experiment.create(self.name, spec)
-        log.info(f"Experiment submitted, see progress at {self.beaker.experiment.url(experiment)}")
-
-        if not follow:
-            return experiment
-
+    def _follow_experiment(self, experiment: Experiment):
         print("-------------------- Logs ----------------------")
 
         # Wait for job to start...
@@ -354,13 +336,42 @@ class BeakerLaunchConfig(Config):
             exit_code = job.status.exit_code
 
         if exit_code is None:
-            raise RuntimeError(
+            raise BeakerExperimentFailedError(
                 f"Experiment failed, see {self.beaker.experiment.url(experiment)} for details"
             )
         elif exit_code > 0:
-            raise RuntimeError(
+            raise BeakerExperimentFailedError(
                 f"Experiment exited with non-zero code ({exit_code}), "
                 f"see {self.beaker.experiment.url(experiment)} for details"
             )
+        else:
+            print("Experiment completed successfully")
+
+    def launch(self, follow: bool = False) -> Experiment:
+        """
+        Launch a Beaker experiment using this config.
+
+        .. tip::
+            You can preview what the Beaker experiment spec would like using
+            :meth:`build_experiment_spec()`.
+
+        :param follow: Stream the logs and follow the experiment until completion.
+
+        :returns: The Beaker experiment.
+        """
+        spec = self.build_experiment_spec()
+        experiment = self.beaker.experiment.create(self.name, spec)
+        log.info(f"Experiment submitted, see progress at {self.beaker.experiment.url(experiment)}")
+
+        if not follow:
+            return experiment
+
+        try:
+            self._follow_experiment(experiment)
+        except KeyboardInterrupt:
+            print(
+                f"You can cancel the experiment on the Beaker UI: {self.beaker.experiment.url(experiment)}"
+            )
+            raise
 
         return experiment
