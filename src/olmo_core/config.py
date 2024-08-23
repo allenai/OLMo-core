@@ -54,7 +54,7 @@ class Config:
         :param exclude_none: Don't include values that are ``None``.
         :param exclude_private_fields: Don't include private fields.
         :param include_class_name: Include a field for the name of the class.
-        :param json_safe: Output only JSON-safe types if possible.
+        :param json_safe: Output only JSON-safe types.
         :param recurse: Recurse into fields that are also configs/dataclasses.
         """
 

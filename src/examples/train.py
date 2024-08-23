@@ -135,6 +135,7 @@ def main():
         load_path=LOAD_PATH,
     )
 
+    # Maybe add W&B callback.
     if WANDB_RUN is not None:
         trainer_config.with_callback(
             WandBCallback(
@@ -143,15 +144,20 @@ def main():
             )
         )
 
+    # Build components.
     model = build_model(model_config)
     optim = optim_config.build(model)
     dataset = build_dataset()
     trainer = trainer_config.build(model, optim, dataset)
+
+    # Save config to file.
     trainer.checkpointer.write_file(SAVE_FOLDER, "config.json", json.dumps(config_dict, indent=2))
 
+    # Maybe load a checkpoint.
     if LOAD_PATH is not None:
         trainer.load_checkpoint(LOAD_PATH)
 
+    # Train.
     trainer.fit()
 
 
