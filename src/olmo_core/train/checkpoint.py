@@ -151,6 +151,7 @@ class Checkpointer:
                 target = Path(dir) / fname
                 if target.is_file() and not self.save_overwrite:
                     raise FileExistsError(target)
+                target.parent.mkdir(exist_ok=True, parents=True)
                 tmp_path.rename(target)
 
             return target

@@ -12,6 +12,7 @@ import torch
 
 from olmo_core.data import MemMapDatasetConfig
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
+from olmo_core.distributed.utils import get_rank
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup
 from olmo_core.train import (
@@ -108,7 +109,10 @@ def main():
     trainer = TRAINER_CONFIG.build(model, optim, dataset)
 
     # Save config to file.
-    trainer.checkpointer.write_file(SAVE_FOLDER, "config.json", json.dumps(config_dict, indent=2))
+    if get_rank() == 0:
+        trainer.checkpointer.write_file(
+            SAVE_FOLDER, "config.json", json.dumps(config_dict, indent=2)
+        )
 
     # Maybe load a checkpoint.
     if LOAD_PATH is not None:
