@@ -296,7 +296,7 @@ class BeakerLaunchConfig(Config):
             task_spec = task_spec.with_dataset(
                 "/net/nfs.cirrascale", host_path="/net/nfs.cirrascale"
             )
-            task_spec = task_spec.with_dataset("/net/nfs.cirrascale", host_path="/net/nfs")
+            task_spec = task_spec.with_dataset("/net/nfs", host_path="/net/nfs.cirrascale")
 
         if self.weka_buckets:
             for source, target in self.weka_buckets:
