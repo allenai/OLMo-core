@@ -79,6 +79,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             # Setup python environment.
             "conda shell.bash activate base",
             "pip install -e '.[all]'",
+            "pip install wandb",
             "pip freeze",
             # Move AWS credentials from env to relevant files
             "mkdir -p ~/.aws",
