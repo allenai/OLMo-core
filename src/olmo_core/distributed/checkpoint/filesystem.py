@@ -93,7 +93,9 @@ def _write_items(
 ) -> List[WriteResult]:
     results: List[WriteResult] = []
 
-    tmp_path = Path(tempfile.mktemp(suffix=".distcp"))
+    tmp_path = Path(
+        tempfile.mktemp(suffix=".distcp", dir=None if is_url(path) else Path(path).parent)
+    )
     try:
         with tmp_path.open("wb") as tmp_file:
             for write_item in items:

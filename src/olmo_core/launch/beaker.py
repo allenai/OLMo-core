@@ -329,8 +329,6 @@ class BeakerLaunchConfig(Config):
         return ExperimentSpec(description=self.description, budget=self.budget, tasks=[task_spec])
 
     def _follow_experiment(self, experiment: Experiment):
-        print("-------------------- Logs ----------------------")
-
         # Wait for job to start...
         job: Optional[Job] = self.beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
         if job is None:
@@ -339,6 +337,8 @@ class BeakerLaunchConfig(Config):
                 time.sleep(1.0)
                 print(".", end="")
                 job = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
+
+        log.info("Showing logs:")
 
         exit_code: Optional[int] = job.status.exit_code
         stream_logs = exit_code is None and not job.is_finalized
@@ -352,7 +352,7 @@ class BeakerLaunchConfig(Config):
                 if line.endswith("\n"):
                     line = line[:-1]
                 print(line)
-            print("-------------------- End logs ----------------------")
+            log.info("End logs")
             print()
 
             # Refresh the job.
@@ -369,7 +369,7 @@ class BeakerLaunchConfig(Config):
                 f"see {self.beaker.experiment.url(experiment)} for details"
             )
         else:
-            print("Experiment completed successfully")
+            log.info("Experiment completed successfully")
 
     def launch(self, follow: bool = False) -> Experiment:
         """
