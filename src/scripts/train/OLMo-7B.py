@@ -111,8 +111,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         TrainerConfig(
             work_dir=save_folder,
             save_folder=save_folder,
-            #  global_batch_size=1024,
-            global_batch_size=128,  # TODO: change bach
+            global_batch_size=1024,
             microbatch_size=2,
             fused_loss=True,
             autocast_precision=DType.bfloat16,
@@ -164,7 +163,9 @@ def train(config: ExperimentConfig):
         WandBCallback(
             name=config.run_name,
             config=config_dict,
-            enabled=False,  # TODO
+            entity="ai2-llm",
+            project="OLMo-core-testing",
+            enabled=True,
         )
     )
 
