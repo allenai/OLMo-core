@@ -136,6 +136,9 @@ class Checkpointer:
         """
         dir = normalize_path(dir)
 
+        if not is_url(dir):
+            Path(dir).mkdir(exist_ok=True, parents=True)
+
         mode = "wb" if isinstance(contents, bytes) else "wt"
         tmp_file = tempfile.NamedTemporaryFile(mode=mode, delete=False, dir=dir)
         tmp_path = Path(tmp_file.name)
