@@ -59,7 +59,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         task_name="train",
         workspace="ai2/OLMo-core",
         description="Testing OLMo-core launch utilities",
-        clusters=["ai2/allennlp-cirrascale"],
+        clusters=["ai2/allennlp-cirrascale", "ai2/general-cirrascale", "ai2/pluto-cirrascale"],
         num_nodes=1,
         num_gpus=8,
         shared_filesystem=True,
