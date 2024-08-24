@@ -137,7 +137,7 @@ class Checkpointer:
         dir = normalize_path(dir)
 
         mode = "wb" if isinstance(contents, bytes) else "wt"
-        tmp_file = tempfile.NamedTemporaryFile(mode=mode, delete=False)
+        tmp_file = tempfile.NamedTemporaryFile(mode=mode, delete=False, dir=dir)
         tmp_path = Path(tmp_file.name)
         try:
             tmp_file.write(contents)
