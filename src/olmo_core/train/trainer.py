@@ -314,13 +314,12 @@ class Trainer:
         elif self.max_duration.unit == DurationUnit.epochs:
             # Need to account for a change in batch size.
             max_epochs = self.max_duration.value
-            complete_epochs_remaining = max(max_epochs - self.epoch + 1, 0)
+            complete_epochs_remaining = max(max_epochs - self.epoch, 0)
             steps_remaining = complete_epochs_remaining * self.steps_per_epoch
-            if self.global_train_tokens_seen_this_epoch > 0:
-                tokens_remaining_this_epoch = max(
-                    self.tokens_per_epoch - self.global_train_tokens_seen_this_epoch, 0
-                )
-                steps_remaining += math.ceil(tokens_remaining_this_epoch / self.tokens_per_batch)
+            tokens_remaining_this_epoch = max(
+                self.tokens_per_epoch - self.global_train_tokens_seen_this_epoch, 0
+            )
+            steps_remaining += math.ceil(tokens_remaining_this_epoch / self.tokens_per_batch)
             return self.global_step + steps_remaining
         elif self.max_duration.unit == DurationUnit.tokens:
             # Need to account for a change in batch size.

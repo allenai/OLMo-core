@@ -89,7 +89,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     model_config = TransformerConfig.llama2_7B(
         vocab_size=50304,  # a little bigger than actual vocab size to make it a multiple of 128
-        compile=False,
+        compile=True,
         dp_config=DataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
