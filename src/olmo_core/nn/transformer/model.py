@@ -18,7 +18,13 @@ from ..attention import AttentionConfig, AttentionType
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig
 from ..layer_norm import LayerNormConfig, LayerNormType
-from ..rope import RoPEConfig, RoPEType
+from ..rope import (
+    ComplexRotaryEmbedding,
+    FusedRotaryEmbedding,
+    RoPEConfig,
+    RoPEType,
+    RotaryEmbedding,
+)
 from .block import TransformerBlockConfig, TransformerBlockType
 from .utils import apply_activation_checkpointing_to_transformer_block
 
@@ -70,6 +76,7 @@ class TransformerConfig(Config):
         init_device: str = "cpu",
         device: Optional[torch.device] = None,
         dp_mesh: Optional[DeviceMesh] = None,
+        max_seq_len: Optional[int] = None,
     ) -> "Transformer":
         """
         Build the model corresponding to this config.
@@ -120,7 +127,7 @@ class TransformerConfig(Config):
         # Materialize and init parameters.
         if device != torch.device(init_device):
             model.to_empty(device=device)
-        model.init_weights()
+        model.init_weights(max_seq_len=max_seq_len)
 
         return model
 
@@ -489,7 +496,7 @@ class Transformer(nn.Module):
         self.w_out = nn.Linear(d_model, vocab_size, bias=bias, dtype=dtype, device=init_device)
         self._cache = cache
 
-    def init_weights(self):
+    def init_weights(self, max_seq_len: Optional[int] = None):
         """
         Initialize the model weights.
         """
@@ -499,6 +506,18 @@ class Transformer(nn.Module):
                 m.reset_parameters()
 
         self.apply(reset_params)
+
+        if max_seq_len is None:
+            return
+
+        # Warmup RoPE embedding caches.
+        device = self.w_out.weight.device
+
+        def warmup_cache(m: nn.Module):
+            if isinstance(m, (RotaryEmbedding, FusedRotaryEmbedding, ComplexRotaryEmbedding)):
+                m._get_rotary_embedding(max_seq_len, device)
+
+        self.apply(warmup_cache)
 
     def reset_parameters(self):
         nn.init.trunc_normal_(self.embeddings.weight, mean=0.0, std=0.02)

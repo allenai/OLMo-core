@@ -169,7 +169,9 @@ def train(config: ExperimentConfig):
     )
 
     # Build components.
-    model = config.model.build(init_device="meta", device=get_default_device())
+    model = config.model.build(
+        init_device="meta", device=get_default_device(), max_seq_len=config.dataset.sequence_length
+    )
     optim = config.optim.build(model)
     dataset = config.dataset.build()
     trainer = config.trainer.build(model, optim, dataset)
