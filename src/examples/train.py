@@ -37,7 +37,7 @@ DATA_FILES = ["/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy"]  # can be globs
 SEED = 3423
 
 MODEL_CONFIG = TransformerConfig.llama2_271M(
-    vocab_size=50304,  # a little big than actual vocab size to make it a multiple of 128
+    vocab_size=50304,  # a little bigger than actual vocab size to make it a multiple of 128
     compile=False,
     dp_config=DataParallelConfig(
         name=DataParallelType.fsdp, param_dtype=torch.bfloat16, reduce_dtype=torch.float32
