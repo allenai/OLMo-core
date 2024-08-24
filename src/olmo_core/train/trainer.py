@@ -314,7 +314,7 @@ class Trainer:
         elif self.max_duration.unit == DurationUnit.epochs:
             # Need to account for a change in batch size.
             max_epochs = self.max_duration.value
-            complete_epochs_remaining = max_epochs - self.epoch
+            complete_epochs_remaining = max(max_epochs - self.epoch + 1, 0)
             steps_remaining = complete_epochs_remaining * self.steps_per_epoch
             if self.global_train_tokens_seen_this_epoch > 0:
                 tokens_remaining_this_epoch = max(

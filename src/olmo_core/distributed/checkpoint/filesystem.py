@@ -229,7 +229,12 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
         metadata.storage_data = storage_md
         metadata.storage_meta = self.storage_meta()
 
-        tmp_path = Path(tempfile.mktemp(suffix=".tmp"))
+        tmp_path = Path(
+            tempfile.mktemp(
+                suffix=".tmp",
+                dir=None if is_url(self.metadata_path) else Path(self.metadata_path).parent,
+            )
+        )
         try:
             with tmp_path.open("wb") as tmp_file:
                 pickle.dump(metadata, tmp_file)
