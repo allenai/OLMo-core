@@ -46,7 +46,6 @@ class ExperimentConfig(Config):
     dataset: MemMapDatasetConfig
     trainer: TrainerConfig
     load_path: Optional[str] = None
-    save_folder: str = "/tmp/run01"
     seed: int = 3423
 
 

@@ -70,8 +70,8 @@ class TrainerConfig(Config):
             save_overwrite=kwargs.pop("save_overwrite"),
             process_group=checkpointer_pg,
         )
-        device = kwargs.pop("device")
-        autocast_precision: Optional[DType] = kwargs.pop("autocast_precision")
+        device = kwargs.pop("device", None)
+        autocast_precision: Optional[DType] = kwargs.pop("autocast_precision", None)
         collator = DataCollator(pad_token_id=dataset.pad_token_id)
 
         return Trainer(
