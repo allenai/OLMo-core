@@ -8,8 +8,7 @@ Launch this with torchrun:
 
 import json
 
-import torch
-
+from olmo_core.config import DType
 from olmo_core.data import MemMapDatasetConfig
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.distributed.utils import get_rank
@@ -40,7 +39,7 @@ MODEL_CONFIG = TransformerConfig.llama2_271M(
     vocab_size=50304,  # a little bigger than actual vocab size to make it a multiple of 128
     compile=False,
     dp_config=DataParallelConfig(
-        name=DataParallelType.fsdp, param_dtype=torch.bfloat16, reduce_dtype=torch.float32
+        name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
     ),
 )
 
@@ -60,7 +59,7 @@ TRAINER_CONFIG = (
         global_batch_size=256,
         microbatch_size=16,
         fused_loss=has_flash_attn(),
-        autocast_precision=torch.bfloat16,
+        autocast_precision=DType.bfloat16,
         save_overwrite=True,
         data_seed=SEED,
         data_loader_workers=4,

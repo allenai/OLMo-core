@@ -1,9 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
-import torch
-
-from olmo_core.config import Config, StrEnum
+from olmo_core.config import Config, DType, StrEnum
 
 
 class DataParallelType(StrEnum):
@@ -14,5 +12,5 @@ class DataParallelType(StrEnum):
 @dataclass
 class DataParallelConfig(Config):
     name: DataParallelType
-    param_dtype: Optional[torch.dtype] = None
-    reduce_dtype: torch.dtype = torch.float32
+    param_dtype: Optional[DType] = None
+    reduce_dtype: DType = DType.float32

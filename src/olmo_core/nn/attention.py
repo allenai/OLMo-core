@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..config import Config, StrEnum
+from ..config import Config, DType, StrEnum
 from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
 from .layer_norm import LayerNorm, LayerNormConfig
@@ -52,7 +52,7 @@ class AttentionConfig(Config):
     qk_norm: Optional[LayerNormConfig] = None
     dropout: float = 0.0
     use_flash: Optional[bool] = None
-    dtype: torch.dtype = torch.float32
+    dtype: DType = DType.float32
 
     def build(
         self,
@@ -68,6 +68,7 @@ class AttentionConfig(Config):
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
+        kwargs["dtype"] = kwargs["dtype"].as_pt()
         kwargs.update(
             dict(
                 d_model=d_model,

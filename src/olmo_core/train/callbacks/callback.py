@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict
 
 if TYPE_CHECKING:
     from ..trainer import Trainer
@@ -15,7 +15,9 @@ class Callback:
     always add your own.
     """
 
-    _trainer: Optional["Trainer"] = None
+    # NOTE: omegaconf can't use this annotation
+    #  _trainer: Optional["Trainer"] = None
+    _trainer = None
 
     @property
     def trainer(self) -> "Trainer":

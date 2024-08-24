@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 
-from olmo_core.config import Config
+from olmo_core.config import Config, DType
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.utils import (
     get_cumulative_document_lengths,
@@ -59,7 +59,7 @@ class TransformerConfig(Config):
     block: TransformerBlockConfig
     layer_norm: LayerNormConfig
     bias: bool = True
-    dtype: torch.dtype = torch.float32
+    dtype: DType = DType.float32
     compile: bool = False
     dp_config: Optional[DataParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
@@ -87,7 +87,7 @@ class TransformerConfig(Config):
             block=self.block,
             layer_norm=self.layer_norm,
             bias=self.bias,
-            dtype=self.dtype,
+            dtype=self.dtype.as_pt(),
             init_device=init_device,
         )
         log.info("%s", model)
@@ -107,8 +107,10 @@ class TransformerConfig(Config):
             if self.dp_config.name == DataParallelType.fsdp:
                 model.apply_fsdp(
                     dp_mesh=dp_mesh,
-                    param_dtype=self.dp_config.param_dtype,
-                    reduce_dtype=self.dp_config.reduce_dtype,
+                    param_dtype=self.dp_config.param_dtype.as_pt()
+                    if self.dp_config.param_dtype is not None
+                    else None,
+                    reduce_dtype=self.dp_config.reduce_dtype.as_pt(),
                 )
             elif self.dp_config.name == DataParallelType.ddp:
                 model.apply_ddp(dp_mesh=dp_mesh, compile_enabled=self.compile)
@@ -369,7 +371,7 @@ class TransformerConfig(Config):
         hidden_size_multiplier: Optional[float] = None,
         fused_ops: Optional[bool] = None,
         use_flash: Optional[bool] = None,
-        dtype: torch.dtype = torch.float32,
+        dtype: DType = DType.float32,
         compile: bool = False,
         **kwargs,
     ) -> "TransformerConfig":

@@ -2,8 +2,10 @@ from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 from typing import Any, Dict, Generator, List, Optional, Tuple, Type, TypeVar, cast
 
+import torch
 from omegaconf import OmegaConf as om
 from omegaconf.errors import OmegaConfBaseException
+from typing_extensions import Self
 
 from .exceptions import OLMoConfigurationError
 
@@ -106,6 +108,19 @@ class Config:
             recurse=True,
         )
 
+    def merge(self, dotlist: List[str]) -> Self:
+        """
+        Merge self with fields from a "dotlist", creating a new object.
+
+        :param dotlist: A list of field attributes with dot notation, e.g. ``foo.bar=1``.
+        """
+        try:
+            merge_fields = om.from_dotlist(_clean_opts(dotlist))
+            merged = om.merge(self, merge_fields)
+            return cast(Self, om.to_object(merged))
+        except OmegaConfBaseException as e:
+            raise OLMoConfigurationError(str(e))
+
     @classmethod
     def from_dict(cls: Type[C], data: Dict[str, Any], overrides: Optional[List[str]] = None) -> C:
         """
@@ -114,11 +129,35 @@ class Config:
         :param data: A Python dictionary.
         :param overrides: A list of field overrides with dot notation, e.g. ``foo.bar=1``.
         """
-        schema = om.structured(cls)
         try:
+            schema = om.structured(cls)
             conf = om.merge(schema, data)
             if overrides:
-                conf = om.merge(conf, om.from_dotlist(overrides))
+                conf = om.merge(conf, om.from_dotlist(_clean_opts(overrides)))
             return cast(C, om.to_object(conf))
         except OmegaConfBaseException as e:
             raise OLMoConfigurationError(str(e))
+
+
+def _clean_opts(opts: List[str]) -> List[str]:
+    return [_clean_opt(s) for s in opts]
+
+
+def _clean_opt(arg: str) -> str:
+    if "=" not in arg:
+        arg = f"{arg}=True"
+    name, val = arg.split("=", 1)
+    name = name.strip("-").replace("-", "_")
+    return f"{name}={val}"
+
+
+class DType(StrEnum):
+    """
+    An enumeration of supported PyTorch data types.
+    """
+
+    float32 = "float32"
+    bfloat16 = "bfloat16"
+
+    def as_pt(self) -> torch.dtype:
+        return getattr(torch, self)

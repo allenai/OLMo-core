@@ -37,6 +37,8 @@ def test_nested_configs():
 
     foo2 = Foo.from_dict(data, overrides=["bar.x=0"])
     assert foo2.bar.x == 0
+    foo3 = foo2.merge(["bar.x=-1"])
+    assert foo3.bar.x == -1
 
     assert foo.as_dict(recurse=False) == {"z": "z", "bar": foo.bar}
 

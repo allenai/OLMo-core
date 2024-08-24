@@ -24,6 +24,11 @@ class WandBCallback(Callback):
         Requires the ``wandb`` package and the environment variable ``WANDB_API_KEY``.
     """
 
+    enabled: bool = True
+    """
+    Set to false to disable this callback.
+    """
+
     name: Optional[str] = None
     """
     The name to give the W&B run.
@@ -66,7 +71,7 @@ class WandBCallback(Callback):
     _run_path = None
 
     def __post_init__(self):
-        if get_rank() == 0:
+        if self.enabled and get_rank() == 0:
             self.wandb
             if WANDB_API_KEY_ENV_VAR not in os.environ:
                 raise OLMoEnvironmentError(f"missing env var '{WANDB_API_KEY_ENV_VAR}'")
@@ -88,7 +93,7 @@ class WandBCallback(Callback):
         return self._run_path
 
     def pre_train(self):
-        if get_rank() == 0:
+        if self.enabled and get_rank() == 0:
             wandb_dir = Path(self.trainer.save_folder) / "wandb"
             wandb_dir.mkdir(parents=True, exist_ok=True)
             self.wandb.init(
@@ -103,24 +108,24 @@ class WandBCallback(Callback):
             self._run_path = self.run.path
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):
-        if get_rank() == 0:
+        if self.enabled and get_rank() == 0:
             self.wandb.log(metrics, step=step)
 
     def post_step(self):
-        if get_rank() == 0 and self.step % self.trainer.cancel_check_interval == 0:
+        if self.enabled and get_rank() == 0 and self.step % self.trainer.cancel_check_interval == 0:
             self.trainer.thread_pool.submit(self.check_if_canceled)
 
     def post_train(self):
-        if get_rank() == 0 and self.run is not None:
+        if self.enabled and get_rank() == 0 and self.run is not None:
             self.wandb.finish(exit_code=0, quiet=True)
 
     def on_error(self, exc: BaseException):
         del exc
-        if get_rank() == 0 and self.run is not None:
+        if self.enabled and get_rank() == 0 and self.run is not None:
             self.wandb.finish(exit_code=1, quiet=True)
 
     def check_if_canceled(self):
-        if self.cancel_tags:
+        if self.enabled and self.cancel_tags:
             from requests.exceptions import RequestException
             from wandb.errors import CommError  # type: ignore
 

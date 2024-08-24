@@ -29,10 +29,28 @@ from .utils import ensure_repo
 log = logging.getLogger(__name__)
 
 
-__all__ = ["BeakerLaunchConfig", "BeakerPriority"]
+__all__ = ["BeakerLaunchConfig", "BeakerEnvVar", "BeakerEnvSecret", "BeakerPriority"]
 
 
 BeakerPriority = Priority
+
+
+@dataclass
+class BeakerEnvVar(Config):
+    name: str
+    value: str
+
+
+@dataclass
+class BeakerEnvSecret(Config):
+    name: str
+    secret: str
+
+
+@dataclass
+class BeakerWekaBucket(Config):
+    bucket: str
+    mount: str
 
 
 @dataclass
@@ -83,9 +101,11 @@ class BeakerLaunchConfig(Config):
     and other setup steps.
     """
 
-    beaker_image: str = "ai2/pytorch2.4.0-cuda12.1-python3.11"
+    beaker_image: str = "petew/olmo-core"
     """
     The Beaker image to use.
+
+    Suitable images can be found at `beaker.org/ws/ai2/OLMo-core/images <https://beaker.org/ws/ai2/OLMo-core/images>`_.
     """
 
     num_nodes: int = 1
@@ -119,12 +139,12 @@ class BeakerLaunchConfig(Config):
     If the job should be preemptible.
     """
 
-    env_vars: List[Tuple[str, str]] = field(default_factory=list)
+    env_vars: List[BeakerEnvVar] = field(default_factory=list)
     """
     Additional env vars to include.
     """
 
-    env_secrets: List[Tuple[str, str]] = field(default_factory=list)
+    env_secrets: List[BeakerEnvSecret] = field(default_factory=list)
     """
     Environment variables to add from secrets.
     """
@@ -134,10 +154,9 @@ class BeakerLaunchConfig(Config):
     Attach the NFS drive.
     """
 
-    weka_buckets: List[Tuple[str, str]] = field(default_factory=list)
+    weka_buckets: List[BeakerWekaBucket] = field(default_factory=list)
     """
-    Weka buckets to attach and where to attach them,
-    e.g. ``("oe-training-default", "/weka/oe-training-default")``.
+    Weka buckets to attach and where to attach them.
     """
 
     allow_dirty: bool = False
@@ -145,7 +164,9 @@ class BeakerLaunchConfig(Config):
     Allow running with uncommitted changed.
     """
 
-    _beaker: Optional[Beaker] = None
+    # NOTE: don't assign a type here because omegaconf can't validate arbitrary classes
+    #  _beaker: Optional[Beaker] = None
+    _beaker = None
 
     @property
     def default_env_vars(self) -> List[Tuple[str, str]]:
@@ -156,6 +177,9 @@ class BeakerLaunchConfig(Config):
             ("NCCL_DEBUG", "INFO"),
             (LOG_FILTER_TYPE_ENV_VAR, LogFilterType.local_rank0_only),
             ("OMP_NUM_THREADS", "8"),
+            ("R2_PROFILE", "R2"),
+            ("S3_PROFILE", "S3"),
+            ("WEKA_PROFILE", "WEKA"),
         ]
         if self.shared_filesystem:
             env_vars.append((OLMO_SHARED_FS_ENV_VAR, "1"))
@@ -180,9 +204,9 @@ class BeakerLaunchConfig(Config):
     def _get_env_vars(self) -> List[Tuple[str, str]]:
         env_vars: List[Tuple[str, str]] = []
         env_var_names: Set[str] = set()
-        for name, val in self.env_vars:
-            env_vars.append((name, val))
-            env_var_names.add(name)
+        for var in self.env_vars:
+            env_vars.append((var.name, var.value))
+            env_var_names.add(var.name)
         for name, val in self.default_env_vars:
             if name not in env_var_names:
                 env_vars.append((name, val))
@@ -289,8 +313,8 @@ class BeakerLaunchConfig(Config):
         for name, val in self._get_env_vars():
             task_spec = task_spec.with_env_var(name=name, value=val)
 
-        for name, secret in self.env_secrets or []:
-            task_spec = task_spec.with_env_var(name=name, secret=secret)
+        for env_secret in self.env_secrets or []:
+            task_spec = task_spec.with_env_var(name=env_secret.name, secret=env_secret.secret)
 
         if self.nfs:
             task_spec = task_spec.with_dataset(
@@ -299,8 +323,8 @@ class BeakerLaunchConfig(Config):
             task_spec = task_spec.with_dataset("/net/nfs", host_path="/net/nfs.cirrascale")
 
         if self.weka_buckets:
-            for source, target in self.weka_buckets:
-                task_spec = task_spec.with_dataset(target, weka=source)
+            for bucket in self.weka_buckets:
+                task_spec = task_spec.with_dataset(bucket.mount, weka=bucket.bucket)
 
         return ExperimentSpec(description=self.description, budget=self.budget, tasks=[task_spec])
 

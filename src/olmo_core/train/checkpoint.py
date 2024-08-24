@@ -132,7 +132,7 @@ class Checkpointer:
         :param fname: The name of the file to write.
         :param contents: The contents of the file to write.
 
-        :returns: The path of the file.
+        :returns: The path/URL of the file.
         """
         dir = normalize_path(dir)
 

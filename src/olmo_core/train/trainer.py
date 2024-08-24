@@ -496,6 +496,17 @@ class Trainer:
         self._metrics[self.global_step][name] = value
         self._metrics_reduce_type[name] = reduce_type
 
+    def write_file(self, name: str, contents: Union[str, bytes]) -> PathOrStr:
+        """
+        Write a file to the save folder.
+
+        :param fname: The name of the file to write.
+        :param contents: The contents of the file to write.
+
+        :returns: The path/URL of the file.
+        """
+        return self.checkpointer.write_file(self.save_folder, name, contents)
+
     def _duration_due(self, duration: Duration) -> bool:
         if duration.unit == DurationUnit.steps:
             return self.global_step > duration.value

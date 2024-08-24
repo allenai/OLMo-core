@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..config import Config, StrEnum
+from ..config import Config, DType, StrEnum
 
 __all__ = ["LayerNormType", "LayerNormConfig", "LayerNorm", "RMSNorm", "FusedRMSNorm"]
 
@@ -41,7 +41,7 @@ class LayerNormConfig(Config):
     elementwise_affine: bool = True
     bias: bool = True
     full_precision: bool = True
-    dtype: torch.dtype = torch.float32
+    dtype: DType = DType.float32
 
     def build(self, size: int, init_device: str = "cpu") -> "LayerNorm":
         """
@@ -51,6 +51,7 @@ class LayerNormConfig(Config):
         """
         kwargs = self.as_dict(exclude_none=True)
         kwargs.pop("name")
+        kwargs["dtype"] = kwargs["dtype"].as_pt()
         kwargs.update(
             dict(
                 size=size,

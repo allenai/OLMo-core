@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union, cast
 
 import numpy as np
 import torch
@@ -41,34 +41,38 @@ class MemMapDatasetConfig(Config):
     pad_token_id: int
     eos_token_id: int
     memmap_dtype: MemMapDType = MemMapDType.uint16
-    metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None
+    metadata: Optional[List[Dict[str, Any]]] = None
     include_instance_metadata: bool = True
     generate_attention_mask: bool = False
     generate_doc_lengths: bool = False
-    label_mask_paths: Optional[List[PathOrStr]] = None
+    label_mask_paths: Optional[List[str]] = None
+    expand_glob: bool = False
 
     @classmethod
-    def glob(cls, *glob_paths, **kwargs) -> "MemMapDatasetConfig":
+    def glob(cls, *glob_paths: str, **kwargs) -> "MemMapDatasetConfig":
         """
         Initialize a dataset config with glob paths.
         """
-        from glob import glob
-
-        paths = []
-        for glob_path in glob_paths:
-            matches = sorted(glob(glob_path))
-            if not matches:
-                raise FileNotFoundError(glob_path)
-            paths.extend(matches)
-
-        return cls(paths=paths, **kwargs)
+        return cls(paths=list(glob_paths), expand_glob=True, **kwargs)
 
     def build(self) -> MemMapDataset:
         """
         Construct the corresponding :class:`MemMapDataset`.
         """
+        paths: List[str] = []
+        if self.glob:
+            from glob import glob
+
+            for glob_path in self.paths:
+                matches = sorted(glob(glob_path))
+                if not matches:
+                    raise FileNotFoundError(glob_path)
+                paths.extend(matches)
+        else:
+            paths = self.paths
+
         return MemMapDataset(
-            *self.paths,
+            *paths,
             sequence_length=self.sequence_length,
             pad_token_id=self.pad_token_id,
             eos_token_id=self.eos_token_id,
@@ -77,7 +81,7 @@ class MemMapDatasetConfig(Config):
             include_instance_metadata=self.include_instance_metadata,
             generate_attention_mask=self.generate_attention_mask,
             generate_doc_lengths=self.generate_doc_lengths,
-            label_mask_paths=self.label_mask_paths,
+            label_mask_paths=cast(Optional[List[PathOrStr]], self.label_mask_paths),
         )
 
 

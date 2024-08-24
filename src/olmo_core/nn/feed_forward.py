@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..config import Config
+from ..config import Config, DType
 
 __all__ = ["FeedForwardConfig", "FeedForward"]
 
@@ -19,14 +19,14 @@ class FeedForwardConfig(Config):
 
     hidden_size: int
     bias: bool = True
-    dtype: torch.dtype = torch.float32
+    dtype: DType = DType.float32
 
     def build(self, d_model: int, init_device: str = "cpu") -> "FeedForward":
         return FeedForward(
             d_model=d_model,
             hidden_size=self.hidden_size,
             bias=self.bias,
-            dtype=self.dtype,
+            dtype=self.dtype.as_pt(),
             init_device=init_device,
         )
 

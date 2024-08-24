@@ -6,8 +6,7 @@ import torch.distributed as dist
 import torch.nn as nn
 from torch.optim import Optimizer
 
-from ..aliases import PathOrStr
-from ..config import Config
+from ..config import Config, DType
 from ..data import DataCollator, MemMapDataset
 from ..utils import get_default_device
 from .callbacks import Callback
@@ -22,14 +21,13 @@ class TrainerConfig(Config):
     A configuration class for easily building :class:`~olmo_core.train.trainer.Trainer` instances.
     """
 
-    work_dir: PathOrStr
+    work_dir: str
     save_folder: str
     global_batch_size: int
     microbatch_size: int
 
-    device: Optional[torch.device] = None
+    device: Optional[str] = None
     save_overwrite: bool = False
-    checkpointer_pg: Optional[dist.ProcessGroup] = None
     max_duration: Duration = field(
         default_factory=lambda: Duration(value=1, unit=DurationUnit.epochs)
     )
@@ -37,13 +35,28 @@ class TrainerConfig(Config):
     callbacks: List[Callback] = field(default_factory=list)
     fused_loss: bool = False
     z_loss_multiplier: Optional[float] = None
-    autocast_precision: Optional[torch.dtype] = None
-    dp_process_group: Optional[dist.ProcessGroup] = None
+    autocast_precision: Optional[DType] = None
     data_seed: int = 0
     data_loader_workers: int = 0
     data_loader_prefetch_factor: Optional[int] = None
 
-    def build(self, model: nn.Module, optim: Optimizer, dataset: MemMapDataset) -> Trainer:
+    def with_callback(self, callback: Callback) -> "TrainerConfig":
+        """
+        Add another callback.
+
+        :param callback: The callback to add.
+        """
+        self.callbacks.append(callback)
+        return self
+
+    def build(
+        self,
+        model: nn.Module,
+        optim: Optimizer,
+        dataset: MemMapDataset,
+        dp_process_group: Optional[dist.ProcessGroup] = None,
+        checkpointer_pg: Optional[dist.ProcessGroup] = None,
+    ) -> Trainer:
         """
         Build the corresponding trainer.
 
@@ -55,9 +68,10 @@ class TrainerConfig(Config):
 
         checkpointer = Checkpointer(
             save_overwrite=kwargs.pop("save_overwrite"),
-            process_group=kwargs.pop("checkpointer_pg", None),
+            process_group=checkpointer_pg,
         )
-        device = kwargs.pop("device", get_default_device())
+        device = kwargs.pop("device")
+        autocast_precision: Optional[DType] = kwargs.pop("autocast_precision")
         collator = DataCollator(pad_token_id=dataset.pad_token_id)
 
         return Trainer(
@@ -65,17 +79,10 @@ class TrainerConfig(Config):
             optim=optim,
             dataset=dataset,
             collator=collator,
-            device=device,
             checkpointer=checkpointer,
             train_sequence_length=dataset.sequence_length,
+            autocast_precision=None if autocast_precision is None else autocast_precision.as_pt(),
+            device=torch.device(device) if device is not None else get_default_device(),
+            dp_process_group=dp_process_group,
             **kwargs,
         )
-
-    def with_callback(self, callback: Callback) -> "TrainerConfig":
-        """
-        Add another callback.
-
-        :param callback: The callback to add.
-        """
-        self.callbacks.append(callback)
-        return self
