@@ -379,6 +379,8 @@ class Trainer:
         self._cancel_reason = None
         self._canceling_rank = None
 
+        log.info(f"Training for {self.max_steps:,d} steps")
+
         self.model.train()
 
         for callback in self.callbacks:
@@ -756,6 +758,7 @@ class Trainer:
         for callback in self.callbacks:
             callback.pre_epoch()
 
+        first_batch = True
         for batch in self._get_dataloader():
             # Bookkeeping.
             # NOTE: To track the global batch size / number of tokens per batch we make the
@@ -783,8 +786,10 @@ class Trainer:
             for callback in self.callbacks:
                 callback.post_step()
 
-            if self.global_step % self.metrics_log_interval == 0:
+            if first_batch or self.global_step % self.metrics_log_interval == 0:
                 self._log_metrics()
+
+            first_batch = False
 
             if self.training_complete:
                 # Finishing before the epoch is complete.

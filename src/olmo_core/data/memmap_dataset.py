@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Type, Union, cast
@@ -16,6 +17,9 @@ from ..io import _get_s3_client, file_size, get_bytes_range
 from ..utils import get_document_lengths
 
 __all__ = ["MemMapDatasetConfig", "MemMapDataset"]
+
+
+log = logging.getLogger(__name__)
 
 
 class MemMapDType(StrEnum):
@@ -64,9 +68,12 @@ class MemMapDatasetConfig(Config):
             from glob import glob
 
             for glob_path in self.paths:
+                log.info(f"Expanding '{glob_path}'...")
                 matches = sorted(glob(glob_path))
                 if not matches:
                     raise FileNotFoundError(glob_path)
+                for path in matches:
+                    log.info(f" - '{path}'")
                 paths.extend(matches)
         else:
             paths = self.paths

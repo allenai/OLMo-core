@@ -99,16 +99,19 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     dataset_config = MemMapDatasetConfig.glob(
         "/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy",
-        sequence_length=1024,
+        sequence_length=4096,
         eos_token_id=50256,
         pad_token_id=50256,
     )
 
+    save_folder = f"/net/nfs/allennlp/{beaker_user.lower()}/{run_name}"
+
     trainer_config = (
         TrainerConfig(
-            work_dir=f"/tmp/{run_name}",
-            save_folder=f"/tmp/{run_name}",  # TODO: change this to a better default
-            global_batch_size=1024,
+            work_dir=save_folder,
+            save_folder=save_folder,
+            #  global_batch_size=1024,
+            global_batch_size=128,  # TODO: change bach
             microbatch_size=2,
             fused_loss=True,
             autocast_precision=DType.bfloat16,
