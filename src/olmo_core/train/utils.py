@@ -93,9 +93,12 @@ class EnvRngStates(Config):
         return cls(python=python_rng, numpy=numpy_rng, torch=torch_rng, cuda=cuda_rng)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "EnvRngStates":
+    def from_dict(
+        cls, data: Dict[str, Any], overrides: Optional[List[str]] = None
+    ) -> "EnvRngStates":
         # overriding this from the base class since omegaconf doesn't like whatever objects
         # we get for the states, like numpy ndarrays.
+        assert overrides is None
         return cls(
             python=LibRngState(**data["python"]),
             numpy=LibRngState(**data["numpy"]),

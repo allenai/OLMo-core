@@ -85,7 +85,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         ],
     )
 
-    model_config = TransformerConfig.llama2_271M(
+    model_config = TransformerConfig.llama2_7B(
         vocab_size=50304,  # a little bigger than actual vocab size to make it a multiple of 128
         compile=False,
         dp_config=DataParallelConfig(
@@ -93,7 +93,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         ),
     )
 
-    optim_config = AdamWConfig(lr=1e-3)
+    # TODO: don't decay embeddings
+    optim_config = AdamWConfig(lr=3e-4, weight_decay=0.1)
 
     dataset_config = MemMapDatasetConfig.glob(
         "/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy",
@@ -106,8 +107,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         TrainerConfig(
             work_dir=f"/tmp/{run_name}",
             save_folder=f"/tmp/{run_name}",  # TODO: change this to a better default
-            global_batch_size=256,
-            microbatch_size=16,
+            global_batch_size=1024,
+            microbatch_size=2,
             fused_loss=True,
             autocast_precision=DType.bfloat16,
             save_overwrite=True,
@@ -115,7 +116,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             data_loader_workers=4,
             metrics_log_interval=5,
         )
-        .with_callback(SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=100)))
+        .with_callback(SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=2000)))
         .with_callback(GPUMemoryMonitorCallback())
         .with_callback(GradClipperCallback(max_grad_norm=1.0))
         .with_callback(
@@ -194,12 +195,10 @@ if __name__ == "__main__":
     if sys.argv[1] == SubCmd.launch:
         prepare_cli_environment()
         config = build_config(run_name, overrides)
-        print(config)
         launch(config)
     else:
         prepare_training_environment()
         config = build_config(run_name, overrides)
-        print(config)
         try:
             train(config)
         finally:

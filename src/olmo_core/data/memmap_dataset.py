@@ -60,7 +60,7 @@ class MemMapDatasetConfig(Config):
         Construct the corresponding :class:`MemMapDataset`.
         """
         paths: List[str] = []
-        if self.glob:
+        if self.expand_glob:
             from glob import glob
 
             for glob_path in self.paths:
