@@ -1,5 +1,6 @@
+from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -10,6 +11,7 @@ from .buffer_cache import BufferCache
 __all__ = [
     "RoPEType",
     "RoPEConfig",
+    "RotaryEmbeddingBase",
     "RotaryEmbedding",
     "FusedRotaryEmbedding",
     "ComplexRotaryEmbedding",
@@ -51,7 +53,7 @@ class RoPEConfig(Config):
         self,
         head_shape: int,
         cache: Optional[BufferCache] = None,
-    ) -> Union["RotaryEmbedding", "FusedRotaryEmbedding", "ComplexRotaryEmbedding"]:
+    ) -> "RotaryEmbeddingBase":
         """
         Construct the corresponding RoPE class.
 
@@ -74,17 +76,9 @@ class RoPEConfig(Config):
             raise NotImplementedError(self.name)
 
 
-class RotaryEmbedding(nn.Module):
+class RotaryEmbeddingBase(nn.Module):
     """
-    `Rotary positional embeddings (RoPE) <https://arxiv.org/abs/2104.09864>`_.
-
-    .. seealso::
-        - :class:`ComplexRotaryEmbedding`
-        - :class:`FusedRotaryEmbedding`
-
-    :param head_shape: The dimensionality of the attention heads.
-    :param theta: The theta base value to use.
-    :param full_precision: Always apply RoPE in full precision regardless of the input data type.
+    Base class for RoPE implementations.
     """
 
     def __init__(
@@ -100,6 +94,30 @@ class RotaryEmbedding(nn.Module):
         self.theta = theta
         self.full_precision = full_precision
         self._cache = cache or BufferCache()
+
+    @abstractmethod
+    def warmup_cache(self, max_seq_len: int, device: torch.device):
+        """
+        Warmup the buffer cache.
+        """
+        raise NotImplementedError
+
+
+class RotaryEmbedding(RotaryEmbeddingBase):
+    """
+    `Rotary positional embeddings (RoPE) <https://arxiv.org/abs/2104.09864>`_.
+
+    .. seealso::
+        - :class:`ComplexRotaryEmbedding`
+        - :class:`FusedRotaryEmbedding`
+
+    :param head_shape: The dimensionality of the attention heads.
+    :param theta: The theta base value to use.
+    :param full_precision: Always apply RoPE in full precision regardless of the input data type.
+    """
+
+    def warmup_cache(self, max_seq_len: int, device: torch.device):
+        self._get_rotary_embedding(max_seq_len, device)
 
     def _get_rotary_embedding(
         self, seq_len: int, device: torch.device
@@ -194,7 +212,7 @@ class RotaryEmbedding(nn.Module):
         return q_.type_as(q), k_.type_as(k)
 
 
-class FusedRotaryEmbedding(nn.Module):
+class FusedRotaryEmbedding(RotaryEmbeddingBase):
     """
     A "fused" triton-based implementation of :class:`RotaryEmbedding`.
 
@@ -216,12 +234,13 @@ class FusedRotaryEmbedding(nn.Module):
     ):
         from flash_attn.layers.rotary import apply_rotary_emb_qkv_  # type: ignore
 
-        super().__init__()
-        self.dim = head_shape
-        self.theta = theta
-        self.full_precision = full_precision
+        super().__init__(
+            head_shape=head_shape, theta=theta, full_precision=full_precision, cache=cache
+        )
         self._apply_rotary_emb_qkv_ = apply_rotary_emb_qkv_
-        self._cache = cache or BufferCache()
+
+    def warmup_cache(self, max_seq_len: int, device: torch.device):
+        self._get_rotary_embedding(max_seq_len, device)
 
     def _get_rotary_embedding(
         self, seq_len: int, device: torch.device
@@ -276,7 +295,7 @@ class FusedRotaryEmbedding(nn.Module):
         return qkv_.type_as(qkv)
 
 
-class ComplexRotaryEmbedding(nn.Module):
+class ComplexRotaryEmbedding(RotaryEmbeddingBase):
     """
     An implementation of `RoPE <https://arxiv.org/abs/2104.09864>`_ as a rotation in complex space.
 
@@ -285,19 +304,8 @@ class ComplexRotaryEmbedding(nn.Module):
     :param full_precision: Always apply RoPE in full precision regardless of the input data type.
     """
 
-    def __init__(
-        self,
-        *,
-        head_shape: int,
-        theta: int = 500_000,
-        full_precision: bool = True,
-        cache: Optional[BufferCache] = None,
-    ):
-        super().__init__()
-        self.dim = head_shape
-        self.theta = theta
-        self.full_precision = full_precision
-        self._cache = cache or BufferCache()
+    def warmup_cache(self, max_seq_len: int, device: torch.device):
+        self._get_rotary_embedding(max_seq_len, device)
 
     def _get_rotary_embedding(self, seq_len: int, device: torch.device) -> torch.Tensor:
         if (freqs_cis := self._cache.get("rope_freqs_cis")) is not None and freqs_cis.shape[

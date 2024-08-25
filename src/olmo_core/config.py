@@ -32,7 +32,16 @@ class Config:
     A base class for configuration dataclasses.
 
     .. important::
-        When you subclass this you should still decorate your subclasses with ``@dataclass``.
+        When you subclass this you should still decorate your subclasses with
+        :func:`@dataclass <dataclasses.dataclass>`. For example::
+
+            @dataclass
+            class MyConfig(Config):
+                ...
+
+    .. important::
+        Config classes need to be serializable, so you should only use simple types for your fields.
+        Though you can use nested configs.
     """
 
     CLASS_NAME_FIELD = "_CLASS_"

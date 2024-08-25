@@ -3,8 +3,8 @@ from .iterable_dataset import IterableDataset
 from .memmap_dataset import MemMapDataset, MemMapDatasetConfig, MemMapDType
 
 __all__ = [
-    "MemMapDataset",
     "MemMapDatasetConfig",
+    "MemMapDataset",
     "MemMapDType",
     "DataCollator",
     "PaddingDirection",

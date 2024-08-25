@@ -1,3 +1,43 @@
+"""
+This module implements a highly efficient, yet flexible, language model trainer.
+
+Features
+--------
+
+- Async checkpointing (optional) with local or remote checkpoint directories.
+- Supports any type of parallel strategy.
+- Async metric logging, with support for custom metrics, even those that need to be reduced across
+  ranks.
+- Flexible callback system for extending/modifying the training loop behavior.
+- A powerful set of built-in callbacks.
+
+Overview
+--------
+
+Call :func:`prepare_training_environment()` at the top of your training script,
+then construct your trainer using a :class:`TrainerConfig`. Finally, call :meth:`Trainer.fit()`
+and cleanup at the end of your script by calling :func:`teardown_training_environment()`.
+For example::
+
+    if __name__ == "__main__":
+        prepare_training_environment()
+        try:
+            # Build model, optimizer, dataset...
+
+            # Build trainer.
+            trainer = trainer_config.build(model, optim, dataset)
+
+            # Run the trainer.
+            trainer.fit()
+        finally:
+            teardown_training_environment()
+
+See the `train a language model <examples/train.html>`_ example for a complete, run-able demonstration.
+
+API Reference
+-------------
+"""
+
 import logging
 from datetime import timedelta
 from typing import Optional

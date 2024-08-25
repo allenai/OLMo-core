@@ -24,6 +24,7 @@ from ..rope import (
     RoPEConfig,
     RoPEType,
     RotaryEmbedding,
+    RotaryEmbeddingBase,
 )
 from .block import TransformerBlockConfig, TransformerBlockType
 from .utils import apply_activation_checkpointing_to_transformer_block
@@ -514,8 +515,9 @@ class Transformer(nn.Module):
         device = self.w_out.weight.device
 
         def warmup_cache(m: nn.Module):
-            if isinstance(m, (RotaryEmbedding, FusedRotaryEmbedding, ComplexRotaryEmbedding)):
-                m._get_rotary_embedding(max_seq_len, device)
+            if isinstance(m, RotaryEmbeddingBase):
+                assert max_seq_len is not None
+                m.warmup_cache(max_seq_len, device)
 
         self.apply(warmup_cache)
 

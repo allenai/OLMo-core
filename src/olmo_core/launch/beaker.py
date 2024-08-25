@@ -1,3 +1,7 @@
+"""
+Launch experiments on `Beaker <https://beaker.org>`_.
+"""
+
 import hashlib
 import logging
 import tempfile
@@ -29,7 +33,13 @@ from .utils import ensure_repo
 log = logging.getLogger(__name__)
 
 
-__all__ = ["BeakerLaunchConfig", "BeakerEnvVar", "BeakerEnvSecret", "BeakerPriority"]
+__all__ = [
+    "BeakerLaunchConfig",
+    "BeakerEnvVar",
+    "BeakerEnvSecret",
+    "BeakerWekaBucket",
+    "BeakerPriority",
+]
 
 
 BeakerPriority = Priority

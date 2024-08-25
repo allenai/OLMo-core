@@ -15,7 +15,7 @@ from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.distributed.utils import get_rank
 from olmo_core.launch.beaker import BeakerEnvSecret, BeakerLaunchConfig
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import AdamWConfig, CosWithWarmup
+from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
     TrainerConfig,
     prepare_training_environment,
@@ -96,8 +96,13 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         ),
     )
 
-    # TODO: don't decay embeddings
-    optim_config = AdamWConfig(lr=3e-4, weight_decay=0.1)
+    optim_config = AdamWConfig(
+        lr=3e-4,
+        weight_decay=0.1,
+        group_overrides=[
+            OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+        ],
+    )
 
     dataset_config = MemMapDatasetConfig.glob(
         "/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy",

@@ -1,6 +1,7 @@
 import os
 
 import torch
+import torch.distributed as dist
 
 from olmo_core.distributed.utils import get_rank
 from olmo_core.train.checkpoint import Checkpointer
@@ -35,7 +36,7 @@ def test_checkpointer_with_local_dir(tmp_path, tiny_model_factory):
 def run_async_checkpointer_with_local_dir(dir, model_factory):
     os.environ["OLMO_SHARED_FS"] = "1"
 
-    checkpointer = Checkpointer()
+    checkpointer = Checkpointer(process_group=dist.new_group())
     model = model_factory()
     optim = torch.optim.AdamW(model.parameters())
 

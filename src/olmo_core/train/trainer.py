@@ -53,7 +53,7 @@ TRAIN_Z_LOSS_METRIC = "train/Z loss"
 @dataclass
 class Trainer:
     """
-    A language model trainer.
+    Language model trainer.
 
     .. tip::
         Use :class:`TrainerConfig` instead of constructing this class directly.
