@@ -25,7 +25,7 @@ class SpeedMonitorCallback(Callback):
     _start_time: float = 0.0
     _first_step: bool = True
 
-    _step_start_time: float = 0.0
+    _step_last_logged: float = 0.0
     _step_tokens: int = 0
 
     def pre_train(self):
@@ -54,22 +54,26 @@ class SpeedMonitorCallback(Callback):
             # unusually long.
             return
 
-        self._step_start_time = time.perf_counter()
         self._step_tokens = batch["input_ids"].numel()
         self._total_steps += 1
         self._total_tokens += self._step_tokens
 
     def post_step(self):
+        counter = time.perf_counter()
+
         if self._first_step:
             # Now we can start recording.
             self._total_steps = 0
             self._total_tokens = 0
-            self._start_time = time.perf_counter()
+            self._start_time = counter
+            self._step_last_logged = counter
             self._first_step = False
             return
 
-        step_time = time.perf_counter() - self._step_start_time
-        total_time = time.perf_counter() - self._start_time
+        step_time = counter - self._step_last_logged
+        total_time = counter - self._start_time
+        self._step_last_logged = counter
+
         tps = self._step_tokens / step_time
         tps_avg = self._total_tokens / total_time
         bps = 1 / step_time

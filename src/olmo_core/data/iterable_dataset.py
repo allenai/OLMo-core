@@ -82,7 +82,8 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
     def build_and_save_global_indices(self):
         assert self.work_dir is not None
         self.global_indices_file = (
-            Path(self.work_dir) / f"global_indices_seed{self.seed}_epoch{self.epoch}.npy"
+            Path(self.work_dir)
+            / f"global_indices_seed{self.seed}_epoch{self.epoch}_size{self.total_size}.npy"
         )
         if self.fs_local_rank == 0:
             if self.global_indices_file.is_file():
