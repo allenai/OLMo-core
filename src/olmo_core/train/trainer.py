@@ -46,6 +46,7 @@ from .utils import (
     DurationUnit,
     EnvRngStates,
     ReduceType,
+    get_local_tensor,
     move_metrics,
     reduce_metrics,
 )
@@ -501,6 +502,8 @@ class Trainer:
         """
         if not isinstance(value, torch.Tensor):
             value = torch.tensor(value)
+        else:
+            value = get_local_tensor(value).float()
         if self.global_step not in self._metrics:
             self._metrics[self.global_step] = OrderedDict()
         self._metrics[self.global_step][name] = value
@@ -610,14 +613,15 @@ class Trainer:
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         compute_z_loss: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
-        # shape: (batch_size, seq_len, vocab_size)
-        logits = self.model(
-            input_ids=batch["input_ids"],
-            #  attention_mask=batch.get("attention_mask"),
-            #  attention_bias=batch.get("attention_bias"),
-            doc_lens=batch.get("doc_lens"),
-            max_doc_lens=batch.get("max_doc_lens"),
-        )
+        with self._model_forward_context():
+            # shape: (batch_size, seq_len, vocab_size)
+            logits = self.model(
+                input_ids=batch["input_ids"],
+                #  attention_mask=batch.get("attention_mask"),
+                #  attention_bias=batch.get("attention_bias"),
+                doc_lens=batch.get("doc_lens"),
+                max_doc_lens=batch.get("max_doc_lens"),
+            )
 
         # shape: (batch_size, seq_len - 1, vocab_size)
         logits_for_loss = logits[..., :-1, :].contiguous()
@@ -711,19 +715,18 @@ class Trainer:
 
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
             with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
-                with self._model_forward_context():
-                    # Run forward pass.
-                    loss, ce_loss, z_loss = self._get_micro_batch_loss(
-                        micro_batch, batch_num_tokens_for_loss
-                    )
+                # Run forward pass.
+                loss, ce_loss, z_loss = self._get_micro_batch_loss(
+                    micro_batch, batch_num_tokens_for_loss
+                )
 
-                    # Update overall CE batch loss.
-                    ce_batch_loss += ce_loss.detach()
+                # Update overall CE batch loss.
+                ce_batch_loss += ce_loss.detach()
 
-                    # Update overall Z batch loss.
-                    if z_loss is not None:
-                        assert z_batch_loss is not None
-                        z_batch_loss += z_loss.detach()
+                # Update overall Z batch loss.
+                if z_loss is not None:
+                    assert z_batch_loss is not None
+                    z_batch_loss += z_loss.detach()
 
                 # Run backward pass.
                 loss.backward()

@@ -131,20 +131,21 @@ def _get_cuda_version() -> Optional[Tuple[int, int]]:
         return None
 
 
-def _get_local_tensor(x: torch.Tensor) -> torch.Tensor:
+def get_local_tensor(x: torch.Tensor) -> torch.Tensor:
     if isinstance(x, DTensor):
         return x.to_local()
     else:
         return x
 
 
+@torch.no_grad()
 def move_metrics(
     source: Dict[int, Dict[str, torch.Tensor]],
     device: torch.device,
 ) -> Dict[int, Dict[str, torch.Tensor]]:
     # Collate all metrics together, then transfer to device all at once.
     metrics_to_move_list = [
-        _get_local_tensor(m)
+        get_local_tensor(m)
         for step_metrics in source.values()
         for m in step_metrics.values()
         if m.device != device
@@ -169,6 +170,7 @@ def move_metrics(
     return target
 
 
+@torch.no_grad()
 def reduce_metrics(
     metrics: Dict[int, Dict[str, torch.Tensor]],
     metrics_reduce_type: Dict[str, Optional[ReduceType]],
