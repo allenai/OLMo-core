@@ -565,6 +565,7 @@ class Trainer:
         if self.bookkeeping_device.type == "cpu" and self.bookkeeping_pg is not None:
             # If we have a separate CPU backend and process group we can safely reduce
             # metrics on CPU in a thread.
+            print("Before reduce", reduce_metrics)
             future = self.thread_pool.submit(
                 reduce_metrics,
                 metrics_to_reduce,
@@ -728,11 +729,10 @@ class Trainer:
 
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
             with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
-                with self._model_forward_context():
-                    # Run forward pass.
-                    loss, ce_loss, z_loss = self._get_micro_batch_loss(
-                        micro_batch, batch_num_tokens_for_loss
-                    )
+                # Run forward pass.
+                loss, ce_loss, z_loss = self._get_micro_batch_loss(
+                    micro_batch, batch_num_tokens_for_loss
+                )
 
                 # Update overall CE batch loss.
                 ce_batch_loss += ce_loss.detach()
