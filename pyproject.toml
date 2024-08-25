@@ -48,8 +48,11 @@ beaker = [
     "beaker-py",
     "GitPython>=3.0,<4.0",
 ]
+wandb = [
+    "wandb",
+]
 all = [
-    "ai2-olmo-core[dev,beaker]",
+    "ai2-olmo-core[dev,beaker,wandb]",
 ]
 
 [tool.setuptools]
