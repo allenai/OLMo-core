@@ -80,7 +80,12 @@ def get_rank(group: Optional[dist.ProcessGroup] = None) -> int:
 
 def get_local_rank() -> int:
     """
-    Get the local rank within the current node. Relies on the environment variable "LOCAL_RANK".
+    Get the local rank within the current node.
+
+    .. warning::
+        This relies on the environment variable ``LOCAL_RANK`` being set correctly.
+
+    :returns: The rank.
     """
     if is_distributed():
         return int(os.environ.get(OLMO_LOCAL_RANK_ENV_VAR) or 0)
@@ -94,6 +99,13 @@ def get_fs_local_rank(group: Optional[dist.ProcessGroup] = None) -> int:
     if all ranks share the same filesystem then :func:`get_fs_local_rank()` will be equivalent
     to :func:`get_rank()`, but if nodes do not share the same filesystem then
     :func:`get_fs_local_rank()` will be equivalent to :func:`get_local_rank()`.
+
+    .. warning::
+        This relies on some environment variables to determine the correct rank.
+        If you are using a shared filesystem across nodes, you can simply set the environment
+        variable ``OLMO_SHARED_FS=1``. Otherwise you can set ``FS_LOCAL_RANK`` for each process.
+
+    :returns: The rank.
     """
     if not is_distributed():
         return 0
