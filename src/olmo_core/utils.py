@@ -202,22 +202,22 @@ def has_flash_attn() -> bool:
 
 class LogFilterType(StrEnum):
     """
-    Determines which ranks emit INFO and below messages.
+    Determines which ranks are allowed to emit INFO messages.
     """
 
     rank0_only = "rank0_only"
     """
-    INFO and below are only emitted from the global rank 0.
+    INFO messages are only emitted from the global rank 0.
     """
 
     local_rank0_only = "local_rank0_only"
     """
-    INFO and below are only emitted from the local (node) rank 0.
+    INFO messages are only emitted from the local (node) rank 0.
     """
 
     all_ranks = "all_ranks"
     """
-    All ranks emit INFO and below messages.
+    All ranks emit INFO messages.
     """
 
 
@@ -409,8 +409,16 @@ def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
     - :func:`filter_warnings()`
     - :func:`set_env_variables()`
 
-    :param log_filter_type: Which ranks emit INFO and below messages. You can also configure this
-        through the env var ``LOG_FILTER_TYPE``. If neither are set, this defaults to "rank0_only".
+    .. tip::
+        If you're looking to setup the environment specifically for distributed training,
+        see :func:`~olmo_core.train.prepare_training_environment` instead.
+
+    :param log_filter_type: Determines which ranks are allowed to emit log messages below the
+        ``WARNING`` level. You can also configure this through the env var ``LOG_FILTER_TYPE``.
+        If neither are set, this defaults to "rank0_only".
+
+        .. note::
+            All ranks will always emit messages at the ``WARNING`` level or higher.
     """
     if log_filter_type is None:
         log_filter_type = LogFilterType(os.environ.get(LOG_FILTER_TYPE_ENV_VAR, "rank0_only"))

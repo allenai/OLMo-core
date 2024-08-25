@@ -196,11 +196,18 @@ def file_exists(path: PathOrStr) -> bool:
         return Path(path).exists()
 
 
-def clear_directory(dir: PathOrStr):
+def clear_directory(dir: PathOrStr, force: bool = False):
     """
     Clear out the contents of a local or remote directory.
 
+    .. warning::
+        This function is potentially very destructive!
+
+        By default, for safety, this raise a :class:`ValueError` if you attempt to clear a remote
+        directory too close to the root of the bucket. Set ``force=True`` to override.
+
     :param dir: Path/URL to the directory.
+    :param force: See note about safety.
     """
     dir = normalize_path(dir)
 
@@ -209,7 +216,15 @@ def clear_directory(dir: PathOrStr):
 
         parsed = urlparse(str(dir))
         if parsed.scheme in ("s3", "r2", "weka"):
-            return _s3_clear_directory(parsed.scheme, parsed.netloc, parsed.path.strip("/"))
+            prefix = parsed.path.strip("/")
+            # For safety (so people don't accidentally delete a whole bunch of important data),
+            # ensure prefix is at least 2 folders deep.
+            if not force and prefix.count("/") < 2:
+                raise ValueError(
+                    "For safety, clearing a remote directory this close to the root of a bucket is "
+                    "not allowed by default. To override this behavior set ``force=True``."
+                )
+            return _s3_clear_directory(parsed.scheme, parsed.netloc, prefix)
         else:
             raise NotImplementedError(
                 f"clear_directory not implemented for '{parsed.scheme}' folders"

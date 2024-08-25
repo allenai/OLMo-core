@@ -240,8 +240,8 @@ class Trainer:
         if not is_url(self.save_folder) and get_fs_local_rank() != get_rank():
             raise OLMoConfigurationError(
                 "Checkpointing to a local directory requires a shared filesystem. "
-                "If you do have shared filesystem make sure you have the env var 'OLMO_SHARED_FS=1' set "
-                "or 'FS_LOCAL_RANK' set to the global rank."
+                "If you do have a shared filesystem please set the env var 'OLMO_SHARED_FS=1' "
+                "or set 'FS_LOCAL_RANK' to the global rank for each process."
             )
 
         # Configure working directory.

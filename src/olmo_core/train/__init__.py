@@ -87,8 +87,12 @@ def prepare_training_environment(
         which allows the trainer to run async checkpointing and bookkeeping collectives on the CPU
         backend without blocking training operations.
     :param timeout: The timeout for initializing the distributed process group.
-    :param log_filter_type: Which ranks emit INFO and below messages. You can also configure this
-        through the env var ``LOG_FILTER_TYPE``. If neither are set, this defaults to "rank0_only".
+    :param log_filter_type: Determines which ranks are allowed to emit log messages below the
+        ``WARNING`` level. You can also configure this through the env var ``LOG_FILTER_TYPE``.
+        If neither are set, this defaults to "rank0_only".
+
+        .. note::
+            All ranks will always emit messages at the ``WARNING`` level or higher.
     """
     # Setting the mp start method to "spawn" avoids some data loader segfaults on LUMI.
     try:

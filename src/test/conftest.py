@@ -23,14 +23,18 @@ def unique_name() -> str:
 def s3_checkpoint_dir(bucket_name, unique_name) -> Generator[str, None, None]:
     folder = f"s3://{bucket_name}/checkpoints/{unique_name}"
     yield folder
-    clear_directory(folder)
+    clear_directory(folder, force=True)
 
 
 class TinyModel(nn.Module):
     def __init__(self, dim: int = 8):
         super().__init__()
         self.fc = nn.Sequential(
-            nn.Linear(dim, dim * 2), nn.ReLU(), nn.Linear(dim * 2, dim), nn.ReLU(), nn.Linear(dim, dim)
+            nn.Linear(dim, dim * 2),
+            nn.ReLU(),
+            nn.Linear(dim * 2, dim),
+            nn.ReLU(),
+            nn.Linear(dim, dim),
         )
 
     def forward(self, x):
