@@ -215,6 +215,7 @@ class Trainer:
     _canceled: bool = False
     _cancel_reason: Optional[str] = None
     _canceling_rank: Optional[int] = None
+    _error: Optional[BaseException] = None
     _rank_batch_size: Optional[int] = None
     _thread_pool: Optional[ThreadPoolExecutor] = None
     _bookkeeping_pg: Optional[dist.ProcessGroup] = None
@@ -279,6 +280,9 @@ class Trainer:
 
     @property
     def training_complete(self) -> bool:
+        if self._error is not None:
+            raise RuntimeError("An error occurred") from self._error
+
         if (
             not self._canceled
             and self.global_step > 0
@@ -568,7 +572,15 @@ class Trainer:
                 self.bookkeeping_device,
                 process_group=self.bookkeeping_pg,
             )
-            future.add_done_callback(lambda f: self._check_and_pass_on_metrics(f.result()))
+
+            def callback(fut):
+                try:
+                    self._check_and_pass_on_metrics(fut.result())
+                except BaseException as e:
+                    log.exception(e)
+                    self._error = e
+
+            future.add_done_callback(callback)
         else:
             # Otherwise we have to reduce them now in the main thread.
             # NOTE: if we're training on GPU and didn't have a host device sync above, this will
@@ -583,10 +595,10 @@ class Trainer:
 
     def _check_and_pass_on_metrics(self, metrics: Dict[int, Dict[str, float]]):
         for step in sorted(metrics.keys()):
-            # Check for NaN loss and add perplexity.
+            # Check for nan/inf loss and add perplexity.
             if (ce_loss := metrics[step].get(TRAIN_CE_LOSS_METRIC)) is not None:
-                if math.isnan(ce_loss):
-                    raise RuntimeError(f"NaN loss encountered at step {step}")
+                if not math.isfinite(ce_loss):
+                    raise RuntimeError(f"{ce_loss} loss encountered at step {step}")
                 metrics[step][TRAIN_PPL_METRIC] = math.exp(ce_loss)
             for callback in self.callbacks:
                 callback.log_metrics(step, metrics[step])
