@@ -40,9 +40,7 @@ class ConsoleLoggerCallback(Callback):
             "system/*",
             "optim/total grad norm",
             "optim/LR*",
-            "throughput/total tokens",
-            "throughput/device/TPS*",
-            "throughput/device/MFU*",
+            "throughput/*",
         ]
     )
 
