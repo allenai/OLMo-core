@@ -155,15 +155,6 @@ def all_reduce_value(
         return value
 
 
-def gc_cuda():
-    """
-    Run garbage collection, including CUDA.
-    """
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-
 T = TypeVar("T")
 
 

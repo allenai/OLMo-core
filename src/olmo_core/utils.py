@@ -146,7 +146,7 @@ def same_storage(x: torch.Tensor, y: torch.Tensor) -> bool:
 
 def gc_cuda():
     """
-    Run CUDA garbage collection.
+    Run garbage collection, including emptying the CUDA cache.
     """
     gc.collect()
     if torch.cuda.is_available():

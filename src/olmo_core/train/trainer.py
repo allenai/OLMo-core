@@ -137,10 +137,23 @@ class Trainer:
     Microbatch size per rank, i.e. the number of instances to process at a time from each rank.
     """
 
-    metrics_log_interval: int = 1
+    metrics_collect_interval: int = 5
     """
-    How often (in steps) to collect and log metrics.
-    Increasing this can improve throughput.
+    How often (in steps) to collect, reduce, and pass on metrics to the
+    :meth:`Callback.log_metrics <olmo_core.train.callbacks.Callback.log_metrics>` method on callbacks.
+
+    .. note::
+        Regardless of what this is set to, the
+        :meth:`Callback.log_metrics <olmo_core.train.callbacks.Callback.log_metrics>` methods are still
+        called with the metrics for every single step, but will be delayed according to this value.
+
+        For example, if this is set to 5, then every 5 steps the metrics from the past 5 steps
+        are collected and reduced together, then passed on to 
+        :meth:`Callback.log_metrics <olmo_core.train.callbacks.Callback.log_metrics>` altogether.
+
+    .. tip::
+        Increasing this can improve throughput since logging metrics always requires a host-device
+        sync.
     """
 
     fused_loss: bool = False
@@ -249,7 +262,11 @@ class Trainer:
             elif isinstance(callback, GarbageCollectorCallback):
                 has_gc_collector_callback = True
         if not has_console_logger_callback:
-            self.callbacks.append(ConsoleLoggerCallback(log_interval=self.metrics_log_interval))
+            self.callbacks.append(
+                ConsoleLoggerCallback(
+                    log_interval=1, metrics_log_interval=self.metrics_collect_interval
+                )
+            )
         if not has_checkpointer_callback:
             self.callbacks.append(CheckpointerCallback())
         if not has_speed_monitor_callback:
@@ -844,7 +861,7 @@ class Trainer:
             for callback in self.callbacks:
                 callback.post_step()
 
-            if first_batch or self.global_step % self.metrics_log_interval == 0:
+            if first_batch or self.global_step % self.metrics_collect_interval == 0:
                 self._log_metrics()
 
             first_batch = False

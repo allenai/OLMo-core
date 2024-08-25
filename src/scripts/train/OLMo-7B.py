@@ -124,7 +124,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             save_overwrite=True,
             data_seed=34521,
             data_loader_workers=4,
-            metrics_log_interval=5,
+            metrics_collect_interval=10,
         )
         .with_callback(SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=200)))
         .with_callback(GPUMemoryMonitorCallback())

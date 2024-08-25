@@ -22,6 +22,10 @@ class WandBCallback(Callback):
 
     .. important::
         Requires the ``wandb`` package and the environment variable ``WANDB_API_KEY``.
+
+    .. note::
+        This callback logs metrics from every single step to W&B, regardless of the value
+        of :data:`Trainer.metrics_collect_interval <olmo_core.train.Trainer.metrics_collect_interval>`.
     """
 
     enabled: bool = True

@@ -63,7 +63,7 @@ TRAINER_CONFIG = (
         save_overwrite=True,
         data_seed=SEED,
         data_loader_workers=4,
-        metrics_log_interval=5,
+        metrics_collect_interval=5,
     )
     .with_callback(SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=100)))
     .with_callback(GPUMemoryMonitorCallback())

@@ -31,7 +31,7 @@ class TrainerConfig(Config):
     max_duration: Duration = field(
         default_factory=lambda: Duration(value=1, unit=DurationUnit.epochs)
     )
-    metrics_log_interval: int = 1
+    metrics_collect_interval: int = 5
     callbacks: List[Callback] = field(default_factory=list)
     fused_loss: bool = False
     z_loss_multiplier: Optional[float] = None
