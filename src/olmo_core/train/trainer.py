@@ -559,9 +559,7 @@ class Trainer:
         # host-device sync. It's unavoidable to have a host-device at some point, but we
         # prefer to do that early and then finish processing the metrics in a separate thread
         # so CUDA training can continue.
-        print(self._metrics)
         metrics_to_reduce = move_metrics(self._metrics, self.bookkeeping_device)
-        print(metrics_to_reduce)
         self._metrics.clear()
 
         if self.bookkeeping_device.type == "cpu" and self.bookkeeping_pg is not None:
@@ -601,7 +599,8 @@ class Trainer:
             if (ce_loss := metrics[step].get(TRAIN_CE_LOSS_METRIC)) is not None:
                 if not math.isfinite(ce_loss):
                     raise RuntimeError(f"{ce_loss} loss encountered at step {step}")
-                metrics[step][TRAIN_PPL_METRIC] = math.exp(ce_loss)
+                if ce_loss < 10:
+                    metrics[step][TRAIN_PPL_METRIC] = math.exp(ce_loss)
             for callback in self.callbacks:
                 callback.log_metrics(step, metrics[step])
 
