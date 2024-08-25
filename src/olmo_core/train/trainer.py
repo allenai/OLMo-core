@@ -283,10 +283,16 @@ class Trainer:
             if self.dataset.sequence_length != self.train_sequence_length:
                 raise OLMoConfigurationError("trainer and dataset sequence length does not match")
 
-        # Create separate process group for bookkeeping.
-        if self._bookkeeping_pg is None and is_distributed() and backend_supports_cpu():
-            log.info("Creating new process group for bookkeeping")
-            self._bookkeeping_pg = dist.new_group()
+        # Maybe create separate process group for bookkeeping.
+        if self._bookkeeping_pg is None and is_distributed():
+            if backend_supports_cpu():
+                log.info("Creating new process group for bookkeeping")
+                self._bookkeeping_pg = dist.new_group()
+            else:
+                log.warning(
+                    "No CPU backend configured, bookkeeping collectives will occur on the default "
+                    "backend and will be blocking. This may result in slower training throughput."
+                )
 
         # Sort callbacks by priority.
         self.callbacks.sort(key=lambda callback: callback.priority, reverse=True)
@@ -640,6 +646,13 @@ class Trainer:
             labels.masked_fill_(~instance_mask.unsqueeze(-1), value=-100)
         return labels[..., 1:].contiguous()
 
+    @contextlib.contextmanager
+    def _model_forward_context(self) -> Generator[None, None, None]:
+        with contextlib.ExitStack() as stack:
+            if self.autocast_precision is not None:
+                stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
+            yield
+
     def _model_forward(
         self,
         batch: Dict[str, Any],
@@ -683,7 +696,7 @@ class Trainer:
 
         return ce_loss, z_loss, logits
 
-    def _get_micro_batch_loss(
+    def _get_microbatch_loss(
         self, micro_batch: Dict[str, Any], batch_num_tokens_for_loss: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         # NOTE: we use the "sum" loss reduction and then divide by 'batch_num_tokens_for_loss'
@@ -719,16 +732,17 @@ class Trainer:
                 stack.enter_context(self.model.no_sync())
             yield
 
-    @contextlib.contextmanager
-    def _model_forward_context(self) -> Generator[None, None, None]:
-        with contextlib.ExitStack() as stack:
-            if self.autocast_precision is not None:
-                stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
-            yield
+    def _train_batch(self, batch: Dict[str, Any]):
+        # Record how many instances are going to be skipped (masked out).
+        if (instance_mask := batch.get("instance_mask")) is not None:
+            self.record_metric("train/masked instances", (~instance_mask).sum(), ReduceType.sum)
 
-    def _model_forward_backward(
-        self, batch: Dict[str, Any]
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        # Zero-gradients.
+        self.optim.zero_grad(set_to_none=True)
+
+        # Move tensors to the right device.
+        batch = move_to_device(batch, self.device, non_blocking=True)
+
         # Generate labels, calculate how many tokens are going to be use in the loss.
         if "labels" not in batch:
             batch["labels"] = self._get_labels(batch)
@@ -746,10 +760,11 @@ class Trainer:
             None if self.z_loss_multiplier is None else torch.tensor(0.0, device=self.device)
         )
 
+        # Train one micro-batch at a time.
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
             with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
                 # Run forward pass.
-                loss, ce_loss, z_loss = self._get_micro_batch_loss(
+                loss, ce_loss, z_loss = self._get_microbatch_loss(
                     micro_batch, batch_num_tokens_for_loss
                 )
 
@@ -764,21 +779,6 @@ class Trainer:
                 # Run backward pass.
                 loss.backward()
 
-        return ce_batch_loss, z_batch_loss
-
-    def _train_batch(self, batch: Dict[str, Any]):
-        # Record how many instances are going to be skipped (masked out).
-        if (instance_mask := batch.get("instance_mask")) is not None:
-            self.record_metric("train/masked instances", (~instance_mask).sum(), ReduceType.sum)
-
-        # Zero-gradients.
-        self.optim.zero_grad(set_to_none=True)
-
-        # Move tensors to the right device.
-        batch = move_to_device(batch, self.device, non_blocking=True)
-
-        # Run forward-backward pass.
-        ce_batch_loss, z_batch_loss = self._model_forward_backward(batch)
         self.record_metric(TRAIN_CE_LOSS_METRIC, ce_batch_loss, ReduceType.mean)
         if z_batch_loss is not None:
             self.record_metric(TRAIN_Z_LOSS_METRIC, z_batch_loss, ReduceType.mean)
@@ -787,7 +787,7 @@ class Trainer:
         for callback in self.callbacks:
             callback.pre_optim_step()
 
-        # Optimizer steps.
+        # Optimizer step.
         self.optim.step()
 
     def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:

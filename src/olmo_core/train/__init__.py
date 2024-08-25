@@ -83,6 +83,9 @@ def prepare_training_environment(
 
     :param seed: The seed to initialize RNG states with.
     :param backend: The distributed backend to use, if any. Set to ``None`` for non-distributed training.
+        When using NCCL, ideally you should also include a CPU-only backend (the default) like GLOO,
+        which allows the trainer to run async checkpointing and bookkeeping collectives on the CPU
+        backend without blocking training operations.
     :param timeout: The timeout for initializing the distributed process group.
     :param log_filter_type: Which ranks emit INFO and below messages. You can also configure this
         through the env var ``LOG_FILTER_TYPE``. If neither are set, this defaults to "rank0_only".
