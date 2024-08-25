@@ -1,7 +1,7 @@
 import contextlib
 import logging
 import math
-from collections import defaultdict
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,7 +32,7 @@ from ..nn.functional.cross_entropy_loss import (
     cross_entropy_loss,
     fused_cross_entropy_loss,
 )
-from ..utils import gc_cuda, move_to_device
+from ..utils import move_to_device
 from .callbacks import (
     Callback,
     CheckpointerCallback,
@@ -41,7 +41,14 @@ from .callbacks import (
     SpeedMonitorCallback,
 )
 from .checkpoint import Checkpointer
-from .utils import Duration, DurationUnit, EnvRngStates, ReduceType, reduce_metrics
+from .utils import (
+    Duration,
+    DurationUnit,
+    EnvRngStates,
+    ReduceType,
+    move_metrics,
+    reduce_metrics,
+)
 
 log = logging.getLogger(__name__)
 
@@ -202,7 +209,7 @@ class Trainer:
     The interval (in steps) to check if the run is canceled. Checking requires distributed comms.
     """
 
-    _metrics: Dict[int, Dict[str, torch.Tensor]] = field(default_factory=lambda: defaultdict(dict))
+    _metrics: Dict[int, Dict[str, torch.Tensor]] = field(default_factory=OrderedDict)
     _metrics_reduce_type: Dict[str, Optional[ReduceType]] = field(default_factory=dict)
     _canceled: bool = False
     _cancel_reason: Optional[str] = None
@@ -258,7 +265,7 @@ class Trainer:
                 raise OLMoConfigurationError("trainer and dataset sequence length does not match")
 
         # Create separate process group for bookkeeping.
-        if self._bookkeeping_pg is None and is_distributed():
+        if self._bookkeeping_pg is None and is_distributed() and backend_supports_cpu():
             log.info("Creating new process group for bookkeeping")
             self._bookkeeping_pg = dist.new_group()
 
@@ -494,6 +501,8 @@ class Trainer:
         """
         if not isinstance(value, torch.Tensor):
             value = torch.tensor(value)
+        if self.global_step not in self._metrics:
+            self._metrics[self.global_step] = OrderedDict()
         self._metrics[self.global_step][name] = value
         self._metrics_reduce_type[name] = reduce_type
 
@@ -538,18 +547,38 @@ class Trainer:
         if not self._metrics:
             return
 
-        metrics: Dict[int, Dict[str, float]] = reduce_metrics(
-            self._metrics,
-            self._metrics_reduce_type,
-            # NOTE: using `self.bookkeeping_device` would probably be slower here since some
-            # metrics (like loss) are on GPU at this point.
-            self.device,
-            process_group=self.dp_process_group,
-        )
+        # Prep metrics to reduce by moving to bookkeeping device all at once.
+        # NOTE: if training on GPU and `bookkeeping_device` is CPU, this triggers
+        # host-device sync. It's unavoidable to have a host-device at some point, but we
+        # prefer to do that early and then finish processing the metrics in a separate thread
+        # so CUDA training can continue.
+        metrics_to_reduce = move_metrics(self._metrics, self.bookkeeping_device)
         self._metrics.clear()
-        self._metrics_reduce_type.clear()
-        gc_cuda()
 
+        if self.bookkeeping_device.type == "cpu" and self.bookkeeping_pg is not None:
+            # If we have a separate CPU backend and process group we can safely reduce
+            # metrics on CPU in a thread.
+            future = self.thread_pool.submit(
+                reduce_metrics,
+                metrics_to_reduce,
+                self._metrics_reduce_type,
+                self.bookkeeping_device,
+                process_group=self.bookkeeping_pg,
+            )
+            future.add_done_callback(lambda f: self._check_and_pass_on_metrics(f.result()))
+        else:
+            # Otherwise we have to reduce them now in the main thread.
+            # NOTE: if we're training on GPU and didn't have a host device sync above, this will
+            # trigger a host-device sync as we transfer the metrics back to CPU post-reducing.
+            metrics = reduce_metrics(
+                metrics_to_reduce,
+                self._metrics_reduce_type,
+                self.bookkeeping_device,
+                process_group=self.bookkeeping_pg,
+            )
+            self._check_and_pass_on_metrics(metrics)
+
+    def _check_and_pass_on_metrics(self, metrics: Dict[int, Dict[str, float]]):
         for step in sorted(metrics.keys()):
             # Check for NaN loss and add perplexity.
             if (ce_loss := metrics[step].get(TRAIN_CE_LOSS_METRIC)) is not None:

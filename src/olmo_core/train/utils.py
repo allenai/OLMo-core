@@ -1,7 +1,7 @@
 import logging
 import random
 import sys
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -130,6 +130,34 @@ def _get_cuda_version() -> Optional[Tuple[int, int]]:
         return None
 
 
+def move_metrics(
+    source: Dict[int, Dict[str, torch.Tensor]],
+    device: torch.device,
+) -> Dict[int, Dict[str, torch.Tensor]]:
+    # Collate all metrics together, then transfer to device all at once.
+    metrics_to_move_list = [
+        m for step_metrics in source.values() for m in step_metrics.values() if m.device != device
+    ]
+    metrics_to_move: Optional[torch.Tensor] = None
+    if metrics_to_move_list:
+        metrics_to_move = torch.stack(metrics_to_move_list).to(device, non_blocking=True)
+
+    # Collect output with moved tensors.
+    target: Dict[int, Dict[str, torch.Tensor]] = OrderedDict()
+    idx = 0
+    for step, step_metrics in source.items():
+        for name, m in step_metrics.items():
+            if step not in target:
+                target[step] = OrderedDict()
+            if metrics_to_move is not None and m.device != device:
+                target[step][name] = metrics_to_move[idx]
+                idx += 1
+            else:
+                target[step][name] = m
+
+    return target
+
+
 def reduce_metrics(
     metrics: Dict[int, Dict[str, torch.Tensor]],
     metrics_reduce_type: Dict[str, Optional[ReduceType]],
@@ -137,6 +165,7 @@ def reduce_metrics(
     process_group: Optional[dist.ProcessGroup] = None,
 ) -> Dict[int, Dict[str, float]]:
     out: Dict[int, Dict[str, float]] = defaultdict(dict)
+    metrics = move_metrics(metrics, device)
 
     if not is_distributed():
         for step, step_metrics in metrics.items():
@@ -162,15 +191,13 @@ def reduce_metrics(
             reduce_type = metrics_reduce_type[name]
             if reduce_type == ReduceType.mean:
                 step_sum_metric_names.append(name)
-                step_sum_metric_values.append(
-                    (value / get_world_size()).to(device, non_blocking=True)
-                )
+                step_sum_metric_values.append((value / get_world_size()))
             elif reduce_type == ReduceType.sum:
                 step_sum_metric_names.append(name)
-                step_sum_metric_values.append(value.to(device, non_blocking=True))
+                step_sum_metric_values.append(value)
             elif reduce_type == ReduceType.max:
                 step_max_metric_names.append(name)
-                step_max_metric_values.append(value.to(device, non_blocking=True))
+                step_max_metric_values.append(value)
             elif reduce_type is None:
                 out[step][name] = value.item()
             else:
@@ -198,9 +225,15 @@ def reduce_metrics(
     all_max_metrics = torch.stack(
         [F.pad(t, (0, max_num_max_metrics - t.numel()), value=0.0) for t in max_metric_values]
     )
+    del sum_metric_values
+    del max_metric_values
 
     dist.reduce(all_sum_metrics, 0, op=dist.ReduceOp.SUM, group=process_group)
     dist.reduce(all_max_metrics, 0, op=dist.ReduceOp.MAX, group=process_group)
+
+    # Transfer to CPU all at once.
+    all_sum_metrics = all_sum_metrics.cpu()
+    all_max_metrics = all_max_metrics.cpu()
 
     for i, step in enumerate(sorted(metrics.keys())):
         step_sum_metric_names = sum_metric_names[i]

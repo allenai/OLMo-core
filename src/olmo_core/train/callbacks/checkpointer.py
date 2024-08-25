@@ -5,7 +5,11 @@ from typing import List, Optional
 
 import torch.distributed as dist
 
-from olmo_core.distributed.utils import get_fs_local_rank, is_distributed
+from olmo_core.distributed.utils import (
+    backend_supports_cpu,
+    get_fs_local_rank,
+    is_distributed,
+)
 from olmo_core.io import clear_directory
 
 from .callback import Callback
@@ -69,6 +73,9 @@ class CheckpointerCallback(Callback):
 
     def pre_train(self):
         if is_distributed() and self.save_async and self.trainer.checkpointer.process_group is None:
+            if not backend_supports_cpu():
+                raise RuntimeError("a CPU-capable backend is required for async checkpointing")
+
             log.info(
                 "Creating new process group for checkpointing (needed for async checkpointing)"
             )
