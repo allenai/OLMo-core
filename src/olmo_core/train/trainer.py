@@ -565,7 +565,7 @@ class Trainer:
         if self.bookkeeping_device.type == "cpu" and self.bookkeeping_pg is not None:
             # If we have a separate CPU backend and process group we can safely reduce
             # metrics on CPU in a thread.
-            print("Before reduce", reduce_metrics)
+            print("Before reduce", metrics_to_reduce)
             future = self.thread_pool.submit(
                 reduce_metrics,
                 metrics_to_reduce,
