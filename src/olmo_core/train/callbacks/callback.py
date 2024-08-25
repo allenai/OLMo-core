@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any, ClassVar, Dict
 
 if TYPE_CHECKING:
     from ..trainer import Trainer
@@ -13,6 +13,12 @@ class Callback:
     Callbacks can be used to modify and extend the behavior of the trainer loop.
     This module contains a number of useful :class:`Callback` implementations, but you can
     always add your own.
+    """
+
+    priority: ClassVar[int] = 0
+    """
+    Priority of the callback. Determines the order in which callbacks run relative to each other.
+    The higher the priority, the earlier a callback runs.
     """
 
     # NOTE: omegaconf can't use this annotation
@@ -47,6 +53,12 @@ class Callback:
     def pre_epoch(self):
         """
         Runs before the start of a new epoch.
+        """
+        pass
+
+    def pre_load_batch(self):
+        """
+        Runs right before the next batch is fetched from the data loader.
         """
         pass
 

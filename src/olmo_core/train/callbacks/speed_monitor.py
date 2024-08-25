@@ -1,6 +1,6 @@
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, ClassVar, Dict, Optional
 
 import torch
 
@@ -17,6 +17,8 @@ class SpeedMonitorCallback(Callback):
         If you want to override this callback you should subclass it.
     """
 
+    priority: ClassVar[int] = -1
+
     num_flops_per_token: Optional[int] = None
     device_peak_flops: Optional[int] = None
 
@@ -24,8 +26,9 @@ class SpeedMonitorCallback(Callback):
     _total_tokens: int = 0
     _start_time: float = 0.0
     _first_step: bool = True
-
     _step_last_logged: float = 0.0
+    _batch_load_start: float = 0.0
+    _batch_load_time: float = 0.0
     _step_tokens: int = 0
 
     def pre_train(self):
@@ -48,7 +51,12 @@ class SpeedMonitorCallback(Callback):
                 else:  # for other GPU types, assume A100
                     self.device_peak_flops = int(312e12)
 
+    def pre_load_batch(self):
+        self._batch_load_start = time.perf_counter()
+
     def pre_step(self, batch: Dict[str, Any]):
+        self._batch_load_time = time.perf_counter() - self._batch_load_start
+
         if self._first_step:
             # We don't record the first batch since the first one tends to take
             # unusually long.
@@ -60,6 +68,7 @@ class SpeedMonitorCallback(Callback):
 
     def post_step(self):
         counter = time.perf_counter()
+        self.trainer.record_metric("throughput/device/data loading (s)", self._batch_load_time)
 
         if self._first_step:
             # Now we can start recording.
@@ -78,8 +87,10 @@ class SpeedMonitorCallback(Callback):
         tps_avg = self._total_tokens / total_time
         bps = 1 / step_time
         bps_avg = self._total_steps / total_time
+        data_pct = 100 * self._batch_load_time / step_time
 
         self.trainer.record_metric("throughput/total tokens", self.trainer.global_train_tokens_seen)
+        self.trainer.record_metric("throughput/device/data loading (%)", data_pct)
         self.trainer.record_metric("throughput/device/TPS", tps)
         self.trainer.record_metric("throughput/device/TPS (actual avg)", tps_avg)
         self.trainer.record_metric("throughput/device/BPS", bps)

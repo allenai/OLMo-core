@@ -271,6 +271,9 @@ class Trainer:
             log.info("Creating new process group for bookkeeping")
             self._bookkeeping_pg = dist.new_group()
 
+        # Sort callbacks by priority.
+        self.callbacks.sort(key=lambda callback: callback.priority, reverse=True)
+
     @property
     def rank_batch_size(self) -> int:
         if self._rank_batch_size is None:
@@ -770,7 +773,7 @@ class Trainer:
         # Optimizer steps.
         self.optim.step()
 
-    def _get_dataloader(self) -> DataLoader:
+    def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:
         iterable_dataset = IterableDataset(
             self.dataset,
             seed=self.data_seed,
@@ -784,7 +787,7 @@ class Trainer:
             work_dir=self.work_dir,
         )
         iterable_dataset.build_and_save_global_indices()
-        return DataLoader(
+        data_loader = DataLoader(
             iterable_dataset,
             batch_size=self.rank_batch_size,
             drop_last=True,
@@ -795,6 +798,17 @@ class Trainer:
             persistent_workers=False,
             timeout=0,
         )
+        data_iterator = iter(data_loader)
+
+        while True:
+            for callback in self.callbacks:
+                callback.pre_load_batch()
+
+            try:
+                batch = next(data_iterator)
+                yield batch
+            except StopIteration:
+                break
 
     def _fit_epoch(self):
         log.info(f"Starting epoch {self.epoch}...")
@@ -803,7 +817,7 @@ class Trainer:
             callback.pre_epoch()
 
         first_batch = True
-        for batch in self._get_dataloader():
+        for batch in self._iter_batches():
             # Bookkeeping.
             # NOTE: To track the global batch size / number of tokens per batch we make the
             # assumption that all batches see the same number of tokens, which should always be
