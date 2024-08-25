@@ -11,6 +11,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 import torch.version
 from packaging.version import parse as parse_version
+from torch.distributed._tensor import DTensor
 
 from ..config import Config, StrEnum
 from ..distributed.utils import get_world_size, is_distributed
@@ -130,13 +131,23 @@ def _get_cuda_version() -> Optional[Tuple[int, int]]:
         return None
 
 
+def _get_local_tensor(x: torch.Tensor) -> torch.Tensor:
+    if isinstance(x, DTensor):
+        return x.to_local()
+    else:
+        return x
+
+
 def move_metrics(
     source: Dict[int, Dict[str, torch.Tensor]],
     device: torch.device,
 ) -> Dict[int, Dict[str, torch.Tensor]]:
     # Collate all metrics together, then transfer to device all at once.
     metrics_to_move_list = [
-        m for step_metrics in source.values() for m in step_metrics.values() if m.device != device
+        _get_local_tensor(m)
+        for step_metrics in source.values()
+        for m in step_metrics.values()
+        if m.device != device
     ]
     metrics_to_move: Optional[torch.Tensor] = None
     if metrics_to_move_list:

@@ -126,7 +126,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             data_loader_workers=4,
             metrics_log_interval=5,
         )
-        .with_callback(SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=2000)))
+        .with_callback(SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=200)))
         .with_callback(GPUMemoryMonitorCallback())
         .with_callback(GradClipperCallback(max_grad_norm=1.0))
         .with_callback(
@@ -148,9 +148,10 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     experiment_config.trainer.with_callback(
         CheckpointerCallback(
             save_interval=10_000,
-            ephemeral_save_interval=250,
+            ephemeral_save_interval=1024,
             save_async=True,
-            pre_train_checkpoint=experiment_config.load_path is None,
+            pre_train_checkpoint=False,
+            #  pre_train_checkpoint=experiment_config.load_path is None,
         )
     )
 
