@@ -47,7 +47,7 @@ class ConsoleLoggerCallback(Callback):
     )
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):
-        if step % self.log_interval != 0:
+        if step == 1 or step % self.log_interval != 0:
             return
 
         prefix = f"[step={step}/{self.trainer.max_steps},epoch={self.trainer.epoch}]"
