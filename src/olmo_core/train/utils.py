@@ -143,6 +143,8 @@ def move_metrics(
     source: Dict[int, Dict[str, torch.Tensor]],
     device: torch.device,
 ) -> Dict[int, Dict[str, torch.Tensor]]:
+    non_blocking = device.type != "cpu"
+
     # Collate all metrics together, then transfer to device all at once.
     metrics_to_move_list = [
         get_local_tensor(m)
@@ -152,7 +154,7 @@ def move_metrics(
     ]
     metrics_to_move: Optional[torch.Tensor] = None
     if metrics_to_move_list:
-        metrics_to_move = torch.stack(metrics_to_move_list).to(device, non_blocking=True)
+        metrics_to_move = torch.stack(metrics_to_move_list).to(device, non_blocking=non_blocking)
 
     # Collect output with moved tensors.
     target: Dict[int, Dict[str, torch.Tensor]] = OrderedDict()

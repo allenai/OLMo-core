@@ -508,8 +508,6 @@ class Trainer:
             value = torch.tensor(value)
         else:
             value = get_local_tensor(value).float()
-        if name == TRAIN_CE_LOSS_METRIC:
-            print(f"Recording metric {name} from rank {get_rank()}, value: {value}")
         if self.global_step not in self._metrics:
             self._metrics[self.global_step] = OrderedDict()
         self._metrics[self.global_step][name] = value
