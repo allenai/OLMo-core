@@ -341,9 +341,10 @@ class Trainer:
     def dataset_total_size(self) -> int:
         dp_world_size = get_world_size(self.dp_process_group)
         if len(self.dataset) % dp_world_size == 0:
-            return len(self.dataset) // dp_world_size
+            return len(self.dataset)
         else:
-            return math.ceil((len(self.dataset) - dp_world_size) / dp_world_size)
+            num_samples = math.ceil((len(self.dataset) - dp_world_size) / dp_world_size)
+            return num_samples * dp_world_size
 
     @property
     def max_steps(self) -> int:
