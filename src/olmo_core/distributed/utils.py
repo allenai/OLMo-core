@@ -61,7 +61,6 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
         set_env_var("NCCL_SOCKET_IFNAME", "ib")
         set_env_var("NCCL_IB_HCA", "^=mlx5_bond_0")
     elif "pluto" in get_node_hostname():
-        set_env_var("NCCL_SOCKET_IFNAME", "ib")
         set_env_var("NCCL_IB_HCA", "^=mlx5_1,mlx5_2")
 
     validate_env_vars()
