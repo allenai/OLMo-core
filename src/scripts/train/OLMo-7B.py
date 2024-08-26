@@ -12,7 +12,7 @@ from beaker import Beaker
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.data import MemMapDatasetConfig
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
-from olmo_core.distributed.utils import get_rank
+from olmo_core.distributed.utils import get_num_nodes, get_rank, init_hybrid_shard_mesh
 from olmo_core.launch.beaker import BeakerEnvSecret, BeakerLaunchConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
@@ -178,7 +178,10 @@ def train(config: ExperimentConfig):
 
     # Build components.
     model = config.model.build(
-        init_device="meta", device=get_default_device(), max_seq_len=config.dataset.sequence_length
+        init_device="meta",
+        device=get_default_device(),
+        max_seq_len=config.dataset.sequence_length,
+        dp_mesh=None if get_num_nodes() == 1 else init_hybrid_shard_mesh(),
     )
     optim = config.optim.build(model)
     dataset = config.dataset.build()
