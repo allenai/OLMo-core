@@ -49,12 +49,14 @@ def cross_entropy_loss(
     return loss, z_loss
 
 
-flash_cross_entropy_loss: Optional[Callable] = None
+_fused_cross_entropy_loss: Optional[Callable] = None
 
 try:
-    import flash_attn.ops.triton.cross_entropy as flash_attn_ce  # type: ignore
+    import olmo_core.triton.cross_entropy_loss as triton_ce_loss
 
-    flash_cross_entropy_loss = flash_attn_ce.cross_entropy_loss
+    #  import flash_attn.ops.triton.cross_entropy as flash_attn_ce  # type: ignore
+
+    _fused_cross_entropy_loss = triton_ce_loss.cross_entropy_loss
 except ModuleNotFoundError:
     pass
 
@@ -85,10 +87,10 @@ def fused_cross_entropy_loss(
 
     :returns: The cross entropy loss and optionally the z-loss.
     """
-    if flash_cross_entropy_loss is None:
-        raise RuntimeError("flash-attn is required for fused_cross_entropy_loss")
+    if _fused_cross_entropy_loss is None:
+        raise RuntimeError("triton is required for fused_cross_entropy_loss")
 
-    loss, z_loss = flash_cross_entropy_loss(
+    loss, z_loss = _fused_cross_entropy_loss(
         logits,
         labels,
         label_smoothing=0.0,

@@ -27,7 +27,7 @@ from olmo_core.train.callbacks import (
     SpeedMonitorCallback,
     WandBCallback,
 )
-from olmo_core.utils import get_default_device, has_flash_attn
+from olmo_core.utils import get_default_device
 
 LOAD_PATH = None  # path to a checkpoint folder
 WANDB_RUN = None  # name of W&B run
@@ -58,7 +58,6 @@ TRAINER_CONFIG = (
         save_folder=SAVE_FOLDER,
         global_batch_size=256,
         microbatch_size=16,
-        fused_loss=has_flash_attn(),
         autocast_precision=DType.bfloat16,
         save_overwrite=True,
         data_seed=SEED,

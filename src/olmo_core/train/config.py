@@ -8,7 +8,7 @@ from torch.optim import Optimizer
 
 from ..config import Config, DType
 from ..data import DataCollator, MemMapDataset
-from ..utils import get_default_device, has_flash_attn
+from ..utils import get_default_device
 from .callbacks import Callback
 from .checkpoint import Checkpointer
 from .trainer import Trainer
@@ -33,7 +33,7 @@ class TrainerConfig(Config):
     )
     metrics_collect_interval: int = 5
     callbacks: List[Callback] = field(default_factory=list)
-    fused_loss: Optional[bool] = None
+    fused_loss: bool = False
     z_loss_multiplier: Optional[float] = None
     autocast_precision: Optional[DType] = None
     data_seed: int = 0
@@ -73,9 +73,6 @@ class TrainerConfig(Config):
         device = kwargs.pop("device", None)
         autocast_precision: Optional[DType] = kwargs.pop("autocast_precision", None)
         collator = DataCollator(pad_token_id=dataset.pad_token_id)
-        fused_loss = kwargs.pop("fused_loss", None)
-        if fused_loss is None:
-            fused_loss = has_flash_attn()
 
         return Trainer(
             model=model,
@@ -87,6 +84,5 @@ class TrainerConfig(Config):
             autocast_precision=None if autocast_precision is None else autocast_precision.as_pt(),
             device=torch.device(device) if device is not None else get_default_device(),
             dp_process_group=dp_process_group,
-            fused_loss=fused_loss,
             **kwargs,
         )
