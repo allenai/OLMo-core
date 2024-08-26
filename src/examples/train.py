@@ -11,7 +11,7 @@ import json
 from olmo_core.config import DType
 from olmo_core.data import MemMapDatasetConfig
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
-from olmo_core.distributed.utils import get_rank
+from olmo_core.distributed.utils import get_rank, init_hybrid_shard_mesh
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup
 from olmo_core.train import (
@@ -102,7 +102,11 @@ def main():
         )
 
     # Build components.
-    model = MODEL_CONFIG.build(init_device="meta", device=get_default_device())
+    model = MODEL_CONFIG.build(
+        init_device="meta",
+        device=get_default_device(),
+        dp_mesh=init_hybrid_shard_mesh(num_replicas=2),
+    )
     optim = OPTIM_CONFIG.build(model)
     dataset = DATASET_CONFIG.build()
     trainer = TRAINER_CONFIG.build(model, optim, dataset)
