@@ -73,9 +73,6 @@ def fused_cross_entropy_loss(
     """
     A "fused" triton-based implementation of :func:`cross_entropy_loss`.
 
-    .. warning::
-        This requires `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ to be installed.
-
     :param logits: Predicted unnormalized logits with shape ``(N, vocab_size)``.
     :param labels: Ground truth class indices with shape ``(N,)``.
     :param ignore_index: Specifies a target value that is ignored and does not contribute to
