@@ -1,3 +1,5 @@
+BASE_IMAGE = ghcr.io/allenai/pytorch:2.4.0-cuda12.1-python3.11
+NIGHTLY_BASE_IMAGE = ghcr.io/allenai/pytorch:2.5.0.dev20240826-cuda12.1-python3.11
 IMAGE_BASENAME = olmo-core
 BEAKER_WORKSPACE = ai2/OLMo-core
 BEAKER_USER = $(shell beaker account whoami --format=json | jq -r '.[0].name')
@@ -30,7 +32,14 @@ build :
 
 .PHONY : beaker-image
 beaker-image :
-	docker build -f src/Dockerfile -t $(IMAGE_BASENAME) .
+	docker build -f src/Dockerfile --build-arg BASE=$(BASE_IMAGE) -t $(IMAGE_BASENAME) .
 	beaker image create $(IMAGE_BASENAME) --name $(IMAGE_BASENAME)-tmp --workspace $(BEAKER_WORKSPACE)
 	beaker image delete $(BEAKER_USER)/$(IMAGE_BASENAME) || true
 	beaker image rename $(BEAKER_USER)/$(IMAGE_BASENAME)-tmp $(IMAGE_BASENAME)
+
+.PHONY : beaker-image-nightly
+beaker-image-nightly :
+	docker build -f src/Dockerfile --build-arg BASE=$(NIGHTLY_BASE_IMAGE) -t $(IMAGE_BASENAME)-nightly .
+	beaker image create $(IMAGE_BASENAME)-nightly --name $(IMAGE_BASENAME)-nightly-tmp --workspace $(BEAKER_WORKSPACE)
+	beaker image delete $(BEAKER_USER)/$(IMAGE_BASENAME)-nightly || true
+	beaker image rename $(BEAKER_USER)/$(IMAGE_BASENAME)-nightly-tmp $(IMAGE_BASENAME)-nightly

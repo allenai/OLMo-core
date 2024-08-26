@@ -17,6 +17,7 @@ from olmo_core.launch.beaker import (
     BeakerEnvSecret,
     BeakerLaunchConfig,
     BeakerWekaBucket,
+    OLMoCoreBeakerImage,
 )
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
@@ -65,6 +66,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         description="Testing OLMo-core launch utilities",
         clusters=["ai2/jupiter-cirrascale-2"],
         weka_buckets=[BeakerWekaBucket("oe-training-default", "/weka/oe-training-default")],
+        beaker_image=OLMoCoreBeakerImage.nightly,
         num_nodes=1,
         num_gpus=8,
         shared_filesystem=True,
@@ -82,8 +84,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             # Setup python environment.
             "conda shell.bash activate base",
             "pip install -e '.[all]'",
-            "pip install --upgrade --pre torch --index-url https://download.pytorch.org/whl/nightly/cu121",
-            "pip install wandb",
+            #  "pip install --upgrade --pre torch --index-url https://download.pytorch.org/whl/nightly/cu121",
+            #  "pip install wandb",
             "pip freeze",
             # Move AWS credentials from env to relevant files
             "mkdir -p ~/.aws",

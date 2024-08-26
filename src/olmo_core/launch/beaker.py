@@ -23,7 +23,7 @@ from beaker import (
     TaskSpec,
 )
 
-from ..config import Config
+from ..config import Config, StrEnum
 from ..distributed.utils import OLMO_SHARED_FS_ENV_VAR
 from ..exceptions import BeakerExperimentFailedError, OLMoConfigurationError
 from ..utils import LOG_FILTER_TYPE_ENV_VAR, LogFilterType
@@ -34,6 +34,7 @@ log = logging.getLogger(__name__)
 
 
 __all__ = [
+    "OLMoCoreBeakerImage",
     "BeakerLaunchConfig",
     "BeakerEnvVar",
     "BeakerEnvSecret",
@@ -43,6 +44,15 @@ __all__ = [
 
 
 BeakerPriority = Priority
+
+
+class OLMoCoreBeakerImage(StrEnum):
+    """
+    An enumeration of official Beaker images that work well for OLMo-core.
+    """
+
+    stable = "petew/olmo-core"
+    nightly = "petew/olmo-core-nightly"
 
 
 @dataclass
@@ -111,7 +121,7 @@ class BeakerLaunchConfig(Config):
     and other setup steps.
     """
 
-    beaker_image: str = "petew/olmo-core"
+    beaker_image: str = OLMoCoreBeakerImage.stable
     """
     The Beaker image to use.
 
