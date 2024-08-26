@@ -12,7 +12,7 @@ from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 
 from ..config import StrEnum
 from ..exceptions import OLMoConfigurationError, OLMoEnvironmentError
-from ..utils import get_default_device
+from ..utils import get_default_device, set_env_var
 
 OLMO_SHARED_FS_ENV_VAR = "OLMO_SHARED_FS"
 OLMO_FS_LOCAL_RANK_ENV_VAR = "FS_LOCAL_RANK"
@@ -50,19 +50,19 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
     """
     # to mitigate the memory issue that collectives using async_op=True hold memory longer
     # than they should such as those in tensor parallelism
-    os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
+    set_env_var("TORCH_NCCL_AVOID_RECORD_STREAMS", "1")
 
     # Force processes to synchronize at init process group.
-    os.environ["TORCH_DIST_INIT_BARRIER"] = "1"
+    set_env_var("TORCH_DIST_INIT_BARRIER", "1")
 
     # Host-specific env vars.
     # See https://beaker-docs.apps.allenai.org/experiments/distributed-training.html#ai2pluto-cirrascale.
     if "jupiter" in get_node_hostname():
-        os.environ["NCCL_SOCKET_IFNAME"] = "ib"
-        os.environ["NCCL_IB_HCA"] = "^=mlx5_bond_0"
+        set_env_var("NCCL_SOCKET_IFNAME", "ib")
+        set_env_var("NCCL_IB_HCA", "^=mlx5_bond_0")
     elif "pluto" in get_node_hostname():
-        os.environ["NCCL_SOCKET_IFNAME"] = "ib"
-        os.environ["NCCL_IB_HCA"] = "^=mlx5_1,mlx5_2"
+        set_env_var("NCCL_SOCKET_IFNAME", "ib")
+        set_env_var("NCCL_IB_HCA", "^=mlx5_1,mlx5_2")
 
     validate_env_vars()
 

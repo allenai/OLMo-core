@@ -200,6 +200,17 @@ def has_flash_attn() -> bool:
         return False
 
 
+def set_env_var(name: str, value: str, override: bool = False, secret: bool = False):
+    value_str = "****" if secret else value
+    if name in os.environ:
+        if override and os.environ[name] != value:
+            log.warning(f"Overriding env var '{name}' to '{value_str}'")
+            os.environ[name] = value
+    else:
+        log.info(f"Setting env var '{name}' to '{value_str}'")
+        os.environ[name] = value
+
+
 class LogFilterType(StrEnum):
     """
     Determines which ranks are allowed to emit INFO messages.
@@ -390,10 +401,8 @@ def set_env_variables():
     .. seealso::
         :func:`prepare_cli_environment()`
     """
-    if "OMP_NUM_THREADS" not in os.environ:
-        os.environ["OMP_NUM_THREADS"] = "8"
-    if "TOKENIZERS_PARALLELISM" not in os.environ:
-        os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    set_env_var("OMP_NUM_THREADS", "8")
+    set_env_var("TOKENIZERS_PARALLELISM", "false")
 
 
 def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
