@@ -82,6 +82,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             # Setup python environment.
             "conda shell.bash activate base",
             "pip install -e '.[all]'",
+            "pip install --upgrade --pre torch --index-url https://download.pytorch.org/whl/nightly/cu121",
             "pip install wandb",
             "pip freeze",
             # Move AWS credentials from env to relevant files
