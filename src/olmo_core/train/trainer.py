@@ -327,18 +327,30 @@ class Trainer:
 
     @property
     def tokens_per_batch(self) -> int:
+        """
+        The number of tokens in each training batch.
+        """
         return self.global_batch_size * self.train_sequence_length
 
     @property
     def steps_per_epoch(self) -> int:
+        """
+        The total number of training steps in an epoch.
+        """
         return self.dataset_total_size // self.global_batch_size
 
     @property
     def tokens_per_epoch(self) -> int:
+        """
+        The total number of tokens in the training dataset, minus left-overs.
+        """
         return self.dataset_total_size * self.train_sequence_length
 
     @property
     def dataset_total_size(self) -> int:
+        """
+        The total number of complete examples in the training dataset.
+        """
         dp_world_size = get_world_size(self.dp_process_group)
         if len(self.dataset) % dp_world_size == 0:
             return len(self.dataset)
@@ -348,6 +360,9 @@ class Trainer:
 
     @property
     def max_steps(self) -> int:
+        """
+        The maximum number of steps to train for, as determined by :data:`max_duration`.
+        """
         if self.max_duration.unit == DurationUnit.steps:
             return self.max_duration.value
         elif self.max_duration.unit == DurationUnit.epochs:
@@ -875,6 +890,8 @@ class Trainer:
 
         # Log any remaining metrics.
         self._log_metrics()
+
+        log.info("Epoch complete")
 
         for callback in self.callbacks:
             callback.post_epoch()

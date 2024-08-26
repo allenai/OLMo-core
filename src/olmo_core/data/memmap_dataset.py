@@ -85,7 +85,7 @@ class MemMapDatasetConfig(Config):
         else:
             paths = self.paths
 
-        return MemMapDataset(
+        dataset = MemMapDataset(
             *paths,
             sequence_length=self.sequence_length,
             pad_token_id=self.pad_token_id,
@@ -97,6 +97,9 @@ class MemMapDatasetConfig(Config):
             generate_doc_lengths=self.generate_doc_lengths,
             label_mask_paths=cast(Optional[List[PathOrStr]], self.label_mask_paths),
         )
+        log.info(f"Built dataset with {len(dataset):,d} examples of length {self.sequence_length}")
+
+        return dataset
 
 
 class MemMapDataset(Dataset[Dict[str, Any]]):
