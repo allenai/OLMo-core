@@ -20,7 +20,7 @@ __all__ = [
 ]
 
 
-O = TypeVar("O", bound=torch.optim.Optimizer)
+Opt = TypeVar("Opt", bound=torch.optim.Optimizer)
 
 
 @dataclass
@@ -37,7 +37,7 @@ class OptimGroupOverride(Config):
 
 
 @dataclass
-class OptimConfig(Config, Generic[O]):
+class OptimConfig(Config, Generic[Opt]):
     """
     Base class for :class:`~torch.optim.Optimizer` configs.
     """
@@ -77,7 +77,7 @@ class OptimConfig(Config, Generic[O]):
         return param_groups
 
     @abstractmethod
-    def build(self, model: nn.Module) -> O:
+    def build(self, model: nn.Module) -> Opt:
         """
         Build the optimizer.
         """

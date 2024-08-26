@@ -18,14 +18,7 @@ from ..attention import AttentionConfig, AttentionType
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig
 from ..layer_norm import LayerNormConfig, LayerNormType
-from ..rope import (
-    ComplexRotaryEmbedding,
-    FusedRotaryEmbedding,
-    RoPEConfig,
-    RoPEType,
-    RotaryEmbedding,
-    RotaryEmbeddingBase,
-)
+from ..rope import RoPEConfig, RoPEType, RotaryEmbeddingBase
 from .block import TransformerBlockConfig, TransformerBlockType
 from .utils import apply_activation_checkpointing_to_transformer_block
 
@@ -211,7 +204,7 @@ class TransformerConfig(Config):
         """
         Get the approximate number of flops per token.
         """
-        l, h, q, t = (
+        n, h, q, t = (
             self.n_layers,
             self.block.attention.n_heads,
             self.d_model // self.block.attention.n_heads,
@@ -223,7 +216,7 @@ class TransformerConfig(Config):
         #    but recomputation should not be counted in calculating MFU           (+0)
         # 3. each matmul performs 1 multiplication and 1 addition                 (*2)
         # 4. we follow the convention and do not account for sparsity in causal attention
-        flop_per_token = 6 * self.num_non_embedding_params + 12 * l * h * q * t
+        flop_per_token = 6 * self.num_non_embedding_params + 12 * n * h * q * t
 
         return flop_per_token
 

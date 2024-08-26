@@ -2,7 +2,6 @@
 Distributed helpers, most of which work in a non-distributed context as well for API unity.
 """
 
-import gc
 import os
 from datetime import timedelta
 from typing import TYPE_CHECKING, List, Optional, TypeVar

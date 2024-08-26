@@ -183,13 +183,14 @@ class BeakerLaunchConfig(Config):
         """
         Default env vars to add to the experiment.
         """
-        env_vars = [
+        env_vars: List[Tuple[str, str]] = [
             ("NCCL_DEBUG", "INFO"),
             (LOG_FILTER_TYPE_ENV_VAR, LogFilterType.local_rank0_only),
             ("OMP_NUM_THREADS", "8"),
             ("R2_PROFILE", "R2"),
             ("S3_PROFILE", "S3"),
             ("WEKA_PROFILE", "WEKA"),
+            ("NUM_NODES", str(self.num_nodes)),
         ]
         if self.shared_filesystem:
             env_vars.append((OLMO_SHARED_FS_ENV_VAR, "1"))
@@ -346,7 +347,7 @@ class BeakerLaunchConfig(Config):
             while job is None:
                 time.sleep(1.0)
                 print(".", end="")
-                job = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
+                job = self.beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
 
         log.info("Showing logs:")
 
