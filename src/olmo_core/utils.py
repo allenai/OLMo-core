@@ -28,6 +28,7 @@ LOG_FILTER_TYPE_ENV_VAR = "LOG_FILTER_TYPE"
 
 
 _log_extra_fields: Dict[str, Any] = {}
+_LOGGING_CONFIGURED: bool = False
 log = logging.getLogger(__name__)
 
 
@@ -201,13 +202,22 @@ def has_flash_attn() -> bool:
 
 
 def set_env_var(name: str, value: str, override: bool = False, secret: bool = False):
+    global _LOGGING_CONFIGURED
     value_str = "****" if secret else value
     if name in os.environ:
         if override and os.environ[name] != value:
-            log.warning(f"Overriding env var '{name}' to '{value_str}'")
+            msg = f"Overriding env var '{name}' to '{value_str}'"
+            if _LOGGING_CONFIGURED:
+                log.warning(msg)
+            else:
+                print(msg)
             os.environ[name] = value
     else:
-        log.info(f"Setting env var '{name}' to '{value_str}'")
+        msg = f"Setting env var '{name}' to '{value_str}'"
+        if _LOGGING_CONFIGURED:
+            log.info(msg)
+        else:
+            print(msg)
         os.environ[name] = value
 
 
@@ -251,7 +261,9 @@ def log_extra_field(field_name: str, field_value: Any) -> None:
         _log_extra_fields[field_name] = field_value
 
 
-def setup_logging(log_filter_type: LogFilterType = LogFilterType.rank0_only) -> None:
+def setup_logging(
+    log_filter_type: LogFilterType = LogFilterType.rank0_only, force: bool = False
+) -> None:
     """
     Configure logging.
 
@@ -259,7 +271,13 @@ def setup_logging(log_filter_type: LogFilterType = LogFilterType.rank0_only) -> 
         :func:`prepare_cli_environment()`
 
     :param log_filter_type: Which ranks emit INFO and below messages.
+    :param force: Force configuring logging even if it was already configured.
     """
+    global _LOGGING_CONFIGURED
+
+    if _LOGGING_CONFIGURED and not force:
+        return
+
     from .distributed.utils import get_local_rank, get_rank
 
     log_extra_field("hostname", socket.gethostname())
@@ -323,6 +341,8 @@ def setup_logging(log_filter_type: LogFilterType = LogFilterType.rank0_only) -> 
 
     logging.captureWarnings(True)
     logging.getLogger("urllib3").setLevel(logging.ERROR)
+
+    _LOGGING_CONFIGURED = True
 
 
 def excepthook(exctype, value, traceback):
