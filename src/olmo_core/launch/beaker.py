@@ -228,7 +228,7 @@ class BeakerLaunchConfig(Config):
 
         torchrun: List[str]
         if self.num_nodes == 1:
-            torchrun = ["torchrun", f"--nproc-per-node={self.num_gpus}"]
+            torchrun = [f"torchrun", f"--nproc-per-node={self.num_gpus}"]
         else:
             torchrun = [
                 "torchrun",
@@ -241,7 +241,7 @@ class BeakerLaunchConfig(Config):
                 "--rdzv_conf='read_timeout=420'",
             ]
 
-        return torchrun + self.cmd
+        return torchrun
 
     def _create_script_dataset(self, script_name: str, script: List[str]) -> Dataset:
         workspace_id = self.beaker.workspace.get(self.workspace).id
@@ -296,7 +296,7 @@ class BeakerLaunchConfig(Config):
             f"git checkout {git_ref}",
             "git submodule update --init --recursive",
             *self.setup_steps,
-            'exec "$@" 2>&1',
+            " ".join(self._get_torchrun_cmd()) + " $@",
         ]
 
         entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
@@ -307,7 +307,7 @@ class BeakerLaunchConfig(Config):
                 beaker_image=self.beaker_image,
                 priority=self.priority,
                 preemptible=self.preemptible,
-                arguments=self._get_torchrun_cmd(),
+                arguments=self.cmd,
                 command=["bash", "/olmo-core/entrypoint.sh"],
                 replicas=self.num_nodes if self.num_nodes > 1 else None,
                 leader_selection=self.num_nodes > 1,
