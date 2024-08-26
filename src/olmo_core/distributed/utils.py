@@ -19,6 +19,7 @@ OLMO_FS_LOCAL_RANK_ENV_VAR = "FS_LOCAL_RANK"
 OLMO_LOCAL_RANK_ENV_VAR = "LOCAL_RANK"
 OLMO_NUM_NODES_ENV_VAR = "NUM_NODES"
 OLMO_LOCAL_WORLD_SIZE_ENV_VAR = "LOCAL_WORLD_SIZE"
+BEAKER_HOSTNAME_ENV_VAR = "BEAKER_NODE_HOSTNAME"
 
 
 def validate_env_vars():
@@ -54,6 +55,15 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
     # Force processes to synchronize at init process group.
     os.environ["TORCH_DIST_INIT_BARRIER"] = "1"
 
+    # Host-specific env vars.
+    # See https://beaker-docs.apps.allenai.org/experiments/distributed-training.html#ai2pluto-cirrascale.
+    if "jupiter" in get_node_hostname():
+        os.environ["NCCL_SOCKET_IFNAME"] = "ib"
+        os.environ["NCCL_IB_HCA"] = "^=mlx5_bond_0"
+    elif "pluto" in get_node_hostname():
+        os.environ["NCCL_SOCKET_IFNAME"] = "ib"
+        os.environ["NCCL_IB_HCA"] = "^=mlx5_1,mlx5_2"
+
     validate_env_vars()
 
     dist.init_process_group(backend, timeout=timeout)
@@ -61,6 +71,18 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
     if "nccl" in backend:
         # Set CUDA device.
         torch.cuda.set_device(f"cuda:{get_local_rank()}")
+
+
+def get_node_hostname() -> str:
+    """
+    Get the hostname of the node.
+    """
+    if BEAKER_HOSTNAME_ENV_VAR in os.environ:
+        return os.environ[BEAKER_HOSTNAME_ENV_VAR]
+    else:
+        import socket
+
+        return socket.gethostname()
 
 
 def is_distributed() -> bool:

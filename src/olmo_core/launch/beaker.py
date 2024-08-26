@@ -194,13 +194,6 @@ class BeakerLaunchConfig(Config):
         ]
         if self.shared_filesystem:
             env_vars.append((OLMO_SHARED_FS_ENV_VAR, "1"))
-        if len(self.clusters) == 1 and "jupiter" in self.clusters[0]:
-            env_vars.extend(
-                [
-                    ("NCCL_IB_HCA", "^=mlx5_bond_0"),
-                    ("NCCL_SOCKET_IFNAME", "ib"),
-                ]
-            )
         return env_vars
 
     @property
@@ -228,7 +221,7 @@ class BeakerLaunchConfig(Config):
 
         torchrun: List[str]
         if self.num_nodes == 1:
-            torchrun = [f"torchrun", f"--nproc-per-node={self.num_gpus}"]
+            torchrun = ["torchrun", f"--nproc-per-node={self.num_gpus}"]
         else:
             torchrun = [
                 "torchrun",
