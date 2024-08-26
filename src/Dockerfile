@@ -1,6 +1,6 @@
 # Base image comes with PyTorch, numpy, flash-attn
-ARG BASE_IMAGE=ghcr.io/allenai/pytorch:2.4.0-cuda12.1-python3.11
-FROM ${BASE_IMAGE}
+ARG BASE
+FROM ${BASE}
 
 # Install other dependencies, but not the source code.
 COPY pyproject.toml .
