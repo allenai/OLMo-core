@@ -154,9 +154,9 @@ jobs:
                   - name: TOKENIZERS_PARALLELISM
                     value: "false"
                   - name: AWS_ACCESS_KEY_ID
-                    secret: PETEW_AWS_ACCESS_KEY_ID
+                    secret: AWS_ACCESS_KEY_ID
                   - name: AWS_SECRET_ACCESS_KEY
-                    secret: PETEW_AWS_SECRET_ACCESS_KEY
+                    secret: AWS_SECRET_ACCESS_KEY
                 command:
                   - "bash"
                   - "-c"
