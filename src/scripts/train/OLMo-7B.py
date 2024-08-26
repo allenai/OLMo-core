@@ -10,10 +10,14 @@ from typing import List, Optional
 from beaker import Beaker
 
 from olmo_core.config import Config, DType, StrEnum
-from olmo_core.data import MemMapDatasetConfig
+from olmo_core.data import MemMapDatasetConfig, MemMapDType
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.distributed.utils import get_num_nodes, get_rank, init_hybrid_shard_mesh
-from olmo_core.launch.beaker import BeakerEnvSecret, BeakerLaunchConfig
+from olmo_core.launch.beaker import (
+    BeakerEnvSecret,
+    BeakerLaunchConfig,
+    BeakerWekaBucket,
+)
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
@@ -59,11 +63,11 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         task_name="train",
         workspace="ai2/OLMo-core",
         description="Testing OLMo-core launch utilities",
-        clusters=["ai2/pluto-cirrascale"],
+        clusters=["ai2/jupiter-cirrascale-2"],
+        weka_buckets=[BeakerWekaBucket("oe-training-default", "/weka/oe-training-default")],
         num_nodes=1,
         num_gpus=8,
         shared_filesystem=True,
-        nfs=True,
         allow_dirty=False,
         env_secrets=[
             BeakerEnvSecret(name="BEAKER_TOKEN", secret=f"{beaker_user}_BEAKER_TOKEN"),
@@ -88,7 +92,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     )
 
     model_config = TransformerConfig.llama2_7B(
-        vocab_size=50304,  # a little bigger than actual vocab size to make it a multiple of 128
+        vocab_size=100352,  # a little bigger than actual vocab size to make it a multiple of 128
         compile=True,
         dp_config=DataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
@@ -104,13 +108,15 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     )
 
     dataset_config = MemMapDatasetConfig.glob(
-        "/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy",
+        # Wikipedia
+        "/weka/oe-training-default/ai2-llm/preprocessed/olmo-mix/danyh-compiled-v1_7/documents/wiki/allenai/dolma2-tokenizer/*.npy",
         sequence_length=4096,
-        eos_token_id=50256,
-        pad_token_id=50256,
+        eos_token_id=100257,
+        pad_token_id=100277,
+        memmap_dtype=MemMapDType.uint32,
     )
 
-    save_folder = f"/net/nfs/allennlp/{beaker_user.lower()}/{run_name}"
+    save_folder = f"/weka/oe-training-default/ai2-llm/checkpoints/OLMo-medium/{beaker_user.lower()}/{run_name}"
 
     trainer_config = (
         TrainerConfig(
