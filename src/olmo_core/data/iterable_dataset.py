@@ -77,7 +77,7 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
             )
         else:
             num_samples = math.ceil(len(self.dataset) / self.dp_world_size)  # type: ignore[arg-type]
-        return num_samples
+        return num_samples * self.dp_world_size
 
     def build_and_save_global_indices(self):
         assert self.work_dir is not None
