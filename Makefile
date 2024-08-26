@@ -1,5 +1,8 @@
 BASE_IMAGE = ghcr.io/allenai/pytorch:2.4.0-cuda12.1-python3.11
+# NOTE: when upgrading the nightly version you also need to upgrade the torch version specification
+# in 'pyproject.toml' to include that nightly version.
 NIGHTLY_BASE_IMAGE = ghcr.io/allenai/pytorch:2.5.0.dev20240826-cuda12.1-python3.11
+
 IMAGE_BASENAME = olmo-core
 BEAKER_WORKSPACE = ai2/OLMo-core
 BEAKER_USER = $(shell beaker account whoami --format=json | jq -r '.[0].name')
