@@ -127,7 +127,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             save_folder=save_folder,
             global_batch_size=1024,
             microbatch_size=2,
-            fused_loss=True,
             autocast_precision=DType.bfloat16,
             save_overwrite=True,
             data_seed=34521,
