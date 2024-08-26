@@ -129,6 +129,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             microbatch_size=2,
             autocast_precision=DType.bfloat16,
             save_overwrite=True,
+            fused_loss=True,
             data_seed=34521,
             data_loader_workers=4,
             metrics_collect_interval=10,
