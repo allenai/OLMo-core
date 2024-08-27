@@ -104,4 +104,8 @@ class AdamWConfig(OptimConfig):  # NOTE: omagaconf doesn't like "OptimConfig[tor
     def build(self, model: nn.Module) -> torch.optim.AdamW:
         kwargs = self.as_dict()
         kwargs.pop("group_overrides")
-        return torch.optim.AdamW(self.build_groups(model), **kwargs)
+        optim = torch.optim.AdamW(self.build_groups(model), **kwargs)
+        for group in optim.param_groups:
+            if "initial_lr" not in group:
+                group["initial_lr"] = self.lr
+        return optim
