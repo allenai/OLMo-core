@@ -20,6 +20,7 @@ dependencies = [
     "packaging",
     "rich",
     "omegaconf",
+    "safetensors",
 ]
 
 [project.optional-dependencies]
@@ -82,8 +83,7 @@ exclude = '''
     | \.venv
     | \bdist\b
     | \bdoc\b
-    | pretrain_data/
-    | inference/
+    | scratch/
 )
 '''
 

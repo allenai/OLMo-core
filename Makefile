@@ -12,16 +12,20 @@ checks : style-check lint-check type-check
 
 .PHONY : style-check
 style-check :
-	isort --check .
-	black --check .
+	@echo "======== running isort... ========"
+	@isort --check .
+	@echo "======== running black... ========"
+	@black --check .
 
 .PHONY : lint-check
 lint-check :
-	ruff check .
+	@echo "======== running ruff... ========="
+	@ruff check .
 
 .PHONY : type-check
 type-check :
-	mypy src/
+	@echo "======== running mypy... ========="
+	@mypy src/
 
 .PHONY : docs
 docs :

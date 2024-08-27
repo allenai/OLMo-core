@@ -1,4 +1,5 @@
 import pytest
+import safetensors.torch
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -218,13 +219,25 @@ def test_unshard_checkpoint(backend, tmp_path):
     )
 
     assert sharded_checkpoint_dir.is_dir()
-    model_path, optim_path = unshard_checkpoint(sharded_checkpoint_dir, unsharded_checkpoint_dir)
-    assert model_path.is_file()
-    assert optim_path is not None and optim_path.is_file()
 
-    model_state = torch.load(model_path, map_location="cpu", weights_only=True)
-    assert model_state
-    assert model_state.keys() == {
+    # Unshard with regular PyTorch format.
+    model_path_pt, optim_path_pt = unshard_checkpoint(
+        sharded_checkpoint_dir, unsharded_checkpoint_dir
+    )
+    assert model_path_pt.is_file()
+    assert model_path_pt.suffix == ".pt"
+    assert optim_path_pt is not None and optim_path_pt.is_file()
+
+    # Unshard with model safetensors format.
+    model_path_st, _ = unshard_checkpoint(
+        sharded_checkpoint_dir, unsharded_checkpoint_dir, optim=False, use_safetensors=True
+    )
+    assert model_path_st.is_file()
+    assert model_path_st.suffix == ".safetensors"
+
+    model_state_pt = torch.load(model_path_pt, map_location="cpu", weights_only=True)
+    assert model_state_pt
+    assert model_state_pt.keys() == {
         "w1.weight",
         "w1.bias",
         "w2.weight",
@@ -232,9 +245,11 @@ def test_unshard_checkpoint(backend, tmp_path):
         "w3.weight",
         "w3.bias",
     }
-    assert model_state["w1.weight"].shape == (16, 16)
+    assert model_state_pt["w1.weight"].shape == (16, 16)
+    model_state_st = safetensors.torch.load_file(model_path_st)
+    torch.testing.assert_close(model_state_pt, model_state_st)
 
-    optim_state = torch.load(optim_path, map_location="cpu", weights_only=False)
+    optim_state = torch.load(optim_path_pt, map_location="cpu", weights_only=False)
     assert optim_state
     assert optim_state.keys() == {"param_groups", "state"}
     assert optim_state["state"].keys() == {
