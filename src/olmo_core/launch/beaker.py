@@ -48,11 +48,22 @@ BeakerPriority = Priority
 
 class OLMoCoreBeakerImage(StrEnum):
     """
-    An enumeration of official Beaker images that work well for OLMo-core.
+    Official Beaker images that work well for OLMo-core.
+
+    You can find the full list at
+    `beaker.org/ws/ai2/OLMo-core/images <https://beaker.org/ws/ai2/OLMo-core/images>`_, which
+    includes *versioned* images that are published with each release of the OLMo-core package.
     """
 
-    stable = "petew/olmo-core"
-    nightly = "petew/olmo-core-nightly"
+    stable = "olmo-core"
+    """
+    Built with the latest compatible stable version of PyTorch.
+    """
+
+    nightly = "olmo-core-nightly"
+    """
+    Built with the latest compatible nightly version of PyTorch.
+    """
 
 
 @dataclass
@@ -307,7 +318,7 @@ class BeakerLaunchConfig(Config):
         task_spec = (
             TaskSpec.new(
                 self.task_name,
-                beaker_image=self.beaker_image,
+                beaker_image=self.beaker.image.get(self.beaker_image).full_name,
                 priority=self.priority,
                 preemptible=self.preemptible,
                 arguments=self.cmd,

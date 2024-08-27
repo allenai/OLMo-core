@@ -3,6 +3,8 @@ BASE_IMAGE = ghcr.io/allenai/pytorch:2.4.0-cuda12.1-python3.11
 # in 'pyproject.toml' to include that nightly version.
 NIGHTLY_BASE_IMAGE = ghcr.io/allenai/pytorch:2.5.0.dev20240826-cuda12.1-python3.11
 
+VERSION = $(shell python src/olmo_core/version.py)
+VERSION_SHORT = $(shell python src/olmo_core/version.py short)
 IMAGE_BASENAME = olmo-core
 BEAKER_WORKSPACE = ai2/OLMo-core
 BEAKER_USER = $(shell beaker account whoami --format=json | jq -r '.[0].name')
@@ -37,16 +39,30 @@ build :
 	rm -rf *.egg-info/
 	python -m build
 
-.PHONY : beaker-image
-beaker-image :
+.PHONY : stable-image
+stable-image :
 	docker build -f src/Dockerfile --build-arg BASE=$(BASE_IMAGE) -t $(IMAGE_BASENAME) .
-	beaker image create $(IMAGE_BASENAME) --name $(IMAGE_BASENAME)-tmp --workspace $(BEAKER_WORKSPACE)
-	beaker image delete $(BEAKER_USER)/$(IMAGE_BASENAME) || true
-	beaker image rename $(BEAKER_USER)/$(IMAGE_BASENAME)-tmp $(IMAGE_BASENAME)
+
+.PHONY : beaker-image-stable
+beaker-image-stable : stable-image
+	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME) $(IMAGE_BASENAME) $(BEAKER_WORKSPACE)
+	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME) $(IMAGE_BASENAME)-v$(VERSION_SHORT) $(BEAKER_WORKSPACE)
+	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME) $(IMAGE_BASENAME)-v$(VERSION) $(BEAKER_WORKSPACE)
+
+.PHONY : nightly-image
+nightly-image :
+	docker build -f src/Dockerfile --build-arg BASE=$(NIGHTLY_BASE_IMAGE) -t $(IMAGE_BASENAME)-nightly .
 
 .PHONY : beaker-image-nightly
-beaker-image-nightly :
-	docker build -f src/Dockerfile --build-arg BASE=$(NIGHTLY_BASE_IMAGE) -t $(IMAGE_BASENAME)-nightly .
-	beaker image create $(IMAGE_BASENAME)-nightly --name $(IMAGE_BASENAME)-nightly-tmp --workspace $(BEAKER_WORKSPACE)
-	beaker image delete $(BEAKER_USER)/$(IMAGE_BASENAME)-nightly || true
-	beaker image rename $(BEAKER_USER)/$(IMAGE_BASENAME)-nightly-tmp $(IMAGE_BASENAME)-nightly
+beaker-image-nightly : nightly-image
+	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME)-nightly $(IMAGE_BASENAME)-nightly $(BEAKER_WORKSPACE)
+	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME)-nightly $(IMAGE_BASENAME)-v$(VERSION_SHORT)-nightly $(BEAKER_WORKSPACE)
+	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME)-nightly $(IMAGE_BASENAME)-v$(VERSION)-nightly $(BEAKER_WORKSPACE)
+
+.PHONY : get-beaker-workspace
+get-beaker-workspace :
+	@echo $(BEAKER_WORKSPACE)
+
+.PHONY : get-full-beaker-image-name
+get-full-beaker-image-name :
+	@./src/scripts/beaker/get_full_image_name.sh $(IMAGE_BASENAME) $(BEAKER_WORKSPACE)

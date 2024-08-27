@@ -1,0 +1,51 @@
+name: Docker
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  beaker:
+    name: Beaker image (${{ matrix.version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BEAKER_TOKEN: ${{ secrets.BEAKER_TOKEN }}
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [nightly, stable]
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+
+      - name: Set env vars
+        run: |
+          echo "BEAKER_WORKSPACE=$(make get-beaker-workspace)" >> $GITHUB_ENV
+
+      - name: Build
+        run: |
+          make ${{ matrix.version }}-image
+
+      - uses: allenai/setup-beaker@v2
+        if: env.BEAKER_TOKEN != ''
+        with:
+          token: ${{ env.BEAKER_TOKEN }}
+          workspace: ${{ env.BEAKER_WORKSPACE }}
+
+      - name: Push
+        if: env.BEAKER_TOKEN != '' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          make beaker-image-${{ matrix.version }}

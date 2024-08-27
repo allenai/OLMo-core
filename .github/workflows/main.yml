@@ -20,6 +20,7 @@ env:
   PYTHONPATH: ./src/
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  BEAKER_TOKEN: ${{ secrets.BEAKER_TOKEN }}
 
 jobs:
   checks:
@@ -99,10 +100,6 @@ jobs:
     name: ${{ matrix.task.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
-    env:
-      BEAKER_TOKEN: ${{ secrets.BEAKER_TOKEN }}
-      BEAKER_IMAGE: petew/olmo-core
-      BEAKER_WORKSPACE: ai2/OLMo-core
     strategy:
       fail-fast: false
       matrix:
@@ -113,6 +110,15 @@ jobs:
           - name: Test checkpoint (GPU)
             run: pytest -v --color=yes --durations=3 -m gpu src/test/distributed/checkpoint*
     steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+
+      - name: Set env vars
+        run: |
+          echo "BEAKER_WORKSPACE=$(make get-beaker-workspace)" >> $GITHUB_ENV
+
       - name: Determine current commit SHA (pull request)
         if: github.event_name == 'pull_request'
         run: |
@@ -122,6 +128,17 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           echo "COMMIT_SHA=$GITHUB_SHA" >> $GITHUB_ENV
+
+      - uses: allenai/setup-beaker@v2
+        if: env.BEAKER_TOKEN != ''
+        with:
+          token: ${{ env.BEAKER_TOKEN }}
+          workspace: ${{ env.BEAKER_WORKSPACE }}
+
+      - name: Get full image name
+        if: env.BEAKER_TOKEN != ''
+        run:
+          echo "BEAKER_IMAGE=$(make get-full-beaker-image-name)" >> $GITHUB_ENV
 
       - name: GPU Tests
         uses: allenai/beaker-run-action@v1.2
