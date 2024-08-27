@@ -141,6 +141,19 @@ def load_model_and_optim_state(
         :meth:`~torch.distributed.fsdp.FullyShardedDataParallel.state_dict_type()` or other methods.
         This function handles that internally.
 
+    .. warning::
+        Due to the way :mod:`torch.distributed.checkpoint` works, if you have keys in the checkpoint
+        dict that are not present in the current state of the model or optimizer, those keys won't
+        be loaded.
+
+        For example, if you added a custom field to one of your optimizer's param groups
+        before saving the checkpoint, but don't have that field in the param group of the optimizer
+        you're loading into, it won't be added.
+
+        This can cause unexpected behavior if you're not careful. In this case the best thing to do
+        is to ensure all keys are in present param groups when you initialize the optimizer, before saving
+        or loading a checkpoint.
+
     :param dir: Path/URL to the checkpoint saved via :func:`save_model_and_optim_state()`.
     :param model: The model to load the state into.
     :param optim: The optimizer to load the state into.
