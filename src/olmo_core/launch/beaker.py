@@ -27,7 +27,7 @@ from ..config import Config, StrEnum
 from ..distributed.utils import OLMO_SHARED_FS_ENV_VAR
 from ..exceptions import BeakerExperimentFailedError, OLMoConfigurationError
 from ..utils import LOG_FILTER_TYPE_ENV_VAR, LogFilterType
-from ..version import VERSION, VERSION_SHORT
+from ..version import VERSION
 from .utils import ensure_repo
 
 log = logging.getLogger(__name__)
@@ -48,15 +48,17 @@ BeakerPriority = Priority
 
 class OLMoCoreBeakerImage(StrEnum):
     """
-    An enumeration of official Beaker images that work well for OLMo-core.
+    Official Beaker images that work well for OLMo-core.
+
+    You can find the full list at `beaker.org/ws/ai2/OLMo-core/images <https://beaker.org/ws/ai2/OLMo-core/images>`_.
     """
 
-    stable = f"olmo-core-v{VERSION_SHORT}"
+    stable = "olmo-core"
     """
     Built with the latest compatible stable version of PyTorch.
     """
 
-    nightly = f"olmo-core-v{VERSION_SHORT}-nightly"
+    nightly = "olmo-core-nightly"
     """
     Built with the latest compatible nightly version of PyTorch.
     """

@@ -7,7 +7,7 @@ TAG=$(python -c 'from olmo_core.version import VERSION; print("v" + VERSION)')
 git pull
 python src/scripts/prepare_changelog.py
 
-read -p "Creating new release for $TAG. Do you want to continue? [Y/n] " prompt
+read -rp "Creating new release for $TAG. Do you want to continue? [Y/n] " prompt
 
 if [[ $prompt == "y" || $prompt == "Y" || $prompt == "yes" || $prompt == "Yes" ]]; then
     git add -A

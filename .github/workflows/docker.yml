@@ -40,7 +40,7 @@ jobs:
           make ${{ matrix.version }}-image
 
       - uses: allenai/setup-beaker@v2
-        if: env.BEAKER_TOKEN != '' && startsWith(github.ref, 'refs/tags/')
+        if: env.BEAKER_TOKEN != ''
         with:
           token: ${{ env.BEAKER_TOKEN }}
           workspace: ${{ env.BEAKER_WORKSPACE }}
