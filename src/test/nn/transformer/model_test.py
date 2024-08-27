@@ -19,3 +19,7 @@ def test_small_llama2_config_builder():
     for module in model.modules():
         if isinstance(module, (nn.Linear, LayerNorm)):
             assert module.bias is None
+
+    # Make sure block_idx is set correctly.
+    assert model.blocks[0].block_idx == 0
+    assert model.blocks[-1].block_idx == len(model.blocks) - 1

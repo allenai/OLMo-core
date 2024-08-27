@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import Literal, Optional, Sequence, Union
+from typing import Callable, Literal, Optional, Sequence, Union
 
 import torch
 import torch.nn as nn
@@ -71,6 +71,7 @@ class TransformerConfig(Config):
         device: Optional[torch.device] = None,
         dp_mesh: Optional[DeviceMesh] = None,
         max_seq_len: Optional[int] = None,
+        init_func: Optional[Callable[[nn.Module], None]] = None,
     ) -> "Transformer":
         """
         Build the model corresponding to this config.
@@ -121,7 +122,7 @@ class TransformerConfig(Config):
         # Materialize and init parameters.
         if device != torch.device(init_device):
             model.to_empty(device=device)
-        model.init_weights(max_seq_len=max_seq_len)
+        model.init_weights(max_seq_len=max_seq_len, device=device, init_func=init_func)
 
         return model
 
@@ -479,40 +480,53 @@ class Transformer(nn.Module):
         self.blocks = nn.ModuleList(
             [
                 block.build(
-                    d_model,
+                    d_model=d_model,
+                    block_idx=block_idx,
                     init_device=init_device,
                     cache=cache,
                 )
-                for _ in range(n_layers)
+                for block_idx in range(n_layers)
             ]
         )
         self.norm = layer_norm.build(d_model, init_device=init_device)
         self.w_out = nn.Linear(d_model, vocab_size, bias=bias, dtype=dtype, device=init_device)
         self._cache = cache
 
-    def init_weights(self, max_seq_len: Optional[int] = None):
+    @property
+    def device(self) -> torch.device:
+        for p in self.parameters():
+            if p.numel() > 0:
+                return p.device
+        return get_default_device()
+
+    def init_weights(
+        self,
+        *,
+        max_seq_len: Optional[int] = None,
+        device: Optional[torch.device] = None,
+        init_func: Optional[Callable[[nn.Module], None]] = None,
+    ):
         """
         Initialize the model weights.
+
+        :param max_seq_len: The maximum sequence length expected during training. This is used
+            to warm up the RoPE cache.
+        :param device: The device the local copy of the model will be trained on.
+        :param init_func: The function used to initialize the weights of each module.
+            By default this just calls ``m.reset_parameters()`` if defined.
         """
+        device = device or self.device
 
         def reset_params(m: nn.Module):
-            if hasattr(m, "reset_parameters"):
+            if init_func is not None:
+                init_func(m)
+            elif hasattr(m, "reset_parameters"):
                 m.reset_parameters()
 
-        self.apply(reset_params)
-
-        if max_seq_len is None:
-            return
-
-        # Warmup RoPE embedding caches.
-        device = self.w_out.weight.device
-
-        def warmup_cache(m: nn.Module):
-            if isinstance(m, RotaryEmbeddingBase):
-                assert max_seq_len is not None
+            if max_seq_len is not None and isinstance(m, RotaryEmbeddingBase):
                 m.warmup_cache(max_seq_len, device)
 
-        self.apply(warmup_cache)
+        self.apply(reset_params)
 
     def reset_parameters(self):
         nn.init.trunc_normal_(self.embeddings.weight, mean=0.0, std=0.02)

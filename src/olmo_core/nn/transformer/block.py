@@ -34,8 +34,9 @@ class TransformerBlockConfig(Config):
 
     def build(
         self,
-        d_model: int,
         *,
+        d_model: int,
+        block_idx: int,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ) -> "TransformerBlock":
@@ -44,6 +45,7 @@ class TransformerBlockConfig(Config):
         kwargs.update(
             dict(
                 d_model=d_model,
+                block_idx=block_idx,
                 init_device=init_device,
                 cache=cache,
             )
@@ -62,6 +64,7 @@ class TransformerBlock(nn.Module):
     A typical "Llama-style" transformer block implementation.
 
     :param d_model: The model dimensionality.
+    :param block_idx: The index/position of the block within the model. Ranges from 0 to ``n_layers - 1``.
     :param attention: The attention module config.
     :param feed_forward: The feed forward module config.
     :param layer_norm: The layer norm config for both the attention LN and the feed forward LN.
@@ -73,6 +76,7 @@ class TransformerBlock(nn.Module):
         self,
         *,
         d_model: int,
+        block_idx: int,
         attention: AttentionConfig,
         feed_forward: FeedForwardConfig,
         layer_norm: LayerNormConfig,
@@ -82,6 +86,7 @@ class TransformerBlock(nn.Module):
     ):
         super().__init__()
         self.d_model = d_model
+        self.block_idx = block_idx
         self.attention = attention.build(d_model, init_device=init_device, cache=cache)
         self.attention_norm = layer_norm.build(d_model, init_device=init_device)
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)

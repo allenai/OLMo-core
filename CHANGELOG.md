@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for unsharding model state into `safetensors` format with `olmo_core.distributed.checkpoint.unshard_checkpoint(..., use_safetensors=True)`.
 - Added `data.TokenizerConfig` config class and `data.TokenizerName` enumeration.
 - Added data mixes with `data.DataMix` API.
+- Added `block_idx` attribute to the `TransformerBlock` class.
+- Added `init_func` parameter to `Transformer.init_weights()` and `TransformerConfig.build()`.
 
 ## [v1.0.1](https://github.com/allenai/OLMo-core/releases/tag/v1.0.1) - 2024-08-26
 
