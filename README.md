@@ -1,6 +1,15 @@
-# OLMo-core
-
-Building blocks for OLMo modeling and training.
+<div align="center">
+  <h1>OLMo-core</h1>
+  <p>Building blocks for OLMo modeling and training</p>
+</div>
+<p align="center">
+  <a href="https://github.com/allenai/OLMo-core/tree/main/src/examples">Examples</a> ||
+  <a href="https://olmo-core.readthedocs.io/en/latest/">Docs</a> ||
+  <a href="https://pypi.org/project/ai2-olmo-core/">PyPI</a> ||
+  <a href="https://beaker.org/ws/ai2/OLMo-core/images">Beaker Images</a> ||
+  <a href="https://github.com/allenai/OLMo-core/blob/main/LICENSE">License</a> ||
+  <a href="https://github.com/allenai/OLMo-core/blob/main/CHANGELOG.md">Changelog</a>
+</p>
 
 ## Installation
 
