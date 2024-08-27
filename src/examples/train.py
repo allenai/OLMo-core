@@ -9,7 +9,7 @@ Launch this with torchrun:
 import json
 
 from olmo_core.config import DType
-from olmo_core.data import MemMapDatasetConfig
+from olmo_core.data import MemMapDatasetConfig, TokenizerConfig
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.distributed.utils import get_rank, init_hybrid_shard_mesh
 from olmo_core.nn.transformer import TransformerConfig
@@ -35,8 +35,10 @@ SAVE_FOLDER = "/tmp/run01"
 DATA_FILES = ["/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy"]  # can be globs
 SEED = 3423
 
+TOKENIZER_CONFIG = TokenizerConfig.gpt2()
+
 MODEL_CONFIG = TransformerConfig.llama2_271M(
-    vocab_size=50304,  # a little bigger than actual vocab size to make it a multiple of 128
+    vocab_size=TOKENIZER_CONFIG.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
     compile=False,
     dp_config=DataParallelConfig(
         name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
@@ -48,8 +50,7 @@ OPTIM_CONFIG = AdamWConfig(lr=1e-3)
 DATASET_CONFIG = MemMapDatasetConfig.glob(
     *DATA_FILES,
     sequence_length=1024,
-    eos_token_id=50256,
-    pad_token_id=50256,
+    tokenizer=TOKENIZER_CONFIG,
 )
 
 TRAINER_CONFIG = (

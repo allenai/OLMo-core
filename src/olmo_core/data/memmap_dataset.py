@@ -15,6 +15,7 @@ from ..aliases import PathOrStr
 from ..config import Config, StrEnum
 from ..io import _get_s3_client, file_size, get_bytes_range
 from ..utils import get_document_lengths
+from .tokenizer import TokenizerConfig
 
 __all__ = ["MemMapDatasetConfig", "MemMapDataset"]
 
@@ -42,9 +43,8 @@ class MemMapDatasetConfig(Config):
 
     paths: List[str]
     sequence_length: int
-    pad_token_id: int
-    eos_token_id: int
-    memmap_dtype: MemMapDType = MemMapDType.uint16
+    tokenizer: TokenizerConfig
+    memmap_dtype: Optional[MemMapDType] = None
     metadata: Optional[List[Dict[str, Any]]] = None
     include_instance_metadata: bool = True
     generate_attention_mask: bool = False
@@ -65,6 +65,25 @@ class MemMapDatasetConfig(Config):
         :returns: A new config.
         """
         return cls(paths=list(glob_paths), expand_glob=True, **kwargs)
+
+    def get_memmap_dtype(
+        self,
+    ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
+        if self.memmap_dtype is not None:
+            return MemMapDType(self.memmap_dtype).as_np_dtype()
+
+        # Guess based on vocab size.
+        for dtype in (
+            MemMapDType.uint8,
+            MemMapDType.uint16,
+            MemMapDType.uint32,
+            MemMapDType.uint64,
+        ):
+            if (self.tokenizer.vocab_size - 1) <= np.iinfo(dtype.as_np_dtype()).max:
+                log.info(f"Assuming memmap dtype {dtype} based on vocab size")
+                return dtype.as_np_dtype()
+
+        raise ValueError("vocab size too big!")
 
     def build(self) -> MemMapDataset:
         """
@@ -88,9 +107,9 @@ class MemMapDatasetConfig(Config):
         dataset = MemMapDataset(
             *paths,
             sequence_length=self.sequence_length,
-            pad_token_id=self.pad_token_id,
-            eos_token_id=self.eos_token_id,
-            memmap_dtype=MemMapDType(self.memmap_dtype).as_np_dtype(),
+            pad_token_id=self.tokenizer.pad_token_id,
+            eos_token_id=self.tokenizer.eos_token_id,
+            memmap_dtype=self.get_memmap_dtype(),
             metadata=self.metadata,
             include_instance_metadata=self.include_instance_metadata,
             generate_attention_mask=self.generate_attention_mask,

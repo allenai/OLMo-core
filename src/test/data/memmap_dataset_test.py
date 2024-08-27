@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
-from olmo_core.data.memmap_dataset import MemMapDataset
+from olmo_core.data import MemMapDataset, MemMapDatasetConfig, TokenizerConfig
 
 
 def test_mmap_dataset(tmp_path: Path):
@@ -99,3 +99,11 @@ def test_concat_mmap_datasets(tmp_path: Path):
     # Should get the same with negative index.
     assert ds[-1]["input_ids"].tolist() == [3, 4, 5]
     assert ds[-1]["metadata"]["label"] == "test2"
+
+
+def test_guess_dtype():
+    config = MemMapDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.gpt2())
+    assert config.get_memmap_dtype() == np.uint16
+
+    config = MemMapDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.dolma2())
+    assert config.get_memmap_dtype() == np.uint32

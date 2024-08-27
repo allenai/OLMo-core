@@ -10,7 +10,7 @@ from typing import List, Optional
 from beaker import Beaker
 
 from olmo_core.config import Config, DType, StrEnum
-from olmo_core.data import MemMapDatasetConfig, MemMapDType
+from olmo_core.data import MemMapDatasetConfig, TokenizerConfig
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.distributed.utils import get_num_nodes, get_rank, init_hybrid_shard_mesh
 from olmo_core.launch.beaker import (
@@ -94,8 +94,10 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         ],
     )
 
+    tokenizer_config = TokenizerConfig.dolma2()
+
     model_config = TransformerConfig.llama2_7B(
-        vocab_size=100352,  # a little bigger than actual vocab size to make it a multiple of 128
+        vocab_size=tokenizer_config.padded_vocab_size(),
         compile=True,
         dp_config=DataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
@@ -114,9 +116,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         # Wikipedia
         "/weka/oe-training-default/ai2-llm/preprocessed/olmo-mix/danyh-compiled-v1_7/documents/wiki/allenai/dolma2-tokenizer/*.npy",
         sequence_length=4096,
-        eos_token_id=100257,
-        pad_token_id=100277,
-        memmap_dtype=MemMapDType.uint32,
+        tokenizer=tokenizer_config,
     )
 
     save_folder = f"/weka/oe-training-default/ai2-llm/checkpoints/OLMo-medium/{beaker_user.lower()}/{run_name}"
