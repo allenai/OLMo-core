@@ -39,16 +39,30 @@ build :
 	rm -rf *.egg-info/
 	python -m build
 
-.PHONY : beaker-image
-beaker-image :
+.PHONY : stable-image
+stable-image :
 	docker build -f src/Dockerfile --build-arg BASE=$(BASE_IMAGE) -t $(IMAGE_BASENAME) .
+
+.PHONY : beaker-image-stable
+beaker-image-stable : stable-image
 	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME) $(IMAGE_BASENAME) $(BEAKER_WORKSPACE)
 	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME) $(IMAGE_BASENAME)-v$(VERSION_SHORT) $(BEAKER_WORKSPACE)
 	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME) $(IMAGE_BASENAME)-v$(VERSION) $(BEAKER_WORKSPACE)
 
-.PHONY : beaker-image-nightly
-beaker-image-nightly :
+.PHONY : nightly-image
+nightly-image :
 	docker build -f src/Dockerfile --build-arg BASE=$(NIGHTLY_BASE_IMAGE) -t $(IMAGE_BASENAME)-nightly .
+
+.PHONY : beaker-image-nightly
+beaker-image-nightly : nightly-image
 	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME)-nightly $(IMAGE_BASENAME)-nightly $(BEAKER_WORKSPACE)
 	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME)-nightly $(IMAGE_BASENAME)-v$(VERSION_SHORT)-nightly $(BEAKER_WORKSPACE)
 	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME)-nightly $(IMAGE_BASENAME)-v$(VERSION)-nightly $(BEAKER_WORKSPACE)
+
+.PHONY : get-beaker-workspace
+get-beaker-workspace :
+	@echo $(BEAKER_WORKSPACE)
+
+.PHONY : get-full-beaker-image-name
+get-full-beaker-image-name :
+	@./src/scripts/beaker/get_full_image_name.sh $(IMAGE_BASENAME) $(BEAKER_WORKSPACE)
