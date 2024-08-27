@@ -4,7 +4,7 @@ from typing import Optional
 from ..config import Config, StrEnum
 
 
-class TokenizerNames(StrEnum):
+class TokenizerName(StrEnum):
     """
     An enumeration of supported tokenizer names.
     """
@@ -24,7 +24,7 @@ class TokenizerConfig(Config):
     eos_token_id: int
     pad_token_id: int
     bos_token_id: Optional[int] = None
-    identifier: Optional[str] = None
+    identifier: Optional[TokenizerName] = None
 
     def padded_vocab_size(self, pad_multiple: int = 128) -> int:
         """
@@ -39,7 +39,7 @@ class TokenizerConfig(Config):
             vocab_size=100278,
             eos_token_id=100257,
             pad_token_id=100277,
-            identifier=TokenizerNames.dolma2,
+            identifier=TokenizerName.dolma2,
         )
 
     @classmethod
@@ -48,7 +48,7 @@ class TokenizerConfig(Config):
             vocab_size=50280,
             eos_token_id=50279,
             pad_token_id=1,
-            identifier=TokenizerNames.gpt_neox_olmo_dolma_v1_5,
+            identifier=TokenizerName.gpt_neox_olmo_dolma_v1_5,
         )
 
     @classmethod
@@ -57,5 +57,5 @@ class TokenizerConfig(Config):
             vocab_size=50280,
             eos_token_id=50256,
             pad_token_id=50256,
-            identifier=TokenizerNames.gpt2,
+            identifier=TokenizerName.gpt2,
         )

@@ -9,12 +9,13 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from olmo_core.exceptions import OLMoEnvironmentError
+from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
 
 from ..aliases import PathOrStr
 from ..config import Config, StrEnum
 from ..io import _get_s3_client, file_size, get_bytes_range
 from ..utils import get_document_lengths
+from .mixes import DataMix
 from .tokenizer import TokenizerConfig
 
 __all__ = ["MemMapDatasetConfig", "MemMapDataset"]
@@ -41,9 +42,10 @@ class MemMapDatasetConfig(Config):
     A config class for easily building :class:`MemMapDataset` classes.
     """
 
-    paths: List[str]
     sequence_length: int
     tokenizer: TokenizerConfig
+    paths: Optional[List[str]] = None
+    mix: Optional[DataMix] = None
     memmap_dtype: Optional[MemMapDType] = None
     metadata: Optional[List[Dict[str, Any]]] = None
     include_instance_metadata: bool = True
@@ -62,9 +64,27 @@ class MemMapDatasetConfig(Config):
             If any of the globs don't expand to any matches a :class:`FileNotFoundError`
             error is raised
 
-        :returns: A new config.
+        :returns: A new dataset config.
         """
         return cls(paths=list(glob_paths), expand_glob=True, **kwargs)
+
+    @classmethod
+    def from_data_mix(
+        cls, mix: DataMix, *, tokenizer: TokenizerConfig, **kwargs
+    ) -> "MemMapDatasetConfig":
+        """
+        Initialize a dataset config from an official data mix.
+
+        :param mix: The data mix.
+        :param tokenizer: The tokenizer config.
+
+        :returns: A new dataset config.
+        """
+        if tokenizer.identifier is None:
+            raise OLMoConfigurationError(
+                "Missing tokenizer identifier required to construct data mix"
+            )
+        return cls(mix=mix, tokenizer=tokenizer, **kwargs)
 
     def get_memmap_dtype(
         self,
@@ -85,12 +105,18 @@ class MemMapDatasetConfig(Config):
 
         raise ValueError("vocab size too big!")
 
-    def build(self) -> MemMapDataset:
+    def build(self, mix_base_dir: Optional[str] = None) -> MemMapDataset:
         """
         Construct the corresponding :class:`MemMapDataset`.
+
+        :param mix_base_dir: The base directory for the :data:`mix`, e.g. "s3://ai2-llm".
+            Required if initializing from a data mix.
         """
+        if (self.paths is None) == (self.mix is None):
+            raise OLMoConfigurationError("Exactly one of 'paths' or 'mix' is required")
+
         paths: List[str] = []
-        if self.expand_glob:
+        if self.paths and self.expand_glob:
             from glob import glob
 
             for glob_path in self.paths:
@@ -101,8 +127,19 @@ class MemMapDatasetConfig(Config):
                 for path in matches:
                     log.info(f" - '{path}'")
                 paths.extend(matches)
-        else:
+        elif self.paths:
             paths = self.paths
+        else:
+            assert self.mix is not None
+            if mix_base_dir is None:
+                raise OLMoConfigurationError(
+                    "'mix_base_dir' is required to build a dataset from a mix"
+                )
+            if self.tokenizer.identifier is None:
+                raise OLMoConfigurationError(
+                    "Missing tokenizer identifier required to construct data mix"
+                )
+            paths = self.mix.build(mix_base_dir, self.tokenizer.identifier)
 
         dataset = MemMapDataset(
             *paths,
