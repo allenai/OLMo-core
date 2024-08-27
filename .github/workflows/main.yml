@@ -20,6 +20,7 @@ env:
   PYTHONPATH: ./src/
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  BEAKER_TOKEN: ${{ secrets.BEAKER_TOKEN }}
 
 jobs:
   checks:
@@ -99,8 +100,6 @@ jobs:
     name: ${{ matrix.task.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
-    env:
-      BEAKER_TOKEN: ${{ secrets.BEAKER_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
