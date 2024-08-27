@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `data.TokenizerConfig` config class and `data.TokenizerName` enumeration.
 - Added data mixes with `data.DataMix` API.
 - Added `block_idx` attribute to the `TransformerBlock` class.
-- Added `init_func` parameter to `Transformer.init_weights()` and `TransformerConfig.build()`.
+- Added `init_method` option to `Transformer` for controlling how the weights are initialized.
 
 ## [v1.0.1](https://github.com/allenai/OLMo-core/releases/tag/v1.0.1) - 2024-08-26
 

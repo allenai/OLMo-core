@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import Callable, Literal, Optional, Sequence, Union
+from typing import Literal, Optional, Sequence, Union
 
 import torch
 import torch.nn as nn
@@ -14,12 +14,13 @@ from olmo_core.utils import (
     has_flash_attn,
 )
 
-from ..attention import AttentionConfig, AttentionType
+from ..attention import Attention, AttentionConfig, AttentionType
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig
 from ..layer_norm import LayerNormConfig, LayerNormType
-from ..rope import RoPEConfig, RoPEType, RotaryEmbeddingBase
-from .block import TransformerBlockConfig, TransformerBlockType
+from ..rope import RoPEConfig, RoPEType
+from .block import TransformerBlock, TransformerBlockConfig, TransformerBlockType
+from .init import InitMethod
 from .utils import apply_activation_checkpointing_to_transformer_block
 
 __all__ = ["TransformerConfig", "Transformer"]
@@ -60,6 +61,7 @@ class TransformerConfig(Config):
     layer_norm: LayerNormConfig
     bias: bool = True
     dtype: DType = DType.float32
+    init_method: InitMethod = InitMethod.normal
     compile: bool = False
     dp_config: Optional[DataParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
@@ -71,10 +73,18 @@ class TransformerConfig(Config):
         device: Optional[torch.device] = None,
         dp_mesh: Optional[DeviceMesh] = None,
         max_seq_len: Optional[int] = None,
-        init_func: Optional[Callable[[nn.Module], None]] = None,
     ) -> "Transformer":
         """
-        Build the model corresponding to this config.
+        Build the model corresponding to this config, potentially applying activation checkpointing,
+        compilation, FSDP or DDP, etc, and eventually calling :meth:`Transformer.init_weights()`.
+
+        :param init_device: The device to put the parameters on during initialization. In a
+            distributed setting it usually makes sense to set this to "meta".
+        :param device: The device to put the model on after initialization.
+        :param dp_mesh: Data parallel device mesh. This can be used to configure hybrid sharding
+            with FSDP. See :func:`~olmo_core.distributed.utils.init_hybrid_shard_mesh()` for
+            easily creating such a mesh.
+        :param max_seq_len: The maximum sequence length expected.
         """
         device = device or get_default_device()
 
@@ -90,6 +100,7 @@ class TransformerConfig(Config):
             layer_norm=self.layer_norm,
             bias=self.bias,
             dtype=self.dtype.as_pt(),
+            init_method=self.init_method,
             init_device=init_device,
         )
         log.info("%s", model)
@@ -122,7 +133,7 @@ class TransformerConfig(Config):
         # Materialize and init parameters.
         if device != torch.device(init_device):
             model.to_empty(device=device)
-        model.init_weights(max_seq_len=max_seq_len, device=device, init_func=init_func)
+        model.init_weights(max_seq_len=max_seq_len, device=device)
 
         return model
 
@@ -470,6 +481,7 @@ class Transformer(nn.Module):
         layer_norm: LayerNormConfig,
         bias: bool = True,
         dtype: torch.dtype = torch.float32,
+        init_method: InitMethod = InitMethod.normal,
         init_device: str = "cpu",
     ):
         super().__init__()
@@ -490,6 +502,7 @@ class Transformer(nn.Module):
         )
         self.norm = layer_norm.build(d_model, init_device=init_device)
         self.w_out = nn.Linear(d_model, vocab_size, bias=bias, dtype=dtype, device=init_device)
+        self.init_method = InitMethod(init_method)
         self._cache = cache
 
     @property
@@ -499,12 +512,12 @@ class Transformer(nn.Module):
                 return p.device
         return get_default_device()
 
+    @torch.no_grad()
     def init_weights(
         self,
         *,
         max_seq_len: Optional[int] = None,
         device: Optional[torch.device] = None,
-        init_func: Optional[Callable[[nn.Module], None]] = None,
     ):
         """
         Initialize the model weights.
@@ -512,27 +525,44 @@ class Transformer(nn.Module):
         :param max_seq_len: The maximum sequence length expected during training. This is used
             to warm up the RoPE cache.
         :param device: The device the local copy of the model will be trained on.
-        :param init_func: The function used to initialize the weights of each module.
-            By default this just calls ``m.reset_parameters()`` if defined.
         """
         device = device or self.device
 
-        def reset_params(m: nn.Module):
-            if init_func is not None:
-                init_func(m)
-            elif hasattr(m, "reset_parameters"):
-                m.reset_parameters()
+        if self.embeddings is not None:
+            self.init_method.init_embeddings(self.embeddings)
 
-            if max_seq_len is not None and isinstance(m, RotaryEmbeddingBase):
-                m.warmup_cache(max_seq_len, device)
+        for block in self.blocks:
+            assert isinstance(block, TransformerBlock)
 
-        self.apply(reset_params)
+            # Norms.
+            block_norms = [block.attention_norm, block.feed_forward_norm]
+            if isinstance(block.attention, Attention):
+                if block.attention.q_norm is not None:
+                    block_norms.append(block.attention.q_norm)
+                if block.attention.k_norm is not None:
+                    block_norms.append(block.attention.k_norm)
+            for norm in block_norms:
+                norm.reset_parameters()
 
-    def reset_parameters(self):
-        nn.init.trunc_normal_(self.embeddings.weight, mean=0.0, std=0.02)
-        nn.init.trunc_normal_(self.w_out.weight, mean=0.0, std=0.02)
-        if self.w_out.bias is not None:
-            nn.init.zeros_(self.bias)
+            # Attention weights.
+            self.init_method.init_attention(
+                block.attention, block_idx=block.block_idx, num_blocks=len(self.blocks)
+            )
+
+            # Feed-forward weights.
+            self.init_method.init_feed_forward(
+                block.feed_forward, block_idx=block.block_idx, num_blocks=len(self.blocks)
+            )
+
+            # Warm up RoPE cache.
+            if max_seq_len is not None and block.attention.rope is not None:
+                block.attention.rope.warmup_cache(max_seq_len, device)
+
+        if self.norm is not None:
+            self.norm.reset_parameters()
+
+        if self.w_out is not None:
+            self.init_method.init_final_w_out(self.w_out, d_model=self.d_model)
 
     def forward(
         self,
@@ -574,6 +604,10 @@ class Transformer(nn.Module):
         """
         Apply activation checkpointing to the model.
 
+        .. warning::
+            Usually this does not need to be called directly, as :meth:`TransformerConfig.build()`
+            will call it for you.
+
         :param mode: Either "full" for apply AC to each block, or "selective" which depends on
             the value of ``selective_option``.
         :param selective_option: If "op", AC is applied individual operations. If an int, it's
@@ -593,8 +627,11 @@ class Transformer(nn.Module):
         due to repeated structure.
 
         .. warning::
-            This should be called after :meth:`apply_activation_checkpointing()` but before
-            :meth:`apply_fsdp2()` or :meth:`apply_ddp2()`.
+            Usually this does not need to be called directly, as :meth:`TransformerConfig.build()`
+            will call it for you.
+
+            If you do use this directly note that it must be called after
+            :meth:`apply_activation_checkpointing()` but before :meth:`apply_fsdp()` or :meth:`apply_ddp()`.
         """
         for block_id, block in self.blocks.named_children():
             block = torch.compile(block, fullgraph=False)
@@ -611,6 +648,10 @@ class Transformer(nn.Module):
     ):
         """
         Apply FSDP(2) to the model.
+
+        .. warning::
+            Usually this does not need to be called directly, as :meth:`TransformerConfig.build()`
+            will call it for you.
 
         :param dp_mesh: The data parallel device mesh.
         :param param_dtype: The data type to materialize params in. Defaults to the current param dtype.
@@ -653,6 +694,10 @@ class Transformer(nn.Module):
     ):
         """
         Apply DDP to the model.
+
+        .. warning::
+            Usually this does not need to be called directly, as :meth:`TransformerConfig.build()`
+            will call it for you.
         """
         from torch.distributed._composable.replicate import replicate
 

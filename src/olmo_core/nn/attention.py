@@ -172,12 +172,6 @@ class Attention(nn.Module):
             self._flash_attn_func = flash_attn_func
             self._flash_attn_varlen_func = flash_attn_varlen_func
 
-    def reset_parameters(self):
-        for w in (self.w_q, self.w_k, self.w_v, self.w_out):
-            nn.init.trunc_normal_(w.weight, mean=0.0, std=0.02)
-            if w.bias is not None:
-                nn.init.zeros_(w.bias)
-
     def forward(
         self,
         x: torch.Tensor,
@@ -333,12 +327,6 @@ class FusedAttention(nn.Module):
 
         self._flash_attn_qkvpacked_func = flash_attn_qkvpacked_func
         self._flash_attn_varlen_qkvpacked_func = flash_attn_varlen_qkvpacked_func
-
-    def reset_parameters(self):
-        for w in (self.w_qkv, self.w_out):
-            nn.init.trunc_normal_(w.weight, mean=0.0, std=0.02)
-            if w.bias is not None:
-                nn.init.zeros_(w.bias)
 
     def forward(
         self,

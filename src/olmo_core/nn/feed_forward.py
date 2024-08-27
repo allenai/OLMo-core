@@ -50,12 +50,6 @@ class FeedForward(nn.Module):
         self.w2 = nn.Linear(hidden_size, d_model, bias=bias, dtype=dtype, device=init_device)
         self.w3 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
 
-    def reset_parameters(self):
-        for w in (self.w1, self.w2, self.w3):
-            nn.init.trunc_normal_(w.weight, mean=0.0, std=0.02)
-            if w.bias is not None:
-                nn.init.zeros_(w.bias)
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Run the feed-forward on the input ``x``.

@@ -15,10 +15,13 @@ def test_small_llama2_config_builder():
         num_actual_params += p.numel()
     assert config.num_params == num_actual_params
 
-    # Make sure there are no biases anywhere.
     for module in model.modules():
+        # Make sure there are no biases anywhere and layer norm weights are all 1.
         if isinstance(module, (nn.Linear, LayerNorm)):
             assert module.bias is None
+        if isinstance(module, LayerNorm):
+            assert module.weight is not None
+            assert (module.weight == 1).all()
 
     # Make sure block_idx is set correctly.
     assert model.blocks[0].block_idx == 0
