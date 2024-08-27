@@ -10,7 +10,7 @@ from typing import List, Optional
 from beaker import Beaker
 
 from olmo_core.config import Config, DType, StrEnum
-from olmo_core.data import MemMapDatasetConfig, TokenizerConfig
+from olmo_core.data import DataMix, MemMapDatasetConfig, TokenizerConfig
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.distributed.utils import get_num_nodes, get_rank, init_hybrid_shard_mesh
 from olmo_core.launch.beaker import (
@@ -112,11 +112,10 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         ],
     )
 
-    dataset_config = MemMapDatasetConfig.glob(
-        # Wikipedia
-        "/weka/oe-training-default/ai2-llm/preprocessed/olmo-mix/danyh-compiled-v1_7/documents/wiki/allenai/dolma2-tokenizer/*.npy",
-        sequence_length=4096,
+    dataset_config = MemMapDatasetConfig.from_data_mix(
+        DataMix.OLMoE_mix_0824,
         tokenizer=tokenizer_config,
+        sequence_length=4096,
     )
 
     save_folder = f"/weka/oe-training-default/ai2-llm/checkpoints/OLMo-medium/{beaker_user.lower()}/{run_name}"
@@ -190,7 +189,7 @@ def train(config: ExperimentConfig):
         dp_mesh=None if get_num_nodes() == 1 else init_hybrid_shard_mesh(),
     )
     optim = config.optim.build(model)
-    dataset = config.dataset.build()
+    dataset = config.dataset.build(mix_base_dir="/weka/oe-training-default/ai2-llm")
     trainer = config.trainer.build(model, optim, dataset)
 
     # Save config to file.

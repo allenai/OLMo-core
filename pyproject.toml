@@ -21,6 +21,7 @@ dependencies = [
     "rich",
     "omegaconf",
     "safetensors",
+    "importlib_resources",
 ]
 
 [project.urls]
@@ -65,7 +66,7 @@ all = [
 include-package-data = true
 
 [tool.setuptools.package-data]
-olmo_core = ["py.typed"]
+olmo_core = ["py.typed", "*.txt"]
 
 [tool.setuptools.dynamic]
 version = { attr = "olmo_core.version.VERSION" }
