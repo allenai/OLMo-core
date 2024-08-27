@@ -23,6 +23,11 @@ dependencies = [
     "safetensors",
 ]
 
+[project.urls]
+Homepage = "https://github.com/allenai/OLMo-core"
+Documentation = "https://olmo-core.readthedocs.io/en/latest/"
+Changelog = "https://github.com/allenai/OLMo-core/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 dev = [
     "ruff",
