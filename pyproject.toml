@@ -10,16 +10,16 @@ description = "Core training module for the Open Language Model (OLMo)"
 authors = [
     { name = "Allen Institute for Artificial Intelligence", email = "olmo@allenai.org" }
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 license = { file = "LICENSE" }
 dependencies = [
     "numpy",
-    "torch>=2.1",
-    "safetensors",
-    "pydantic>=2.0,<3.0",
+    "torch>=2.4,<=2.5.0.dev20240826",
     "cached-path",
     "requests",
     "packaging",
+    "rich",
+    "omegaconf",
 ]
 
 [project.optional-dependencies]
@@ -44,8 +44,15 @@ dev = [
     "sphinx-autobuild==2021.3.14",
     "sphinx-autodoc-typehints==1.23.3",
 ]
+beaker = [
+    "beaker-py",
+    "GitPython>=3.0,<4.0",
+]
+wandb = [
+    "wandb",
+]
 all = [
-    "ai2-olmo-core[dev]",
+    "ai2-olmo-core[dev,beaker,wandb]",
 ]
 
 [tool.setuptools]
@@ -63,7 +70,7 @@ include = ["olmo_core*"]
 exclude = []
 
 [tool.black]
-line-length = 115
+line-length = 100
 include = '\.pyi?$'
 exclude = '''
 (
@@ -149,4 +156,5 @@ filterwarnings = [
     'ignore::FutureWarning:huggingface_hub\.file_download',
     'ignore::DeprecationWarning:pkg_resources',
     'ignore::DeprecationWarning:google\.rpc',
+    'ignore::FutureWarning:torch\.distributed\.checkpoint\.default_planner',
 ]

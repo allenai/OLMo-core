@@ -1,79 +1,48 @@
 import dataclasses
 import gc
+import logging
 import os
+import socket
+import sys
 import time
-from enum import Enum
-from typing import Any, Callable, Iterable, List, Tuple, Union
+import uuid
+import warnings
+from datetime import datetime
+from itertools import cycle, islice
+from queue import Queue
+from threading import Thread
+from typing import Any, Callable, Dict, Optional, TypeVar, Union
 
-import numpy as np
+import rich
 import torch
-import torch.nn as nn
-from pydantic import BaseModel
+from rich.console import Console, ConsoleRenderable
+from rich.highlighter import NullHighlighter
+from rich.text import Text
+from rich.traceback import Traceback
 
-from .exceptions import OLMoEnvironmentError
+from .config import StrEnum
+from .exceptions import OLMoCLIError, OLMoEnvironmentError, OLMoError, OLMoThreadError
 
 OLMO_NUM_THREADS_ENV_VAR = "OLMO_NUM_THREADS"
+LOG_FILTER_TYPE_ENV_VAR = "LOG_FILTER_TYPE"
 
 
-class StrEnum(str, Enum):
+_log_extra_fields: Dict[str, Any] = {}
+_LOGGING_CONFIGURED: bool = False
+log = logging.getLogger(__name__)
+
+
+def generate_uuid() -> str:
     """
-    This is equivalent to Python's :class:`enum.StrEnum` since version 3.11.
-    We include this here for compatibility with older version of Python.
+    Generate a unique ID.
     """
-
-    def __str__(self) -> str:
-        return self.value
-
-    def __repr__(self) -> str:
-        return f"'{str(self)}'"
+    return str(uuid.uuid4())
 
 
-ShapeType = Union[torch.Size, List[int], Tuple[int, ...]]
-
-# torch.float8 formats require 2.1; we do not support these dtypes on earlier versions
-_float8_e4m3fn = getattr(torch, "float8_e4m3fn", None)
-_float8_e5m2 = getattr(torch, "float8_e5m2", None)
-
-TORCH_TO_NP_DTYPES = {
-    torch.int64: np.int64,
-    torch.float32: np.float32,
-    torch.int32: np.int32,
-    # XXX: This is ok because both have the same width
-    torch.bfloat16: np.float16,
-    torch.float16: np.float16,
-    torch.int16: np.int16,
-    torch.uint8: np.uint8,
-    torch.int8: np.int8,
-    torch.bool: bool,
-    torch.float64: np.float64,
-    # XXX: This is ok because both have the same width and byteswap is a no-op anyway
-    _float8_e4m3fn: np.uint8,
-    _float8_e5m2: np.uint8,
-}
-
-TORCH_DTYPES = {
-    "F64": torch.float64,
-    "F32": torch.float32,
-    "F16": torch.float16,
-    "BF16": torch.bfloat16,
-    "I64": torch.int64,
-    # "U64": torch.uint64,
-    "I32": torch.int32,
-    # "U32": torch.uint32,
-    "I16": torch.int16,
-    # "U16": torch.uint16,
-    "I8": torch.int8,
-    "U8": torch.uint8,
-    "BOOL": torch.bool,
-    "F8_E4M3": _float8_e4m3fn,
-    "F8_E5M2": _float8_e5m2,
-}
-
-
-TORCH_DTYPE_TO_STR = {v: k for k, v in TORCH_DTYPES.items()}
-
-
-def default_thread_count() -> int:
+def get_default_thread_count() -> int:
+    """
+    Get the default maximum number of threads allowed.
+    """
     env_val = os.environ.get(OLMO_NUM_THREADS_ENV_VAR)
     if env_val is not None:
         try:
@@ -112,14 +81,37 @@ def apply_to_tensors(fn, container: Any) -> None:
         for f in dataclasses.fields(container):
             name = f.name
             apply_to_tensors(fn, getattr(container, name))
-    elif isinstance(container, BaseModel):
-        apply_to_tensors(fn, container.model_dump())
     elif hasattr(container, "__next__"):
         for x in container:
             apply_to_tensors(fn, x)
 
 
+T = TypeVar("T")
+
+
+def move_to_device(o: T, device: torch.device, non_blocking: bool = False) -> T:
+    """
+    Move a tensor or container of tensors to the given device.
+
+    :param o: The object to move.
+    :param device: The device to move to.
+    """
+    if isinstance(o, torch.Tensor):
+        return o.to(device, non_blocking=non_blocking)  # type: ignore[return-value]
+    elif isinstance(o, dict):
+        return {k: move_to_device(v, device) for k, v in o.items()}  # type: ignore[return-value]
+    elif isinstance(o, list):
+        return [move_to_device(x, device) for x in o]  # type: ignore[return-value]
+    elif isinstance(o, tuple):
+        return tuple((move_to_device(x, device) for x in o))  # type: ignore[return-value]
+    else:
+        return o
+
+
 def get_default_device() -> torch.device:
+    """
+    Get the default device.
+    """
     if torch.cuda.is_available() and torch.cuda.is_initialized():
         return torch.device("cuda")
     else:
@@ -127,7 +119,9 @@ def get_default_device() -> torch.device:
 
 
 def seed_all(seed: int):
-    """Seed all rng objects."""
+    """
+    Seed all RNG states.
+    """
     import random
 
     import numpy as np
@@ -142,32 +136,6 @@ def seed_all(seed: int):
     torch.cuda.manual_seed_all(seed)
 
 
-def get_grad_norm(params: Iterable[nn.Parameter], norm_type: float) -> torch.Tensor:
-    """
-    Return the gradient norm of parameters, where the gradients are viewed as a single vector.
-
-    The returned norm is in FP32 even if parameters/gradients are in a low precision. This is because the downstream
-    use of this return value is a reduction across ranks.
-    """
-    grads = [param.grad for param in params if param.grad is not None]
-    if not grads:
-        return torch.tensor(0.0)
-
-    grad_dtypes = {grad.dtype for grad in grads}
-    if len(grad_dtypes) != 1:
-        raise ValueError(f"Requires uniform dtype across all gradients but got {grad_dtypes}")
-    # Compute the gradient norm in FP32, where we treat the gradients as a
-    # single vector
-    grad_norm = torch.linalg.vector_norm(
-        torch.stack(
-            [torch.linalg.vector_norm(grad.detach(), norm_type, dtype=torch.float32) for grad in grads],
-        ),
-        norm_type,
-        dtype=torch.float32,
-    )
-    return grad_norm
-
-
 def same_storage(x: torch.Tensor, y: torch.Tensor) -> bool:
     """
     Check if two tensors share the same storage.
@@ -179,42 +147,425 @@ def same_storage(x: torch.Tensor, y: torch.Tensor) -> bool:
 
 def gc_cuda():
     """
-    Run CUDA garbage collection.
+    Run garbage collection, including emptying the CUDA cache.
     """
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
 
-@torch.no_grad()
-def alloc_storage(tensor: torch.Tensor, size: torch.Size) -> None:
+def get_document_lengths(input_ids: torch.Tensor, eos_token_id: int) -> torch.Tensor:
     """
-    Allocate storage for ``tensor`` with the given size.
+    Get the length of documents.
 
-    Returns ``True`` if this method allocated storage and ``False`` if the storage was already allocated.
+    :param input_ids: An integer-type tensor of token IDs.
+    :param eos_token_id: The ID of the EOS token (use to denote document boundaries).
     """
-    already_allocated = tensor._typed_storage()._size() == size.numel()
-    if not already_allocated:
-        tensor_storage_size = tensor._typed_storage()._size()
-        if tensor_storage_size != 0:
-            raise RuntimeError(f"Tensor storage should have been resized to be 0 but got {tensor_storage_size}")
-        tensor._typed_storage()._resize_(size.numel())
+    doc_boundaries = torch.cat(
+        [
+            torch.tensor([-1], dtype=torch.int32),
+            (input_ids == eos_token_id).nonzero(as_tuple=True)[0].to(dtype=torch.int32),
+            torch.tensor(
+                [] if input_ids[-1] == eos_token_id else [input_ids.shape[0] - 1], dtype=torch.int32
+            ),
+        ]
+    )
+    return doc_boundaries[1:] - doc_boundaries[:-1]
 
 
-@torch.no_grad()
-def free_storage(tensor: torch.Tensor) -> None:
+def get_cumulative_document_lengths(doc_lens: torch.Tensor) -> torch.Tensor:
     """
-    Frees the underlying storage of ``tensor``.
+    Transform a batched tensor of document lengths into a 1D tensor of cumulative document
+    lengths for the whole batch.
 
-    Returns ``True`` if the method freed the storage and ``False`` if the storage was already freed.
+    :param doc_lens: The document lengths, such as those returned by :func:`get_document_lengths`.
     """
-    already_freed = tensor._typed_storage()._size() == 0
-    if not already_freed:
-        if tensor.storage_offset() != 0:
-            raise RuntimeError(
-                "Freeing a tensor's storage is unsafe when it is not the sole occupant\n"
-                f"storage offset: {tensor.storage_offset()}\n"
-                f"storage size: {tensor._typed_storage()._size()}\n"
-                f"tensor shape: {tensor.shape}",
-            )
-        tensor._typed_storage()._resize_(0)
+    return torch.cat(
+        [
+            torch.tensor([0], dtype=torch.int32, device=doc_lens.device),
+            torch.cumsum(doc_lens.masked_select(doc_lens != 0), 0, dtype=torch.int32),
+        ]
+    )
+
+
+def has_flash_attn() -> bool:
+    """
+    Check if flash-attn is available.
+    """
+    try:
+        import flash_attn  # type: ignore
+
+        del flash_attn
+        return True
+    except ModuleNotFoundError:
+        return False
+
+
+def set_env_var(name: str, value: str, override: bool = False, secret: bool = False):
+    global _LOGGING_CONFIGURED
+    value_str = "****" if secret else value
+    if name in os.environ:
+        if override and os.environ[name] != value:
+            msg = f"Overriding env var '{name}' to '{value_str}'"
+            if _LOGGING_CONFIGURED:
+                log.warning(msg)
+            else:
+                print(msg)
+            os.environ[name] = value
+    else:
+        msg = f"Setting env var '{name}' to '{value_str}'"
+        if _LOGGING_CONFIGURED:
+            log.info(msg)
+        else:
+            print(msg)
+        os.environ[name] = value
+
+
+class LogFilterType(StrEnum):
+    """
+    Determines which ranks are allowed to emit INFO messages.
+    """
+
+    rank0_only = "rank0_only"
+    """
+    INFO messages are only emitted from the global rank 0.
+    """
+
+    local_rank0_only = "local_rank0_only"
+    """
+    INFO messages are only emitted from the local (node) rank 0.
+    """
+
+    all_ranks = "all_ranks"
+    """
+    All ranks emit INFO messages.
+    """
+
+
+def log_extra_field(field_name: str, field_value: Any) -> None:
+    """
+    Add an additional field to each log record.
+
+    .. note::
+        For these fields to actually show up in the logs you need to use a formatter/handler
+        that displays them.
+
+    :param field_name: The name of the field to attach.
+    :param field_value: The value of the field to attach.
+    """
+    global _log_extra_fields
+    if field_value is None:
+        if field_name in _log_extra_fields:
+            del _log_extra_fields[field_name]
+    else:
+        _log_extra_fields[field_name] = field_value
+
+
+def setup_logging(
+    log_filter_type: LogFilterType = LogFilterType.rank0_only, force: bool = False
+) -> None:
+    """
+    Configure logging.
+
+    .. seealso::
+        :func:`prepare_cli_environment()`
+
+    :param log_filter_type: Which ranks emit INFO and below messages.
+    :param force: Force configuring logging even if it was already configured.
+    """
+    global _LOGGING_CONFIGURED
+
+    if _LOGGING_CONFIGURED and not force:
+        return
+
+    from .distributed.utils import get_local_rank, get_rank
+
+    log_extra_field("hostname", socket.gethostname())
+    log_extra_field("local_rank", get_local_rank())
+    log_extra_field("global_rank", get_rank())
+
+    old_log_record_factory = logging.getLogRecordFactory()
+
+    def log_record_factory(*args, **kwargs) -> logging.LogRecord:
+        record = old_log_record_factory(*args, **kwargs)
+        for field_name, field_value in _log_extra_fields.items():
+            setattr(record, field_name, field_value)
+        return record
+
+    logging.setLogRecordFactory(log_record_factory)
+
+    handler: logging.Handler
+    if (
+        os.environ.get("OLMo_NONINTERACTIVE", False)
+        or os.environ.get("DEBIAN_FRONTEND", None) == "noninteractive"
+        or not sys.stdout.isatty()
+    ):
+        handler = logging.StreamHandler(sys.stdout)
+        formatter = logging.Formatter(
+            "%(asctime)s\t%(hostname)s:%(local_rank)s\t%(name)s:%(lineno)s\t%(levelname)s\t%(message)s"
+        )
+        formatter.default_time_format = "%Y-%m-%d %H:%M:%S"
+        formatter.default_msec_format = "%s.%03d"
+        handler.setFormatter(formatter)
+    else:
+        handler = _RichHandler()
+
+    def rank0_filter(record: logging.LogRecord) -> int:
+        if record.levelno > logging.INFO:
+            return 1
+        if getattr(record, "global_rank", 0) == 0:
+            return 1
+        else:
+            return 0
+
+    def local_rank0_filter(record: logging.LogRecord) -> int:
+        if record.levelno > logging.INFO:
+            return 1
+        if getattr(record, "local_rank", 0) == 0:
+            return 1
+        else:
+            return 0
+
+    if log_filter_type == LogFilterType.rank0_only:
+        filter = rank0_filter
+    elif log_filter_type == LogFilterType.local_rank0_only:
+        filter = local_rank0_filter  # type: ignore
+    elif log_filter_type == LogFilterType.all_ranks:
+        filter = None
+    else:
+        raise ValueError(log_filter_type)
+
+    if filter is not None:
+        handler.addFilter(filter)  # type: ignore
+    logging.basicConfig(handlers=[handler], level=logging.INFO)
+
+    logging.captureWarnings(True)
+    logging.getLogger("urllib3").setLevel(logging.ERROR)
+
+    _LOGGING_CONFIGURED = True
+
+
+def excepthook(exctype, value, traceback):
+    """
+    Used to patch ``sys.excepthook`` in order to log exceptions. Use :func:`install_excepthook()`
+    to install this.
+    """
+    if issubclass(exctype, KeyboardInterrupt):
+        sys.__excepthook__(exctype, value, traceback)
+    elif issubclass(exctype, OLMoCLIError):
+        rich.get_console().print(f"[yellow]{value}[/]", highlight=False)
+    elif issubclass(exctype, OLMoError):
+        rich.get_console().print(Text(f"{exctype.__name__}:", style="red"), value, highlight=False)
+    else:
+        log.critical(
+            "Uncaught %s: %s", exctype.__name__, value, exc_info=(exctype, value, traceback)
+        )
+
+
+def install_excepthook():
+    """
+    Install the custom :func:`excepthook`.
+
+    .. seealso::
+        :func:`prepare_cli_environment()`
+    """
+    sys.excepthook = excepthook
+
+
+def filter_warnings():
+    """
+    Configure warning filters for warnings we don't need to see.
+
+    .. seealso::
+        :func:`prepare_cli_environment()`
+    """
+    # Filter internal deprecation warnings from torch
+    warnings.filterwarnings(
+        action="ignore",
+        category=UserWarning,
+        message="torch.distributed.*_base is a private function and will be deprecated.*",
+    )
+    warnings.filterwarnings(
+        action="ignore",
+        category=UserWarning,
+        message="TypedStorage is deprecated.*",
+    )
+    warnings.filterwarnings(
+        action="ignore",
+        category=UserWarning,
+        message="Please use DTensor instead.*",
+    )
+    warnings.filterwarnings(
+        action="ignore",
+        category=FutureWarning,
+        message="You are using `torch.load` with `weights_only=False`.*",
+    )
+    # flash_attn warnings.
+    warnings.filterwarnings(
+        action="ignore",
+        category=FutureWarning,
+        module="flash_attn.ops.triton.layer_norm",
+    )
+    # Torchvision warnings. We don't actually use torchvision.
+    warnings.filterwarnings(
+        action="ignore",
+        message="failed to load.*",
+        module="torchvision.io.image",
+    )
+
+
+def set_env_variables():
+    """
+    Set common needed env vars if they're not already set.
+
+    .. seealso::
+        :func:`prepare_cli_environment()`
+    """
+    set_env_var("OMP_NUM_THREADS", "8")
+    set_env_var("TOKENIZERS_PARALLELISM", "false")
+
+
+def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
+    """
+    Prepare the environment for a script/CLI.
+    This should be called at the very beginning of the script/command, like at the top
+    of the ``if __name__ == "__main__": ...`` block.
+
+    Internally this calls:
+
+    - :func:`setup_logging()`
+    - :func:`install_excepthook()`
+    - :func:`filter_warnings()`
+    - :func:`set_env_variables()`
+
+    .. tip::
+        If you're looking to setup the environment specifically for distributed training,
+        see :func:`~olmo_core.train.prepare_training_environment` instead.
+
+    :param log_filter_type: Determines which ranks are allowed to emit log messages below the
+        ``WARNING`` level. You can also configure this through the env var ``LOG_FILTER_TYPE``.
+        If neither are set, this defaults to "rank0_only".
+
+        .. note::
+            All ranks will always emit messages at the ``WARNING`` level or higher.
+    """
+    if log_filter_type is None:
+        log_filter_type = LogFilterType(os.environ.get(LOG_FILTER_TYPE_ENV_VAR, "rank0_only"))
+    rich.reconfigure(width=max(rich.get_console().width, 180), soft_wrap=True)
+    setup_logging(log_filter_type=log_filter_type)
+    install_excepthook()
+    filter_warnings()
+    set_env_variables()
+
+
+class _RichHandler(logging.Handler):
+    """
+    A simplified version of rich.logging.RichHandler from
+    https://github.com/Textualize/rich/blob/master/rich/logging.py
+    """
+
+    def __init__(
+        self,
+        *,
+        level: Union[int, str] = logging.NOTSET,
+        console: Optional[Console] = None,
+        markup: bool = False,
+    ) -> None:
+        super().__init__(level=level)
+        self.console = console or rich.get_console()
+        self.highlighter = NullHighlighter()
+        self.markup = markup
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            if hasattr(record.msg, "__rich__") or hasattr(record.msg, "__rich_console__"):
+                self.console.print(record.msg)
+            else:
+                msg: Any = record.msg
+                if isinstance(record.msg, str):
+                    msg = self.render_message(record=record, message=record.getMessage())
+                renderables = [
+                    self.get_time_text(record),
+                    self.get_level_text(record),
+                    self.get_location_text(record),
+                    msg,
+                ]
+                if record.exc_info is not None:
+                    tb = Traceback.from_exception(*record.exc_info)  # type: ignore
+                    renderables.append(tb)
+                self.console.print(*renderables)
+        except Exception:
+            self.handleError(record)
+
+    def render_message(self, *, record: logging.LogRecord, message: str) -> ConsoleRenderable:
+        use_markup = getattr(record, "markup", self.markup)
+        message_text = Text.from_markup(message) if use_markup else Text(message)
+
+        highlighter = getattr(record, "highlighter", self.highlighter)
+        if highlighter:
+            message_text = highlighter(message_text)
+
+        return message_text
+
+    def get_time_text(self, record: logging.LogRecord) -> Text:
+        log_time = datetime.fromtimestamp(record.created)
+        time_str = log_time.strftime("[%Y-%m-%d %X]")
+        return Text(time_str, style="log.time", end=" ")
+
+    def get_level_text(self, record: logging.LogRecord) -> Text:
+        level_name = record.levelname
+        level_text = Text.styled(level_name.ljust(8), f"logging.level.{level_name.lower()}")
+        level_text.style = "log.level"
+        level_text.end = " "
+        return level_text
+
+    def get_location_text(self, record: logging.LogRecord) -> Text:
+        name_and_line = f"{record.name}:{record.lineno}" if record.name != "root" else "root"
+        text = f"[{name_and_line}, rank={record.local_rank}]"  # type: ignore
+        return Text(text, style="log.path")
+
+
+def threaded_generator(g, maxsize: int = 16, thread_name: Optional[str] = None):
+    """
+    Wraps a generator ``g`` and runs it in a thread.
+    """
+    q: Queue = Queue(maxsize=maxsize)
+
+    sentinel = object()
+
+    def fill_queue():
+        try:
+            for value in g:
+                q.put(value)
+        except Exception as e:
+            q.put(e)
+        finally:
+            q.put(sentinel)
+
+    thread_name = thread_name or repr(g)
+    thread = Thread(name=thread_name, target=fill_queue, daemon=True)
+    thread.start()
+
+    for x in iter(q.get, sentinel):
+        if isinstance(x, Exception):
+            raise OLMoThreadError(f"generator thread {thread_name} failed") from x
+        else:
+            yield x
+
+
+def roundrobin(*iterables):
+    """
+    Call the given iterables in a round-robin fashion. For example:
+    ``roundrobin('ABC', 'D', 'EF') --> A D E B F C``
+    """
+    # Adapted from https://docs.python.org/3/library/itertools.html#itertools-recipes
+    num_active = len(iterables)
+    nexts = cycle(iter(it).__next__ for it in iterables)
+    while num_active:
+        try:
+            for next in nexts:
+                yield next()
+        except StopIteration:
+            # Remove the iterator we just exhausted from the cycle.
+            num_active -= 1
+            nexts = cycle(islice(nexts, num_active))

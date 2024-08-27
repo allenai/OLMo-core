@@ -8,7 +8,8 @@
 
 **OLMo-core** is a Python library that provides building blocks for large-scale distributed training with PyTorch.
 
-To get started, install OLMo-core from PyPI with:
+To get started first install `PyTorch <https://pytorch.org>`_ according to the official instructions
+specific to your environment. Then you can install OLMo-core from PyPI with:
 
 .. code-block:: bash
 
@@ -17,13 +18,32 @@ To get started, install OLMo-core from PyPI with:
 .. toctree::
    :hidden:
    :maxdepth: 2
+   :caption: Examples
+
+   examples/train.rst
+
+.. toctree::
+   :hidden:
+   :maxdepth: 2
    :caption: API Reference
 
+   config.rst
+   data.rst
+   distributed/checkpoint.rst
+   distributed/parallel.rst
+   distributed/utils.rst
    exceptions.rst
    io.rst
+   launch.rst
+   nn/index.rst
+   nn/functional.rst
+   nn/transformer.rst
+   optim.rst
+   train/index.rst
+   train/callbacks.rst
+   train/checkpoint.rst
+   train/utils.rst
    utils.rst
-   distributed/checkpoint.rst
-   distributed/tensors.rst
 
 .. toctree::
    :hidden:

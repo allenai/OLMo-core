@@ -2,12 +2,34 @@ import pytest
 import torch
 
 has_cuda = torch.cuda.is_available()
+has_flash_attn = False
+
+try:
+    import flash_attn  # type: ignore
+
+    has_flash_attn = True
+    del flash_attn
+except ModuleNotFoundError:
+    pass
+
 
 GPU_MARKS = (pytest.mark.gpu, pytest.mark.skipif(not has_cuda, reason="Requires a GPU"))
 
 
 def requires_gpu(func):
     for mark in GPU_MARKS:
+        func = mark(func)
+    return func
+
+
+FLASH_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_flash_attn, reason="Requires flash-attn"),
+)
+
+
+def requires_flash_attn(func):
+    for mark in FLASH_MARKS:
         func = mark(func)
     return func
 

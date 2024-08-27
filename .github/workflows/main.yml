@@ -53,7 +53,7 @@ jobs:
             run: make style-check
 
         include:
-          - python: '3.8'
+          - python: '3.9'
             task:
               name: Lint (min Python)
               run: make lint-check
@@ -101,8 +101,8 @@ jobs:
     timeout-minutes: 8
     env:
       BEAKER_TOKEN: ${{ secrets.BEAKER_TOKEN }}
-      BEAKER_IMAGE: olmo-torch2-test
-      BEAKER_WORKSPACE: ai2/llm-testing
+      BEAKER_IMAGE: petew/olmo-core
+      BEAKER_WORKSPACE: ai2/OLMo-core
     strategy:
       fail-fast: false
       matrix:
@@ -142,12 +142,10 @@ jobs:
                   gpuCount: 2
                 constraints:
                   cluster:
-                    - ai2/general-cirrascale
-                    - ai2/general-cirrascale-a100-80g-ib
                     - ai2/allennlp-cirrascale
                     - ai2/allennlp-elanding-a100-40g
                     - ai2/pluto-cirrascale
-                    - ai2/jupiter-cirrascale
+                    - ai2/jupiter-cirrascale-2
                 envVars:
                   - name: CUBLAS_WORKSPACE_CONFIG
                     value: ":16:8"

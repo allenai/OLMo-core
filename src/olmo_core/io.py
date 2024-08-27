@@ -1,12 +1,12 @@
+import io
 import logging
 import os
 import pickle
 import re
 import shutil
 import time
-from os import PathLike
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Generator, Optional, Tuple, Union
 
 try:
     from functools import cache
@@ -14,16 +14,39 @@ except ImportError:
     from functools import lru_cache as cache
 
 import torch
+from cached_path import cached_path
+from cached_path.schemes import S3Client, SchemeClient, add_scheme_client
 
+from .aliases import PathOrStr
 from .exceptions import OLMoEnvironmentError, OLMoNetworkError
 
 log = logging.getLogger(__name__)
 
-PathOrStr = Union[Path, PathLike, str]
-
 ############################################
 ## Unified API for local and remote files ##
 ############################################
+
+
+def normalize_path(path: PathOrStr) -> str:
+    """
+    Normalize a path/URL.
+
+    :param path: The path/URL to normalize.
+    """
+    return str(path).rstrip("/").replace("file://", "")
+
+
+def resource_path(folder: PathOrStr, fname: str, local_cache: Optional[PathOrStr] = None) -> Path:
+    """
+    Returns an actual path for local or remote file, potentially downloading it if a copy doesn't
+    exist locally yet.
+    """
+    folder = normalize_path(folder)
+    if local_cache is not None and (local_path := Path(local_cache) / fname).is_file():
+        log.info(f"Found local cache of {fname} at {local_path}")
+        return local_path
+    else:
+        return cached_path(f"{folder}/{fname}", quiet=True)
 
 
 def is_url(path: PathOrStr) -> bool:
@@ -32,6 +55,7 @@ def is_url(path: PathOrStr) -> bool:
 
     :param path: Path-like object to check.
     """
+    path = normalize_path(path)
     return re.match(r"[a-z0-9]+://.*", str(path)) is not None
 
 
@@ -41,6 +65,8 @@ def file_size(path: PathOrStr) -> int:
 
     :param path: Path/URL to the file.
     """
+    path = normalize_path(path)
+
     if is_url(path):
         from urllib.parse import urlparse
 
@@ -61,18 +87,22 @@ def file_size(path: PathOrStr) -> int:
 
 def get_bytes_range(path: PathOrStr, bytes_start: int, num_bytes: int) -> bytes:
     """
-    Get a range of bytes from a file.
+    Get a range of bytes from a local or remote file.
 
     :param source: Path/URL to the file.
     :param bytes_start: Byte offset to start at.
     :param num_bytes: Number of bytes to get.
     """
+    path = normalize_path(path)
+
     if is_url(path):
         from urllib.parse import urlparse
 
         parsed = urlparse(str(path))
         if parsed.scheme == "gs":
-            return _gcs_get_bytes_range(parsed.netloc, parsed.path.strip("/"), bytes_start, num_bytes)
+            return _gcs_get_bytes_range(
+                parsed.netloc, parsed.path.strip("/"), bytes_start, num_bytes
+            )
         elif parsed.scheme in ("s3", "r2", "weka"):
             return _s3_get_bytes_range(
                 parsed.scheme, parsed.netloc, parsed.path.strip("/"), bytes_start, num_bytes
@@ -99,7 +129,7 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
     """
     from urllib.parse import urlparse
 
-    source = Path(source)
+    source = Path(normalize_path(source))
     assert source.is_file()
     num_bytes = file_size(source)
     log.info(f"Uploading {_format_bytes(num_bytes)} from '{source}' to '{target}'...")
@@ -107,33 +137,39 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
     if parsed.scheme == "gs":
         _gcs_upload(source, parsed.netloc, parsed.path.strip("/"), save_overwrite=save_overwrite)
     elif parsed.scheme in ("s3", "r2", "weka"):
-        _s3_upload(source, parsed.scheme, parsed.netloc, parsed.path.strip("/"), save_overwrite=save_overwrite)
+        _s3_upload(
+            source,
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path.strip("/"),
+            save_overwrite=save_overwrite,
+        )
     else:
         raise NotImplementedError(f"Upload not implemented for '{parsed.scheme}' scheme")
 
 
 def dir_is_empty(dir: PathOrStr) -> bool:
     """
-    Check if a local directory is empty. This also returns true if the directory does not exist.
+    Check if a local or remote directory is empty.
+    This also returns true if the directory does not exist.
 
-    :param dir: Path to the local directory.
+    :param dir: Path/URL to the directory.
     """
-    dir = Path(dir)
-    if not dir.is_dir():
-        return True
     try:
-        next(dir.glob("*"))
+        next(list_directory(dir))
         return False
-    except StopIteration:
+    except (StopIteration, FileNotFoundError):
         return True
 
 
 def file_exists(path: PathOrStr) -> bool:
     """
-    Check if a file exists.
+    Check if a local or remote file exists.
 
     :param path: Path/URL to a file.
     """
+    path = normalize_path(path)
+
     if is_url(path):
         from urllib.parse import urlparse
 
@@ -154,32 +190,83 @@ def file_exists(path: PathOrStr) -> bool:
                 return True
         elif parsed.scheme in ("http", "https"):
             return _http_file_exists(str(path))
-        elif parsed.scheme == "file":
-            return file_exists(str(path).replace("file://", "", 1))
         else:
             raise NotImplementedError(f"file_exists not implemented for '{parsed.scheme}' files")
     else:
         return Path(path).exists()
 
 
-def clear_directory(dir: PathOrStr):
+def clear_directory(dir: PathOrStr, force: bool = False):
     """
-    Clear out the contents of a local or remote directory. GCS (``gs://``) and S3 (``s3://``) URLs are supported.
+    Clear out the contents of a local or remote directory.
+
+    .. warning::
+        This function is potentially very destructive!
+
+        By default, for safety, this raise a :class:`ValueError` if you attempt to clear a remote
+        directory too close to the root of the bucket. Set ``force=True`` to override.
 
     :param dir: Path/URL to the directory.
+    :param force: See note about safety.
     """
+    dir = normalize_path(dir)
+
     if is_url(dir):
         from urllib.parse import urlparse
 
         parsed = urlparse(str(dir))
         if parsed.scheme in ("s3", "r2", "weka"):
-            return _s3_clear_directory(parsed.scheme, parsed.netloc, parsed.path.strip("/"))
-        elif parsed.scheme == "file":
-            return clear_directory(str(dir).replace("file://", "", 1))
+            prefix = parsed.path.strip("/")
+            # For safety (so people don't accidentally delete a whole bunch of important data),
+            # ensure prefix is at least 2 folders deep.
+            if not force and prefix.count("/") < 2:
+                raise ValueError(
+                    "For safety, clearing a remote directory this close to the root of a bucket is "
+                    "not allowed by default. To override this behavior set ``force=True``."
+                )
+            return _s3_clear_directory(parsed.scheme, parsed.netloc, prefix)
         else:
-            raise NotImplementedError(f"clear_directory not implemented for '{parsed.scheme}' folders")
+            raise NotImplementedError(
+                f"clear_directory not implemented for '{parsed.scheme}' folders"
+            )
     elif Path(dir).is_dir():
         shutil.rmtree(dir, ignore_errors=True)
+
+
+def list_directory(dir: PathOrStr) -> Generator[str, None, None]:
+    """
+    List the contents of a local or remote directory.
+
+    :param dir: Path/URL to the directory.
+    """
+    dir = normalize_path(dir)
+
+    if not is_url(dir):
+        for p in Path(dir).iterdir():
+            yield str(p)
+    else:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(dir)
+        if parsed.scheme in ("s3", "r2", "weka"):
+            yield from _s3_list_directory(parsed.scheme, parsed.netloc, parsed.path.strip("/"))
+        else:
+            raise NotImplementedError(
+                f"list_directory size not implemented for '{parsed.scheme}' URLs"
+            )
+
+
+def init_client(remote_path: str):
+    """
+    Initialize the right client for the given remote resource. This is helpful to avoid threading issues
+    with boto3.
+    """
+    if remote_path.startswith("s3://"):
+        _get_s3_client("s3")
+    elif remote_path.startswith("r2://"):
+        _get_s3_client("r2")
+    elif remote_path.startswith("weka://"):
+        _get_s3_client("weka")
 
 
 ###################################
@@ -241,7 +328,9 @@ def _http_file_size(url: str) -> int:
 def _http_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
     import requests
 
-    response = requests.get(url, headers={"Range": f"bytes={bytes_start}-{bytes_start+num_bytes-1}"})
+    response = requests.get(
+        url, headers={"Range": f"bytes={bytes_start}-{bytes_start+num_bytes-1}"}
+    )
     if response.status_code == 404:
         raise FileNotFoundError(url)
 
@@ -309,7 +398,9 @@ def _gcs_upload(source: Path, bucket_name: str, key: str, save_overwrite: bool =
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(key)
     if not save_overwrite and blob.exists():
-        raise FileExistsError(f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it.")
+        raise FileExistsError(
+            f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
+        )
     blob.upload_from_filename(source)
 
 
@@ -392,7 +483,12 @@ def _s3_file_size(scheme: str, bucket_name: str, key: str, max_attempts: int = 3
             err = e
 
         if attempt < max_attempts:
-            log.warning("%s failed attempt %d with retriable error: %s", _s3_file_size.__name__, attempt, err)
+            log.warning(
+                "%s failed attempt %d with retriable error: %s",
+                _s3_file_size.__name__,
+                attempt,
+                err,
+            )
             _wait_before_retry(attempt)
 
     raise OLMoNetworkError("Failed to get s3 file size") from err
@@ -409,7 +505,9 @@ def _s3_get_bytes_range(
             return (
                 _get_s3_client(scheme)
                 .get_object(
-                    Bucket=bucket_name, Key=key, Range=f"bytes={bytes_start}-{bytes_start + num_bytes - 1}"
+                    Bucket=bucket_name,
+                    Key=key,
+                    Range=f"bytes={bytes_start}-{bytes_start + num_bytes - 1}",
                 )["Body"]
                 .read()
             )
@@ -425,7 +523,10 @@ def _s3_get_bytes_range(
 
         if attempt < max_attempts:
             log.warning(
-                "%s failed attempt %d with retriable error: %s", _s3_get_bytes_range.__name__, attempt, err
+                "%s failed attempt %d with retriable error: %s",
+                _s3_get_bytes_range.__name__,
+                attempt,
+                err,
             )
             _wait_before_retry(attempt)
 
@@ -440,7 +541,12 @@ def _s3_get_bytes_range(
 
 
 def _s3_upload(
-    source: Path, scheme: str, bucket_name: str, key: str, save_overwrite: bool = False, max_attempts: int = 3
+    source: Path,
+    scheme: str,
+    bucket_name: str,
+    key: str,
+    save_overwrite: bool = False,
+    max_attempts: int = 3,
 ):
     from botocore.exceptions import ClientError
 
@@ -459,7 +565,12 @@ def _s3_upload(
                 err = e
 
             if attempt < max_attempts:
-                log.warning("%s failed attempt %d with retriable error: %s", _s3_upload.__name__, attempt, err)
+                log.warning(
+                    "%s failed attempt %d with retriable error: %s",
+                    _s3_upload.__name__,
+                    attempt,
+                    err,
+                )
                 _wait_before_retry(attempt)
 
         if err is not None:
@@ -480,16 +591,99 @@ def _s3_clear_directory(scheme: str, bucket_name: str, prefix: str, max_attempts
     err: Optional[Exception] = None
     for attempt in range(1, max_attempts + 1):
         try:
-            for o in _get_s3_client(scheme).list_objects_v2(Bucket=bucket_name, Prefix=prefix)["Contents"]:
+            for o in _get_s3_client(scheme).list_objects_v2(Bucket=bucket_name, Prefix=prefix)[
+                "Contents"
+            ]:
                 _get_s3_client(scheme).delete_object(Bucket=bucket_name, Key=o["Key"])
             return
         except ClientError as e:
             if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
                 return
             err = e
+        except KeyError:
+            return
 
         if attempt < max_attempts:
-            log.warning("%s failed attempt %d with retriable error: %s", _s3_upload.__name__, attempt, err)
+            log.warning(
+                "%s failed attempt %d with retriable error: %s", _s3_upload.__name__, attempt, err
+            )
             _wait_before_retry(attempt)
 
     raise OLMoNetworkError("Failed to remove S3 directory") from err
+
+
+def _s3_list_directory(scheme: str, bucket_name: str, prefix: str) -> Generator[str, None, None]:
+    response = _get_s3_client(scheme).list_objects(Bucket=bucket_name, Prefix=prefix, Delimiter="/")
+    assert not response["IsTruncated"]  # need to handle this if it happens
+    for item in response.get("CommonPrefixes", []):
+        prefix = item["Prefix"].strip("/")
+        yield f"{scheme}://{bucket_name}/{prefix}"
+
+
+#############################################
+## Custom cached path client for 'weka://' ##
+#############################################
+
+
+def add_cached_path_clients():
+    """
+    Add additional cached-path clients.
+    """
+    add_scheme_client(_WekaClient)
+
+
+class _WekaClient(SchemeClient):
+    recoverable_errors = S3Client.recoverable_errors
+
+    scheme = "weka"
+
+    def __init__(self, resource: str) -> None:
+        super().__init__(resource)
+        self.bucket_name, self.path = _WekaClient._split_cloud_path(resource, "weka")
+        self.s3 = _get_s3_client("weka")
+        self.object_info = None
+
+    @staticmethod
+    def _split_cloud_path(url: str, provider: str) -> Tuple[str, str]:
+        """Split a full s3 path into the bucket name and path."""
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        if not parsed.netloc or not parsed.path:
+            raise ValueError("bad {} path {}".format(provider, url))
+        bucket_name = parsed.netloc
+        provider_path = parsed.path
+        # Remove '/' at beginning of path.
+        if provider_path.startswith("/"):
+            provider_path = provider_path[1:]
+        return bucket_name, provider_path
+
+    def _ensure_object_info(self):
+        import botocore.exceptions as boto_exceptions
+
+        if self.object_info is None:
+            try:
+                self.object_info = self.s3.head_object(Bucket=self.bucket_name, Key=self.path)
+            except boto_exceptions.ClientError as e:
+                if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
+                    raise FileNotFoundError(f"weka://{self.bucket_name}/{self.path}") from e
+                raise e
+
+    def get_etag(self) -> Optional[str]:
+        self._ensure_object_info()
+        assert self.object_info is not None
+        return self.object_info.get("ETag")
+
+    def get_size(self) -> Optional[int]:
+        self._ensure_object_info()
+        assert self.object_info is not None
+        return self.object_info.get("ContentLength")
+
+    def get_resource(self, temp_file: io.BufferedWriter) -> None:
+        self.s3.download_fileobj(Fileobj=temp_file, Bucket=self.bucket_name, Key=self.path)
+
+    def get_bytes_range(self, index: int, length: int) -> bytes:
+        response = self.s3.get_object(
+            Bucket=self.bucket_name, Key=self.path, Range=f"bytes={index}-{index+length-1}"
+        )
+        return response["Body"].read()
