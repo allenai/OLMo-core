@@ -48,7 +48,7 @@ class Checkpointer:
         dir = normalize_path(dir)
         with self._temporary_wd(dir) as wd:
             # Save trainer state.
-            self._save_train_state(wd, train_state)
+            self._save_train_state(dir, wd, train_state)
 
             # Save model and optim state.
             model_and_optim_dir = (
