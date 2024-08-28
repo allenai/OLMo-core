@@ -512,18 +512,18 @@ class Trainer:
         """
         Load a checkpoint.
 
-        :param dir: The path/URL to the checkpoint.
+        :param dir: The path/URL to a checkpoint or a folder of checkpoints.
         :param load_optimizer_state: Load optimizer state.
         :param load_trainer_state: Load trainer state.
         """
-        if not self.checkpointer.dir_is_checkpoint(dir):
+        dir = normalize_path(dir)
+
+        # NOTE: to avoid making a ton of client requests (S3 or otherwise) we only make those
+        # requests from rank 0 then scatter the result to the other ranks.
+        if get_rank() == 0 and not self.checkpointer.dir_is_checkpoint(dir):
             # Try to find the latest checkpoint in the directory.
-            latest_checkpoint: Optional[str] = None
-            if get_rank() == 0:
-                latest_checkpoint = self.checkpointer.latest_checkpoint(dir)
-            latest_checkpoint = scatter_object(latest_checkpoint)
-            assert latest_checkpoint is not None
-            dir = latest_checkpoint
+            dir = self.checkpointer.latest_checkpoint(dir)
+        dir = scatter_object(dir)
 
         log.info(f"Loading checkpoint from '{dir}'...")
         trainer_state = self.checkpointer.load(

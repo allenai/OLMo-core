@@ -13,7 +13,12 @@ from beaker import Beaker
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.data import DataMix, MemMapDatasetConfig, TokenizerConfig
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
-from olmo_core.distributed.utils import get_num_nodes, get_rank, init_hybrid_shard_mesh
+from olmo_core.distributed.utils import (
+    get_num_nodes,
+    get_rank,
+    init_hybrid_shard_mesh,
+    scatter_object,
+)
 from olmo_core.io import is_url
 from olmo_core.launch.beaker import (
     BeakerEnvSecret,
@@ -221,15 +226,18 @@ def train(config: ExperimentConfig):
     dataset = config.dataset.build()
     trainer = config.trainer.build(model, optim, dataset)
 
-    # Maybe load a checkpoint.
-    if (load_path := config.load_path) is not None and (
-        config.load_strategy == LoadStrategy.always
-        or (
-            config.load_strategy == LoadStrategy.if_available
-            and trainer.checkpointer.contains_checkpoint(load_path)
-        )
-    ):
-        trainer.load_checkpoint(load_path)
+    if (load_path := config.load_path) is not None:
+        # Maybe load a checkpoint.
+        should_load: bool = True
+        if config.load_strategy == LoadStrategy.never:
+            should_load = False
+        elif config.load_strategy == LoadStrategy.if_available:
+            if get_rank() == 0:
+                should_load = trainer.checkpointer.contains_checkpoint(load_path)
+            should_load = scatter_object(should_load)
+
+        if should_load:
+            trainer.load_checkpoint(load_path)
     elif get_rank() == 0:
         # Save config to file.
         trainer.write_file("config.json", json.dumps(config_dict, indent=2))

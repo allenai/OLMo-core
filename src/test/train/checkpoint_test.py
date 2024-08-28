@@ -11,8 +11,8 @@ from olmo_core.train.checkpoint import Checkpointer
 from ..distributed.utils import run_distributed_test
 
 
-def run_checkpointer(dir, model_factory):
-    dir = normalize_path(dir)
+def run_checkpointer(base_dir, model_factory):
+    dir = f"{normalize_path(base_dir)}/{Checkpointer.checkpoint_dirname(10)}"
 
     if not is_url(dir):
         os.environ["OLMO_SHARED_FS"] = "1"
@@ -29,6 +29,8 @@ def run_checkpointer(dir, model_factory):
     assert file_exists((f"{dir}/train/rank1.pt"))
     assert not dir_is_empty((f"{dir}/model_and_optim"))
     assert checkpointer.dir_is_checkpoint(dir)
+    assert list(checkpointer.find_checkpoints(base_dir)) == [(10, dir)]
+    assert checkpointer.latest_checkpoint(base_dir) == dir
 
     # Load checkpoint.
     train_state = checkpointer.load(dir, model, optim)
