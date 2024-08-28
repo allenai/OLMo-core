@@ -154,7 +154,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     experiment_config.trainer.with_callback(
         CheckpointerCallback(
             save_interval=10_000,
-            ephemeral_save_interval=1024,
+            ephemeral_save_interval=250,
             save_async=True,
             pre_train_checkpoint=experiment_config.load_path is None,
         )
