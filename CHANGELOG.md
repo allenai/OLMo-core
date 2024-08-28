@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `block_idx` attribute to the `TransformerBlock` class.
 - Added `init_method` option to `Transformer` for controlling how the weights are initialized.
 
+### Fixed
+
+- Fixed `list_directory` for remote folders.
+
 ## [v1.0.1](https://github.com/allenai/OLMo-core/releases/tag/v1.0.1) - 2024-08-26
 
 ### Fixed
