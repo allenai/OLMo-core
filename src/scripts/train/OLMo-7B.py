@@ -5,7 +5,7 @@ Train a 7B OLMo model. See below for usage.
 import json
 import sys
 from dataclasses import dataclass
-from typing import List, Literal, Optional
+from typing import List, Optional
 
 from beaker import Beaker
 
@@ -43,6 +43,15 @@ class SubCmd(StrEnum):
     train = "train"
 
 
+class LoadStrategy(StrEnum):
+    if_available = "if_available"
+    """Only load from the load path if a checkpoint exists there."""
+    always = "always"
+    """Always try loading from the load path."""
+    never = "never"
+    """Never load from the load path."""
+
+
 @dataclass
 class ExperimentConfig(Config):
     run_name: str
@@ -51,22 +60,12 @@ class ExperimentConfig(Config):
     optim: AdamWConfig
     dataset: MemMapDatasetConfig
     trainer: TrainerConfig
-
-    load_strategy: Literal["always", "if_available", "never"] = "if_available"
-    """
-    Load strategy.
-
-    - "always" -> load from the load path
-    - "if_available" -> only load from the load path if a checkpoint exists there
-    - "never" -> don't load from the load path even if a checkpoint exists there
-    """
-
+    seed: int = 3423
+    load_strategy: LoadStrategy = LoadStrategy.if_available
     load_path: Optional[str] = None
     """
     Path to load from. Defaults to ``trainer.save_folder`` if ``None``.
     """
-
-    seed: int = 3423
 
 
 def build_config(run_name: str, cluster: str, overrides: List[str]) -> ExperimentConfig:
@@ -180,7 +179,10 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
         )
     )
 
-    if experiment_config.load_path is None and experiment_config.load_strategy != "never":
+    if (
+        experiment_config.load_path is None
+        and experiment_config.load_strategy == LoadStrategy.if_available
+    ):
         experiment_config.load_path = save_folder
 
     return experiment_config
@@ -221,8 +223,8 @@ def train(config: ExperimentConfig):
 
     # Maybe load a checkpoint.
     if (load_path := config.load_path) is not None and (
-        config.load_strategy == "always"
-        or (config.load_strategy == "if_available" and not dir_is_empty(load_path))
+        config.load_strategy == LoadStrategy.always
+        or (config.load_strategy == LoadStrategy.if_available and not dir_is_empty(load_path))
     ):
         trainer.load_checkpoint(load_path)
 
