@@ -1,10 +1,12 @@
+import json
 import os
+import re
 import tempfile
 from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Generator, Optional, Tuple, Union
+from typing import Any, ClassVar, Dict, Generator, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -13,6 +15,7 @@ from cached_path import cached_path
 from torch.optim import Optimizer
 
 from ..aliases import PathOrStr
+from ..config import Config
 from ..distributed.checkpoint import (
     async_save_model_and_optim_state,
     load_model_and_optim_state,
@@ -30,6 +33,12 @@ from ..io import (
     upload,
 )
 from ..utils import wait_for
+from ..version import VERSION
+
+
+@dataclass
+class CheckpointMetadata(Config):
+    version: str = VERSION
 
 
 @dataclass
@@ -37,6 +46,9 @@ class Checkpointer:
     """
     Trainer checkpointer.
     """
+
+    METADATA_FNAME: ClassVar[str] = ".metadata.json"
+    CHECKPOINT_DIR: ClassVar[str] = "step{step}"
 
     save_overwrite: bool = False
     process_group: Optional[dist.ProcessGroup] = None
@@ -62,6 +74,8 @@ class Checkpointer:
                 save_overwrite=self.save_overwrite,
             )
 
+        self._save_metadata(dir, CheckpointMetadata())
+
     def save_async(
         self, dir: PathOrStr, model: nn.Module, optim: Optimizer, train_state: Dict[str, Any]
     ) -> Future[None]:
@@ -81,13 +95,22 @@ class Checkpointer:
 
         # Save model and optim state.
         model_and_optim_dir = f"{dir}/model_and_optim"
-        return async_save_model_and_optim_state(
+        future = async_save_model_and_optim_state(
             model_and_optim_dir,
             model,
             optim,
             process_group=self.process_group,
             save_overwrite=self.save_overwrite,
         )
+
+        def done_callback(fut: Future):
+            fut.result()
+            self._save_metadata(dir, CheckpointMetadata())
+
+        # Upload metadata when everything else is done.
+        future.add_done_callback(done_callback)
+
+        return future
 
     def load(
         self,
@@ -164,12 +187,20 @@ class Checkpointer:
             tmp_path.unlink(missing_ok=True)
 
     @classmethod
+    def checkpoint_dirname(cls, step: int) -> str:
+        return cls.CHECKPOINT_DIR.format(step=step)
+
+    @classmethod
     def dir_is_checkpoint(cls, dir: PathOrStr) -> bool:
         """
         Check if a directory is a checkpoint directory.
         """
         dir = normalize_path(dir)
-        paths_to_check = [f"{dir}/train/rank0.pt", f"{dir}/model_and_optim/.metadata"]
+        paths_to_check = [
+            f"{dir}/train/rank0.pt",
+            f"{dir}/model_and_optim/.metadata",
+            f"{dir}/{cls.METADATA_FNAME}",
+        ]
         for path in paths_to_check:
             if not file_exists(path):
                 return False
@@ -183,19 +214,14 @@ class Checkpointer:
         dir = normalize_path(dir)
         for path in list_directory(dir):
             name = os.path.basename(path)
-            if not name.startswith("step"):
-                continue
+            if (m := re.match("^" + cls.CHECKPOINT_DIR.format(step=r"(\d+)$"), name)) is not None:
+                step = int(m.group(1))
 
-            try:
-                step = int(name.replace("step", ""))
-            except ValueError:
-                continue
+                # Make sure the directory is a valid checkpoint dir.
+                if not cls.dir_is_checkpoint(path):
+                    continue
 
-            # Make sure the directory is a valid checkpoint dir.
-            if not cls.dir_is_checkpoint(path):
-                continue
-
-            yield step, path
+                yield step, path
 
     @classmethod
     def contains_checkpoint(cls, dir: PathOrStr) -> bool:
@@ -238,6 +264,10 @@ class Checkpointer:
             train_dir.mkdir(exist_ok=True, parents=True)
         wait_for(train_dir.exists, description=f"Waiting on '{train_dir}' to be created...")
         torch.save(train_state, train_dir / f"rank{get_rank()}.pt")
+
+    def _save_metadata(self, dir: PathOrStr, metadata: CheckpointMetadata):
+        if get_rank() == 0:
+            self.write_file(dir, self.METADATA_FNAME, json.dumps(metadata.as_dict(json_safe=True)))
 
     def _prepare_dir(self, dir: PathOrStr, ensure_exists: bool = True) -> str:
         dir = normalize_path(dir)

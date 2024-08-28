@@ -1,9 +1,10 @@
 import os
+import time
 
 import torch
 import torch.distributed as dist
 
-from olmo_core.distributed.utils import get_rank
+from olmo_core.distributed.utils import barrier, get_rank
 from olmo_core.io import dir_is_empty, file_exists, is_url, normalize_path
 from olmo_core.train.checkpoint import Checkpointer
 
@@ -22,6 +23,8 @@ def run_checkpointer(dir, model_factory):
 
     # Save checkpoint.
     checkpointer.save(dir, model, optim, {"rank": get_rank()})
+    barrier()
+
     assert file_exists((f"{dir}/train/rank0.pt"))
     assert file_exists((f"{dir}/train/rank1.pt"))
     assert not dir_is_empty((f"{dir}/model_and_optim"))
@@ -56,6 +59,8 @@ def run_async_checkpointer(dir, model_factory):
     # Save checkpoint.
     future = checkpointer.save_async(dir, model, optim, {"rank": get_rank()})
     future.result()
+    time.sleep(0.1)  # allow done callback to run.
+    barrier()
 
     assert file_exists((f"{dir}/train/rank0.pt"))
     assert file_exists((f"{dir}/train/rank1.pt"))
