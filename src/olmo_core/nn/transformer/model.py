@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import Literal, Optional, Sequence, Union
+from typing import Literal, Optional, Sequence, Union, cast
 
 import torch
 import torch.nn as nn
@@ -532,7 +532,9 @@ class Transformer(nn.Module):
             self.init_method.init_embeddings(self.embeddings)
 
         for block in self.blocks:
-            assert isinstance(block, TransformerBlock)
+            # This might fail if it's wrapped.
+            #  assert isinstance(block, TransformerBlock)
+            block = cast(TransformerBlock, block)
 
             # Norms.
             block_norms = [block.attention_norm, block.feed_forward_norm]
