@@ -224,7 +224,10 @@ def train(config: ExperimentConfig):
     # Maybe load a checkpoint.
     if (load_path := config.load_path) is not None and (
         config.load_strategy == LoadStrategy.always
-        or (config.load_strategy == LoadStrategy.if_available and not dir_is_empty(load_path))
+        or (
+            config.load_strategy == LoadStrategy.if_available
+            and trainer.checkpointer.dir_contains_checkpoint(load_path)
+        )
     ):
         trainer.load_checkpoint(load_path)
     elif get_rank() == 0:

@@ -4,7 +4,7 @@ from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Generator, Optional, Union
+from typing import Any, Dict, Generator, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -166,7 +166,7 @@ class Checkpointer:
     @classmethod
     def dir_is_checkpoint(cls, dir: PathOrStr) -> bool:
         """
-        Check if a directory contains a checkpoint.
+        Check if a directory is a checkpoint directory.
         """
         dir = normalize_path(dir)
         paths_to_check = [f"{dir}/train/rank0.pt", f"{dir}/model_and_optim/.metadata"]
@@ -176,13 +176,11 @@ class Checkpointer:
         return True
 
     @classmethod
-    def latest_checkpoint(cls, dir: PathOrStr) -> str:
+    def find_checkpoints(cls, dir: PathOrStr) -> Generator[Tuple[int, str], None, None]:
         """
-        Find the latest checkpoint in a directory of checkpoints.
+        Find checkpoints within a directory.
         """
         dir = normalize_path(dir)
-        latest_step: Optional[int] = None
-        latest_checkpoint: Optional[str] = None
         for path in list_directory(dir):
             name = os.path.basename(path)
             if not name.startswith("step"):
@@ -197,6 +195,31 @@ class Checkpointer:
             if not cls.dir_is_checkpoint(path):
                 continue
 
+            yield step, path
+
+    @classmethod
+    def dir_contains_checkpoint(cls, dir: PathOrStr) -> bool:
+        """
+        Check if a directory is a checkpoint directory or contains a child checkpoint directory.
+        """
+        if cls.dir_is_checkpoint(dir):
+            return True
+
+        try:
+            next(cls.find_checkpoints(dir))
+            return True
+        except (StopIteration, FileNotFoundError):
+            return False
+
+    @classmethod
+    def latest_checkpoint(cls, dir: PathOrStr) -> str:
+        """
+        Find the latest checkpoint in a directory of checkpoints.
+        """
+        dir = normalize_path(dir)
+        latest_step: Optional[int] = None
+        latest_checkpoint: Optional[str] = None
+        for step, path in cls.find_checkpoints(dir):
             if latest_step is None or step > latest_step:
                 latest_step = step
                 latest_checkpoint = path
