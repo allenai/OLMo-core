@@ -299,19 +299,19 @@ class Checkpointer:
             # So we wait here across all ranks until that final checkpoint directory is visible.
             wait_for(lambda: Path(dir).exists(), "Waiting for checkpoint directory", timeout=10.0)
         else:
-            if get_fs_local_rank() == 0:
-                # Upload files to final location.
-                for path in tmp_dir.glob("**/*"):
-                    if not path.is_file():
-                        continue
-                    upload(
-                        path,
-                        f"{dir}/{path.relative_to(tmp_dir)}",
-                        save_overwrite=self.save_overwrite,
-                    )
+            # NOTE: each rank will have its own tmp dir
+            # Upload files to final location.
+            for path in tmp_dir.glob("**/*"):
+                if not path.is_file():
+                    continue
+                upload(
+                    path,
+                    f"{dir}/{path.relative_to(tmp_dir)}",
+                    save_overwrite=self.save_overwrite,
+                )
 
-                # Then remove the temp dir.
-                tmp_dir.unlink(missing_ok=True)
+            # Then remove the temp dir.
+            clear_directory(tmp_dir)
 
         barrier()
 
