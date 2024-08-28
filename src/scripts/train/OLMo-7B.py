@@ -5,7 +5,7 @@ Train a 7B OLMo model. See below for usage.
 import json
 import sys
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from beaker import Beaker
 
@@ -13,6 +13,7 @@ from olmo_core.config import Config, DType, StrEnum
 from olmo_core.data import DataMix, MemMapDatasetConfig, TokenizerConfig
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.distributed.utils import get_num_nodes, get_rank, init_hybrid_shard_mesh
+from olmo_core.io import dir_is_empty, is_url
 from olmo_core.launch.beaker import (
     BeakerEnvSecret,
     BeakerLaunchConfig,
@@ -50,26 +51,46 @@ class ExperimentConfig(Config):
     optim: AdamWConfig
     dataset: MemMapDatasetConfig
     trainer: TrainerConfig
+
+    load_strategy: Literal["always", "if_available", "never"] = "if_available"
+    """
+    Load strategy.
+
+    - "always" -> load from the load path
+    - "if_available" -> only load from the load path if a checkpoint exists there
+    - "never" -> don't load from the load path even if a checkpoint exists there
+    """
+
     load_path: Optional[str] = None
+    """
+    Path to load from. Defaults to ``trainer.save_folder`` if ``None``.
+    """
+
     seed: int = 3423
 
 
-def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
+def build_config(run_name: str, cluster: str, overrides: List[str]) -> ExperimentConfig:
+    root_dir: str = "weka://oe-training-default/ai2-llm"
+    weka_buckets: List[BeakerWekaBucket] = []
+    if "jupiter" in cluster:
+        root_dir = "/weka/oe-training-default/ai2-llm"
+        weka_buckets.append(BeakerWekaBucket("oe-training-default", "/weka/oe-training-default"))
+
     beaker_user = (Beaker.from_env().account.whoami().name).upper()
 
     launch_config = BeakerLaunchConfig(
         name=f"{run_name}-{generate_uuid()[:8]}",
         budget="ai2/oe-training",
-        cmd=["src/scripts/train/OLMo-7B.py", SubCmd.train, run_name, *overrides],
+        cmd=["src/scripts/train/OLMo-7B.py", SubCmd.train, run_name, cluster, *overrides],
         task_name="train",
         workspace="ai2/OLMo-core",
         description="Testing OLMo-core launch utilities",
-        clusters=["ai2/jupiter-cirrascale-2"],
-        weka_buckets=[BeakerWekaBucket("oe-training-default", "/weka/oe-training-default")],
+        clusters=[cluster],
+        weka_buckets=weka_buckets,
         beaker_image=OLMoCoreBeakerImage.nightly,  # some features require nightly at the moment
         num_nodes=1,
         num_gpus=8,
-        shared_filesystem=True,
+        shared_filesystem=not is_url(root_dir),
         allow_dirty=False,
         env_secrets=[
             BeakerEnvSecret(name="BEAKER_TOKEN", secret=f"{beaker_user}_BEAKER_TOKEN"),
@@ -116,13 +137,13 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         DataMix.OLMoE_mix_0824,
         tokenizer=tokenizer_config,
         sequence_length=4096,
+        mix_base_dir=root_dir,
     )
 
-    save_folder = f"/weka/oe-training-default/ai2-llm/checkpoints/OLMo-medium/{beaker_user.lower()}/{run_name}"
-
+    save_folder = f"{root_dir}/checkpoints/OLMo-medium/{beaker_user.lower()}/{run_name}"
     trainer_config = (
         TrainerConfig(
-            work_dir=save_folder,
+            work_dir=save_folder if not is_url(save_folder) else f"/tmp/{run_name}",
             save_folder=save_folder,
             global_batch_size=1024,
             microbatch_size=2,
@@ -156,9 +177,11 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             save_interval=10_000,
             ephemeral_save_interval=250,
             save_async=True,
-            pre_train_checkpoint=experiment_config.load_path is None,
         )
     )
+
+    if experiment_config.load_path is None and experiment_config.load_strategy != "never":
+        experiment_config.load_path = save_folder
 
     return experiment_config
 
@@ -189,7 +212,7 @@ def train(config: ExperimentConfig):
         dp_mesh=None if get_num_nodes() == 1 else init_hybrid_shard_mesh(),
     )
     optim = config.optim.build(model)
-    dataset = config.dataset.build(mix_base_dir="/weka/oe-training-default/ai2-llm")
+    dataset = config.dataset.build()
     trainer = config.trainer.build(model, optim, dataset)
 
     # Save config to file.
@@ -197,31 +220,39 @@ def train(config: ExperimentConfig):
         trainer.write_file("config.json", json.dumps(config_dict, indent=2))
 
     # Maybe load a checkpoint.
-    if config.load_path is not None:
-        trainer.load_checkpoint(config.load_path)
+    if (load_path := config.load_path) is not None and (
+        config.load_strategy == "always"
+        or (config.load_strategy == "if_available" and not dir_is_empty(load_path))
+    ):
+        trainer.load_checkpoint(load_path)
 
     # Train.
     trainer.fit()
 
 
 if __name__ == "__main__":
-    usage = f"Usage: python {sys.argv[0]} {SubCmd.launch}|{SubCmd.train} run_name [OVERRIDES...]"
+    usage = (
+        f"Usage: python {sys.argv[0]} {SubCmd.launch}|{SubCmd.train} run_name cluster [OVERRIDES...]\n\n"
+        "Example:\n"
+        f"$ python {sys.argv[0]} {SubCmd.launch} OLMo-core-7B ai2/pluto-cirrascale --launch.num_nodes=2"
+    )
 
-    if len(sys.argv) < 3:
+    if len(sys.argv) < 4:
         print(usage)
         sys.exit(1)
 
     cmd = sys.argv[1]
     run_name = sys.argv[2]
-    overrides = sys.argv[3:]
+    cluster = sys.argv[3]
+    overrides = sys.argv[4:]
 
     if sys.argv[1] == SubCmd.launch:
         prepare_cli_environment()
-        config = build_config(run_name, overrides)
+        config = build_config(run_name, cluster, overrides)
         launch(config)
     else:
         prepare_training_environment()
-        config = build_config(run_name, overrides)
+        config = build_config(run_name, cluster, overrides)
         try:
             train(config)
         finally:

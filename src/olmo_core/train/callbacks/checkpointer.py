@@ -29,7 +29,7 @@ class CheckpointerCallback(Callback):
 
     save_interval: int = 250
     ephemeral_save_interval: Optional[int] = None
-    pre_train_checkpoint: bool = True
+    pre_train_checkpoint: Optional[bool] = None
     save_async: bool = False
 
     # Bookkeeping
@@ -81,7 +81,7 @@ class CheckpointerCallback(Callback):
             )
             self.trainer.checkpointer.process_group = dist.new_group()
 
-        if self.step == 0 and self.pre_train_checkpoint:
+        if self.step == 0 and self.pre_train_checkpoint is not False:
             self._checkpoints.append(self._save_checkpoint())
 
     def post_train_batch(self):

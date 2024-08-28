@@ -298,6 +298,13 @@ class Trainer:
         self.callbacks.sort(key=lambda callback: callback.priority, reverse=True)
 
     @property
+    def checkpointer_callback(self) -> CheckpointerCallback:
+        for callback in self.callbacks:
+            if isinstance(callback, CheckpointerCallback):
+                return callback
+        raise OLMoConfigurationError("Missing CheckpointerCallback in trainer!")
+
+    @property
     def rank_batch_size(self) -> int:
         if self._rank_batch_size is None:
             assert self.global_batch_size % get_world_size(self.dp_process_group) == 0
@@ -529,6 +536,11 @@ class Trainer:
         if load_trainer_state:
             assert trainer_state is not None
             self.load_state_dict(trainer_state)
+
+            # No need for a pre-train checkpoint.
+            if self.checkpointer_callback.pre_train_checkpoint is None:
+                self.checkpointer_callback.pre_train_checkpoint = False
+
         log.info("Checkpoint successfully loaded")
 
     def record_metric(
