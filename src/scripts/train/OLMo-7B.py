@@ -6,7 +6,7 @@ import json
 import logging
 import sys
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List
 
 from beaker import Beaker
 
@@ -47,15 +47,6 @@ class SubCmd(StrEnum):
     dry_run = "dry_run"
 
 
-class LoadStrategy(StrEnum):
-    if_available = "if_available"
-    """Only load from the load path if a checkpoint exists there."""
-    always = "always"
-    """Always try loading from the load path."""
-    never = "never"
-    """Never load from the load path."""
-
-
 @dataclass
 class ExperimentConfig(Config):
     run_name: str
@@ -65,11 +56,6 @@ class ExperimentConfig(Config):
     dataset: MemMapDatasetConfig
     trainer: TrainerConfig
     seed: int = 3423
-    load_strategy: LoadStrategy = LoadStrategy.if_available
-    load_path: Optional[str] = None
-    """
-    Path to load from. Defaults to ``trainer.save_folder`` if ``None``.
-    """
 
 
 def build_config(run_name: str, cluster: str, overrides: List[str]) -> ExperimentConfig:
@@ -164,6 +150,13 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
                 num_flops_per_token=model_config.num_flops_per_token(dataset_config.sequence_length)
             )
         )
+        .with_callback(
+            CheckpointerCallback(
+                save_interval=10_000,
+                ephemeral_save_interval=250,
+                save_async=True,
+            )
+        )
     )
 
     experiment_config = ExperimentConfig(
@@ -174,20 +167,6 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
         dataset=dataset_config,
         trainer=trainer_config,
     ).merge(overrides)
-
-    experiment_config.trainer.with_callback(
-        CheckpointerCallback(
-            save_interval=10_000,
-            ephemeral_save_interval=250,
-            save_async=True,
-        )
-    )
-
-    if (
-        experiment_config.load_path is None
-        and experiment_config.load_strategy == LoadStrategy.if_available
-    ):
-        experiment_config.load_path = save_folder
 
     return experiment_config
 
@@ -221,17 +200,8 @@ def train(config: ExperimentConfig):
     dataset = config.dataset.build()
     trainer = config.trainer.build(model, optim, dataset)
 
-    # Maybe load a checkpoint.
-    checkpoint_loaded = False
-    if config.load_strategy == LoadStrategy.always:
-        assert config.load_path is not None
-        trainer.load_checkpoint(config.load_path)
-        checkpoint_loaded = True
-    elif config.load_strategy == LoadStrategy.if_available and config.load_path is not None:
-        checkpoint_loaded = trainer.maybe_load_checkpoint(config.load_path)
-
-    # Otherwise save the config to file.
-    if not checkpoint_loaded and get_rank() == 0:
+    # Save the config to file.
+    if get_rank() == 0:
         trainer.write_file("config.json", json.dumps(config_dict, indent=2))
 
     # Train.

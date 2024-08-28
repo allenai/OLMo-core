@@ -83,7 +83,11 @@ class CheckpointerCallback(Callback):
             )
             self.trainer.checkpointer.process_group = dist.new_group()
 
-        if self.step == 0 and self.pre_train_checkpoint is not False:
+        if (
+            self.step == 0
+            and self.pre_train_checkpoint is not False
+            and not self.trainer.checkpoint_loaded
+        ):
             self._checkpoints.append(self._save_checkpoint())
 
     def post_train_batch(self):

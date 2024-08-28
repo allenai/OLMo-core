@@ -49,13 +49,14 @@ from ..distributed.utils import init_distributed, is_distributed
 from ..io import add_cached_path_clients
 from ..utils import LogFilterType, prepare_cli_environment, seed_all
 from .config import TrainerConfig
-from .trainer import Trainer
+from .trainer import LoadStrategy, Trainer
 
 __all__ = [
     "prepare_training_environment",
     "teardown_training_environment",
     "TrainerConfig",
     "Trainer",
+    "LoadStrategy",
 ]
 
 

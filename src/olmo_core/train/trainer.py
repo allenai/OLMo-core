@@ -15,6 +15,7 @@ from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 
 from ..aliases import PathOrStr
+from ..config import StrEnum
 from ..data import DataCollator, IterableDataset, MemMapDataset
 from ..distributed.utils import (
     all_reduce_value,
@@ -56,6 +57,27 @@ log = logging.getLogger(__name__)
 TRAIN_CE_LOSS_METRIC = "train/CE loss"
 TRAIN_PPL_METRIC = "train/PPL"
 TRAIN_Z_LOSS_METRIC = "train/Z loss"
+
+
+class LoadStrategy(StrEnum):
+    """
+    Determines the strategy for loading checkpoints prior to training.
+    """
+
+    if_available = "if_available"
+    """
+    Only load from the load path if a checkpoint exists there.
+    """
+
+    always = "always"
+    """
+    Always try loading from the load path.
+    """
+
+    never = "never"
+    """
+    Never load from the load path.
+    """
 
 
 @dataclass
@@ -135,6 +157,17 @@ class Trainer:
     microbatch_size: int
     """
     Microbatch size per rank, i.e. the number of instances to process at a time from each rank.
+    """
+
+    load_path: Optional[PathOrStr] = None
+    """
+    Where to load a checkpoint from prior to training.
+    Defaults to ``save_folder``.
+    """
+
+    load_strategy: LoadStrategy = LoadStrategy.if_available
+    """
+    The strategy for loading a checkpoint prior to training.
     """
 
     metrics_collect_interval: int = 5
@@ -232,9 +265,12 @@ class Trainer:
     _rank_batch_size: Optional[int] = None
     _thread_pool: Optional[ThreadPoolExecutor] = None
     _bookkeeping_pg: Optional[dist.ProcessGroup] = None
+    _checkpoint_loaded: bool = False
 
     def __post_init__(self):
         self.save_folder = normalize_path(self.save_folder)
+        if self.load_path is not None:
+            self.load_path = normalize_path(self.load_path)
 
         # If save folder is a local directory, make sure we're using a shared filesystem.
         if not is_url(self.save_folder) and get_fs_local_rank() != get_rank():
@@ -296,13 +332,6 @@ class Trainer:
 
         # Sort callbacks by priority.
         self.callbacks.sort(key=lambda callback: callback.priority, reverse=True)
-
-    @property
-    def checkpointer_callback(self) -> CheckpointerCallback:
-        for callback in self.callbacks:
-            if isinstance(callback, CheckpointerCallback):
-                return callback
-        raise OLMoConfigurationError("Missing CheckpointerCallback in trainer!")
 
     @property
     def rank_batch_size(self) -> int:
@@ -421,6 +450,13 @@ class Trainer:
             self._thread_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="trainer")
         return self._thread_pool
 
+    @property
+    def checkpoint_loaded(self) -> bool:
+        """
+        If a checkpoint has been loaded.
+        """
+        return self._checkpoint_loaded
+
     def cancel_run(self, reason: str):
         """
         Mark the run canceled.
@@ -433,11 +469,19 @@ class Trainer:
 
     def fit(self):
         """
-        Fit the model.
+        Fit the model, potentially loading a checkpoint before hand.
         """
         self._canceled = False
         self._cancel_reason = None
         self._canceling_rank = None
+
+        # Maybe load a checkpoint.
+        if not self.checkpoint_loaded:
+            load_path = self.load_path if self.load_path is not None else self.save_folder
+            if self.load_strategy == LoadStrategy.always:
+                self.load_checkpoint(load_path)
+            elif self.load_checkpoint == LoadStrategy.if_available:
+                self.maybe_load_checkpoint(load_path)
 
         log.info(f"Training for {self.max_steps:,d} steps")
 
@@ -514,6 +558,9 @@ class Trainer:
         """
         Load a checkpoint.
 
+        .. note::
+            :meth:`fit()` may call this method automatically depending on the :data:`load_strategy`.
+
         :param dir: The path/URL to a checkpoint or a folder of checkpoints.
         :param load_optimizer_state: Load optimizer state.
         :param load_trainer_state: Load trainer state.
@@ -539,10 +586,7 @@ class Trainer:
             assert trainer_state is not None
             self.load_state_dict(trainer_state)
 
-            # No need for a pre-train checkpoint.
-            if self.checkpointer_callback.pre_train_checkpoint is None:
-                self.checkpointer_callback.pre_train_checkpoint = False
-
+        self._checkpoint_loaded = True
         log.info("Checkpoint successfully loaded")
 
     def maybe_load_checkpoint(
@@ -550,6 +594,9 @@ class Trainer:
     ) -> bool:
         """
         Like :meth:`load_checkpoint()` but is a no-op if there is no checkpoint in the ``dir`` provided.
+
+        .. note::
+            :meth:`fit()` may call this method automatically depending on the :data:`load_strategy`.
 
         :returns: If a checkpoint was loaded.
         """
