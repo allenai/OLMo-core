@@ -77,7 +77,7 @@ class Checkpointer:
 
         with self._temporary_wd(dir) as wd:
             # Save trainer state.
-            self._save_train_state(wd, train_state)
+            self._save_train_state(dir, wd, train_state)
 
         # Save model and optim state.
         model_and_optim_dir = f"{dir}/model_and_optim"
@@ -206,9 +206,10 @@ class Checkpointer:
         else:
             return latest_checkpoint
 
-    def _save_train_state(self, wd: Path, train_state: Dict[str, Any]):
+    def _save_train_state(self, dir: PathOrStr, wd: Path, train_state: Dict[str, Any]):
         train_dir = wd / "train"
-        if get_fs_local_rank() == 0:
+        # NOTE: if 'dir' is a URL, the 'wd' will be a different temp dir for each rank.
+        if is_url(dir) or get_fs_local_rank() == 0:
             train_dir.mkdir(exist_ok=True, parents=True)
         wait_for(train_dir.exists, description=f"Waiting on '{train_dir}' to be created...")
         torch.save(train_state, train_dir / f"rank{get_rank()}.pt")
