@@ -13,12 +13,7 @@ from beaker import Beaker
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.data import DataMix, MemMapDatasetConfig, TokenizerConfig
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
-from olmo_core.distributed.utils import (
-    get_num_nodes,
-    get_rank,
-    init_hybrid_shard_mesh,
-    scatter_object,
-)
+from olmo_core.distributed.utils import get_num_nodes, get_rank, init_hybrid_shard_mesh
 from olmo_core.io import is_url
 from olmo_core.launch.beaker import (
     BeakerEnvSecret,

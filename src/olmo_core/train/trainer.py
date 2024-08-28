@@ -494,6 +494,8 @@ class Trainer:
         ]
         self.epoch = state_dict["epoch"]
 
+        log.info(f"Will resume training from step {self.global_step}, epoch {self.epoch}")
+
         if state_dict["world_size"] == get_world_size():  # global world size here on purpose
             rng_state = EnvRngStates.from_dict(state_dict["rng"])
             if not rng_state.restore():
