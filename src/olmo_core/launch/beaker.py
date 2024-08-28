@@ -212,6 +212,7 @@ class BeakerLaunchConfig(Config):
             ("S3_PROFILE", "S3"),
             ("WEKA_PROFILE", "WEKA"),
             ("NUM_NODES", str(self.num_nodes)),
+            ("OLMO_CORE_VERSION", VERSION),
         ]
         if self.shared_filesystem:
             env_vars.append((OLMO_SHARED_FS_ENV_VAR, "1"))
