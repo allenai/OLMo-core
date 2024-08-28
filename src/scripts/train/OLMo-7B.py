@@ -3,6 +3,7 @@ Train a 7B OLMo model. See below for usage.
 """
 
 import json
+import logging
 import sys
 from dataclasses import dataclass
 from typing import List, Optional
@@ -37,10 +38,13 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.utils import generate_uuid, get_default_device, prepare_cli_environment
 
+log = logging.getLogger(__name__)
+
 
 class SubCmd(StrEnum):
     launch = "launch"
     train = "train"
+    dry_run = "dry_run"
 
 
 class LoadStrategy(StrEnum):
@@ -217,16 +221,15 @@ def train(config: ExperimentConfig):
     dataset = config.dataset.build()
     trainer = config.trainer.build(model, optim, dataset)
 
-    # Save config to file.
-    if get_rank() == 0:
-        trainer.write_file("config.json", json.dumps(config_dict, indent=2))
-
     # Maybe load a checkpoint.
     if (load_path := config.load_path) is not None and (
         config.load_strategy == LoadStrategy.always
         or (config.load_strategy == LoadStrategy.if_available and not dir_is_empty(load_path))
     ):
         trainer.load_checkpoint(load_path)
+    elif get_rank() == 0:
+        # Save config to file.
+        trainer.write_file("config.json", json.dumps(config_dict, indent=2))
 
     # Train.
     trainer.fit()
@@ -234,7 +237,7 @@ def train(config: ExperimentConfig):
 
 if __name__ == "__main__":
     usage = (
-        f"Usage: python {sys.argv[0]} {SubCmd.launch}|{SubCmd.train} run_name cluster [OVERRIDES...]\n\n"
+        f"Usage: python {sys.argv[0]} {SubCmd.launch}|{SubCmd.train}|{SubCmd.dry_run} run_name cluster [OVERRIDES...]\n\n"
         "Example:\n"
         f"$ python {sys.argv[0]} {SubCmd.launch} OLMo-core-7B ai2/pluto-cirrascale --launch.num_nodes=2"
     )
@@ -252,6 +255,10 @@ if __name__ == "__main__":
         prepare_cli_environment()
         config = build_config(run_name, cluster, overrides)
         launch(config)
+    elif sys.argv[1] == SubCmd.dry_run:
+        prepare_cli_environment()
+        config = build_config(run_name, cluster, overrides)
+        log.info(config)
     else:
         prepare_training_environment()
         config = build_config(run_name, cluster, overrides)
