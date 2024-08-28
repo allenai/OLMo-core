@@ -226,7 +226,7 @@ def train(config: ExperimentConfig):
         config.load_strategy == LoadStrategy.always
         or (
             config.load_strategy == LoadStrategy.if_available
-            and trainer.checkpointer.dir_contains_checkpoint(load_path)
+            and trainer.checkpointer.contains_checkpoint(load_path)
         )
     ):
         trainer.load_checkpoint(load_path)

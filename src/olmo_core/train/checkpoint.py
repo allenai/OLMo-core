@@ -198,7 +198,7 @@ class Checkpointer:
             yield step, path
 
     @classmethod
-    def dir_contains_checkpoint(cls, dir: PathOrStr) -> bool:
+    def contains_checkpoint(cls, dir: PathOrStr) -> bool:
         """
         Check if a directory is a checkpoint directory or contains a child checkpoint directory.
         """
@@ -215,6 +215,8 @@ class Checkpointer:
     def latest_checkpoint(cls, dir: PathOrStr) -> str:
         """
         Find the latest checkpoint in a directory of checkpoints.
+
+        :raises FileNotFoundError: If no checkpoints are found.
         """
         dir = normalize_path(dir)
         latest_step: Optional[int] = None
