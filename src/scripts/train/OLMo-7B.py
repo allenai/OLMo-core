@@ -226,20 +226,17 @@ def train(config: ExperimentConfig):
     dataset = config.dataset.build()
     trainer = config.trainer.build(model, optim, dataset)
 
-    if (load_path := config.load_path) is not None:
-        # Maybe load a checkpoint.
-        should_load: bool = True
-        if config.load_strategy == LoadStrategy.never:
-            should_load = False
-        elif config.load_strategy == LoadStrategy.if_available:
-            if get_rank() == 0:
-                should_load = trainer.checkpointer.contains_checkpoint(load_path)
-            should_load = scatter_object(should_load)
+    # Maybe load a checkpoint.
+    checkpoint_loaded = False
+    if config.load_strategy == LoadStrategy.always:
+        assert config.load_path is not None
+        trainer.load_checkpoint(config.load_path)
+        checkpoint_loaded = True
+    elif config.load_strategy == LoadStrategy.if_available and config.load_path is not None:
+        checkpoint_loaded = trainer.maybe_load_checkpoint(config.load_path)
 
-        if should_load:
-            trainer.load_checkpoint(load_path)
-    elif get_rank() == 0:
-        # Save config to file.
+    # Otherwise save the config to file.
+    if not checkpoint_loaded and get_rank() == 0:
         trainer.write_file("config.json", json.dumps(config_dict, indent=2))
 
     # Train.

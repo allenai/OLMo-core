@@ -507,7 +507,7 @@ class Trainer:
             )
 
     def load_checkpoint(
-        self, dir: PathOrStr, load_optimizer_state: bool = True, load_trainer_state: bool = True
+        self, dir: PathOrStr, *, load_optimizer_state: bool = True, load_trainer_state: bool = True
     ):
         """
         Load a checkpoint.
@@ -542,6 +542,28 @@ class Trainer:
                 self.checkpointer_callback.pre_train_checkpoint = False
 
         log.info("Checkpoint successfully loaded")
+
+    def maybe_load_checkpoint(
+        self, dir: PathOrStr, *, load_optimizer_state: bool = True, load_trainer_state: bool = True
+    ) -> bool:
+        """
+        Like :meth:`load_checkpoint()` but is a no-op if there is no checkpoint in the ``dir`` provided.
+
+        :returns: If a checkpoint was loaded.
+        """
+        should_load: bool = True
+        if get_rank() == 0:
+            should_load = self.checkpointer.contains_checkpoint(dir)
+        should_load = scatter_object(should_load)
+        if should_load:
+            self.load_checkpoint(
+                dir,
+                load_optimizer_state=load_optimizer_state,
+                load_trainer_state=load_trainer_state,
+            )
+        else:
+            log.warning(f"No checkpoint found in '{dir}', will train from scratch...")
+        return should_load
 
     def record_metric(
         self, name: str, value: Union[float, torch.Tensor], reduce_type: Optional[ReduceType] = None
