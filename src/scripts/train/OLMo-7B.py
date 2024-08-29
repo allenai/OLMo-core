@@ -166,7 +166,7 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
             WandBCallback(
                 name=run_name,
                 entity="ai2-llm",
-                project="ai2/OLMo-core-doc-masking",
+                project="OLMo-core-testing",
                 enabled=True,
             ),
         )
