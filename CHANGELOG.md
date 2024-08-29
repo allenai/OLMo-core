@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Add `Trainer.hard_stop` field.
+- The trainer now catches `SIGTERM` and marks the run as canceled.
 
 ### Fixed
 
