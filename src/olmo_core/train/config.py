@@ -48,6 +48,7 @@ class TrainerConfig(Config):
         """
         Add another callback.
 
+        :param name: A name to assign the callback. Must be unique.
         :param callback: The callback to add.
         """
         if name in self.callbacks:
