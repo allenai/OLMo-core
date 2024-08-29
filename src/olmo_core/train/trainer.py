@@ -320,7 +320,7 @@ class Trainer:
             (
                 (k, cb)
                 for k, cb in sorted(
-                    self.callbacks.items(), key=lambda x: x[1].priority, reverse=True
+                    self.callbacks.items(), key=lambda x: (x[1].priority, x[0]), reverse=True
                 )
             )
         )
