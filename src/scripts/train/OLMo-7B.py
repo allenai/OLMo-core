@@ -117,6 +117,7 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
     optim_config = AdamWConfig(
         lr=3e-4,
         weight_decay=0.1,
+        betas=(0.9, 0.95),
         group_overrides=[
             OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
         ],
@@ -142,7 +143,7 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
             data_loader_workers=4,
             metrics_collect_interval=10,
         )
-        .with_callback(SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=200)))
+        .with_callback(SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=2000)))
         .with_callback(GPUMemoryMonitorCallback())
         .with_callback(GradClipperCallback(max_grad_norm=1.0))
         .with_callback(
