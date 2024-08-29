@@ -315,7 +315,10 @@ class Trainer:
         for callback in self.callbacks.values():
             callback.trainer = self
 
-        # Sort callbacks by priority.
+        # Sort callbacks by (priority, name).
+        # We do this for 2 reasons: (1) to respect the priority, and (2) to ensure the callback
+        # order is consistent across the process group since some callbacks make distributed
+        # synchronization/communication calls.
         self.callbacks = OrderedDict(
             (
                 (k, cb)
