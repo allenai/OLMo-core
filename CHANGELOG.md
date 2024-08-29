@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fixed `list_directory` for remote folders.
 
+### Changed
+
+- Callbacks now have to have a name assigned.
+
 ## [v1.0.1](https://github.com/allenai/OLMo-core/releases/tag/v1.0.1) - 2024-08-26
 
 ### Fixed
