@@ -35,6 +35,7 @@ class TrainerConfig(Config):
     max_duration: Duration = field(
         default_factory=lambda: Duration(value=1, unit=DurationUnit.epochs)
     )
+    hard_stop: Optional[Duration] = None
     metrics_collect_interval: int = 5
     callbacks: Dict[str, Callback] = field(default_factory=dict)
     fused_loss: bool = False

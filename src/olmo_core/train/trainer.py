@@ -256,6 +256,13 @@ class Trainer:
     The interval (in steps) to check if the run is canceled. Checking requires distributed comms.
     """
 
+    hard_stop: Optional[Duration] = None
+    """
+    Set a hard stopping point for the trainer. This is useful for ablations when you you don't
+    want to do a complete training run, but you don't want to change :data:`max_duration` as to
+    not affect the learning rate schedule.
+    """
+
     _metrics: Dict[int, Dict[str, torch.Tensor]] = field(default_factory=OrderedDict)
     _metrics_reduce_type: Dict[str, Optional[ReduceType]] = field(default_factory=dict)
     _canceled: bool = False
@@ -368,6 +375,8 @@ class Trainer:
         if self._canceled:
             return True
         elif self._duration_due(self.max_duration):
+            return True
+        elif self.hard_stop is not None and self._duration_due(self.hard_stop):
             return True
         else:
             return False

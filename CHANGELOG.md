@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Add `Trainer.hard_stop` field.
+
 ### Fixed
 
 - Fixed bug with how command arguments were expanded by `BeakerLaunchConfig`.
