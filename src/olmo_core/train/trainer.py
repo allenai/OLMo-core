@@ -469,7 +469,8 @@ class Trainer:
 
     def fit(self):
         """
-        Fit the model, potentially loading a checkpoint before hand.
+        Fit the model, potentially loading a checkpoint before hand depending on the
+        :data:`load_strategy`.
         """
         self._canceled = False
         self._cancel_reason = None
@@ -480,7 +481,7 @@ class Trainer:
             load_path = self.load_path if self.load_path is not None else self.save_folder
             if self.load_strategy == LoadStrategy.always:
                 self.load_checkpoint(load_path)
-            elif self.load_checkpoint == LoadStrategy.if_available:
+            elif self.load_strategy == LoadStrategy.if_available:
                 self.maybe_load_checkpoint(load_path)
 
         log.info(f"Training for {self.max_steps:,d} steps")
