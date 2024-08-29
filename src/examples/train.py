@@ -64,6 +64,7 @@ TRAINER_CONFIG = (
         data_seed=SEED,
         data_loader_workers=4,
         metrics_collect_interval=5,
+        cancel_check_interval=5,
     )
     .with_callback("lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=100)))
     .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
@@ -101,6 +102,7 @@ def main():
             WandBCallback(
                 name=WANDB_RUN,
                 config=config_dict,
+                cancel_check_interval=10,
             ),
         )
 

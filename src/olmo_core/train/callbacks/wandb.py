@@ -71,6 +71,12 @@ class WandBCallback(Callback):
     Defaults to ``["cancel", "canceled", "cancelled"]``.
     """
 
+    cancel_check_interval: Optional[int] = None
+    """
+    Check for cancel tags every this many steps. Defaults to
+    :data:`olmo_core.train.Trainer.cancel_check_interval`.
+    """
+
     _wandb = None
     _run_path = None
 
@@ -114,7 +120,8 @@ class WandBCallback(Callback):
             self.wandb.log(metrics, step=step)
 
     def post_step(self):
-        if self.enabled and get_rank() == 0 and self.step % self.trainer.cancel_check_interval == 0:
+        cancel_check_interval = self.cancel_check_interval or self.trainer.cancel_check_interval
+        if self.enabled and get_rank() == 0 and self.step % cancel_check_interval == 0:
             self.trainer.thread_pool.submit(self.check_if_canceled)
 
     def post_train(self):

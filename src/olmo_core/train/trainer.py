@@ -1,6 +1,7 @@
 import contextlib
 import logging
 import math
+import signal
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -496,6 +497,9 @@ class Trainer:
         self._cancel_reason = None
         self._canceling_rank = None
 
+        # Install SIGTERM handler.
+        signal.signal(signal.SIGTERM, self._handle_sigterm)
+
         # Maybe load a checkpoint.
         if not self.checkpoint_loaded:
             load_path = self.load_path if self.load_path is not None else self.save_folder
@@ -679,6 +683,11 @@ class Trainer:
             return self.global_train_tokens_seen >= duration.value
         else:
             raise NotImplementedError
+
+    def _handle_sigterm(self, *args):
+        del args
+        log.warning("SIGTERM received")
+        self.cancel_run("SIGTERM received")
 
     def _check_if_canceled(self):
         if self._canceled:

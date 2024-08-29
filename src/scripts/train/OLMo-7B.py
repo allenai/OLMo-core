@@ -140,6 +140,7 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
             data_seed=34521,
             data_loader_workers=4,
             metrics_collect_interval=10,
+            cancel_check_interval=1,
         )
         .with_callback(
             "lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=2000))
@@ -167,6 +168,7 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
                 entity="ai2-llm",
                 project="OLMo-core-testing",
                 enabled=True,
+                cancel_check_interval=10,
             ),
         )
     )
