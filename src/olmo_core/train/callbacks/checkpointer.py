@@ -34,7 +34,9 @@ class CheckpointerCallback(Callback):
 
     # Bookkeeping
 
-    _future: Optional[Future] = None
+    # NOTE: can't use type annotation here, omegaconf doesn't like it
+    #  _future: Optional[Future] = None
+    _future = None
     _latest_checkpoint: int = -1
     _checkpoints: List[str] = field(default_factory=list)
     _ephemeral_checkpoints: List[str] = field(default_factory=list)
