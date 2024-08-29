@@ -311,7 +311,7 @@ class BeakerLaunchConfig(Config):
             'git checkout "${GIT_REF}"',
             "git submodule update --init --recursive",
             *self.setup_steps,
-            " ".join(self._get_torchrun_cmd()) + " $@",
+            " ".join(self._get_torchrun_cmd()) + ' "$@"',
         ]
 
         entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
