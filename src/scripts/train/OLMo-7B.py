@@ -73,7 +73,6 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
         cmd=["src/scripts/train/OLMo-7B.py", SubCmd.train, run_name, cluster, *overrides],
         task_name="train",
         workspace="ai2/OLMo-core",
-        description="Testing OLMo-core launch utilities",
         clusters=[cluster],
         weka_buckets=weka_buckets,
         beaker_image=OLMoCoreBeakerImage.nightly,  # some features require nightly at the moment
