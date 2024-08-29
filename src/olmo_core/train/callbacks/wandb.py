@@ -74,12 +74,6 @@ class WandBCallback(Callback):
     _wandb = None
     _run_path = None
 
-    def __post_init__(self):
-        if self.enabled and get_rank() == 0:
-            self.wandb
-            if WANDB_API_KEY_ENV_VAR not in os.environ:
-                raise OLMoEnvironmentError(f"missing env var '{WANDB_API_KEY_ENV_VAR}'")
-
     @property
     def wandb(self):
         if self._wandb is None:
@@ -98,6 +92,10 @@ class WandBCallback(Callback):
 
     def pre_train(self):
         if self.enabled and get_rank() == 0:
+            self.wandb
+            if WANDB_API_KEY_ENV_VAR not in os.environ:
+                raise OLMoEnvironmentError(f"missing env var '{WANDB_API_KEY_ENV_VAR}'")
+
             wandb_dir = Path(self.trainer.save_folder) / "wandb"
             wandb_dir.mkdir(parents=True, exist_ok=True)
             self.wandb.init(
@@ -109,7 +107,7 @@ class WandBCallback(Callback):
                 tags=self.tags,
                 config=self.config,
             )
-            self._run_path = self.run.path
+            self._run_path = self.run.path  # type: ignore
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):
         if self.enabled and get_rank() == 0:
@@ -137,7 +135,7 @@ class WandBCallback(Callback):
                 # NOTE: need to re-initialize the API client every time, otherwise
                 # I guess it return cached run data.
                 api = self.wandb.Api(api_key=os.environ[WANDB_API_KEY_ENV_VAR])
-                run = api.run(self.run_path)
+                run = api.run(self.run_path)  # type: ignore
                 for tag in run.tags or []:
                     if tag.lower() in self.cancel_tags:
                         self.trainer.cancel_run("canceled from W&B tag")
