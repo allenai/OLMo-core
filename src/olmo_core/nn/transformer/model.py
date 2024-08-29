@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import Literal, Optional, Sequence, Union
+from typing import List, Literal, Optional, Sequence, Union, cast
 
 import torch
 import torch.nn as nn
@@ -14,10 +14,10 @@ from olmo_core.utils import (
     has_flash_attn,
 )
 
-from ..attention import Attention, AttentionConfig, AttentionType
+from ..attention import AttentionConfig, AttentionType
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig
-from ..layer_norm import LayerNormConfig, LayerNormType
+from ..layer_norm import LayerNorm, LayerNormConfig, LayerNormType
 from ..rope import RoPEConfig, RoPEType
 from .block import TransformerBlock, TransformerBlockConfig, TransformerBlockType
 from .init import InitMethod
@@ -532,21 +532,23 @@ class Transformer(nn.Module):
             self.init_method.init_embeddings(self.embeddings)
 
         for block in self.blocks:
-            assert isinstance(block, TransformerBlock)
+            # This might fail if it's wrapped.
+            #  assert isinstance(block, TransformerBlock)
+            block = cast(TransformerBlock, block)
+            att = block.attention
 
             # Norms.
-            block_norms = [block.attention_norm, block.feed_forward_norm]
-            if isinstance(block.attention, Attention):
-                if block.attention.q_norm is not None:
-                    block_norms.append(block.attention.q_norm)
-                if block.attention.k_norm is not None:
-                    block_norms.append(block.attention.k_norm)
+            block_norms: List[LayerNorm] = [block.attention_norm, block.feed_forward_norm]
+            if hasattr(att, "q_norm") and att.q_norm is not None:
+                block_norms.append(att.q_norm)
+            if hasattr(att, "k_norm") and att.k_norm is not None:
+                block_norms.append(att.k_norm)
             for norm in block_norms:
                 norm.reset_parameters()
 
             # Attention weights.
             self.init_method.init_attention(
-                block.attention, block_idx=block.block_idx, num_blocks=len(self.blocks)
+                att, block_idx=block.block_idx, num_blocks=len(self.blocks)
             )
 
             # Feed-forward weights.
@@ -555,8 +557,8 @@ class Transformer(nn.Module):
             )
 
             # Warm up RoPE cache.
-            if max_seq_len is not None and block.attention.rope is not None:
-                block.attention.rope.warmup_cache(max_seq_len, device)
+            if max_seq_len is not None and att.rope is not None:
+                att.rope.warmup_cache(max_seq_len, device)
 
         if self.norm is not None:
             self.norm.reset_parameters()

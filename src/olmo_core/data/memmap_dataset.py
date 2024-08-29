@@ -46,6 +46,7 @@ class MemMapDatasetConfig(Config):
     tokenizer: TokenizerConfig
     paths: Optional[List[str]] = None
     mix: Optional[DataMix] = None
+    mix_base_dir: Optional[str] = None
     memmap_dtype: Optional[MemMapDType] = None
     metadata: Optional[List[Dict[str, Any]]] = None
     include_instance_metadata: bool = True
@@ -105,12 +106,9 @@ class MemMapDatasetConfig(Config):
 
         raise ValueError("vocab size too big!")
 
-    def build(self, mix_base_dir: Optional[str] = None) -> MemMapDataset:
+    def build(self) -> MemMapDataset:
         """
         Construct the corresponding :class:`MemMapDataset`.
-
-        :param mix_base_dir: The base directory for the :data:`mix`, e.g. "s3://ai2-llm".
-            Required if initializing from a data mix.
         """
         if (self.paths is None) == (self.mix is None):
             raise OLMoConfigurationError("Exactly one of 'paths' or 'mix' is required")
@@ -131,7 +129,7 @@ class MemMapDatasetConfig(Config):
             paths = self.paths
         else:
             assert self.mix is not None
-            if mix_base_dir is None:
+            if self.mix_base_dir is None:
                 raise OLMoConfigurationError(
                     "'mix_base_dir' is required to build a dataset from a mix"
                 )
@@ -139,7 +137,7 @@ class MemMapDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "Missing tokenizer identifier required to construct data mix"
                 )
-            paths = self.mix.build(mix_base_dir, self.tokenizer.identifier)
+            paths = self.mix.build(self.mix_base_dir, self.tokenizer.identifier)
 
         dataset = MemMapDataset(
             *paths,

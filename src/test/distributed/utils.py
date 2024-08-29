@@ -117,7 +117,7 @@ def init_process(
 
     log.info("Starting test...")
 
-    if torch.cuda.is_available():
+    if "nccl" in backend:
         torch.cuda.set_device(int(process_rank))
 
     try:

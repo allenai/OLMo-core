@@ -15,6 +15,7 @@ from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 
 from ..aliases import PathOrStr
+from ..config import StrEnum
 from ..data import DataCollator, IterableDataset, MemMapDataset
 from ..distributed.utils import (
     all_reduce_value,
@@ -56,6 +57,27 @@ log = logging.getLogger(__name__)
 TRAIN_CE_LOSS_METRIC = "train/CE loss"
 TRAIN_PPL_METRIC = "train/PPL"
 TRAIN_Z_LOSS_METRIC = "train/Z loss"
+
+
+class LoadStrategy(StrEnum):
+    """
+    Determines the strategy for loading checkpoints prior to training.
+    """
+
+    if_available = "if_available"
+    """
+    Only load from the load path if a checkpoint exists there.
+    """
+
+    always = "always"
+    """
+    Always try loading from the load path.
+    """
+
+    never = "never"
+    """
+    Never load from the load path.
+    """
 
 
 @dataclass
@@ -135,6 +157,17 @@ class Trainer:
     microbatch_size: int
     """
     Microbatch size per rank, i.e. the number of instances to process at a time from each rank.
+    """
+
+    load_path: Optional[PathOrStr] = None
+    """
+    Where to load a checkpoint from prior to training.
+    Defaults to ``save_folder``.
+    """
+
+    load_strategy: LoadStrategy = LoadStrategy.if_available
+    """
+    The strategy for loading a checkpoint prior to training.
     """
 
     metrics_collect_interval: int = 5
@@ -232,9 +265,12 @@ class Trainer:
     _rank_batch_size: Optional[int] = None
     _thread_pool: Optional[ThreadPoolExecutor] = None
     _bookkeeping_pg: Optional[dist.ProcessGroup] = None
+    _checkpoint_loaded: bool = False
 
     def __post_init__(self):
         self.save_folder = normalize_path(self.save_folder)
+        if self.load_path is not None:
+            self.load_path = normalize_path(self.load_path)
 
         # If save folder is a local directory, make sure we're using a shared filesystem.
         if not is_url(self.save_folder) and get_fs_local_rank() != get_rank():
@@ -414,6 +450,13 @@ class Trainer:
             self._thread_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="trainer")
         return self._thread_pool
 
+    @property
+    def checkpoint_loaded(self) -> bool:
+        """
+        If a checkpoint has been loaded.
+        """
+        return self._checkpoint_loaded
+
     def cancel_run(self, reason: str):
         """
         Mark the run canceled.
@@ -426,11 +469,20 @@ class Trainer:
 
     def fit(self):
         """
-        Fit the model.
+        Fit the model, potentially loading a checkpoint before hand depending on the
+        :data:`load_strategy`.
         """
         self._canceled = False
         self._cancel_reason = None
         self._canceling_rank = None
+
+        # Maybe load a checkpoint.
+        if not self.checkpoint_loaded:
+            load_path = self.load_path if self.load_path is not None else self.save_folder
+            if self.load_strategy == LoadStrategy.always:
+                self.load_checkpoint(load_path)
+            elif self.load_strategy == LoadStrategy.if_available:
+                self.maybe_load_checkpoint(load_path)
 
         log.info(f"Training for {self.max_steps:,d} steps")
 
@@ -487,6 +539,8 @@ class Trainer:
         ]
         self.epoch = state_dict["epoch"]
 
+        log.info(f"Will resume training from step {self.global_step}, epoch {self.epoch}")
+
         if state_dict["world_size"] == get_world_size():  # global world size here on purpose
             rng_state = EnvRngStates.from_dict(state_dict["rng"])
             if not rng_state.restore():
@@ -500,23 +554,26 @@ class Trainer:
             )
 
     def load_checkpoint(
-        self, dir: PathOrStr, load_optimizer_state: bool = True, load_trainer_state: bool = True
+        self, dir: PathOrStr, *, load_optimizer_state: bool = True, load_trainer_state: bool = True
     ):
         """
         Load a checkpoint.
 
-        :param dir: The path/URL to the checkpoint.
+        .. note::
+            :meth:`fit()` may call this method automatically depending on the :data:`load_strategy`.
+
+        :param dir: The path/URL to a checkpoint or a folder of checkpoints.
         :param load_optimizer_state: Load optimizer state.
         :param load_trainer_state: Load trainer state.
         """
-        if not self.checkpointer.dir_is_checkpoint(dir):
+        dir = normalize_path(dir)
+
+        # NOTE: to avoid making a ton of client requests (S3 or otherwise) we only make those
+        # requests from rank 0 then scatter the result to the other ranks.
+        if get_rank() == 0 and not self.checkpointer.dir_is_checkpoint(dir):
             # Try to find the latest checkpoint in the directory.
-            latest_checkpoint: Optional[str] = None
-            if get_rank() == 0:
-                latest_checkpoint = self.checkpointer.latest_checkpoint(dir)
-            latest_checkpoint = scatter_object(latest_checkpoint)
-            assert latest_checkpoint is not None
-            dir = latest_checkpoint
+            dir = self.checkpointer.latest_checkpoint(dir)
+        dir = scatter_object(dir)
 
         log.info(f"Loading checkpoint from '{dir}'...")
         trainer_state = self.checkpointer.load(
@@ -529,7 +586,34 @@ class Trainer:
         if load_trainer_state:
             assert trainer_state is not None
             self.load_state_dict(trainer_state)
+
+        self._checkpoint_loaded = True
         log.info("Checkpoint successfully loaded")
+
+    def maybe_load_checkpoint(
+        self, dir: PathOrStr, *, load_optimizer_state: bool = True, load_trainer_state: bool = True
+    ) -> bool:
+        """
+        Like :meth:`load_checkpoint()` but is a no-op if there is no checkpoint in the ``dir`` provided.
+
+        .. note::
+            :meth:`fit()` may call this method automatically depending on the :data:`load_strategy`.
+
+        :returns: If a checkpoint was loaded.
+        """
+        should_load: bool = True
+        if get_rank() == 0:
+            should_load = self.checkpointer.contains_checkpoint(dir)
+        should_load = scatter_object(should_load)
+        if should_load:
+            self.load_checkpoint(
+                dir,
+                load_optimizer_state=load_optimizer_state,
+                load_trainer_state=load_trainer_state,
+            )
+        else:
+            log.warning(f"No checkpoint found in '{dir}', will train from scratch...")
+        return should_load
 
     def record_metric(
         self, name: str, value: Union[float, torch.Tensor], reduce_type: Optional[ReduceType] = None

@@ -212,6 +212,7 @@ class BeakerLaunchConfig(Config):
             ("S3_PROFILE", "S3"),
             ("WEKA_PROFILE", "WEKA"),
             ("NUM_NODES", str(self.num_nodes)),
+            ("OLMO_CORE_VERSION", VERSION),
         ]
         if self.shared_filesystem:
             env_vars.append((OLMO_SHARED_FS_ENV_VAR, "1"))
@@ -306,8 +307,8 @@ class BeakerLaunchConfig(Config):
             "set -exuo pipefail",
             "mkdir -p /olmo-core-runtime",
             "cd /olmo-core-runtime",
-            f"git clone https://github.com/{github_account}/{github_repo} .",
-            f"git checkout {git_ref}",
+            'git clone "${REPO_URL}" .',
+            'git checkout "${GIT_REF}"',
             "git submodule update --init --recursive",
             *self.setup_steps,
             " ".join(self._get_torchrun_cmd()) + " $@",
@@ -333,6 +334,8 @@ class BeakerLaunchConfig(Config):
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
             .with_constraint(cluster=self.clusters)
+            .with_env_var("REPO_URL", f"https://github.com/{github_account}/{github_repo}")
+            .with_env_var("GIT_REF", git_ref)
         )
 
         for name, val in self._get_env_vars():

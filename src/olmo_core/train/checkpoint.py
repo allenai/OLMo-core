@@ -1,10 +1,12 @@
+import json
 import os
+import re
 import tempfile
 from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Generator, Optional, Union
+from typing import Any, ClassVar, Dict, Generator, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -13,6 +15,7 @@ from cached_path import cached_path
 from torch.optim import Optimizer
 
 from ..aliases import PathOrStr
+from ..config import Config
 from ..distributed.checkpoint import (
     async_save_model_and_optim_state,
     load_model_and_optim_state,
@@ -30,6 +33,12 @@ from ..io import (
     upload,
 )
 from ..utils import wait_for
+from ..version import VERSION
+
+
+@dataclass
+class CheckpointMetadata(Config):
+    version: str = VERSION
 
 
 @dataclass
@@ -37,6 +46,9 @@ class Checkpointer:
     """
     Trainer checkpointer.
     """
+
+    METADATA_FNAME: ClassVar[str] = ".metadata.json"
+    CHECKPOINT_DIR: ClassVar[str] = "step{step}"
 
     save_overwrite: bool = False
     process_group: Optional[dist.ProcessGroup] = None
@@ -48,7 +60,7 @@ class Checkpointer:
         dir = normalize_path(dir)
         with self._temporary_wd(dir) as wd:
             # Save trainer state.
-            self._save_train_state(wd, train_state)
+            self._save_train_state(dir, wd, train_state)
 
             # Save model and optim state.
             model_and_optim_dir = (
@@ -61,6 +73,8 @@ class Checkpointer:
                 process_group=self.process_group,
                 save_overwrite=self.save_overwrite,
             )
+
+        self._save_metadata(dir, CheckpointMetadata())
 
     def save_async(
         self, dir: PathOrStr, model: nn.Module, optim: Optimizer, train_state: Dict[str, Any]
@@ -77,17 +91,26 @@ class Checkpointer:
 
         with self._temporary_wd(dir) as wd:
             # Save trainer state.
-            self._save_train_state(wd, train_state)
+            self._save_train_state(dir, wd, train_state)
 
         # Save model and optim state.
         model_and_optim_dir = f"{dir}/model_and_optim"
-        return async_save_model_and_optim_state(
+        future = async_save_model_and_optim_state(
             model_and_optim_dir,
             model,
             optim,
             process_group=self.process_group,
             save_overwrite=self.save_overwrite,
         )
+
+        def done_callback(fut: Future):
+            fut.result()
+            self._save_metadata(dir, CheckpointMetadata())
+
+        # Upload metadata when everything else is done.
+        future.add_done_callback(done_callback)
+
+        return future
 
     def load(
         self,
@@ -108,11 +131,13 @@ class Checkpointer:
         trainer_state: Optional[Dict[str, Any]] = None
         if load_trainer_state:
             try:
-                trainer_state = torch.load(cached_path(f"{dir}/train/rank{get_rank()}.pt"))
+                trainer_state = torch.load(
+                    cached_path(f"{dir}/train/rank{get_rank()}.pt", quiet=True)
+                )
             except FileNotFoundError:
                 # Fall back to rank 0 train state.
                 # This can happen when we're restoring a checkpoint with a different world size.
-                trainer_state = torch.load(cached_path(f"{dir}/train/rank0.pt"))
+                trainer_state = torch.load(cached_path(f"{dir}/train/rank0.pt", quiet=True))
 
         # Load model and optimizer state.
         load_model_and_optim_state(
@@ -140,7 +165,9 @@ class Checkpointer:
             Path(dir).mkdir(exist_ok=True, parents=True)
 
         mode = "wb" if isinstance(contents, bytes) else "wt"
-        tmp_file = tempfile.NamedTemporaryFile(mode=mode, delete=False, dir=dir)
+        tmp_file = tempfile.NamedTemporaryFile(
+            mode=mode, delete=False, dir=None if is_url(dir) else dir
+        )
         tmp_path = Path(tmp_file.name)
         try:
             tmp_file.write(contents)
@@ -162,39 +189,67 @@ class Checkpointer:
             tmp_path.unlink(missing_ok=True)
 
     @classmethod
+    def checkpoint_dirname(cls, step: int) -> str:
+        return cls.CHECKPOINT_DIR.format(step=step)
+
+    @classmethod
     def dir_is_checkpoint(cls, dir: PathOrStr) -> bool:
         """
-        Check if a directory contains a checkpoint.
+        Check if a directory is a checkpoint directory.
         """
         dir = normalize_path(dir)
-        paths_to_check = [f"{dir}/train/rank0.pt", f"{dir}/model_and_optim/.metadata"]
+        paths_to_check = [
+            f"{dir}/train/rank0.pt",
+            f"{dir}/model_and_optim/.metadata",
+            f"{dir}/{cls.METADATA_FNAME}",
+        ]
         for path in paths_to_check:
             if not file_exists(path):
                 return False
         return True
 
     @classmethod
+    def find_checkpoints(cls, dir: PathOrStr) -> Generator[Tuple[int, str], None, None]:
+        """
+        Find checkpoints within a directory.
+        """
+        dir = normalize_path(dir)
+        for path in list_directory(dir):
+            name = os.path.basename(path)
+            if (m := re.match("^" + cls.CHECKPOINT_DIR.format(step=r"(\d+)$"), name)) is not None:
+                step = int(m.group(1))
+
+                # Make sure the directory is a valid checkpoint dir.
+                if not cls.dir_is_checkpoint(path):
+                    continue
+
+                yield step, path
+
+    @classmethod
+    def contains_checkpoint(cls, dir: PathOrStr) -> bool:
+        """
+        Check if a directory is a checkpoint directory or contains a child checkpoint directory.
+        """
+        if cls.dir_is_checkpoint(dir):
+            return True
+
+        try:
+            next(cls.find_checkpoints(dir))
+            return True
+        except (StopIteration, FileNotFoundError):
+            return False
+
+    @classmethod
     def latest_checkpoint(cls, dir: PathOrStr) -> str:
         """
         Find the latest checkpoint in a directory of checkpoints.
+
+        :raises FileNotFoundError: If no checkpoints are found.
         """
         dir = normalize_path(dir)
         latest_step: Optional[int] = None
         latest_checkpoint: Optional[str] = None
-        for path in list_directory(dir):
-            name = os.path.basename(path)
-            if not name.startswith("step"):
-                continue
-
-            try:
-                step = int(name.replace("step", ""))
-            except ValueError:
-                continue
-
-            # Make sure the directory is a valid checkpoint dir.
-            if not cls.dir_is_checkpoint(path):
-                continue
-
+        for step, path in cls.find_checkpoints(dir):
             if latest_step is None or step > latest_step:
                 latest_step = step
                 latest_checkpoint = path
@@ -204,12 +259,17 @@ class Checkpointer:
         else:
             return latest_checkpoint
 
-    def _save_train_state(self, wd: Path, train_state: Dict[str, Any]):
+    def _save_train_state(self, dir: PathOrStr, wd: Path, train_state: Dict[str, Any]):
         train_dir = wd / "train"
-        if get_fs_local_rank() == 0:
+        # NOTE: if 'dir' is a URL, the 'wd' will be a different temp dir for each rank.
+        if is_url(dir) or get_fs_local_rank() == 0:
             train_dir.mkdir(exist_ok=True, parents=True)
         wait_for(train_dir.exists, description=f"Waiting on '{train_dir}' to be created...")
         torch.save(train_state, train_dir / f"rank{get_rank()}.pt")
+
+    def _save_metadata(self, dir: PathOrStr, metadata: CheckpointMetadata):
+        if get_rank() == 0:
+            self.write_file(dir, self.METADATA_FNAME, json.dumps(metadata.as_dict(json_safe=True)))
 
     def _prepare_dir(self, dir: PathOrStr, ensure_exists: bool = True) -> str:
         dir = normalize_path(dir)
@@ -271,19 +331,19 @@ class Checkpointer:
             # So we wait here across all ranks until that final checkpoint directory is visible.
             wait_for(lambda: Path(dir).exists(), "Waiting for checkpoint directory", timeout=10.0)
         else:
-            if get_fs_local_rank() == 0:
-                # Upload files to final location.
-                for path in tmp_dir.glob("**/*"):
-                    if not path.is_file():
-                        continue
-                    upload(
-                        path,
-                        f"{dir}/{path.relative_to(tmp_dir)}",
-                        save_overwrite=self.save_overwrite,
-                    )
+            # NOTE: each rank will have its own tmp dir
+            # Upload files to final location.
+            for path in tmp_dir.glob("**/*"):
+                if not path.is_file():
+                    continue
+                upload(
+                    path,
+                    f"{dir}/{path.relative_to(tmp_dir)}",
+                    save_overwrite=self.save_overwrite,
+                )
 
-                # Then remove the temp dir.
-                tmp_dir.unlink(missing_ok=True)
+            # Then remove the temp dir.
+            clear_directory(tmp_dir)
 
         barrier()
 

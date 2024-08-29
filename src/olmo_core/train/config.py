@@ -11,7 +11,7 @@ from ..data import DataCollator, MemMapDataset
 from ..utils import get_default_device
 from .callbacks import Callback
 from .checkpoint import Checkpointer
-from .trainer import Trainer
+from .trainer import LoadStrategy, Trainer
 from .utils import Duration, DurationUnit
 
 
@@ -25,6 +25,9 @@ class TrainerConfig(Config):
     save_folder: str
     global_batch_size: int
     microbatch_size: int
+
+    load_path: Optional[str] = None
+    load_strategy: LoadStrategy = LoadStrategy.if_available
 
     device: Optional[str] = None
     save_overwrite: bool = False

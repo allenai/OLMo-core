@@ -613,11 +613,15 @@ def _s3_clear_directory(scheme: str, bucket_name: str, prefix: str, max_attempts
 
 
 def _s3_list_directory(scheme: str, bucket_name: str, prefix: str) -> Generator[str, None, None]:
-    response = _get_s3_client(scheme).list_objects(Bucket=bucket_name, Prefix=prefix, Delimiter="/")
-    assert not response["IsTruncated"]  # need to handle this if it happens
-    for item in response.get("CommonPrefixes", []):
-        prefix = item["Prefix"].strip("/")
-        yield f"{scheme}://{bucket_name}/{prefix}"
+    client = _get_s3_client(scheme)
+    paginator = client.get_paginator("list_objects_v2")
+    if not prefix.endswith("/"):
+        prefix = prefix + "/"
+    for page in paginator.paginate(Bucket=bucket_name, Prefix=prefix, MaxKeys=50, Delimiter="/"):
+        for file_item in page.get("Contents", []):
+            yield f"{scheme}://{bucket_name}/{file_item['Key']}"
+        for dir_item in page.get("CommonPrefixes", []):
+            yield f"{scheme}://{bucket_name}/{dir_item['Prefix'].strip('/')}"
 
 
 #############################################

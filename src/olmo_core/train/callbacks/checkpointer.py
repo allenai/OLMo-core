@@ -29,12 +29,14 @@ class CheckpointerCallback(Callback):
 
     save_interval: int = 250
     ephemeral_save_interval: Optional[int] = None
-    pre_train_checkpoint: bool = True
+    pre_train_checkpoint: Optional[bool] = None
     save_async: bool = False
 
     # Bookkeeping
 
-    _future: Optional[Future] = None
+    # NOTE: can't use type annotation here, omegaconf doesn't like it
+    #  _future: Optional[Future] = None
+    _future = None
     _latest_checkpoint: int = -1
     _checkpoints: List[str] = field(default_factory=list)
     _ephemeral_checkpoints: List[str] = field(default_factory=list)
@@ -52,9 +54,10 @@ class CheckpointerCallback(Callback):
     def _save_checkpoint(self) -> str:
         self._await_last_checkpoint()
         self._latest_checkpoint = self.step
-        path = f"{self.trainer.save_folder}/step{self.step}"
-        log.info(f"Saving checkpoint for step {self.step} to {path}...")
+        dirname = self.trainer.checkpointer.checkpoint_dirname(self.step)
+        path = f"{self.trainer.save_folder}/{dirname}"
         if self.save_async:
+            log.info(f"Saving checkpoint for step {self.step} to '{path}' asynchronously...")
             self._future = self.trainer.checkpointer.save_async(
                 path,
                 self.trainer.model,
@@ -62,6 +65,7 @@ class CheckpointerCallback(Callback):
                 self.trainer.state_dict(),
             )
         else:
+            log.info(f"Saving checkpoint for step {self.step} to '{path}'...")
             self.trainer.checkpointer.save(
                 path,
                 self.trainer.model,
@@ -81,7 +85,11 @@ class CheckpointerCallback(Callback):
             )
             self.trainer.checkpointer.process_group = dist.new_group()
 
-        if self.step == 0 and self.pre_train_checkpoint:
+        if (
+            self.step == 0
+            and self.pre_train_checkpoint is not False
+            and not self.trainer.checkpoint_loaded
+        ):
             self._checkpoints.append(self._save_checkpoint())
 
     def post_train_batch(self):
