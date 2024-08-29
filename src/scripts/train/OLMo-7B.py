@@ -117,6 +117,7 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
     optim_config = AdamWConfig(
         lr=3e-4,
         weight_decay=0.1,
+        betas=(0.9, 0.95),
         group_overrides=[
             OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
         ],
@@ -142,20 +143,24 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
             data_loader_workers=4,
             metrics_collect_interval=10,
         )
-        .with_callback(SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=200)))
-        .with_callback(GPUMemoryMonitorCallback())
-        .with_callback(GradClipperCallback(max_grad_norm=1.0))
         .with_callback(
+            "lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=2000))
+        )
+        .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
+        .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0))
+        .with_callback(
+            "speed_monitor",
             SpeedMonitorCallback(
                 num_flops_per_token=model_config.num_flops_per_token(dataset_config.sequence_length)
-            )
+            ),
         )
         .with_callback(
+            "checkpointer",
             CheckpointerCallback(
                 save_interval=10_000,
                 ephemeral_save_interval=250,
                 save_async=True,
-            )
+            ),
         )
     )
 
@@ -180,13 +185,14 @@ def train(config: ExperimentConfig):
 
     # Add W&B callback.
     config.trainer.with_callback(
+        "wandb",
         WandBCallback(
             name=config.run_name,
             config=config_dict,
             entity="ai2-llm",
             project="OLMo-core-testing",
             enabled=True,
-        )
+        ),
     )
 
     # Build components.

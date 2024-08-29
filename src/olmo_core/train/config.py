@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, Optional
 
 import torch
 import torch.distributed as dist
@@ -8,6 +8,7 @@ from torch.optim import Optimizer
 
 from ..config import Config, DType
 from ..data import DataCollator, MemMapDataset
+from ..exceptions import OLMoConfigurationError
 from ..utils import get_default_device
 from .callbacks import Callback
 from .checkpoint import Checkpointer
@@ -35,7 +36,7 @@ class TrainerConfig(Config):
         default_factory=lambda: Duration(value=1, unit=DurationUnit.epochs)
     )
     metrics_collect_interval: int = 5
-    callbacks: List[Callback] = field(default_factory=list)
+    callbacks: Dict[str, Callback] = field(default_factory=dict)
     fused_loss: bool = False
     z_loss_multiplier: Optional[float] = None
     autocast_precision: Optional[DType] = None
@@ -43,13 +44,16 @@ class TrainerConfig(Config):
     data_loader_workers: int = 0
     data_loader_prefetch_factor: Optional[int] = None
 
-    def with_callback(self, callback: Callback) -> "TrainerConfig":
+    def with_callback(self, name: str, callback: Callback) -> "TrainerConfig":
         """
         Add another callback.
 
+        :param name: A name to assign the callback. Must be unique.
         :param callback: The callback to add.
         """
-        self.callbacks.append(callback)
+        if name in self.callbacks:
+            raise OLMoConfigurationError(f"A callback with name '{name}' already exists")
+        self.callbacks[name] = callback
         return self
 
     def build(

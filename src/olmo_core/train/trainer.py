@@ -134,7 +134,7 @@ class Trainer:
     state from a trainer checkpoint.
     """
 
-    callbacks: List[Callback]
+    callbacks: Dict[str, Callback]
     """
     Trainer callbacks.
     """
@@ -288,7 +288,7 @@ class Trainer:
         has_checkpointer_callback = False
         has_speed_monitor_callback = False
         has_gc_collector_callback = False
-        for callback in self.callbacks:
+        for callback in self.callbacks.values():
             if isinstance(callback, ConsoleLoggerCallback):
                 has_console_logger_callback = True
             elif isinstance(callback, CheckpointerCallback):
@@ -298,21 +298,35 @@ class Trainer:
             elif isinstance(callback, GarbageCollectorCallback):
                 has_gc_collector_callback = True
         if not has_console_logger_callback:
-            self.callbacks.append(
+            self.callbacks.setdefault(
+                "console_logger",
                 ConsoleLoggerCallback(
                     log_interval=1, metrics_log_interval=self.metrics_collect_interval
-                )
+                ),
             )
         if not has_checkpointer_callback:
-            self.callbacks.append(CheckpointerCallback())
+            self.callbacks.setdefault("checkpointer", CheckpointerCallback())
         if not has_speed_monitor_callback:
-            self.callbacks.append(SpeedMonitorCallback())
+            self.callbacks.setdefault("speed_monitor", SpeedMonitorCallback())
         if is_distributed() and not has_gc_collector_callback:
-            self.callbacks.append(GarbageCollectorCallback())
+            self.callbacks.setdefault("garbage_collector", GarbageCollectorCallback())
 
         # Set pointer to self in all callbacks.
-        for callback in self.callbacks:
+        for callback in self.callbacks.values():
             callback.trainer = self
+
+        # Sort callbacks by (priority, name).
+        # We do this for 2 reasons: (1) to respect the priority, and (2) to ensure the callback
+        # order is consistent across the process group since some callbacks make distributed
+        # synchronization/communication calls.
+        self.callbacks = OrderedDict(
+            (
+                (k, cb)
+                for k, cb in sorted(
+                    self.callbacks.items(), key=lambda x: (x[1].priority, x[0]), reverse=True
+                )
+            )
+        )
 
         # Other validation.
         if isinstance(self.dataset, MemMapDataset):
@@ -329,9 +343,6 @@ class Trainer:
                     "No CPU backend configured, bookkeeping collectives will occur on the default "
                     "backend and will be blocking. This may result in slower training throughput."
                 )
-
-        # Sort callbacks by priority.
-        self.callbacks.sort(key=lambda callback: callback.priority, reverse=True)
 
     @property
     def rank_batch_size(self) -> int:
@@ -488,7 +499,7 @@ class Trainer:
 
         self.model.train()
 
-        for callback in self.callbacks:
+        for callback in self.callbacks.values():
             callback.pre_train()
 
         barrier()
@@ -497,11 +508,11 @@ class Trainer:
             while not self.training_complete:
                 self._fit_epoch()
         except BaseException as exc:
-            for callback in self.callbacks:
+            for callback in self.callbacks.values():
                 callback.on_error(exc)
             raise
 
-        for callback in self.callbacks:
+        for callback in self.callbacks.values():
             callback.post_train()
 
         log.info("Training complete")
@@ -727,7 +738,7 @@ class Trainer:
                     raise RuntimeError(f"{ce_loss} loss encountered at step {step}")
                 if ce_loss < 10:
                     metrics[step][TRAIN_PPL_METRIC] = math.exp(ce_loss)
-            for callback in self.callbacks:
+            for callback in self.callbacks.values():
                 callback.log_metrics(step, metrics[step])
 
     def _get_labels(self, batch: Dict[str, Any]) -> torch.Tensor:
@@ -884,7 +895,7 @@ class Trainer:
             self.record_metric(TRAIN_Z_LOSS_METRIC, z_batch_loss, ReduceType.mean)
 
         # Run through callbacks.
-        for callback in self.callbacks:
+        for callback in self.callbacks.values():
             callback.pre_optim_step()
 
         # Optimizer step.
@@ -918,7 +929,7 @@ class Trainer:
         data_iterator = iter(data_loader)
 
         while True:
-            for callback in self.callbacks:
+            for callback in self.callbacks.values():
                 callback.pre_load_batch()
 
             try:
@@ -930,7 +941,7 @@ class Trainer:
     def _fit_epoch(self):
         log.info(f"Starting epoch {self.epoch}...")
 
-        for callback in self.callbacks:
+        for callback in self.callbacks.values():
             callback.pre_epoch()
 
         first_batch = True
@@ -948,17 +959,17 @@ class Trainer:
             self.global_train_examples_seen_this_epoch += self.global_batch_size
             self.global_train_tokens_seen += self.global_batch_size * seq_len
 
-            for callback in self.callbacks:
+            for callback in self.callbacks.values():
                 callback.pre_step(batch)
 
             self._train_batch(batch)
 
-            for callback in self.callbacks:
+            for callback in self.callbacks.values():
                 callback.post_train_batch()
 
             # TODO: evals
 
-            for callback in self.callbacks:
+            for callback in self.callbacks.values():
                 callback.post_step()
 
             if first_batch or self.global_step % self.metrics_collect_interval == 0:
@@ -977,7 +988,7 @@ class Trainer:
 
         log.info("Epoch complete")
 
-        for callback in self.callbacks:
+        for callback in self.callbacks.values():
             callback.post_epoch()
 
         # Bookkeeping

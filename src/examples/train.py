@@ -65,21 +65,23 @@ TRAINER_CONFIG = (
         data_loader_workers=4,
         metrics_collect_interval=5,
     )
-    .with_callback(SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=100)))
-    .with_callback(GPUMemoryMonitorCallback())
-    .with_callback(GradClipperCallback(max_grad_norm=1.0))
+    .with_callback("lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=100)))
+    .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
+    .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0))
     .with_callback(
+        "checkpointer",
         CheckpointerCallback(
-            save_interval=10_000,
-            ephemeral_save_interval=250,
+            save_interval=1000,
+            ephemeral_save_interval=50,
             save_async=True,
             pre_train_checkpoint=LOAD_PATH is None,
-        )
+        ),
     )
     .with_callback(
+        "speed_monitor",
         SpeedMonitorCallback(
             num_flops_per_token=MODEL_CONFIG.num_flops_per_token(DATASET_CONFIG.sequence_length)
-        )
+        ),
     )
 )
 
@@ -95,10 +97,11 @@ def main():
     # Maybe add W&B callback.
     if WANDB_RUN is not None:
         TRAINER_CONFIG.with_callback(
+            "wandb",
             WandBCallback(
                 name=WANDB_RUN,
                 config=config_dict,
-            )
+            ),
         )
 
     # Build components.
