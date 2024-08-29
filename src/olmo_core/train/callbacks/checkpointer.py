@@ -10,6 +10,7 @@ from olmo_core.distributed.utils import (
     get_fs_local_rank,
     is_distributed,
 )
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.io import clear_directory
 
 from ..checkpoint import Checkpointer
@@ -29,9 +30,25 @@ class CheckpointerCallback(Callback):
     """
 
     save_interval: int = 250
+    """
+    The interval, in steps, with which to save permanent checkoints.
+    """
+
     ephemeral_save_interval: Optional[int] = None
+    """
+    The interval, in steps, with which to save temporary checkpoints. It's useful to set this to
+    a frequent interval for preemptible jobs.
+    """
+
     pre_train_checkpoint: Optional[bool] = None
+    """
+    Save a pretrain checkpoint. Defaults to ``True`` unless the trainer resumes from a checkpoint.
+    """
+
     save_async: bool = False
+    """
+    Save checkpoints asynchronously. Requires a backend that supports CPU.
+    """
 
     # Bookkeeping
 
@@ -41,6 +58,17 @@ class CheckpointerCallback(Callback):
     _latest_checkpoint: int = -1
     _checkpoints: List[str] = field(default_factory=list)
     _ephemeral_checkpoints: List[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        if self.save_interval < 1:
+            raise OLMoConfigurationError("'save_interval' must be at least 1")
+        if self.ephemeral_save_interval is not None:
+            if self.ephemeral_save_interval < 1:
+                raise OLMoConfigurationError("'ephemeral_save_interval' must be at least 1")
+            if self.ephemeral_save_interval >= self.save_interval:
+                raise OLMoConfigurationError(
+                    "'ephemeral_save_interval' must be less than 'save_interval'"
+                )
 
     @property
     def checkpointer(self) -> Checkpointer:

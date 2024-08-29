@@ -71,8 +71,8 @@ TRAINER_CONFIG = (
     .with_callback(
         "checkpointer",
         CheckpointerCallback(
-            save_interval=10_000,
-            ephemeral_save_interval=250,
+            save_interval=1000,
+            ephemeral_save_interval=50,
             save_async=True,
             pre_train_checkpoint=LOAD_PATH is None,
         ),
