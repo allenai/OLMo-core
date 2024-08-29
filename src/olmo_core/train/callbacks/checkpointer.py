@@ -8,7 +8,9 @@ import torch.distributed as dist
 from olmo_core.distributed.utils import (
     backend_supports_cpu,
     get_fs_local_rank,
+    get_rank,
     is_distributed,
+    scatter_object,
 )
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.io import clear_directory
@@ -137,14 +139,15 @@ class CheckpointerCallback(Callback):
         # Collect existing ephemeral checkpoints from previous runs.
         if self.ephemeral_save_interval is not None:
             ephemeral_checkpoints: List[Tuple[int, str]] = []
-            for step_num, path in self.checkpointer.find_checkpoints(self.save_folder):
-                if step_num == 0 and step_num % self.save_interval == 0:
-                    continue
-                elif step_num % self.ephemeral_save_interval == 0:
-                    ephemeral_checkpoints.append((step_num, path))
-                    log.info(
-                        f"Collected existing ephemeral checkpoint for step {step_num} at '{path}'"
-                    )
+
+            # Only search from rank 0 to avoid hammering remote file stores with requests.
+            if get_rank() == 0:
+                for step_num, path in self.checkpointer.find_checkpoints(self.save_folder):
+                    if step_num == 0 and step_num % self.save_interval == 0:
+                        continue
+                    elif step_num % self.ephemeral_save_interval == 0:
+                        ephemeral_checkpoints.append((step_num, path))
+            ephemeral_checkpoints = scatter_object(ephemeral_checkpoints)
 
             # TODO: handle this if we ever restore callback state.
             assert not self._ephemeral_checkpoints
@@ -152,6 +155,8 @@ class CheckpointerCallback(Callback):
             self._ephemeral_checkpoints = [
                 path for _, path in sorted(ephemeral_checkpoints, key=lambda x: x[0])
             ]
+            for path in self._ephemeral_checkpoints:
+                log.info(f"Collected existing ephemeral checkpoint at '{path}'")
 
     def post_train_batch(self):
         self._await_last_checkpoint(blocking=False)
