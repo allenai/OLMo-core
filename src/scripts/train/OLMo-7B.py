@@ -55,7 +55,6 @@ class ExperimentConfig(Config):
     optim: AdamWConfig
     dataset: MemMapDatasetConfig
     trainer: TrainerConfig
-    seed: int = 3423
 
 
 def build_config(run_name: str, cluster: str, overrides: List[str]) -> ExperimentConfig:
@@ -128,11 +127,9 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
         mix_base_dir=root_dir,
     )
 
-    save_folder = f"{root_dir}/checkpoints/OLMo-medium/{beaker_user.lower()}/{run_name}"
     trainer_config = (
         TrainerConfig(
-            work_dir=save_folder if not is_url(save_folder) else f"/tmp/{run_name}",
-            save_folder=save_folder,
+            save_folder=f"{root_dir}/checkpoints/OLMo-medium/{beaker_user.lower()}/{run_name}",
             global_batch_size=1024,
             microbatch_size=2,
             autocast_precision=DType.bfloat16,
@@ -173,7 +170,7 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
         )
     )
 
-    experiment_config = ExperimentConfig(
+    return ExperimentConfig(
         run_name=run_name,
         launch=launch_config,
         model=model_config,
@@ -181,8 +178,6 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
         dataset=dataset_config,
         trainer=trainer_config,
     ).merge(overrides)
-
-    return experiment_config
 
 
 def launch(config: ExperimentConfig):

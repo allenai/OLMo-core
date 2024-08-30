@@ -1,3 +1,5 @@
+import os
+import tempfile
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
@@ -9,6 +11,7 @@ from torch.optim import Optimizer
 from ..config import Config, DType
 from ..data import DataCollator, MemMapDataset
 from ..exceptions import OLMoConfigurationError
+from ..io import is_url
 from ..utils import get_default_device
 from .callbacks import Callback
 from .checkpoint import Checkpointer
@@ -22,11 +25,11 @@ class TrainerConfig(Config):
     A configuration class for easily building :class:`~olmo_core.train.trainer.Trainer` instances.
     """
 
-    work_dir: str
     save_folder: str
     global_batch_size: int
     microbatch_size: int
 
+    work_dir: Optional[str] = None
     load_path: Optional[str] = None
     load_strategy: LoadStrategy = LoadStrategy.if_available
 
@@ -81,6 +84,13 @@ class TrainerConfig(Config):
         )
         device = kwargs.pop("device", None)
         autocast_precision: Optional[DType] = kwargs.pop("autocast_precision", None)
+        work_dir = kwargs.pop("work_dir", None)
+        if work_dir is None:
+            if not is_url(self.save_folder):
+                work_dir = self.save_folder
+            else:
+                work_dir = os.path.join(tempfile.gettempdir(), os.path.basename(self.save_folder))
+
         collator = DataCollator(pad_token_id=dataset.pad_token_id)
 
         return Trainer(
@@ -91,6 +101,7 @@ class TrainerConfig(Config):
             checkpointer=checkpointer,
             train_sequence_length=dataset.sequence_length,
             autocast_precision=None if autocast_precision is None else autocast_precision.as_pt(),
+            work_dir=work_dir,
             device=torch.device(device) if device is not None else get_default_device(),
             dp_process_group=dp_process_group,
             **kwargs,
