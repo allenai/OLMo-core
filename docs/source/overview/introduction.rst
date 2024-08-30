@@ -45,4 +45,4 @@ Most users will likely follow a workflow that looks like this:
      launch_config = BeakerLaunchConfig(...)
      launch_config.launch(follow=True)
 
-You can find a complete example of this workflow in the `Train a language model </examples/train.html>`_ example.
+You can find a complete example of this workflow in the `Train a language model <../examples/train.html>`_ example.
