@@ -6,7 +6,7 @@ import json
 import logging
 import sys
 from dataclasses import dataclass
-from typing import List
+from typing import List, cast
 
 from beaker import Beaker
 
@@ -73,7 +73,6 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
         cmd=["src/scripts/train/OLMo-7B.py", SubCmd.train, run_name, cluster, *overrides],
         task_name="train",
         workspace="ai2/OLMo-core",
-        description="Testing OLMo-core launch utilities",
         clusters=[cluster],
         weka_buckets=weka_buckets,
         beaker_image=OLMoCoreBeakerImage.nightly,  # some features require nightly at the moment
@@ -88,7 +87,6 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
             BeakerEnvSecret(name="AWS_CREDENTIALS", secret=f"{beaker_user}_AWS_CREDENTIALS"),
             BeakerEnvSecret(name="R2_ENDPOINT_URL", secret="R2_ENDPOINT_URL"),
             BeakerEnvSecret(name="WEKA_ENDPOINT_URL", secret="WEKA_ENDPOINT_URL"),
-            BeakerEnvSecret(name="WANDB_API_KEY", secret=f"{beaker_user}_WANDB_API_KEY"),
         ],
         setup_steps=[
             # Setup python environment.
@@ -142,6 +140,7 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
             data_seed=34521,
             data_loader_workers=4,
             metrics_collect_interval=10,
+            cancel_check_interval=1,
         )
         .with_callback(
             "lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=2000))
@@ -160,6 +159,16 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
                 save_interval=10_000,
                 ephemeral_save_interval=250,
                 save_async=True,
+            ),
+        )
+        .with_callback(
+            "wandb",
+            WandBCallback(
+                name=run_name,
+                entity="ai2-llm",
+                project="OLMo-core-testing",
+                enabled=True,
+                cancel_check_interval=10,
             ),
         )
     )
@@ -181,20 +190,6 @@ def launch(config: ExperimentConfig):
 
 
 def train(config: ExperimentConfig):
-    config_dict = config.as_config_dict()
-
-    # Add W&B callback.
-    config.trainer.with_callback(
-        "wandb",
-        WandBCallback(
-            name=config.run_name,
-            config=config_dict,
-            entity="ai2-llm",
-            project="OLMo-core-testing",
-            enabled=True,
-        ),
-    )
-
     # Build components.
     model = config.model.build(
         init_device="meta",
@@ -206,8 +201,11 @@ def train(config: ExperimentConfig):
     dataset = config.dataset.build()
     trainer = config.trainer.build(model, optim, dataset)
 
-    # Save the config to file.
+    # Record the config to W&B and to the save folder.
     if get_rank() == 0:
+        config_dict = config.as_config_dict()
+        wandb_callback = cast(WandBCallback, trainer.callbacks["wandb"])
+        wandb_callback.config = config_dict
         trainer.write_file("config.json", json.dumps(config_dict, indent=2))
 
     # Train.

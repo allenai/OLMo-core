@@ -90,12 +90,13 @@ class CheckpointerCallback(Callback):
                 return fut
         return None
 
-    def _save_checkpoint(self) -> str:
+    def _save_checkpoint(self, save_async: Optional[bool] = None) -> str:
+        save_async = save_async if save_async is not None else self.save_async
         self._await_last_checkpoint()
         self._latest_checkpoint = self.step
         dirname = self.checkpointer.checkpoint_dirname(self.step)
         path = f"{self.save_folder}/{dirname}"
-        if self.save_async:
+        if save_async:
             log.info(f"Saving checkpoint for step {self.step} to '{path}' asynchronously...")
             self._future = self.checkpointer.save_async(
                 path,
@@ -174,5 +175,5 @@ class CheckpointerCallback(Callback):
 
     def post_train(self):
         if self.step > self._latest_checkpoint:
-            self._checkpoints.append(self._save_checkpoint())
+            self._checkpoints.append(self._save_checkpoint(save_async=False))
         self._await_last_checkpoint()

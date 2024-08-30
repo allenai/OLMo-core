@@ -7,6 +7,7 @@ Launch this with torchrun:
 """
 
 import json
+from typing import cast
 
 from olmo_core.config import DType
 from olmo_core.data import MemMapDatasetConfig, TokenizerConfig
@@ -29,7 +30,6 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.utils import get_default_device
 
-LOAD_PATH = None  # path to a checkpoint folder
 WANDB_RUN = None  # name of W&B run
 SAVE_FOLDER = "/tmp/run01"
 DATA_FILES = ["/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy"]  # can be globs
@@ -64,6 +64,7 @@ TRAINER_CONFIG = (
         data_seed=SEED,
         data_loader_workers=4,
         metrics_collect_interval=5,
+        cancel_check_interval=5,
     )
     .with_callback("lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=100)))
     .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
@@ -74,13 +75,20 @@ TRAINER_CONFIG = (
             save_interval=1000,
             ephemeral_save_interval=50,
             save_async=True,
-            pre_train_checkpoint=LOAD_PATH is None,
         ),
     )
     .with_callback(
         "speed_monitor",
         SpeedMonitorCallback(
             num_flops_per_token=MODEL_CONFIG.num_flops_per_token(DATASET_CONFIG.sequence_length)
+        ),
+    )
+    .with_callback(
+        "wandb",
+        WandBCallback(
+            name=WANDB_RUN,
+            cancel_check_interval=10,
+            enabled=WANDB_RUN is not None,
         ),
     )
 )
@@ -91,18 +99,7 @@ def main():
         model=MODEL_CONFIG.as_config_dict(),
         optim=OPTIM_CONFIG.as_config_dict(),
         trainer=TRAINER_CONFIG.as_config_dict(),
-        load_path=LOAD_PATH,
     )
-
-    # Maybe add W&B callback.
-    if WANDB_RUN is not None:
-        TRAINER_CONFIG.with_callback(
-            "wandb",
-            WandBCallback(
-                name=WANDB_RUN,
-                config=config_dict,
-            ),
-        )
 
     # Build components.
     model = MODEL_CONFIG.build(
@@ -114,15 +111,12 @@ def main():
     dataset = DATASET_CONFIG.build()
     trainer = TRAINER_CONFIG.build(model, optim, dataset)
 
-    # Save config to file.
+    # Save config to W&B and file.
     if get_rank() == 0:
+        cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
         trainer.checkpointer.write_file(
             SAVE_FOLDER, "config.json", json.dumps(config_dict, indent=2)
         )
-
-    # Maybe load a checkpoint.
-    if LOAD_PATH is not None:
-        trainer.load_checkpoint(LOAD_PATH)
 
     # Train.
     trainer.fit()

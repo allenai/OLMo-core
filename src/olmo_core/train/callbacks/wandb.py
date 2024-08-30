@@ -71,14 +71,14 @@ class WandBCallback(Callback):
     Defaults to ``["cancel", "canceled", "cancelled"]``.
     """
 
+    cancel_check_interval: Optional[int] = None
+    """
+    Check for cancel tags every this many steps. Defaults to
+    :data:`olmo_core.train.Trainer.cancel_check_interval`.
+    """
+
     _wandb = None
     _run_path = None
-
-    def __post_init__(self):
-        if self.enabled and get_rank() == 0:
-            self.wandb
-            if WANDB_API_KEY_ENV_VAR not in os.environ:
-                raise OLMoEnvironmentError(f"missing env var '{WANDB_API_KEY_ENV_VAR}'")
 
     @property
     def wandb(self):
@@ -98,6 +98,10 @@ class WandBCallback(Callback):
 
     def pre_train(self):
         if self.enabled and get_rank() == 0:
+            self.wandb
+            if WANDB_API_KEY_ENV_VAR not in os.environ:
+                raise OLMoEnvironmentError(f"missing env var '{WANDB_API_KEY_ENV_VAR}'")
+
             wandb_dir = Path(self.trainer.save_folder) / "wandb"
             wandb_dir.mkdir(parents=True, exist_ok=True)
             self.wandb.init(
@@ -109,14 +113,15 @@ class WandBCallback(Callback):
                 tags=self.tags,
                 config=self.config,
             )
-            self._run_path = self.run.path
+            self._run_path = self.run.path  # type: ignore
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):
         if self.enabled and get_rank() == 0:
             self.wandb.log(metrics, step=step)
 
     def post_step(self):
-        if self.enabled and get_rank() == 0 and self.step % self.trainer.cancel_check_interval == 0:
+        cancel_check_interval = self.cancel_check_interval or self.trainer.cancel_check_interval
+        if self.enabled and get_rank() == 0 and self.step % cancel_check_interval == 0:
             self.trainer.thread_pool.submit(self.check_if_canceled)
 
     def post_train(self):
@@ -137,7 +142,7 @@ class WandBCallback(Callback):
                 # NOTE: need to re-initialize the API client every time, otherwise
                 # I guess it return cached run data.
                 api = self.wandb.Api(api_key=os.environ[WANDB_API_KEY_ENV_VAR])
-                run = api.run(self.run_path)
+                run = api.run(self.run_path)  # type: ignore
                 for tag in run.tags or []:
                     if tag.lower() in self.cancel_tags:
                         self.trainer.cancel_run("canceled from W&B tag")

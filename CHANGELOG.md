@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Add `Trainer.hard_stop` field.
+- The trainer now catches `SIGTERM` and marks the run as canceled.
+
+### Fixed
+
+- Fixed bug with how command arguments were expanded by `BeakerLaunchConfig`.
+
 ## [v1.0.2](https://github.com/allenai/OLMo-core/releases/tag/v1.0.2) - 2024-08-29
 
 ### Added
