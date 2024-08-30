@@ -497,9 +497,6 @@ class Trainer:
         self._cancel_reason = None
         self._canceling_rank = None
 
-        # Install SIGTERM handler.
-        signal.signal(signal.SIGTERM, self._handle_sigterm)
-
         # Maybe load a checkpoint.
         if not self.checkpoint_loaded:
             load_path = self.load_path if self.load_path is not None else self.save_folder
@@ -517,6 +514,9 @@ class Trainer:
 
         barrier()
 
+        # Install SIGTERM handler.
+        og_handler = signal.signal(signal.SIGTERM, self._handle_sigterm)
+
         try:
             while not self.training_complete:
                 self._fit_epoch()
@@ -524,6 +524,9 @@ class Trainer:
             for callback in self.callbacks.values():
                 callback.on_error(exc)
             raise
+        finally:
+            # Restore original SIGTERM handler.
+            signal.signal(signal.SIGTERM, og_handler)
 
         for callback in self.callbacks.values():
             callback.post_train()
@@ -676,11 +679,11 @@ class Trainer:
 
     def _duration_due(self, duration: Duration) -> bool:
         if duration.unit == DurationUnit.steps:
-            return self.global_step > duration.value
-        elif duration.unit == DurationUnit.epochs:
-            return self.epoch > duration.value
+            return self.global_step >= duration.value
         elif duration.unit == DurationUnit.tokens:
             return self.global_train_tokens_seen >= duration.value
+        elif duration.unit == DurationUnit.epochs:
+            return self.epoch > duration.value
         else:
             raise NotImplementedError
 

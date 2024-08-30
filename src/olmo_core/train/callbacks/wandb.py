@@ -58,6 +58,11 @@ class WandBCallback(Callback):
     Tags to assign the run.
     """
 
+    notes: Optional[str] = None
+    """
+    A note/description of the run.
+    """
+
     config: Optional[Dict[str, Any]] = None
     """
     The config to load to W&B.
@@ -111,6 +116,7 @@ class WandBCallback(Callback):
                 group=self.group,
                 name=self.name,
                 tags=self.tags,
+                notes=self.notes,
                 config=self.config,
             )
             self._run_path = self.run.path  # type: ignore

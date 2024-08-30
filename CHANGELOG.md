@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add `Trainer.hard_stop` field.
 - The trainer now catches `SIGTERM` and marks the run as canceled.
+- Added `CheckpointerCallback.remove` strategy for configuring which old checkpoints found in the save folder are removed.
+- Added `ReorderedNormTransformerBlock` implementation.
+- Added `WandBCallback.notes` field.
 
 ### Fixed
 
