@@ -40,6 +40,7 @@ TOKENIZER_CONFIG = TokenizerConfig.gpt2()
 MODEL_CONFIG = TransformerConfig.llama2_271M(
     vocab_size=TOKENIZER_CONFIG.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
     compile=False,
+    use_flash=True,
     dp_config=DataParallelConfig(
         name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
     ),
@@ -51,6 +52,7 @@ DATASET_CONFIG = MemMapDatasetConfig.glob(
     *DATA_FILES,
     sequence_length=1024,
     tokenizer=TOKENIZER_CONFIG,
+    generate_doc_lengths=True,
 )
 
 TRAINER_CONFIG = (
