@@ -18,6 +18,14 @@ class TransformerBlockType(StrEnum):
     """
 
     default = "default"
+    """
+    :class:`TransformerBlock`
+    """
+
+    reordered_norm = "reordered_norm"
+    """
+    :class:`ReorderedNormTransformerBlock`
+    """
 
 
 @dataclass
@@ -52,9 +60,9 @@ class TransformerBlockConfig(Config):
         )
 
         if self.name == TransformerBlockType.default:
-            return TransformerBlock(
-                **kwargs,
-            )
+            return TransformerBlock(**kwargs)
+        elif self.name == TransformerBlockType.reordered_norm:
+            return ReorderedNormTransformerBlock(**kwargs)
         else:
             raise NotImplementedError(self.name)
 
@@ -114,3 +122,22 @@ class TransformerBlock(nn.Module):
             self.attention(self.attention_norm(x), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
         )
         return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
+
+
+class ReorderedNormTransformerBlock(TransformerBlock):
+    """
+    Like :class:`TransformerBlock` except that the attention norm is applied on the output
+    of attention instead of the input, and likewise the feed-forward norm is applied on the output
+    of the feed-forward instead of the input.
+    """
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        max_doc_len: Optional[int] = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        h = x + self.dropout(
+            self.attention_norm(self.attention(x, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens))
+        )
+        return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))

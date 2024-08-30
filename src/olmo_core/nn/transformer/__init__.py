@@ -2,7 +2,12 @@
 Transformer building blocks.
 """
 
-from .block import TransformerBlock, TransformerBlockConfig, TransformerBlockType
+from .block import (
+    ReorderedNormTransformerBlock,
+    TransformerBlock,
+    TransformerBlockConfig,
+    TransformerBlockType,
+)
 from .init import InitMethod
 from .model import (
     Transformer,
@@ -16,6 +21,7 @@ __all__ = [
     "TransformerBlockType",
     "TransformerBlockConfig",
     "TransformerBlock",
+    "ReorderedNormTransformerBlock",
     "TransformerActivationCheckpointingConfig",
     "InitMethod",
 ]
