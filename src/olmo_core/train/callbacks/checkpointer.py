@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple
 
 import torch.distributed as dist
 
+from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import (
     backend_supports_cpu,
     get_fs_local_rank,
@@ -21,10 +22,34 @@ from .callback import Callback
 log = logging.getLogger(__name__)
 
 
+class CheckpointRemovalStrategy(StrEnum):
+    """
+    An enumeration of the different strategies for removing old checkpoints found in the save folder.
+    """
+
+    ephemeral_only = "ephemeral_only"
+    """
+    Only remove checkpoints that were saved at the :data:`CheckpointerCallback.ephemeral_save_interval`.
+    """
+
+    all_non_permanent = "all_non_permanent"
+    """
+    Remove all non-permanent checkpoints found, including ephemeral checkpoints and also
+    any other checkpoints that were not saved at the :data:`CheckpointerCallback.save_interval`.
+    """
+
+    never = "never"
+    """
+    Never remove any old checkpoints found in the save folder.
+    """
+
+
 @dataclass
 class CheckpointerCallback(Callback):
     """
-    Used to configure checkpointing during training.
+    Manages checkpointing during training, including writing checkpoints at set intervals
+    determined by :data:`save_interval` and :data:`ephemeral_save_interval`, as well as removing
+    old checkpoints found in the save folder as determined by the :data:`remove` setting.
 
     .. important::
         This callback gets added automatically if you don't explicitly configure it.
@@ -38,8 +63,10 @@ class CheckpointerCallback(Callback):
 
     ephemeral_save_interval: Optional[int] = None
     """
-    The interval, in steps, with which to save temporary checkpoints. It's useful to set this to
-    a frequent interval for preemptible jobs.
+    The interval, in steps, with which to save temporary checkpoints. These checkpoints are removed
+    each time a new checkpoint is saved.
+
+    It can be useful to set this to a relatively frequent interval for preemptible jobs.
     """
 
     pre_train_checkpoint: Optional[bool] = None
@@ -50,6 +77,11 @@ class CheckpointerCallback(Callback):
     save_async: bool = False
     """
     Save checkpoints asynchronously. Requires a backend that supports CPU.
+    """
+
+    remove: CheckpointRemovalStrategy = CheckpointRemovalStrategy.ephemeral_only
+    """
+    The strategy for removing old checkpoints found in the save folder.
     """
 
     # Bookkeeping
@@ -138,16 +170,21 @@ class CheckpointerCallback(Callback):
             self._checkpoints.append(self._save_checkpoint())
 
         # Collect existing ephemeral checkpoints from previous runs.
-        if self.ephemeral_save_interval is not None:
+        if self.remove != CheckpointRemovalStrategy.never:
             ephemeral_checkpoints: List[Tuple[int, str]] = []
 
             # Only search from rank 0 to avoid hammering remote file stores with requests.
             if get_rank() == 0:
                 for step_num, path in self.checkpointer.find_checkpoints(self.save_folder):
-                    if step_num == 0 and step_num % self.save_interval == 0:
+                    if step_num == 0 or step_num % self.save_interval == 0:
                         continue
-                    elif step_num % self.ephemeral_save_interval == 0:
+                    elif (
+                        self.remove == CheckpointRemovalStrategy.ephemeral_only
+                        and self.ephemeral_save_interval is not None
+                        and step_num % self.ephemeral_save_interval == 0
+                    ) or (self.remove == CheckpointRemovalStrategy.all_non_permanent):
                         ephemeral_checkpoints.append((step_num, path))
+
             ephemeral_checkpoints = scatter_object(ephemeral_checkpoints)
 
             # TODO: handle this if we ever restore callback state.

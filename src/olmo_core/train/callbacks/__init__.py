@@ -1,5 +1,5 @@
 from .callback import Callback
-from .checkpointer import CheckpointerCallback
+from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy
 from .console_logger import ConsoleLoggerCallback
 from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
@@ -11,6 +11,7 @@ from .wandb import WandBCallback
 __all__ = [
     "Callback",
     "CheckpointerCallback",
+    "CheckpointRemovalStrategy",
     "ConsoleLoggerCallback",
     "GarbageCollectorCallback",
     "GPUMemoryMonitorCallback",
