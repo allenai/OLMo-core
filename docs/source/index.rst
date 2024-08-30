@@ -18,6 +18,14 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
 .. toctree::
    :hidden:
    :maxdepth: 2
+   :caption: Overview
+
+   overview/introduction.rst
+   overview/installation.rst
+
+.. toctree::
+   :hidden:
+   :maxdepth: 2
    :caption: Examples
 
    examples/train.rst
