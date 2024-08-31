@@ -676,11 +676,8 @@ class Trainer:
         """
         Save a checkpoint for the current step to the :data:`save_folder` asynchronously.
 
-        :param done_callback: A function that will be called with the path to the checkpoint
-            after it's saved successfully.
-
         :returns: The path/URL to the checkpoint and a future which will complete when the
-        checkpoint is successfully saved.
+            checkpoint is successfully saved.
         """
         step = self.global_step
         dirname = self.checkpointer.checkpoint_dirname(step)
@@ -723,16 +720,19 @@ class Trainer:
         self._metrics[self.global_step][name] = value
         self._metrics_reduce_type[name] = reduce_type
 
-    def write_file(self, name: str, contents: Union[str, bytes]) -> PathOrStr:
+    def write_file(
+        self, name: str, contents: Union[str, bytes], dir: Optional[PathOrStr] = None
+    ) -> PathOrStr:
         """
-        Write a file to the :data:`save_folder`.
+        Write a file to the :data:`save_folder` or ``dir``, if provided.
 
         :param fname: The name of the file to write.
         :param contents: The contents of the file to write.
+        :param dir: The path/URL to a directory to write the file to. Defaults to :data:`save_folder`.
 
         :returns: The path/URL of the file.
         """
-        return self.checkpointer.write_file(self.save_folder, name, contents)
+        return self.checkpointer.write_file(dir or self.save_folder, name, contents)
 
     def _duration_due(self, duration: Duration) -> bool:
         if duration.unit == DurationUnit.steps:

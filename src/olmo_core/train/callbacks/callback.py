@@ -49,6 +49,8 @@ class Callback:
     def post_checkpoint_loaded(self, path: PathOrStr):
         """
         Called when a checkpoint is successfully loaded.
+
+        :param path: The path/URL to the checkpoint.
         """
         del path
 
