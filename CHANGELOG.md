@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added `Trainer.save_checkpoint()` and `Trainer.save_checkpoint_async()` methods.
+- Added `Callback.post_checkpoint_saved()` and `Callback.post_checkpoint_loaded()` methods.
 
 ### Changed
 

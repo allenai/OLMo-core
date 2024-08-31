@@ -626,6 +626,9 @@ class Trainer:
             assert trainer_state is not None
             self.load_state_dict(trainer_state)
 
+        for callback in self.callbacks.values():
+            callback.post_checkpoint_loaded(dir)
+
         self._checkpoint_loaded = True
         log.info("Checkpoint successfully loaded")
 
@@ -664,6 +667,8 @@ class Trainer:
         path = join_path(self.save_folder, dirname)
         log.info(f"Saving checkpoint for step {self.global_step} to '{path}'...")
         self.checkpointer.save(path, self.model, self.optim, self.state_dict())
+        for callback in self.callbacks.values():
+            callback.post_checkpoint_saved(path)
         log.info("Checkpoint saved")
         return path
 
@@ -686,6 +691,8 @@ class Trainer:
 
         def callback(future: Future):
             future.result()  # ensure it finished successfully
+            for callback in self.callbacks.values():
+                callback.post_checkpoint_saved(path)
             log.info(f"Checkpoint for step {step} saved successfully")
 
         fut.add_done_callback(callback)
