@@ -542,6 +542,8 @@ class Trainer:
             global_train_tokens_seen=self.global_train_tokens_seen,
             global_train_tokens_seen_this_epoch=self.global_train_tokens_seen_this_epoch,
             global_train_examples_seen_this_epoch=self.global_train_examples_seen_this_epoch,
+            dataset_total_size=self.dataset_total_size,
+            data_seed=self.data_seed,
             epoch=self.epoch,
             world_size=get_world_size(),  # global world size here on purpose
             train_sequence_length=self.train_sequence_length,
@@ -554,8 +556,18 @@ class Trainer:
         """
         if state_dict["train_sequence_length"] != self.train_sequence_length:
             raise NotImplementedError(
-                "Restoring training state with a different sequence length is not supported"
+                "Restoring trainer state with a different sequence length is not supported"
             )
+
+        if state_dict.get("dataset_total_size", self.dataset_total_size) != self.dataset_total_size:
+            raise RuntimeError("Restoring trainer state with a different dataset is not supported!")
+
+        if (data_seed := state_dict.get("data_seed", self.data_seed)) != self.data_seed:
+            log.warning(
+                "Restoring from trainer state with a different data seed, "
+                "will use data seed from state dict for data order consistency."
+            )
+            self.data_seed = data_seed
 
         self.train_sequence_length = state_dict["train_sequence_length"]
         self.global_step = state_dict["global_step"]
