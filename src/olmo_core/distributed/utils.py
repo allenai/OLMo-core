@@ -58,8 +58,10 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
     # Host-specific env vars.
     # See https://beaker-docs.apps.allenai.org/experiments/distributed-training.html#ai2pluto-cirrascale.
     if "jupiter" in get_node_hostname():
-        set_env_var("NCCL_SOCKET_IFNAME", "ib")
         set_env_var("NCCL_IB_HCA", "^=mlx5_bond_0")
+        if int(os.environ.get(OLMO_NUM_NODES_ENV_VAR, "1")) > 1:
+            # Only for multi-node
+            set_env_var("NCCL_SOCKET_IFNAME", "ib")
     elif "pluto" in get_node_hostname():
         set_env_var("NCCL_IB_HCA", "^=mlx5_1,mlx5_2")
 
