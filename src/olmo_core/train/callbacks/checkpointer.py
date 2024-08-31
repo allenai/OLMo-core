@@ -118,7 +118,6 @@ class CheckpointerCallback(Callback):
             if blocking or fut.done():
                 fut.result()
                 self._future = None
-                log.info(f"Checkpoint for step {self._latest_checkpoint:,d} saved successfully")
                 return fut
         return None
 
@@ -126,26 +125,11 @@ class CheckpointerCallback(Callback):
         save_async = save_async if save_async is not None else self.save_async
         self._await_last_checkpoint()
         self._latest_checkpoint = self.step
-        dirname = self.checkpointer.checkpoint_dirname(self.step)
-        path = f"{self.save_folder}/{dirname}"
         if save_async:
-            log.info(f"Saving checkpoint for step {self.step} to '{path}' asynchronously...")
-            self._future = self.checkpointer.save_async(
-                path,
-                self.trainer.model,
-                self.trainer.optim,
-                self.trainer.state_dict(),
-            )
+            path, self._future = self.trainer.save_checkpoint_async()
         else:
-            log.info(f"Saving checkpoint for step {self.step} to '{path}'...")
-            self.checkpointer.save(
-                path,
-                self.trainer.model,
-                self.trainer.optim,
-                self.trainer.state_dict(),
-            )
-            log.info("Checkpoint saved")
-        return path
+            path = self.trainer.save_checkpoint()
+        return str(path)
 
     def _remove_checkpoint(self, path: str):
         if get_fs_local_rank() == 0:
