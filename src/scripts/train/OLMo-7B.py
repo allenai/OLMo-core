@@ -1,5 +1,5 @@
 """
-Train a 7B OLMo model. See below for usage.
+Train a 7B OLMo model. Run this script without any arguments to see usage info.
 """
 
 import json
@@ -36,7 +36,12 @@ from olmo_core.train.callbacks import (
     SpeedMonitorCallback,
     WandBCallback,
 )
-from olmo_core.utils import generate_uuid, get_default_device, prepare_cli_environment
+from olmo_core.utils import (
+    generate_uuid,
+    get_default_device,
+    prepare_cli_environment,
+    seed_all,
+)
 
 log = logging.getLogger(__name__)
 
@@ -55,6 +60,7 @@ class ExperimentConfig(Config):
     optim: AdamWConfig
     dataset: MemMapDatasetConfig
     trainer: TrainerConfig
+    init_seed: int = 12536
 
 
 def build_config(run_name: str, cluster: str, overrides: List[str]) -> ExperimentConfig:
@@ -185,6 +191,9 @@ def launch(config: ExperimentConfig):
 
 
 def train(config: ExperimentConfig):
+    # Set RNG states on all devices.
+    seed_all(config.init_seed)
+
     # Build components.
     model = config.model.build(
         init_device="meta",
@@ -208,33 +217,41 @@ def train(config: ExperimentConfig):
 
 
 if __name__ == "__main__":
-    usage = (
-        f"Usage: python {sys.argv[0]} {SubCmd.launch}|{SubCmd.train}|{SubCmd.dry_run} run_name cluster [OVERRIDES...]\n\n"
-        "Example:\n"
-        f"$ python {sys.argv[0]} {SubCmd.launch} OLMo-core-7B ai2/pluto-cirrascale --launch.num_nodes=2"
-    )
+    usage = f"""
+[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
 
-    if len(sys.argv) < 4:
-        print(usage)
+[b]Subcommands[/]
+[b magenta]launch:[/]  Launch the script on Beaker with the [b magenta]train[/] subcommand.
+[b magenta]train:[/]   Run the trainer. You usually shouldn't invoke the script with this subcommand directly.
+         Instead use [b magenta]launch[/] or run it with torchrun.
+[b magenta]dry_run:[/] Pretty print the config and exit.
+
+[b]Examples[/]
+$ [i]python {sys.argv[0]} {SubCmd.launch} OLMo-core-7B ai2/pluto-cirrascale --launch.num_nodes=2[/]
+    """.strip()
+
+    if len(sys.argv) < 4 or sys.argv[1] not in set(SubCmd):
+        import rich
+
+        rich.get_console().print(usage, highlight=False)
         sys.exit(1)
 
-    cmd = sys.argv[1]
-    run_name = sys.argv[2]
-    cluster = sys.argv[3]
-    overrides = sys.argv[4:]
+    cmd, run_name, cluster, *overrides = sys.argv[1:]
 
-    if sys.argv[1] == SubCmd.launch:
+    if cmd == SubCmd.launch:
         prepare_cli_environment()
         config = build_config(run_name, cluster, overrides)
         launch(config)
-    elif sys.argv[1] == SubCmd.dry_run:
+    elif cmd == SubCmd.dry_run:
         prepare_cli_environment()
         config = build_config(run_name, cluster, overrides)
         log.info(config)
-    else:
+    elif cmd == SubCmd.train:
         prepare_training_environment()
         config = build_config(run_name, cluster, overrides)
         try:
             train(config)
         finally:
             teardown_training_environment()
+    else:
+        raise NotImplementedError(cmd)

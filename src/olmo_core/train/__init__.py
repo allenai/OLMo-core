@@ -65,7 +65,7 @@ log = logging.getLogger(__name__)
 
 def prepare_training_environment(
     *,
-    seed: int = 0,
+    seed: Optional[int] = None,
     backend: Optional[str] = "cpu:gloo,cuda:nccl",
     timeout: timedelta = timedelta(minutes=5),
     log_filter_type: Optional[LogFilterType] = None,
@@ -112,7 +112,8 @@ def prepare_training_environment(
     add_cached_path_clients()
 
     # Init RNG states.
-    seed_all(seed)
+    if seed is not None:
+        seed_all(seed)
 
     if is_distributed():
         log.info(f"Using distributed backend {dist.get_backend()}")

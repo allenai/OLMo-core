@@ -34,8 +34,7 @@ if __name__ == "__main__":
         print(f"Usage: python {sys.argv[0]} run_name [OVERRIDES...]")
         sys.exit(1)
 
-    run_name = sys.argv[1]
-    overrides = sys.argv[2:]
+    run_name, *overrides = sys.argv[1:]
 
     prepare_cli_environment()
 
