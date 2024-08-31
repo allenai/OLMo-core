@@ -53,6 +53,10 @@ jobs:
           - name: Style
             run: make style-check
 
+          - name: Docs
+            run: |
+              cd docs && make html SPHINXOPTS="-W --keep-going"
+
         include:
           - python: '3.9'
             task:
