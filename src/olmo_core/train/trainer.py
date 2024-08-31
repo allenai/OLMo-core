@@ -3,7 +3,7 @@ import logging
 import math
 import signal
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Literal, Optional, Tuple, Union
@@ -29,7 +29,7 @@ from ..distributed.utils import (
     scatter_object,
 )
 from ..exceptions import OLMoConfigurationError
-from ..io import is_url, normalize_path
+from ..io import is_url, join_path, normalize_path
 from ..nn.functional.cross_entropy_loss import (
     cross_entropy_loss,
     fused_cross_entropy_loss,
@@ -626,6 +626,9 @@ class Trainer:
             assert trainer_state is not None
             self.load_state_dict(trainer_state)
 
+        for callback in self.callbacks.values():
+            callback.post_checkpoint_loaded(dir)
+
         self._checkpoint_loaded = True
         log.info("Checkpoint successfully loaded")
 
@@ -654,6 +657,45 @@ class Trainer:
             log.warning(f"No checkpoint found in '{dir}', will train from scratch...")
         return should_load
 
+    def save_checkpoint(self) -> PathOrStr:
+        """
+        Save a checkpoint for the current step to the :data:`save_folder`.
+
+        :returns: The path/URL to the checkpoint.
+        """
+        dirname = self.checkpointer.checkpoint_dirname(self.global_step)
+        path = join_path(self.save_folder, dirname)
+        log.info(f"Saving checkpoint for step {self.global_step} to '{path}'...")
+        self.checkpointer.save(path, self.model, self.optim, self.state_dict())
+        for callback in self.callbacks.values():
+            callback.post_checkpoint_saved(path)
+        log.info("Checkpoint saved")
+        return path
+
+    def save_checkpoint_async(self) -> Tuple[PathOrStr, Future]:
+        """
+        Save a checkpoint for the current step to the :data:`save_folder` asynchronously.
+
+        :returns: The path/URL to the checkpoint and a future which will complete when the
+            checkpoint is successfully saved.
+        """
+        step = self.global_step
+        dirname = self.checkpointer.checkpoint_dirname(step)
+        path = join_path(self.save_folder, dirname)
+
+        log.info(f"Saving checkpoint for step {step} to '{path}' asynchronously...")
+        fut = self.checkpointer.save_async(path, self.model, self.optim, self.state_dict())
+
+        def callback(future: Future):
+            future.result()  # ensure it finished successfully
+            for callback in self.callbacks.values():
+                callback.post_checkpoint_saved(path)
+            log.info(f"Checkpoint for step {step} saved successfully")
+
+        fut.add_done_callback(callback)
+
+        return path, fut
+
     def record_metric(
         self, name: str, value: Union[float, torch.Tensor], reduce_type: Optional[ReduceType] = None
     ):
@@ -678,16 +720,19 @@ class Trainer:
         self._metrics[self.global_step][name] = value
         self._metrics_reduce_type[name] = reduce_type
 
-    def write_file(self, name: str, contents: Union[str, bytes]) -> PathOrStr:
+    def write_file(
+        self, name: str, contents: Union[str, bytes], dir: Optional[PathOrStr] = None
+    ) -> PathOrStr:
         """
-        Write a file to the save folder.
+        Write a file to the :data:`save_folder` or ``dir``, if provided.
 
         :param fname: The name of the file to write.
         :param contents: The contents of the file to write.
+        :param dir: The path/URL to a directory to write the file to. Defaults to :data:`save_folder`.
 
         :returns: The path/URL of the file.
         """
-        return self.checkpointer.write_file(self.save_folder, name, contents)
+        return self.checkpointer.write_file(dir or self.save_folder, name, contents)
 
     def _duration_due(self, duration: Duration) -> bool:
         if duration.unit == DurationUnit.steps:

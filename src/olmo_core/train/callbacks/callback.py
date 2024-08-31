@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Dict
 
+from olmo_core.aliases import PathOrStr
+
 if TYPE_CHECKING:
     from ..trainer import Trainer
 
@@ -44,6 +46,14 @@ class Callback:
     #  def load_state_dict(self, state_dict: Dict[str, Any]):
     #      del state_dict
 
+    def post_checkpoint_loaded(self, path: PathOrStr):
+        """
+        Called when a checkpoint is successfully loaded.
+
+        :param path: The path/URL to the checkpoint.
+        """
+        del path
+
     def pre_train(self):
         """
         Runs before the training loop starts.
@@ -85,6 +95,14 @@ class Callback:
         Runs after a complete step (potentially including evals and checkpointing).
         """
         pass
+
+    def post_checkpoint_saved(self, path: PathOrStr):
+        """
+        Called when a checkpoint is successfully saved.
+
+        :param path: The path/URL to the checkpoint.
+        """
+        del path
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):
         """

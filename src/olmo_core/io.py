@@ -36,6 +36,21 @@ def normalize_path(path: PathOrStr) -> str:
     return str(path).rstrip("/").replace("file://", "")
 
 
+def join_path(path1: PathOrStr, path2: PathOrStr) -> PathOrStr:
+    """
+    Join two paths.
+
+    :param path1: The first path.
+    :param path2: The second path.
+
+    :returns: The joined result.
+    """
+    if is_url(path1):
+        return f"{normalize_path(path1)}/{normalize_path(path2)}"
+    else:
+        return Path(path1) / path2
+
+
 def resource_path(folder: PathOrStr, fname: str, local_cache: Optional[PathOrStr] = None) -> Path:
     """
     Returns an actual path for local or remote file, potentially downloading it if a copy doesn't

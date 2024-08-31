@@ -2,7 +2,6 @@
 Train a 7B OLMo model. Run this script without any arguments to see usage info.
 """
 
-import json
 import logging
 import sys
 from dataclasses import dataclass
@@ -13,7 +12,7 @@ from beaker import Beaker
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.data import DataMix, MemMapDatasetConfig, TokenizerConfig
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
-from olmo_core.distributed.utils import get_num_nodes, get_rank, init_hybrid_shard_mesh
+from olmo_core.distributed.utils import get_num_nodes, init_hybrid_shard_mesh
 from olmo_core.io import is_url
 from olmo_core.launch.beaker import (
     BeakerEnvSecret,
@@ -30,6 +29,7 @@ from olmo_core.train import (
 )
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
+    ConfigSaverCallback,
     GPUMemoryMonitorCallback,
     GradClipperCallback,
     SchedulerCallback,
@@ -174,6 +174,7 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
                 cancel_check_interval=10,
             ),
         )
+        .with_callback("config_saver", ConfigSaverCallback())
     )
 
     return ExperimentConfig(
@@ -205,12 +206,10 @@ def train(config: ExperimentConfig):
     dataset = config.dataset.build()
     trainer = config.trainer.build(model, optim, dataset)
 
-    # Record the config to W&B and to the save folder.
-    if get_rank() == 0:
-        config_dict = config.as_config_dict()
-        wandb_callback = cast(WandBCallback, trainer.callbacks["wandb"])
-        wandb_callback.config = config_dict
-        trainer.write_file("config.json", json.dumps(config_dict, indent=2))
+    # Record the config to W&B and each checkpoint dir.
+    config_dict = config.as_config_dict()
+    cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
+    cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
     # Train.
     trainer.fit()
