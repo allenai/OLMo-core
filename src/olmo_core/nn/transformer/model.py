@@ -648,7 +648,7 @@ class Transformer(nn.Module):
         # TODO: only preserve RNG state if dropout is active
         preserve_rng_state = True
 
-        for block_idx, block in enumerate(self.blocks()):
+        for block_idx, block in enumerate(self.blocks):
             if mode == TransformerActivationCheckpointingMode.selected_blocks:
                 assert block_interval is not None
                 if block_idx % block_interval == 0:
