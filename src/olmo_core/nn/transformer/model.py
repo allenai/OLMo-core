@@ -26,7 +26,12 @@ from ..rope import RoPEConfig, RoPEType
 from .block import TransformerBlock, TransformerBlockConfig, TransformerBlockType
 from .init import InitMethod
 
-__all__ = ["TransformerConfig", "Transformer"]
+__all__ = [
+    "TransformerConfig",
+    "Transformer",
+    "TransformerActivationCheckpointingConfig",
+    "TransformerActivationCheckpointingMode",
+]
 
 
 log = logging.getLogger(__name__)
