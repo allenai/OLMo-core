@@ -236,7 +236,8 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
         A fingerprint for the dataset. Can be used to validate that a dataset is the same.
         """
         sha256_hash = hashlib.sha256()
-        sha256_hash.update(str(self.offsets).encode())
+        for offset_start, offset_end in self.offsets:
+            sha256_hash.update(f"(start={offset_start}, end={offset_end})".encode())
         return sha256_hash.hexdigest()
 
     @property
