@@ -542,7 +542,8 @@ class Trainer:
             global_train_tokens_seen=self.global_train_tokens_seen,
             global_train_tokens_seen_this_epoch=self.global_train_tokens_seen_this_epoch,
             global_train_examples_seen_this_epoch=self.global_train_examples_seen_this_epoch,
-            dataset_total_size=self.dataset_total_size,
+            # We use dataset length a quick proxy for a fingerprint of the dataset
+            dataset_length=len(self.dataset),
             data_seed=self.data_seed,
             epoch=self.epoch,
             world_size=get_world_size(),  # global world size here on purpose
@@ -559,7 +560,7 @@ class Trainer:
                 "Restoring trainer state with a different sequence length is not supported"
             )
 
-        if state_dict.get("dataset_total_size", self.dataset_total_size) != self.dataset_total_size:
+        if state_dict.get("dataset_length", len(self.dataset)) != len(self.dataset):
             raise RuntimeError("Restoring trainer state with a different dataset is not supported!")
 
         if (data_seed := state_dict.get("data_seed", self.data_seed)) != self.data_seed:
