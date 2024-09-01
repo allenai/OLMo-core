@@ -648,7 +648,7 @@ class Transformer(nn.Module):
         # TODO: only preserve RNG state if dropout is active
         preserve_rng_state = True
 
-        for block_idx, block in self.blocks.named_children():
+        for block_idx, block in enumerate(self.blocks()):
             if mode == TransformerActivationCheckpointingMode.selected_blocks:
                 assert block_interval is not None
                 if block_idx % block_interval == 0:
@@ -658,7 +658,7 @@ class Transformer(nn.Module):
             elif mode == TransformerActivationCheckpointingMode.selected_ops:
                 raise NotImplementedError
 
-            self.blocks.register_module(block_idx, block)
+            self.blocks.register_module(str(block_idx), block)
 
         log.info(f"Applied {mode} activation checkpointing to the model")
 
