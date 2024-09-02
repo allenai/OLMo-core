@@ -13,3 +13,6 @@ RUN pip install --no-cache-dir '.[all]' && \
 WORKDIR /app/olmo-core
 
 FROM stable as nightly
+
+ARG NIGHTLY_VERSION
+RUN pip install --no-cache-dir --pre torch==${NIGHTLY_VERSION}
