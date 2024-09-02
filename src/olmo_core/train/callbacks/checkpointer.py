@@ -161,7 +161,11 @@ class CheckpointerCallback(Callback):
             if get_rank() == 0:
                 try:
                     for step_num, path in self.checkpointer.find_checkpoints(self.save_folder):
-                        if step_num == 0 or step_num % self.save_interval == 0:
+                        if (
+                            step_num == 0
+                            or step_num > self.step
+                            or step_num % self.save_interval == 0
+                        ):
                             continue
                         elif (
                             self.remove == CheckpointRemovalStrategy.ephemeral_only
