@@ -159,15 +159,18 @@ class CheckpointerCallback(Callback):
 
             # Only search from rank 0 to avoid hammering remote file stores with requests.
             if get_rank() == 0:
-                for step_num, path in self.checkpointer.find_checkpoints(self.save_folder):
-                    if step_num == 0 or step_num % self.save_interval == 0:
-                        continue
-                    elif (
-                        self.remove == CheckpointRemovalStrategy.ephemeral_only
-                        and self.ephemeral_save_interval is not None
-                        and step_num % self.ephemeral_save_interval == 0
-                    ) or (self.remove == CheckpointRemovalStrategy.all_non_permanent):
-                        ephemeral_checkpoints.append((step_num, path))
+                try:
+                    for step_num, path in self.checkpointer.find_checkpoints(self.save_folder):
+                        if step_num == 0 or step_num % self.save_interval == 0:
+                            continue
+                        elif (
+                            self.remove == CheckpointRemovalStrategy.ephemeral_only
+                            and self.ephemeral_save_interval is not None
+                            and step_num % self.ephemeral_save_interval == 0
+                        ) or (self.remove == CheckpointRemovalStrategy.all_non_permanent):
+                            ephemeral_checkpoints.append((step_num, path))
+                except FileNotFoundError:
+                    pass
 
             ephemeral_checkpoints = scatter_object(ephemeral_checkpoints)
 
