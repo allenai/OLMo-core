@@ -1,13 +1,17 @@
 import logging
 from dataclasses import dataclass
-from typing import List, Literal, Optional, Sequence, Union, cast
+from typing import List, Optional, Sequence, cast
 
 import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    checkpoint_wrapper as ptd_checkpoint_wrapper,
+)
 
-from olmo_core.config import Config, DType
+from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import (
     get_cumulative_document_lengths,
     get_default_device,
@@ -21,12 +25,25 @@ from ..layer_norm import LayerNorm, LayerNormConfig, LayerNormType
 from ..rope import RoPEConfig, RoPEType
 from .block import TransformerBlock, TransformerBlockConfig, TransformerBlockType
 from .init import InitMethod
-from .utils import apply_activation_checkpointing_to_transformer_block
 
-__all__ = ["TransformerConfig", "Transformer"]
+__all__ = [
+    "TransformerConfig",
+    "Transformer",
+    "TransformerActivationCheckpointingConfig",
+    "TransformerActivationCheckpointingMode",
+]
 
 
 log = logging.getLogger(__name__)
+
+
+class TransformerActivationCheckpointingMode(StrEnum):
+    full = "full"
+    """Checkpoint every block."""
+    selected_blocks = "selected_blocks"
+    """Checkpoint only selected blocks."""
+    selected_ops = "selected_ops"
+    """Checkpoint only selected operations."""
 
 
 @dataclass
@@ -35,15 +52,21 @@ class TransformerActivationCheckpointingConfig(Config):
     Defines the activation checkpointing strategy for a transformer model.
     """
 
-    mode: Literal["full", "selective"]
+    mode: TransformerActivationCheckpointingMode = TransformerActivationCheckpointingMode.full
+
+    block_interval: Optional[int] = None
     """
-    - "full" ➡️ checkpoint every block
-    - "selective" ➡️ checkpoint a subset of blocks or operations according to ``selective_option``.
+    Required when :data:`mode` is "selected_blocks". Determines which blocks are wrapped.
     """
-    selective_option: Union[Literal["op"], int] = 1
-    """
-    If "op", only checkpoint certain operations. If an integer, checkpoint blocks with this frequency.
-    """
+
+    def __post_init__(self):
+        if (
+            self.mode == TransformerActivationCheckpointingMode.selected_blocks
+            and self.block_interval is None
+        ):
+            raise OLMoConfigurationError(
+                "'block_interval' is required for 'selected_blocks' activation checkpointing"
+            )
 
 
 @dataclass
@@ -108,7 +131,7 @@ class TransformerConfig(Config):
         # Maybe apply activation checkpointing.
         if self.ac_config is not None:
             model.apply_activation_checkpointing(
-                self.ac_config.mode, selective_option=self.ac_config.selective_option
+                self.ac_config.mode, block_interval=self.ac_config.block_interval
             )
 
         # Maybe compile.
@@ -601,7 +624,9 @@ class Transformer(nn.Module):
         return out
 
     def apply_activation_checkpointing(
-        self, mode: Literal["full", "selective"], selective_option: Union[Literal["op"], int] = "op"
+        self,
+        mode: TransformerActivationCheckpointingMode,
+        block_interval: Optional[int] = None,
     ):
         """
         Apply activation checkpointing to the model.
@@ -610,16 +635,30 @@ class Transformer(nn.Module):
             Usually this does not need to be called directly, as :meth:`TransformerConfig.build()`
             will call it for you.
 
-        :param mode: Either "full" for apply AC to each block, or "selective" which depends on
-            the value of ``selective_option``.
-        :param selective_option: If "op", AC is applied individual operations. If an int, it's
-            applied to each block with this frequency.
+        :param mode: Determines how to apply activation checkpointing.
+        :param block_interval: Required when :data:`mode` is "selected_blocks". Determines
+            which blocks are wrapped.
         """
-        for block_id, block in self.blocks.named_children():
-            block = apply_activation_checkpointing_to_transformer_block(
-                block, mode, selective_option
-            )
-            self.blocks.register_module(block_id, block)
+        if (
+            mode == TransformerActivationCheckpointingMode.selected_blocks
+            and block_interval is None
+        ):
+            raise ValueError("'block_interval' is required for 'selected_blocks' mode")
+
+        # TODO: only preserve RNG state if dropout is active
+        preserve_rng_state = True
+
+        for block_idx, block in enumerate(self.blocks):
+            if mode == TransformerActivationCheckpointingMode.selected_blocks:
+                assert block_interval is not None
+                if block_idx % block_interval == 0:
+                    block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
+            elif mode == TransformerActivationCheckpointingMode.full:
+                block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
+            elif mode == TransformerActivationCheckpointingMode.selected_ops:
+                raise NotImplementedError
+
+            self.blocks.register_module(str(block_idx), block)
 
         log.info(f"Applied {mode} activation checkpointing to the model")
 

@@ -98,7 +98,7 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
             "conda shell.bash activate base",
             "pip install -e '.[all]'",
             # In case you want to try a different version of PyTorch:
-            #  "pip install --upgrade --pre torch --index-url https://download.pytorch.org/whl/nightly/cu121",
+            #  "pip install --no-cache-dir --upgrade --pre torch==2.5.0.dev20240826 --index-url https://download.pytorch.org/whl/nightly/cu121",
             "pip freeze",
             # Move AWS credentials from env to relevant files
             "mkdir -p ~/.aws",
