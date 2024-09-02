@@ -1,7 +1,7 @@
 BASE_IMAGE = ghcr.io/allenai/pytorch:2.4.0-cuda12.1-python3.11
 # NOTE: when upgrading the nightly version you also need to upgrade the torch version specification
 # in 'pyproject.toml' to include that nightly version.
-NIGHTLY_BASE_IMAGE = ghcr.io/allenai/pytorch:2.5.0.dev20240826-cuda12.1-python3.11
+NIGHTLY_VERSION = "2.5.0.dev20240826+cu121 --index-url https://download.pytorch.org/whl/nightly/cu121"
 
 VERSION = $(shell python src/olmo_core/version.py)
 VERSION_SHORT = $(shell python src/olmo_core/version.py short)
@@ -41,7 +41,11 @@ build :
 
 .PHONY : stable-image
 stable-image :
-	docker build -f src/Dockerfile --build-arg BASE=$(BASE_IMAGE) -t $(IMAGE_BASENAME) .
+	docker build -f src/Dockerfile \
+		--build-arg BUILDKIT_INLINE_CACHE=1 \
+		--build-arg BASE=$(BASE_IMAGE) \
+		--target stable \
+		-t $(IMAGE_BASENAME) .
 
 .PHONY : beaker-image-stable
 beaker-image-stable : stable-image
@@ -51,7 +55,12 @@ beaker-image-stable : stable-image
 
 .PHONY : nightly-image
 nightly-image :
-	docker build -f src/Dockerfile --build-arg BASE=$(NIGHTLY_BASE_IMAGE) -t $(IMAGE_BASENAME)-nightly .
+	docker build -f src/Dockerfile \
+		--build-arg BUILDKIT_INLINE_CACHE=1 \
+		--build-arg BASE=$(BASE_IMAGE) \
+		--build-arg NIGHTLY_VERSION=$(NIGHTLY_VERSION) \
+		--target nightly \
+		-t $(IMAGE_BASENAME)-nightly .
 
 .PHONY : beaker-image-nightly
 beaker-image-nightly : nightly-image
