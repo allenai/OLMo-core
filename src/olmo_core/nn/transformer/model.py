@@ -673,7 +673,7 @@ class Transformer(nn.Module):
             from fnmatch import fnmatch
 
             assert modules is not None
-            for name, module in self.named_module():
+            for name, module in self.named_modules():
                 for pattern in modules:
                     if fnmatch(name, pattern):
                         break
