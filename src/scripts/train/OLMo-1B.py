@@ -111,7 +111,9 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
     model_config = TransformerConfig.llama2_1B(
         vocab_size=tokenizer_config.padded_vocab_size(),
         compile=True,
-        dp_config=DataParallelConfig(name=DataParallelType.ddp),
+        dp_config=DataParallelConfig(
+            name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
+        ),
     )
 
     optim_config = AdamWConfig(
@@ -134,7 +136,7 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
         TrainerConfig(
             save_folder=f"{root_dir}/checkpoints/OLMo-medium/{beaker_user.lower()}/{run_name}",
             global_batch_size=1024,
-            microbatch_size=2,
+            microbatch_size=4,
             autocast_precision=DType.bfloat16,
             save_overwrite=True,
             data_seed=34521,
