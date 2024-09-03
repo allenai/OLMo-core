@@ -42,8 +42,8 @@ class TransformerActivationCheckpointingMode(StrEnum):
     """Checkpoint every block."""
     selected_blocks = "selected_blocks"
     """Checkpoint only selected blocks."""
-    selected_ops = "selected_ops"
-    """Checkpoint only selected operations."""
+    selected_modules = "selected_modules"
+    """Checkpoint only selected modules."""
 
 
 @dataclass
@@ -59,6 +59,12 @@ class TransformerActivationCheckpointingConfig(Config):
     Required when :data:`mode` is "selected_blocks". Determines which blocks are wrapped.
     """
 
+    modules: Optional[List[str]] = None
+    """
+    Required when :data:`mode` is "selected_modules". A list of modules names to wrap for
+    activation checkpointing. Globs are supported.
+    """
+
     def __post_init__(self):
         if (
             self.mode == TransformerActivationCheckpointingMode.selected_blocks
@@ -66,6 +72,13 @@ class TransformerActivationCheckpointingConfig(Config):
         ):
             raise OLMoConfigurationError(
                 "'block_interval' is required for 'selected_blocks' activation checkpointing"
+            )
+        elif (
+            self.mode == TransformerActivationCheckpointingMode.selected_modules
+            and self.modules is None
+        ):
+            raise OLMoConfigurationError(
+                "'modules' is required for 'selected_modules' activation checkpointing"
             )
 
 
@@ -131,7 +144,9 @@ class TransformerConfig(Config):
         # Maybe apply activation checkpointing.
         if self.ac_config is not None:
             model.apply_activation_checkpointing(
-                self.ac_config.mode, block_interval=self.ac_config.block_interval
+                self.ac_config.mode,
+                block_interval=self.ac_config.block_interval,
+                modules=self.ac_config.modules,
             )
 
         # Maybe compile.
@@ -627,6 +642,7 @@ class Transformer(nn.Module):
         self,
         mode: TransformerActivationCheckpointingMode,
         block_interval: Optional[int] = None,
+        modules: Optional[List[str]] = None,
     ):
         """
         Apply activation checkpointing to the model.
@@ -638,6 +654,8 @@ class Transformer(nn.Module):
         :param mode: Determines how to apply activation checkpointing.
         :param block_interval: Required when :data:`mode` is "selected_blocks". Determines
             which blocks are wrapped.
+        :param modules: Required when :data:`mode` is "selected_modules". A list of modules names
+            to wrap for activation checkpointing. Globs are supported.
         """
         if (
             mode == TransformerActivationCheckpointingMode.selected_blocks
@@ -645,20 +663,38 @@ class Transformer(nn.Module):
         ):
             raise ValueError("'block_interval' is required for 'selected_blocks' mode")
 
+        if mode == TransformerActivationCheckpointingMode.selected_modules and modules is None:
+            raise ValueError("'modules' is required for 'selected_modules' mode")
+
         # TODO: only preserve RNG state if dropout is active
         preserve_rng_state = True
 
-        for block_idx, block in enumerate(self.blocks):
-            if mode == TransformerActivationCheckpointingMode.selected_blocks:
-                assert block_interval is not None
-                if block_idx % block_interval == 0:
-                    block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
-            elif mode == TransformerActivationCheckpointingMode.full:
-                block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
-            elif mode == TransformerActivationCheckpointingMode.selected_ops:
-                raise NotImplementedError
+        if mode == TransformerActivationCheckpointingMode.selected_modules:
+            from fnmatch import fnmatch
 
-            self.blocks.register_module(str(block_idx), block)
+            assert modules is not None
+            for name, module in self.named_modules():
+                for pattern in modules:
+                    if fnmatch(name, pattern):
+                        break
+                else:
+                    continue
+
+                parent_name = ".".join(name.split(".")[:-1])
+                parent = self if not parent_name else self.get_submodule(parent_name)
+                module = ptd_checkpoint_wrapper(module, preserve_rng_state=preserve_rng_state)
+                parent.register_module(name.split(".")[-1], module)
+                log.info(f"Wrapped '{name}' for activation checkpointing")
+        else:
+            for block_idx, block in enumerate(self.blocks):
+                if mode == TransformerActivationCheckpointingMode.selected_blocks:
+                    assert block_interval is not None
+                    if block_idx % block_interval == 0:
+                        block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
+                elif mode == TransformerActivationCheckpointingMode.full:
+                    block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
+
+                self.blocks.register_module(str(block_idx), block)
 
         log.info(f"Applied {mode} activation checkpointing to the model")
 
