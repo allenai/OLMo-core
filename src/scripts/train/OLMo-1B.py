@@ -134,7 +134,7 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
         TrainerConfig(
             save_folder=f"{root_dir}/checkpoints/OLMo-medium/{beaker_user.lower()}/{run_name}",
             global_batch_size=1024,
-            microbatch_size=4,
+            microbatch_size=2,
             autocast_precision=DType.bfloat16,
             save_overwrite=True,
             data_seed=34521,
