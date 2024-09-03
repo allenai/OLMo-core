@@ -1,5 +1,5 @@
 """
-Train a 7B OLMo model. Run this script without any arguments to see usage info.
+Train a 1B OLMo model. Run this script without any arguments to see usage info.
 """
 
 import logging
