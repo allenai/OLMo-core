@@ -336,11 +336,6 @@ class Trainer:
             )
         )
 
-        # Other validation.
-        if isinstance(self.dataset, MemMapDataset):
-            if self.dataset.sequence_length != self.train_sequence_length:
-                raise OLMoConfigurationError("trainer and dataset sequence length does not match")
-
         # Maybe create separate process group for bookkeeping.
         if self._bookkeeping_pg is None and is_distributed():
             if backend_supports_cpu():
@@ -351,6 +346,22 @@ class Trainer:
                     "No CPU backend configured, bookkeeping collectives will occur on the default "
                     "backend and will be blocking. This may result in slower training throughput."
                 )
+
+        # Make sure global batch size is divisible by microbatch size times world size
+        if (
+            self.global_batch_size
+            % (self.microbatch_size * (ws := get_world_size(self.dp_process_group)))
+            != 0
+        ):
+            raise OLMoConfigurationError(
+                f"global batch size ({self.global_batch_size}) must be divisible by "
+                f"micro-batch size ({self.microbatch_size}) x DP world size ({ws})"
+            )
+
+        # Other validation.
+        if isinstance(self.dataset, MemMapDataset):
+            if self.dataset.sequence_length != self.train_sequence_length:
+                raise OLMoConfigurationError("trainer and dataset sequence length does not match")
 
     @property
     def rank_batch_size(self) -> int:
