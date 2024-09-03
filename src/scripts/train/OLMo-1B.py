@@ -75,7 +75,7 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
     launch_config = BeakerLaunchConfig(
         name=f"{run_name}-{generate_uuid()[:8]}",
         budget="ai2/oe-training",
-        cmd=["src/scripts/train/OLMo-7B.py", SubCmd.train, run_name, cluster, *overrides],
+        cmd=["src/scripts/train/OLMo-1B.py", SubCmd.train, run_name, cluster, *overrides],
         task_name="train",
         workspace="ai2/OLMo-core",
         clusters=[cluster],
@@ -109,7 +109,7 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
 
     tokenizer_config = TokenizerConfig.dolma2()
 
-    model_config = TransformerConfig.llama2_7B(
+    model_config = TransformerConfig.llama2_1B(
         vocab_size=tokenizer_config.padded_vocab_size(),
         compile=True,
         dp_config=DataParallelConfig(
@@ -118,7 +118,7 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
     )
 
     optim_config = AdamWConfig(
-        lr=3e-4,
+        lr=4e-4,
         weight_decay=0.1,
         betas=(0.9, 0.95),
         group_overrides=[
@@ -137,7 +137,7 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
         TrainerConfig(
             save_folder=f"{root_dir}/checkpoints/OLMo-medium/{beaker_user.lower()}/{run_name}",
             global_batch_size=1024,
-            microbatch_size=2,
+            microbatch_size=4,
             autocast_precision=DType.bfloat16,
             save_overwrite=True,
             data_seed=34521,
@@ -161,7 +161,7 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
             "checkpointer",
             CheckpointerCallback(
                 save_interval=10_000,
-                ephemeral_save_interval=250,
+                ephemeral_save_interval=1000,
                 save_async=True,
             ),
         )
@@ -227,7 +227,7 @@ if __name__ == "__main__":
 [b magenta]dry_run:[/] Pretty print the config and exit.
 
 [b]Examples[/]
-$ [i]python {sys.argv[0]} {SubCmd.launch} OLMo-core-7B ai2/pluto-cirrascale --launch.num_nodes=2[/]
+$ [i]python {sys.argv[0]} {SubCmd.launch} OLMo-core-1B ai2/pluto-cirrascale --launch.num_nodes=2[/]
     """.strip()
 
     if len(sys.argv) < 4 or sys.argv[1] not in set(SubCmd):
