@@ -24,7 +24,7 @@ pip install ai2-olmo-core
 Official training scripts for various model sizes can be found in [`src/scripts/train/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/train). Throughput numbers are reported below.
 
 | Model size | Context Length | Script | Throughput[^1] | MFU |
-| ---------- | -------------- | ------ | ---------- | --- |
+| :--------: | :------------: | ------ | -------------: | --- |
 | 1B  | 4K | [`OLMo-1B.py`](https://github.com/allenai/OLMo-core/blob/main/src/scripts/train/OLMo-1B.py) | 45-46K TPS | 39-40% |
 | 7B  | 4K | [`OLMo-7B.py`](https://github.com/allenai/OLMo-core/blob/main/src/scripts/train/OLMo-7B.py) | 9.7-10K TPS | 47-48% |
 | 13B | 4K | [`OLMo-13B.py`](https://github.com/allenai/OLMo-core/blob/main/src/scripts/train/OLMo-13B.py) | 4.4-4.6K TPS | 41-42% |
