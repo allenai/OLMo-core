@@ -1,4 +1,5 @@
 import logging
+import math
 import random
 import sys
 from collections import OrderedDict, defaultdict
@@ -14,7 +15,7 @@ from packaging.version import parse as parse_version
 from torch.distributed._tensor import DTensor
 
 from ..config import Config, StrEnum
-from ..distributed.utils import get_world_size, is_distributed
+from ..distributed.utils import get_reduce_divide_factor, get_world_size, is_distributed
 
 log = logging.getLogger(__name__)
 
@@ -37,8 +38,25 @@ class ReduceType(StrEnum):
     """
 
     mean = "mean"
+    """
+    Average across the process group.
+    """
+
     sum = "sum"
+    """
+    Add across the process group.
+    """
+
     max = "max"
+    """
+    Take the max across the process group.
+    """
+
+    l2_norm = "l2_norm"
+    """
+    For metrics that are computed as L2 norms on each rank, this will correctly reduce the norm
+    across the process group to produce the global L2 norm.
+    """
 
 
 @dataclass
@@ -179,14 +197,17 @@ def reduce_metrics(
     device: torch.device,
     process_group: Optional[dist.ProcessGroup] = None,
 ) -> Dict[int, Dict[str, float]]:
-    out: Dict[int, Dict[str, float]] = defaultdict(dict)
     metrics = move_metrics(metrics, device)
+    out: Dict[int, Dict[str, float]] = defaultdict(dict)
 
     if not is_distributed():
         for step, step_metrics in metrics.items():
             for name, value in step_metrics.items():
                 out[step][name] = value.item()
         return out
+
+    world_size = get_world_size(process_group)
+    divide_factor = get_reduce_divide_factor(world_size)
 
     # Flattened metrics by step and reduce type.
     sum_metric_names: List[List[str]] = []
@@ -204,12 +225,12 @@ def reduce_metrics(
         for name in sorted(step_metrics.keys()):
             value = step_metrics[name]
             reduce_type = metrics_reduce_type[name]
-            if reduce_type == ReduceType.mean:
-                step_sum_metric_names.append(name)
-                step_sum_metric_values.append((value / get_world_size()))
-            elif reduce_type == ReduceType.sum:
+            if reduce_type in (ReduceType.mean, ReduceType.sum):
                 step_sum_metric_names.append(name)
                 step_sum_metric_values.append(value)
+            elif reduce_type == ReduceType.l2_norm:
+                step_sum_metric_names.append(name)
+                step_sum_metric_values.append(value.pow(2))
             elif reduce_type == ReduceType.max:
                 step_max_metric_names.append(name)
                 step_max_metric_values.append(value)
@@ -243,10 +264,14 @@ def reduce_metrics(
     del sum_metric_values
     del max_metric_values
 
+    all_sum_metrics.div_(divide_factor)
+
     dist.reduce(all_sum_metrics, 0, op=dist.ReduceOp.SUM, group=process_group)
     dist.reduce(all_max_metrics, 0, op=dist.ReduceOp.MAX, group=process_group)
 
-    # Transfer to CPU all at once.
+    all_sum_metrics.mul_(divide_factor)
+
+    # Transfer to CPU all at once (if not already on CPU).
     all_sum_metrics = all_sum_metrics.cpu()
     all_max_metrics = all_max_metrics.cpu()
 
@@ -256,6 +281,11 @@ def reduce_metrics(
         step_max_metric_names = max_metric_names[i]
         step_max_metric_items = all_max_metrics[i].tolist()
         for name, item in zip(step_sum_metric_names, step_sum_metric_items):
+            reduce_type = metrics_reduce_type[name]
+            if reduce_type == ReduceType.mean:
+                item = item / world_size
+            elif reduce_type == ReduceType.l2_norm:
+                item = math.sqrt(item)
             out[step][name] = item
         for name, item in zip(step_max_metric_names, step_max_metric_items):
             out[step][name] = item

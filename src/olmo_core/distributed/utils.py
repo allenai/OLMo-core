@@ -345,3 +345,10 @@ def init_hybrid_shard_mesh(
         (num_replicas, get_world_size() // num_replicas),
         mesh_dim_names=(HybridShardMeshDimName.replicas, HybridShardMeshDimName.shards),
     )
+
+
+def get_reduce_divide_factor(world_size: int) -> float:
+    factor: int = 1
+    while world_size % factor == 0 and world_size / factor > factor:
+        factor *= 2
+    return float(factor)

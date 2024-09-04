@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `Trainer.get_metric()`, `.get_loss()`, and `.get_zloss()` methods.
 - Added `io.copy_file()` function.
 - Added `ProfilerCallback` for profiling/tracing the training loop with PyTorch `profiler` module.
+- Added an "L2 norm" metric reduce type.
+
+### Fixed
+
+- Made reducing metrics more numerically stable with large world sizes.
 
 ## [v1.0.5](https://github.com/allenai/OLMo-core/releases/tag/v1.0.5) - 2024-09-03
 
