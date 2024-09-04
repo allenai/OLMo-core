@@ -163,6 +163,26 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
         raise NotImplementedError(f"Upload not implemented for '{parsed.scheme}' scheme")
 
 
+def copy_file(source: PathOrStr, target: PathOrStr, save_overwrite: bool = False):
+    """
+    Copy a file from ``source`` to ``target``.
+
+    :param source: The path/URL to the source file.
+    :param target: The path/URL to the target location.
+    :param save_overwrite: Overwrite any existing file.
+
+    :raises FileNotFoundError: If the ``source`` file doesn't exist.
+    :raises FileExistsError: If the ``target`` already exists and ``save_overwrite=False``.
+    """
+    local_source = cached_path(source, quiet=True)
+    if is_url(target):
+        upload(local_source, str(target), save_overwrite=save_overwrite)
+    else:
+        if not save_overwrite and file_exists(target):
+            raise FileExistsError(target)
+        shutil.copyfile(source, target, follow_symlinks=True)
+
+
 def dir_is_empty(dir: PathOrStr) -> bool:
     """
     Check if a local or remote directory is empty.

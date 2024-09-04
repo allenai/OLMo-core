@@ -29,7 +29,7 @@ from ..distributed.utils import (
     scatter_object,
 )
 from ..exceptions import OLMoConfigurationError
-from ..io import is_url, join_path, normalize_path
+from ..io import copy_file, file_exists, is_url, join_path, normalize_path
 from ..nn.functional.cross_entropy_loss import (
     cross_entropy_loss,
     fused_cross_entropy_loss,
@@ -90,9 +90,11 @@ class Trainer:
         Use :class:`TrainerConfig` instead of constructing this class directly.
     """
 
-    work_dir: PathOrStr
+    work_dir: Path
     """
-    A local directory to use for temporary files needed during training.
+    A local working directory to use for temporary files needed during training.
+    Files added to this working directory can be persisted to the :data:`save_folder` via
+    :meth:`persist_working_file()`.
     """
 
     model: nn.Module
@@ -158,6 +160,11 @@ class Trainer:
     microbatch_size: int
     """
     Microbatch size per rank, i.e. the number of instances to process at a time from each rank.
+    """
+
+    save_overwrite: bool = False
+    """
+    Whether to overwrite existing files/checkpoints in the :data:`save_folder`.
     """
 
     load_path: Optional[PathOrStr] = None
@@ -290,6 +297,12 @@ class Trainer:
 
         # Configure working directory.
         self.work_dir = Path(self.work_dir)
+
+        # Ensure save folder and working directory exist.
+        if get_fs_local_rank() == 0:
+            self.work_dir.mkdir(exist_ok=True, parents=True)
+            if not is_url(self.save_folder):
+                Path(self.save_folder).mkdir(exist_ok=True, parents=True)
 
         # Ensure we have necessary callbacks.
         has_console_logger_callback = False
@@ -736,19 +749,91 @@ class Trainer:
         self._metrics[self.global_step][name] = value
         self._metrics_reduce_type[name] = reduce_type
 
+    def get_metric(self, name: str) -> Optional[torch.Tensor]:
+        """
+        Get the value of a metric recorded during the current step.
+
+        .. seealso::
+            - :meth:`get_loss()`
+            - :meth:`get_zloss()`
+
+        .. warning::
+            Metrics will only be available from the time they're recorded until the end of the
+            current step.
+
+        .. warning::
+            Accessing a metric can inadvertently trigger a host-device sync, which slows down
+            training.
+
+        :param name: The name of the metric.
+        """
+        if self.global_step not in self._metrics:
+            return None
+        return self._metrics[self.global_step].get(name)
+
+    def get_loss(self) -> Optional[torch.Tensor]:
+        """
+        Get the value of the cross-entropy loss for the current step.
+
+        .. important::
+            If you're trying to access the loss from a callback, it may only be accessible
+            within the following callback methods:
+
+            - :meth:`~olmo_core.train.callbacks.Callback.pre_optim_step()`
+            - :meth:`~olmo_core.train.callbacks.Callback.post_train_batch()`
+            - :meth:`~olmo_core.train.callbacks.Callback.post_step()`
+        """
+        return self.get_metric(TRAIN_CE_LOSS_METRIC)
+
+    def get_zloss(self) -> Optional[torch.Tensor]:
+        """
+        Get the value of the Z-loss for the current step.
+
+        .. important::
+            If you're trying to access the Z-loss from a callback, it may only be accessible
+            within the following callback methods:
+
+            - :meth:`~olmo_core.train.callbacks.Callback.pre_optim_step()`
+            - :meth:`~olmo_core.train.callbacks.Callback.post_train_batch()`
+            - :meth:`~olmo_core.train.callbacks.Callback.post_step()`
+        """
+        return self.get_metric(TRAIN_Z_LOSS_METRIC)
+
     def write_file(
         self, name: str, contents: Union[str, bytes], dir: Optional[PathOrStr] = None
     ) -> PathOrStr:
         """
         Write a file to the :data:`save_folder` or ``dir``, if provided.
 
-        :param fname: The name of the file to write.
+        :param fname: The name of the file to write, relative to the :data:`save_folder` or ``dir``.
         :param contents: The contents of the file to write.
         :param dir: The path/URL to a directory to write the file to. Defaults to :data:`save_folder`.
 
         :returns: The path/URL of the file.
         """
         return self.checkpointer.write_file(dir or self.save_folder, name, contents)
+
+    def persist_working_file(self, name: PathOrStr) -> PathOrStr:
+        """
+        Persist a file in the :data:`work_dir` by saving/uploading it to the :data:`save_folder`.
+
+        :param name: The name/path of the file *relative* to the :data:`work_dir`.
+
+        :returns: The full path/URL to the saved file.
+
+        :raises FileNotFoundError: If the file can't be found.
+        :raises FileExistsError: If the file already exists in the save folder and :data:`save_overwrite`
+            is ``False``.
+        """
+        if Path(name).is_relative_to(self.work_dir):
+            name = Path(name).relative_to(self.work_dir)
+        source = join_path(self.work_dir, name)
+        target = join_path(self.save_folder, name)
+        if source != target:
+            copy_file(source, target, save_overwrite=self.save_overwrite)
+        elif not file_exists(source):
+            raise FileNotFoundError(source)
+        return target
 
     def _duration_due(self, duration: Duration) -> bool:
         if duration.unit == DurationUnit.steps:

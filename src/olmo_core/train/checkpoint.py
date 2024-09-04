@@ -154,12 +154,13 @@ class Checkpointer:
         Write something to a file in a local or remote directory.
 
         :param dir: The path/URL of the directory to write the file to.
-        :param fname: The name of the file to write.
+        :param fname: The name of the file to write, relative to ``dir``.
         :param contents: The contents of the file to write.
 
         :returns: The path/URL of the file.
         """
         dir = normalize_path(dir)
+        fname = normalize_path(fname)
 
         if not is_url(dir):
             Path(dir).mkdir(exist_ok=True, parents=True)
