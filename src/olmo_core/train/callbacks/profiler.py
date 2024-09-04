@@ -58,10 +58,14 @@ class ProfilerCallback(Callback):
             repeat=self.repeat,
             skip_first=self.skip_first,
         )
+        activities = [ProfilerActivity.CPU]
+        if self.trainer.device.type == "cuda":
+            activities.append(ProfilerActivity.CUDA)
+
         self._exit_stack = ExitStack()
         self._profiler = self._exit_stack.enter_context(
             profile(
-                activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                activities=activities,
                 record_shapes=False,
                 profile_memory=False,
                 with_stack=True,
@@ -82,6 +86,12 @@ class ProfilerCallback(Callback):
             self._profiler.step()
 
     def _on_trace_ready(self, prof):
+        assert self._profiler is not None
+        output = self._profiler.key_averages().table(sort_by="self_cuda_time_total", row_limit=32)
+        log.info(f"Profile by total GPU time at step {self._profiler.step_num}:\n{output}")
+        output = self._profiler.key_averages().table(sort_by="self_cpu_time_total", row_limit=32)
+        log.info(f"Profile by total CPU time at step {self._profiler.step_num}:\n{output}")
+
         log.info("Saving chrome trace from profiler...")
         output_dir = self.trainer.work_dir / "profiler"
         output_dir.mkdir(exist_ok=True, parents=True)
