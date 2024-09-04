@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added "selected_modules" transformer activation checkpointing mode.
 - Added `OLMo-1B.py` official training script.
 - Added `OLMo-13B.py` official training script.
-- Added `Trainer.get_metric()` method.
+- Added `Trainer.get_metric()`, `.get_loss()`, and `.get_zloss()` methods.
 - Added `io.copy_file()` function.
 - Added `ProfilerCallback` for profiling/tracing the training loop with PyTorch `profiler` module.
 

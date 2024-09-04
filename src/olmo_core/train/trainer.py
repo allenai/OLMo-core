@@ -92,7 +92,9 @@ class Trainer:
 
     work_dir: Path
     """
-    A local directory to use for temporary files needed during training.
+    A local working directory to use for temporary files needed during training.
+    Files added to this working directory can be persisted to the :data:`save_folder` via
+    :meth:`persist_working_file()`.
     """
 
     model: nn.Module
@@ -751,11 +753,51 @@ class Trainer:
         """
         Get the value of a metric recorded during the current step.
 
+        .. seealso::
+            - :meth:`get_loss()`
+            - :meth:`get_zloss()`
+
+        .. warning::
+            Metrics will only be available from the time they're recorded until the end of the
+            current step.
+
+        .. warning::
+            Accessing a metric can inadvertently trigger a host-device sync, which slows down
+            training.
+
         :param name: The name of the metric.
         """
         if self.global_step not in self._metrics:
             return None
         return self._metrics[self.global_step].get(name)
+
+    def get_loss(self) -> Optional[torch.Tensor]:
+        """
+        Get the value of the cross-entropy loss for the current step.
+
+        .. important::
+            If you're trying to access the loss from a callback, it may only be accessible
+            within the following callback methods:
+
+            - :meth:`~olmo_core.train.callbacks.Callback.pre_optim_step()`
+            - :meth:`~olmo_core.train.callbacks.Callback.post_train_batch()`
+            - :meth:`~olmo_core.train.callbacks.Callback.post_step()`
+        """
+        return self.get_metric(TRAIN_CE_LOSS_METRIC)
+
+    def get_zloss(self) -> Optional[torch.Tensor]:
+        """
+        Get the value of the Z-loss for the current step.
+
+        .. important::
+            If you're trying to access the Z-loss from a callback, it may only be accessible
+            within the following callback methods:
+
+            - :meth:`~olmo_core.train.callbacks.Callback.pre_optim_step()`
+            - :meth:`~olmo_core.train.callbacks.Callback.post_train_batch()`
+            - :meth:`~olmo_core.train.callbacks.Callback.post_step()`
+        """
+        return self.get_metric(TRAIN_Z_LOSS_METRIC)
 
     def write_file(
         self, name: str, contents: Union[str, bytes], dir: Optional[PathOrStr] = None
@@ -775,7 +817,7 @@ class Trainer:
         """
         Persist a file in the :data:`work_dir` by saving/uploading it to the :data:`save_folder`.
 
-        :param name: The name/path of the file relative to the :data:`work_dir`.
+        :param name: The name/path of the file *relative* to the :data:`work_dir`.
 
         :returns: The full path/URL to the saved file.
 
@@ -783,6 +825,8 @@ class Trainer:
         :raises FileExistsError: If the file already exists in the save folder and :data:`save_overwrite`
             is ``False``.
         """
+        if Path(name).is_relative_to(self.work_dir):
+            name = Path(name).relative_to(self.work_dir)
         source = join_path(self.work_dir, name)
         target = join_path(self.save_folder, name)
         if source != target:
