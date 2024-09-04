@@ -1,6 +1,7 @@
 import os
 import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, Optional
 
 import torch
@@ -79,7 +80,7 @@ class TrainerConfig(Config):
         kwargs = self.as_dict(exclude_none=True, recurse=False)
 
         checkpointer = Checkpointer(
-            save_overwrite=kwargs.pop("save_overwrite"),
+            save_overwrite=kwargs["save_overwrite"],
             process_group=checkpointer_pg,
         )
         device = kwargs.pop("device", None)
@@ -101,7 +102,7 @@ class TrainerConfig(Config):
             checkpointer=checkpointer,
             train_sequence_length=dataset.sequence_length,
             autocast_precision=None if autocast_precision is None else autocast_precision.as_pt(),
-            work_dir=work_dir,
+            work_dir=Path(work_dir),
             device=torch.device(device) if device is not None else get_default_device(),
             dp_process_group=dp_process_group,
             **kwargs,
