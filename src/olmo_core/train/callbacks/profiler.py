@@ -2,6 +2,8 @@ import logging
 from contextlib import ExitStack
 from dataclasses import dataclass
 
+from olmo_core.distributed.utils import get_rank
+
 from .callback import Callback
 
 log = logging.getLogger(__name__)
@@ -34,12 +36,19 @@ class ProfilerCallback(Callback):
     """
     Repeat the cycle start at ``wait`` steps.
     """
+    enabled: bool = True
+    """
+    Set to ``False`` to disable profiling.
+    """
 
     _exit_stack = None
     _profiler = None
     _first_batch: bool = True
 
     def pre_train(self):
+        if not self.enabled or get_rank() != 0:
+            return
+
         from torch.profiler import ProfilerActivity, profile, schedule
 
         profiling_schedule = schedule(
@@ -63,6 +72,9 @@ class ProfilerCallback(Callback):
         self._first_batch = True
 
     def pre_load_batch(self):
+        if not self.enabled or get_rank() != 0:
+            return
+
         if self._first_batch:
             self._first_batch = False
         else:

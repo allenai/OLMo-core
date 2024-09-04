@@ -26,6 +26,7 @@ from olmo_core.train.callbacks import (
     ConfigSaverCallback,
     GPUMemoryMonitorCallback,
     GradClipperCallback,
+    ProfilerCallback,
     SchedulerCallback,
     SpeedMonitorCallback,
     WandBCallback,
@@ -100,6 +101,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             ),
         )
         .with_callback("config_saver", ConfigSaverCallback())
+        .with_callback("profiler", ProfilerCallback(enabled=False))
     )
 
     return ExperimentConfig(
