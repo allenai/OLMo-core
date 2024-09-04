@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added "selected_modules" transformer activation checkpointing mode.
 - Added `OLMo-1B.py` official training script.
+- Added `OLMo-13B.py` official training script.
 
 ## [v1.0.5](https://github.com/allenai/OLMo-core/releases/tag/v1.0.5) - 2024-09-03
 

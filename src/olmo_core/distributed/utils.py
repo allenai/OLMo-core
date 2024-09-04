@@ -67,11 +67,12 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
 
     validate_env_vars()
 
-    dist.init_process_group(backend, timeout=timeout)
-
-    if "nccl" in backend:
+    if backend_supports_cuda(backend):
         # Set CUDA device.
-        torch.cuda.set_device(f"cuda:{get_local_rank()}")
+        device = torch.device(f"cuda:{int(os.environ[OLMO_LOCAL_RANK_ENV_VAR])}")
+        torch.cuda.set_device(device)
+
+    dist.init_process_group(backend, timeout=timeout)
 
 
 def get_node_hostname() -> str:
@@ -275,11 +276,28 @@ def get_mesh_coordinates(mesh: "DeviceMesh", rank: Optional[int] = None) -> Opti
     return rank_coords[0].tolist() if rank_coords.size(0) > 0 else None
 
 
-def backend_supports_cpu():
-    if not is_distributed():
+def backend_supports_cuda(backend: Optional[str] = None) -> bool:
+    """
+    Check if a distributed backend supports CUDA tensors.
+    """
+    if backend is None and not is_distributed():
+        return torch.cuda.is_available()
+
+    backend = backend or dist.get_backend()
+    if "nccl" in backend:
+        return True
+    else:
+        return False
+
+
+def backend_supports_cpu(backend: Optional[str] = None) -> bool:
+    """
+    Check if a distributed backend supports CPU tensors.
+    """
+    if backend is None and not is_distributed():
         return True
 
-    backend = dist.get_backend()
+    backend = backend or dist.get_backend()
     if "gloo" in backend or "mpi" in backend:
         return True
     else:
