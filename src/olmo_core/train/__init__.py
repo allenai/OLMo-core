@@ -75,8 +75,13 @@ def prepare_training_environment(
     for distributed training.
 
     .. tip::
-        Internally this calls :func:`~olmo_core.utils.prepare_cli_environment()`, so there's no
-        need to call that separately.
+        Internally this calls:
+
+        - :func:`~olmo_core.distributed.utils.init_distributed()`, which also calls :func:`torch.cuda.set_device()`
+          for backends that support CUDA.
+        - :func:`~olmo_core.utils.prepare_cli_environment()`
+
+        So there's no need to call those separately.
 
     .. important::
         This should be invoked at the very start of your training script, such as at the beginning

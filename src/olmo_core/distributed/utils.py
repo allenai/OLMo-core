@@ -23,6 +23,9 @@ BEAKER_HOSTNAME_ENV_VAR = "BEAKER_NODE_HOSTNAME"
 
 
 def validate_env_vars():
+    """
+    Validate distributed environment variables. This is called internally by :func:`init_distributed()`.
+    """
     if not is_distributed():
         return
 
@@ -46,7 +49,9 @@ def validate_env_vars():
 
 def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minutes=30)):
     """
-    Initialize the distributed backend(s).
+    Initialize the distributed process group with the given backend(s) and check/set the
+    relevant environment variables.
+    This also calls :func:`torch.cuda.set_device()` for backends that support CUDA.
     """
     # to mitigate the memory issue that collectives using async_op=True hold memory longer
     # than they should such as those in tensor parallelism
@@ -117,7 +122,8 @@ def get_local_rank() -> int:
     Get the local rank within the current node.
 
     .. warning::
-        This relies on the environment variable ``LOCAL_RANK`` being set correctly.
+        This relies on the environment variable ``LOCAL_RANK`` being set correctly, but
+        will always return 0 if a distributed process group has not been initialized.
 
     :returns: The rank.
     """
@@ -139,6 +145,8 @@ def get_fs_local_rank(group: Optional[dist.ProcessGroup] = None) -> int:
         If you are using a shared filesystem across nodes, you can simply set the environment
         variable ``OLMO_SHARED_FS=1``. Otherwise you can set ``FS_LOCAL_RANK`` for each process.
 
+        This will always return 0 if a distributed process group has not been initialized.
+
     :returns: The rank.
     """
     if not is_distributed():
@@ -151,7 +159,10 @@ def get_fs_local_rank(group: Optional[dist.ProcessGroup] = None) -> int:
 
 def get_world_size(group: Optional[dist.ProcessGroup] = None) -> int:
     """
-    Get the world size of the distributed process group.
+    Get the world size of the default distributed process group.
+
+    .. warning::
+        This will always return 1 if a distributed group has not been initialized.
     """
     if is_distributed():
         return dist.get_world_size(group)
@@ -161,10 +172,11 @@ def get_world_size(group: Optional[dist.ProcessGroup] = None) -> int:
 
 def get_local_world_size() -> int:
     """
-    Get the local world size.
+    Get the local world size within the default distributed process group.
 
     .. warning::
-        This relies on the 'LOCAL_WORLD_SIZE' env var.
+        This relies on the 'LOCAL_WORLD_SIZE' env var but will always return 1 if a distributed
+        process group has not been initialized.
 
     :returns: The local world size.
     """
@@ -176,10 +188,11 @@ def get_local_world_size() -> int:
 
 def get_num_nodes() -> int:
     """
-    Get the number of nodes.
+    Get the number of nodes in the default distributed process group.
 
     .. warning::
-        This relies on either the 'NUM_NODES'or 'LOCAL_WORLD_SIZE' env var.
+        This relies on either the 'NUM_NODES' or 'LOCAL_WORLD_SIZE' env var, but will always
+        return 1 if a distributed process group has not been initialized.
 
     :returns: The number of nodes.
     """
@@ -314,6 +327,10 @@ def init_hybrid_shard_mesh(
 ) -> DeviceMesh:
     """
     Initialize a device mesh for FSDP hybrid sharding.
+
+    :param num_replicas: The number of model replicas. Defaults to the number of nodes in the main
+        process group.
+    :param device_type: The device type for the mesh.
     """
     num_replicas = num_replicas or get_num_nodes()
     device_type = device_type or get_default_device().type

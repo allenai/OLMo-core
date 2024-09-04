@@ -273,7 +273,7 @@ class TransformerConfig(Config):
     @classmethod
     def llama2_271M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
-        A 271M Llama2 model config.
+        A 271M Llama2-like model config.
         """
         return cls.llama_like(
             d_model=1024, vocab_size=vocab_size, n_layers=16, n_heads=8, rope_theta=10_000, **kwargs
@@ -282,7 +282,7 @@ class TransformerConfig(Config):
     @classmethod
     def llama2_1B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
-        A 1B Llama2 model config.
+        A 1B Llama2-like model config.
         """
         return cls.llama_like(
             d_model=2048,
@@ -296,7 +296,7 @@ class TransformerConfig(Config):
     @classmethod
     def llama2_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
-        A 7B Llama2 model config.
+        A 7B Llama2-like model config.
         """
         return cls.llama_like(
             d_model=4096,
@@ -310,7 +310,7 @@ class TransformerConfig(Config):
     @classmethod
     def llama2_13B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
-        A 7B Llama2 model config.
+        A 7B Llama2-like model config.
         """
         return cls.llama_like(
             d_model=5120,
@@ -324,7 +324,7 @@ class TransformerConfig(Config):
     @classmethod
     def llama2_26B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
-        A 26B Llama2 model config.
+        A 26B Llama2-like model config.
         """
         return cls.llama_like(
             d_model=5120,
@@ -338,7 +338,7 @@ class TransformerConfig(Config):
     @classmethod
     def llama2_70B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
-        A 70B Llama2 model config.
+        A 70B Llama2-like model config.
         """
         return cls.llama_like(
             d_model=8192,
@@ -355,7 +355,7 @@ class TransformerConfig(Config):
     @classmethod
     def llama3_8B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
-        An 8B Llama3 model config.
+        An 8B Llama3-like model config.
         """
         return cls.llama_like(
             d_model=4096,
@@ -372,7 +372,7 @@ class TransformerConfig(Config):
     @classmethod
     def llama3_70B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
-        A 70B Llama3 model config.
+        A 70B Llama3-like model config.
         """
         return cls.llama_like(
             d_model=8196,
@@ -393,7 +393,7 @@ class TransformerConfig(Config):
         **kwargs,
     ) -> "TransformerConfig":
         """
-        A 405B Llama3 model config.
+        A 405B Llama3-like model config.
         """
         return cls.llama_like(
             d_model=16384,
@@ -427,7 +427,7 @@ class TransformerConfig(Config):
         **kwargs,
     ) -> "TransformerConfig":
         """
-        Create a Llama-like configuration.
+        Create a Llama-like model configuration.
 
         :param hidden_size_multiple_of: Ensure the FFN hidden size is a multiple of this value.
         :param hidden_size_multiplier: Custom multiplier for the FFN hidden size.
