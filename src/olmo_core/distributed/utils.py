@@ -67,11 +67,12 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
 
     validate_env_vars()
 
-    dist.init_process_group(backend, timeout=timeout)
-
     if "nccl" in backend:
         # Set CUDA device.
-        torch.cuda.set_device(f"cuda:{get_local_rank()}")
+        device = torch.device(f"cuda:{int(os.environ[OLMO_LOCAL_RANK_ENV_VAR])}")
+        torch.cuda.set_device(device)
+
+    dist.init_process_group(backend, timeout=timeout)
 
 
 def get_node_hostname() -> str:
