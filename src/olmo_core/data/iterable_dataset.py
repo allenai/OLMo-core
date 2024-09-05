@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 
 class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
     """
-    Adapted from PyTorch's ``DistributedSampler``, this wraps a ``Dataset`` or arbitrary sequence
+    Adapted from PyTorch's ``DistributedSampler``, this wraps a ``Dataset`` or an arbitrary sequence
     as an ``IterableDataset`` that can be deterministically restarted at any point by setting
     ``start_index`` accordingly.
 
@@ -45,9 +45,10 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
         drop_last: bool = True,
         work_dir: Optional[PathOrStr] = None,
         num_threads: Optional[int] = None,
-        dp_world_size: int = 0,
+        dp_world_size: int = 1,
         dp_rank: int = 0,
         fs_local_rank: int = 0,
+        chunk_size: int = 1,
     ):
         self.dataset = dataset
         self.seed = seed
@@ -63,6 +64,8 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
         self.dp_world_size = dp_world_size
         self.dp_rank = dp_rank
         self.fs_local_rank = fs_local_rank
+        self.chunk_size = chunk_size
+        assert chunk_size >= 1
 
     @property
     def total_size(self) -> int:
@@ -80,10 +83,15 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
 
     def build_and_save_global_indices(self):
         assert self.work_dir is not None
-        self.global_indices_file = (
-            Path(self.work_dir)
-            / f"global_indices_seed{self.seed}_epoch{self.epoch}_size{self.total_size}.npy"
+
+        global_indices_fname = (
+            f"global_indices_seed{self.seed}_epoch{self.epoch}_size{self.total_size}"
         )
+        if self.chunk_size > 1:
+            global_indices_fname += f"_chunk{self.chunk_size}"
+
+        self.global_indices_file = Path(self.work_dir) / (global_indices_fname + ".npy")
+
         if self.fs_local_rank == 0:
             if self.global_indices_file.is_file():
                 log.info(
@@ -199,12 +207,26 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
 
     def _build_global_indices(self) -> np.ndarray:
         assert len(self.dataset) < np.iinfo(np.uint32).max
-        indices = np.arange(len(self.dataset), dtype=np.uint32)
+
+        rng: Optional[np.random.Generator] = None
         if self.shuffle:
             # Deterministically shuffle based on epoch and seed
-            # Torch built-in randomness is not very random, so we use numpy.
             rng = np.random.Generator(np.random.PCG64(seed=self.seed + self.epoch))
-            rng.shuffle(indices)
+
+        indices: np.ndarray
+        if self.chunk_size == 1:
+            indices = np.arange(len(self.dataset), dtype=np.uint32)
+            if rng is not None:
+                rng.shuffle(indices)
+        else:
+            chunk_indices = np.arange(len(self.dataset) // self.chunk_size)
+            if rng is not None:
+                rng.shuffle(chunk_indices)
+            indices = np.repeat(chunk_indices * self.chunk_size, self.chunk_size)
+            indices = indices.reshape((-1, self.chunk_size)) + np.arange(
+                0, self.chunk_size
+            ).reshape((1, -1))
+            indices = indices.reshape(-1)
 
         if not self.drop_last:
             # Add extra samples to make it evenly divisible

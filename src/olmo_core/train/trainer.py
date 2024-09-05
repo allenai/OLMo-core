@@ -150,6 +150,13 @@ class Trainer:
     train_sequence_length: int
     """
     Training sequence length.
+
+    .. important::
+        If you're using a :class:`~olmo_core.data.MemMapDataset`, the value here must match
+        :data:`MemMapDataset.sequence_length <olmo_core.data.MemMapDataset.sequence_length>`.
+
+    .. seealso::
+        :data:`max_train_sequence_length`
     """
 
     global_batch_size: int
@@ -160,6 +167,17 @@ class Trainer:
     microbatch_size: int
     """
     Microbatch size per rank, i.e. the number of instances to process at a time from each rank.
+    """
+
+    max_train_sequence_length: Optional[int] = None
+    """
+    Set this to the maximum target train sequence length if you're planning on changing
+    the train sequence length during a training run, e.g. for sequence length warm-up.
+
+    .. important::
+        If set this must be a multiple of :data:`train_sequence_length`, and if you're using
+        a :class:`~olmo_core.data.MemMapDataset`, the value here must match
+        :data:`MemMapDataset.max_target_sequence_length <olmo_core.data.MemMapDataset.max_target_sequence_length>`.
     """
 
     save_overwrite: bool = False
@@ -374,7 +392,9 @@ class Trainer:
         # Other validation.
         if isinstance(self.dataset, MemMapDataset):
             if self.dataset.sequence_length != self.train_sequence_length:
-                raise OLMoConfigurationError("trainer and dataset sequence length does not match")
+                raise OLMoConfigurationError("trainer and dataset sequence length do not match")
+            if self.dataset.max_target_sequence_length != self.max_train_sequence_length:
+                raise OLMoConfigurationError("trainer and dataset max sequence length do not match")
 
     @property
     def rank_batch_size(self) -> int:
@@ -571,6 +591,7 @@ class Trainer:
             epoch=self.epoch,
             world_size=get_world_size(),  # global world size here on purpose
             train_sequence_length=self.train_sequence_length,
+            max_train_sequence_length=self.max_train_sequence_length,
             rng=EnvRngStates.current_state().as_dict(),
         )
 
@@ -578,9 +599,9 @@ class Trainer:
         """
         Load trainer state (not model or optimizer state).
         """
-        if state_dict["train_sequence_length"] != self.train_sequence_length:
-            raise NotImplementedError(
-                "Restoring trainer state with a different sequence length is not supported"
+        if state_dict.get("max_train_sequence_length") != self.max_train_sequence_length:
+            raise RuntimeError(
+                "Restoring trainer state with a different 'max_train_sequence_length' is not supported"
             )
 
         if (
@@ -598,14 +619,26 @@ class Trainer:
             )
             self.data_seed = data_seed
 
-        self.train_sequence_length = state_dict["train_sequence_length"]
         self.global_step = state_dict["global_step"]
         self.global_train_tokens_seen = state_dict["global_train_tokens_seen"]
         self.global_train_tokens_seen_this_epoch = state_dict["global_train_tokens_seen_this_epoch"]
-        self.global_train_examples_seen_this_epoch = state_dict[
-            "global_train_examples_seen_this_epoch"
-        ]
         self.epoch = state_dict["epoch"]
+
+        if self.train_sequence_length == state_dict["train_sequence_length"]:
+            self.global_train_examples_seen_this_epoch = state_dict[
+                "global_train_examples_seen_this_epoch"
+            ]
+        elif self.train_sequence_length % state_dict["train_sequence_length"] == 0:
+            # Adjust for current larger sequence length.
+            ratio = self.train_sequence_length // state_dict["train_sequence_length"]
+            self.global_train_examples_seen_this_epoch = (
+                state_dict["global_train_examples_seen_this_epoch"] // ratio
+            )
+        else:
+            raise RuntimeError(
+                "You can only restore trainer state from a sequence length that is a multiple "
+                "of the current configured sequence length"
+            )
 
         log.info(f"Will resume training from step {self.global_step}, epoch {self.epoch}")
 
