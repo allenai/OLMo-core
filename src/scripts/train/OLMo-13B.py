@@ -130,8 +130,9 @@ def build_config(run_name: str, cluster: str, overrides: List[str]) -> Experimen
     dataset_config = MemMapDatasetConfig.from_data_mix(
         DataMix.OLMoE_mix_0824,
         tokenizer=tokenizer_config,
-        sequence_length=4096,
         mix_base_dir=root_dir,
+        sequence_length=4096,
+        max_target_sequence_length=8192,
     )
 
     trainer_config = (

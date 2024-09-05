@@ -48,6 +48,7 @@ class MemMapDatasetConfig(Config):
     paths: Optional[List[str]] = None
     mix: Optional[DataMix] = None
     mix_base_dir: Optional[str] = None
+    max_target_sequence_length: Optional[int] = None
     memmap_dtype: Optional[MemMapDType] = None
     metadata: Optional[List[Dict[str, Any]]] = None
     include_instance_metadata: bool = True
@@ -143,6 +144,7 @@ class MemMapDatasetConfig(Config):
         dataset = MemMapDataset(
             *paths,
             sequence_length=self.sequence_length,
+            max_target_sequence_length=self.max_target_sequence_length,
             pad_token_id=self.tokenizer.pad_token_id,
             eos_token_id=self.tokenizer.eos_token_id,
             memmap_dtype=self.get_memmap_dtype(),
