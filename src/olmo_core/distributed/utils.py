@@ -22,6 +22,42 @@ OLMO_LOCAL_WORLD_SIZE_ENV_VAR = "LOCAL_WORLD_SIZE"
 BEAKER_HOSTNAME_ENV_VAR = "BEAKER_NODE_HOSTNAME"
 
 
+def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minutes=30)):
+    """
+    Initialize the distributed process group with the given backend(s) and check/set the
+    relevant environment variables.
+    This also calls :func:`torch.cuda.set_device()` for backends that support CUDA.
+    """
+    # To mitigate the memory issue that collectives using async_op=True hold memory longer
+    # than they should such as those in tensor parallelism.
+    set_env_var("TORCH_NCCL_AVOID_RECORD_STREAMS", "1")
+
+    # Force processes to synchronize at init process group.
+    set_env_var("TORCH_DIST_INIT_BARRIER", "1")
+
+    # Set host-specific env var defaults.
+    if _running_in_beaker():
+        # See https://beaker-docs.apps.allenai.org/experiments/distributed-training.html
+        if "jupiter" in get_node_hostname():
+            set_env_var("NCCL_IB_HCA", "^=mlx5_bond_0")
+            if int(os.environ.get(OLMO_NUM_NODES_ENV_VAR, "1")) > 1:
+                # Only for multi-node
+                set_env_var("NCCL_SOCKET_IFNAME", "ib")
+        elif "pluto" in get_node_hostname():
+            set_env_var("NCCL_IB_HCA", "^=mlx5_1,mlx5_2")
+
+    validate_env_vars()
+
+    if backend_supports_cuda(backend):
+        # Set CUDA device.
+        # NOTE: important to do this *before* initializing the process group to avoid
+        # other ranks initializing CUDA on GPU 0.
+        device = torch.device(f"cuda:{int(os.environ[OLMO_LOCAL_RANK_ENV_VAR])}")
+        torch.cuda.set_device(device)
+
+    dist.init_process_group(backend, timeout=timeout)
+
+
 def validate_env_vars():
     """
     Validate distributed environment variables. This is called internally by :func:`init_distributed()`.
@@ -47,37 +83,8 @@ def validate_env_vars():
         )
 
 
-def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minutes=30)):
-    """
-    Initialize the distributed process group with the given backend(s) and check/set the
-    relevant environment variables.
-    This also calls :func:`torch.cuda.set_device()` for backends that support CUDA.
-    """
-    # to mitigate the memory issue that collectives using async_op=True hold memory longer
-    # than they should such as those in tensor parallelism
-    set_env_var("TORCH_NCCL_AVOID_RECORD_STREAMS", "1")
-
-    # Force processes to synchronize at init process group.
-    set_env_var("TORCH_DIST_INIT_BARRIER", "1")
-
-    # Host-specific env vars.
-    # See https://beaker-docs.apps.allenai.org/experiments/distributed-training.html#ai2pluto-cirrascale.
-    if "jupiter" in get_node_hostname():
-        set_env_var("NCCL_IB_HCA", "^=mlx5_bond_0")
-        if int(os.environ.get(OLMO_NUM_NODES_ENV_VAR, "1")) > 1:
-            # Only for multi-node
-            set_env_var("NCCL_SOCKET_IFNAME", "ib")
-    elif "pluto" in get_node_hostname():
-        set_env_var("NCCL_IB_HCA", "^=mlx5_1,mlx5_2")
-
-    validate_env_vars()
-
-    if backend_supports_cuda(backend):
-        # Set CUDA device.
-        device = torch.device(f"cuda:{int(os.environ[OLMO_LOCAL_RANK_ENV_VAR])}")
-        torch.cuda.set_device(device)
-
-    dist.init_process_group(backend, timeout=timeout)
+def _running_in_beaker() -> bool:
+    return BEAKER_HOSTNAME_ENV_VAR in os.environ
 
 
 def get_node_hostname() -> str:
