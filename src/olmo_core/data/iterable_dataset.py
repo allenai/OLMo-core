@@ -8,7 +8,6 @@ import torch
 import torch.utils.data
 
 from ..aliases import PathOrStr
-from ..distributed.utils import barrier
 from ..utils import roundrobin, threaded_generator
 
 if TYPE_CHECKING:
@@ -107,7 +106,6 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
                 global_indices_mmap.flush()
                 del global_indices_mmap
                 log.info(f"Global data order indices saved to '{self.global_indices_file}'")
-        barrier()
 
     def get_global_indices(self) -> np.ndarray:
         """

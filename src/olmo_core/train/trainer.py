@@ -1094,6 +1094,7 @@ class Trainer:
             work_dir=self.work_dir,
         )
         iterable_dataset.build_and_save_global_indices()
+        barrier()
         data_loader = DataLoader(
             iterable_dataset,
             batch_size=self.rank_batch_size,
