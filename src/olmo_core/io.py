@@ -146,7 +146,7 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
 
     source = Path(normalize_path(source))
     assert source.is_file()
-    num_bytes = file_size(source)
+    num_bytes = get_file_size(source)
     log.info(f"Uploading {_format_bytes(num_bytes)} from '{source}' to '{target}'...")
     parsed = urlparse(target)
     if parsed.scheme == "gs":
