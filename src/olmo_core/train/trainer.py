@@ -1136,12 +1136,12 @@ class Trainer:
                 )
 
                 # Update overall CE batch loss.
-                ce_batch_loss += ce_loss.detach()
+                ce_batch_loss += get_local_tensor(ce_loss.detach())
 
                 # Update overall Z batch loss.
                 if z_loss is not None:
                     assert z_batch_loss is not None
-                    z_batch_loss += z_loss.detach()
+                    z_batch_loss += get_local_tensor(z_loss.detach())
 
                 # Run backward pass.
                 loss.backward()
