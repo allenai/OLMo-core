@@ -61,7 +61,7 @@ def wait_for(condition: Callable[[], bool], description: str, timeout: float = 1
     while not condition():
         time.sleep(0.5)
         if time.monotonic() - start_time > timeout:
-            raise TimeoutError(f"{description} timed out")
+            raise TimeoutError(f"timed out {description}")
 
 
 def apply_to_tensors(fn, container: Any) -> None:
