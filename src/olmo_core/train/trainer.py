@@ -28,7 +28,7 @@ from torch.utils.data import DataLoader
 
 from ..aliases import PathOrStr
 from ..config import StrEnum
-from ..data import DataCollator, IterableDataset, MemMapDataset
+from ..data import DataCollator, IterableDataset, NumpyDataset
 from ..distributed.utils import (
     all_reduce_value,
     backend_supports_cpu,
@@ -133,7 +133,7 @@ class Trainer:
     The optimizer to use.
     """
 
-    dataset: MemMapDataset
+    dataset: NumpyDataset
     """
     The training dataset.
     """
@@ -178,8 +178,8 @@ class Trainer:
     Training sequence length.
 
     .. important::
-        If you're using a :class:`~olmo_core.data.MemMapDataset`, the value here must match
-        :data:`MemMapDataset.sequence_length <olmo_core.data.MemMapDataset.sequence_length>`.
+        If you're using a :class:`~olmo_core.data.NumpyDataset`, the value here must match
+        :data:`NumpyDataset.sequence_length <olmo_core.data.NumpyDataset.sequence_length>`.
 
     .. seealso::
         :data:`max_train_sequence_length`
@@ -202,8 +202,8 @@ class Trainer:
 
     .. important::
         If set this must be a multiple of :data:`train_sequence_length`, and if you're using
-        a :class:`~olmo_core.data.MemMapDataset`, the value here must match
-        :data:`MemMapDataset.max_target_sequence_length <olmo_core.data.MemMapDataset.max_target_sequence_length>`.
+        a :class:`~olmo_core.data.NumpyDataset`, the value here must match
+        :data:`NumpyDataset.max_target_sequence_length <olmo_core.data.NumpyDataset.max_target_sequence_length>`.
     """
 
     save_overwrite: bool = False
@@ -416,7 +416,7 @@ class Trainer:
             )
 
         # Other validation.
-        if isinstance(self.dataset, MemMapDataset):
+        if isinstance(self.dataset, NumpyDataset):
             if self.dataset.sequence_length != self.train_sequence_length:
                 raise OLMoConfigurationError("trainer and dataset sequence length do not match")
             if self.dataset.max_target_sequence_length != self.max_train_sequence_length:

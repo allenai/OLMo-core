@@ -19,13 +19,13 @@ from ..utils import get_document_lengths
 from .mixes import DataMix
 from .tokenizer import TokenizerConfig
 
-__all__ = ["MemMapDatasetConfig", "MemMapDataset"]
+__all__ = ["NumpyDatasetConfig", "NumpyDataset", "NumpyDatasetDType"]
 
 
 log = logging.getLogger(__name__)
 
 
-class MemMapDType(StrEnum):
+class NumpyDatasetDType(StrEnum):
     uint8 = "uint8"
     uint16 = "uint16"
     uint32 = "uint32"
@@ -38,9 +38,9 @@ class MemMapDType(StrEnum):
 
 
 @dataclass
-class MemMapDatasetConfig(Config):
+class NumpyDatasetConfig(Config):
     """
-    A config class for easily building :class:`MemMapDataset` classes.
+    A config class for easily building :class:`NumpyDataset` classes.
     """
 
     sequence_length: int
@@ -49,7 +49,7 @@ class MemMapDatasetConfig(Config):
     mix: Optional[DataMix] = None
     mix_base_dir: Optional[str] = None
     max_target_sequence_length: Optional[int] = None
-    memmap_dtype: Optional[MemMapDType] = None
+    dtype: Optional[NumpyDatasetDType] = None
     metadata: Optional[List[Dict[str, Any]]] = None
     include_instance_metadata: bool = True
     generate_attention_mask: bool = False
@@ -58,7 +58,7 @@ class MemMapDatasetConfig(Config):
     expand_glob: bool = False
 
     @classmethod
-    def glob(cls, *glob_paths: str, **kwargs) -> "MemMapDatasetConfig":
+    def glob(cls, *glob_paths: str, **kwargs) -> NumpyDatasetConfig:
         """
         Initialize a dataset config with glob paths.
 
@@ -74,7 +74,7 @@ class MemMapDatasetConfig(Config):
     @classmethod
     def from_data_mix(
         cls, mix: DataMix, *, tokenizer: TokenizerConfig, **kwargs
-    ) -> "MemMapDatasetConfig":
+    ) -> "NumpyDatasetConfig":
         """
         Initialize a dataset config from an official data mix.
 
@@ -89,28 +89,28 @@ class MemMapDatasetConfig(Config):
             )
         return cls(mix=mix, tokenizer=tokenizer, **kwargs)
 
-    def get_memmap_dtype(
+    def get_dtype(
         self,
     ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
-        if self.memmap_dtype is not None:
-            return MemMapDType(self.memmap_dtype).as_np_dtype()
+        if self.dtype is not None:
+            return NumpyDatasetDType(self.dtype).as_np_dtype()
 
         # Guess based on vocab size.
         for dtype in (
-            MemMapDType.uint8,
-            MemMapDType.uint16,
-            MemMapDType.uint32,
-            MemMapDType.uint64,
+            NumpyDatasetDType.uint8,
+            NumpyDatasetDType.uint16,
+            NumpyDatasetDType.uint32,
+            NumpyDatasetDType.uint64,
         ):
             if (self.tokenizer.vocab_size - 1) <= np.iinfo(dtype.as_np_dtype()).max:
-                log.info(f"Assuming memmap dtype {dtype} based on vocab size")
+                log.info(f"Assuming dtype '{dtype}' based on vocab size")
                 return dtype.as_np_dtype()
 
         raise ValueError("vocab size too big!")
 
-    def build(self) -> MemMapDataset:
+    def build(self) -> NumpyDataset:
         """
-        Construct the corresponding :class:`MemMapDataset`.
+        Construct the corresponding :class:`NumpyDataset`.
         """
         if (self.paths is None) == (self.mix is None):
             raise OLMoConfigurationError("Exactly one of 'paths' or 'mix' is required")
@@ -141,13 +141,13 @@ class MemMapDatasetConfig(Config):
                 )
             paths = self.mix.build(self.mix_base_dir, self.tokenizer.identifier)
 
-        dataset = MemMapDataset(
+        dataset = NumpyDataset(
             *paths,
             sequence_length=self.sequence_length,
             max_target_sequence_length=self.max_target_sequence_length,
             pad_token_id=self.tokenizer.pad_token_id,
             eos_token_id=self.tokenizer.eos_token_id,
-            memmap_dtype=self.get_memmap_dtype(),
+            dtype=self.get_dtype(),
             metadata=self.metadata,
             include_instance_metadata=self.include_instance_metadata,
             generate_attention_mask=self.generate_attention_mask,
@@ -159,33 +159,33 @@ class MemMapDatasetConfig(Config):
         return dataset
 
 
-class MemMapDataset(Dataset[Dict[str, Any]]):
+class NumpyDataset(Dataset[Dict[str, Any]]):
     """
-    A PyTorch :class:`~torch.utils.data.Dataset` backed by one or more numpy memory-mapped arrays
+    A PyTorch :class:`~torch.utils.data.Dataset` backed by one or more local or remote numpy arrays
     of token IDs. Token IDs are chunked together into contiguous blocks of ``sequence_length``
     to create instances.
 
     .. important::
-        If the length of a memory-mapped array is not a multiple of ``sequence_length`` the
-        remainder of the tokens will be ignored.
+        If the length of an array is not a multiple of ``sequence_length`` or
+        ``max_target_sequence_length`` the remainder of the tokens will be ignored.
 
     .. important::
         No special tokens are added to the input IDs so it's assumed that if you want
-        EOS tokens between documents, for example, those will already be in the memory-mapped array.
+        EOS tokens between documents, for example, those will already be in the array.
 
-    :param paths: Paths to memory-mapped token arrays.
+    :param paths: Paths or URLs to numpy token ID arrays.
     :param sequence_length: The number of tokens to chunk together into a single instance.
         Generally this should correspond to your model's maximum input length.
     :param pad_token_id: The ID of the padding token.
     :param eos_token_id: The ID of the EOS token.
-    :param memmap_dtype: The numpy datatype of the memory-mapped array.
+    :param dtype: The numpy datatype of the array.
     :param metadata: Metadata to add to each item. This should be a dictionary or a list of dictionaries
         with the same number of items as there are paths.
     :param include_instance_metadata: If ``True`` (the default), each instance returned from ``__getitem__`` will
         include the metadata from its source.
     :param generate_attention_mask: If ``True``, each instance returned from ``__getitem__`` will include an
         attention mask generated by masking each padding token.
-    :param label_mask_paths: Optional paths to ``np.bool_`` memory-mapped arrays of label masks.
+    :param label_mask_paths: Optional paths to ``np.bool_`` numpy arrays of label masks.
     :param max_target_sequence_length: If using sequence length warm-up throughput training, this
         should be set to the maximum/final target sequence length to ensure consistent
         data order.
@@ -197,9 +197,7 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
         sequence_length: int,
         pad_token_id: int,
         eos_token_id: int,
-        memmap_dtype: Union[
-            Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
-        ] = np.uint16,
+        dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]] = np.uint16,
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: bool = True,
         generate_attention_mask: bool = False,
@@ -231,8 +229,8 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
         else:
             metadata = [metadata or {}] * len(paths)
 
-        self._memmap_dtype = memmap_dtype
-        self._memmap_paths = paths
+        self._dtype = dtype
+        self._array_paths = paths
         self._metadata = metadata
         self._label_mask_paths = label_mask_paths
         self._sequence_length = sequence_length
@@ -261,10 +259,10 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
         return sha256_hash.hexdigest()
 
     @property
-    def memmap_dtype(
+    def dtype(
         self,
     ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
-        return self._memmap_dtype
+        return self._dtype
 
     @property
     def sequence_length(self) -> int:
@@ -288,10 +286,10 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
             import concurrent.futures
 
             # Maybe create client up front to work around a threading issue in boto.
-            if any(str(p).startswith("s3://") for p in self._memmap_paths):
+            if any(str(p).startswith("s3://") for p in self._array_paths):
                 _get_s3_client("s3")
 
-            if any(str(p).startswith("r2://") for p in self._memmap_paths):
+            if any(str(p).startswith("r2://") for p in self._array_paths):
                 try:
                     _get_s3_client("r2")
                 except OLMoEnvironmentError:
@@ -299,7 +297,7 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
                     # later if R2 is needed.
                     pass
 
-            if any(str(p).startswith("weka://") for p in self._memmap_paths):
+            if any(str(p).startswith("weka://") for p in self._array_paths):
                 try:
                     _get_s3_client("weka")
                 except OLMoEnvironmentError:
@@ -318,7 +316,7 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 path_futures = []
                 mask_path_futures = []
-                for i, path in enumerate(self._memmap_paths):
+                for i, path in enumerate(self._array_paths):
                     path_futures.append(executor.submit(self._get_file_size_and_length, path))
                     if self._label_mask_paths is not None:
                         mask_path = self._label_mask_paths[i]
@@ -337,7 +335,7 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
                     mask_path_to_length[path] = length
 
             start_offset = 0
-            for path in self._memmap_paths:
+            for path in self._array_paths:
                 length = path_to_length[path]
                 size = path_to_size[path]
                 if mask_path_to_length:
@@ -354,14 +352,17 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
 
     @property
     def sizes(self) -> List[int]:
+        """
+        The size, in bytes, of each numpy array.
+        """
         return self.sizes_and_offsets[0]
 
     @property
     def offsets(self) -> List[Tuple[int, int]]:
         return self.sizes_and_offsets[1]
 
-    def _read_chunk_from_memmap(self, path: PathOrStr, index: int, dtype=None) -> torch.Tensor:
-        dtype = dtype or self.memmap_dtype
+    def _read_chunk_from_array(self, path: PathOrStr, index: int, dtype=None) -> torch.Tensor:
+        dtype = dtype or self.dtype
         item_size = dtype(0).itemsize
         bytes_start = index * item_size * self._sequence_length
         num_bytes = item_size * self._sequence_length
@@ -373,7 +374,7 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
             return torch.tensor(array.astype(np.int_), dtype=torch.long)
 
     def _get_file_size_and_length(self, path, dtype=None) -> Tuple[PathOrStr, int, int]:
-        dtype = dtype or self.memmap_dtype
+        dtype = dtype or self.dtype
         item_size = dtype(0).itemsize
         file_size = get_file_size(path)
         if (
@@ -401,33 +402,31 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
         index = int(index)  # in case this is a numpy int type.
         pos_index = index if index >= 0 else len(self) + index
 
-        # The index of the memmap array within 'self.memmaps'
-        memmap_index: Optional[int] = None
-        # The 'index' relative to the corresponding memmap array.
-        memmap_local_index: Optional[int] = None
+        # The index of the array within 'self._array_paths'.
+        array_index: Optional[int] = None
+        # The index within the corresponding array.
+        array_local_index: Optional[int] = None
         for i, (offset_start, offset_end) in enumerate(self.offsets):
             if offset_start <= pos_index < offset_end:
-                memmap_index = i
-                memmap_local_index = pos_index - offset_start
+                array_index = i
+                array_local_index = pos_index - offset_start
                 break
 
-        if memmap_index is None or memmap_local_index is None:
+        if array_index is None or array_local_index is None:
             raise IndexError(f"{index} is out of bounds for dataset of size {len(self)}")
 
         # Read the data from file.
-        input_ids = self._read_chunk_from_memmap(
-            self._memmap_paths[memmap_index], memmap_local_index
-        )
+        input_ids = self._read_chunk_from_array(self._array_paths[array_index], array_local_index)
         out: Dict[str, Any] = {"input_ids": input_ids}
 
         if self._label_mask_paths is not None:
-            label_mask = self._read_chunk_from_memmap(
-                self._label_mask_paths[memmap_index], memmap_local_index, dtype=np.bool_
+            label_mask = self._read_chunk_from_array(
+                self._label_mask_paths[array_index], array_local_index, dtype=np.bool_
             )
             out["label_mask"] = label_mask
 
         if self._include_instance_metadata:
-            metadata = self._metadata[memmap_index]
+            metadata = self._metadata[array_index]
             out["metadata"] = deepcopy(metadata)
 
         if self._generate_attention_mask:
@@ -440,17 +439,17 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
 
         return out
 
-    def __add__(self, other: MemMapDataset) -> MemMapDataset:
+    def __add__(self, other: NumpyDataset) -> NumpyDataset:
         """
-        Concatenate one :class:`MemMapDataset` with another.
+        Concatenate one :class:`NumpyDataset` with another.
         """
-        if not isinstance(other, MemMapDataset):
-            raise NotImplementedError(f"Expected another MemMapDataset but got {type(other)}")
-        return MemMapDataset(
-            *(self._memmap_paths + other._memmap_paths),
+        if not isinstance(other, NumpyDataset):
+            raise NotImplementedError(f"Expected another NumpyDataset but got {type(other)}")
+        return NumpyDataset(
+            *(self._array_paths + other._array_paths),
             sequence_length=self.sequence_length,
             pad_token_id=self.pad_token_id,
             eos_token_id=self.eos_token_id,
-            memmap_dtype=self.memmap_dtype,
+            dtype=self.dtype,
             metadata=self._metadata + other._metadata,
         )

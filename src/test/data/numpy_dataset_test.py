@@ -2,10 +2,10 @@ from pathlib import Path
 
 import numpy as np
 
-from olmo_core.data import MemMapDataset, MemMapDatasetConfig, TokenizerConfig
+from olmo_core.data import NumpyDataset, NumpyDatasetConfig, TokenizerConfig
 
 
-def test_mmap_dataset(tmp_path: Path):
+def test_numpy_dataset(tmp_path: Path):
     mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(16,))
     mmap1[:] = np.array(list(range(16)), dtype=np.uint16)
     mmap1.flush()
@@ -14,7 +14,7 @@ def test_mmap_dataset(tmp_path: Path):
     mmap2[:] = np.array(list(range(16, 32)), dtype=np.uint16)
     mmap2.flush()
 
-    ds = MemMapDataset(
+    ds = NumpyDataset(
         tmp_path / "mmap1.npy",
         tmp_path / "mmap2.npy",
         sequence_length=4,
@@ -26,7 +26,7 @@ def test_mmap_dataset(tmp_path: Path):
     assert ds[7]["input_ids"].tolist() == [28, 29, 30, 31]
 
 
-def test_mmap_dataset_with_label_mask(tmp_path: Path):
+def test_numpy_dataset_with_label_mask(tmp_path: Path):
     mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(16,))
     mmap1[:] = np.array(list(range(16)), dtype=np.uint16)
     mmap1.flush()
@@ -47,7 +47,7 @@ def test_mmap_dataset_with_label_mask(tmp_path: Path):
     mask_mmap2[:] = np.array(mask2, dtype=np.bool_)
     mask_mmap2.flush()
 
-    ds = MemMapDataset(
+    ds = NumpyDataset(
         tmp_path / "mmap1.npy",
         tmp_path / "mmap2.npy",
         sequence_length=4,
@@ -62,7 +62,7 @@ def test_mmap_dataset_with_label_mask(tmp_path: Path):
     assert ds[7]["label_mask"].tolist() == [True, True, True, False]
 
 
-def test_concat_mmap_datasets(tmp_path: Path):
+def test_concat_numpy_datasets(tmp_path: Path):
     # Write some data to disk.
     mmap1 = np.memmap(tmp_path / "tokens1.npy", dtype=np.uint16, mode="w+", shape=(16,))
     mmap1[:] = list(range(16))
@@ -73,7 +73,7 @@ def test_concat_mmap_datasets(tmp_path: Path):
     del mmap1, mmap2
 
     # Initialize two datasets, one for each file.
-    ds1 = MemMapDataset(
+    ds1 = NumpyDataset(
         tmp_path / "tokens1.npy",
         sequence_length=3,
         metadata={"label": "test1"},
@@ -81,7 +81,7 @@ def test_concat_mmap_datasets(tmp_path: Path):
         eos_token_id=-1,
     )
     assert len(ds1) == 5
-    ds2 = MemMapDataset(
+    ds2 = NumpyDataset(
         tmp_path / "tokens2.npy",
         sequence_length=3,
         metadata={"label": "test2"},
@@ -102,8 +102,8 @@ def test_concat_mmap_datasets(tmp_path: Path):
 
 
 def test_guess_dtype():
-    config = MemMapDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.gpt2())
-    assert config.get_memmap_dtype() == np.uint16
+    config = NumpyDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.gpt2())
+    assert config.get_dtype() == np.uint16
 
-    config = MemMapDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.dolma2())
-    assert config.get_memmap_dtype() == np.uint32
+    config = NumpyDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.dolma2())
+    assert config.get_dtype() == np.uint32
