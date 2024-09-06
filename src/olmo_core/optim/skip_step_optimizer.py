@@ -78,13 +78,12 @@ class SkipStepOptimizer(Optimizer):
         if len(self._losses) < max(20, self.rolling_interval_length // 2):
             return torch.tensor(1.0).to(device=self.latest_loss.device, non_blocking=True)
 
-        loss_std = torch.std(torch.stack(self._losses[:-1]))
+        loss_std, loss_mean = torch.std_mean(torch.stack(self._losses[:-1]))
 
         if self._grad_norms:
-            grad_norm_std = torch.std(torch.stack(self._grad_norms[:-1]))
-            return (
-                self.latest_loss <= self.sigma_factor * loss_std
-                and self.latest_grad_norm <= self.sigma_factor * grad_norm_std
-            )
+            grad_norm_std, grad_norm_mean = torch.std_mean(torch.stack(self._grad_norms[:-1]))
+            return (self.latest_loss - loss_mean) <= self.sigma_factor * loss_std and (
+                self.latest_grad_norm - grad_norm_mean
+            ) <= self.sigma_factor * grad_norm_std
         else:
-            return self.latest_loss <= self.sigma_factor * loss_std
+            return (self.latest_loss - loss_mean) <= self.sigma_factor * loss_std
