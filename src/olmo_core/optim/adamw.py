@@ -6,13 +6,11 @@ import torch
 import torch.nn as nn
 from torch.optim.optimizer import Optimizer
 
-from ..distributed.utils import get_local_tensor
 from .config import OptimConfig
 
 
 def adamw_step(
-    p: torch.Tensor,
-    grad: torch.Tensor,
+    p: nn.Parameter,
     *,
     lr: float,
     betas: Tuple[float, float],
@@ -23,15 +21,18 @@ def adamw_step(
     step: int,
     step_factor: torch.Tensor,
 ):
+    if p.grad is None:
+        return
+
     beta1, beta2 = betas
 
     # Perform step weight decay.
     p.mul_(1 - step_factor * (lr * weight_decay))
 
     # Decay the first and second moment running average coefficient.
-    exp_avg.lerp_(grad, step_factor * (1 - beta1))
+    exp_avg.lerp_(p.grad, step_factor * (1 - beta1))
     exp_avg_sq.mul_(1 - step_factor * (1 - beta2))
-    exp_avg_sq.add_(step_factor * grad * grad, alpha=1 - beta2)
+    exp_avg_sq.add_(step_factor * p.grad * p.grad, alpha=1 - beta2)
 
     bias_correction1 = 1 - beta1**step
     bias_correction2 = 1 - beta2**step
@@ -44,34 +45,6 @@ def adamw_step(
     update = -step_size * torch.div(exp_avg, denom)
     update.mul_(step_factor)
     p.add_(update)
-
-
-@torch.compile(fullgraph=False)
-def compiled_adamw_step(
-    p: torch.Tensor,
-    grad: torch.Tensor,
-    *,
-    lr: float,
-    betas: Tuple[float, float],
-    eps: float,
-    weight_decay: float,
-    exp_avg: torch.Tensor,
-    exp_avg_sq: torch.Tensor,
-    step: int,
-    step_factor: torch.Tensor,
-):
-    adamw_step(
-        p,
-        grad,
-        lr=lr,
-        betas=betas,
-        eps=eps,
-        weight_decay=weight_decay,
-        exp_avg=exp_avg,
-        exp_avg_sq=exp_avg_sq,
-        step=step,
-        step_factor=step_factor,
-    )
 
 
 class AdamW(Optimizer):
@@ -91,12 +64,11 @@ class AdamW(Optimizer):
         self.compile = compile
 
     @torch.no_grad()
-    def step(self, closure=None) -> None:
+    def _step(self, closure=None) -> None:
         if closure is not None:
             with torch.enable_grad():
                 closure()
 
-        step_func = adamw_step if not self.compile else compiled_adamw_step
         for group in self.param_groups:
             for p in group["params"]:
                 if p.grad is None:
@@ -119,18 +91,27 @@ class AdamW(Optimizer):
                 # NOTE: No host-device sync since 'step' tensor will always be on CPU.
                 step = state["step"].item()
 
-                step_func(
-                    get_local_tensor(p),
-                    get_local_tensor(p.grad),
+                adamw_step(
+                    p,
                     lr=group["lr"],
                     betas=group["betas"],
                     eps=group["eps"],
                     weight_decay=group["weight_decay"],
-                    exp_avg=get_local_tensor(state["exp_avg"]),
-                    exp_avg_sq=get_local_tensor(state["exp_avg_sq"]),
+                    exp_avg=state["exp_avg"],
+                    exp_avg_sq=state["exp_avg_sq"],
                     step=step,
                     step_factor=state["step_factor"],
                 )
+
+    @torch.compile(fullgraph=False)
+    def _compiled_step(self, closure=None):
+        self._step(closure=closure)
+
+    def step(self, closure=None):
+        if self.compile:
+            self._compiled_step(closure=closure)
+        else:
+            self._step(closure=closure)
 
 
 @dataclass
