@@ -45,6 +45,7 @@ from ..nn.functional.cross_entropy_loss import (
     cross_entropy_loss,
     fused_cross_entropy_loss,
 )
+from ..optim import SkipStepOptimizer
 from ..utils import move_to_device
 from .callbacks import (
     Callback,
@@ -69,6 +70,7 @@ log = logging.getLogger(__name__)
 TRAIN_CE_LOSS_METRIC = "train/CE loss"
 TRAIN_PPL_METRIC = "train/PPL"
 TRAIN_Z_LOSS_METRIC = "train/Z loss"
+OPTIM_STEP_SKIPPED_METRIC = "optim/step skipped"
 
 
 class LoadStrategy(StrEnum):
@@ -1134,12 +1136,12 @@ class Trainer:
                 )
 
                 # Update overall CE batch loss.
-                ce_batch_loss += ce_loss.detach()
+                ce_batch_loss += get_local_tensor(ce_loss.detach())
 
                 # Update overall Z batch loss.
                 if z_loss is not None:
                     assert z_batch_loss is not None
-                    z_batch_loss += z_loss.detach()
+                    z_batch_loss += get_local_tensor(z_loss.detach())
 
                 # Run backward pass.
                 loss.backward()
@@ -1148,12 +1150,17 @@ class Trainer:
         if z_batch_loss is not None:
             self.record_metric(TRAIN_Z_LOSS_METRIC, z_batch_loss, ReduceType.mean)
 
+        if isinstance(self.optim, SkipStepOptimizer):
+            self.optim.latest_loss = ce_batch_loss
+
         # Run through callbacks.
         for callback in self.callbacks.values():
             callback.pre_optim_step()
 
         # Optimizer step.
         self.optim.step()
+        if isinstance(self.optim, SkipStepOptimizer):
+            self.record_metric(OPTIM_STEP_SKIPPED_METRIC, self.optim.step_skipped)
 
     def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:
         iterable_dataset = IterableDataset(

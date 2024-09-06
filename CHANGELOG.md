@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added support for sequence length warm-up.
+- Added `Lion` and `SkipStepLion` optimizers.
 
 ### Changed
 

@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
+from olmo_core.optim import SkipStepOptimizer
+
 from .callback import Callback
 
 
@@ -26,3 +28,5 @@ class GradClipperCallback(Callback):
 
         # NOTE: grad norm is already reduced over ranks, so we set `reduce_type` to `None`.
         self.trainer.record_metric("optim/total grad norm", grad_norm, reduce_type=None)
+        if isinstance(self.trainer.optim, SkipStepOptimizer):
+            self.trainer.optim.latest_grad_norm = grad_norm

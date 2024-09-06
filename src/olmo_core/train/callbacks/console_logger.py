@@ -9,7 +9,9 @@ log = logging.getLogger(__name__)
 
 
 def format_float(value: float) -> str:
-    if value < 0.0001:
+    if value == 0.0:
+        return "0.0"
+    elif value < 0.0001:
         return f"{value:.2E}"
     elif value > 1000:
         return f"{int(value):,d}"
@@ -48,6 +50,7 @@ class ConsoleLoggerCallback(Callback):
             "train/*",
             "system/*",
             "optim/total grad norm",
+            "optim/step skipped",
             "optim/LR*",
             "throughput/*",
         ]
