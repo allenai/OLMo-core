@@ -238,6 +238,7 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
         self._sequence_length = sequence_length
         self._max_target_sequence_length = max_target_sequence_length
         self._mmap_offsets: Optional[List[Tuple[int, int]]] = None
+        self._mmap_sizes: Optional[List[int]] = None
         self._num_instances: Optional[int] = None
         self._include_instance_metadata = include_instance_metadata
         self._generate_attention_mask = generate_attention_mask
@@ -246,13 +247,17 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
         self._eos_token_id = eos_token_id
 
     @property
+    def fingerprint_version(self) -> str:
+        return "v1"
+
+    @property
     def fingerprint(self) -> str:
         """
-        A fingerprint for the dataset. Can be used to validate that a dataset is the same.
+        A fingerprint for the dataset. Can be used as a proxy for a hash of the underlying data.
         """
         sha256_hash = hashlib.sha256()
-        for offset_start, offset_end in self.offsets:
-            sha256_hash.update(f"(start={offset_start}, end={offset_end})".encode())
+        for size in self.sizes:
+            sha256_hash.update(f"size={size}".encode())
         return sha256_hash.hexdigest()
 
     @property
@@ -278,8 +283,8 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
         return self._eos_token_id
 
     @property
-    def offsets(self) -> List[Tuple[int, int]]:
-        if self._mmap_offsets is None:
+    def sizes_and_offsets(self) -> Tuple[List[int], List[Tuple[int, int]]]:
+        if self._mmap_offsets is None or self._mmap_sizes is None:
             import concurrent.futures
 
             # Maybe create client up front to work around a threading issue in boto.
@@ -303,34 +308,40 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
                     pass
 
             self._mmap_offsets = []
+            self._mmap_sizes = []
 
+            path_to_size: Dict[PathOrStr, int] = {}
             path_to_length: Dict[PathOrStr, int] = {}
             path_to_mask_path: Dict[PathOrStr, PathOrStr] = {}
             mask_path_to_length: Dict[PathOrStr, int] = {}
+            mask_path_to_size: Dict[PathOrStr, int] = {}
 
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 path_futures = []
                 mask_path_futures = []
                 for i, path in enumerate(self._memmap_paths):
-                    path_futures.append(executor.submit(self._get_file_length, path))
+                    path_futures.append(executor.submit(self._get_file_size_and_length, path))
                     if self._label_mask_paths is not None:
                         mask_path = self._label_mask_paths[i]
                         path_to_mask_path[path] = mask_path
                         mask_path_futures.append(
-                            executor.submit(self._get_file_length, mask_path, np.bool_)
+                            executor.submit(self._get_file_size_and_length, mask_path, np.bool_)
                         )
 
                 for future in concurrent.futures.as_completed(path_futures):
-                    path, length = future.result()
+                    path, size, length = future.result()
                     path_to_length[path] = length
+                    path_to_size[path] = size
 
                 for future in concurrent.futures.as_completed(mask_path_futures):
-                    path, length = future.result()
+                    path, size, length = future.result()
                     mask_path_to_length[path] = length
+                    mask_path_to_size[path] = size
 
             start_offset = 0
             for path in self._memmap_paths:
                 length = path_to_length[path]
+                size = path_to_size[path]
                 if mask_path_to_length:
                     mask_path = path_to_mask_path[path]
                     if length != mask_path_to_length[mask_path]:
@@ -339,8 +350,17 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
                         )
                 end_offset = start_offset + length
                 self._mmap_offsets.append((start_offset, end_offset))
+                self._mmap_sizes.append(size)
                 start_offset += length
-        return self._mmap_offsets
+        return self._mmap_sizes, self._mmap_offsets
+
+    @property
+    def sizes(self) -> List[int]:
+        return self.sizes_and_offsets[0]
+
+    @property
+    def offsets(self) -> List[Tuple[int, int]]:
+        return self.sizes_and_offsets[1]
 
     def _read_chunk_from_memmap(self, path: PathOrStr, index: int, dtype=None) -> torch.Tensor:
         dtype = dtype or self.memmap_dtype
@@ -354,7 +374,7 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
         else:
             return torch.tensor(array.astype(np.int_), dtype=torch.long)
 
-    def _get_file_length(self, path, dtype=None) -> Tuple[PathOrStr, int]:
+    def _get_file_size_and_length(self, path, dtype=None) -> Tuple[PathOrStr, int, int]:
         dtype = dtype or self.memmap_dtype
         item_size = dtype(0).itemsize
         file_size = get_file_size(path)
@@ -362,11 +382,14 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
             self.max_target_sequence_length is None
             or self.max_target_sequence_length == self.sequence_length
         ):
-            return path, file_size // (item_size * self.sequence_length)
+            return path, file_size, file_size // (item_size * self.sequence_length)
         elif self.max_target_sequence_length > self.sequence_length:
             num_max_seq_len_instances = file_size // (item_size * self.max_target_sequence_length)
-            return path, num_max_seq_len_instances * (
-                self.max_target_sequence_length // self.sequence_length
+            return (
+                path,
+                file_size,
+                num_max_seq_len_instances
+                * (self.max_target_sequence_length // self.sequence_length),
             )
         else:
             raise RuntimeError("invalid 'max_target_sequence_length' or 'sequence_length'")

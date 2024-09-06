@@ -98,6 +98,7 @@ class TrainerStateDict(TypedDict):
     global_train_tokens_seen_this_epoch: int
     global_train_examples_seen_this_epoch: int
     dataset_fingerprint: str
+    dataset_fingerprint_version: str
     data_seed: int
     epoch: int
     world_size: int
@@ -612,6 +613,7 @@ class Trainer:
             "global_train_tokens_seen_this_epoch": self.global_train_tokens_seen_this_epoch,
             "global_train_examples_seen_this_epoch": self.global_train_examples_seen_this_epoch,
             "dataset_fingerprint": self.dataset.fingerprint,
+            "dataset_fingerprint_version": self.dataset.fingerprint_version,
             "data_seed": self.data_seed,
             "epoch": self.epoch,
             "world_size": get_world_size(),  # global world size here on purpose
@@ -629,7 +631,12 @@ class Trainer:
                 "Restoring trainer state with a different 'max_train_sequence_length' is not supported"
             )
 
-        if (
+        if state_dict.get("dataset_fingerprint_version") != self.dataset.fingerprint_version:
+            log.warning(
+                "Dataset fingerprint version does not match the version in the checkpoint, "
+                "this could mean the data has changed"
+            )
+        elif (
             state_dict.get("dataset_fingerprint", self.dataset.fingerprint)
             != self.dataset.fingerprint
         ):
