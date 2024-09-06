@@ -6,7 +6,6 @@ import torch
 import torch.nn as nn
 from torch.optim.optimizer import Optimizer
 
-from ..distributed.utils import get_local_tensor
 from .config import OptimConfig
 
 
@@ -63,7 +62,7 @@ class AdamW(Optimizer):
         self.compile = compile
 
     @torch.no_grad()
-    def _step(self, closure=None) -> None:
+    def step(self, closure=None) -> None:
         if closure is not None:
             with torch.enable_grad():
                 closure()
@@ -91,27 +90,17 @@ class AdamW(Optimizer):
                 step = state["step"].item()
 
                 adamw_step(
-                    get_local_tensor(p),
-                    get_local_tensor(p.grad),
+                    p,
+                    p.grad,
                     lr=group["lr"],
                     betas=group["betas"],
                     eps=group["eps"],
                     weight_decay=group["weight_decay"],
-                    exp_avg=get_local_tensor(state["exp_avg"]),
-                    exp_avg_sq=get_local_tensor(state["exp_avg_sq"]),
+                    exp_avg=state["exp_avg"],
+                    exp_avg_sq=state["exp_avg_sq"],
                     step=step,
                     step_factor=state["step_factor"],
                 )
-
-    @torch.compile(fullgraph=False)
-    def _compiled_step(self, closure=None):
-        self._step(closure=closure)
-
-    def step(self, closure=None):
-        if self.compile:
-            self._compiled_step(closure=closure)
-        else:
-            self._step(closure=closure)
 
 
 @dataclass
@@ -124,7 +113,6 @@ class AdamWConfig(OptimConfig):  # NOTE: omagaconf doesn't like "OptimConfig[tor
     betas: Tuple[float, float] = (0.9, 0.999)
     eps: float = 1e-8
     weight_decay: float = 1e-2
-    compile: bool = False
 
     def build(self, model: nn.Module) -> AdamW:
         kwargs = self.as_dict()

@@ -17,15 +17,12 @@ class Model(nn.Module):
         return self.w2(self.w1(x))
 
 
-@pytest.mark.parametrize(
-    "compile", [pytest.param(True, id="compile"), pytest.param(False, id="no-compile")]
-)
 @pytest.mark.parametrize("device", DEVICES)
-def test_adamw(compile: bool, device: torch.device):
+def test_adamw(device: torch.device):
     if compile and device.type != "cuda":
         pytest.skip("compile requires a GPU")
 
-    config = AdamWConfig(compile=compile)
+    config = AdamWConfig()
     model = Model().train().to(device)
     optim = config.build(model)
     optim.zero_grad(set_to_none=True)
