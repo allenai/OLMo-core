@@ -4,6 +4,8 @@ import torch
 from torch.optim.optimizer import Optimizer
 from typing_extensions import TypeAlias
 
+from olmo_core.utils import get_default_device
+
 ParamsT: TypeAlias = Union[Iterable[torch.Tensor], Iterable[Dict[str, Any]]]
 
 
@@ -41,12 +43,26 @@ class SkipStepOptimizer(Optimizer):
         self.sigma_factor = sigma_factor
         self._losses: List[torch.Tensor] = []
         self._grad_norms: List[torch.Tensor] = []
+        self._device: Optional[torch.device] = None
 
     @property
-    def latest_loss(self) -> torch.Tensor:
+    def device(self) -> torch.device:
+        if self._device is None:
+            for group in self.param_groups:
+                for p in group["params"]:
+                    if p.numel() > 0:
+                        self._device = p.device
+                        break
+            if self._device is None:
+                self._device = get_default_device()
+        return self._device
+
+    @property
+    def latest_loss(self) -> Optional[torch.Tensor]:
         if not self._losses:
-            raise RuntimeError("'latest_loss' has not been set yet")
-        return self._losses[-1]
+            return None
+        else:
+            return self._losses[-1]
 
     @latest_loss.setter
     def latest_loss(self, loss: torch.Tensor):
@@ -76,7 +92,7 @@ class SkipStepOptimizer(Optimizer):
         without a host-device sync.
         """
         if len(self._losses) < max(20, self.rolling_interval_length // 2):
-            return torch.tensor(1.0).to(device=self.latest_loss.device, non_blocking=True)
+            return torch.tensor(1.0).to(device=self.device, non_blocking=True)
 
         loss_std, loss_mean = torch.std_mean(torch.stack(self._losses[:-1]))
         loss_z_score = (self.latest_loss - loss_mean).abs().div(loss_std)
