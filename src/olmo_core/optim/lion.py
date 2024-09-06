@@ -1,8 +1,11 @@
+from dataclasses import dataclass
 from typing import Tuple
 
 import torch
+import torch.nn as nn
 from torch.optim.optimizer import Optimizer
 
+from .config import OptimConfig
 from .skip_step_optimizer import SkipStepOptimizer
 
 
@@ -145,3 +148,33 @@ class SkipStepLion(SkipStepOptimizer):
                     exp_avg=state["exp_avg"],
                     step_factor=step_factor,
                 )
+
+
+@dataclass
+class LionConfig(OptimConfig):
+    """
+    Configuration class for building a :class:`Lion` optimizer.
+    """
+
+    lr: float = 1e-4
+    betas: Tuple[float, float] = (0.9, 0.99)
+    weight_decay: float = 0.0
+    compile: bool = False
+
+    def build(self, model: nn.Module) -> Lion:
+        kwargs = self.as_dict()
+        kwargs.pop("group_overrides")
+        optim = Lion(self.build_groups(model), **kwargs)
+        for group in optim.param_groups:
+            group.setdefault("initial_lr", self.lr)
+        return optim
+
+
+@dataclass
+class SkipStepLionConfig(LionConfig):
+    """
+    Configuration class for building a :class:`SkipStepLion` optimizer.
+    """
+
+    rolling_interval_length: int = 128
+    sigma_factor: int = 6
