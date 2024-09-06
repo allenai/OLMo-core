@@ -10,7 +10,7 @@ import torch.nn as nn
 from torch.optim import Optimizer
 
 from ..config import Config, DType
-from ..data import DataCollator, MemMapDataset
+from ..data import DataCollator, NumpyDataset
 from ..exceptions import OLMoConfigurationError
 from ..io import is_url
 from ..utils import get_default_device
@@ -66,7 +66,7 @@ class TrainerConfig(Config):
         self,
         model: nn.Module,
         optim: Optimizer,
-        dataset: MemMapDataset,
+        dataset: NumpyDataset,
         dp_process_group: Optional[dist.ProcessGroup] = None,
         checkpointer_pg: Optional[dist.ProcessGroup] = None,
     ) -> Trainer:

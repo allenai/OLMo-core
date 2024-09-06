@@ -1,13 +1,13 @@
 from .collator import DataCollator, PaddingDirection
 from .iterable_dataset import IterableDataset
-from .memmap_dataset import MemMapDataset, MemMapDatasetConfig, MemMapDType
 from .mixes import DataMix
+from .numpy_dataset import NumpyDataset, NumpyDatasetConfig, NumpyDatasetDType
 from .tokenizer import TokenizerConfig, TokenizerName
 
 __all__ = [
-    "MemMapDatasetConfig",
-    "MemMapDataset",
-    "MemMapDType",
+    "NumpyDatasetConfig",
+    "NumpyDataset",
+    "NumpyDatasetDType",
     "TokenizerConfig",
     "TokenizerName",
     "DataMix",

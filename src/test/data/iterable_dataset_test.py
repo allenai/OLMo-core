@@ -3,7 +3,7 @@ from typing import List
 import numpy as np
 import pytest
 
-from olmo_core.data import IterableDataset, MemMapDataset
+from olmo_core.data import IterableDataset, NumpyDataset
 
 
 @pytest.mark.parametrize(
@@ -22,7 +22,7 @@ def test_restart_with_seq_len_warmup(tmp_path, shuffle):
     del mmap1, mmap2
 
     def get_all_tokens(seq_len: int, start_index: int = 0) -> List[int]:
-        dataset = MemMapDataset(
+        dataset = NumpyDataset(
             tmp_path / "tokens1.npy",
             tmp_path / "tokens2.npy",
             sequence_length=seq_len,
