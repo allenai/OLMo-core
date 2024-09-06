@@ -180,10 +180,22 @@ class LionConfig(OptimConfig):
 
 
 @dataclass
-class SkipStepLionConfig(LionConfig):
+class SkipStepLionConfig(OptimConfig):
     """
     Configuration class for building a :class:`SkipStepLion` optimizer.
     """
 
+    lr: float = 1e-4
+    betas: Tuple[float, float] = (0.9, 0.99)
+    weight_decay: float = 0.0
+    compile: bool = False
     rolling_interval_length: int = 128
     sigma_factor: int = 6
+
+    def build(self, model: nn.Module) -> SkipStepLion:
+        kwargs = self.as_dict()
+        kwargs.pop("group_overrides")
+        optim = SkipStepLion(self.build_groups(model), **kwargs)
+        for group in optim.param_groups:
+            group.setdefault("initial_lr", self.lr)
+        return optim
