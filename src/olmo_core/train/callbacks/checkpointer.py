@@ -91,7 +91,8 @@ class CheckpointerCallback(Callback):
     # NOTE: can't use type annotation here, omegaconf doesn't like it
     #  _future: Optional[Future] = None
     _future = None
-    _latest_checkpoint: Tuple[int, str] = (-1, "")
+    _latest_checkpoint_step: int = -1
+    _latest_checkpoint_path: str = ""
     _checkpoints: List[str] = field(default_factory=list)
     _ephemeral_checkpoints: List[str] = field(default_factory=list)
 
@@ -121,7 +122,7 @@ class CheckpointerCallback(Callback):
                 fut.result()
                 if get_rank() == 0:
                     wait_for(
-                        lambda: self.checkpointer.dir_is_checkpoint(self._latest_checkpoint[1]),
+                        lambda: self.checkpointer.dir_is_checkpoint(self._latest_checkpoint_path),
                         "waiting to finalize checkpoint",
                     )
                 barrier()
@@ -136,7 +137,8 @@ class CheckpointerCallback(Callback):
             path, self._future = self.trainer.save_checkpoint_async()
         else:
             path = self.trainer.save_checkpoint()
-        self._latest_checkpoint = (self.step, str(path))
+        self._latest_checkpoint_step = self.step
+        self._latest_checkpoint_path = str(path)
         return str(path)
 
     def _remove_checkpoint(self, path: str):
@@ -210,6 +212,6 @@ class CheckpointerCallback(Callback):
                 self._remove_checkpoint(oldest_path)
 
     def post_train(self):
-        if self.step > self._latest_checkpoint[0]:
+        if self.step > self._latest_checkpoint_step:
             self._checkpoints.append(self._save_checkpoint(save_async=False))
         self._await_last_checkpoint()
