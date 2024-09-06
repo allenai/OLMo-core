@@ -74,7 +74,7 @@ def is_url(path: PathOrStr) -> bool:
     return re.match(r"[a-z0-9]+://.*", str(path)) is not None
 
 
-def file_size(path: PathOrStr) -> int:
+def get_file_size(path: PathOrStr) -> int:
     """
     Get the size of a local or remote file in bytes.
 
@@ -93,7 +93,7 @@ def file_size(path: PathOrStr) -> int:
         elif parsed.scheme in ("http", "https"):
             return _http_file_size(str(path))
         elif parsed.scheme == "file":
-            return file_size(str(path).replace("file://", "", 1))
+            return get_file_size(str(path).replace("file://", "", 1))
         else:
             raise NotImplementedError(f"file size not implemented for '{parsed.scheme}' files")
     else:
@@ -146,7 +146,7 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
 
     source = Path(normalize_path(source))
     assert source.is_file()
-    num_bytes = file_size(source)
+    num_bytes = get_file_size(source)
     log.info(f"Uploading {_format_bytes(num_bytes)} from '{source}' to '{target}'...")
     parsed = urlparse(target)
     if parsed.scheme == "gs":

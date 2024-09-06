@@ -104,7 +104,7 @@ class Checkpointer:
         )
 
         def done_callback(fut: Future):
-            fut.result()
+            del fut
             self._save_metadata(dir, CheckpointMetadata())
 
         # Upload metadata when everything else is done.

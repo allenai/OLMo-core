@@ -62,6 +62,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         sequence_length=1024,
         tokenizer=tokenizer_config,
         generate_doc_lengths=True,
+        max_target_sequence_length=8192,
     )
 
     trainer_config = (

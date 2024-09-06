@@ -6,7 +6,18 @@ from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Literal, Optional, Tuple, Union
+from typing import (
+    Any,
+    Dict,
+    Generator,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    TypedDict,
+    Union,
+    cast,
+)
 
 import torch
 import torch.distributed as dist
@@ -81,6 +92,21 @@ class LoadStrategy(StrEnum):
     """
 
 
+class TrainerStateDict(TypedDict):
+    global_step: int
+    global_train_tokens_seen: int
+    global_train_tokens_seen_this_epoch: int
+    global_train_examples_seen_this_epoch: int
+    dataset_fingerprint: str
+    dataset_fingerprint_version: str
+    data_seed: int
+    epoch: int
+    world_size: int
+    train_sequence_length: int
+    max_train_sequence_length: Optional[int]
+    rng: Dict[str, Any]
+
+
 @dataclass
 class Trainer:
     """
@@ -150,6 +176,13 @@ class Trainer:
     train_sequence_length: int
     """
     Training sequence length.
+
+    .. important::
+        If you're using a :class:`~olmo_core.data.MemMapDataset`, the value here must match
+        :data:`MemMapDataset.sequence_length <olmo_core.data.MemMapDataset.sequence_length>`.
+
+    .. seealso::
+        :data:`max_train_sequence_length`
     """
 
     global_batch_size: int
@@ -160,6 +193,17 @@ class Trainer:
     microbatch_size: int
     """
     Microbatch size per rank, i.e. the number of instances to process at a time from each rank.
+    """
+
+    max_train_sequence_length: Optional[int] = None
+    """
+    Set this to the maximum target train sequence length if you're planning on changing
+    the train sequence length during a training run, e.g. for sequence length warm-up.
+
+    .. important::
+        If set this must be a multiple of :data:`train_sequence_length`, and if you're using
+        a :class:`~olmo_core.data.MemMapDataset`, the value here must match
+        :data:`MemMapDataset.max_target_sequence_length <olmo_core.data.MemMapDataset.max_target_sequence_length>`.
     """
 
     save_overwrite: bool = False
@@ -374,7 +418,9 @@ class Trainer:
         # Other validation.
         if isinstance(self.dataset, MemMapDataset):
             if self.dataset.sequence_length != self.train_sequence_length:
-                raise OLMoConfigurationError("trainer and dataset sequence length does not match")
+                raise OLMoConfigurationError("trainer and dataset sequence length do not match")
+            if self.dataset.max_target_sequence_length != self.max_train_sequence_length:
+                raise OLMoConfigurationError("trainer and dataset max sequence length do not match")
 
     @property
     def rank_batch_size(self) -> int:
@@ -557,33 +603,40 @@ class Trainer:
 
         log.info("Training complete")
 
-    def state_dict(self) -> Dict[str, Any]:
+    def state_dict(self) -> TrainerStateDict:
         """
         Get the trainer state to save.
         """
-        return dict(
-            global_step=self.global_step,
-            global_train_tokens_seen=self.global_train_tokens_seen,
-            global_train_tokens_seen_this_epoch=self.global_train_tokens_seen_this_epoch,
-            global_train_examples_seen_this_epoch=self.global_train_examples_seen_this_epoch,
-            dataset_fingerprint=self.dataset.fingerprint,
-            data_seed=self.data_seed,
-            epoch=self.epoch,
-            world_size=get_world_size(),  # global world size here on purpose
-            train_sequence_length=self.train_sequence_length,
-            rng=EnvRngStates.current_state().as_dict(),
-        )
+        return {
+            "global_step": self.global_step,
+            "global_train_tokens_seen": self.global_train_tokens_seen,
+            "global_train_tokens_seen_this_epoch": self.global_train_tokens_seen_this_epoch,
+            "global_train_examples_seen_this_epoch": self.global_train_examples_seen_this_epoch,
+            "dataset_fingerprint": self.dataset.fingerprint,
+            "dataset_fingerprint_version": self.dataset.fingerprint_version,
+            "data_seed": self.data_seed,
+            "epoch": self.epoch,
+            "world_size": get_world_size(),  # global world size here on purpose
+            "train_sequence_length": self.train_sequence_length,
+            "max_train_sequence_length": self.max_train_sequence_length,
+            "rng": EnvRngStates.current_state().as_dict(),
+        }
 
-    def load_state_dict(self, state_dict: Dict[str, Any]):
+    def load_state_dict(self, state_dict: TrainerStateDict):
         """
         Load trainer state (not model or optimizer state).
         """
-        if state_dict["train_sequence_length"] != self.train_sequence_length:
-            raise NotImplementedError(
-                "Restoring trainer state with a different sequence length is not supported"
+        if state_dict.get("max_train_sequence_length") != self.max_train_sequence_length:
+            raise RuntimeError(
+                "Restoring trainer state with a different 'max_train_sequence_length' is not supported"
             )
 
-        if (
+        if state_dict.get("dataset_fingerprint_version") != self.dataset.fingerprint_version:
+            log.warning(
+                "Dataset fingerprint version does not match the version in the checkpoint, "
+                "this could mean the data has changed"
+            )
+        elif (
             state_dict.get("dataset_fingerprint", self.dataset.fingerprint)
             != self.dataset.fingerprint
         ):
@@ -598,14 +651,32 @@ class Trainer:
             )
             self.data_seed = data_seed
 
-        self.train_sequence_length = state_dict["train_sequence_length"]
         self.global_step = state_dict["global_step"]
         self.global_train_tokens_seen = state_dict["global_train_tokens_seen"]
         self.global_train_tokens_seen_this_epoch = state_dict["global_train_tokens_seen_this_epoch"]
-        self.global_train_examples_seen_this_epoch = state_dict[
-            "global_train_examples_seen_this_epoch"
-        ]
         self.epoch = state_dict["epoch"]
+
+        if self.train_sequence_length == state_dict["train_sequence_length"]:
+            self.global_train_examples_seen_this_epoch = state_dict[
+                "global_train_examples_seen_this_epoch"
+            ]
+        elif self.train_sequence_length % state_dict["train_sequence_length"] == 0:
+            # Adjust for current larger sequence length.
+            ratio = self.train_sequence_length // state_dict["train_sequence_length"]
+            self.global_train_examples_seen_this_epoch = (
+                state_dict["global_train_examples_seen_this_epoch"] // ratio
+            )
+        elif state_dict["train_sequence_length"] % self.train_sequence_length == 0:
+            # Adjust for current smaller sequence length.
+            ratio = state_dict["train_sequence_length"] // self.train_sequence_length
+            self.global_train_examples_seen_this_epoch = (
+                state_dict["global_train_examples_seen_this_epoch"] * ratio
+            )
+        else:
+            raise RuntimeError(
+                "You can only restore trainer state from a sequence length that is a multiple "
+                "of the current configured sequence length, or vice versa"
+            )
 
         log.info(f"Will resume training from step {self.global_step}, epoch {self.epoch}")
 
@@ -653,7 +724,7 @@ class Trainer:
         )
         if load_trainer_state:
             assert trainer_state is not None
-            self.load_state_dict(trainer_state)
+            self.load_state_dict(cast(TrainerStateDict, trainer_state))
 
         for callback in self.callbacks.values():
             callback.post_checkpoint_loaded(dir)
@@ -695,7 +766,9 @@ class Trainer:
         dirname = self.checkpointer.checkpoint_dirname(self.global_step)
         path = join_path(self.save_folder, dirname)
         log.info(f"Saving checkpoint for step {self.global_step} to '{path}'...")
-        self.checkpointer.save(path, self.model, self.optim, self.state_dict())
+        self.checkpointer.save(
+            path, self.model, self.optim, cast(Dict[str, Any], self.state_dict())
+        )
         for callback in self.callbacks.values():
             callback.post_checkpoint_saved(path)
         log.info("Checkpoint saved")
@@ -713,7 +786,9 @@ class Trainer:
         path = join_path(self.save_folder, dirname)
 
         log.info(f"Saving checkpoint for step {step} to '{path}' asynchronously...")
-        fut = self.checkpointer.save_async(path, self.model, self.optim, self.state_dict())
+        fut = self.checkpointer.save_async(
+            path, self.model, self.optim, cast(Dict[str, Any], self.state_dict())
+        )
 
         def callback(future: Future):
             future.result()  # ensure it finished successfully
@@ -1092,6 +1167,8 @@ class Trainer:
             fs_local_rank=get_fs_local_rank(),
             drop_last=True,
             work_dir=self.work_dir,
+            chunk_size=(self.max_train_sequence_length or self.train_sequence_length)
+            // self.train_sequence_length,
         )
         iterable_dataset.build_and_save_global_indices()
         barrier()

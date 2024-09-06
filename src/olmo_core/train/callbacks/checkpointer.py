@@ -8,6 +8,7 @@ import torch.distributed as dist
 from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import (
     backend_supports_cpu,
+    barrier,
     get_fs_local_rank,
     get_rank,
     is_distributed,
@@ -15,6 +16,7 @@ from olmo_core.distributed.utils import (
 )
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.io import clear_directory
+from olmo_core.utils import wait_for
 
 from ..checkpoint import Checkpointer
 from .callback import Callback
@@ -89,7 +91,8 @@ class CheckpointerCallback(Callback):
     # NOTE: can't use type annotation here, omegaconf doesn't like it
     #  _future: Optional[Future] = None
     _future = None
-    _latest_checkpoint: int = -1
+    _latest_checkpoint_step: int = -1
+    _latest_checkpoint_path: str = ""
     _checkpoints: List[str] = field(default_factory=list)
     _ephemeral_checkpoints: List[str] = field(default_factory=list)
 
@@ -117,6 +120,13 @@ class CheckpointerCallback(Callback):
             # Wait for last async checkpoint to finish.
             if blocking or fut.done():
                 fut.result()
+                if get_rank() == 0:
+                    # Just to be safe, make sure the checkpointer has finalized the checkpoint.
+                    wait_for(
+                        lambda: self.checkpointer.dir_is_checkpoint(self._latest_checkpoint_path),
+                        "waiting to finalize checkpoint",
+                    )
+                barrier()
                 self._future = None
                 return fut
         return None
@@ -124,11 +134,12 @@ class CheckpointerCallback(Callback):
     def _save_checkpoint(self, save_async: Optional[bool] = None) -> str:
         save_async = save_async if save_async is not None else self.save_async
         self._await_last_checkpoint()
-        self._latest_checkpoint = self.step
         if save_async:
             path, self._future = self.trainer.save_checkpoint_async()
         else:
             path = self.trainer.save_checkpoint()
+        self._latest_checkpoint_step = self.step
+        self._latest_checkpoint_path = str(path)
         return str(path)
 
     def _remove_checkpoint(self, path: str):
@@ -202,6 +213,6 @@ class CheckpointerCallback(Callback):
                 self._remove_checkpoint(oldest_path)
 
     def post_train(self):
-        if self.step > self._latest_checkpoint:
+        if self.step > self._latest_checkpoint_step:
             self._checkpoints.append(self._save_checkpoint(save_async=False))
         self._await_last_checkpoint()
