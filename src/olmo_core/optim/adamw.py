@@ -6,11 +6,13 @@ import torch
 import torch.nn as nn
 from torch.optim.optimizer import Optimizer
 
+from ..distributed.utils import get_local_tensor
 from .config import OptimConfig
 
 
 def adamw_step(
-    p: nn.Parameter,
+    p: torch.Tensor,
+    grad: torch.Tensor,
     *,
     lr: float,
     betas: Tuple[float, float],
@@ -21,18 +23,15 @@ def adamw_step(
     step: int,
     step_factor: torch.Tensor,
 ):
-    if p.grad is None:
-        return
-
     beta1, beta2 = betas
 
     # Perform step weight decay.
     p.mul_(1 - step_factor * (lr * weight_decay))
 
     # Decay the first and second moment running average coefficient.
-    exp_avg.lerp_(p.grad, step_factor * (1 - beta1))
+    exp_avg.lerp_(grad, step_factor * (1 - beta1))
     exp_avg_sq.mul_(1 - step_factor * (1 - beta2))
-    exp_avg_sq.add_(step_factor * p.grad * p.grad, alpha=1 - beta2)
+    exp_avg_sq.add_(step_factor * grad * grad, alpha=1 - beta2)
 
     bias_correction1 = 1 - beta1**step
     bias_correction2 = 1 - beta2**step
@@ -92,13 +91,14 @@ class AdamW(Optimizer):
                 step = state["step"].item()
 
                 adamw_step(
-                    p,
+                    get_local_tensor(p),
+                    get_local_tensor(p.grad),
                     lr=group["lr"],
                     betas=group["betas"],
                     eps=group["eps"],
                     weight_decay=group["weight_decay"],
-                    exp_avg=state["exp_avg"],
-                    exp_avg_sq=state["exp_avg_sq"],
+                    exp_avg=get_local_tensor(state["exp_avg"]),
+                    exp_avg_sq=get_local_tensor(state["exp_avg_sq"]),
                     step=step,
                     step_factor=state["step_factor"],
                 )
