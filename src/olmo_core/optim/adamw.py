@@ -126,8 +126,8 @@ class AdamW(Optimizer):
                     betas=group["betas"],
                     eps=group["eps"],
                     weight_decay=group["weight_decay"],
-                    exp_avg=state["exp_avg"],
-                    exp_avg_sq=state["exp_avg_sq"],
+                    exp_avg=get_local_tensor(state["exp_avg"]),
+                    exp_avg_sq=get_local_tensor(state["exp_avg_sq"]),
                     step=step,
                     step_factor=state["step_factor"],
                 )
