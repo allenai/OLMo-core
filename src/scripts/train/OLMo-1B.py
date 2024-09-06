@@ -56,7 +56,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             data_seed=34521,
             data_loader_workers=4,
             metrics_collect_interval=10,
-            cancel_check_interval=3,
+            cancel_check_interval=1,
             z_loss_multiplier=1e-5,
         )
         .with_callback(
