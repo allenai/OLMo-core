@@ -121,6 +121,7 @@ class CheckpointerCallback(Callback):
             if blocking or fut.done():
                 fut.result()
                 if get_rank() == 0:
+                    # Just to be safe, make sure the checkpointer has finalized the checkpoint.
                     wait_for(
                         lambda: self.checkpointer.dir_is_checkpoint(self._latest_checkpoint_path),
                         "waiting to finalize checkpoint",

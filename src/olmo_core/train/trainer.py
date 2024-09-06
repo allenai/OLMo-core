@@ -1167,6 +1167,8 @@ class Trainer:
             fs_local_rank=get_fs_local_rank(),
             drop_last=True,
             work_dir=self.work_dir,
+            chunk_size=(self.max_train_sequence_length or self.train_sequence_length)
+            // self.train_sequence_length,
         )
         iterable_dataset.build_and_save_global_indices()
         barrier()
