@@ -12,10 +12,14 @@ import torch.distributed as dist
 import torch.nn.functional as F
 import torch.version
 from packaging.version import parse as parse_version
-from torch.distributed._tensor import DTensor
 
 from ..config import Config, StrEnum
-from ..distributed.utils import get_reduce_divide_factor, get_world_size, is_distributed
+from ..distributed.utils import (
+    get_local_tensor,
+    get_reduce_divide_factor,
+    get_world_size,
+    is_distributed,
+)
 
 log = logging.getLogger(__name__)
 
@@ -147,13 +151,6 @@ def _get_cuda_version() -> Optional[Tuple[int, int]]:
         return (version.major, version.minor)
     else:
         return None
-
-
-def get_local_tensor(x: torch.Tensor) -> torch.Tensor:
-    if isinstance(x, DTensor):
-        return x.to_local()
-    else:
-        return x
 
 
 @torch.no_grad()

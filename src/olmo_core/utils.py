@@ -19,6 +19,7 @@ from rich.console import Console, ConsoleRenderable
 from rich.highlighter import NullHighlighter
 from rich.text import Text
 from rich.traceback import Traceback
+from torch.distributed._tensor import DTensor
 
 from .config import StrEnum
 from .exceptions import OLMoCLIError, OLMoEnvironmentError, OLMoError, OLMoThreadError
@@ -569,3 +570,10 @@ def roundrobin(*iterables):
             # Remove the iterator we just exhausted from the cycle.
             num_active -= 1
             nexts = cycle(islice(nexts, num_active))
+
+
+def get_local_tensor(x: torch.Tensor) -> torch.Tensor:
+    if isinstance(x, DTensor):
+        return x.to_local()
+    else:
+        return x

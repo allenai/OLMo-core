@@ -8,6 +8,7 @@ from typing import List, Optional, TypeVar
 
 import torch
 import torch.distributed as dist
+from torch.distributed._tensor import DTensor
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 
 from ..config import StrEnum
@@ -359,3 +360,10 @@ def get_reduce_divide_factor(world_size: int) -> float:
     while world_size % factor == 0 and world_size / factor > factor:
         factor *= 2
     return float(factor)
+
+
+def get_local_tensor(x: torch.Tensor) -> torch.Tensor:
+    if isinstance(x, DTensor):
+        return x.to_local()
+    else:
+        return x
