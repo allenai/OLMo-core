@@ -48,6 +48,7 @@ class ConsoleLoggerCallback(Callback):
             "train/*",
             "system/*",
             "optim/total grad norm",
+            "optim/step skipped",
             "optim/LR*",
             "throughput/*",
         ]
