@@ -87,3 +87,10 @@ class SkipStepOptimizer(Optimizer):
             return loss_z_score <= self.sigma_factor and grad_norm_z_score <= self.sigma_factor
         else:
             return loss_z_score <= self.sigma_factor
+
+    @property
+    def step_skipped(self) -> torch.Tensor:
+        """
+        Returns a float tensor which will be `1.0` if the step was skipped and `0.0` otherwise.
+        """
+        return 1 - self.get_step_factor()

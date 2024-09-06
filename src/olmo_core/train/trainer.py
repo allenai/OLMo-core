@@ -70,6 +70,7 @@ log = logging.getLogger(__name__)
 TRAIN_CE_LOSS_METRIC = "train/CE loss"
 TRAIN_PPL_METRIC = "train/PPL"
 TRAIN_Z_LOSS_METRIC = "train/Z loss"
+OPTIM_STEP_SKIPPED_METRIC = "optim/step skipped"
 
 
 class LoadStrategy(StrEnum):
@@ -1158,6 +1159,8 @@ class Trainer:
 
         # Optimizer step.
         self.optim.step()
+        if isinstance(self.optim, SkipStepOptimizer):
+            self.record_metric(OPTIM_STEP_SKIPPED_METRIC, self.optim.step_skipped)
 
     def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:
         iterable_dataset = IterableDataset(

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -122,6 +122,14 @@ class SkipStepLion(SkipStepOptimizer):
             sigma_factor=sigma_factor,
         )
         self.compile = compile
+        self._step_skipped: Optional[torch.Tensor] = None
+
+    @property
+    def step_skipped(self) -> torch.Tensor:
+        if self._step_skipped is not None:
+            return self._step_skipped
+        else:
+            return torch.tensor(0.0)
 
     @torch.no_grad()
     def step(self, closure=None) -> None:
@@ -130,6 +138,7 @@ class SkipStepLion(SkipStepOptimizer):
                 closure()
 
         step_factor = self.get_step_factor()
+        self._step_skipped = 1 - step_factor
         step_func = lion_step if not self.compile else compiled_lion_step
         for group in self.param_groups:
             for p in group["params"]:
