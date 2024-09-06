@@ -314,7 +314,6 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
             path_to_length: Dict[PathOrStr, int] = {}
             path_to_mask_path: Dict[PathOrStr, PathOrStr] = {}
             mask_path_to_length: Dict[PathOrStr, int] = {}
-            mask_path_to_size: Dict[PathOrStr, int] = {}
 
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 path_futures = []
@@ -336,7 +335,6 @@ class MemMapDataset(Dataset[Dict[str, Any]]):
                 for future in concurrent.futures.as_completed(mask_path_futures):
                     path, size, length = future.result()
                     mask_path_to_length[path] = length
-                    mask_path_to_size[path] = size
 
             start_offset = 0
             for path in self._memmap_paths:
