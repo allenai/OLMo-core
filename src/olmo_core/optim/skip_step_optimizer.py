@@ -1,4 +1,4 @@
-from typing import Any, Dict, Iterable, List, Union
+from typing import Any, Dict, Iterable, List, Optional, Union
 
 import torch
 from torch.optim.optimizer import Optimizer
@@ -17,6 +17,11 @@ class SkipStepOptimizer(Optimizer):
         When using a :class:`SkipStepOptimizer` you must always set :data:`latest_loss` and
         :data:`latest_grad_norm` to the current loss and grad norm, respectively, *before* calling
         :meth:`step()`.
+
+        The :class:`~olmo_core.train.Trainer` will automatically set the :data:`latest_loss` whenever
+        its optimizer is a subclass of :class:`SkipStepOptimizer`, and the
+        :class:`~olmo_core.train.callbacks.GradClipperCallback` will automatically set the
+        :data:`latest_grad_norm`.
 
     .. tip::
         When implementing a :class:`SkipStepOptimizer` you should be careful to avoid host-device
@@ -50,10 +55,11 @@ class SkipStepOptimizer(Optimizer):
             self._losses.pop(0)
 
     @property
-    def latest_grad_norm(self) -> torch.Tensor:
+    def latest_grad_norm(self) -> Optional[torch.Tensor]:
         if not self._grad_norms:
-            raise RuntimeError("'latest_grad_norm' has not been set yet")
-        return self._grad_norms[-1]
+            return None
+        else:
+            return self._grad_norms[-1]
 
     @latest_grad_norm.setter
     def latest_grad_norm(self, grad_norm: torch.Tensor):
@@ -73,8 +79,12 @@ class SkipStepOptimizer(Optimizer):
             return torch.tensor(1.0).to(device=self.latest_loss.device, non_blocking=True)
 
         loss_std = torch.std(torch.stack(self._losses[:-1]))
-        grad_norm_std = torch.std(torch.stack(self._grad_norms[:-1]))
-        return (
-            self.latest_loss <= self.sigma_factor * loss_std
-            and self.latest_grad_norm <= self.sigma_factor * grad_norm_std
-        )
+
+        if self._grad_norms:
+            grad_norm_std = torch.std(torch.stack(self._grad_norms[:-1]))
+            return (
+                self.latest_loss <= self.sigma_factor * loss_std
+                and self.latest_grad_norm <= self.sigma_factor * grad_norm_std
+            )
+        else:
+            return self.latest_loss <= self.sigma_factor * loss_std

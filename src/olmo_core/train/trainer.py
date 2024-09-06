@@ -45,6 +45,7 @@ from ..nn.functional.cross_entropy_loss import (
     cross_entropy_loss,
     fused_cross_entropy_loss,
 )
+from ..optim import SkipStepOptimizer
 from ..utils import move_to_device
 from .callbacks import (
     Callback,
@@ -1147,6 +1148,9 @@ class Trainer:
         self.record_metric(TRAIN_CE_LOSS_METRIC, ce_batch_loss, ReduceType.mean)
         if z_batch_loss is not None:
             self.record_metric(TRAIN_Z_LOSS_METRIC, z_batch_loss, ReduceType.mean)
+
+        if isinstance(self.optim, SkipStepOptimizer):
+            self.optim.latest_loss = ce_batch_loss
 
         # Run through callbacks.
         for callback in self.callbacks.values():
