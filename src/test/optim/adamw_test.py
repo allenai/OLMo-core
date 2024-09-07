@@ -2,7 +2,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from olmo_core.optim import LionConfig
+from olmo_core.optim import AdamWConfig
 
 from ..utils import DEVICES
 
@@ -18,8 +18,8 @@ class Model(nn.Module):
 
 
 @pytest.mark.parametrize("device", DEVICES)
-def test_lion(device: torch.device):
-    config = LionConfig()
+def test_adamw(device: torch.device):
+    config = AdamWConfig()
     model = Model().train().to(device)
     optim = config.build(model)
     optim.zero_grad(set_to_none=True)

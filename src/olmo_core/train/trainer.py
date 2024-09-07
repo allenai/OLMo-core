@@ -34,6 +34,7 @@ from ..distributed.utils import (
     backend_supports_cpu,
     barrier,
     get_fs_local_rank,
+    get_local_tensor,
     get_rank,
     get_world_size,
     is_distributed,
@@ -60,7 +61,6 @@ from .utils import (
     DurationUnit,
     EnvRngStates,
     ReduceType,
-    get_local_tensor,
     move_metrics,
     reduce_metrics,
 )
