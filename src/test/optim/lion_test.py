@@ -18,10 +18,7 @@ class Model(nn.Module):
 
 
 @pytest.mark.parametrize("device", DEVICES)
-def test_lion(compile: bool, device: torch.device):
-    if compile and device.type != "cuda":
-        pytest.skip("compile requires a GPU")
-
+def test_lion(device: torch.device):
     config = LionConfig()
     model = Model().train().to(device)
     optim = config.build(model)

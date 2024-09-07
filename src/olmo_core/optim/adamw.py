@@ -8,9 +8,9 @@ import torch.nn as nn
 from .config import OptimConfig
 
 
+# TODO: use this when we implement a "skip step" version of AdamW.
 def adamw_step(
-    p: torch.Tensor,
-    grad: torch.Tensor,
+    p: nn.Parameter,
     *,
     lr: float,
     betas: Tuple[float, float],
@@ -21,15 +21,18 @@ def adamw_step(
     step: int,
     step_factor: torch.Tensor,
 ):
+    if p.grad is None:
+        return
+
     beta1, beta2 = betas
 
     # Perform step weight decay.
     p.mul_(1 - step_factor * (lr * weight_decay))
 
     # Decay the first and second moment running average coefficient.
-    exp_avg.lerp_(grad, step_factor * (1 - beta1))
+    exp_avg.lerp_(p.grad, step_factor * (1 - beta1))
     exp_avg_sq.mul_(1 - step_factor * (1 - beta2))
-    exp_avg_sq.add_(step_factor * grad * grad, alpha=1 - beta2)
+    exp_avg_sq.add_(step_factor * p.grad * p.grad, alpha=1 - beta2)
 
     bias_correction1 = 1 - beta1**step
     bias_correction2 = 1 - beta2**step
