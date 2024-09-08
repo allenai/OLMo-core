@@ -14,6 +14,7 @@ def test_small_llama2_config_builder():
     for _, p in model.named_parameters():
         num_actual_params += p.numel()
     assert config.num_params == num_actual_params
+    assert model.num_params == num_actual_params
 
     for module in model.modules():
         # Make sure there are no biases anywhere and layer norm weights are all 1.
