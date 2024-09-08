@@ -28,6 +28,7 @@ from olmo_core.train.callbacks import (
     GradClipperCallback,
     ProfilerCallback,
     SchedulerCallback,
+    SequenceLengthSchedulerCallback,
     SpeedMonitorCallback,
     WandBCallback,
 )
@@ -61,7 +62,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         "/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy",  # can be globs
         sequence_length=1024,
         tokenizer=tokenizer_config,
-        generate_doc_lengths=True,
         max_target_sequence_length=8192,
     )
 
@@ -77,13 +77,19 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             cancel_check_interval=5,
         )
         .with_callback("lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=100)))
+        .with_callback(
+            "seq_len_scheduler",
+            SequenceLengthSchedulerCallback(
+                min_sequence_length=128, warmup_steps=100, enabled=False
+            ),
+        )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0))
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
-                ephemeral_save_interval=50,
+                ephemeral_save_interval=100,
                 save_async=True,
             ),
         )

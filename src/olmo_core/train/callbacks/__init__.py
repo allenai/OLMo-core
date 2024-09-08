@@ -7,6 +7,7 @@ from .gpu_memory_monitor import GPUMemoryMonitorCallback
 from .grad_clipper import GradClipperCallback
 from .profiler import ProfilerCallback
 from .scheduler import SchedulerCallback
+from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .speed_monitor import SpeedMonitorCallback
 from .wandb import WandBCallback
 
@@ -21,6 +22,7 @@ __all__ = [
     "GradClipperCallback",
     "ProfilerCallback",
     "SchedulerCallback",
+    "SequenceLengthSchedulerCallback",
     "SpeedMonitorCallback",
     "WandBCallback",
 ]
