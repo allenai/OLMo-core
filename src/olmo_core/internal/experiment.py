@@ -22,11 +22,7 @@ from olmo_core.train import (
     prepare_training_environment,
     teardown_training_environment,
 )
-from olmo_core.train.callbacks import (
-    ConfigSaverCallback,
-    SpeedMonitorCallback,
-    WandBCallback,
-)
+from olmo_core.train.callbacks import ConfigSaverCallback, WandBCallback
 from olmo_core.utils import (
     generate_uuid,
     get_default_device,
@@ -143,13 +139,6 @@ def build_config(
         dataset=common.dataset,
         trainer=trainer_config_builder(common),
     ).merge(overrides)
-
-    config.trainer.with_callback(
-        "speed_monitor",
-        SpeedMonitorCallback(
-            num_flops_per_token=config.model.num_flops_per_token(config.dataset.sequence_length)
-        ),
-    )
 
     return config
 

@@ -4,6 +4,8 @@ from typing import Any, ClassVar, Dict, Optional
 
 import torch
 
+from olmo_core.nn.transformer import Transformer
+
 from .callback import Callback
 
 
@@ -30,6 +32,15 @@ class SpeedMonitorCallback(Callback):
     _batch_load_start: float = 0.0
     _batch_load_time: float = 0.0
     _step_tokens: int = 0
+    _step_seq_len: int = 0
+
+    def _get_num_flops_per_token(self, seq_len: int) -> Optional[int]:
+        if self.num_flops_per_token is not None:
+            return self.num_flops_per_token
+        elif isinstance(self.trainer.model, Transformer):
+            return self.trainer.model.num_flops_per_token(seq_len)
+        else:
+            return None
 
     def pre_train(self):
         self._first_step = True
@@ -63,6 +74,7 @@ class SpeedMonitorCallback(Callback):
             return
 
         self._step_tokens = batch["input_ids"].numel()
+        self._step_seq_len = batch["input_ids"].shape[1]
         self._total_steps += 1
         self._total_tokens += self._step_tokens
 
@@ -96,11 +108,13 @@ class SpeedMonitorCallback(Callback):
         self.trainer.record_metric("throughput/device/BPS", bps)
         self.trainer.record_metric("throughput/device/BPS (actual avg)", bps_avg)
 
-        if self.num_flops_per_token is not None and self.device_peak_flops is not None:
+        if (
+            num_flops_per_token := self._get_num_flops_per_token(self._step_seq_len)
+        ) is not None and self.device_peak_flops is not None:
             # model FLOPS utilization
             # For its definition and calculation, please refer to the PaLM paper:
             # https://arxiv.org/abs/2204.02311
-            mfu = 100 * self.num_flops_per_token * tps / self.device_peak_flops
-            mfu_avg = 100 * self.num_flops_per_token * tps_avg / self.device_peak_flops
+            mfu = 100 * num_flops_per_token * tps / self.device_peak_flops
+            mfu_avg = 100 * num_flops_per_token * tps_avg / self.device_peak_flops
             self.trainer.record_metric("throughput/device/MFU", mfu)
             self.trainer.record_metric("throughput/device/MFU (actual avg)", mfu_avg)
