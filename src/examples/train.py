@@ -76,10 +76,10 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             metrics_collect_interval=5,
             cancel_check_interval=5,
         )
-        .with_callback("lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=200)))
+        .with_callback("lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=100)))
         .with_callback(
             "seq_len_scheduler",
-            SequenceLengthSchedulerCallback(min_sequence_length=128, warmup_steps=200),
+            SequenceLengthSchedulerCallback(min_sequence_length=128, warmup_steps=100),
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0))
@@ -87,7 +87,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
-                ephemeral_save_interval=50,
+                ephemeral_save_interval=100,
                 save_async=True,
             ),
         )
