@@ -25,6 +25,12 @@ class SequenceLengthSchedulerCallback(Callback):
     .. important::
         :data:`Trainer.train_sequence_length <olmo_core.train.Trainer.train_sequence_length>`
         must be a multiple of :data:`min_sequence_length` by a power of 2.
+
+    .. important::
+        During the warm-up schedule this works by splitting each instance in a batch into more shorter
+        instances while maintaining the same number of tokens in each micro-batch.
+
+        If it doesn't make sense to split instances in your dataset then you shouldn't use this.
     """
 
     min_sequence_length: int = 128
