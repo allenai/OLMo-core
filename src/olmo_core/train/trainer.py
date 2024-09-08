@@ -10,7 +10,6 @@ from typing import (
     Any,
     Dict,
     Generator,
-    List,
     Literal,
     Optional,
     Tuple,
@@ -28,7 +27,7 @@ from torch.utils.data import DataLoader
 
 from ..aliases import PathOrStr
 from ..config import StrEnum
-from ..data import DataCollator, IterableDataset, NumpyDataset
+from ..data import DataCollator, IterableDataset, NumpyDataset, split_batch
 from ..distributed.utils import (
     all_reduce_value,
     backend_supports_cpu,
@@ -1116,7 +1115,7 @@ class Trainer:
         batch_num_tokens_for_loss = (batch["labels"] != -100).sum()
 
         # Split into micro-batches.
-        micro_batches = self._split_batch(batch)
+        micro_batches = split_batch(batch, self.microbatch_size)
         num_micro_batches = len(micro_batches)
 
         # In case this helps with memory utilization.
@@ -1259,27 +1258,3 @@ class Trainer:
         self.epoch += 1
         self.global_train_tokens_seen_this_epoch = 0
         self.global_train_examples_seen_this_epoch = 0
-
-    def _split_batch(self, batch: Dict[str, Any]) -> List[Dict[str, Any]]:
-        batch_size = batch["input_ids"].shape[0]
-        if batch_size <= self.microbatch_size:
-            return [batch]
-        else:
-            micro_batches = {}
-            for key, value in batch.items():
-                if isinstance(value, torch.Tensor):
-                    micro_batches[key] = value.split(self.microbatch_size, dim=0)
-                elif isinstance(value, list):
-                    micro_batches[key] = [
-                        value[
-                            self.microbatch_size * i : self.microbatch_size * i
-                            + self.microbatch_size
-                        ]
-                        for i in range(math.ceil(batch_size / self.microbatch_size))
-                    ]
-                else:
-                    raise ValueError(f"unexpected item in batch: '{key}={value}'")
-            return [
-                {key: value[i] for key, value in micro_batches.items()}  # type: ignore
-                for i in range(len(micro_batches["input_ids"]))
-            ]
