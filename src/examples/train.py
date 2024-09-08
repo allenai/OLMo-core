@@ -62,7 +62,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         "/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy",  # can be globs
         sequence_length=1024,
         tokenizer=tokenizer_config,
-        generate_doc_lengths=True,
         max_target_sequence_length=8192,
     )
 
