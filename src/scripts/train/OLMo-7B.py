@@ -17,6 +17,7 @@ from olmo_core.train.callbacks import (
     GradClipperCallback,
     ProfilerCallback,
     SchedulerCallback,
+    SequenceLengthSchedulerCallback,
     WandBCallback,
 )
 
@@ -62,6 +63,12 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         .with_callback(
             "lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=2000))
+        )
+        .with_callback(
+            "seq_len_scheduler",
+            SequenceLengthSchedulerCallback(
+                min_sequence_length=128, warmup_steps=2000, enabled=False
+            ),
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0))
