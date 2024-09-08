@@ -99,9 +99,9 @@ def truncate_batch(batch: Dict[str, Any], target_sequence_length: int) -> Dict[s
                 if isinstance(item, list):
                     if len(item) != current_sequence_length:
                         raise RuntimeError(f"unexpected item length for '{key}' in batch")
-                    new_batch[key] = item[:target_sequence_length]
+                    new_batch[key].append(item[:target_sequence_length])
                 else:
-                    new_batch[key] = item
+                    new_batch[key].append(item)
         else:
             raise RuntimeError(f"unexpected item in batch: '{key}={value}'")
 
