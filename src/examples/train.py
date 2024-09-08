@@ -29,7 +29,6 @@ from olmo_core.train.callbacks import (
     ProfilerCallback,
     SchedulerCallback,
     SequenceLengthSchedulerCallback,
-    SpeedMonitorCallback,
     WandBCallback,
 )
 from olmo_core.utils import get_default_device, seed_all
@@ -91,12 +90,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
                 save_interval=1000,
                 ephemeral_save_interval=100,
                 save_async=True,
-            ),
-        )
-        .with_callback(
-            "speed_monitor",
-            SpeedMonitorCallback(
-                num_flops_per_token=model_config.num_flops_per_token(dataset_config.sequence_length)
             ),
         )
         .with_callback(
