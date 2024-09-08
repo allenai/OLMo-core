@@ -30,6 +30,10 @@ class SequenceLengthSchedulerCallback(Callback):
     Otherwise the scheduler simply truncates the instances in the batch to the desired sequence
     length, throwing out the extra tokens. The scheduler will ensure the sequence length
     during the warm-up is always a multiple of :data:`keep_multiple_of`.
+
+    .. note::
+        The "total tokens" recorded by the trainer and :class:`SpeedMonitorCallback` will
+        still include tokens truncated by this callback for bookkeeping purposes.
     """
 
     min_sequence_length: int = 128
