@@ -29,11 +29,15 @@ class SequenceLengthSchedulerCallback(Callback):
 
     min_sequence_length: int = 128
     warmup_steps: int = 2000
+    enabled: bool = True
 
     _og_microbatch_size: Optional[int] = None
     _last_seq_len: Optional[int] = None
 
     def pre_train(self):
+        if not self.enabled:
+            return
+
         if self.trainer.train_sequence_length % self.min_sequence_length != 0 or (
             math.log(self.trainer.train_sequence_length // self.min_sequence_length, 2) % 1 != 0
         ):
@@ -43,6 +47,9 @@ class SequenceLengthSchedulerCallback(Callback):
         self._og_microbatch_size = self.trainer.microbatch_size
 
     def pre_step(self, batch: Dict[str, Any]):
+        if not self.enabled:
+            return
+
         if self.step <= self.warmup_steps:
             new_seq_len = _get_sequence_length(
                 self.min_sequence_length,
@@ -71,6 +78,9 @@ class SequenceLengthSchedulerCallback(Callback):
                 gc_cuda()
 
     def post_train_batch(self):
+        if not self.enabled:
+            return
+
         assert self._og_microbatch_size is not None
         self.trainer.microbatch_size = self._og_microbatch_size
 
