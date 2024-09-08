@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 
 from olmo_core.data import melt_batch
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.utils import gc_cuda
 
 from .callback import Callback
 
@@ -66,6 +67,8 @@ class SequenceLengthSchedulerCallback(Callback):
             if new_seq_len != self._last_seq_len:
                 log.info(f"Changing sequence length to {new_seq_len} per warm-up schedule")
                 self._last_seq_len = new_seq_len
+                # Empty CUDA cache since shapes have now changed.
+                gc_cuda()
 
     def post_train_batch(self):
         assert self._og_microbatch_size is not None
