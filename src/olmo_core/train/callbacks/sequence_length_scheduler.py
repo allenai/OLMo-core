@@ -65,6 +65,7 @@ class SequenceLengthSchedulerCallback(Callback):
 
             if new_seq_len != self._last_seq_len:
                 log.info(f"Changing sequence length to {new_seq_len} per warm-up schedule")
+                self._last_seq_len = new_seq_len
 
     def post_train_batch(self):
         assert self._og_microbatch_size is not None
