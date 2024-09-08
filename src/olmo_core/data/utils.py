@@ -35,7 +35,7 @@ def melt_batch(batch: Dict[str, Any], target_sequence_length: int) -> Dict[str, 
     of instances.
     """
     current_batch_size, current_sequence_length = batch["input_ids"].shape
-    if current_sequence_length == target_sequence_length:
+    if current_sequence_length <= target_sequence_length:
         return batch
 
     if current_sequence_length % target_sequence_length != 0:
@@ -68,6 +68,40 @@ def melt_batch(batch: Dict[str, Any], target_sequence_length: int) -> Dict[str, 
                 else:
                     for _ in range(ratio):
                         new_batch[key].append(item)
+        else:
+            raise RuntimeError(f"unexpected item in batch: '{key}={value}'")
+
+    return new_batch
+
+
+def truncate_batch(batch: Dict[str, Any], target_sequence_length: int) -> Dict[str, Any]:
+    """
+    Truncate the instances in a batch to ``target_sequence_length``.
+    """
+    current_batch_size, current_sequence_length = batch["input_ids"].shape
+    if current_sequence_length <= target_sequence_length:
+        return batch
+
+    new_batch: Dict[str, Any] = {}
+    for key, value in batch.items():
+        if isinstance(value, torch.Tensor):
+            if value.shape == (current_batch_size, current_sequence_length):
+                new_batch[key] = value[:, :target_sequence_length]
+            elif value.shape == (current_batch_size,) or value.shape == (current_batch_size, 1):
+                new_batch[key] = value
+            else:
+                raise RuntimeError(
+                    f"unable to truncate '{key}' tensor in batch with shape '{value.shape}'"
+                )
+        elif isinstance(value, list) and len(value) > 0:
+            new_batch[key] = []
+            for item in value:
+                if isinstance(item, list):
+                    if len(item) != current_sequence_length:
+                        raise RuntimeError(f"unexpected item length for '{key}' in batch")
+                    new_batch[key] = item[:target_sequence_length]
+                else:
+                    new_batch[key] = item
         else:
             raise RuntimeError(f"unexpected item in batch: '{key}={value}'")
 

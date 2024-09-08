@@ -79,7 +79,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         .with_callback("lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=100)))
         .with_callback(
             "seq_len_scheduler",
-            SequenceLengthSchedulerCallback(min_sequence_length=128, warmup_steps=100),
+            SequenceLengthSchedulerCallback(
+                min_sequence_length=128, warmup_steps=100, enabled=False
+            ),
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0))
