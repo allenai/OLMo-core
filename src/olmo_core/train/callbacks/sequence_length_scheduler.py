@@ -3,7 +3,7 @@ import math
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-from olmo_core.data import melt_batch, truncate_batch
+from olmo_core.data.utils import melt_batch, truncate_batch
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import gc_cuda
 

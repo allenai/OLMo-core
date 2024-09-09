@@ -1,7 +1,13 @@
+import gzip
 import math
-from typing import Any, Dict, List
+import os
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
+import numpy as np
 import torch
+
+from olmo_core.aliases import PathOrStr
+from olmo_core.io import get_bytes_range, resource_path
 
 
 def split_batch(batch: Dict[str, Any], microbatch_size: int) -> List[Dict[str, Any]]:
@@ -106,3 +112,87 @@ def truncate_batch(batch: Dict[str, Any], target_sequence_length: int) -> Dict[s
             raise RuntimeError(f"unexpected item in batch: '{key}={value}'")
 
     return new_batch
+
+
+def get_document_indices(
+    data_path: PathOrStr, local_cache: Optional[PathOrStr] = None
+) -> List[Tuple[int, int]]:
+    """
+    Given a ".npy" data path from the Dolma toolkit, get the list of document start/end indices within
+    the array.
+
+    :param data_path: Path to a ".npy" Dolma toolkit data file.
+    :param local_cache: Local directory to put downloads into.
+
+    :returns: The start and end index of every document within the array.
+    """
+    metadata_path = resource_path(
+        os.path.dirname(data_path),
+        os.path.basename(data_path).replace(".npy", ".csv.gz"),
+        local_cache=local_cache,
+    )
+    indicies: List[Tuple[int, int]] = []
+    with gzip.open(metadata_path, "rt") as f:
+        for line in f:
+            start_index, end_index, *_ = line.split(",")
+            indicies.append((int(start_index), int(end_index)))
+    return indicies
+
+
+def read_chunk_from_array(
+    path: PathOrStr,
+    start_idx: int,
+    end_idx: int,
+    dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64], Type[np.bool_]],
+) -> torch.Tensor:
+    """
+    Read a chunk from a numpy array, returning the chunk as a :class:`torch.Tensor`.
+
+    :param path: The path/URL to the array.
+    :param start_idx: The start index (0-based) of the chunk within the array.
+    :param end_idx: The end index (0-based, exclusive) of the chunk within the array.
+    :param dtype: The numpy datatype of the array.
+    """
+    item_size = dtype(0).itemsize
+    bytes_start = start_idx * item_size
+    num_bytes = (end_idx - start_idx) * item_size
+    buffer = get_bytes_range(path, bytes_start, num_bytes)
+    array = np.frombuffer(buffer, dtype=dtype)
+    if dtype == np.bool_:
+        return torch.tensor(array)
+    else:
+        return torch.tensor(array.astype(np.int_), dtype=torch.long)
+
+
+def get_document_lengths(input_ids: torch.Tensor, eos_token_id: int) -> torch.Tensor:
+    """
+    Get the length of documents.
+
+    :param input_ids: An integer-type tensor of token IDs.
+    :param eos_token_id: The ID of the EOS token (use to denote document boundaries).
+    """
+    doc_boundaries = torch.cat(
+        [
+            torch.tensor([-1], dtype=torch.int32),
+            (input_ids == eos_token_id).nonzero(as_tuple=True)[0].to(dtype=torch.int32),
+            torch.tensor(
+                [] if input_ids[-1] == eos_token_id else [input_ids.shape[0] - 1], dtype=torch.int32
+            ),
+        ]
+    )
+    return doc_boundaries[1:] - doc_boundaries[:-1]
+
+
+def get_cumulative_document_lengths(doc_lens: torch.Tensor) -> torch.Tensor:
+    """
+    Transform a batched tensor of document lengths into a 1D tensor of cumulative document
+    lengths for the whole batch.
+
+    :param doc_lens: The document lengths, such as those returned by :func:`get_document_lengths`.
+    """
+    return torch.cat(
+        [
+            torch.tensor([0], dtype=torch.int32, device=doc_lens.device),
+            torch.cumsum(doc_lens.masked_select(doc_lens != 0), 0, dtype=torch.int32),
+        ]
+    )

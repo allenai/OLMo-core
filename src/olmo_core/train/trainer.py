@@ -27,7 +27,8 @@ from torch.utils.data import DataLoader
 
 from ..aliases import PathOrStr
 from ..config import StrEnum
-from ..data import DataCollator, IterableDataset, NumpyDataset, split_batch
+from ..data import DataCollator, IterableDataset, NumpyDataset, NumpyDatasetBase
+from ..data.utils import split_batch
 from ..distributed.utils import (
     all_reduce_value,
     backend_supports_cpu,
@@ -349,6 +350,10 @@ class Trainer:
             if not is_url(self.save_folder):
                 Path(self.save_folder).mkdir(exist_ok=True, parents=True)
 
+        if isinstance(self.dataset, NumpyDatasetBase):
+            self.dataset.fs_local_rank = get_fs_local_rank()
+            self.dataset.work_dir = self.work_dir
+
         # Ensure we have necessary callbacks.
         has_console_logger_callback = False
         has_checkpointer_callback = False
@@ -465,26 +470,19 @@ class Trainer:
         """
         The total number of training steps in an epoch.
         """
-        return self.dataset_total_size // self.global_batch_size
+        dp_world_size = get_world_size(self.dp_process_group)
+        if isinstance(self.dataset, NumpyDataset):
+            num_samples = dp_world_size * (len(self.dataset) // dp_world_size)
+            return num_samples // self.global_batch_size
+        else:
+            raise NotImplementedError
 
     @property
     def tokens_per_epoch(self) -> int:
         """
         The total number of tokens in the training dataset, minus left-overs.
         """
-        return self.dataset_total_size * self.train_sequence_length
-
-    @property
-    def dataset_total_size(self) -> int:
-        """
-        The total number of complete examples in the training dataset.
-        """
-        dp_world_size = get_world_size(self.dp_process_group)
-        if len(self.dataset) % dp_world_size == 0:
-            return len(self.dataset)
-        else:
-            num_samples = math.ceil((len(self.dataset) - dp_world_size) / dp_world_size)
-            return num_samples * dp_world_size
+        return self.steps_per_epoch * self.tokens_per_batch
 
     @property
     def max_steps(self) -> int:
@@ -1162,6 +1160,9 @@ class Trainer:
             self.record_metric(OPTIM_STEP_SKIPPED_METRIC, self.optim.step_skipped)
 
     def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:
+        if not isinstance(self.dataset, NumpyDataset):
+            raise NotImplementedError
+
         iterable_dataset = IterableDataset(
             self.dataset,
             seed=self.data_seed,
@@ -1177,7 +1178,9 @@ class Trainer:
             // self.train_sequence_length,
         )
         iterable_dataset.build_and_save_global_indices()
+
         barrier()
+
         data_loader = DataLoader(
             iterable_dataset,
             batch_size=self.rank_batch_size,

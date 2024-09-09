@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
+import tempfile
+from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type, Union, cast
 
 import numpy as np
@@ -14,15 +18,99 @@ from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
 
 from ..aliases import PathOrStr
 from ..config import Config, StrEnum
-from ..io import _get_s3_client, get_bytes_range, get_file_size
-from ..utils import get_document_lengths
+from ..io import _get_s3_client, get_file_size
 from .mixes import DataMix
 from .tokenizer import TokenizerConfig
+from .utils import get_document_lengths, read_chunk_from_array
 
 __all__ = ["NumpyDatasetConfig", "NumpyDataset", "NumpyDatasetDType"]
 
 
 log = logging.getLogger(__name__)
+
+
+class NumpyDatasetBase(ABC):
+    """
+    A base class for datasets backed from numpy arrays of token IDs.
+    """
+
+    def __init__(
+        self,
+        *paths: PathOrStr,
+        pad_token_id: int,
+        eos_token_id: int,
+        dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]] = np.uint16,
+    ):
+        if not paths:
+            raise OLMoConfigurationError("At least one path is required")
+
+        self._array_paths = tuple(paths)
+        self._pad_token_id = pad_token_id
+        self._eos_token_id = eos_token_id
+        self._dtype = dtype
+        self._fs_local_rank = 0
+        self._work_dir: Optional[Path] = None
+
+    @property
+    def paths(self) -> Tuple[PathOrStr, ...]:
+        return self._array_paths
+
+    @property
+    def pad_token_id(self) -> int:
+        return self._pad_token_id
+
+    @property
+    def eos_token_id(self) -> int:
+        return self._eos_token_id
+
+    @property
+    def dtype(
+        self,
+    ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
+        return self._dtype
+
+    @property
+    @abstractmethod
+    def fingerprint_version(self) -> str:
+        """
+        The version of the :data:`fingerprint` for the dataset.
+        """
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def fingerprint(self) -> str:
+        """
+        A fingerprint for the dataset. Can be used as a proxy for a hash of the underlying data.
+        """
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def num_tokens(self) -> int:
+        """
+        The total number of (usable) tokens in the dataset.
+        """
+        raise NotImplementedError
+
+    @property
+    def fs_local_rank(self) -> int:
+        return self._fs_local_rank
+
+    @fs_local_rank.setter
+    def fs_local_rank(self, fs_local_rank: int):
+        self._fs_local_rank = fs_local_rank
+
+    @property
+    def work_dir(self) -> Path:
+        if self._work_dir is not None:
+            return self._work_dir
+        else:
+            return Path(tempfile.gettempdir())
+
+    @work_dir.setter
+    def work_dir(self, work_dir: Path):
+        self._work_dir = work_dir
 
 
 class NumpyDatasetDType(StrEnum):
@@ -159,11 +247,10 @@ class NumpyDatasetConfig(Config):
         return dataset
 
 
-class NumpyDataset(Dataset[Dict[str, Any]]):
+class NumpyDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     """
-    A PyTorch :class:`~torch.utils.data.Dataset` backed by one or more local or remote numpy arrays
-    of token IDs. Token IDs are chunked together into contiguous blocks of ``sequence_length``
-    to create instances.
+    A numpy array-backed dataset where token IDs from all arrays are concatenated together and then
+    chunked into contiguous blocks of ``sequence_length`` to create instances.
 
     .. important::
         If the length of an array is not a multiple of ``sequence_length`` or
@@ -205,11 +292,10 @@ class NumpyDataset(Dataset[Dict[str, Any]]):
         label_mask_paths: Optional[List[PathOrStr]] = None,
         max_target_sequence_length: Optional[int] = None,
     ):
-        if not paths:
-            raise ValueError("At least one path is required")
+        super().__init__(*paths, pad_token_id=pad_token_id, eos_token_id=eos_token_id, dtype=dtype)
 
         if label_mask_paths and len(label_mask_paths) != len(paths):
-            raise ValueError(
+            raise OLMoConfigurationError(
                 "There must be the same number of 'label_mask_paths' as there are 'paths'"
             )
 
@@ -217,20 +303,18 @@ class NumpyDataset(Dataset[Dict[str, Any]]):
             max_target_sequence_length < sequence_length
             or max_target_sequence_length % sequence_length != 0
         ):
-            raise ValueError(
+            raise OLMoConfigurationError(
                 "'max_target_sequence_length' should be a multiple of 'sequence_length'"
             )
 
         if isinstance(metadata, list):
             if len(metadata) != len(paths):
-                raise ValueError(
+                raise OLMoConfigurationError(
                     "'metadata' should have the same length as the number of file paths"
                 )
         else:
             metadata = [metadata or {}] * len(paths)
 
-        self._dtype = dtype
-        self._array_paths = paths
         self._metadata = metadata
         self._label_mask_paths = label_mask_paths
         self._sequence_length = sequence_length
@@ -241,8 +325,6 @@ class NumpyDataset(Dataset[Dict[str, Any]]):
         self._include_instance_metadata = include_instance_metadata
         self._generate_attention_mask = generate_attention_mask
         self._generate_doc_lengths = generate_doc_lengths
-        self._pad_token_id = pad_token_id
-        self._eos_token_id = eos_token_id
 
     @property
     def fingerprint_version(self) -> str:
@@ -250,19 +332,14 @@ class NumpyDataset(Dataset[Dict[str, Any]]):
 
     @property
     def fingerprint(self) -> str:
-        """
-        A fingerprint for the dataset. Can be used as a proxy for a hash of the underlying data.
-        """
         sha256_hash = hashlib.sha256()
         for size in self.sizes:
             sha256_hash.update(f"size={size}".encode())
         return sha256_hash.hexdigest()
 
     @property
-    def dtype(
-        self,
-    ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
-        return self._dtype
+    def num_tokens(self) -> int:
+        return len(self) * self.sequence_length
 
     @property
     def sequence_length(self) -> int:
@@ -273,23 +350,15 @@ class NumpyDataset(Dataset[Dict[str, Any]]):
         return self._max_target_sequence_length
 
     @property
-    def pad_token_id(self) -> int:
-        return self._pad_token_id
-
-    @property
-    def eos_token_id(self) -> int:
-        return self._eos_token_id
-
-    @property
     def sizes_and_offsets(self) -> Tuple[List[int], List[Tuple[int, int]]]:
         if self._mmap_offsets is None or self._mmap_sizes is None:
             import concurrent.futures
 
             # Maybe create client up front to work around a threading issue in boto.
-            if any(str(p).startswith("s3://") for p in self._array_paths):
+            if any(str(p).startswith("s3://") for p in self.paths):
                 _get_s3_client("s3")
 
-            if any(str(p).startswith("r2://") for p in self._array_paths):
+            if any(str(p).startswith("r2://") for p in self.paths):
                 try:
                     _get_s3_client("r2")
                 except OLMoEnvironmentError:
@@ -297,7 +366,7 @@ class NumpyDataset(Dataset[Dict[str, Any]]):
                     # later if R2 is needed.
                     pass
 
-            if any(str(p).startswith("weka://") for p in self._array_paths):
+            if any(str(p).startswith("weka://") for p in self.paths):
                 try:
                     _get_s3_client("weka")
                 except OLMoEnvironmentError:
@@ -316,7 +385,7 @@ class NumpyDataset(Dataset[Dict[str, Any]]):
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 path_futures = []
                 mask_path_futures = []
-                for i, path in enumerate(self._array_paths):
+                for i, path in enumerate(self.paths):
                     path_futures.append(executor.submit(self._get_file_size_and_length, path))
                     if self._label_mask_paths is not None:
                         mask_path = self._label_mask_paths[i]
@@ -335,7 +404,7 @@ class NumpyDataset(Dataset[Dict[str, Any]]):
                     mask_path_to_length[path] = length
 
             start_offset = 0
-            for path in self._array_paths:
+            for path in self.paths:
                 length = path_to_length[path]
                 size = path_to_size[path]
                 if mask_path_to_length:
@@ -363,15 +432,8 @@ class NumpyDataset(Dataset[Dict[str, Any]]):
 
     def _read_chunk_from_array(self, path: PathOrStr, index: int, dtype=None) -> torch.Tensor:
         dtype = dtype or self.dtype
-        item_size = dtype(0).itemsize
-        bytes_start = index * item_size * self._sequence_length
-        num_bytes = item_size * self._sequence_length
-        buffer = get_bytes_range(path, bytes_start, num_bytes)
-        array = np.frombuffer(buffer, dtype=dtype)
-        if dtype == np.bool_:
-            return torch.tensor(array)
-        else:
-            return torch.tensor(array.astype(np.int_), dtype=torch.long)
+        start_idx = index * self.sequence_length
+        return read_chunk_from_array(path, start_idx, start_idx + self.sequence_length, dtype)
 
     def _get_file_size_and_length(self, path, dtype=None) -> Tuple[PathOrStr, int, int]:
         dtype = dtype or self.dtype
@@ -402,7 +464,7 @@ class NumpyDataset(Dataset[Dict[str, Any]]):
         index = int(index)  # in case this is a numpy int type.
         pos_index = index if index >= 0 else len(self) + index
 
-        # The index of the array within 'self._array_paths'.
+        # The index of the array within 'self.paths'.
         array_index: Optional[int] = None
         # The index within the corresponding array.
         array_local_index: Optional[int] = None
@@ -416,7 +478,7 @@ class NumpyDataset(Dataset[Dict[str, Any]]):
             raise IndexError(f"{index} is out of bounds for dataset of size {len(self)}")
 
         # Read the data from file.
-        input_ids = self._read_chunk_from_array(self._array_paths[array_index], array_local_index)
+        input_ids = self._read_chunk_from_array(self.paths[array_index], array_local_index)
         out: Dict[str, Any] = {"input_ids": input_ids}
 
         if self._label_mask_paths is not None:
@@ -439,17 +501,39 @@ class NumpyDataset(Dataset[Dict[str, Any]]):
 
         return out
 
-    def __add__(self, other: NumpyDataset) -> NumpyDataset:
-        """
-        Concatenate one :class:`NumpyDataset` with another.
-        """
-        if not isinstance(other, NumpyDataset):
-            raise NotImplementedError(f"Expected another NumpyDataset but got {type(other)}")
-        return NumpyDataset(
-            *(self._array_paths + other._array_paths),
-            sequence_length=self.sequence_length,
-            pad_token_id=self.pad_token_id,
-            eos_token_id=self.eos_token_id,
-            dtype=self.dtype,
-            metadata=self._metadata + other._metadata,
-        )
+
+class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
+    """
+    A variable sequence length (VSL) numpy array-backed dataset.
+
+    This dataset creates instances of token IDs with lengths that are powers of 2 of up to
+    ``max_sequence_length`` (which must be a power a 2) and no shorter than ``min_sequence_length``
+    (also a power of 2).
+    """
+
+    def __init__(
+        self,
+        *paths: PathOrStr,
+        pad_token_id: int,
+        eos_token_id: int,
+        max_sequence_length: int,
+        min_sequence_length: int = 8,
+        dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]] = np.uint16,
+    ):
+        if math.log(max_sequence_length, 2) % 1 != 0:
+            raise OLMoConfigurationError("'max_sequence_length' must be a power of 2")
+
+        if math.log(min_sequence_length, 2) % 1 != 0:
+            raise OLMoConfigurationError("'min_sequence_length' must be a power of 2")
+
+        super().__init__(*paths, pad_token_id=pad_token_id, eos_token_id=eos_token_id, dtype=dtype)
+        self._max_sequence_length = max_sequence_length
+        self._min_sequence_length = min_sequence_length
+
+    @property
+    def max_sequence_length(self) -> int:
+        return self._max_sequence_length
+
+    @property
+    def min_sequence_length(self) -> int:
+        return self._min_sequence_length
