@@ -272,12 +272,56 @@ class TransformerConfig(Config):
         return flop_per_token
 
     @classmethod
+    def olmo_1B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 1B OLMo model config.
+        """
+        return cls.llama2_1B(
+            vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            **kwargs,
+        )
+
+    @classmethod
+    def olmo_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 7B OLMo model config.
+        """
+        return cls.llama2_7B(
+            vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            **kwargs,
+        )
+
+    @classmethod
+    def olmo_13B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 13B OLMo model config.
+        """
+        return cls.llama2_13B(
+            vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            **kwargs,
+        )
+
+    @classmethod
     def llama2_271M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 271M Llama2-like model config.
         """
         return cls.llama_like(
-            d_model=1024, vocab_size=vocab_size, n_layers=16, n_heads=8, rope_theta=10_000, **kwargs
+            d_model=1024,
+            vocab_size=vocab_size,
+            n_layers=16,
+            n_heads=8,
+            rope_theta=kwargs.pop("rope_theta", 10_000),
+            **kwargs,
         )
 
     @classmethod
@@ -290,7 +334,7 @@ class TransformerConfig(Config):
             vocab_size=vocab_size,
             n_layers=18,
             n_heads=16,
-            rope_theta=10_000,
+            rope_theta=kwargs.pop("rope_theta", 10_000),
             **kwargs,
         )
 
@@ -304,7 +348,7 @@ class TransformerConfig(Config):
             vocab_size=vocab_size,
             n_layers=32,
             n_heads=32,
-            rope_theta=10_000,
+            rope_theta=kwargs.pop("rope_theta", 10_000),
             **kwargs,
         )
 
@@ -318,7 +362,7 @@ class TransformerConfig(Config):
             vocab_size=vocab_size,
             n_layers=40,
             n_heads=40,
-            rope_theta=10_000,
+            rope_theta=kwargs.pop("rope_theta", 10_000),
             **kwargs,
         )
 
@@ -332,7 +376,7 @@ class TransformerConfig(Config):
             vocab_size=vocab_size,
             n_layers=80,
             n_heads=40,
-            rope_theta=10_000,
+            rope_theta=kwargs.pop("rope_theta", 10_000),
             **kwargs,
         )
 
@@ -347,7 +391,7 @@ class TransformerConfig(Config):
             n_layers=80,
             n_heads=64,
             n_kv_heads=8,
-            rope_theta=10_000,
+            rope_theta=kwargs.pop("rope_theta", 10_000),
             hidden_size_multiplier=1.3,
             hidden_size_multiple_of=4096,
             **kwargs,
@@ -364,7 +408,7 @@ class TransformerConfig(Config):
             n_layers=32,
             n_heads=32,
             n_kv_heads=8,
-            rope_theta=500_000,
+            rope_theta=kwargs.pop("rope_theta", 500_000),
             hidden_size_multiplier=1.3,
             hidden_size_multiple_of=1024,
             **kwargs,
@@ -381,7 +425,7 @@ class TransformerConfig(Config):
             n_layers=80,
             n_heads=64,
             n_kv_heads=8,
-            rope_theta=500_000,
+            rope_theta=kwargs.pop("rope_theta", 500_000),
             hidden_size_multiplier=1.3,
             hidden_size_multiple_of=4096,
             **kwargs,
@@ -402,7 +446,7 @@ class TransformerConfig(Config):
             n_layers=126,
             n_heads=128,
             n_kv_heads=8,
-            rope_theta=500_000,
+            rope_theta=kwargs.pop("rope_theta", 500_000),
             hidden_size_multiplier=1.2,
             hidden_size_multiple_of=4096,
             **kwargs,
@@ -417,12 +461,14 @@ class TransformerConfig(Config):
         n_layers: int,
         n_heads: int,
         n_kv_heads: Optional[int] = None,
+        qk_norm: bool = False,
         rope_theta: int = 500_000,
         rope_type: Optional[RoPEType] = None,
         hidden_size_multiple_of: int = 256,
         hidden_size_multiplier: Optional[float] = None,
         fused_ops: Optional[bool] = None,
         use_flash: Optional[bool] = None,
+        block_name: TransformerBlockType = TransformerBlockType.default,
         dtype: DType = DType.float32,
         compile: bool = False,
         **kwargs,
@@ -469,13 +515,14 @@ class TransformerConfig(Config):
 
         # Configure blocks.
         block = TransformerBlockConfig(
-            name=TransformerBlockType.default,
+            name=block_name,
             attention=AttentionConfig(
                 name=att_type,
                 n_heads=n_heads,
                 n_kv_heads=n_kv_heads,
                 bias=False,
                 rope=RoPEConfig(name=rope_type, theta=rope_theta),
+                qk_norm=layer_norm if qk_norm else None,
                 use_flash=use_flash,
                 dtype=dtype,
             ),
