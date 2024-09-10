@@ -350,10 +350,6 @@ class Trainer:
             if not is_url(self.save_folder):
                 Path(self.save_folder).mkdir(exist_ok=True, parents=True)
 
-        if isinstance(self.dataset, NumpyDatasetBase):
-            self.dataset.fs_local_rank = get_fs_local_rank()
-            self.dataset.work_dir = self.work_dir
-
         # Ensure we have necessary callbacks.
         has_console_logger_callback = False
         has_checkpointer_callback = False
@@ -429,8 +425,9 @@ class Trainer:
                 raise OLMoConfigurationError("trainer and dataset max sequence length do not match")
 
         # Prepare dataset.
-        self.dataset.prepare()
-        barrier()
+        if isinstance(self.dataset, NumpyDatasetBase):
+            self.dataset.work_dir = self.work_dir
+            self.dataset.prepare()
 
     @property
     def rank_batch_size(self) -> int:

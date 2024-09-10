@@ -20,6 +20,7 @@ from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
 
 from ..aliases import PathOrStr
 from ..config import Config, StrEnum
+from ..distributed.utils import barrier, get_fs_local_rank
 from ..io import _get_s3_client, get_file_size
 from ..utils import capped_powers_of_2
 from .mixes import DataMix
@@ -46,11 +47,9 @@ class NumpyDatasetBase(ABC):
     A base class for datasets backed from numpy arrays of token IDs.
 
     .. warning::
-        When using subclasses in a distributed setting be sure to set :data:`fs_local_rank`
-        and :data:`work_dir` properly. The working directory should be shared among all local ranks.
-
-        After setting those you should then call :meth:`prepare()` with a
-        :func:`~olmo_core.distributed.barrier()` afterwards before doing anything else.
+        When using subclasses in a distributed setting be sure that the :data:`work_dir` is shared
+        among all local ranks. Then you should then call :meth:`prepare()` in the main process
+        before doing anything else.
     """
 
     def __init__(
@@ -67,7 +66,7 @@ class NumpyDatasetBase(ABC):
         self._pad_token_id = pad_token_id
         self._eos_token_id = eos_token_id
         self._dtype = dtype
-        self._fs_local_rank = 0
+        self._fs_local_rank = get_fs_local_rank()
         self._work_dir: Optional[Path] = None
         self._array_file_sizes: Optional[List[int]] = None
 
@@ -182,8 +181,9 @@ class NumpyDatasetBase(ABC):
         """
         Perform any necessary preparation.
 
-        Be sure to set :data:`fs_local_rank` and :data:`work_dir` properly before calling this,
-        and use a :func:`~olmo_core.distributed.barrier()` right after.
+        .. warning::
+            Be sure to set data:`work_dir` properly before calling this and only call this from the
+            main process (not a worker process).
         """
         pass
 
@@ -605,6 +605,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         if self.fs_local_rank == 0:
             log.info("Gathering dataset document indices...")
             self.map(self._write_document_indices, max_workers=8)
+        barrier()
         len(self)
 
     def __len__(self):
