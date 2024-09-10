@@ -36,7 +36,8 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
    :caption: API Reference
 
    config.rst
-   data.rst
+   data/index.rst
+   data/utils.rst
    distributed/checkpoint.rst
    distributed/parallel.rst
    distributed/utils.rst

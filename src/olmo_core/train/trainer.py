@@ -27,7 +27,7 @@ from torch.utils.data import DataLoader
 
 from ..aliases import PathOrStr
 from ..config import StrEnum
-from ..data import DataCollator, IterableDataset, NumpyDataset, NumpyDatasetBase
+from ..data import DataCollator, IterableDataset, NumpyDatasetBase, NumpyFSLDataset
 from ..data.utils import split_batch
 from ..distributed.utils import (
     all_reduce_value,
@@ -135,7 +135,7 @@ class Trainer:
     The optimizer to use.
     """
 
-    dataset: NumpyDataset
+    dataset: NumpyFSLDataset
     """
     The training dataset.
     """
@@ -180,8 +180,8 @@ class Trainer:
     Training sequence length.
 
     .. important::
-        If you're using a :class:`~olmo_core.data.NumpyDataset`, the value here must match
-        :data:`NumpyDataset.sequence_length <olmo_core.data.NumpyDataset.sequence_length>`.
+        If you're using a :class:`~olmo_core.data.NumpyFSLDataset`, the value here must match
+        :data:`NumpyFSLDataset.sequence_length <olmo_core.data.NumpyFSLDataset.sequence_length>`.
 
     .. seealso::
         :data:`max_train_sequence_length`
@@ -204,8 +204,8 @@ class Trainer:
 
     .. important::
         If set this must be a multiple of :data:`train_sequence_length`, and if you're using
-        a :class:`~olmo_core.data.NumpyDataset`, the value here must match
-        :data:`NumpyDataset.max_target_sequence_length <olmo_core.data.NumpyDataset.max_target_sequence_length>`.
+        a :class:`~olmo_core.data.NumpyFSLDataset`, the value here must match
+        :data:`NumpyFSLDataset.max_target_sequence_length <olmo_core.data.NumpyFSLDataset.max_target_sequence_length>`.
     """
 
     save_overwrite: bool = False
@@ -422,11 +422,15 @@ class Trainer:
             )
 
         # Other validation.
-        if isinstance(self.dataset, NumpyDataset):
+        if isinstance(self.dataset, NumpyFSLDataset):
             if self.dataset.sequence_length != self.train_sequence_length:
                 raise OLMoConfigurationError("trainer and dataset sequence length do not match")
             if self.dataset.max_target_sequence_length != self.max_train_sequence_length:
                 raise OLMoConfigurationError("trainer and dataset max sequence length do not match")
+
+        # Prepare dataset.
+        self.dataset.prepare()
+        barrier()
 
     @property
     def rank_batch_size(self) -> int:
@@ -471,7 +475,7 @@ class Trainer:
         The total number of training steps in an epoch.
         """
         dp_world_size = get_world_size(self.dp_process_group)
-        if isinstance(self.dataset, NumpyDataset):
+        if isinstance(self.dataset, NumpyFSLDataset):
             num_samples = dp_world_size * (len(self.dataset) // dp_world_size)
             return num_samples // self.global_batch_size
         else:
@@ -1160,7 +1164,7 @@ class Trainer:
             self.record_metric(OPTIM_STEP_SKIPPED_METRIC, self.optim.step_skipped)
 
     def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:
-        if not isinstance(self.dataset, NumpyDataset):
+        if not isinstance(self.dataset, NumpyFSLDataset):
             raise NotImplementedError
 
         iterable_dataset = IterableDataset(
@@ -1177,8 +1181,8 @@ class Trainer:
             chunk_size=(self.max_train_sequence_length or self.train_sequence_length)
             // self.train_sequence_length,
         )
-        iterable_dataset.build_and_save_global_indices()
 
+        iterable_dataset.build_and_save_global_indices()
         barrier()
 
         data_loader = DataLoader(

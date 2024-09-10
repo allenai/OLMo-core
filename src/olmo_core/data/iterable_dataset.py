@@ -11,7 +11,7 @@ from ..aliases import PathOrStr
 from ..utils import roundrobin, threaded_generator
 
 if TYPE_CHECKING:
-    from .numpy_dataset import NumpyDataset
+    from .numpy_dataset import NumpyFSLDataset
 
 __all__ = ["IterableDataset"]
 
@@ -33,7 +33,7 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
     def __init__(
         self,
         dataset: Union[
-            Sequence[List[int]], Sequence[torch.Tensor], Sequence[Dict[str, Any]], "NumpyDataset"
+            Sequence[List[int]], Sequence[torch.Tensor], Sequence[Dict[str, Any]], "NumpyFSLDataset"
         ],
         *,
         seed: int = 0,

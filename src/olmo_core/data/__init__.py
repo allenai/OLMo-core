@@ -2,18 +2,20 @@ from .collator import DataCollator, PaddingDirection
 from .iterable_dataset import IterableDataset
 from .mixes import DataMix
 from .numpy_dataset import (
-    NumpyDataset,
     NumpyDatasetBase,
-    NumpyDatasetConfig,
-    NumpyDatasetDType,
+    NumpyFSLDataset,
+    NumpyFSLDatasetConfig,
+    NumpyFSLDatasetDType,
+    NumpyVSLDataset,
 )
 from .tokenizer import TokenizerConfig, TokenizerName
 
 __all__ = [
     "NumpyDatasetBase",
-    "NumpyDataset",
-    "NumpyDatasetConfig",
-    "NumpyDatasetDType",
+    "NumpyFSLDataset",
+    "NumpyFSLDatasetConfig",
+    "NumpyFSLDatasetDType",
+    "NumpyVSLDataset",
     "TokenizerConfig",
     "TokenizerName",
     "DataMix",

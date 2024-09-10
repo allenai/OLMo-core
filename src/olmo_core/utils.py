@@ -11,7 +11,7 @@ from datetime import datetime
 from itertools import cycle, islice
 from queue import Queue
 from threading import Thread
-from typing import Any, Callable, Dict, Optional, TypeVar, Union
+from typing import Any, Callable, Dict, List, Optional, TypeVar, Union
 
 import rich
 import torch
@@ -535,3 +535,25 @@ def roundrobin(*iterables):
             # Remove the iterator we just exhausted from the cycle.
             num_active -= 1
             nexts = cycle(islice(nexts, num_active))
+
+
+def powers_of_2(x: int) -> List[int]:
+    powers: List[int] = []
+    i = 1
+    while i <= x:
+        if i & x:
+            powers.insert(0, i)
+        i <<= 1
+    return powers
+
+
+def capped_powers_of_2(x: int, cap: int) -> List[int]:
+    powers = []
+    for i in powers_of_2(x):
+        if i > cap:
+            assert i % cap == 0
+            for _ in range(i // cap):
+                powers.append(cap)
+        else:
+            powers.append(i)
+    return powers

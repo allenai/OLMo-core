@@ -24,13 +24,13 @@ def test_melt_batch():
     assert new_batch["metadata"] == [{"path": "x"}] * 3 + [{"path": "y"}] * 3
 
 
-def test_get_document_indices(tmp_path):
+def test_get_document_indices():
     dtype = np.uint32
     item_size = dtype(0).itemsize
     data_path = "s3://ai2-llm/preprocessed/proof-pile-2/v0_decontaminated/algebraic-stack/train/allenai/dolma2-tokenizer/part-15-00000.npy"
     tokenizer_config = TokenizerConfig.dolma2()
 
-    indices = get_document_indices(data_path, local_cache=tmp_path)
+    indices = get_document_indices(data_path)
 
     start_idx, end_idx = indices[1]
     buffer = get_bytes_range(data_path, start_idx * item_size, (end_idx - start_idx) * item_size)

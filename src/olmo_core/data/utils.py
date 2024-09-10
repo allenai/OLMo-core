@@ -1,7 +1,7 @@
 import gzip
 import math
 import os
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Dict, Generator, List, Optional, Tuple, Type, Union
 
 import numpy as np
 import torch
@@ -114,29 +114,34 @@ def truncate_batch(batch: Dict[str, Any], target_sequence_length: int) -> Dict[s
     return new_batch
 
 
-def get_document_indices(
+def iter_document_indices(
     data_path: PathOrStr, local_cache: Optional[PathOrStr] = None
-) -> List[Tuple[int, int]]:
+) -> Generator[Tuple[int, int], None, None]:
     """
     Given a ".npy" data path from the Dolma toolkit, get the list of document start/end indices within
     the array.
 
     :param data_path: Path to a ".npy" Dolma toolkit data file.
     :param local_cache: Local directory to put downloads into.
-
-    :returns: The start and end index of every document within the array.
     """
     metadata_path = resource_path(
         os.path.dirname(data_path),
         os.path.basename(data_path).replace(".npy", ".csv.gz"),
         local_cache=local_cache,
     )
-    indicies: List[Tuple[int, int]] = []
     with gzip.open(metadata_path, "rt") as f:
         for line in f:
             start_index, end_index, *_ = line.split(",")
-            indicies.append((int(start_index), int(end_index)))
-    return indicies
+            yield int(start_index), int(end_index)
+
+
+def get_document_indices(
+    data_path: PathOrStr, local_cache: Optional[PathOrStr] = None
+) -> List[Tuple[int, int]]:
+    """
+    Like :func:`iter_document_indices` but returns a list.
+    """
+    return list(iter_document_indices(data_path, local_cache=local_cache))
 
 
 def read_chunk_from_array(
