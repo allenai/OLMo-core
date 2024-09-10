@@ -173,12 +173,12 @@ class Trainer:
 
     global_batch_size: int
     """
-    Global training batch size in tokens.
+    Global training batch size *in tokens*.
     """
 
     rank_microbatch_size: int
     """
-    Microbatch size in tokens per rank, i.e. the number of tokens to process at a time from each rank.
+    Microbatch size *in tokens* per rank, i.e. the number of tokens to process at a time from each rank.
     """
 
     save_overwrite: bool = False
@@ -1054,7 +1054,7 @@ class Trainer:
         batch_num_tokens_for_loss = (batch["labels"] != self.collator.label_ignore_index).sum()
 
         # Split into micro-batches.
-        micro_batches = split_batch(batch, batch["input_ids"].numel() // self.rank_microbatch_size)
+        micro_batches = split_batch(batch, self.rank_microbatch_size // batch["input_ids"].shape[1])
         num_micro_batches = len(micro_batches)
 
         # In case this helps with memory utilization.
