@@ -38,6 +38,7 @@ def test_restart_with_seq_len_warmup(tmp_path, shuffle):
             chunk_size=max_target_sequence_length // seq_len,
             start_index=start_index,
             num_threads=0,
+            work_dir=tmp_path,
         )
         all_tokens = []
         for instance in iter_dataset:

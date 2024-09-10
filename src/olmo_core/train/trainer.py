@@ -1101,30 +1101,28 @@ class Trainer:
             self.record_metric(OPTIM_STEP_SKIPPED_METRIC, self.optim.step_skipped)
 
     def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:
-        iterable_dataset = IterableDataset(
-            self.dataset,
-            rank_batch_size=self.rank_batch_size,
-            collator=self.collator,
-            seed=self.data_seed,
-            epoch=self.epoch,
-            start_index=self.global_train_examples_seen_this_epoch,
-            dp_world_size=get_world_size(self.dp_process_group),
-            dp_rank=get_rank(self.dp_process_group),
-            fs_local_rank=get_fs_local_rank(),
-            drop_last=True,
-            work_dir=self.work_dir,
-        )
-
-        if (
-            isinstance(self.dataset, NumpyFSLDataset)
-            and self.dataset.max_target_sequence_length is not None
-        ):
-            iterable_dataset.chunk_size = (
-                self.dataset.max_target_sequence_length // self.dataset.sequence_length
+        if isinstance(self.dataset, NumpyFSLDataset):
+            iterable_dataset = IterableDataset(
+                self.dataset,
+                rank_batch_size=self.rank_batch_size,
+                collator=self.collator,
+                seed=self.data_seed,
+                epoch=self.epoch,
+                start_index=self.global_train_examples_seen_this_epoch,
+                dp_world_size=get_world_size(self.dp_process_group),
+                dp_rank=get_rank(self.dp_process_group),
+                fs_local_rank=get_fs_local_rank(),
+                drop_last=True,
+                work_dir=self.work_dir,
             )
+            if self.dataset.max_target_sequence_length is not None:
+                iterable_dataset.chunk_size = (
+                    self.dataset.max_target_sequence_length // self.dataset.sequence_length
+                )
+        else:
+            raise NotImplementedError
 
         iterable_dataset.build_and_save_global_indices()
-        barrier()
 
         data_loader = DataLoader(
             iterable_dataset,

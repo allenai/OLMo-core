@@ -181,7 +181,7 @@ class NumpyDatasetBase(ABC):
         Perform any necessary preparation.
 
         .. warning::
-            Be sure to set data:`work_dir` properly before calling this and only call this from the
+            Be sure to set :data:`work_dir` properly before calling this and only call this from the
             main process (not a worker process).
         """
         pass
@@ -381,8 +381,8 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     :param dtype: The numpy datatype of the arrays.
     :param metadata: Metadata to add to each item. This should be a dictionary or a list of dictionaries
         with the same number of items as there are paths.
-    :param include_instance_metadata: If ``True`` (the default), each instance returned from ``__getitem__`` will
-        include the metadata from its source.
+    :param include_instance_metadata: If ``True`` (the default), each instance returned from
+        :meth:`__getitem__()` will include the metadata from its source.
     :param max_target_sequence_length: If using sequence length warm-up throughput training, this
         should be set to the maximum/final target sequence length to ensure consistent
         data order.
@@ -578,8 +578,8 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     :param dtype: The numpy datatype of the arrays.
     :param metadata: Metadata to add to each item. This should be a dictionary or a list of dictionaries
         with the same number of items as there are paths.
-    :param include_instance_metadata: If ``True`` (the default), each instance returned from ``__getitem__`` will
-        include the metadata from its source.
+    :param include_instance_metadata: If ``True`` (the default), each instance returned from
+        :meth:`__getitem__()` will include the metadata from its source.
     """
 
     def __init__(

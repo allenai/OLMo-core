@@ -1,19 +1,7 @@
 import gzip
 import math
 import os
-from itertools import islice
-from typing import (
-    Any,
-    Dict,
-    Generator,
-    Iterable,
-    List,
-    Optional,
-    Tuple,
-    Type,
-    TypeVar,
-    Union,
-)
+from typing import Any, Dict, Generator, Iterable, List, Optional, Tuple, Type, Union
 
 import numpy as np
 import torch
@@ -218,10 +206,19 @@ def get_cumulative_document_lengths(doc_lens: torch.Tensor) -> torch.Tensor:
     )
 
 
-T = TypeVar("T")
+def iter_batched(
+    iterable: Iterable[Dict[str, Any]], batch_num_tokens: int
+) -> Iterable[Tuple[Dict[str, Any], ...]]:
+    batch: List[Dict[str, Any]] = []
+    tokens = 0
+    for x in iter(iterable):
+        x_num_tokens = x["input_ids"].numel()
+        if (tokens + x_num_tokens) > batch_num_tokens:
+            yield tuple(batch)
+            batch.clear()
+            tokens = 0
+        tokens += x_num_tokens
+        batch.append(x)
 
-
-def iter_batched(iterable: Iterable[T], batch_size: int) -> Iterable[Tuple[T, ...]]:
-    iterator = iter(iterable)
-    while batch := tuple(islice(iterator, batch_size)):
-        yield batch
+    if batch:
+        yield tuple(batch)

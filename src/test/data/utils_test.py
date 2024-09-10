@@ -3,6 +3,7 @@ import torch
 from olmo_core.data.utils import (
     get_cumulative_document_lengths,
     get_document_lengths,
+    iter_batched,
     melt_batch,
 )
 
@@ -46,3 +47,19 @@ def test_get_cumulative_document_lengths():
             dtype=torch.int32,
         )
     ).tolist() == [0, 1, 6, 9, 11, 16, 19, 22]
+
+
+def test_iter_batched():
+    instances = [
+        {"input_ids": torch.tensor([1, 1, 1, 1])},
+        {"input_ids": torch.tensor([2, 2, 2, 2])},
+        {"input_ids": torch.tensor([3, 3])},
+        {"input_ids": torch.tensor([4, 4])},
+        {"input_ids": torch.tensor([5, 5])},
+        {"input_ids": torch.tensor([6, 6])},
+        {"input_ids": torch.tensor([7, 7])},
+    ]
+    batches = list(iter_batched(instances, 8))
+    assert len(batches[0]) == 2
+    assert len(batches[1]) == 4
+    assert len(batches[2]) == 1

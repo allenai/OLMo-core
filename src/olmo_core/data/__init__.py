@@ -1,5 +1,5 @@
 from .collator import DataCollator, PaddingDirection
-from .iterable_dataset import IterableDataset
+from .iterable_dataset import IterableDataset, IterableDatasetBase
 from .mixes import DataMix
 from .numpy_dataset import (
     NumpyDatasetBase,
@@ -21,5 +21,6 @@ __all__ = [
     "DataMix",
     "DataCollator",
     "PaddingDirection",
+    "IterableDatasetBase",
     "IterableDataset",
 ]
