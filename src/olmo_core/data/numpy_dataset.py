@@ -432,7 +432,7 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         return self._sizes_and_offsets[1]
 
     def prepare(self):
-        _ = self._sizes_and_offsets
+        len(self)
 
     def __len__(self) -> int:
         if self._num_instances is None:
@@ -605,6 +605,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         if self.fs_local_rank == 0:
             log.info("Gathering dataset document indices...")
             self.map(self._write_document_indices, max_workers=8)
+        len(self)
 
     def __len__(self):
         if self._num_instances is None:
