@@ -3,7 +3,7 @@ from typing import List
 import numpy as np
 import pytest
 
-from olmo_core.data import DataCollator, IterableDataset, NumpyFSLDataset
+from olmo_core.data import DataCollator, IterableFSLDataset, NumpyFSLDataset
 
 
 @pytest.mark.parametrize(
@@ -30,7 +30,7 @@ def test_restart_with_seq_len_warmup(tmp_path, shuffle):
             eos_token_id=-1,
             max_target_sequence_length=max_target_sequence_length,
         )
-        iter_dataset = IterableDataset(
+        iter_dataset = IterableFSLDataset(
             dataset,
             rank_batch_size=seq_len,
             collator=DataCollator(pad_token_id=-1),

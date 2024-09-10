@@ -88,6 +88,13 @@ def test_numpy_vsl_dataset(tmp_path: Path):
     assert ds[3]["input_ids"].tolist() == [1, 2, 3, 4, 5, 6, 7, 8]
     assert ds[4]["input_ids"].tolist() == [9, 10]
 
+    assert ds.get_instance_lengths().tolist() == [8, 4, 2, 8, 2]
+    buckets = ds.get_instance_buckets()
+    assert len(buckets) == 3  # for each power of 2 from 2**1 = 2 through 2**3 = 8
+    assert buckets[0][1].tolist() == [2, 4]  # instances of length 2
+    assert buckets[1][1].tolist() == [1]  # instances of length 4
+    assert buckets[2][1].tolist() == [0, 3]  # instances of length 8
+
 
 def test_guess_dtype():
     config = NumpyFSLDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.gpt2())

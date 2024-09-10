@@ -27,7 +27,15 @@ from torch.utils.data import DataLoader
 
 from ..aliases import PathOrStr
 from ..config import StrEnum
-from ..data import DataCollator, IterableDataset, NumpyDatasetBase, NumpyFSLDataset
+from ..data import (
+    DataCollator,
+    IterableDatasetBase,
+    IterableFSLDataset,
+    IterableVSLDataset,
+    NumpyDatasetBase,
+    NumpyFSLDataset,
+    NumpyVSLDataset,
+)
 from ..data.utils import split_batch
 from ..distributed.utils import (
     all_reduce_value,
@@ -131,7 +139,7 @@ class Trainer:
     The optimizer to use.
     """
 
-    dataset: NumpyFSLDataset
+    dataset: NumpyDatasetBase
     """
     The training dataset.
     """
@@ -300,6 +308,7 @@ class Trainer:
     _thread_pool: Optional[ThreadPoolExecutor] = None
     _bookkeeping_pg: Optional[dist.ProcessGroup] = None
     _checkpoint_loaded: bool = False
+    _iterable_dataset: Optional[IterableDatasetBase] = None
 
     def __post_init__(self):
         self.save_folder = normalize_path(self.save_folder)
@@ -390,10 +399,37 @@ class Trainer:
                 f"micro-batch size ({self.rank_microbatch_size}) x DP world size ({ws})"
             )
 
-        # Prepare dataset.
+        # Prepare datasets.
         if isinstance(self.dataset, NumpyDatasetBase):
             self.dataset.work_dir = self.work_dir
             self.dataset.prepare()
+
+        if isinstance(self.dataset, NumpyFSLDataset):
+            self._iterable_dataset = IterableFSLDataset(
+                self.dataset,
+                rank_batch_size=self.rank_batch_size,
+                collator=self.collator,
+                work_dir=self.work_dir,
+                dp_world_size=get_world_size(self.dp_process_group),
+                dp_rank=get_rank(self.dp_process_group),
+                fs_local_rank=get_fs_local_rank(),
+            )
+            if self.dataset.max_target_sequence_length is not None:
+                self._iterable_dataset.chunk_size = (
+                    self.dataset.max_target_sequence_length // self.dataset.sequence_length
+                )
+        elif isinstance(self.dataset, NumpyVSLDataset):
+            self._iterable_dataset = IterableVSLDataset(
+                self.dataset,
+                rank_batch_size=self.rank_batch_size,
+                collator=self.collator,
+                work_dir=self.work_dir,
+                dp_world_size=get_world_size(self.dp_process_group),
+                dp_rank=get_rank(self.dp_process_group),
+                fs_local_rank=get_fs_local_rank(),
+            )
+        else:
+            raise NotImplementedError
 
     @property
     def rank_batch_size(self) -> int:
@@ -440,12 +476,8 @@ class Trainer:
         """
         The total number of training steps in an epoch.
         """
-        dp_world_size = get_world_size(self.dp_process_group)
-        if isinstance(self.dataset, NumpyFSLDataset):
-            num_samples = dp_world_size * (len(self.dataset) // dp_world_size)
-            return num_samples // (self.global_batch_size // self.dataset.sequence_length)
-        else:
-            raise NotImplementedError
+        assert self._iterable_dataset is not None
+        return self._iterable_dataset.calculate_total_batches(self.global_batch_size)
 
     @property
     def tokens_per_epoch(self) -> int:
@@ -617,6 +649,7 @@ class Trainer:
         self.epoch = state_dict["epoch"]
 
         log.info(f"Will resume training from step {self.global_step}, epoch {self.epoch}")
+        self._configure_iterable_dataset()
 
         if state_dict["world_size"] == get_world_size():  # global world size here on purpose
             rng_state = EnvRngStates.from_dict(state_dict["rng"])
@@ -1100,32 +1133,19 @@ class Trainer:
         if isinstance(self.optim, SkipStepOptimizer):
             self.record_metric(OPTIM_STEP_SKIPPED_METRIC, self.optim.step_skipped)
 
-    def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:
-        if isinstance(self.dataset, NumpyFSLDataset):
-            iterable_dataset = IterableDataset(
-                self.dataset,
-                rank_batch_size=self.rank_batch_size,
-                collator=self.collator,
-                seed=self.data_seed,
-                epoch=self.epoch,
-                start_index=self.global_train_examples_seen_this_epoch,
-                dp_world_size=get_world_size(self.dp_process_group),
-                dp_rank=get_rank(self.dp_process_group),
-                fs_local_rank=get_fs_local_rank(),
-                drop_last=True,
-                work_dir=self.work_dir,
-            )
-            if self.dataset.max_target_sequence_length is not None:
-                iterable_dataset.chunk_size = (
-                    self.dataset.max_target_sequence_length // self.dataset.sequence_length
-                )
-        else:
-            raise NotImplementedError
+    def _configure_iterable_dataset(self):
+        assert self._iterable_dataset is not None
+        self._iterable_dataset.seed = self.data_seed
+        self._iterable_dataset.epoch = self.epoch
+        self._iterable_dataset.start_index = self.global_train_examples_seen_this_epoch
 
-        iterable_dataset.build_and_save_global_indices()
+    def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:
+        assert self._iterable_dataset is not None
+        self._configure_iterable_dataset()
+        self._iterable_dataset.reshuffle(self.epoch)
 
         data_loader = DataLoader(
-            iterable_dataset,
+            self._iterable_dataset,
             batch_size=None,
             num_workers=self.data_loader_workers,
             pin_memory=True,

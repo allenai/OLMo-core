@@ -30,7 +30,7 @@ __all__ = [
     "NumpyDatasetBase",
     "NumpyFSLDatasetConfig",
     "NumpyFSLDataset",
-    "NumpyFSLDatasetDType",
+    "NumpyDatasetDType",
     "NumpyVSLDataset",
 ]
 
@@ -39,6 +39,18 @@ log = logging.getLogger(__name__)
 
 
 T = TypeVar("T")
+
+
+class NumpyDatasetDType(StrEnum):
+    uint8 = "uint8"
+    uint16 = "uint16"
+    uint32 = "uint32"
+    uint64 = "uint64"
+
+    def as_np_dtype(
+        self,
+    ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
+        return getattr(np, str(self))
 
 
 class NumpyDatasetBase(ABC):
@@ -228,18 +240,6 @@ class NumpyDatasetBase(ABC):
         return state_dict["instances_processed"]
 
 
-class NumpyFSLDatasetDType(StrEnum):
-    uint8 = "uint8"
-    uint16 = "uint16"
-    uint32 = "uint32"
-    uint64 = "uint64"
-
-    def as_np_dtype(
-        self,
-    ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
-        return getattr(np, str(self))
-
-
 @dataclass
 class NumpyFSLDatasetConfig(Config):
     """
@@ -252,7 +252,7 @@ class NumpyFSLDatasetConfig(Config):
     mix: Optional[DataMix] = None
     mix_base_dir: Optional[str] = None
     max_target_sequence_length: Optional[int] = None
-    dtype: Optional[NumpyFSLDatasetDType] = None
+    dtype: Optional[NumpyDatasetDType] = None
     metadata: Optional[List[Dict[str, Any]]] = None
     include_instance_metadata: bool = True
     generate_doc_lengths: bool = False
@@ -294,14 +294,14 @@ class NumpyFSLDatasetConfig(Config):
         self,
     ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
         if self.dtype is not None:
-            return NumpyFSLDatasetDType(self.dtype).as_np_dtype()
+            return NumpyDatasetDType(self.dtype).as_np_dtype()
 
         # Guess based on vocab size.
         for dtype in (
-            NumpyFSLDatasetDType.uint8,
-            NumpyFSLDatasetDType.uint16,
-            NumpyFSLDatasetDType.uint32,
-            NumpyFSLDatasetDType.uint64,
+            NumpyDatasetDType.uint8,
+            NumpyDatasetDType.uint16,
+            NumpyDatasetDType.uint32,
+            NumpyDatasetDType.uint64,
         ):
             if (self.tokenizer.vocab_size - 1) <= np.iinfo(dtype.as_np_dtype()).max:
                 log.info(f"Assuming dtype '{dtype}' based on vocab size")
@@ -622,6 +622,18 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         self._min_sequence_length = min_sequence_length
         self._num_instances: Optional[int] = None
         self._array_offsets: Optional[List[Tuple[int, int]]] = None
+        self._lengths_dtype: Optional[
+            Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]
+        ] = None
+
+    @property
+    def fingerprint(self) -> str:
+        sha256_hash = hashlib.sha256()
+        sha256_hash.update(f"min_sequence_length={self.min_sequence_length}".encode())
+        sha256_hash.update(f"max_sequence_length={self.max_sequence_length}".encode())
+        for size in self.file_sizes:
+            sha256_hash.update(f"size={size}".encode())
+        return sha256_hash.hexdigest()
 
     @property
     def max_sequence_length(self) -> int:
@@ -638,7 +650,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         """
         if self._array_offsets is None:
             self._array_offsets = []
-            item_size = np.uint32(0).itemsize
+            item_size = self.indices_dtype(0).itemsize
             start_offset = 0
             for path in self.paths:
                 doc_indices_path = self._get_document_indices_path(path)
@@ -689,7 +701,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
 
     def _read_chunk_from_array(self, path: PathOrStr, index: int) -> torch.Tensor:
         indices_path = self._get_document_indices_path(path)
-        indices = read_chunk_from_array(indices_path, index * 2, index * 2 + 2, np.uint32)
+        indices = read_chunk_from_array(indices_path, index * 2, index * 2 + 2, self.indices_dtype)
         start_idx, end_idx = indices
         data = read_chunk_from_array(path, int(start_idx), int(end_idx), self.dtype)
         return data
@@ -699,6 +711,9 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         sha256_hash.update(str(path).encode())
         path_hash = sha256_hash.hexdigest()
         return self.work_dir / f"dataset-{self.fingerprint}" / f"{path_hash}.npy"
+
+    def _get_instance_lengths_path(self) -> Path:
+        return self.work_dir / f"dataset-{self.fingerprint}" / "instance-lengths.npy"
 
     def _write_document_indices(self, path: PathOrStr) -> Path:
         indices_path = self._get_document_indices_path(path)
@@ -715,9 +730,63 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                     start_idx += x
 
             indices_mmap = np.memmap(
-                indices_path, dtype=np.uint32, mode="w+", shape=(len(indices),)
+                indices_path, dtype=self.indices_dtype, mode="w+", shape=(len(indices),)
             )
             indices_mmap[:] = indices
             indices_mmap.flush()
             del indices_mmap
         return indices_path
+
+    def get_instance_lengths(self) -> np.ndarray:
+        """
+        Get a numpy memory-mapped array with the length of every instance in the dataset.
+        """
+        instance_lengths = np.memmap(
+            self._get_instance_lengths_path(),
+            dtype=self.lengths_dtype,
+            mode="w+",
+            shape=(len(self),),
+        )
+        for path, (offset_start, offset_end) in zip(self.paths, self.offsets):
+            indices_path = self._get_document_indices_path(path)
+            indices_mmap = np.memmap(indices_path, dtype=self.indices_dtype, mode="r")
+            instance_lengths[offset_start:offset_end] = indices_mmap[1::2] - indices_mmap[::2]
+            del indices_mmap
+        return instance_lengths
+
+    def get_instance_buckets(self) -> List[Tuple[int, np.ndarray]]:
+        """
+        Get the buckets of instance indices that all have the same length.
+        The buckets will be sorted from smallest sequence length to longest.
+        """
+        instance_lengths = self.get_instance_lengths()
+        min_exp = int(math.log(self.min_sequence_length, 2))
+        max_exp = int(math.log(self.max_sequence_length, 2))
+        buckets = []
+        for exp in range(min_exp, max_exp + 1):
+            seq_len = 2**exp
+            buckets.append((seq_len, (instance_lengths == seq_len).nonzero()[0]))
+        return buckets
+
+    @property
+    def indices_dtype(
+        self,
+    ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
+        return np.uint32
+
+    @property
+    def lengths_dtype(
+        self,
+    ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
+        if self._lengths_dtype is None:
+            for dtype in (
+                np.uint8,
+                np.uint16,
+                np.uint32,
+                np.uint64,
+            ):
+                if (self.max_sequence_length - 1) <= np.iinfo(dtype).max:
+                    self._lengths_dtype = dtype
+                    break
+            assert self._lengths_dtype is not None
+        return self._lengths_dtype

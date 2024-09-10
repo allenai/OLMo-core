@@ -15,7 +15,7 @@ from .collator import DataCollator
 from .numpy_dataset import NumpyDatasetBase, NumpyFSLDataset, NumpyVSLDataset
 from .utils import iter_batched
 
-__all__ = ["IterableDataset"]
+__all__ = ["IterableDatasetBase", "IterableFSLDataset"]
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +33,6 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         start_index: int = 0,
         max_examples: Optional[int] = None,
         shuffle: bool = True,
-        drop_last: bool = True,
         num_threads: Optional[int] = None,
         dp_world_size: int = 1,
         dp_rank: int = 0,
@@ -47,7 +46,6 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         self.start_index = start_index
         self.max_examples = max_examples
         self.shuffle = shuffle
-        self.drop_last = drop_last
         self.num_threads = num_threads
         self.work_dir = work_dir
         self.dp_world_size = dp_world_size
@@ -55,10 +53,17 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         self.fs_local_rank = fs_local_rank
 
     @property
-    @abstractmethod
     def total_size(self) -> int:
         """
         The total number of instances that the dataset will produce over the course of an epoch.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def calculate_total_batches(self, global_batch_size: int) -> int:
+        """
+        Calculate the total number of batches that the dataset will produce over the course of an epoch
+        given the global batch size in tokens.
         """
         raise NotImplementedError
 
@@ -176,8 +181,7 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         :param epoch: The epoch number.
         """
         self.epoch = epoch
-        if self.work_dir is not None:
-            self.build_and_save_global_indices()
+        self.build_and_save_global_indices()
 
     def _get_dataset_item(self, idx: int) -> Dict[str, Any]:
         item = self.dataset[idx]
@@ -187,7 +191,7 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
             return {"input_ids": item, "index": idx}
 
 
-class IterableDataset(IterableDatasetBase):
+class IterableFSLDataset(IterableDatasetBase):
     """
     Adapted from PyTorch's ``DistributedSampler``, this wraps a :class:`~olmo_core.data.NumpyFSLDataset`
     as an ``IterableDataset`` that can be deterministically restarted at any point by setting
@@ -203,53 +207,20 @@ class IterableDataset(IterableDatasetBase):
         self,
         dataset: NumpyFSLDataset,
         *,
-        rank_batch_size: int,
-        collator: DataCollator,
-        work_dir: PathOrStr,
-        seed: int = 0,
-        epoch: int = 0,
-        start_index: int = 0,
-        max_examples: Optional[int] = None,
-        shuffle: bool = True,
-        drop_last: bool = True,
-        num_threads: Optional[int] = None,
-        dp_world_size: int = 1,
-        dp_rank: int = 0,
-        fs_local_rank: int = 0,
         chunk_size: int = 1,
+        **kwargs,
     ):
         assert chunk_size >= 1
-        super().__init__(
-            dataset,
-            rank_batch_size=rank_batch_size,
-            collator=collator,
-            seed=seed,
-            epoch=epoch,
-            start_index=start_index,
-            max_examples=max_examples,
-            shuffle=shuffle,
-            drop_last=drop_last,
-            work_dir=work_dir,
-            num_threads=num_threads,
-            dp_world_size=dp_world_size,
-            dp_rank=dp_rank,
-            fs_local_rank=fs_local_rank,
-        )
+        super().__init__(dataset, **kwargs)
         self.chunk_size = chunk_size
 
     @property
     def total_size(self) -> int:
-        # If the dataset length is evenly divisible by # of replicas, then there
-        # is no need to drop any data, since the dataset will be split equally.
-        if self.drop_last and len(self.dataset) % self.dp_world_size != 0:  # type: ignore[arg-type]
-            # Split to nearest available length that is evenly divisible by world size.
-            # This is to ensure each rank receives the same amount of data.
-            num_samples = math.ceil(
-                (len(self.dataset) - self.dp_world_size) / self.dp_world_size  # type: ignore[arg-type]
-            )
-        else:
-            num_samples = math.ceil(len(self.dataset) / self.dp_world_size)  # type: ignore[arg-type]
-        return num_samples * self.dp_world_size
+        return self.dp_world_size * (len(self.dataset) // self.dp_world_size)
+
+    def calculate_total_batches(self, global_batch_size: int) -> int:
+        assert isinstance(self.dataset, NumpyFSLDataset)
+        return self.total_size // (global_batch_size // self.dataset.sequence_length)
 
     @property
     def _global_indices_file(self) -> Path:
@@ -282,20 +253,8 @@ class IterableDataset(IterableDatasetBase):
             ).reshape((1, -1))
             indices = indices.reshape(-1)
 
-        if not self.drop_last:
-            # Add extra samples to make it evenly divisible
-            padding_size = self.total_size - len(indices)
-            arrays_to_concatenate = [indices]
-            while padding_size > 0:
-                array_to_concatenate = indices[: min(padding_size, len(indices))]
-                arrays_to_concatenate.append(array_to_concatenate)
-                padding_size -= len(array_to_concatenate)
-                del array_to_concatenate
-            indices = np.concatenate(arrays_to_concatenate)
-        else:
-            # Remove tail of data to make it evenly divisible.
-            indices = indices[: self.total_size]
-        assert len(indices) == self.total_size
+        # Remove tail of data to make it evenly divisible.
+        indices = indices[: self.total_size]
         return indices
 
     def _filter_global_instances(self, indices: np.ndarray) -> np.ndarray:
@@ -331,3 +290,41 @@ class IterableDataset(IterableDatasetBase):
             indices = np.concatenate([indices, left_overs])
 
         return indices
+
+
+class IterableVSLDataset(IterableDatasetBase):
+    """
+    Adapted from PyTorch's ``DistributedSampler``, this wraps a :class:`~olmo_core.data.NumpyVSLDataset`
+    as an ``IterableDataset`` that can be deterministically restarted at any point by setting
+    ``start_index`` accordingly.
+
+    .. warning::
+        This is used internally by the :class:`~olmo_core.train.Trainer`.
+        In general you shouldn't be using this class directly unless you really know what you're
+        doing! It's easy to misuse, resulting in incorrect data order.
+    """
+
+    def __init__(
+        self,
+        dataset: NumpyVSLDataset,
+        **kwargs,
+    ):
+        super().__init__(dataset, **kwargs)
+
+    @property
+    def total_size(self) -> int:
+        raise NotImplementedError
+
+    def calculate_total_batches(self, global_batch_size: int) -> int:
+        raise NotImplementedError
+
+    @property
+    def _global_indices_file(self) -> Path:
+        path = super()._global_indices_file
+        return path.with_stem(path.stem + f"_dataset{self.dataset.fingerprint}")
+
+    def _build_global_indices(self) -> np.ndarray:
+        raise NotImplementedError
+
+    def _filter_global_instances(self, indices: np.ndarray) -> np.ndarray:
+        raise NotImplementedError
