@@ -1,4 +1,6 @@
+import gzip
 from pathlib import Path
+from typing import List
 
 import numpy as np
 
@@ -8,6 +10,7 @@ from olmo_core.data import (
     NumpyVSLDataset,
     TokenizerConfig,
 )
+from olmo_core.data.utils import get_document_indices
 
 
 def test_numpy_fsl_dataset(tmp_path: Path):
@@ -32,22 +35,58 @@ def test_numpy_fsl_dataset(tmp_path: Path):
     assert len(ds) == 8
 
 
+def write_data_file(data: List[int], path: Path, dtype, eos_token_id: int):
+    path.parent.mkdir(exist_ok=True, parents=True)
+    mmap = np.memmap(path, mode="w+", dtype=dtype, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+
+    with gzip.open(path.with_suffix(".csv.gz"), mode="wt") as f:
+        start_idx = 0
+        end_idx = 0
+        for idx, x in enumerate(data):
+            end_idx = idx + 1
+            if x == eos_token_id:
+                f.write(f"{start_idx},{end_idx},other-fields-don't-matter\n")
+                start_idx = end_idx
+        if end_idx > start_idx:
+            f.write(f"{start_idx},{end_idx},other-fields-don't-matter\n")
+
+
 def test_numpy_vsl_dataset(tmp_path: Path):
-    data_path = "s3://ai2-llm/preprocessed/proof-pile-2/v0_decontaminated/algebraic-stack/train/allenai/dolma2-tokenizer/part-15-00000.npy"
-    tokenizer_config = TokenizerConfig.dolma2()
+    eos_token_id = 0
+    pad_token_id = 0
     dtype = np.uint32
+
+    # Write some fake data.
+    data1 = [1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 0]
+    data1_path = tmp_path / "data" / "part-1-00000.npy"
+    write_data_file(data1, data1_path, dtype, eos_token_id)
+    assert get_document_indices(data1_path) == [(0, 9), (9, len(data1))]
+
+    data2 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0]
+    data2_path = tmp_path / "data" / "part-2-00000.npy"
+    write_data_file(data2, data2_path, dtype, eos_token_id)
+    assert get_document_indices(data2_path) == [(0, len(data2))]
+
     ds = NumpyVSLDataset(
-        data_path,
-        pad_token_id=tokenizer_config.pad_token_id,
-        eos_token_id=tokenizer_config.eos_token_id,
-        max_sequence_length=1024,
+        data1_path,
+        data2_path,
+        pad_token_id=pad_token_id,
+        eos_token_id=eos_token_id,
+        max_sequence_length=8,
+        min_sequence_length=2,
         dtype=dtype,
     )
     ds.work_dir = tmp_path
     ds.prepare()
-    assert len(ds) > 71788
-    assert ds[0]["input_ids"].shape[0] <= 1024
-    assert ds[-1]["input_ids"].shape[0] <= 1024
+
+    assert len(ds) == 5
+    assert ds[0]["input_ids"].tolist() == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert ds[1]["input_ids"].tolist() == [1, 2, 3, 4]
+    assert ds[2]["input_ids"].tolist() == [5, 0]
+    assert ds[3]["input_ids"].tolist() == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert ds[4]["input_ids"].tolist() == [9, 10]
 
 
 def test_guess_dtype():

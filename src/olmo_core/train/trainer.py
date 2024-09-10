@@ -1004,11 +1004,13 @@ class Trainer:
             batch.get("instance_mask"),
         )
         if label_mask is not None:
-            labels.masked_fill_(~label_mask, -100)
+            labels.masked_fill_(~label_mask, self.collator.label_ignore_index)
         if attention_mask is not None:
-            labels.masked_fill_(attention_mask == 0.0, -100)
+            labels.masked_fill_(attention_mask == 0.0, self.collator.label_ignore_index)
         if instance_mask is not None:
-            labels.masked_fill_(~instance_mask.unsqueeze(-1), value=-100)
+            labels.masked_fill_(
+                ~instance_mask.unsqueeze(-1), value=self.collator.label_ignore_index
+            )
         return labels[..., 1:].contiguous()
 
     @contextlib.contextmanager
@@ -1047,7 +1049,7 @@ class Trainer:
         ce_loss, z_loss = loss_fn(
             logits_for_loss,
             labels,
-            ignore_index=-100,
+            ignore_index=self.collator.label_ignore_index,
             reduction=loss_reduction,
             compute_z_loss=compute_z_loss,
             z_loss_multiplier=self.z_loss_multiplier or 1e-4,
@@ -1111,7 +1113,7 @@ class Trainer:
         # Generate labels, calculate how many tokens are going to be use in the loss.
         if "labels" not in batch:
             batch["labels"] = self._get_labels(batch)
-        batch_num_tokens_for_loss = (batch["labels"] != -100).sum()
+        batch_num_tokens_for_loss = (batch["labels"] != self.collator.label_ignore_index).sum()
 
         # Split into micro-batches.
         micro_batches = split_batch(batch, self.microbatch_size)

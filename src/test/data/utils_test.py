@@ -1,14 +1,10 @@
-import numpy as np
 import torch
 
-from olmo_core.data import TokenizerConfig
 from olmo_core.data.utils import (
     get_cumulative_document_lengths,
-    get_document_indices,
     get_document_lengths,
     melt_batch,
 )
-from olmo_core.io import get_bytes_range
 
 
 def test_melt_batch():
@@ -22,20 +18,6 @@ def test_melt_batch():
     assert new_batch["input_ids"].shape == (6, 4)
     assert new_batch["index"].tolist() == [0, 0, 0, 1, 1, 1]
     assert new_batch["metadata"] == [{"path": "x"}] * 3 + [{"path": "y"}] * 3
-
-
-def test_get_document_indices():
-    dtype = np.uint32
-    item_size = dtype(0).itemsize
-    data_path = "s3://ai2-llm/preprocessed/proof-pile-2/v0_decontaminated/algebraic-stack/train/allenai/dolma2-tokenizer/part-15-00000.npy"
-    tokenizer_config = TokenizerConfig.dolma2()
-
-    indices = get_document_indices(data_path)
-
-    start_idx, end_idx = indices[1]
-    buffer = get_bytes_range(data_path, start_idx * item_size, (end_idx - start_idx) * item_size)
-    array = np.frombuffer(buffer, dtype=dtype)
-    assert array[-1] == tokenizer_config.eos_token_id
 
 
 def test_get_document_lengths():

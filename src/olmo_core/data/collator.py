@@ -28,6 +28,7 @@ class DataCollator:
 
     pad_token_id: int
     pad_direction: PaddingDirection = PaddingDirection.right
+    label_ignore_index: int = -100
 
     def __call__(self, items: Union[List[Dict[str, Any]], List[torch.Tensor]]) -> Dict[str, Any]:
         assert items
