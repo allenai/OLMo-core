@@ -598,6 +598,7 @@ class Trainer:
                 "fingerprint": state_dict.pop("dataset_fingerprint"),
                 "sequence_length": state_dict.pop("train_sequence_length"),
                 "max_target_sequence_length": state_dict.pop("max_train_sequence_length"),
+                "instances_processed": state_dict.pop("global_train_examples_seen_this_epoch"),
             }
 
         if (data_seed := state_dict.get("data_seed", self.data_seed)) != self.data_seed:
