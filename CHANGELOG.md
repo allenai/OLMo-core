@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Renamed `MemMapDataset` to `NumpyFSLDataset`.
+- Batch size is now specified in tokens, not instances.
 
 ## [v1.0.6](https://github.com/allenai/OLMo-core/releases/tag/v1.0.6) - 2024-09-05
 

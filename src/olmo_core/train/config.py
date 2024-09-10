@@ -28,7 +28,7 @@ class TrainerConfig(Config):
 
     save_folder: str
     global_batch_size: int
-    microbatch_size: int
+    rank_microbatch_size: int
 
     work_dir: Optional[str] = None
     load_path: Optional[str] = None
@@ -100,8 +100,6 @@ class TrainerConfig(Config):
             dataset=dataset,
             collator=collator,
             checkpointer=checkpointer,
-            train_sequence_length=dataset.sequence_length,
-            max_train_sequence_length=dataset.max_target_sequence_length,
             autocast_precision=None if autocast_precision is None else autocast_precision.as_pt(),
             work_dir=Path(work_dir),
             device=torch.device(device) if device is not None else get_default_device(),

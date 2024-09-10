@@ -3,7 +3,7 @@ from typing import List
 import numpy as np
 import pytest
 
-from olmo_core.data import IterableDataset, NumpyFSLDataset
+from olmo_core.data import DataCollator, IterableDataset, NumpyFSLDataset
 
 
 @pytest.mark.parametrize(
@@ -32,6 +32,8 @@ def test_restart_with_seq_len_warmup(tmp_path, shuffle):
         )
         iter_dataset = IterableDataset(
             dataset,
+            rank_batch_size=seq_len,
+            collator=DataCollator(pad_token_id=-1),
             shuffle=shuffle,
             chunk_size=max_target_sequence_length // seq_len,
             start_index=start_index,
@@ -39,7 +41,7 @@ def test_restart_with_seq_len_warmup(tmp_path, shuffle):
         )
         all_tokens = []
         for instance in iter_dataset:
-            all_tokens.extend(instance["input_ids"].tolist())
+            all_tokens.extend(instance["input_ids"].flatten().tolist())
         return all_tokens
 
     assert get_all_tokens(2) == get_all_tokens(4) == get_all_tokens(8)

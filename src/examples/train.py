@@ -67,8 +67,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     trainer_config = (
         TrainerConfig(
             save_folder=f"/tmp/{run_name}",
-            global_batch_size=256,
-            microbatch_size=16,
+            global_batch_size=256 * dataset_config.sequence_length,
+            rank_microbatch_size=16 * dataset_config.sequence_length,
             autocast_precision=DType.bfloat16,
             save_overwrite=True,
             data_loader_workers=4,

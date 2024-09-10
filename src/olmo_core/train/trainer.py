@@ -98,14 +98,10 @@ class TrainerStateDict(TypedDict):
     global_step: int
     global_train_tokens_seen: int
     global_train_tokens_seen_this_epoch: int
-    global_train_examples_seen_this_epoch: int
-    dataset_fingerprint: str
-    dataset_fingerprint_version: str
+    dataset: Dict[str, Any]
     data_seed: int
     epoch: int
     world_size: int
-    train_sequence_length: int
-    max_train_sequence_length: Optional[int]
     rng: Dict[str, Any]
 
 
@@ -175,37 +171,14 @@ class Trainer:
     The duration to train for.
     """
 
-    train_sequence_length: int
-    """
-    Training sequence length.
-
-    .. important::
-        If you're using a :class:`~olmo_core.data.NumpyFSLDataset`, the value here must match
-        :data:`NumpyFSLDataset.sequence_length <olmo_core.data.NumpyFSLDataset.sequence_length>`.
-
-    .. seealso::
-        :data:`max_train_sequence_length`
-    """
-
     global_batch_size: int
     """
-    Global training batch size (in terms of instances, not tokens).
+    Global training batch size in tokens.
     """
 
-    microbatch_size: int
+    rank_microbatch_size: int
     """
-    Microbatch size per rank, i.e. the number of instances to process at a time from each rank.
-    """
-
-    max_train_sequence_length: Optional[int] = None
-    """
-    Set this to the maximum target train sequence length if you're planning on changing
-    the train sequence length during a training run, e.g. for sequence length warm-up.
-
-    .. important::
-        If set this must be a multiple of :data:`train_sequence_length`, and if you're using
-        a :class:`~olmo_core.data.NumpyFSLDataset`, the value here must match
-        :data:`NumpyFSLDataset.max_target_sequence_length <olmo_core.data.NumpyFSLDataset.max_target_sequence_length>`.
+    Microbatch size in tokens per rank, i.e. the number of tokens to process at a time from each rank.
     """
 
     save_overwrite: bool = False
@@ -409,20 +382,13 @@ class Trainer:
         # Make sure global batch size is divisible by microbatch size times world size
         if (
             self.global_batch_size
-            % (self.microbatch_size * (ws := get_world_size(self.dp_process_group)))
+            % (self.rank_microbatch_size * (ws := get_world_size(self.dp_process_group)))
             != 0
         ):
             raise OLMoConfigurationError(
                 f"global batch size ({self.global_batch_size}) must be divisible by "
-                f"micro-batch size ({self.microbatch_size}) x DP world size ({ws})"
+                f"micro-batch size ({self.rank_microbatch_size}) x DP world size ({ws})"
             )
-
-        # Other validation.
-        if isinstance(self.dataset, NumpyFSLDataset):
-            if self.dataset.sequence_length != self.train_sequence_length:
-                raise OLMoConfigurationError("trainer and dataset sequence length do not match")
-            if self.dataset.max_target_sequence_length != self.max_train_sequence_length:
-                raise OLMoConfigurationError("trainer and dataset max sequence length do not match")
 
         # Prepare dataset.
         if isinstance(self.dataset, NumpyDatasetBase):
@@ -431,6 +397,9 @@ class Trainer:
 
     @property
     def rank_batch_size(self) -> int:
+        """
+        The number of tokens in each training batch per rank.
+        """
         if self._rank_batch_size is None:
             assert self.global_batch_size % get_world_size(self.dp_process_group) == 0
             self._rank_batch_size = self.global_batch_size // get_world_size(self.dp_process_group)
@@ -464,7 +433,7 @@ class Trainer:
         """
         The number of tokens in each training batch.
         """
-        return self.global_batch_size * self.train_sequence_length
+        return self.global_batch_size
 
     @property
     def steps_per_epoch(self) -> int:
@@ -474,7 +443,7 @@ class Trainer:
         dp_world_size = get_world_size(self.dp_process_group)
         if isinstance(self.dataset, NumpyFSLDataset):
             num_samples = dp_world_size * (len(self.dataset) // dp_world_size)
-            return num_samples // self.global_batch_size
+            return num_samples // (self.global_batch_size // self.dataset.sequence_length)
         else:
             raise NotImplementedError
 
@@ -611,14 +580,10 @@ class Trainer:
             "global_step": self.global_step,
             "global_train_tokens_seen": self.global_train_tokens_seen,
             "global_train_tokens_seen_this_epoch": self.global_train_tokens_seen_this_epoch,
-            "global_train_examples_seen_this_epoch": self.global_train_examples_seen_this_epoch,
-            "dataset_fingerprint": self.dataset.fingerprint,
-            "dataset_fingerprint_version": self.dataset.fingerprint_version,
+            "dataset": self.dataset.state_dict(self.global_train_examples_seen_this_epoch),
             "data_seed": self.data_seed,
             "epoch": self.epoch,
             "world_size": get_world_size(),  # global world size here on purpose
-            "train_sequence_length": self.train_sequence_length,
-            "max_train_sequence_length": self.max_train_sequence_length,
             "rng": EnvRngStates.current_state().as_dict(),
         }
 
@@ -626,23 +591,14 @@ class Trainer:
         """
         Load trainer state (not model or optimizer state).
         """
-        if state_dict.get("max_train_sequence_length") != self.max_train_sequence_length:
-            raise RuntimeError(
-                "Restoring trainer state with a different 'max_train_sequence_length' is not supported"
-            )
-
-        if state_dict.get("dataset_fingerprint_version") != self.dataset.fingerprint_version:
-            log.warning(
-                "Dataset fingerprint version does not match the version in the checkpoint, "
-                "this could mean the data has changed"
-            )
-        elif (
-            state_dict.get("dataset_fingerprint", self.dataset.fingerprint)
-            != self.dataset.fingerprint
-        ):
-            raise RuntimeError(
-                "Restoring trainer state with a different dataset is not supported! (fingerprint doesn't match)"
-            )
+        # For backwards compat.
+        if "dataset" not in state_dict:
+            state_dict["dataset"] = {
+                "fingerprint_version": state_dict.pop("dataset_fingerprint_version"),
+                "fingerprint": state_dict.pop("dataset_fingerprint"),
+                "sequence_length": state_dict.pop("train_sequence_length"),
+                "max_target_sequence_length": state_dict.pop("max_train_sequence_length"),
+            }
 
         if (data_seed := state_dict.get("data_seed", self.data_seed)) != self.data_seed:
             log.warning(
@@ -651,32 +607,13 @@ class Trainer:
             )
             self.data_seed = data_seed
 
+        self.global_train_examples_seen_this_epoch = self.dataset.load_state_dict(
+            state_dict["dataset"]
+        )
         self.global_step = state_dict["global_step"]
         self.global_train_tokens_seen = state_dict["global_train_tokens_seen"]
         self.global_train_tokens_seen_this_epoch = state_dict["global_train_tokens_seen_this_epoch"]
         self.epoch = state_dict["epoch"]
-
-        if self.train_sequence_length == state_dict["train_sequence_length"]:
-            self.global_train_examples_seen_this_epoch = state_dict[
-                "global_train_examples_seen_this_epoch"
-            ]
-        elif self.train_sequence_length % state_dict["train_sequence_length"] == 0:
-            # Adjust for current larger sequence length.
-            ratio = self.train_sequence_length // state_dict["train_sequence_length"]
-            self.global_train_examples_seen_this_epoch = (
-                state_dict["global_train_examples_seen_this_epoch"] // ratio
-            )
-        elif state_dict["train_sequence_length"] % self.train_sequence_length == 0:
-            # Adjust for current smaller sequence length.
-            ratio = state_dict["train_sequence_length"] // self.train_sequence_length
-            self.global_train_examples_seen_this_epoch = (
-                state_dict["global_train_examples_seen_this_epoch"] * ratio
-            )
-        else:
-            raise RuntimeError(
-                "You can only restore trainer state from a sequence length that is a multiple "
-                "of the current configured sequence length, or vice versa"
-            )
 
         log.info(f"Will resume training from step {self.global_step}, epoch {self.epoch}")
 
@@ -1116,7 +1053,7 @@ class Trainer:
         batch_num_tokens_for_loss = (batch["labels"] != self.collator.label_ignore_index).sum()
 
         # Split into micro-batches.
-        micro_batches = split_batch(batch, self.microbatch_size)
+        micro_batches = split_batch(batch, batch["input_ids"].numel() // self.rank_microbatch_size)
         num_micro_batches = len(micro_batches)
 
         # In case this helps with memory utilization.
@@ -1163,32 +1100,34 @@ class Trainer:
             self.record_metric(OPTIM_STEP_SKIPPED_METRIC, self.optim.step_skipped)
 
     def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:
-        if not isinstance(self.dataset, NumpyFSLDataset):
-            raise NotImplementedError
-
         iterable_dataset = IterableDataset(
             self.dataset,
+            rank_batch_size=self.rank_batch_size,
+            collator=self.collator,
             seed=self.data_seed,
             epoch=self.epoch,
             start_index=self.global_train_examples_seen_this_epoch,
-            rank_batch_size=self.rank_batch_size,
             dp_world_size=get_world_size(self.dp_process_group),
             dp_rank=get_rank(self.dp_process_group),
             fs_local_rank=get_fs_local_rank(),
             drop_last=True,
             work_dir=self.work_dir,
-            chunk_size=(self.max_train_sequence_length or self.train_sequence_length)
-            // self.train_sequence_length,
         )
+
+        if (
+            isinstance(self.dataset, NumpyFSLDataset)
+            and self.dataset.max_target_sequence_length is not None
+        ):
+            iterable_dataset.chunk_size = (
+                self.dataset.max_target_sequence_length // self.dataset.sequence_length
+            )
 
         iterable_dataset.build_and_save_global_indices()
         barrier()
 
         data_loader = DataLoader(
             iterable_dataset,
-            batch_size=self.rank_batch_size,
-            drop_last=True,
-            collate_fn=self.collator,
+            batch_size=None,
             num_workers=self.data_loader_workers,
             pin_memory=True,
             prefetch_factor=self.data_loader_prefetch_factor,
@@ -1217,16 +1156,15 @@ class Trainer:
         for batch in self._iter_batches():
             # Bookkeeping.
             # NOTE: To track the global batch size / number of tokens per batch we make the
-            # assumption that all batches see the same number of tokens, which should always be
-            # the case except for potentially the last batch in an epoch if drop_last=False.
+            # assumption that all ranks see the same number of instances and the same number
+            # of tokens per step, which should always be the case for training efficiency.
             # Alternatively we'd have to use a distributed collective which isn't worth it.
-            batch_size, seq_len = batch["input_ids"].shape
-            assert seq_len == self.train_sequence_length
-            assert batch_size == self.rank_batch_size
+            instances, seq_len = batch["input_ids"].shape
+            assert instances * seq_len == self.rank_batch_size
             self.global_step += 1
-            self.global_train_tokens_seen_this_epoch += self.global_batch_size * seq_len
-            self.global_train_examples_seen_this_epoch += self.global_batch_size
-            self.global_train_tokens_seen += self.global_batch_size * seq_len
+            self.global_train_tokens_seen_this_epoch += self.global_batch_size
+            self.global_train_examples_seen_this_epoch += self.global_batch_size // seq_len
+            self.global_train_tokens_seen += self.global_batch_size
 
             for callback in self.callbacks.values():
                 callback.pre_step(batch)

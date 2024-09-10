@@ -1,7 +1,7 @@
 import logging
 import math
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Sequence, Union
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Union
 
 import numpy as np
 import torch
@@ -9,9 +9,9 @@ import torch.utils.data
 
 from ..aliases import PathOrStr
 from ..utils import roundrobin, threaded_generator
-
-if TYPE_CHECKING:
-    from .numpy_dataset import NumpyFSLDataset
+from .collator import DataCollator
+from .numpy_dataset import NumpyFSLDataset
+from .utils import iter_batched
 
 __all__ = ["IterableDataset"]
 
@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 
 class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
     """
-    Adapted from PyTorch's ``DistributedSampler``, this wraps a ``Dataset`` or an arbitrary sequence
+    Adapted from PyTorch's ``DistributedSampler``, this wraps a :class:`~olmo_core.data.NumpyDatasetBase`
     as an ``IterableDataset`` that can be deterministically restarted at any point by setting
     ``start_index`` accordingly.
 
@@ -36,9 +36,10 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
             Sequence[List[int]], Sequence[torch.Tensor], Sequence[Dict[str, Any]], "NumpyFSLDataset"
         ],
         *,
+        rank_batch_size: int,
+        collator: DataCollator,
         seed: int = 0,
         epoch: int = 0,
-        rank_batch_size: Optional[int] = None,
         start_index: int = 0,
         max_examples: Optional[int] = None,
         shuffle: bool = True,
@@ -51,6 +52,8 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
         chunk_size: int = 1,
     ):
         self.dataset = dataset
+        self.rank_batch_size = rank_batch_size
+        self.collator = collator
         self.seed = seed
         self.epoch = epoch
         self.start_index = start_index
@@ -58,7 +61,6 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
         self.shuffle = shuffle
         self.drop_last = drop_last
         self.num_threads = num_threads
-        self.rank_batch_size = rank_batch_size
         self.global_indices_file: Optional[Path] = None
         self.work_dir = work_dir
         self.dp_world_size = dp_world_size
@@ -140,6 +142,12 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         indices = self.get_global_indices()
 
+        instances_per_rank: int
+        if isinstance(self.dataset, NumpyFSLDataset):
+            instances_per_rank = self.rank_batch_size // self.dataset.sequence_length
+        else:
+            raise NotImplementedError
+
         # Truncate to max_examples.
         if self.max_examples is not None:
             assert self.max_examples % self.dp_world_size == 0
@@ -162,14 +170,13 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
         if worker_info is not None:
             # Note that each data loading worker gathers a whole batch at a time, and the workers
             # are called round-robin by rank. So to slice these up in a way that preserves order, regardless
-            # of the number of workers, we should give worker 0 the first chunk of `rank_batch_size` indices,
-            # worker 1 the 2nd chunk of `device_train_batch_size` indices, etc...
-            assert self.rank_batch_size is not None
-            truncated_size = self.rank_batch_size * (len(indices) // self.rank_batch_size)
+            # of the number of workers, we should give worker 0 the first chunk of `instances_per_rank` indices,
+            # worker 1 the 2nd chunk of `instances_per_rank` indices, etc...
+            truncated_size = instances_per_rank * (len(indices) // instances_per_rank)
             left_overs = indices[truncated_size + worker_info.id :: worker_info.num_workers]
             indices = (
                 indices[:truncated_size]
-                .reshape((-1, self.rank_batch_size))[worker_info.id :: worker_info.num_workers]  # type: ignore
+                .reshape((-1, instances_per_rank))[worker_info.id :: worker_info.num_workers]  # type: ignore
                 .reshape((-1,))
             )
             indices = np.concatenate([indices, left_overs])
@@ -179,11 +186,11 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
             num_threads = 4
 
         # Finally, potentially slice by threads.
+        instance_iterator: Iterator[Dict[str, Any]]
         if num_threads:
-            assert self.rank_batch_size is not None
             # In order to stay ahead of training the total queue size (sum across all threads)
             # should be bigger than the batch size.
-            queue_size = math.ceil(self.rank_batch_size * 2 / num_threads)
+            queue_size = math.ceil(instances_per_rank * 2 / num_threads)
 
             thread_generators = []
             for i in range(num_threads):
@@ -194,9 +201,13 @@ class IterableDataset(torch.utils.data.IterableDataset[Dict[str, Any]]):
                     )
                 )
 
-            return (x for x in roundrobin(*thread_generators))
+            instance_iterator = (x for x in roundrobin(*thread_generators))
         else:
-            return (self._get_dataset_item(int(idx)) for idx in indices)
+            instance_iterator = (self._get_dataset_item(int(idx)) for idx in indices)
+
+        return (
+            self.collator(batch) for batch in iter_batched(instance_iterator, instances_per_rank)
+        )
 
     def _get_dataset_item(self, idx: int) -> Dict[str, Any]:
         item = self.dataset[idx]
