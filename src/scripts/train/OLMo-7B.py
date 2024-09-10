@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    return TransformerConfig.llama2_7B(
+    return TransformerConfig.olmo_7B(
         vocab_size=common.tokenizer.padded_vocab_size(),
         compile=True,
         dp_config=DataParallelConfig(
@@ -60,6 +60,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=10,
             cancel_check_interval=1,
             z_loss_multiplier=1e-5,
+            fused_loss=True,
         )
         .with_callback(
             "lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=2000))
