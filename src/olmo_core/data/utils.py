@@ -1,6 +1,8 @@
 import gzip
 import math
 import os
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Dict, Generator, Iterable, List, Optional, Tuple, Type, Union
 
 import numpy as np
@@ -240,3 +242,24 @@ def iter_batched(
 
     if batch:
         yield tuple(batch)
+
+
+@contextmanager
+def memmap_to_write(
+    path: Path,
+    *,
+    shape: Tuple[int, ...],
+    dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64], Type[np.bool_]],
+) -> Generator[np.ndarray, None, None]:
+    """
+    A context manager for safely writing a numpy memory-mapped array to disk.
+    The memory-mapped ndarray returned by the context manager will be mapped to a temporary
+    file until the context exists successfully.
+    """
+    path.parent.mkdir(exist_ok=True, parents=True)
+    tmp_path = path.with_suffix(".npy.tmp")
+    mmap = np.memmap(tmp_path, dtype=dtype, mode="w+", shape=shape)
+    yield mmap
+    mmap.flush()
+    del mmap
+    tmp_path.replace(path)

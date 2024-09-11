@@ -17,7 +17,7 @@ from ..exceptions import OLMoConfigurationError
 from ..utils import roundrobin, threaded_generator
 from .collator import DataCollator
 from .numpy_dataset import NumpyDatasetBase, NumpyFSLDataset, NumpyVSLDataset
-from .utils import iter_batched, load_array_slice
+from .utils import iter_batched, load_array_slice, memmap_to_write
 
 __all__ = [
     "IterableDatasetBase",
@@ -136,17 +136,11 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
                     f"Saving global data order indices for seed {self.seed} and epoch {self.epoch} "
                     f"to '{self._global_indices_file}'..."
                 )
-                self._global_indices_file.parent.mkdir(parents=True, exist_ok=True)
                 global_indices = self._build_global_indices()
-                global_indices_mmap = np.memmap(
-                    self._global_indices_file,
-                    dtype=np.uint32,
-                    mode="w+",
-                    shape=(len(global_indices),),
-                )
-                global_indices_mmap[:] = global_indices
-                global_indices_mmap.flush()
-                del global_indices_mmap
+                with memmap_to_write(
+                    self._global_indices_file, shape=(len(global_indices),), dtype=np.uint32
+                ) as global_indices_mmap:
+                    global_indices_mmap[:] = global_indices
                 log.info(f"Global data order indices saved to '{self._global_indices_file}'")
         barrier()
 
@@ -521,17 +515,11 @@ class IterableVSLDataset(IterableDatasetBase):
                     f"Saving bucket indices for bucket {seq_len}, seed {self.seed}, and epoch {self.epoch} "
                     f"to '{bucket_indices_file}'..."
                 )
-                bucket_indices_file.parent.mkdir(parents=True, exist_ok=True)
                 bucket_indices = self._build_bucket_indices(seq_len, num_instances)
-                bucket_indices_mmap = np.memmap(
-                    bucket_indices_file,
-                    dtype=np.uint32,
-                    mode="w+",
-                    shape=(num_instances,),
-                )
-                bucket_indices_mmap[:] = bucket_indices
-                bucket_indices_mmap.flush()
-                del bucket_indices_mmap
+                with memmap_to_write(
+                    bucket_indices_file, shape=(num_instances,), dtype=np.uint32
+                ) as bucket_indices_mmap:
+                    bucket_indices_mmap[:] = bucket_indices
                 log.info(f"Bucket indices saved to '{bucket_indices_file}'")
         super().build_and_save_global_indices()
 

@@ -28,6 +28,7 @@ from .utils import (
     get_document_lengths,
     iter_document_indices,
     load_array_slice_into_tensor,
+    memmap_to_write,
 )
 
 __all__ = [
@@ -624,8 +625,8 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         if self.fs_local_rank == 0:
             log.info("Gathering dataset document indices and buckets...")
             self.map(self._write_document_indices, max_workers=8)
-            instance_lengths = self._write_instance_lengths()
-            self._write_instance_buckets(instance_lengths)
+            self._write_instance_lengths()
+            self._write_instance_buckets(self.get_instance_lengths())
         barrier()
         len(self)
 
@@ -685,7 +686,6 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     def _write_document_indices(self, path: PathOrStr) -> Path:
         indices_path = self._get_document_indices_path(path)
         if not indices_path.is_file():
-            indices_path.parent.mkdir(exist_ok=True, parents=True)
             indices = []
             for start_idx, end_idx in iter_document_indices(path):
                 bin_decomp = capped_powers_of_2(end_idx - start_idx, self.max_sequence_length)
@@ -696,33 +696,26 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                     indices.append(start_idx + x)
                     start_idx += x
 
-            indices_mmap = np.memmap(
-                indices_path, dtype=self.indices_dtype, mode="w+", shape=(len(indices),)
-            )
-            indices_mmap[:] = indices
-            indices_mmap.flush()
-            del indices_mmap
+            with memmap_to_write(
+                indices_path, dtype=self.indices_dtype, shape=(len(indices),)
+            ) as indices_mmap:
+                indices_mmap[:] = indices
+
         return indices_path
 
-    def _write_instance_lengths(self) -> np.ndarray:
+    def _write_instance_lengths(self):
         instance_lengths_path = self._get_instance_lengths_path()
         if not instance_lengths_path.is_file():
-            instance_lengths_path.parent.mkdir(exist_ok=True, parents=True)
-            instance_lengths = np.memmap(
-                instance_lengths_path,
-                dtype=self.lengths_dtype,
-                mode="w+",
-                shape=(len(self),),
-            )
-            for path, (offset_start, offset_end) in zip(self.paths, self.offsets):
-                indices_path = self._get_document_indices_path(path)
-                indices_mmap = np.memmap(indices_path, dtype=self.indices_dtype, mode="r")
-                instance_lengths[offset_start:offset_end] = indices_mmap[1::2] - indices_mmap[::2]
-                del indices_mmap
-            instance_lengths.flush()
-            return instance_lengths
-        else:
-            return self.get_instance_lengths()
+            with memmap_to_write(
+                instance_lengths_path, dtype=self.lengths_dtype, shape=(len(self),)
+            ) as instance_lengths:
+                for path, (offset_start, offset_end) in zip(self.paths, self.offsets):
+                    indices_path = self._get_document_indices_path(path)
+                    indices_mmap = np.memmap(indices_path, dtype=self.indices_dtype, mode="r")
+                    instance_lengths[offset_start:offset_end] = (
+                        indices_mmap[1::2] - indices_mmap[::2]
+                    )
+                    del indices_mmap
 
     def _write_instance_buckets(self, instance_lengths: np.ndarray):
         for seq_len in self.all_sequence_lengths:
@@ -730,13 +723,12 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
             if not bucket_path.is_file():
                 bucket_path.parent.mkdir(exist_ok=True, parents=True)
                 instance_indices = (instance_lengths == seq_len).nonzero()[0]
-                bucket = np.memmap(
+                with memmap_to_write(
                     bucket_path,
                     dtype=self.indices_dtype,
-                    mode="w+",
                     shape=instance_indices.shape,
-                )
-                bucket[:] = instance_indices
+                ) as bucket:
+                    bucket[:] = instance_indices
 
     def get_instance_lengths(self) -> np.ndarray:
         """
