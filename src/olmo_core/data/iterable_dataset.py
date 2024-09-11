@@ -2,8 +2,9 @@ import logging
 import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -91,7 +92,7 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         raise NotImplementedError
 
     @abstractmethod
-    def _get_local_instance_indices(self, indices: np.ndarray) -> np.ndarray:
+    def _get_local_instance_indices(self, indices: np.ndarray) -> Iterable[int]:
         """
         Filter global instance indices down to the local worker indices.
         """
@@ -198,7 +199,10 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
 
             thread_generators = []
             for i in range(num_threads):
-                generator = (self._get_dataset_item(int(idx)) for idx in indices[i::num_threads])
+                generator = (
+                    self._get_dataset_item(int(idx))
+                    for idx in islice(indices, i, None, num_threads)
+                )
                 thread_generators.append(
                     threaded_generator(
                         generator, maxsize=queue_size, thread_name=f"data thread {i}"
@@ -300,7 +304,7 @@ class IterableFSLDataset(IterableDatasetBase):
         indices = indices[: self.total_size]
         return indices
 
-    def _get_local_instance_indices(self, indices: np.ndarray) -> np.ndarray:
+    def _get_local_instance_indices(self, indices: np.ndarray) -> Iterable[int]:
         assert isinstance(self.dataset, NumpyFSLDataset)
 
         num_batch_instances_per_rank = self.rank_batch_size // self.dataset.sequence_length
@@ -366,6 +370,10 @@ class VSLCurriculum(Config):
     def batches_per_bucket(
         self, dataset: NumpyVSLDataset, global_batch_size: int
     ) -> List[Tuple[int, int]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def sort_batch_indices(self, batch_indices: np.ndarray) -> np.ndarray:
         raise NotImplementedError
 
 
@@ -457,7 +465,9 @@ class IterableVSLDataset(IterableDatasetBase):
     def _build_global_indices(self) -> np.ndarray:
         raise NotImplementedError
 
-    def _get_local_instance_indices(self, indices: np.ndarray) -> np.ndarray:
+    def _get_local_instance_indices(self, indices: np.ndarray) -> Iterable[int]:
+        # NOTE: indices are *batch* indices at this point. We need to translate those into
+        # instance indices.
         raise NotImplementedError
 
     def state_dict(self, *, batches_processed: int, tokens_processed: int) -> Dict[str, Any]:
