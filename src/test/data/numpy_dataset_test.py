@@ -1,4 +1,3 @@
-import gzip
 from pathlib import Path
 from typing import List
 
@@ -10,7 +9,7 @@ from olmo_core.data import (
     NumpyVSLDataset,
     TokenizerConfig,
 )
-from olmo_core.data.utils import get_document_indices
+from olmo_core.data.utils import get_document_indices, write_document_indices
 
 
 def test_numpy_fsl_dataset(tmp_path: Path):
@@ -40,17 +39,7 @@ def write_data_file(data: List[int], path: Path, dtype, eos_token_id: int):
     mmap = np.memmap(path, mode="w+", dtype=dtype, shape=(len(data),))
     mmap[:] = data
     mmap.flush()
-
-    with gzip.open(path.with_suffix(".csv.gz"), mode="wt") as f:
-        start_idx = 0
-        end_idx = 0
-        for idx, x in enumerate(data):
-            end_idx = idx + 1
-            if x == eos_token_id:
-                f.write(f"{start_idx},{end_idx},other-fields-don't-matter\n")
-                start_idx = end_idx
-        if end_idx > start_idx:
-            f.write(f"{start_idx},{end_idx},other-fields-don't-matter\n")
+    write_document_indices(path, dtype=dtype, eos_token_id=eos_token_id)
 
 
 def test_numpy_vsl_dataset(tmp_path: Path):

@@ -3,7 +3,18 @@ import math
 import os
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Generator, Iterable, List, Optional, Tuple, Type, Union
+from typing import (
+    Any,
+    Dict,
+    Generator,
+    Iterable,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+    Union,
+)
 
 import numpy as np
 import torch
@@ -117,6 +128,23 @@ def truncate_batch(batch: Dict[str, Any], target_sequence_length: int) -> Dict[s
             raise RuntimeError(f"unexpected item in batch: '{key}={value}'")
 
     return new_batch
+
+
+def write_document_indices(data_path: Path, *, dtype, eos_token_id: int) -> Path:
+    """
+    Given a local ".npy" data path from the Dolma toolkit, write a metadata file with start/end indices
+    of each document within the array.
+    """
+    token_ids = np.memmap(data_path, mode="r", dtype=dtype)
+    eos_token_locations = (token_ids == eos_token_id).nonzero()[0]
+    metadata_path = data_path.with_suffix(".csv.gz")
+    with gzip.open(metadata_path, mode="wt") as f:
+        start_idx = 0
+        for eos_token_location in eos_token_locations:
+            end_idx = eos_token_location + 1
+            f.write(f"{start_idx},{end_idx}\n")
+            start_idx = end_idx
+    return metadata_path
 
 
 def iter_document_indices(
@@ -263,3 +291,23 @@ def memmap_to_write(
     mmap.flush()
     del mmap
     tmp_path.replace(path)
+
+
+def divide_into_buckets(n: int, b: int) -> List[int]:
+    buckets: List[int] = []
+    while (buckets_remaining := b - len(buckets)) > 0:
+        c = math.ceil(n / buckets_remaining)
+        n -= c
+        buckets.append(c)
+    return buckets
+
+
+def chunk_array(arr: np.ndarray, chunk_sizes: Sequence[int]) -> List[np.ndarray]:
+    assert len(arr.shape) == 1
+    assert sum(chunk_sizes) == arr.shape[0]
+    offset = 0
+    chunks = []
+    for n in chunk_sizes:
+        chunks.append(arr[offset : offset + n])
+        offset += n
+    return chunks

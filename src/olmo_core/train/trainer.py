@@ -1235,6 +1235,6 @@ class Trainer:
 
         # Bookkeeping
         self.epoch += 1
-        self.global_train_tokens_seen_this_epoch = 0
         self.global_train_steps_this_epoch = 0
+        self.global_train_tokens_seen_this_epoch = 0
         self.iterable_dataset.reset()
