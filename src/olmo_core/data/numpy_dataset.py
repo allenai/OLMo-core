@@ -212,33 +212,6 @@ class NumpyDatasetBase(ABC):
         """
         raise NotImplementedError
 
-    def state_dict(self, instances_processed: int) -> Dict[str, Any]:
-        """
-        Given the number of instances processed so far (e.g. during training), get a state dict
-        for checkpointing.
-        """
-        return {
-            "fingerprint_version": self.fingerprint_version,
-            "fingerprint": self.fingerprint,
-            "instances_processed": instances_processed,
-        }
-
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> int:
-        """
-        Given a state dict from :meth:`state_dict()`, return the number of instances processed
-        so far (e.g. during training).
-        """
-        if state_dict["fingerprint_version"] != self.fingerprint_version:
-            log.warning(
-                "Dataset fingerprint version does not match the version in the checkpoint, "
-                "this could mean the data has changed"
-            )
-        elif state_dict["fingerprint"] != self.fingerprint:
-            raise RuntimeError(
-                "Restoring state from a different dataset is not supported! (fingerprint doesn't match)"
-            )
-        return state_dict["instances_processed"]
-
 
 @dataclass
 class NumpyFSLDatasetConfig(Config):
@@ -488,36 +461,6 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
             out["doc_lens"] = get_document_lengths(input_ids, self.eos_token_id)
 
         return out
-
-    def state_dict(self, instances_processed: int) -> Dict[str, Any]:
-        state_dict = super().state_dict(instances_processed)
-        state_dict["sequence_length"] = self.sequence_length
-        state_dict["max_target_sequence_length"] = self.max_target_sequence_length
-        return state_dict
-
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> int:
-        instances_processed = super().load_state_dict(state_dict)
-
-        if state_dict["max_target_sequence_length"] != self.max_target_sequence_length:
-            raise RuntimeError(
-                "Restoring dataset state with a different 'max_target_sequence_length' is not supported"
-            )
-
-        if self.sequence_length == state_dict["sequence_length"]:
-            return instances_processed
-        elif self.sequence_length % state_dict["sequence_length"] == 0:
-            # Adjust for current larger sequence length.
-            ratio = self.sequence_length // state_dict["sequence_length"]
-            return instances_processed // ratio
-        elif state_dict["sequence_length"] % self.sequence_length == 0:
-            # Adjust for current smaller sequence length.
-            ratio = state_dict["sequence_length"] // self.sequence_length
-            return instances_processed * ratio
-        else:
-            raise RuntimeError(
-                "You can only restore dataset state from a sequence length that is a multiple "
-                "of the current configured sequence length, or vice versa."
-            )
 
     @property
     def _sizes_and_offsets(self) -> Tuple[Tuple[int, ...], Tuple[Tuple[int, int], ...]]:

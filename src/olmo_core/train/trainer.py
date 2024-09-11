@@ -35,6 +35,7 @@ from ..data import (
     NumpyDatasetBase,
     NumpyFSLDataset,
     NumpyVSLDataset,
+    VSLCurriculum,
 )
 from ..data.utils import split_batch
 from ..distributed.utils import (
@@ -105,6 +106,7 @@ class LoadStrategy(StrEnum):
 class TrainerStateDict(TypedDict):
     global_step: int
     global_train_tokens_seen: int
+    global_train_steps_this_epoch: int
     global_train_tokens_seen_this_epoch: int
     dataset: Dict[str, Any]
     data_seed: int
@@ -194,6 +196,11 @@ class Trainer:
     Whether to overwrite existing files/checkpoints in the :data:`save_folder`.
     """
 
+    vsl_curriculum: Optional[VSLCurriculum] = None
+    """
+    The variable sequence length curriculum.
+    """
+
     load_path: Optional[PathOrStr] = None
     """
     Where to load a checkpoint from prior to training.
@@ -263,7 +270,8 @@ class Trainer:
 
     global_step: int = 0
     """
-    The current step (1-based), though it's initialized to 0 before the first step.
+    The current step/batch. 1-based, though it's initialized to 0 before the first step.
+    This does not reset after an epoch.
     """
 
     global_train_tokens_seen: int = 0
@@ -271,14 +279,14 @@ class Trainer:
     The total number of training tokens seen.
     """
 
+    global_train_steps_this_epoch: int = 0
+    """
+    The number of steps/batches seen so far during the current epoch.
+    """
+
     global_train_tokens_seen_this_epoch: int = 0
     """
     The total number of training tokens seen in the current epoch.
-    """
-
-    global_train_examples_seen_this_epoch: int = 0
-    """
-    The total number of examples seen in the current epoch.
     """
 
     epoch: int = 1
@@ -413,10 +421,16 @@ class Trainer:
                 dp_world_size=get_world_size(self.dp_process_group),
                 dp_rank=get_rank(self.dp_process_group),
                 fs_local_rank=get_fs_local_rank(),
+                seed=self.data_seed,
+                epoch=self.epoch,
             )
             if self.dataset.max_target_sequence_length is not None:
                 self._iterable_dataset.chunk_size = (
                     self.dataset.max_target_sequence_length // self.dataset.sequence_length
+                )
+            if self.vsl_curriculum is not None:
+                raise OLMoConfigurationError(
+                    "vsl_curriculum can only be applied to variable sequence length datasets"
                 )
         elif isinstance(self.dataset, NumpyVSLDataset):
             self._iterable_dataset = IterableVSLDataset(
@@ -427,6 +441,9 @@ class Trainer:
                 dp_world_size=get_world_size(self.dp_process_group),
                 dp_rank=get_rank(self.dp_process_group),
                 fs_local_rank=get_fs_local_rank(),
+                seed=self.data_seed,
+                epoch=self.epoch,
+                curriculum=self.vsl_curriculum,
             )
         else:
             raise NotImplementedError
@@ -549,6 +566,11 @@ class Trainer:
         """
         return self._checkpoint_loaded
 
+    @property
+    def iterable_dataset(self) -> IterableDatasetBase:
+        assert self._iterable_dataset is not None
+        return self._iterable_dataset
+
     def cancel_run(self, reason: str):
         """
         Mark the run canceled.
@@ -611,8 +633,12 @@ class Trainer:
         return {
             "global_step": self.global_step,
             "global_train_tokens_seen": self.global_train_tokens_seen,
+            "global_train_steps_this_epoch": self.global_train_steps_this_epoch,
             "global_train_tokens_seen_this_epoch": self.global_train_tokens_seen_this_epoch,
-            "dataset": self.dataset.state_dict(self.global_train_examples_seen_this_epoch),
+            "dataset": self.iterable_dataset.state_dict(
+                batches_processed=self.global_train_steps_this_epoch,
+                tokens_processed=self.global_train_tokens_seen_this_epoch,
+            ),
             "data_seed": self.data_seed,
             "epoch": self.epoch,
             "world_size": get_world_size(),  # global world size here on purpose
@@ -626,30 +652,27 @@ class Trainer:
         # For backwards compat.
         if "dataset" not in state_dict:
             state_dict["dataset"] = {
-                "fingerprint_version": state_dict.pop("dataset_fingerprint_version"),
-                "fingerprint": state_dict.pop("dataset_fingerprint"),
+                "dataset_fingerprint_version": state_dict.pop("dataset_fingerprint_version"),
+                "dataset_fingerprint": state_dict.pop("dataset_fingerprint"),
+                "tokens_processed": state_dict["global_train_tokens_seen_this_epoch"],
+                "batches_processed": state_dict["global_train_tokens_seen_this_epoch"]
+                // self.global_batch_size,
                 "sequence_length": state_dict.pop("train_sequence_length"),
                 "max_target_sequence_length": state_dict.pop("max_train_sequence_length"),
-                "instances_processed": state_dict.pop("global_train_examples_seen_this_epoch"),
             }
 
-        if (data_seed := state_dict.get("data_seed", self.data_seed)) != self.data_seed:
-            log.warning(
-                "Restoring from trainer state with a different data seed, "
-                "will use data seed from state dict for data order consistency."
-            )
-            self.data_seed = data_seed
-
-        self.global_train_examples_seen_this_epoch = self.dataset.load_state_dict(
-            state_dict["dataset"]
-        )
+        self.iterable_dataset.load_state_dict(state_dict["dataset"])
+        self.data_seed = state_dict.get("data_seed", self.data_seed)
         self.global_step = state_dict["global_step"]
         self.global_train_tokens_seen = state_dict["global_train_tokens_seen"]
+        self.global_train_steps_this_epoch = state_dict.get(
+            "global_train_steps_this_epoch",
+            state_dict["global_train_tokens_seen_this_epoch"] // self.global_batch_size,
+        )
         self.global_train_tokens_seen_this_epoch = state_dict["global_train_tokens_seen_this_epoch"]
         self.epoch = state_dict["epoch"]
 
         log.info(f"Will resume training from step {self.global_step}, epoch {self.epoch}")
-        self._configure_iterable_dataset()
 
         if state_dict["world_size"] == get_world_size():  # global world size here on purpose
             rng_state = EnvRngStates.from_dict(state_dict["rng"])
@@ -1133,19 +1156,11 @@ class Trainer:
         if isinstance(self.optim, SkipStepOptimizer):
             self.record_metric(OPTIM_STEP_SKIPPED_METRIC, self.optim.step_skipped)
 
-    def _configure_iterable_dataset(self):
-        assert self._iterable_dataset is not None
-        self._iterable_dataset.seed = self.data_seed
-        self._iterable_dataset.epoch = self.epoch
-        self._iterable_dataset.start_index = self.global_train_examples_seen_this_epoch
-
     def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:
-        assert self._iterable_dataset is not None
-        self._configure_iterable_dataset()
-        self._iterable_dataset.reshuffle(self.epoch)
+        self.iterable_dataset.reshuffle(self.epoch)
 
         data_loader = DataLoader(
-            self._iterable_dataset,
+            self.iterable_dataset,
             batch_size=None,
             num_workers=self.data_loader_workers,
             pin_memory=True,
@@ -1174,16 +1189,16 @@ class Trainer:
         first_batch = True
         for batch in self._iter_batches():
             # Bookkeeping.
-            # NOTE: To track the global batch size / number of tokens per batch we make the
-            # assumption that all ranks see the same number of instances and the same number
-            # of tokens per step, which should always be the case for training efficiency.
+            # NOTE: To track the global number of tokens seen per batch we make the
+            # assumption that all ranks see the same number batch size in tokens per step,
+            # which should always be the case for training efficiency at least.
             # Alternatively we'd have to use a distributed collective which isn't worth it.
             instances, seq_len = batch["input_ids"].shape
             assert instances * seq_len == self.rank_batch_size
             self.global_step += 1
-            self.global_train_tokens_seen_this_epoch += self.global_batch_size
-            self.global_train_examples_seen_this_epoch += self.global_batch_size // seq_len
             self.global_train_tokens_seen += self.global_batch_size
+            self.global_train_steps_this_epoch += 1
+            self.global_train_tokens_seen_this_epoch += self.global_batch_size
 
             for callback in self.callbacks.values():
                 callback.pre_step(batch)
@@ -1220,4 +1235,5 @@ class Trainer:
         # Bookkeeping
         self.epoch += 1
         self.global_train_tokens_seen_this_epoch = 0
-        self.global_train_examples_seen_this_epoch = 0
+        self.global_train_steps_this_epoch = 0
+        self.iterable_dataset.reset()

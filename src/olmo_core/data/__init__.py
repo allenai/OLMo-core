@@ -3,6 +3,9 @@ from .iterable_dataset import (
     IterableDatasetBase,
     IterableFSLDataset,
     IterableVSLDataset,
+    VSLCurriculum,
+    VSLGrowP2Curriculum,
+    VSLNaturalCurriculum,
 )
 from .mixes import DataMix
 from .numpy_dataset import (
@@ -28,4 +31,7 @@ __all__ = [
     "IterableDatasetBase",
     "IterableFSLDataset",
     "IterableVSLDataset",
+    "VSLCurriculum",
+    "VSLNaturalCurriculum",
+    "VSLGrowP2Curriculum",
 ]
