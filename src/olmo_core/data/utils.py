@@ -147,7 +147,28 @@ def get_document_indices(
     return list(iter_document_indices(data_path, local_cache=local_cache))
 
 
-def read_chunk_from_array(
+def load_array_slice(
+    path: PathOrStr,
+    start_idx: int,
+    end_idx: int,
+    dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64], Type[np.bool_]],
+) -> np.ndarray:
+    """
+    Load a slice from a numpy array on disk.
+
+    :param path: The path/URL to the array.
+    :param start_idx: The start index (0-based) of the slice within the array.
+    :param end_idx: The end index (0-based, exclusive) of the slice within the array.
+    :param dtype: The numpy datatype of the array.
+    """
+    item_size = dtype(0).itemsize
+    bytes_start = start_idx * item_size
+    num_bytes = (end_idx - start_idx) * item_size
+    buffer = get_bytes_range(path, bytes_start, num_bytes)
+    return np.frombuffer(buffer, dtype=dtype)
+
+
+def load_array_slice_into_tensor(
     path: PathOrStr,
     start_idx: int,
     end_idx: int,
@@ -161,11 +182,7 @@ def read_chunk_from_array(
     :param end_idx: The end index (0-based, exclusive) of the chunk within the array.
     :param dtype: The numpy datatype of the array.
     """
-    item_size = dtype(0).itemsize
-    bytes_start = start_idx * item_size
-    num_bytes = (end_idx - start_idx) * item_size
-    buffer = get_bytes_range(path, bytes_start, num_bytes)
-    array = np.frombuffer(buffer, dtype=dtype)
+    array = load_array_slice(path, start_idx, end_idx, dtype)
     if dtype == np.bool_:
         return torch.tensor(array)
     else:
@@ -213,6 +230,7 @@ def iter_batched(
     tokens = 0
     for x in iter(iterable):
         x_num_tokens = x["input_ids"].numel()
+        assert x_num_tokens <= batch_num_tokens, f"{x_num_tokens} > {batch_num_tokens}"
         if (tokens + x_num_tokens) > batch_num_tokens:
             yield tuple(batch)
             batch.clear()

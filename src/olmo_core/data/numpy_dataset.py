@@ -24,7 +24,11 @@ from ..io import _get_s3_client, get_file_size
 from ..utils import capped_powers_of_2
 from .mixes import DataMix
 from .tokenizer import TokenizerConfig
-from .utils import get_document_lengths, iter_document_indices, read_chunk_from_array
+from .utils import (
+    get_document_lengths,
+    iter_document_indices,
+    load_array_slice_into_tensor,
+)
 
 __all__ = [
     "NumpyDatasetBase",
@@ -483,7 +487,9 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     def _read_chunk_from_array(self, path: PathOrStr, index: int, dtype=None) -> torch.Tensor:
         dtype = dtype or self.dtype
         start_idx = index * self.sequence_length
-        return read_chunk_from_array(path, start_idx, start_idx + self.sequence_length, dtype)
+        return load_array_slice_into_tensor(
+            path, start_idx, start_idx + self.sequence_length, dtype
+        )
 
     def _get_file_size_and_length(self, path, dtype=None) -> Tuple[int, int]:
         dtype = dtype or self.dtype
@@ -657,9 +663,11 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
 
     def _read_chunk_from_array(self, path: PathOrStr, index: int) -> torch.Tensor:
         indices_path = self._get_document_indices_path(path)
-        indices = read_chunk_from_array(indices_path, index * 2, index * 2 + 2, self.indices_dtype)
+        indices = load_array_slice_into_tensor(
+            indices_path, index * 2, index * 2 + 2, self.indices_dtype
+        )
         start_idx, end_idx = indices
-        data = read_chunk_from_array(path, int(start_idx), int(end_idx), self.dtype)
+        data = load_array_slice_into_tensor(path, int(start_idx), int(end_idx), self.dtype)
         return data
 
     def _get_document_indices_path(self, path: PathOrStr) -> Path:

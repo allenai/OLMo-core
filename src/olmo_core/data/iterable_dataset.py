@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -16,7 +16,7 @@ from ..distributed.utils import barrier
 from ..utils import roundrobin, threaded_generator
 from .collator import DataCollator
 from .numpy_dataset import NumpyDatasetBase, NumpyFSLDataset, NumpyVSLDataset
-from .utils import iter_batched
+from .utils import iter_batched, load_array_slice
 
 __all__ = [
     "IterableDatasetBase",
@@ -69,6 +69,8 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         self.dp_world_size = dp_world_size
         self.dp_rank = dp_rank
         self.fs_local_rank = fs_local_rank
+        # NOTE: the semantic of 'start_index' depend on the implementation.
+        # It could be an instance index, batch index, or something else.
         self.start_index = start_index
 
     @property
@@ -111,7 +113,10 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         Get the global shuffled instance indices.
         """
         if not self._global_indices_file.is_file():
-            self.build_and_save_global_indices()
+            raise RuntimeError(
+                "Missing global indices file, did you forget to call 'build_and_save_global_indices()' "
+                "or 'reshuffle()'?"
+            )
         return np.memmap(self._global_indices_file, mode="r", dtype=np.uint32)  # type: ignore
 
     def build_and_save_global_indices(self):
@@ -127,7 +132,8 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
                 )
             else:
                 log.info(
-                    f"Saving global data order indices for seed {self.seed} and epoch {self.epoch}..."
+                    f"Saving global data order indices for seed {self.seed} and epoch {self.epoch} "
+                    f"to '{self._global_indices_file}'..."
                 )
                 self._global_indices_file.parent.mkdir(parents=True, exist_ok=True)
                 global_indices = self._build_global_indices()
@@ -174,7 +180,7 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         """
         Iterate over the local rank+worker instances.
         """
-        indices = self._get_local_instance_indices(self._get_global_indices())
+        indices = iter(self._get_local_instance_indices(self._get_global_indices()))
 
         num_threads = self.num_threads
         if self.worker_info is None and self.num_threads is None:
@@ -283,7 +289,7 @@ class IterableFSLDataset(IterableDatasetBase):
         rng: Optional[np.random.Generator] = None
         if self.shuffle:
             # Deterministically shuffle based on epoch and seed
-            rng = np.random.Generator(np.random.PCG64(seed=self.seed + self.epoch))
+            rng = _get_rng(self.seed + self.epoch)
 
         indices: np.ndarray
         if self.chunk_size == 1:
@@ -305,33 +311,26 @@ class IterableFSLDataset(IterableDatasetBase):
         return indices
 
     def _get_local_instance_indices(self, indices: np.ndarray) -> Iterable[int]:
+        # NOTE: 'indices' are global instance indices.
+
+        # Start at the specified global instance index.
+        indices = indices[self.start_index : self.total_size]
+
+        # Slice up by batch.
         assert isinstance(self.dataset, NumpyFSLDataset)
+        instances_per_batch = self.global_batch_size // self.dataset.sequence_length
+        # shape: (global num batches, global num instances per batch)
+        indices = indices.reshape(-1, instances_per_batch)
 
-        num_batch_instances_per_rank = self.rank_batch_size // self.dataset.sequence_length
-
-        # Start at the specified index.
-        if self.start_index > 0:
-            indices = indices[self.start_index :]
-
-        # Slice indices by rank to avoid duplicates.
-        indices = indices[self.dp_rank : self.total_size : self.dp_world_size]
-
-        # Slice the indices by data loader worker rank to avoid duplicates.
+        # Slice batches by data loader worker rank to avoid duplicates.
         if (worker_info := self.worker_info) is not None:
             # Note that each data loading worker gathers a whole batch at a time, and the workers
             # are called round-robin by rank. So to slice these up in a way that preserves order, regardless
-            # of the number of workers, we should give worker 0 the first chunk of `instances_per_rank` indices,
-            # worker 1 the 2nd chunk of `instances_per_rank` indices, etc...
-            truncated_size = num_batch_instances_per_rank * (
-                len(indices) // num_batch_instances_per_rank
-            )
-            left_overs = indices[truncated_size + worker_info.id :: worker_info.num_workers]
-            indices = (
-                indices[:truncated_size]
-                .reshape((-1, num_batch_instances_per_rank))[worker_info.id :: worker_info.num_workers]  # type: ignore
-                .reshape((-1,))
-            )
-            indices = np.concatenate([indices, left_overs])
+            # of the number of workers, we give worker 0 the first batch, worker 1 the second batch, etc.
+            indices = indices[worker_info.id :: worker_info.num_workers]
+
+        # Finally slice batches into micro batches for the local DP rank.
+        indices = indices[:, self.dp_rank :: self.dp_world_size].reshape((-1,))
 
         return indices
 
@@ -373,8 +372,13 @@ class VSLCurriculum(Config):
         raise NotImplementedError
 
     @abstractmethod
-    def sort_batch_indices(self, batch_indices: np.ndarray) -> np.ndarray:
+    def get_batch_indices(
+        self, batches_per_bucket: Sequence[Tuple[int, int]], seed: int
+    ) -> np.ndarray:
         raise NotImplementedError
+
+    def get_total_batches(self, batches_per_bucket: Sequence[Tuple[int, int]]) -> int:
+        return sum([batches for _, batches in batches_per_bucket])
 
 
 @dataclass
@@ -394,6 +398,14 @@ class VSLNaturalCurriculum(VSLCurriculum):
             batches = num_instances // instances_per_batch
             batches_per_bucket.append((seq_len, batches))
         return batches_per_bucket
+
+    def get_batch_indices(
+        self, batches_per_bucket: Sequence[Tuple[int, int]], seed: int
+    ) -> np.ndarray:
+        batch_indices = np.arange(self.get_total_batches(batches_per_bucket), dtype=np.uint32)
+        rng = _get_rng(seed)
+        rng.shuffle(batch_indices)
+        return batch_indices
 
 
 @dataclass
@@ -416,6 +428,11 @@ class VSLGrowP2Curriculum(VSLCurriculum):
         batches_per_bucket = self.num_cycles * (batches_per_bucket // self.num_cycles)
         return [(seq_len, batches_per_bucket) for seq_len, _ in actual_batches_per_bucket]
 
+    def get_batch_indices(
+        self, batches_per_bucket: Sequence[Tuple[int, int]], seed: int
+    ) -> np.ndarray:
+        raise NotImplementedError
+
 
 class IterableVSLDataset(IterableDatasetBase):
     """
@@ -435,8 +452,10 @@ class IterableVSLDataset(IterableDatasetBase):
         super().__init__(dataset, **kwargs)
         self._batches_per_bucket: Optional[Tuple[Tuple[int, int], ...]] = None
         self._buckets: Optional[Tuple[int, ...]] = None
-        self._curriculum = curriculum or VSLNaturalCurriculum()
+        self.curriculum = curriculum or VSLNaturalCurriculum()
         self.start_index = 0
+        if not self.shuffle:
+            log.warning("VSL curriculum will be ignored since shuffle=False")
 
     @property
     def buckets(self) -> Tuple[int, ...]:
@@ -449,7 +468,7 @@ class IterableVSLDataset(IterableDatasetBase):
         if self._batches_per_bucket is None:
             assert isinstance(self.dataset, NumpyVSLDataset)
             self._batches_per_bucket = tuple(
-                self._curriculum.batches_per_bucket(self.dataset, self.global_batch_size)
+                self.curriculum.batches_per_bucket(self.dataset, self.global_batch_size)
             )
         return self._batches_per_bucket
 
@@ -459,16 +478,102 @@ class IterableVSLDataset(IterableDatasetBase):
 
     @property
     def _global_indices_file(self) -> Path:
-        global_indices_fname = f"global_indices_seed{self.seed}_epoch{self.epoch}_dataset{self.dataset.fingerprint}.npy"
-        return Path(self.work_dir) / global_indices_fname
+        global_indices_fname = f"global_batch_indices_seed{self.seed}_epoch{self.epoch}.npy"
+        return Path(self.work_dir) / f"dataset-{self.dataset.fingerprint}" / global_indices_fname
+
+    def _bucket_indices_file(self, seq_len: int) -> Path:
+        return (
+            Path(self.work_dir)
+            / f"dataset-{self.dataset.fingerprint}"
+            / f"bucket{seq_len}_seed{self.seed}_epoch{self.epoch}_instance_indices.npy"
+        )
+
+    def _build_bucket_indices(self, seq_len: int, num_instances: int) -> np.ndarray:
+        instance_indices = np.arange(num_instances, dtype=np.uint32)
+        if self.shuffle:
+            rng = _get_rng(self.seed + self.epoch + seq_len)
+            rng.shuffle(instance_indices)
+        return instance_indices
+
+    def build_and_save_global_indices(self):
+        # We also need to build and save the bucket instance indices.
+        if self.fs_local_rank == 0:
+            assert isinstance(self.dataset, NumpyVSLDataset)
+            for seq_len, num_instances in self.dataset.instances_per_bucket:
+                bucket_indices_file = self._bucket_indices_file(seq_len)
+                if bucket_indices_file.is_file():
+                    log.info(
+                        f"Using existing bucket indices file for bucket {seq_len}, seed {self.seed}, "
+                        f"and epoch {self.epoch} at '{bucket_indices_file}'"
+                    )
+                    continue
+
+                log.info(
+                    f"Saving bucket indices for bucket {seq_len}, seed {self.seed}, and epoch {self.epoch} "
+                    f"to '{bucket_indices_file}'..."
+                )
+                bucket_indices_file.parent.mkdir(parents=True, exist_ok=True)
+                bucket_indices = self._build_bucket_indices(seq_len, num_instances)
+                bucket_indices_mmap = np.memmap(
+                    bucket_indices_file,
+                    dtype=np.uint32,
+                    mode="w+",
+                    shape=(num_instances,),
+                )
+                bucket_indices_mmap[:] = bucket_indices
+                bucket_indices_mmap.flush()
+                del bucket_indices_mmap
+                log.info(f"Bucket indices saved to '{bucket_indices_file}'")
+        super().build_and_save_global_indices()
 
     def _build_global_indices(self) -> np.ndarray:
-        raise NotImplementedError
+        if self.shuffle:
+            return self.curriculum.get_batch_indices(
+                self.batches_per_bucket, self.seed + self.epoch
+            )
+        else:
+            return np.arange(self.total_batches, dtype=np.uint32)
 
     def _get_local_instance_indices(self, indices: np.ndarray) -> Iterable[int]:
-        # NOTE: indices are *batch* indices at this point. We need to translate those into
-        # instance indices.
-        raise NotImplementedError
+        # NOTE: 'indices' are *batch* indices at this point.
+
+        # Start at the specified batch index.
+        if self.start_index > 0:
+            indices = indices[self.start_index :]
+
+        # Slice the batch indices by data loader worker rank to avoid duplicates.
+        if (worker_info := self.worker_info) is not None:
+            # Note that each data loading worker gathers a whole batch at a time, and the workers
+            # are called round-robin by rank. So to slice these up in a way that preserves order, regardless
+            # of the number of workers, we give worker 0 the first batch, worker 1 the second batch, etc.
+            indices = indices[worker_info.id :: worker_info.num_workers]
+
+        for batch_index in indices:
+            for instance_index in self._batch_index_to_local_instance_indices(batch_index):
+                yield instance_index
+
+    def _batch_index_to_local_instance_indices(self, batch_index: int) -> np.ndarray:
+        bucket, bucket_batch_index = self._batch_index_to_bucket_batch_index(batch_index)
+        instances_per_batch = self.global_batch_size // bucket
+        bucket_indices_file = self._bucket_indices_file(bucket)
+        instance_start_index = bucket_batch_index * instances_per_batch
+        # Slice up by rank.
+        instances_per_rank = instances_per_batch // self.dp_world_size
+        instance_start_index += self.dp_rank * instances_per_rank
+        instance_end_index = instance_start_index + instances_per_rank
+        return load_array_slice(
+            bucket_indices_file, instance_start_index, instance_end_index, np.uint32
+        )
+
+    def _batch_index_to_bucket_batch_index(self, batch_index: int) -> Tuple[int, int]:
+        bucket_start_offset = 0
+        bucket_end_offset = 0
+        for seq_len, num_batches in self.batches_per_bucket:
+            bucket_end_offset += num_batches
+            if batch_index < bucket_end_offset:
+                return seq_len, batch_index - bucket_start_offset
+            bucket_start_offset += num_batches
+        raise IndexError(f"Batch index '{batch_index}' out of bounds")
 
     def state_dict(self, *, batches_processed: int, tokens_processed: int) -> Dict[str, Any]:
         state_dict = super().state_dict(
@@ -496,3 +601,7 @@ class IterableVSLDataset(IterableDatasetBase):
 
         # Set 'start_index' (which indexes into batches).
         self.start_index = state_dict["batches_processed"]
+
+
+def _get_rng(seed: int) -> np.random.Generator:
+    return np.random.Generator(np.random.PCG64(seed=seed))
