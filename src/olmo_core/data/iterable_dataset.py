@@ -13,6 +13,7 @@ import torch.utils.data
 from ..aliases import PathOrStr
 from ..config import Config
 from ..distributed.utils import barrier
+from ..exceptions import OLMoConfigurationError
 from ..utils import roundrobin, threaded_generator
 from .collator import DataCollator
 from .numpy_dataset import NumpyDatasetBase, NumpyFSLDataset, NumpyVSLDataset
@@ -261,13 +262,20 @@ class IterableFSLDataset(IterableDatasetBase):
         assert chunk_size >= 1
         super().__init__(dataset, **kwargs)
         self.chunk_size = chunk_size
+        assert isinstance(self.dataset, NumpyFSLDataset)
+        if self.rank_batch_size % self.dataset.sequence_length != 0:
+            raise OLMoConfigurationError(
+                "rank batch size (in tokens) must be divisible by sequence length"
+            )
 
     @property
     def total_size(self) -> int:
         """
         The total number of instances that the dataset will produce over the course of an epoch.
         """
-        return self.dp_world_size * (len(self.dataset) // self.dp_world_size)
+        assert isinstance(self.dataset, NumpyFSLDataset)
+        instances_per_batch = self.global_batch_size // self.dataset.sequence_length
+        return instances_per_batch * (len(self.dataset) // instances_per_batch)
 
     @property
     def total_batches(self) -> int:
