@@ -649,7 +649,7 @@ class Trainer:
         """
         Load trainer state (not model or optimizer state).
         """
-        # For backwards compat.
+        # For backwards compatibility.
         if "dataset" not in state_dict:
             state_dict["dataset"] = {
                 "dataset_fingerprint_version": state_dict.pop("dataset_fingerprint_version"),
@@ -659,6 +659,7 @@ class Trainer:
                 // self.global_batch_size,
                 "sequence_length": state_dict.pop("train_sequence_length"),
                 "max_target_sequence_length": state_dict.pop("max_train_sequence_length"),
+                "seed": state_dict["data_seed"],
             }
 
         self.iterable_dataset.load_state_dict(state_dict["dataset"])
