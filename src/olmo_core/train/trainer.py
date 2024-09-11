@@ -477,7 +477,7 @@ class Trainer:
         The total number of training steps in an epoch.
         """
         assert self._iterable_dataset is not None
-        return self._iterable_dataset.calculate_total_batches(self.global_batch_size)
+        return self._iterable_dataset.total_batches
 
     @property
     def tokens_per_epoch(self) -> int:

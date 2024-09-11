@@ -2,7 +2,7 @@ import logging
 import math
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -31,7 +31,6 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         seed: int = 0,
         epoch: int = 0,
         start_index: int = 0,
-        max_examples: Optional[int] = None,
         shuffle: bool = True,
         num_threads: Optional[int] = None,
         dp_world_size: int = 1,
@@ -44,7 +43,6 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         self.seed = seed
         self.epoch = epoch
         self.start_index = start_index
-        self.max_examples = max_examples
         self.shuffle = shuffle
         self.num_threads = num_threads
         self.work_dir = work_dir
@@ -53,30 +51,17 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         self.fs_local_rank = fs_local_rank
 
     @property
-    def total_size(self) -> int:
-        """
-        The total number of instances that the dataset will produce over the course of an epoch.
-        """
-        raise NotImplementedError
-
     @abstractmethod
-    def calculate_total_batches(self, global_batch_size: int) -> int:
+    def total_batches(self) -> int:
         """
-        Calculate the total number of batches that the dataset will produce over the course of an epoch
-        given the global batch size in tokens.
+        The total number of batches that the dataset will produce over the course of an epoch.
         """
         raise NotImplementedError
 
     @property
+    @abstractmethod
     def _global_indices_file(self) -> Path:
-        global_indices_fname = (
-            f"global_indices_seed{self.seed}_epoch{self.epoch}_size{self.total_size}.npy"
-        )
-        return Path(self.work_dir) / global_indices_fname
-
-    @property
-    def worker_info(self):
-        return torch.utils.data.get_worker_info()
+        raise NotImplementedError
 
     @abstractmethod
     def _build_global_indices(self) -> np.ndarray:
@@ -86,11 +71,19 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         raise NotImplementedError
 
     @abstractmethod
-    def _filter_global_instances(self, indices: np.ndarray) -> np.ndarray:
+    def _get_local_instance_indices(self, indices: np.ndarray) -> np.ndarray:
         """
         Filter global instance indices down to the local worker indices.
         """
         raise NotImplementedError
+
+    @property
+    def global_batch_size(self) -> int:
+        return self.rank_batch_size * self.dp_world_size
+
+    @property
+    def worker_info(self):
+        return torch.utils.data.get_worker_info()
 
     def _get_global_indices(self) -> np.ndarray:
         """
@@ -133,8 +126,7 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         """
         Iterate over the local rank+worker instances.
         """
-        indices = self._get_global_indices()
-        indices = self._filter_global_instances(indices)
+        indices = self._get_local_instance_indices(self._get_global_indices())
 
         num_threads = self.num_threads
         if self.worker_info is None and self.num_threads is None:
@@ -216,19 +208,24 @@ class IterableFSLDataset(IterableDatasetBase):
 
     @property
     def total_size(self) -> int:
+        """
+        The total number of instances that the dataset will produce over the course of an epoch.
+        """
         return self.dp_world_size * (len(self.dataset) // self.dp_world_size)
 
-    def calculate_total_batches(self, global_batch_size: int) -> int:
+    @property
+    def total_batches(self) -> int:
         assert isinstance(self.dataset, NumpyFSLDataset)
-        return self.total_size // (global_batch_size // self.dataset.sequence_length)
+        return self.total_size // (self.global_batch_size // self.dataset.sequence_length)
 
     @property
     def _global_indices_file(self) -> Path:
-        path = super()._global_indices_file
+        global_indices_fname = (
+            f"global_indices_seed{self.seed}_epoch{self.epoch}_size{self.total_size}"
+        )
         if self.chunk_size > 1:
-            return path.with_stem(path.stem + f"_chunk{self.chunk_size}")
-        else:
-            return path
+            global_indices_fname += f"_chunk{self.chunk_size}"
+        return Path(self.work_dir) / f"{global_indices_fname}.npy"
 
     def _build_global_indices(self) -> np.ndarray:
         assert len(self.dataset) < np.iinfo(np.uint32).max
@@ -257,14 +254,9 @@ class IterableFSLDataset(IterableDatasetBase):
         indices = indices[: self.total_size]
         return indices
 
-    def _filter_global_instances(self, indices: np.ndarray) -> np.ndarray:
+    def _get_local_instance_indices(self, indices: np.ndarray) -> np.ndarray:
         assert isinstance(self.dataset, NumpyFSLDataset)
         instances_per_rank = self.rank_batch_size // self.dataset.sequence_length
-
-        # Truncate to max_examples.
-        if self.max_examples is not None:
-            assert self.max_examples % self.dp_world_size == 0
-            indices = indices[: self.max_examples]
 
         # Start at the specified index.
         if self.start_index > 0:
@@ -310,21 +302,35 @@ class IterableVSLDataset(IterableDatasetBase):
         **kwargs,
     ):
         super().__init__(dataset, **kwargs)
+        self._total_batches: Optional[int] = None
+        self._batches_per_bucket: Optional[List[Tuple[int, int]]] = None
 
     @property
-    def total_size(self) -> int:
-        raise NotImplementedError
+    def batches_per_bucket(self) -> List[Tuple[int, int]]:
+        if self._batches_per_bucket is None:
+            self._batches_per_bucket = []
+            assert isinstance(self.dataset, NumpyVSLDataset)
+            for seq_len, num_instances in self.dataset.instances_per_bucket:
+                instances_per_batch = self.global_batch_size // seq_len
+                batches = num_instances // instances_per_batch
+                self._batches_per_bucket.append((seq_len, batches))
+        return self._batches_per_bucket
 
-    def calculate_total_batches(self, global_batch_size: int) -> int:
-        raise NotImplementedError
+    @property
+    def total_batches(self) -> int:
+        if self._total_batches is None:
+            self._total_batches = 0
+            for _, num_batches in self.batches_per_bucket:
+                self._total_batches += num_batches
+        return self._total_batches
 
     @property
     def _global_indices_file(self) -> Path:
-        path = super()._global_indices_file
-        return path.with_stem(path.stem + f"_dataset{self.dataset.fingerprint}")
+        global_indices_fname = f"global_indices_seed{self.seed}_epoch{self.epoch}_dataset{self.dataset.fingerprint}.npy"
+        return Path(self.work_dir) / global_indices_fname
 
     def _build_global_indices(self) -> np.ndarray:
         raise NotImplementedError
 
-    def _filter_global_instances(self, indices: np.ndarray) -> np.ndarray:
+    def _get_local_instance_indices(self, indices: np.ndarray) -> np.ndarray:
         raise NotImplementedError

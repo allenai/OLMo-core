@@ -95,6 +95,8 @@ def test_numpy_vsl_dataset(tmp_path: Path):
     assert buckets[1][1].tolist() == [1]  # instances of length 4
     assert buckets[2][1].tolist() == [0, 3]  # instances of length 8
 
+    assert ds.instances_per_bucket == [(2, 2), (4, 1), (8, 2)]
+
 
 def test_guess_dtype():
     config = NumpyFSLDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.gpt2())

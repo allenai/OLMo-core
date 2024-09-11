@@ -342,7 +342,7 @@ class NumpyFSLDatasetConfig(Config):
                 )
             paths = self.mix.build(self.mix_base_dir, self.tokenizer.identifier)
 
-        dataset = NumpyFSLDataset(
+        return NumpyFSLDataset(
             *paths,
             sequence_length=self.sequence_length,
             max_target_sequence_length=self.max_target_sequence_length,
@@ -353,9 +353,6 @@ class NumpyFSLDatasetConfig(Config):
             include_instance_metadata=self.include_instance_metadata,
             generate_doc_lengths=self.generate_doc_lengths,
         )
-        log.info(f"Built dataset with {len(dataset):,d} examples of length {self.sequence_length}")
-
-        return dataset
 
 
 class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
@@ -625,6 +622,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         self._lengths_dtype: Optional[
             Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]
         ] = None
+        self._instances_per_bucket: Optional[List[Tuple[int, int]]] = None
 
     @property
     def fingerprint(self) -> str:
@@ -642,6 +640,12 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     @property
     def min_sequence_length(self) -> int:
         return self._min_sequence_length
+
+    @property
+    def all_sequence_lengths(self) -> List[int]:
+        min_exp = int(math.log(self.min_sequence_length, 2))
+        max_exp = int(math.log(self.max_sequence_length, 2))
+        return [2**exp for exp in range(min_exp, max_exp + 1)]
 
     @property
     def offsets(self) -> List[Tuple[int, int]]:
@@ -662,8 +666,10 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
 
     def prepare(self):
         if self.fs_local_rank == 0:
-            log.info("Gathering dataset document indices...")
+            log.info("Gathering dataset document indices and buckets...")
             self.map(self._write_document_indices, max_workers=8)
+            instance_lengths = self._write_instance_lengths()
+            self._write_instance_buckets(instance_lengths)
         barrier()
         len(self)
 
@@ -715,9 +721,12 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     def _get_instance_lengths_path(self) -> Path:
         return self.work_dir / f"dataset-{self.fingerprint}" / "instance-lengths.npy"
 
+    def _get_instance_bucket_path(self, seq_len: int) -> Path:
+        return self.work_dir / f"dataset-{self.fingerprint}" / f"bucket{seq_len}-indices.npy"
+
     def _write_document_indices(self, path: PathOrStr) -> Path:
         indices_path = self._get_document_indices_path(path)
-        if self.fs_local_rank == 0 and not indices_path.is_file():
+        if not indices_path.is_file():
             indices_path.parent.mkdir(exist_ok=True, parents=True)
             indices = []
             for start_idx, end_idx in iter_document_indices(path):
@@ -737,36 +746,76 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
             del indices_mmap
         return indices_path
 
+    def _write_instance_lengths(self) -> np.ndarray:
+        instance_lengths_path = self._get_instance_lengths_path()
+        if not instance_lengths_path.is_file():
+            instance_lengths_path.parent.mkdir(exist_ok=True, parents=True)
+            instance_lengths = np.memmap(
+                instance_lengths_path,
+                dtype=self.lengths_dtype,
+                mode="w+",
+                shape=(len(self),),
+            )
+            for path, (offset_start, offset_end) in zip(self.paths, self.offsets):
+                indices_path = self._get_document_indices_path(path)
+                indices_mmap = np.memmap(indices_path, dtype=self.indices_dtype, mode="r")
+                instance_lengths[offset_start:offset_end] = indices_mmap[1::2] - indices_mmap[::2]
+                del indices_mmap
+            instance_lengths.flush()
+            return instance_lengths
+        else:
+            return self.get_instance_lengths()
+
+    def _write_instance_buckets(self, instance_lengths: np.ndarray):
+        for seq_len in self.all_sequence_lengths:
+            bucket_path = self._get_instance_bucket_path(seq_len)
+            if not bucket_path.is_file():
+                bucket_path.parent.mkdir(exist_ok=True, parents=True)
+                instance_indices = (instance_lengths == seq_len).nonzero()[0]
+                bucket = np.memmap(
+                    bucket_path,
+                    dtype=self.indices_dtype,
+                    mode="w+",
+                    shape=instance_indices.shape,
+                )
+                bucket[:] = instance_indices
+
     def get_instance_lengths(self) -> np.ndarray:
         """
         Get a numpy memory-mapped array with the length of every instance in the dataset.
         """
-        instance_lengths = np.memmap(
-            self._get_instance_lengths_path(),
-            dtype=self.lengths_dtype,
-            mode="w+",
-            shape=(len(self),),
-        )
-        for path, (offset_start, offset_end) in zip(self.paths, self.offsets):
-            indices_path = self._get_document_indices_path(path)
-            indices_mmap = np.memmap(indices_path, dtype=self.indices_dtype, mode="r")
-            instance_lengths[offset_start:offset_end] = indices_mmap[1::2] - indices_mmap[::2]
-            del indices_mmap
-        return instance_lengths
+        return np.memmap(self._get_instance_lengths_path(), dtype=self.lengths_dtype, mode="r")
 
     def get_instance_buckets(self) -> List[Tuple[int, np.ndarray]]:
         """
         Get the buckets of instance indices that all have the same length.
         The buckets will be sorted from smallest sequence length to longest.
         """
-        instance_lengths = self.get_instance_lengths()
-        min_exp = int(math.log(self.min_sequence_length, 2))
-        max_exp = int(math.log(self.max_sequence_length, 2))
         buckets = []
-        for exp in range(min_exp, max_exp + 1):
-            seq_len = 2**exp
-            buckets.append((seq_len, (instance_lengths == seq_len).nonzero()[0]))
+        for seq_len in self.all_sequence_lengths:
+            buckets.append(
+                (
+                    seq_len,
+                    np.memmap(
+                        self._get_instance_bucket_path(seq_len), dtype=self.indices_dtype, mode="r"
+                    ),
+                )
+            )
         return buckets
+
+    @property
+    def instances_per_bucket(self) -> List[Tuple[int, int]]:
+        """
+        The number of instances in each bucket of equal sequence length instances.
+        """
+        if self._instances_per_bucket is None:
+            self._instances_per_bucket = []
+            item_size = self.indices_dtype(0).itemsize
+            for seq_len in self.all_sequence_lengths:
+                self._instances_per_bucket.append(
+                    (seq_len, get_file_size(self._get_instance_bucket_path(seq_len)) // item_size)
+                )
+        return self._instances_per_bucket
 
     @property
     def indices_dtype(
