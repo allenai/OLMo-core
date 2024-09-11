@@ -321,14 +321,15 @@ class IterableFSLDataset(IterableDatasetBase):
     def _get_local_instance_indices(self, indices: np.ndarray) -> Iterable[int]:
         # NOTE: 'indices' are global instance indices.
 
-        # Start at the specified global instance index.
-        indices = indices[self.start_index : self.total_size]
-
         # Slice up by batch.
         assert isinstance(self.dataset, NumpyFSLDataset)
         instances_per_batch = self.global_batch_size // self.dataset.sequence_length
         # shape: (global num batches, global num instances per batch)
         indices = indices.reshape(-1, instances_per_batch)
+
+        # Offset by 'start_index'.
+        if self.start_index > 0:
+            indices = indices[self.start_index :]
 
         # Slice batches by data loader worker rank to avoid duplicates.
         if (worker_info := self.worker_info) is not None:
@@ -363,7 +364,7 @@ class IterableFSLDataset(IterableDatasetBase):
                 "is not supported"
             )
 
-        # Set 'start_index' (which indexes into instances).
+        # Set 'start_index' (which indexes into batches).
         self.start_index = state_dict["tokens_processed"] // self.global_batch_size
 
 
