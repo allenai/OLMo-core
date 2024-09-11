@@ -2,7 +2,7 @@ import logging
 import math
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, Optional, Tuple
 
 import numpy as np
 import torch
@@ -21,6 +21,17 @@ log = logging.getLogger(__name__)
 
 
 class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]]):
+    """
+    Adapted from PyTorch's ``DistributedSampler``, this is a base class for iterable datasets
+    that wrap a :class:`~olmo_core.data.NumpyDatasetBase`
+    and can be deterministically restarted at any point by setting ``start_index`` accordingly.
+
+    .. warning::
+        This is used internally by the :class:`~olmo_core.train.Trainer`.
+        In general you shouldn't be using these classes directly unless you really know what you're
+        doing! It's easy to misuse, resulting in incorrect data order.
+    """
+
     def __init__(
         self,
         dataset: NumpyDatasetBase,
@@ -185,14 +196,7 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
 
 class IterableFSLDataset(IterableDatasetBase):
     """
-    Adapted from PyTorch's ``DistributedSampler``, this wraps a :class:`~olmo_core.data.NumpyFSLDataset`
-    as an ``IterableDataset`` that can be deterministically restarted at any point by setting
-    ``start_index`` accordingly.
-
-    .. warning::
-        This is used internally by the :class:`~olmo_core.train.Trainer`.
-        In general you shouldn't be using this class directly unless you really know what you're
-        doing! It's easy to misuse, resulting in incorrect data order.
+    An iterable dataset that wraps a :class:`~olmo_core.data.NumpyFSLDataset`.
     """
 
     def __init__(
@@ -286,43 +290,46 @@ class IterableFSLDataset(IterableDatasetBase):
 
 class IterableVSLDataset(IterableDatasetBase):
     """
-    Adapted from PyTorch's ``DistributedSampler``, this wraps a :class:`~olmo_core.data.NumpyVSLDataset`
-    as an ``IterableDataset`` that can be deterministically restarted at any point by setting
-    ``start_index`` accordingly.
-
-    .. warning::
-        This is used internally by the :class:`~olmo_core.train.Trainer`.
-        In general you shouldn't be using this class directly unless you really know what you're
-        doing! It's easy to misuse, resulting in incorrect data order.
+    An iterable dataset that wraps a :class:`~olmo_core.data.NumpyVSLDataset` and implements
+    a sequence length-based curriculum as introduced in
+    `Dataset Decomposition: Faster LLM Training with Variable Sequence Length Curriculum
+    <https://arxiv.org/pdf/2405.13226>`_.
     """
 
     def __init__(
         self,
         dataset: NumpyVSLDataset,
+        *,
+        num_cycles: int = 8,
         **kwargs,
     ):
         super().__init__(dataset, **kwargs)
-        self._total_batches: Optional[int] = None
-        self._batches_per_bucket: Optional[List[Tuple[int, int]]] = None
+        self._num_cycles = num_cycles
+        self._batches_per_bucket: Optional[int] = None
+        self._buckets: Optional[Tuple[int, ...]] = None
 
     @property
-    def batches_per_bucket(self) -> List[Tuple[int, int]]:
+    def buckets(self) -> Tuple[int, ...]:
+        if self._buckets is None:
+            assert isinstance(self.dataset, NumpyVSLDataset)
+            self._buckets = tuple([seq_len for seq_len, _ in self.dataset.instances_per_bucket])
+        return self._buckets
+
+    @property
+    def batches_per_bucket(self) -> int:
         if self._batches_per_bucket is None:
-            self._batches_per_bucket = []
+            batches_per_bucket = []
             assert isinstance(self.dataset, NumpyVSLDataset)
             for seq_len, num_instances in self.dataset.instances_per_bucket:
                 instances_per_batch = self.global_batch_size // seq_len
                 batches = num_instances // instances_per_batch
-                self._batches_per_bucket.append((seq_len, batches))
+                batches_per_bucket.append(batches)
+            self._batches_per_bucket = min(batches_per_bucket)
         return self._batches_per_bucket
 
     @property
     def total_batches(self) -> int:
-        if self._total_batches is None:
-            self._total_batches = 0
-            for _, num_batches in self.batches_per_bucket:
-                self._total_batches += num_batches
-        return self._total_batches
+        return len(self.buckets) * self.batches_per_bucket
 
     @property
     def _global_indices_file(self) -> Path:

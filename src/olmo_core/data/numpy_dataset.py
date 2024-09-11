@@ -79,7 +79,7 @@ class NumpyDatasetBase(ABC):
         self._dtype = dtype
         self._fs_local_rank = get_fs_local_rank()
         self._work_dir: Optional[Path] = None
-        self._array_file_sizes: Optional[List[int]] = None
+        self._array_file_sizes: Optional[Tuple[int, ...]] = None
 
     @property
     def paths(self) -> Tuple[PathOrStr, ...]:
@@ -89,12 +89,12 @@ class NumpyDatasetBase(ABC):
         return self._array_paths
 
     @property
-    def file_sizes(self) -> List[int]:
+    def file_sizes(self) -> Tuple[int, ...]:
         """
         The size, in bytes, of each numpy array.
         """
         if self._array_file_sizes is None:
-            self._array_file_sizes = self.map(get_file_size)
+            self._array_file_sizes = tuple(self.map(get_file_size))
         return self._array_file_sizes
 
     @property
@@ -420,7 +420,7 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         self._metadata = metadata
         self._sequence_length = sequence_length
         self._max_target_sequence_length = max_target_sequence_length
-        self._array_offsets: Optional[List[Tuple[int, int]]] = None
+        self._array_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
         self._num_instances: Optional[int] = None
         self._include_instance_metadata = include_instance_metadata
         self._generate_doc_lengths = generate_doc_lengths
@@ -438,14 +438,14 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         return self._max_target_sequence_length
 
     @property
-    def file_sizes(self) -> List[int]:
+    def file_sizes(self) -> Tuple[int, ...]:
         """
         The size, in bytes, of each numpy array.
         """
         return self._sizes_and_offsets[0]
 
     @property
-    def offsets(self) -> List[Tuple[int, int]]:
+    def offsets(self) -> Tuple[Tuple[int, int], ...]:
         """
         Gives the global start and end instance indices for each data file in the dataset.
         """
@@ -520,17 +520,20 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
             )
 
     @property
-    def _sizes_and_offsets(self) -> Tuple[List[int], List[Tuple[int, int]]]:
+    def _sizes_and_offsets(self) -> Tuple[Tuple[int, ...], Tuple[Tuple[int, int], ...]]:
         if self._array_offsets is None or self._array_file_sizes is None:
-            self._array_offsets = []
-            self._array_file_sizes = []
+            array_offsets: List[Tuple[int, int]] = []
+            array_file_sizes: List[int] = []
 
             start_offset = 0
             for size, length in self.map(self._get_file_size_and_length):
                 end_offset = start_offset + length
-                self._array_offsets.append((start_offset, end_offset))
-                self._array_file_sizes.append(size)
+                array_offsets.append((start_offset, end_offset))
+                array_file_sizes.append(size)
                 start_offset += length
+
+            self._array_offsets = tuple(array_offsets)
+            self._array_file_sizes = tuple(array_file_sizes)
 
         return self._array_file_sizes, self._array_offsets
 
@@ -561,7 +564,10 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
 
 class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     """
-    A variable sequence length (VSL) numpy array-backed dataset.
+    A variable sequence length (VSL) numpy array-backed dataset. Use with
+    :class:`IterableVSLDataset` to implement a sequence length-based curriculum during training as
+    introduced in `Dataset Decomposition: Faster LLM Training with Variable Sequence Length Curriculum
+    <https://arxiv.org/pdf/2405.13226>`_.
 
     This dataset creates instances of token IDs with lengths that are powers of 2
     between ``min_sequence_length`` (which must be a power of 2) and ``max_sequence_length``
@@ -585,7 +591,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         pad_token_id: int,
         eos_token_id: int,
         max_sequence_length: int,
-        min_sequence_length: int = 8,
+        min_sequence_length: int = 256,
         dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]] = np.uint16,
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
@@ -618,11 +624,11 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         self._max_sequence_length = max_sequence_length
         self._min_sequence_length = min_sequence_length
         self._num_instances: Optional[int] = None
-        self._array_offsets: Optional[List[Tuple[int, int]]] = None
+        self._array_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
         self._lengths_dtype: Optional[
             Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]
         ] = None
-        self._instances_per_bucket: Optional[List[Tuple[int, int]]] = None
+        self._instances_per_bucket: Optional[Tuple[Tuple[int, int], ...]] = None
 
     @property
     def fingerprint(self) -> str:
@@ -648,20 +654,21 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         return [2**exp for exp in range(min_exp, max_exp + 1)]
 
     @property
-    def offsets(self) -> List[Tuple[int, int]]:
+    def offsets(self) -> Tuple[Tuple[int, int], ...]:
         """
         Gives the global start and end instance indices for each data file in the dataset.
         """
         if self._array_offsets is None:
-            self._array_offsets = []
+            array_offsets = []
             item_size = self.indices_dtype(0).itemsize
             start_offset = 0
             for path in self.paths:
                 doc_indices_path = self._get_document_indices_path(path)
                 instances_in_file = (get_file_size(doc_indices_path) // item_size) // 2
                 end_offset = start_offset + instances_in_file
-                self._array_offsets.append((start_offset, end_offset))
+                array_offsets.append((start_offset, end_offset))
                 start_offset += instances_in_file
+            self._array_offsets = tuple(array_offsets)
         return self._array_offsets
 
     def prepare(self):
@@ -804,17 +811,18 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         return buckets
 
     @property
-    def instances_per_bucket(self) -> List[Tuple[int, int]]:
+    def instances_per_bucket(self) -> Tuple[Tuple[int, int], ...]:
         """
         The number of instances in each bucket of equal sequence length instances.
         """
         if self._instances_per_bucket is None:
-            self._instances_per_bucket = []
+            instances_per_bucket = []
             item_size = self.indices_dtype(0).itemsize
             for seq_len in self.all_sequence_lengths:
-                self._instances_per_bucket.append(
+                instances_per_bucket.append(
                     (seq_len, get_file_size(self._get_instance_bucket_path(seq_len)) // item_size)
                 )
+            self._instances_per_bucket = tuple(instances_per_bucket)
         return self._instances_per_bucket
 
     @property
