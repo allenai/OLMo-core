@@ -389,6 +389,11 @@ class VSLCurriculum(Config):
     def get_total_batches(self, batches_per_bucket: Sequence[Tuple[int, int]]) -> int:
         return sum([batches for _, batches in batches_per_bucket])
 
+    @staticmethod
+    def log_buckets(batches_per_bucket: Sequence[Tuple[int, int]]):
+        for i, (seq_len, num_batches) in enumerate(batches_per_bucket):
+            log.info(f"- bucket {i}: sequence length {seq_len}, {num_batches:,d} batches")
+
 
 @dataclass
 class VSLNaturalCurriculum(VSLCurriculum):
@@ -443,11 +448,34 @@ class VSLGrowP2Curriculum(VSLCurriculum):
         batches_per_bucket = self.num_cycles * (batches_per_bucket // self.num_cycles)
         return [(seq_len, batches_per_bucket) for seq_len, _ in actual_batches_per_bucket]
 
+    def get_cycle_distribution(
+        self, indices: np.ndarray, batches_per_bucket: Sequence[Tuple[int, int]], cycle: int = 0
+    ):
+        cycle_length = indices.shape[0] // self.num_cycles
+        cycle_indices = indices[cycle * cycle_length : (cycle * cycle_length) + cycle_length]
+        distribution: List[List[int]] = []
+        for subcycle in np.array_split(cycle_indices, len(batches_per_bucket)):
+            distribution.append([])
+            bucket_offset_start = 0
+            bucket_offset_end = 0
+            for _, num_batches in batches_per_bucket:
+                bucket_offset_end += num_batches
+                count = ((subcycle >= bucket_offset_start) & (subcycle < bucket_offset_end)).sum()
+                distribution[-1].append(count)
+                bucket_offset_start += num_batches
+        return distribution
+
     def get_batch_indices(
         self, batches_per_bucket: Sequence[Tuple[int, int]], seed: int
     ) -> np.ndarray:
+        # Shortest sequence length first.
+        assert batches_per_bucket[0][0] < batches_per_bucket[-1][0]
+
         rng = _get_rng(seed)
         num_buckets = len(batches_per_bucket)
+
+        log.info(f"Constructing Grow-P2 VSL curriculum with {num_buckets} buckets:")
+        self.log_buckets(batches_per_bucket)
 
         # This is how many batches we'll pull from each bucket for each cycle.
         batch_counts_per_cycle_per_bucket = divide_into_buckets(
@@ -486,11 +514,24 @@ class VSLGrowP2Curriculum(VSLCurriculum):
                 res = np.concatenate(subsycle_batches)
                 rng.shuffle(res)
                 all_subsycles.append(res)
+            del all_bucket_subcycle_batches
 
             # Finally we can concatenate all of the subsycles together to form the complete cycle.
             cycles.append(np.concatenate(all_subsycles))
+            del all_subsycles
 
-        return np.concatenate(cycles)
+        indices = np.concatenate(cycles)
+        del cycles
+
+        # Make sure the very first batch has the longest sequence length (is from the last bucket).
+        # That way OOMs should happen right away.
+        final_bucket_start = sum([b for _, b in batches_per_bucket[:-1]])
+        first_long_seq_len_batch = np.argmax(indices >= final_bucket_start)
+        batch = indices[first_long_seq_len_batch]
+        indices[first_long_seq_len_batch] = indices[0]
+        indices[0] = batch
+
+        return indices
 
     @classmethod
     def _get_bucket_odds_for_cycle(cls, bucket_idx: int, num_buckets: int) -> List[int]:
