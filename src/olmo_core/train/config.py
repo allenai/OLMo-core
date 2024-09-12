@@ -23,7 +23,10 @@ from .utils import Duration, DurationUnit
 @dataclass
 class TrainerConfig(Config):
     """
-    A configuration class for easily building :class:`~olmo_core.train.trainer.Trainer` instances.
+    A configuration class for easily building :class:`Trainer` instances.
+
+    .. seealso::
+        See the :class:`Trainer` documentation for a description of the fields.
     """
 
     save_folder: str

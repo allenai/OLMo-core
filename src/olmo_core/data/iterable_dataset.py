@@ -1,37 +1,26 @@
 import logging
 import math
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, Iterator, Optional, Tuple
 
 import numpy as np
 import torch
 import torch.utils.data
 
 from ..aliases import PathOrStr
-from ..config import Config
 from ..distributed.utils import barrier
 from ..exceptions import OLMoConfigurationError
 from ..utils import roundrobin, threaded_generator
 from .collator import DataCollator
 from .numpy_dataset import NumpyDatasetBase, NumpyFSLDataset, NumpyVSLDataset
-from .utils import (
-    chunk_array,
-    divide_into_buckets,
-    iter_batched,
-    load_array_slice,
-    memmap_to_write,
-)
+from .utils import get_rng, iter_batched, load_array_slice, memmap_to_write
 
 __all__ = [
     "IterableDatasetBase",
     "IterableFSLDataset",
     "IterableVSLDataset",
-    "VSLCurriculum",
-    "VSLNaturalCurriculum",
-    "VSLGrowP2Curriculum",
 ]
 
 log = logging.getLogger(__name__)
@@ -297,7 +286,7 @@ class IterableFSLDataset(IterableDatasetBase):
         rng: Optional[np.random.Generator] = None
         if self.shuffle:
             # Deterministically shuffle based on epoch and seed
-            rng = _get_rng(self.seed + self.epoch)
+            rng = get_rng(self.seed + self.epoch)
 
         indices: np.ndarray
         if self.chunk_size == 1:
@@ -368,202 +357,6 @@ class IterableFSLDataset(IterableDatasetBase):
         self.start_index = state_dict["tokens_processed"] // self.global_batch_size
 
 
-@dataclass
-class VSLCurriculum(Config):
-    """
-    Base class for variable sequence length curriculums.
-    """
-
-    @abstractmethod
-    def batches_per_bucket(
-        self, dataset: NumpyVSLDataset, global_batch_size: int
-    ) -> List[Tuple[int, int]]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_batch_indices(
-        self, batches_per_bucket: Sequence[Tuple[int, int]], seed: int
-    ) -> np.ndarray:
-        raise NotImplementedError
-
-    def get_total_batches(self, batches_per_bucket: Sequence[Tuple[int, int]]) -> int:
-        return sum([batches for _, batches in batches_per_bucket])
-
-    @staticmethod
-    def log_buckets(batches_per_bucket: Sequence[Tuple[int, int]]):
-        for i, (seq_len, num_batches) in enumerate(batches_per_bucket):
-            log.info(f"- bucket {i}: sequence length {seq_len}, {num_batches:,d} batches")
-
-
-@dataclass
-class VSLNaturalCurriculum(VSLCurriculum):
-    """
-    Implements the natural curriculum from
-    `Dataset Decomposition: Faster LLM Training with Variable Sequence Length Curriculum
-    <https://arxiv.org/pdf/2405.13226>`_.
-    """
-
-    def batches_per_bucket(
-        self, dataset: NumpyVSLDataset, global_batch_size: int
-    ) -> List[Tuple[int, int]]:
-        batches_per_bucket = []
-        for seq_len, num_instances in dataset.instances_per_bucket:
-            instances_per_batch = global_batch_size // seq_len
-            batches = num_instances // instances_per_batch
-            batches_per_bucket.append((seq_len, batches))
-        return batches_per_bucket
-
-    def get_batch_indices(
-        self, batches_per_bucket: Sequence[Tuple[int, int]], seed: int
-    ) -> np.ndarray:
-        total_batches = self.get_total_batches(batches_per_bucket)
-        batch_indices = np.arange(total_batches, dtype=np.uint32)
-        rng = _get_rng(seed)
-        # Put a batch with the largest sequence length first to catch OOMs early.
-        idx = rng.integers(total_batches - batches_per_bucket[-1][1], total_batches)
-        batch = batch_indices[idx]
-        batch_indices[idx] = batch_indices[0]
-        batch_indices[0] = batch
-        rng.shuffle(batch_indices[1:])
-        return batch_indices
-
-
-@dataclass
-class VSLGrowP2Curriculum(VSLCurriculum):
-    """
-    Implements the "Grow-P2" curriculum from
-    `Dataset Decomposition: Faster LLM Training with Variable Sequence Length Curriculum
-    <https://arxiv.org/pdf/2405.13226>`_.
-    """
-
-    num_cycles: int = 8
-
-    def batches_per_bucket(
-        self, dataset: NumpyVSLDataset, global_batch_size: int
-    ) -> List[Tuple[int, int]]:
-        actual_batches_per_bucket = VSLNaturalCurriculum().batches_per_bucket(
-            dataset, global_batch_size
-        )
-        batches_per_bucket = min([batches for _, batches in actual_batches_per_bucket])
-        batches_per_bucket = self.num_cycles * (batches_per_bucket // self.num_cycles)
-        return [(seq_len, batches_per_bucket) for seq_len, _ in actual_batches_per_bucket]
-
-    def get_cycle_distribution(
-        self, indices: np.ndarray, batches_per_bucket: Sequence[Tuple[int, int]], cycle: int = 0
-    ):
-        cycle_length = indices.shape[0] // self.num_cycles
-        cycle_indices = indices[cycle * cycle_length : (cycle * cycle_length) + cycle_length]
-        distribution: List[List[int]] = []
-        for subcycle in np.array_split(cycle_indices, len(batches_per_bucket)):
-            distribution.append([])
-            bucket_offset_start = 0
-            bucket_offset_end = 0
-            for _, num_batches in batches_per_bucket:
-                bucket_offset_end += num_batches
-                count = ((subcycle >= bucket_offset_start) & (subcycle < bucket_offset_end)).sum()
-                distribution[-1].append(count)
-                bucket_offset_start += num_batches
-        return distribution
-
-    def get_batch_indices(
-        self, batches_per_bucket: Sequence[Tuple[int, int]], seed: int
-    ) -> np.ndarray:
-        # Shortest sequence length first.
-        assert batches_per_bucket[0][0] < batches_per_bucket[-1][0]
-
-        rng = _get_rng(seed)
-        num_buckets = len(batches_per_bucket)
-
-        log.info(f"Constructing Grow-P2 VSL curriculum with {num_buckets} buckets:")
-        self.log_buckets(batches_per_bucket)
-
-        # This is how many batches we'll pull from each bucket for each cycle.
-        batch_counts_per_cycle_per_bucket = divide_into_buckets(
-            batches_per_bucket[0][1], self.num_cycles
-        )
-        # These are the batch indices *within* each bucket that we'll use for each cycle.
-        batches_per_cycle_per_bucket = chunk_array(
-            np.arange(0, batches_per_bucket[0][1], dtype=np.uint32),
-            batch_counts_per_cycle_per_bucket,
-        )
-        cycles: List[np.ndarray] = []
-        for cycle in range(self.num_cycles):
-            # Now we need to chunk the batch indices *within* each bucket in this cycle into the batch
-            # indices for each sub-cycle.
-            # At the same time we'll translate those *within* bucket indices into global batch indices
-            # by adding the right offset for each bucket.
-            batches_this_cycle_per_bucket = batches_per_cycle_per_bucket[cycle]
-            all_bucket_subcycle_batches: List[List[np.ndarray]] = []
-            for bucket in range(num_buckets):
-                bucket_offset = sum([b for _, b in batches_per_bucket[:bucket]])
-                bucket_subcycle_batch_counts = self._get_num_bucket_batches_for_cycle(
-                    bucket, num_buckets, batch_counts_per_cycle_per_bucket[cycle]
-                )
-                bucket_subcycle_batches = chunk_array(
-                    bucket_offset + batches_this_cycle_per_bucket, bucket_subcycle_batch_counts
-                )
-                all_bucket_subcycle_batches.append(bucket_subcycle_batches)
-
-            # Now we'll build each full syb-cycle by concatenating all of the bucket sub-cycle batches
-            # together and shuffling.
-            all_subsycles: List[np.ndarray] = []
-            for subcycle in range(num_buckets):
-                subsycle_batches: List[np.ndarray] = []
-                for bucket in range(num_buckets):
-                    subsycle_batches.append(all_bucket_subcycle_batches[bucket][subcycle])
-                res = np.concatenate(subsycle_batches)
-                rng.shuffle(res)
-                all_subsycles.append(res)
-            del all_bucket_subcycle_batches
-
-            # Finally we can concatenate all of the subsycles together to form the complete cycle.
-            cycles.append(np.concatenate(all_subsycles))
-            del all_subsycles
-
-        indices = np.concatenate(cycles)
-        del cycles
-
-        # Make sure the very first batch has the longest sequence length (is from the last bucket).
-        # That way OOMs should happen right away.
-        final_bucket_start = sum([b for _, b in batches_per_bucket[:-1]])
-        first_long_seq_len_batch = np.argmax(indices >= final_bucket_start)
-        batch = indices[first_long_seq_len_batch]
-        indices[first_long_seq_len_batch] = indices[0]
-        indices[0] = batch
-
-        return indices
-
-    @classmethod
-    def _get_bucket_odds_for_cycle(cls, bucket_idx: int, num_buckets: int) -> List[int]:
-        all_odds = []
-        start_odds = num_buckets - bucket_idx
-        for cycle in range(num_buckets):
-            exp = (
-                start_odds + cycle
-                if start_odds + cycle <= num_buckets
-                else start_odds - ((start_odds + cycle) % num_buckets)
-            )
-            all_odds.append(2 ** (exp - 1))
-        return all_odds
-
-    @classmethod
-    def _get_num_bucket_batches_for_cycle(
-        cls, bucket_idx: int, num_buckets: int, num_batches: int
-    ) -> List[int]:
-        odds = cls._get_bucket_odds_for_cycle(bucket_idx, num_buckets)
-        divisor = sum(odds)
-        props = [o / divisor for o in odds]
-        out = []
-        total = 0
-        for p in props:
-            n = round(p * num_batches)
-            total += n
-            out.append(n)
-        if total < num_batches:
-            out[-1] += num_batches - total
-        return out
-
-
 class IterableVSLDataset(IterableDatasetBase):
     """
     An iterable dataset that wraps a :class:`~olmo_core.data.NumpyVSLDataset` and implements
@@ -575,14 +368,11 @@ class IterableVSLDataset(IterableDatasetBase):
     def __init__(
         self,
         dataset: NumpyVSLDataset,
-        *,
-        curriculum: Optional[VSLCurriculum] = None,
         **kwargs,
     ):
         super().__init__(dataset, **kwargs)
         self._batches_per_bucket: Optional[Tuple[Tuple[int, int], ...]] = None
         self._buckets: Optional[Tuple[int, ...]] = None
-        self.curriculum = curriculum or VSLNaturalCurriculum()
         self.start_index = 0
         if not self.shuffle:
             log.warning("VSL curriculum will be ignored since shuffle=False")
@@ -598,7 +388,7 @@ class IterableVSLDataset(IterableDatasetBase):
         if self._batches_per_bucket is None:
             assert isinstance(self.dataset, NumpyVSLDataset)
             self._batches_per_bucket = tuple(
-                self.curriculum.batches_per_bucket(self.dataset, self.global_batch_size)
+                self.dataset.vsl_curriculum.batches_per_bucket(self.dataset, self.global_batch_size)
             )
         return self._batches_per_bucket
 
@@ -621,7 +411,7 @@ class IterableVSLDataset(IterableDatasetBase):
     def _build_bucket_indices(self, seq_len: int, num_instances: int) -> np.ndarray:
         instance_indices = np.arange(num_instances, dtype=np.uint32)
         if self.shuffle:
-            rng = _get_rng(self.seed + self.epoch + seq_len)
+            rng = get_rng(self.seed + self.epoch + seq_len)
             rng.shuffle(instance_indices)
         return instance_indices
 
@@ -652,7 +442,8 @@ class IterableVSLDataset(IterableDatasetBase):
 
     def _build_global_indices(self) -> np.ndarray:
         if self.shuffle:
-            return self.curriculum.get_batch_indices(
+            assert isinstance(self.dataset, NumpyVSLDataset)
+            return self.dataset.vsl_curriculum.get_batch_indices(
                 self.batches_per_bucket, self.seed + self.epoch
             )
         else:
@@ -725,7 +516,3 @@ class IterableVSLDataset(IterableDatasetBase):
 
         # Set 'start_index' (which indexes into batches).
         self.start_index = state_dict["batches_processed"]
-
-
-def _get_rng(seed: int) -> np.random.Generator:
-    return np.random.Generator(np.random.PCG64(seed=seed))

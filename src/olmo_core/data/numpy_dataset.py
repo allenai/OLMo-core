@@ -9,7 +9,18 @@ from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, TypeVar, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+)
 
 import numpy as np
 import torch
@@ -25,7 +36,10 @@ from ..utils import capped_powers_of_2
 from .mixes import DataMix
 from .tokenizer import TokenizerConfig
 from .utils import (
+    chunk_array,
+    divide_into_buckets,
     get_document_lengths,
+    get_rng,
     iter_document_indices,
     load_array_slice_into_tensor,
     memmap_to_write,
@@ -33,10 +47,16 @@ from .utils import (
 
 __all__ = [
     "NumpyDatasetBase",
-    "NumpyFSLDatasetConfig",
     "NumpyFSLDataset",
-    "NumpyDatasetDType",
+    "VSLCurriculum",
+    "VSLNaturalCurriculum",
+    "VSLGrowP2Curriculum",
     "NumpyVSLDataset",
+    "NumpyDatasetType",
+    "NumpyDatasetConfig",
+    "VSLCurriculumType",
+    "VSLCurriculumConfig",
+    "NumpyDatasetDType",
 ]
 
 
@@ -46,26 +66,23 @@ log = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-class NumpyDatasetDType(StrEnum):
-    uint8 = "uint8"
-    uint16 = "uint16"
-    uint32 = "uint32"
-    uint64 = "uint64"
-
-    def as_np_dtype(
-        self,
-    ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
-        return getattr(np, str(self))
-
-
 class NumpyDatasetBase(ABC):
     """
-    A base class for datasets backed from numpy arrays of token IDs.
+    An abstract base class for datasets backed by numpy arrays on disk of token IDs.
+
+    In general the instances that these datasets produce are sequences of token IDs from one
+    or more numpy arrays, sometimes with additional metadata attached.
+    The way those instances are formed depends on the implementation details of the subclass.
 
     .. warning::
-        When using subclasses in a distributed setting be sure that the :data:`work_dir` is shared
-        among all local ranks. Then you should then call :meth:`prepare()` in the main process
-        before doing anything else.
+        When using :class:`NumpyDatasetBase` implementations in a distributed setting be sure
+        that the :data:`work_dir` is shared among all local ranks and :data:`fs_local_rank` is set
+        accordingly. Once those fields are set you should then call :meth:`prepare()` in the
+        main process before doing anything else.
+
+    .. tip::
+        Use :class:`NumpyDatasetConfig` to configure and construct datasets instead of constructing
+        them directly.
     """
 
     def __init__(
@@ -89,7 +106,7 @@ class NumpyDatasetBase(ABC):
     @property
     def paths(self) -> Tuple[PathOrStr, ...]:
         """
-        Paths to the numpy arrays.
+        Paths and/or URLs to the numpy arrays.
         """
         return self._array_paths
 
@@ -213,124 +230,10 @@ class NumpyDatasetBase(ABC):
     @abstractmethod
     def __getitem__(self, index: int) -> Dict[str, Any]:
         """
-        Get an instance from the dataset.
+        Get an instance from the dataset. At a minimum this will contain the field "input_ids", a
+        integer tensor of token IDs.
         """
         raise NotImplementedError
-
-
-@dataclass
-class NumpyFSLDatasetConfig(Config):
-    """
-    A config class for easily building :class:`NumpyFSLDataset` classes.
-    """
-
-    sequence_length: int
-    tokenizer: TokenizerConfig
-    paths: Optional[List[str]] = None
-    mix: Optional[DataMix] = None
-    mix_base_dir: Optional[str] = None
-    max_target_sequence_length: Optional[int] = None
-    dtype: Optional[NumpyDatasetDType] = None
-    metadata: Optional[List[Dict[str, Any]]] = None
-    include_instance_metadata: bool = True
-    generate_doc_lengths: bool = False
-    expand_glob: bool = False
-
-    @classmethod
-    def glob(cls, *glob_paths: str, **kwargs) -> NumpyFSLDatasetConfig:
-        """
-        Initialize a dataset config with glob paths.
-
-        .. note::
-            Globs are not expanded until :meth:`build()` is called.
-            If any of the globs don't expand to any matches a :class:`FileNotFoundError`
-            error is raised
-
-        :returns: A new dataset config.
-        """
-        return cls(paths=list(glob_paths), expand_glob=True, **kwargs)
-
-    @classmethod
-    def from_data_mix(
-        cls, mix: DataMix, *, tokenizer: TokenizerConfig, **kwargs
-    ) -> "NumpyFSLDatasetConfig":
-        """
-        Initialize a dataset config from an official data mix.
-
-        :param mix: The data mix.
-        :param tokenizer: The tokenizer config.
-
-        :returns: A new dataset config.
-        """
-        if tokenizer.identifier is None:
-            raise OLMoConfigurationError(
-                "Missing tokenizer identifier required to construct data mix"
-            )
-        return cls(mix=mix, tokenizer=tokenizer, **kwargs)
-
-    def get_dtype(
-        self,
-    ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
-        if self.dtype is not None:
-            return NumpyDatasetDType(self.dtype).as_np_dtype()
-
-        # Guess based on vocab size.
-        for dtype in (
-            NumpyDatasetDType.uint8,
-            NumpyDatasetDType.uint16,
-            NumpyDatasetDType.uint32,
-            NumpyDatasetDType.uint64,
-        ):
-            if (self.tokenizer.vocab_size - 1) <= np.iinfo(dtype.as_np_dtype()).max:
-                log.info(f"Assuming dtype '{dtype}' based on vocab size")
-                return dtype.as_np_dtype()
-
-        raise ValueError("vocab size too big!")
-
-    def build(self) -> NumpyFSLDataset:
-        """
-        Construct the corresponding :class:`NumpyFSLDataset`.
-        """
-        if (self.paths is None) == (self.mix is None):
-            raise OLMoConfigurationError("Exactly one of 'paths' or 'mix' is required")
-
-        paths: List[str] = []
-        if self.paths and self.expand_glob:
-            from glob import glob
-
-            for glob_path in self.paths:
-                log.info(f"Expanding '{glob_path}'...")
-                matches = sorted(glob(glob_path))
-                if not matches:
-                    raise FileNotFoundError(glob_path)
-                for path in matches:
-                    log.info(f" - '{path}'")
-                paths.extend(matches)
-        elif self.paths:
-            paths = self.paths
-        else:
-            assert self.mix is not None
-            if self.mix_base_dir is None:
-                raise OLMoConfigurationError(
-                    "'mix_base_dir' is required to build a dataset from a mix"
-                )
-            if self.tokenizer.identifier is None:
-                raise OLMoConfigurationError(
-                    "Missing tokenizer identifier required to construct data mix"
-                )
-            paths = self.mix.build(self.mix_base_dir, self.tokenizer.identifier)
-
-        return NumpyFSLDataset(
-            *paths,
-            sequence_length=self.sequence_length,
-            max_target_sequence_length=self.max_target_sequence_length,
-            pad_token_id=self.tokenizer.pad_token_id,
-            eos_token_id=self.tokenizer.eos_token_id,
-            dtype=self.get_dtype(),
-            metadata=self.metadata,
-            include_instance_metadata=self.include_instance_metadata,
-            generate_doc_lengths=self.generate_doc_lengths,
-        )
 
 
 class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
@@ -512,22 +415,225 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
             raise RuntimeError("invalid 'max_target_sequence_length' or 'sequence_length'")
 
 
+@dataclass
+class VSLCurriculum:
+    """
+    Base class for variable sequence length curriculums. These determine the sampling
+    probability of batches from each bucket throughout training with a :class:`NumpyVSLDataset`.
+    """
+
+    @abstractmethod
+    def batches_per_bucket(
+        self, dataset: NumpyVSLDataset, global_batch_size: int
+    ) -> List[Tuple[int, int]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_batch_indices(
+        self, batches_per_bucket: Sequence[Tuple[int, int]], seed: int
+    ) -> np.ndarray:
+        raise NotImplementedError
+
+    def get_total_batches(self, batches_per_bucket: Sequence[Tuple[int, int]]) -> int:
+        return sum([batches for _, batches in batches_per_bucket])
+
+    @staticmethod
+    def log_buckets(batches_per_bucket: Sequence[Tuple[int, int]]):
+        for i, (seq_len, num_batches) in enumerate(batches_per_bucket):
+            log.info(f"- bucket {i}: sequence length {seq_len}, {num_batches:,d} batches")
+
+
+@dataclass
+class VSLNaturalCurriculum(VSLCurriculum):
+    """
+    Implements the natural curriculum from
+    `Dataset Decomposition: Faster LLM Training with Variable Sequence Length Curriculum
+    <https://arxiv.org/pdf/2405.13226>`_.
+    """
+
+    def batches_per_bucket(
+        self, dataset: NumpyVSLDataset, global_batch_size: int
+    ) -> List[Tuple[int, int]]:
+        batches_per_bucket = []
+        for seq_len, num_instances in dataset.instances_per_bucket:
+            instances_per_batch = global_batch_size // seq_len
+            batches = num_instances // instances_per_batch
+            batches_per_bucket.append((seq_len, batches))
+        return batches_per_bucket
+
+    def get_batch_indices(
+        self, batches_per_bucket: Sequence[Tuple[int, int]], seed: int
+    ) -> np.ndarray:
+        total_batches = self.get_total_batches(batches_per_bucket)
+        batch_indices = np.arange(total_batches, dtype=np.uint32)
+        rng = get_rng(seed)
+        # Put a batch with the largest sequence length first to catch OOMs early.
+        idx = rng.integers(total_batches - batches_per_bucket[-1][1], total_batches)
+        batch = batch_indices[idx]
+        batch_indices[idx] = batch_indices[0]
+        batch_indices[0] = batch
+        rng.shuffle(batch_indices[1:])
+        return batch_indices
+
+
+@dataclass
+class VSLGrowP2Curriculum(VSLCurriculum):
+    """
+    Implements the "Grow-P2" curriculum from
+    `Dataset Decomposition: Faster LLM Training with Variable Sequence Length Curriculum
+    <https://arxiv.org/pdf/2405.13226>`_.
+    """
+
+    num_cycles: int = 8
+
+    def batches_per_bucket(
+        self, dataset: NumpyVSLDataset, global_batch_size: int
+    ) -> List[Tuple[int, int]]:
+        actual_batches_per_bucket = VSLNaturalCurriculum().batches_per_bucket(
+            dataset, global_batch_size
+        )
+        batches_per_bucket = min([batches for _, batches in actual_batches_per_bucket])
+        batches_per_bucket = self.num_cycles * (batches_per_bucket // self.num_cycles)
+        return [(seq_len, batches_per_bucket) for seq_len, _ in actual_batches_per_bucket]
+
+    def get_cycle_distribution(
+        self, indices: np.ndarray, batches_per_bucket: Sequence[Tuple[int, int]], cycle: int = 0
+    ):
+        cycle_length = indices.shape[0] // self.num_cycles
+        cycle_indices = indices[cycle * cycle_length : (cycle * cycle_length) + cycle_length]
+        distribution: List[List[int]] = []
+        for subcycle in np.array_split(cycle_indices, len(batches_per_bucket)):
+            distribution.append([])
+            bucket_offset_start = 0
+            bucket_offset_end = 0
+            for _, num_batches in batches_per_bucket:
+                bucket_offset_end += num_batches
+                count = ((subcycle >= bucket_offset_start) & (subcycle < bucket_offset_end)).sum()
+                distribution[-1].append(count)
+                bucket_offset_start += num_batches
+        return distribution
+
+    def get_batch_indices(
+        self, batches_per_bucket: Sequence[Tuple[int, int]], seed: int
+    ) -> np.ndarray:
+        # Shortest sequence length first.
+        assert batches_per_bucket[0][0] < batches_per_bucket[-1][0]
+
+        rng = get_rng(seed)
+        num_buckets = len(batches_per_bucket)
+
+        log.info(f"Constructing Grow-P2 VSL curriculum with {num_buckets} buckets:")
+        self.log_buckets(batches_per_bucket)
+
+        # This is how many batches we'll pull from each bucket for each cycle.
+        batch_counts_per_cycle_per_bucket = divide_into_buckets(
+            batches_per_bucket[0][1], self.num_cycles
+        )
+        # These are the batch indices *within* each bucket that we'll use for each cycle.
+        batches_per_cycle_per_bucket = chunk_array(
+            np.arange(0, batches_per_bucket[0][1], dtype=np.uint32),
+            batch_counts_per_cycle_per_bucket,
+        )
+        cycles: List[np.ndarray] = []
+        for cycle in range(self.num_cycles):
+            # Now we need to chunk the batch indices *within* each bucket in this cycle into the batch
+            # indices for each sub-cycle.
+            # At the same time we'll translate those *within* bucket indices into global batch indices
+            # by adding the right offset for each bucket.
+            batches_this_cycle_per_bucket = batches_per_cycle_per_bucket[cycle]
+            all_bucket_subcycle_batches: List[List[np.ndarray]] = []
+            for bucket in range(num_buckets):
+                bucket_offset = sum([b for _, b in batches_per_bucket[:bucket]])
+                bucket_subcycle_batch_counts = self._get_num_bucket_batches_for_cycle(
+                    bucket, num_buckets, batch_counts_per_cycle_per_bucket[cycle]
+                )
+                bucket_subcycle_batches = chunk_array(
+                    bucket_offset + batches_this_cycle_per_bucket, bucket_subcycle_batch_counts
+                )
+                all_bucket_subcycle_batches.append(bucket_subcycle_batches)
+
+            # Now we'll build each full syb-cycle by concatenating all of the bucket sub-cycle batches
+            # together and shuffling.
+            all_subsycles: List[np.ndarray] = []
+            for subcycle in range(num_buckets):
+                subsycle_batches: List[np.ndarray] = []
+                for bucket in range(num_buckets):
+                    subsycle_batches.append(all_bucket_subcycle_batches[bucket][subcycle])
+                res = np.concatenate(subsycle_batches)
+                rng.shuffle(res)
+                all_subsycles.append(res)
+            del all_bucket_subcycle_batches
+
+            # Finally we can concatenate all of the subsycles together to form the complete cycle.
+            cycles.append(np.concatenate(all_subsycles))
+            del all_subsycles
+
+        indices = np.concatenate(cycles)
+        del cycles
+
+        # Make sure the very first batch has the longest sequence length (is from the last bucket).
+        # That way OOMs should happen right away.
+        final_bucket_start = sum([b for _, b in batches_per_bucket[:-1]])
+        first_long_seq_len_batch = np.argmax(indices >= final_bucket_start)
+        batch = indices[first_long_seq_len_batch]
+        indices[first_long_seq_len_batch] = indices[0]
+        indices[0] = batch
+
+        return indices
+
+    @classmethod
+    def _get_bucket_odds_for_cycle(cls, bucket_idx: int, num_buckets: int) -> List[int]:
+        all_odds = []
+        start_odds = num_buckets - bucket_idx
+        for cycle in range(num_buckets):
+            exp = (
+                start_odds + cycle
+                if start_odds + cycle <= num_buckets
+                else start_odds - ((start_odds + cycle) % num_buckets)
+            )
+            all_odds.append(2 ** (exp - 1))
+        return all_odds
+
+    @classmethod
+    def _get_num_bucket_batches_for_cycle(
+        cls, bucket_idx: int, num_buckets: int, num_batches: int
+    ) -> List[int]:
+        odds = cls._get_bucket_odds_for_cycle(bucket_idx, num_buckets)
+        divisor = sum(odds)
+        props = [o / divisor for o in odds]
+        out = []
+        total = 0
+        for p in props:
+            n = round(p * num_batches)
+            total += n
+            out.append(n)
+        if total < num_batches:
+            out[-1] += num_batches - total
+        return out
+
+
 class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     """
-    A variable sequence length (VSL) numpy array-backed dataset. Use with
-    :class:`IterableVSLDataset` to implement a sequence length-based curriculum during training as
-    introduced in `Dataset Decomposition: Faster LLM Training with Variable Sequence Length Curriculum
+    A variable sequence length (VSL) numpy array-backed dataset. This is used to inject a sequence
+    length-based curriculum during training as introduced in
+    `Dataset Decomposition: Faster LLM Training with Variable Sequence Length Curriculum
     <https://arxiv.org/pdf/2405.13226>`_.
 
     This dataset creates instances of token IDs with lengths that are powers of 2
     between ``min_sequence_length`` (which must be a power of 2) and ``max_sequence_length``
     (also a power a 2). Some tokens will be discarded unless ``min_sequence_length`` is 1.
 
+    .. important::
+        No special tokens are added to the input IDs so it's assumed that if you want
+        EOS tokens between documents, for example, those will already be in the array.
+
     :param paths: Paths or URLs to numpy token ID arrays.
     :param pad_token_id: The ID of the padding token.
     :param eos_token_id: The ID of the EOS token.
     :param max_sequence_length: The maximum allowed sequence length. A power of 2, e.g. '4096'.
-    :param min_sequence_length: The minimum allowed sequence length. A power of 2, e.g. '64'.
+    :param min_sequence_length: The minimum allowed sequence length. A power of 2, e.g. '256'.
+    :param vsl_curriculum: The variable sequence length curriculum. Determines the sampling
+        probability of batches from each bucket throughout training.
     :param dtype: The numpy datatype of the arrays.
     :param metadata: Metadata to add to each item. This should be a dictionary or a list of dictionaries
         with the same number of items as there are paths.
@@ -542,6 +648,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         eos_token_id: int,
         max_sequence_length: int,
         min_sequence_length: int = 256,
+        vsl_curriculum: Optional[VSLCurriculum] = None,
         dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]] = np.uint16,
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
@@ -573,6 +680,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         self._include_instance_metadata = include_instance_metadata
         self._max_sequence_length = max_sequence_length
         self._min_sequence_length = min_sequence_length
+        self._vsl_curriculum = vsl_curriculum or VSLNaturalCurriculum()
         self._num_instances: Optional[int] = None
         self._array_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
         self._lengths_dtype: Optional[
@@ -596,6 +704,10 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     @property
     def min_sequence_length(self) -> int:
         return self._min_sequence_length
+
+    @property
+    def vsl_curriculum(self) -> VSLCurriculum:
+        return self._vsl_curriculum
 
     @property
     def all_sequence_lengths(self) -> List[int]:
@@ -756,7 +868,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     @property
     def instances_per_bucket(self) -> Tuple[Tuple[int, int], ...]:
         """
-        The number of instances in each bucket of equal sequence length instances.
+        The number of instances in each bucket.
         """
         if self._instances_per_bucket is None:
             instances_per_bucket = []
@@ -790,3 +902,294 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                     break
             assert self._lengths_dtype is not None
         return self._lengths_dtype
+
+
+class NumpyDatasetType(StrEnum):
+    """
+    An enumeration of the different :class:`NumpyDatasetBase` implementations.
+    """
+
+    fsl = "fsl"
+    """
+    Fixed sequenced length ➡️ :class:`NumpyFSLDataset`.
+    """
+
+    vsl = "vsl"
+    """
+    Variable sequenced length ➡️ :class:`NumpyVSLDataset`.
+    """
+
+
+class NumpyDatasetDType(StrEnum):
+    uint8 = "uint8"
+    uint16 = "uint16"
+    uint32 = "uint32"
+    uint64 = "uint64"
+
+    def as_np_dtype(
+        self,
+    ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
+        return getattr(np, str(self))
+
+
+class VSLCurriculumType(StrEnum):
+    """
+    An enumeration of the different VSL curriculum implementations.
+    """
+
+    natural = "natural"
+    """
+    The natural curriculum ➡️ :class:`VSLNaturalCurriculum`.
+    """
+
+    grow_p2 = "grow_p2"
+    """
+    The "Grow-P2" curriculum ➡️ :class:`VSLGrowP2Curriculum`.
+    """
+
+
+@dataclass
+class VSLCurriculumConfig(Config):
+    name: VSLCurriculumType = VSLCurriculumType.natural
+    num_cycles: Optional[int] = None
+
+    def build(self) -> VSLCurriculum:
+        """
+        Build the VSL curriculum.
+        """
+        if self.name == VSLCurriculumType.natural:
+            if self.num_cycles is not None:
+                raise OLMoConfigurationError(
+                    f"'num_cycles' is not a valid field for the {self.name} curriculum"
+                )
+            return VSLNaturalCurriculum()
+        elif self.name == VSLCurriculumType.grow_p2:
+            if self.num_cycles is None:
+                raise OLMoConfigurationError(
+                    f"'num_cycles' is required for the {self.name} curriculum"
+                )
+            return VSLGrowP2Curriculum(num_cycles=self.num_cycles)
+        else:
+            raise NotImplementedError(self.name)
+
+
+@dataclass
+class NumpyDatasetConfig(Config):
+    """
+    A config class for easily building :class:`NumpyDatasetBase` classes.
+    """
+
+    tokenizer: TokenizerConfig
+    """
+    The tokenizer config.
+    """
+    name: NumpyDatasetType = NumpyDatasetType.fsl
+    """
+    The type of dataset.
+    """
+    sequence_length: Optional[int] = None
+    """
+    The sequence length for a :class:`NumpyFSLDataset`.
+    """
+    max_target_sequence_length: Optional[int] = None
+    """
+    The max target sequene length for a :class:`NumpyFSLDataset`.
+    """
+    max_sequence_length: Optional[int] = None
+    """
+    The max sequence length for a :class:`NumpyVSLDataset`.
+    """
+    min_sequence_length: Optional[int] = None
+    """
+    The min sequence length for a :class:`NumpyVSLDataset`.
+    """
+    vsl_curriculum: Optional[VSLCurriculumConfig] = None
+    """
+    The variable sequence length (VSL) curriculum for a :class:`NumpyVSLDataset`.
+    """
+    paths: Optional[List[str]] = None
+    """
+    The paths/URLs to the numpy token ID arrays.
+    """
+    mix: Optional[DataMix] = None
+    """
+    The name of a data mix.
+    """
+    mix_base_dir: Optional[str] = None
+    """
+    The base directory for the data mix.
+    """
+    dtype: Optional[NumpyDatasetDType] = None
+    """
+    The numpy datatype of the token ID arrays.
+    """
+    metadata: Optional[List[Dict[str, Any]]] = None
+    """
+    Metadata for the numpy arrays.
+    """
+    include_instance_metadata: bool = True
+    """
+    Whether or not to include the :data:`metadata` in the instances returned from
+    :meth:`NumpyDatasetBase.__getitem__()`.
+    """
+    generate_doc_lengths: bool = False
+    """
+    Include individual document lengths in the instances returned from
+    :meth:`NumpyDatasetBase.__getitem__()`.
+    """
+    expand_glob: bool = False
+    """
+    Treat the :data:`paths` as globs.
+    """
+
+    @property
+    def effective_sequence_length(self) -> int:
+        if self.sequence_length is not None:
+            return self.sequence_length
+        elif self.max_sequence_length is not None:
+            return self.max_sequence_length
+        else:
+            raise ValueError("missing 'sequence_length' or 'max_sequence_length'")
+
+    @classmethod
+    def glob(cls, *glob_paths: str, **kwargs) -> NumpyDatasetConfig:
+        """
+        Initialize a dataset config with glob paths.
+
+        .. note::
+            Globs are not expanded until :meth:`build()` is called.
+            If any of the globs don't expand to any matches a :class:`FileNotFoundError`
+            error is raised
+
+        :returns: A new dataset config.
+        """
+        return cls(paths=list(glob_paths), expand_glob=True, **kwargs)
+
+    @classmethod
+    def from_data_mix(
+        cls, mix: DataMix, *, tokenizer: TokenizerConfig, **kwargs
+    ) -> "NumpyDatasetConfig":
+        """
+        Initialize a dataset config from an official data mix.
+
+        :param mix: The data mix.
+        :param tokenizer: The tokenizer config.
+
+        :returns: A new dataset config.
+        """
+        if tokenizer.identifier is None:
+            raise OLMoConfigurationError(
+                "Missing tokenizer identifier required to construct data mix"
+            )
+        return cls(mix=mix, tokenizer=tokenizer, **kwargs)
+
+    def get_dtype(
+        self,
+    ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
+        if self.dtype is not None:
+            return NumpyDatasetDType(self.dtype).as_np_dtype()
+
+        # Guess based on vocab size.
+        for dtype in (
+            NumpyDatasetDType.uint8,
+            NumpyDatasetDType.uint16,
+            NumpyDatasetDType.uint32,
+            NumpyDatasetDType.uint64,
+        ):
+            if (self.tokenizer.vocab_size - 1) <= np.iinfo(dtype.as_np_dtype()).max:
+                log.info(f"Assuming dtype '{dtype}' based on vocab size")
+                return dtype.as_np_dtype()
+
+        raise ValueError("vocab size too big!")
+
+    def build(self) -> NumpyDatasetBase:
+        """
+        Construct the corresponding :class:`NumpyDatasetBase`.
+        """
+        if (self.paths is None) == (self.mix is None):
+            raise OLMoConfigurationError("Exactly one of 'paths' or 'mix' is required")
+
+        paths: List[str] = []
+        if self.paths and self.expand_glob:
+            from glob import glob
+
+            for glob_path in self.paths:
+                log.info(f"Expanding '{glob_path}'...")
+                matches = sorted(glob(glob_path))
+                if not matches:
+                    raise FileNotFoundError(glob_path)
+                for path in matches:
+                    log.info(f" - '{path}'")
+                paths.extend(matches)
+        elif self.paths:
+            paths = self.paths
+        else:
+            assert self.mix is not None
+            if self.mix_base_dir is None:
+                raise OLMoConfigurationError(
+                    "'mix_base_dir' is required to build a dataset from a mix"
+                )
+            if self.tokenizer.identifier is None:
+                raise OLMoConfigurationError(
+                    "Missing tokenizer identifier required to construct data mix"
+                )
+            paths = self.mix.build(self.mix_base_dir, self.tokenizer.identifier)
+
+        if self.name == NumpyDatasetType.fsl:
+            if self.sequence_length is None:
+                raise OLMoConfigurationError("'sequence_length' is required for FSL dataset")
+            if self.max_sequence_length is not None:
+                if self.max_target_sequence_length is None:
+                    raise OLMoConfigurationError(
+                        "'max_sequence_length' is only a valid field for VSL datasets, "
+                        "did you mean to set 'max_target_sequence_length' instead?"
+                    )
+                else:
+                    raise OLMoConfigurationError(
+                        "'max_sequence_length' is only a valid field for VSL datasets"
+                    )
+            if self.min_sequence_length is not None:
+                raise OLMoConfigurationError(
+                    "'min_sequence_length' is only a valid field for VSL datasets"
+                )
+            if self.vsl_curriculum is not None:
+                raise OLMoConfigurationError(
+                    "'vsl_curriculum' is only a valid field for VSL datasets"
+                )
+            return NumpyFSLDataset(
+                *paths,
+                sequence_length=self.sequence_length,
+                max_target_sequence_length=self.max_target_sequence_length,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+                dtype=self.get_dtype(),
+                metadata=self.metadata,
+                include_instance_metadata=self.include_instance_metadata,
+                generate_doc_lengths=self.generate_doc_lengths,
+            )
+        elif self.name == NumpyDatasetType.vsl:
+            if self.max_sequence_length is None:
+                raise OLMoConfigurationError("'max_sequence_length' is required for VSL datasets")
+            if self.min_sequence_length is None:
+                raise OLMoConfigurationError("'min_sequence_length' is required for VSL datasets")
+            if self.sequence_length is not None:
+                raise OLMoConfigurationError(
+                    "'sequence_length' is only a valid field for FSL datasets"
+                )
+            if self.generate_doc_lengths is not None:
+                raise OLMoConfigurationError(
+                    "'generate_doc_lengths' is only a valid field for FSL datasets"
+                )
+            return NumpyVSLDataset(
+                *paths,
+                max_sequence_length=self.max_sequence_length,
+                min_sequence_length=self.min_sequence_length,
+                vsl_curriculum=None if self.vsl_curriculum is None else self.vsl_curriculum.build(),
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+                dtype=self.get_dtype(),
+                metadata=self.metadata,
+                include_instance_metadata=self.include_instance_metadata,
+            )
+        else:
+            raise NotImplementedError(self.name)

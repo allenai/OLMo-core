@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import List, cast
 
 from olmo_core.config import Config, DType
-from olmo_core.data import NumpyFSLDatasetConfig, TokenizerConfig
+from olmo_core.data import NumpyDatasetConfig, TokenizerConfig
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.distributed.utils import init_hybrid_shard_mesh
 from olmo_core.nn.transformer import TransformerConfig
@@ -38,7 +38,7 @@ from olmo_core.utils import get_default_device, seed_all
 class ExperimentConfig(Config):
     model: TransformerConfig
     optim: AdamWConfig
-    dataset: NumpyFSLDatasetConfig
+    dataset: NumpyDatasetConfig
     trainer: TrainerConfig
     init_seed: int = 12536
 
@@ -57,7 +57,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     optim_config = AdamWConfig(lr=1e-3)
 
-    dataset_config = NumpyFSLDatasetConfig.glob(
+    dataset_config = NumpyDatasetConfig.glob(
         "/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy",  # can be globs
         sequence_length=1024,
         tokenizer=tokenizer_config,
@@ -67,8 +67,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     trainer_config = (
         TrainerConfig(
             save_folder=f"/tmp/{run_name}",
-            global_batch_size=256 * dataset_config.sequence_length,
-            rank_microbatch_size=16 * dataset_config.sequence_length,
+            global_batch_size=256 * dataset_config.effective_sequence_length,
+            rank_microbatch_size=16 * dataset_config.effective_sequence_length,
             autocast_precision=DType.bfloat16,
             save_overwrite=True,
             data_loader_workers=4,

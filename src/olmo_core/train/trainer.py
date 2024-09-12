@@ -35,7 +35,6 @@ from ..data import (
     NumpyDatasetBase,
     NumpyFSLDataset,
     NumpyVSLDataset,
-    VSLCurriculum,
 )
 from ..data.utils import split_batch
 from ..distributed.utils import (
@@ -129,6 +128,10 @@ class Trainer:
     A local working directory to use for temporary files needed during training.
     Files added to this working directory can be persisted to the :data:`save_folder` via
     :meth:`persist_working_file()`.
+
+    .. note::
+        When constructing your trainer through a :class:`TrainerConfig` this will default to
+        the :data:`save_folder` if it's a local directory.
     """
 
     model: nn.Module
@@ -154,13 +157,17 @@ class Trainer:
     device: torch.device
     """
     The default device to use. Should match the device the model is on and be appropriate for the
-    distributed backend, if there is one.
+    main distributed backend.
     """
 
     save_folder: str
     """
     The folder to save all checkpoints to. Could be a local directory (if using a shared filesytem)
     or a URL.
+
+    .. warning::
+        If you try to use a local directory without a globally shared filesystem across all ranks
+        you will get an error.
     """
 
     checkpointer: Checkpointer
@@ -168,7 +175,7 @@ class Trainer:
     The checkpointer. This is a wrapper around the functionality in
     :mod:`olmo_core.distributed.checkpoint`, which means you can use
     :func:`~olmo_core.distributed.checkpoint.unshard_checkpoint` to unshard the model and optimizer
-    state from a trainer checkpoint.
+    state from a train checkpoint after the fact.
     """
 
     callbacks: Dict[str, Callback]
@@ -189,16 +196,15 @@ class Trainer:
     rank_microbatch_size: int
     """
     Microbatch size *in tokens* per rank, i.e. the number of tokens to process at a time from each rank.
+
+    This must evently divide into :data:`global_batch_size` by a factor of the data parallel world size.
+    If this is less than :data:`global_batch_size` divided by the data parallel world size then
+    gradient accumulation is used.
     """
 
     save_overwrite: bool = False
     """
     Whether to overwrite existing files/checkpoints in the :data:`save_folder`.
-    """
-
-    vsl_curriculum: Optional[VSLCurriculum] = None
-    """
-    The variable sequence length curriculum.
     """
 
     load_path: Optional[PathOrStr] = None
@@ -233,7 +239,9 @@ class Trainer:
 
     fused_loss: bool = False
     """
-    Used the fused cross-entropy loss function.
+    Use the fused cross-entropy loss function (:func:`~olmo_core.nn.functional.fused_cross_entropy_loss`)
+    instead the PyTorch built-in. This can help reduce GPU memory usage. Relative performance will
+    depend on the input sizes.
     """
 
     z_loss_multiplier: Optional[float] = None
@@ -271,12 +279,13 @@ class Trainer:
     global_step: int = 0
     """
     The current step/batch. 1-based, though it's initialized to 0 before the first step.
-    This does not reset after an epoch.
+    This does *not* reset after an epoch, unlike :data:`global_train_steps_this_epoch`.
     """
 
     global_train_tokens_seen: int = 0
     """
-    The total number of training tokens seen.
+    The total number of training tokens seen. This does *not* reset after an epoch, unlike
+    :data:`global_train_tokens_seen_this_epoch`.
     """
 
     global_train_steps_this_epoch: int = 0
@@ -296,7 +305,9 @@ class Trainer:
 
     cancel_check_interval: int = 25
     """
-    The interval (in steps) to check if the run is canceled. Checking requires distributed comms.
+    The interval (in steps) to check if the run is canceled. Checking requires distributed comms,
+    but if you've configured a separate CPU-only backend (like "gloo") then this shouldn't impact
+    training throughput.
     """
 
     hard_stop: Optional[Duration] = None
@@ -412,38 +423,29 @@ class Trainer:
             self.dataset.work_dir = self.work_dir
             self.dataset.prepare()
 
+        iterable_dataset_kwargs = dict(
+            rank_batch_size=self.rank_batch_size,
+            collator=self.collator,
+            work_dir=self.work_dir,
+            dp_world_size=get_world_size(self.dp_process_group),
+            dp_rank=get_rank(self.dp_process_group),
+            fs_local_rank=get_fs_local_rank(),
+            seed=self.data_seed,
+            epoch=self.epoch,
+        )
         if isinstance(self.dataset, NumpyFSLDataset):
             self._iterable_dataset = IterableFSLDataset(
                 self.dataset,
-                rank_batch_size=self.rank_batch_size,
-                collator=self.collator,
-                work_dir=self.work_dir,
-                dp_world_size=get_world_size(self.dp_process_group),
-                dp_rank=get_rank(self.dp_process_group),
-                fs_local_rank=get_fs_local_rank(),
-                seed=self.data_seed,
-                epoch=self.epoch,
+                **iterable_dataset_kwargs,  # type: ignore
             )
             if self.dataset.max_target_sequence_length is not None:
                 self._iterable_dataset.chunk_size = (
                     self.dataset.max_target_sequence_length // self.dataset.sequence_length
                 )
-            if self.vsl_curriculum is not None:
-                raise OLMoConfigurationError(
-                    "vsl_curriculum can only be applied to variable sequence length datasets"
-                )
         elif isinstance(self.dataset, NumpyVSLDataset):
             self._iterable_dataset = IterableVSLDataset(
                 self.dataset,
-                rank_batch_size=self.rank_batch_size,
-                collator=self.collator,
-                work_dir=self.work_dir,
-                dp_world_size=get_world_size(self.dp_process_group),
-                dp_rank=get_rank(self.dp_process_group),
-                fs_local_rank=get_fs_local_rank(),
-                seed=self.data_seed,
-                epoch=self.epoch,
-                curriculum=self.vsl_curriculum,
+                **iterable_dataset_kwargs,  # type: ignore
             )
         else:
             raise NotImplementedError
@@ -852,6 +854,8 @@ class Trainer:
             - :meth:`~olmo_core.train.callbacks.Callback.pre_optim_step()`
             - :meth:`~olmo_core.train.callbacks.Callback.post_train_batch()`
             - :meth:`~olmo_core.train.callbacks.Callback.post_step()`
+
+        :returns: The loss scalar tensor, typically on GPU.
         """
         return self.get_metric(TRAIN_CE_LOSS_METRIC)
 
@@ -866,6 +870,8 @@ class Trainer:
             - :meth:`~olmo_core.train.callbacks.Callback.pre_optim_step()`
             - :meth:`~olmo_core.train.callbacks.Callback.post_train_batch()`
             - :meth:`~olmo_core.train.callbacks.Callback.post_step()`
+
+        :returns: The Z-loss scalar tensor, typically on GPU.
         """
         return self.get_metric(TRAIN_Z_LOSS_METRIC)
 

@@ -311,3 +311,7 @@ def chunk_array(arr: np.ndarray, chunk_sizes: Sequence[int]) -> List[np.ndarray]
         chunks.append(arr[offset : offset + n])
         offset += n
     return chunks
+
+
+def get_rng(seed: int) -> np.random.Generator:
+    return np.random.Generator(np.random.PCG64(seed=seed))

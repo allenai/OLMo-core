@@ -4,8 +4,8 @@ from typing import List
 import numpy as np
 
 from olmo_core.data import (
+    NumpyDatasetConfig,
     NumpyFSLDataset,
-    NumpyFSLDatasetConfig,
     NumpyVSLDataset,
     TokenizerConfig,
 )
@@ -88,10 +88,8 @@ def test_numpy_vsl_dataset(tmp_path: Path):
 
 
 def test_guess_dtype():
-    config = NumpyFSLDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.gpt2())
+    config = NumpyDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.gpt2())
     assert config.get_dtype() == np.uint16
 
-    config = NumpyFSLDatasetConfig(
-        paths=[], sequence_length=1024, tokenizer=TokenizerConfig.dolma2()
-    )
+    config = NumpyDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.dolma2())
     assert config.get_dtype() == np.uint32

@@ -6,7 +6,7 @@ from typing import Callable, List, cast
 from beaker import Beaker
 
 from olmo_core.config import Config, StrEnum
-from olmo_core.data import DataMix, NumpyFSLDatasetConfig, TokenizerConfig
+from olmo_core.data import DataMix, NumpyDatasetConfig, TokenizerConfig
 from olmo_core.distributed.utils import get_num_nodes, init_hybrid_shard_mesh
 from olmo_core.io import is_url
 from olmo_core.launch.beaker import (
@@ -39,7 +39,7 @@ class CommonComponents(Config):
     save_folder: str
     launch: BeakerLaunchConfig
     tokenizer: TokenizerConfig
-    dataset: NumpyFSLDatasetConfig
+    dataset: NumpyDatasetConfig
 
 
 @dataclass
@@ -48,7 +48,7 @@ class ExperimentConfig(Config):
     launch: BeakerLaunchConfig
     model: TransformerConfig
     optim: AdamWConfig
-    dataset: NumpyFSLDatasetConfig
+    dataset: NumpyDatasetConfig
     trainer: TrainerConfig
     init_seed: int = 12536
 
@@ -102,7 +102,7 @@ def build_common_components(
 
     tokenizer_config = TokenizerConfig.dolma2()
 
-    dataset_config = NumpyFSLDatasetConfig.from_data_mix(
+    dataset_config = NumpyDatasetConfig.from_data_mix(
         DataMix.OLMoE_mix_0824,
         tokenizer=tokenizer_config,
         mix_base_dir=root_dir,
