@@ -798,6 +798,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     def _write_document_indices(self, path: PathOrStr) -> Path:
         indices_path = self._get_document_indices_path(path)
         if not indices_path.is_file():
+            log.info(f"Gathering document indices for '{path}'...")
             indices = []
             for start_idx, end_idx in iter_document_indices(path):
                 bin_decomp = capped_powers_of_2(end_idx - start_idx, self.max_sequence_length)
@@ -818,6 +819,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     def _write_instance_lengths(self):
         instance_lengths_path = self._get_instance_lengths_path()
         if not instance_lengths_path.is_file():
+            log.info("Gathering all instance lengths...")
             with memmap_to_write(
                 instance_lengths_path, dtype=self.lengths_dtype, shape=(len(self),)
             ) as instance_lengths:
@@ -833,6 +835,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         for seq_len in self.all_sequence_lengths:
             bucket_path = self._get_instance_bucket_path(seq_len)
             if not bucket_path.is_file():
+                log.info(f"Gathering instance indices for seq len {seq_len} bucket...")
                 bucket_path.parent.mkdir(exist_ok=True, parents=True)
                 instance_indices = (instance_lengths == seq_len).nonzero()[0]
                 with memmap_to_write(
