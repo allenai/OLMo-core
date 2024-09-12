@@ -169,8 +169,8 @@ class NumpyDatasetBase(ABC):
             return Path(tempfile.gettempdir())
 
     @work_dir.setter
-    def work_dir(self, work_dir: Path):
-        self._work_dir = work_dir
+    def work_dir(self, work_dir: PathOrStr):
+        self._work_dir = Path(work_dir)
 
     def _warmup_clients(self):
         # Maybe create client up front to work around a threading issue in boto.
@@ -498,7 +498,7 @@ class VSLGrowP2Curriculum(VSLCurriculum):
 
     def get_cycle_distribution(
         self, indices: np.ndarray, batches_per_bucket: Sequence[Tuple[int, int]], cycle: int = 0
-    ):
+    ) -> List[List[int]]:
         cycle_length = indices.shape[0] // self.num_cycles
         cycle_indices = indices[cycle * cycle_length : (cycle * cycle_length) + cycle_length]
         distribution: List[List[int]] = []

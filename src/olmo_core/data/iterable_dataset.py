@@ -104,9 +104,9 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
     def worker_info(self):
         return torch.utils.data.get_worker_info()
 
-    def _get_global_indices(self) -> np.ndarray:
+    def get_global_indices(self) -> np.ndarray:
         """
-        Get the global shuffled instance indices.
+        Get the global shuffled indices.
         """
         if not self._global_indices_file.is_file():
             raise RuntimeError(
@@ -170,7 +170,7 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         """
         Iterate over the local rank+worker instances.
         """
-        indices = iter(self._get_local_instance_indices(self._get_global_indices()))
+        indices = iter(self._get_local_instance_indices(self.get_global_indices()))
 
         num_threads = self.num_threads
         if self.worker_info is None and self.num_threads is None:
