@@ -424,20 +424,20 @@ class IterableVSLDataset(IterableDatasetBase):
                 if bucket_indices_file.is_file():
                     log.info(
                         f"Using existing bucket indices file for bucket {seq_len}, seed {self.seed}, "
-                        f"and epoch {self.epoch} at '{bucket_indices_file}'"
+                        f"and epoch {self.epoch} at:\n'{bucket_indices_file}'"
                     )
                     continue
 
                 log.info(
                     f"Saving bucket indices for bucket {seq_len}, seed {self.seed}, and epoch {self.epoch} "
-                    f"to '{bucket_indices_file}'..."
+                    f"to:\n'{bucket_indices_file}'..."
                 )
                 bucket_indices = self._build_bucket_indices(seq_len, num_instances)
                 with memmap_to_write(
                     bucket_indices_file, shape=(num_instances,), dtype=np.uint32
                 ) as bucket_indices_mmap:
                     bucket_indices_mmap[:] = bucket_indices
-                log.info(f"Bucket indices saved to '{bucket_indices_file}'")
+                log.info(f"Bucket indices saved to:\n'{bucket_indices_file}'")
         super().build_and_save_global_indices()
 
     def _build_global_indices(self) -> np.ndarray:
