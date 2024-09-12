@@ -735,7 +735,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     def prepare(self):
         if self.fs_local_rank == 0:
             log.info("Gathering dataset document indices and buckets...")
-            self.map(self._write_document_indices, max_workers=8)
+            self._write_document_indices()
             self._write_instance_lengths()
             self._write_instance_buckets(self.get_instance_lengths())
         barrier()
@@ -794,23 +794,32 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     def _get_instance_bucket_path(self, seq_len: int) -> Path:
         return self.work_dir / f"dataset-{self.fingerprint}" / f"bucket{seq_len}-indices.npy"
 
-    def _write_document_indices(self, path: PathOrStr) -> Path:
-        indices_path = self._get_document_indices_path(path)
-        if indices_path.is_file():
-            log.info(f"Reusing document indices for '{path}' at:\n'{indices_path}'")
-        else:
-            log.info(f"Gathering document indices for '{path}'...")
-            #  bucket_documents_numpy(
-            bucket_documents_python(  # seems to actually be faster
-                path,
-                indices_path,
-                buckets=self.all_sequence_lengths,
-                eos_token_id=self.eos_token_id,
-                dtype=self.dtype,
-                indices_dtype=self.indices_dtype,
-            )
+    def _write_document_indices(self):
+        paths_needed: List[PathOrStr] = []
+        for path in self.paths:
+            indices_path = self._get_document_indices_path(path)
+            if indices_path.is_file():
+                log.info(f"Reusing document indices for '{path}' at:\n'{indices_path}'")
+            else:
+                paths_needed.append(path)
 
-        return indices_path
+        if paths_needed:
+            with concurrent.futures.ProcessPoolExecutor() as executor:
+                futures = []
+                for path in paths_needed:
+                    indices_path = self._get_document_indices_path(path)
+                    log.info(f"Gathering document indices for '{path}'...")
+                    future = executor.submit(
+                        bucket_documents_python,  # seems to actually be faster than the np version
+                        path,
+                        indices_path,
+                        buckets=self.all_sequence_lengths,
+                        eos_token_id=self.eos_token_id,
+                        dtype=self.dtype,
+                        indices_dtype=self.indices_dtype,
+                    )
+                    futures.append(future)
+                concurrent.futures.wait(futures, return_when="ALL_COMPLETED")
 
     def _write_instance_lengths(self):
         instance_lengths_path = self._get_instance_lengths_path()
