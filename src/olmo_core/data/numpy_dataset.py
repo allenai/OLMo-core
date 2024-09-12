@@ -32,15 +32,14 @@ from ..aliases import PathOrStr
 from ..config import Config, StrEnum
 from ..distributed.utils import barrier, get_fs_local_rank
 from ..io import _get_s3_client, get_file_size
-from ..utils import capped_powers_of_2
 from .mixes import DataMix
 from .tokenizer import TokenizerConfig
 from .utils import (
+    bucket_documents,
     chunk_array,
     divide_into_buckets,
     get_document_lengths,
     get_rng,
-    iter_document_indices,
     load_array_slice_into_tensor,
     memmap_to_write,
 )
@@ -801,22 +800,14 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
             log.info(f"Reusing document indices for '{path}' at:\n'{indices_path}'")
         else:
             log.info(f"Gathering document indices for '{path}'...")
-            indices = []
-            for start_idx, end_idx in iter_document_indices(
-                path, eos_token_id=self.eos_token_id, dtype=self.dtype
-            ):
-                bin_decomp = capped_powers_of_2(end_idx - start_idx, self.max_sequence_length)
-                for x in bin_decomp:
-                    if x < self.min_sequence_length:
-                        break
-                    indices.append(start_idx)
-                    indices.append(start_idx + x)
-                    start_idx += x
-
-            with memmap_to_write(
-                indices_path, dtype=self.indices_dtype, shape=(len(indices),)
-            ) as indices_mmap:
-                indices_mmap[:] = indices
+            bucket_documents(
+                path,
+                indices_path,
+                buckets=self.all_sequence_lengths,
+                eos_token_id=self.eos_token_id,
+                dtype=self.dtype,
+                indices_dtype=self.indices_dtype,
+            )
 
         return indices_path
 

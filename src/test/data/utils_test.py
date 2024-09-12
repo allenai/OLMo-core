@@ -2,6 +2,8 @@ import numpy as np
 import torch
 
 from olmo_core.data.utils import (
+    bucket_documents_from_array,
+    bucket_documents_from_metadata,
     get_cumulative_document_lengths,
     get_document_lengths,
     iter_batched,
@@ -81,3 +83,29 @@ def test_iter_batched():
     assert len(batches[0]) == 2
     assert len(batches[1]) == 4
     assert len(batches[2]) == 1
+
+
+def test_bucket_documents(tmp_path):
+    buckets = [2, 4]
+    data = np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 0, 1, 2, 3, 4, 5, 0, 1, 2, 0])
+
+    data_path = tmp_path / "data.npy"
+    mmap = np.memmap(data_path, dtype=np.uint16, mode="w+", shape=data.shape)
+    mmap[:] = data
+    mmap.flush()
+
+    write_document_indices(data_path, dtype=np.uint16, eos_token_id=0)
+
+    bucket_documents_from_metadata(data_path, tmp_path / "buckets1.npy", buckets=buckets)
+    bucket_documents_from_array(
+        data_path, tmp_path / "buckets2.npy", buckets=buckets, eos_token_id=0, dtype=np.uint16
+    )
+
+    buckets1 = sorted(
+        np.memmap(tmp_path / "buckets1.npy", mode="r", dtype=np.uint32).reshape((-1, 2)).tolist()
+    )
+    buckets2 = sorted(
+        np.memmap(tmp_path / "buckets2.npy", mode="r", dtype=np.uint32).reshape((-1, 2)).tolist()
+    )
+
+    assert buckets1 == buckets2

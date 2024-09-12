@@ -20,7 +20,8 @@ import numpy as np
 import torch
 
 from olmo_core.aliases import PathOrStr
-from olmo_core.io import get_bytes_range, resource_path
+from olmo_core.io import get_bytes_range, is_url, resource_path
+from olmo_core.utils import capped_powers_of_2
 
 
 def split_batch(batch: Dict[str, Any], num_microbatch_instances: int) -> List[Dict[str, Any]]:
@@ -169,10 +170,10 @@ def iter_document_indices(
         Required to use the local data array instead of the metadata file.
     """
     if use_array_if_local is None:
-        if eos_token_id is not None and dtype is not None and Path(data_path).is_file():
+        if eos_token_id is not None and dtype is not None and not is_url(data_path):
             use_array_if_local = True
 
-    if use_array_if_local and Path(data_path).is_file():
+    if use_array_if_local and not is_url(data_path):
         if eos_token_id is None or dtype is None:
             raise ValueError(
                 "'eos_token_id' and 'dtype' are required to use the local array for finding document indices"
@@ -344,3 +345,128 @@ def chunk_array(arr: np.ndarray, chunk_sizes: Sequence[int]) -> List[np.ndarray]
 
 def get_rng(seed: int) -> np.random.Generator:
     return np.random.Generator(np.random.PCG64(seed=seed))
+
+
+def bucket_documents(
+    path: PathOrStr,
+    target: Path,
+    *,
+    buckets: Sequence[int],
+    eos_token_id: int,
+    dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]],
+    indices_dtype: Union[
+        Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
+    ] = np.uint32,
+):
+    if not is_url(path):
+        bucket_documents_from_array(
+            path,
+            target,
+            buckets=buckets,
+            eos_token_id=eos_token_id,
+            dtype=dtype,
+            indices_dtype=indices_dtype,
+        )
+    else:
+        bucket_documents_from_metadata(path, target, buckets=buckets, indices_dtype=indices_dtype)
+
+
+def bucket_documents_from_metadata(
+    path: PathOrStr,
+    target: Path,
+    *,
+    buckets: Sequence[int],
+    indices_dtype: Union[
+        Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
+    ] = np.uint32,
+):
+    max_sequence_length = max(buckets)
+    min_sequence_length = min(buckets)
+
+    indices = []
+    for start_idx, end_idx in iter_document_indices(path):
+        bin_decomp = capped_powers_of_2(end_idx - start_idx, max_sequence_length)
+        for x in bin_decomp:
+            if x < min_sequence_length:
+                break
+            indices.append(start_idx)
+            indices.append(start_idx + x)
+            start_idx += x
+
+    with memmap_to_write(target, dtype=indices_dtype, shape=(len(indices),)) as indices_mmap:
+        indices_mmap[:] = indices
+
+
+def bucket_documents_from_array(
+    path: PathOrStr,
+    target: Path,
+    *,
+    buckets: Sequence[int],
+    eos_token_id: int,
+    dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]],
+    indices_dtype: Union[
+        Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
+    ] = np.uint32,
+):
+    # Ensure buckets sorted smallest to largest.
+    buckets = sorted(buckets)
+
+    mmap = np.memmap(path, dtype=dtype, mode="r")
+
+    doc_end_indices = (mmap == eos_token_id).nonzero()[0]
+    doc_indices = np.concatenate(
+        [np.array([0]), np.repeat(doc_end_indices[:-1], 2) + 1, doc_end_indices[-1:] + 1]
+    )
+    doc_lengths = get_doc_lengths(doc_indices)
+
+    bucket_docs: List[np.ndarray] = []
+    for b in reversed(buckets):
+        doc_indices, doc_lengths = decompose_documents(b, doc_indices, doc_lengths)
+
+        bucket_mask = doc_lengths == b
+        bucket_mask_indices = np.repeat(bucket_mask, 2)
+
+        bucket_docs.insert(0, doc_indices[bucket_mask_indices])
+        doc_indices = doc_indices[~bucket_mask_indices]
+        doc_lengths = doc_lengths[~bucket_mask]
+
+    total_size = sum([x.shape[0] for x in bucket_docs])
+
+    with memmap_to_write(target, dtype=indices_dtype, shape=(total_size,)) as indices_mmap:
+        offset = 0
+        for indices in bucket_docs:
+            indices_mmap[offset : offset + indices.shape[0]] = indices
+            offset += indices.shape[0]
+
+    return np.concatenate(bucket_docs)
+
+
+def decompose_documents_once(
+    b: int, doc_indices: np.ndarray, doc_lengths: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray]:
+    offset = np.repeat(b * ((doc_lengths // b) > 0), 4)
+    offset[::4] = 0
+    offset[3::4] = 0
+
+    new_doc_indices = np.repeat(
+        doc_indices, np.concatenate([np.array([3, 1])] * (doc_indices.shape[0] // 2))
+    )
+    new_doc_indices += offset
+
+    new_doc_lengths = get_doc_lengths(new_doc_indices)
+    mask = new_doc_lengths > 0
+    new_doc_indices = new_doc_indices[np.repeat(mask, 2)]
+    new_doc_lengths = new_doc_lengths[mask]
+    return new_doc_indices, new_doc_lengths
+
+
+def decompose_documents(
+    b: int, doc_indices: np.ndarray, doc_lengths: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray]:
+    while (doc_lengths > b).any():
+        doc_indices, doc_lengths = decompose_documents_once(b, doc_indices, doc_lengths)
+    return doc_indices, doc_lengths
+
+
+def get_doc_lengths(doc_indices: np.ndarray) -> np.ndarray:
+    return doc_indices[1::2] - doc_indices[0:-1:2]
