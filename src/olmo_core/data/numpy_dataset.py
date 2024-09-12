@@ -802,7 +802,9 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         else:
             log.info(f"Gathering document indices for '{path}'...")
             indices = []
-            for start_idx, end_idx in iter_document_indices(path):
+            for start_idx, end_idx in iter_document_indices(
+                path, eos_token_id=self.eos_token_id, dtype=self.dtype
+            ):
                 bin_decomp = capped_powers_of_2(end_idx - start_idx, self.max_sequence_length)
                 for x in bin_decomp:
                     if x < self.min_sequence_length:

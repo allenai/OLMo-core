@@ -148,7 +148,11 @@ def write_document_indices(data_path: Path, *, dtype, eos_token_id: int) -> Path
 
 
 def iter_document_indices(
-    data_path: PathOrStr, local_cache: Optional[PathOrStr] = None
+    data_path: PathOrStr,
+    local_cache: Optional[PathOrStr] = None,
+    use_array_if_local: Optional[bool] = None,
+    eos_token_id: Optional[int] = None,
+    dtype=None,
 ) -> Generator[Tuple[int, int], None, None]:
     """
     Given a ".npy" data path from the Dolma toolkit, get the list of document start/end indices within
@@ -156,16 +160,41 @@ def iter_document_indices(
 
     :param data_path: Path to a ".npy" Dolma toolkit data file.
     :param local_cache: Local directory to put downloads into.
+    :param use_array_if_local: Use the numpy data array to find the document indices if the array
+        is on the local filesystem and ``eos_token_id`` and ``dtype`` are provided.
+        This can be a lot faster. Otherwise relies on the metadata file.
+    :param eos_token_id: The EOS token ID.
+        Required to use the local data array instead of the metadata file.
+    :param dtype: The data type of the numpy data array.
+        Required to use the local data array instead of the metadata file.
     """
-    metadata_path = resource_path(
-        os.path.dirname(data_path),
-        os.path.basename(data_path).replace(".npy", ".csv.gz"),
-        local_cache=local_cache,
-    )
-    with gzip.open(metadata_path, "rt") as f:
-        for line in f:
-            start_index, end_index, *_ = line.split(",")
-            yield int(start_index), int(end_index)
+    if use_array_if_local is None:
+        if eos_token_id is not None and dtype is not None and Path(data_path).is_file():
+            use_array_if_local = True
+
+    if use_array_if_local and Path(data_path).is_file():
+        if eos_token_id is None or dtype is None:
+            raise ValueError(
+                "'eos_token_id' and 'dtype' are required to use the local array for finding document indices"
+            )
+        mmap = np.memmap(data_path, mode="r", dtype=dtype)
+        doc_boundaries = (mmap == eos_token_id).nonzero()[0]
+        start_idx = 0
+        end_idx = 0
+        for idx in doc_boundaries:
+            end_idx = idx + 1
+            yield start_idx, end_idx
+            start_idx = end_idx
+    else:
+        metadata_path = resource_path(
+            os.path.dirname(data_path),
+            os.path.basename(data_path).replace(".npy", ".csv.gz"),
+            local_cache=local_cache,
+        )
+        with gzip.open(metadata_path, "rt") as f:
+            for line in f:
+                start_index, end_index, *_ = line.split(",")
+                yield int(start_index), int(end_index)
 
 
 def get_document_indices(

@@ -1,11 +1,29 @@
+import numpy as np
 import torch
 
 from olmo_core.data.utils import (
     get_cumulative_document_lengths,
     get_document_lengths,
     iter_batched,
+    iter_document_indices,
     melt_batch,
+    write_document_indices,
 )
+
+
+def test_iter_document_indices(tmp_path):
+    data = [1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 0]
+    data_path = tmp_path / "data.npy"
+    mmap = np.memmap(data_path, mode="w+", dtype=np.uint16, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+    write_document_indices(data_path, dtype=np.uint16, eos_token_id=0)
+    assert list(
+        iter_document_indices(data_path, eos_token_id=0, dtype=np.uint16, use_array_if_local=False)
+    ) == [(0, 9), (9, len(data))]
+    assert list(
+        iter_document_indices(data_path, eos_token_id=0, dtype=np.uint16, use_array_if_local=True)
+    ) == [(0, 9), (9, len(data))]
 
 
 def test_melt_batch():
