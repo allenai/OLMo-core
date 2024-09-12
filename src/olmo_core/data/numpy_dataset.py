@@ -436,10 +436,24 @@ class VSLCurriculum:
     def get_total_batches(self, batches_per_bucket: Sequence[Tuple[int, int]]) -> int:
         return sum([batches for _, batches in batches_per_bucket])
 
-    @staticmethod
-    def log_buckets(batches_per_bucket: Sequence[Tuple[int, int]]):
+    def log_buckets(
+        self,
+        dataset: NumpyVSLDataset,
+        global_batch_size: int,
+        batches_per_bucket: Sequence[Tuple[int, int]],
+    ):
+        natural_batches_per_bucket = VSLNaturalCurriculum().batches_per_bucket(
+            dataset, global_batch_size
+        )
         for i, (seq_len, num_batches) in enumerate(batches_per_bucket):
-            log.info(f"- bucket {i}: sequence length {seq_len}, {num_batches:,d} batches")
+            num_natural_batches = natural_batches_per_bucket[i][1]
+            if num_batches < num_natural_batches:
+                log.info(
+                    f"- bucket {i}: sequence length {seq_len}, {num_batches:,d} batches from "
+                    f"{num_natural_batches:,d} total"
+                )
+            else:
+                log.info(f"- bucket {i}: sequence length {seq_len}, {num_batches:,d} batches")
 
 
 @dataclass
@@ -522,7 +536,6 @@ class VSLGrowP2Curriculum(VSLCurriculum):
         num_buckets = len(batches_per_bucket)
 
         log.info(f"Constructing Grow-P2 VSL curriculum with {num_buckets} buckets:")
-        self.log_buckets(batches_per_bucket)
 
         # This is how many batches we'll pull from each bucket for each cycle.
         batch_counts_per_cycle_per_bucket = divide_into_buckets(

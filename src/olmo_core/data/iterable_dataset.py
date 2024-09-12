@@ -416,9 +416,10 @@ class IterableVSLDataset(IterableDatasetBase):
         return instance_indices
 
     def build_and_save_global_indices(self):
+        assert isinstance(self.dataset, NumpyVSLDataset)
+
         # We also need to build and save the bucket instance indices.
         if self.fs_local_rank == 0:
-            assert isinstance(self.dataset, NumpyVSLDataset)
             for seq_len, num_instances in self.dataset.instances_per_bucket:
                 bucket_indices_file = self._bucket_indices_file(seq_len)
                 if bucket_indices_file.is_file():
@@ -438,6 +439,12 @@ class IterableVSLDataset(IterableDatasetBase):
                 ) as bucket_indices_mmap:
                     bucket_indices_mmap[:] = bucket_indices
                 log.info(f"Bucket indices saved to:\n'{bucket_indices_file}'")
+
+            log.info(f"Using {self.dataset.vsl_curriculum} with {len(self.buckets)} buckets:")
+            self.dataset.vsl_curriculum.log_buckets(
+                self.dataset, self.global_batch_size, self.batches_per_bucket
+            )
+
         super().build_and_save_global_indices()
 
     def _build_global_indices(self) -> np.ndarray:
