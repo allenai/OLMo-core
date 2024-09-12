@@ -800,7 +800,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
             indices_path = self._get_document_indices_path(path)
             if indices_path.is_file():
                 log.info(f"Reusing document indices for '{path}' at:\n'{indices_path}'")
-            else:
+            elif path not in paths_needed:
                 paths_needed.append(path)
 
         if paths_needed:
