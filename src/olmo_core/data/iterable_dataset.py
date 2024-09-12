@@ -124,19 +124,19 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
             if self._global_indices_file.is_file():
                 log.info(
                     f"Using existing global indices file for seed {self.seed} and epoch {self.epoch} "
-                    f"at '{self._global_indices_file}'"
+                    f"at:\n'{self._global_indices_file}'"
                 )
             else:
                 log.info(
                     f"Saving global data order indices for seed {self.seed} and epoch {self.epoch} "
-                    f"to '{self._global_indices_file}'..."
+                    f"to:\n'{self._global_indices_file}'..."
                 )
                 global_indices = self._build_global_indices()
                 with memmap_to_write(
                     self._global_indices_file, shape=(len(global_indices),), dtype=np.uint32
                 ) as global_indices_mmap:
                     global_indices_mmap[:] = global_indices
-                log.info(f"Global data order indices saved to '{self._global_indices_file}'")
+                log.info(f"Global data order indices saved to:\n'{self._global_indices_file}'")
         barrier()
 
     def state_dict(self, *, batches_processed: int, tokens_processed: int) -> Dict[str, Any]:
