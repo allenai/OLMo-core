@@ -35,7 +35,7 @@ from ..io import _get_s3_client, get_file_size
 from .mixes import DataMix
 from .tokenizer import TokenizerConfig
 from .utils import (
-    bucket_documents,
+    bucket_documents_python,
     chunk_array,
     divide_into_buckets,
     get_document_lengths,
@@ -800,7 +800,8 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
             log.info(f"Reusing document indices for '{path}' at:\n'{indices_path}'")
         else:
             log.info(f"Gathering document indices for '{path}'...")
-            bucket_documents(
+            #  bucket_documents_numpy(
+            bucket_documents_python(  # seems to actually be faster
                 path,
                 indices_path,
                 buckets=self.all_sequence_lengths,

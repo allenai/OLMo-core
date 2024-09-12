@@ -347,7 +347,7 @@ def get_rng(seed: int) -> np.random.Generator:
     return np.random.Generator(np.random.PCG64(seed=seed))
 
 
-def bucket_documents(
+def bucket_documents_python(
     path: PathOrStr,
     target: Path,
     *,
@@ -358,33 +358,11 @@ def bucket_documents(
         Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
     ] = np.uint32,
 ):
-    if not is_url(path):
-        bucket_documents_from_array(
-            path,
-            target,
-            buckets=buckets,
-            eos_token_id=eos_token_id,
-            dtype=dtype,
-            indices_dtype=indices_dtype,
-        )
-    else:
-        bucket_documents_from_metadata(path, target, buckets=buckets, indices_dtype=indices_dtype)
-
-
-def bucket_documents_from_metadata(
-    path: PathOrStr,
-    target: Path,
-    *,
-    buckets: Sequence[int],
-    indices_dtype: Union[
-        Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
-    ] = np.uint32,
-):
     max_sequence_length = max(buckets)
     min_sequence_length = min(buckets)
 
     indices = []
-    for start_idx, end_idx in iter_document_indices(path):
+    for start_idx, end_idx in iter_document_indices(path, eos_token_id=eos_token_id, dtype=dtype):
         bin_decomp = capped_powers_of_2(end_idx - start_idx, max_sequence_length)
         for x in bin_decomp:
             if x < min_sequence_length:
@@ -397,7 +375,7 @@ def bucket_documents_from_metadata(
         indices_mmap[:] = indices
 
 
-def bucket_documents_from_array(
+def bucket_documents_numpy(
     path: PathOrStr,
     target: Path,
     *,

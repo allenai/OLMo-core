@@ -2,8 +2,8 @@ import numpy as np
 import torch
 
 from olmo_core.data.utils import (
-    bucket_documents_from_array,
-    bucket_documents_from_metadata,
+    bucket_documents_numpy,
+    bucket_documents_python,
     get_cumulative_document_lengths,
     get_document_lengths,
     iter_batched,
@@ -96,8 +96,10 @@ def test_bucket_documents(tmp_path):
 
     write_document_indices(data_path, dtype=np.uint16, eos_token_id=0)
 
-    bucket_documents_from_metadata(data_path, tmp_path / "buckets1.npy", buckets=buckets)
-    bucket_documents_from_array(
+    bucket_documents_python(
+        data_path, tmp_path / "buckets1.npy", buckets=buckets, eos_token_id=0, dtype=np.uint16
+    )
+    bucket_documents_numpy(
         data_path, tmp_path / "buckets2.npy", buckets=buckets, eos_token_id=0, dtype=np.uint16
     )
 
