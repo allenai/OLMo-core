@@ -324,7 +324,10 @@ def memmap_to_write(
     path.parent.mkdir(exist_ok=True, parents=True)
     tmp_path = path.with_suffix(".npy.tmp")
     mmap = np.memmap(tmp_path, dtype=dtype, mode="w+", shape=shape)
-    yield mmap
+    try:
+        yield mmap
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
     mmap.flush()
     del mmap
     tmp_path.replace(path)
