@@ -1200,8 +1200,11 @@ class Trainer:
             # assumption that all ranks see the same number batch size in tokens per step,
             # which should always be the case for training efficiency at least.
             # Alternatively we'd have to use a distributed collective which isn't worth it.
-            instances, seq_len = batch["input_ids"].shape
-            assert instances * seq_len == self.rank_batch_size
+            if batch["input_ids"].numel() != self.rank_batch_size:
+                raise RuntimeError(
+                    f"Expected batch size of {self.rank_batch_size:,d} tokens on rank {get_rank()}, "
+                    f"got input IDs with shape {batch['input_ids'].shape} and {batch['input_ids'].numel():,d} tokens"
+                )
             self.global_step += 1
             self.global_train_tokens_seen += self.global_batch_size
             self.global_train_steps_this_epoch += 1
