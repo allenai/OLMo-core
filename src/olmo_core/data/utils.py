@@ -296,6 +296,7 @@ def iter_batched(
             yield tuple(batch)
             batch.clear()
             tokens = 0
+            shape = None
         batch.append(x)
         tokens += x_num_tokens
         if shape is not None and shape != x["input_ids"].shape:
