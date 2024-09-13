@@ -431,18 +431,14 @@ class IterableVSLDataset(IterableDatasetBase):
                 )
                 bucket_indices = self.dataset.get_instance_bucket(seq_len)
                 assert bucket_indices.shape[0] == num_instances
-                new_bucket_indices = np.zeros_like(bucket_indices)
-                new_bucket_indices[:] = bucket_indices
-                del bucket_indices
-
-                if self.shuffle:
-                    rng = get_rng(self.seed + self.epoch + seq_len)
-                    rng.shuffle(new_bucket_indices)
-
                 with memmap_to_write(
                     bucket_indices_file, shape=(num_instances,), dtype=np.uint32
                 ) as bucket_indices_mmap:
-                    bucket_indices_mmap[:] = new_bucket_indices
+                    if self.shuffle:
+                        rng = get_rng(self.seed + self.epoch + seq_len)
+                        bucket_indices_mmap[:] = rng.permutation(bucket_indices)
+                    else:
+                        bucket_indices_mmap[:] = bucket_indices
 
                 log.info(f"Bucket indices saved to:\n'{bucket_indices_file}'")
 
