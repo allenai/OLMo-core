@@ -303,7 +303,7 @@ def iter_batched(
                 f"Items in batch don't have the same shape! Expected {shape}, "
                 f"got {tuple(x['input_ids'].shape)}"
             )
-        shape = tuple(x["input_ids"])
+        shape = tuple(x["input_ids"].shape)
 
     if batch:
         yield tuple(batch)
