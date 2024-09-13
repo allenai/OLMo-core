@@ -621,7 +621,7 @@ class Trainer:
                 callback.on_error(exc)
             raise
         finally:
-            # Restore original signal handler.
+            # Restore original signal handlers.
             signal.signal(signal.SIGTERM, og_sigterm_handler)
             signal.signal(signal.SIGINT, og_sigint_handler)
 
