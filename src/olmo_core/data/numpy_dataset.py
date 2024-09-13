@@ -14,6 +14,7 @@ from typing import (
     Callable,
     Dict,
     List,
+    Literal,
     Optional,
     Sequence,
     Tuple,
@@ -192,12 +193,31 @@ class NumpyDatasetBase(ABC):
                 # later if Weka is needed.
                 pass
 
-    def map(self, func: Callable[[PathOrStr], T], max_workers: Optional[int] = None) -> List[T]:
+    def map(
+        self,
+        func: Callable[[PathOrStr], T],
+        max_workers: Optional[int] = None,
+        method: Literal["threads", "processes"] = "threads",
+    ) -> List[T]:
         """
         Call a function on each path in the dataset, returning a list of the results, in order.
+
+        :param func: The function to map to the paths.
+        :param max_workers: The number of workers threads/processes.
+        :param method: Whether to use multi-threading or multi-processing.
+
+        :returns: The results, in the same order as :data:`paths`.
         """
-        self._warmup_clients()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        executor_class: Type[concurrent.futures.Executor]
+        if method == "threads":
+            self._warmup_clients()
+            executor_class = concurrent.futures.ThreadPoolExecutor
+        elif method == "processes":
+            executor_class = concurrent.futures.ProcessPoolExecutor
+        else:
+            raise ValueError(method)
+
+        with executor_class(max_workers=max_workers) as executor:
             path_to_future = {}
             for path in self.paths:
                 if path not in path_to_future:
@@ -447,9 +467,9 @@ class VSLCurriculum:
         )
         for i, (seq_len, num_batches) in enumerate(batches_per_bucket):
             num_natural_batches = natural_batches_per_bucket[i][1]
-            if num_batches < num_natural_batches:
+            if num_batches != num_natural_batches:
                 log.info(
-                    f"- bucket {i}: sequence length {seq_len}, {num_batches:,d} batches from "
+                    f"- bucket {i}: sequence length {seq_len}, using {num_batches:,d} batches out of "
                     f"{num_natural_batches:,d} total"
                 )
             else:
@@ -833,6 +853,12 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                     )
                     futures.append(future)
                 concurrent.futures.wait(futures, return_when="ALL_COMPLETED")
+                for path, future in zip(paths_needed, futures):
+                    total_og_docs, total_bucketed_docs = future.result()
+                    log.info(
+                        f"Created {total_bucketed_docs:,d} bucketed documents by sequence length from "
+                        f"{total_og_docs:,d} original documents in '{path}'"
+                    )
 
     def _write_instance_lengths(self):
         instance_lengths_path = self._get_instance_lengths_path()

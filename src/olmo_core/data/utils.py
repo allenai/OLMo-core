@@ -357,12 +357,20 @@ def bucket_documents_python(
     indices_dtype: Union[
         Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
     ] = np.uint32,
-):
+) -> Tuple[int, int]:
+    """
+    Bucket documents by sequence lengths in powers of 2. Saving the indices of the bucketed
+    documents to ``target``.
+
+    Returns the number of original documents and the number of new bucketed documents.
+    """
     max_sequence_length = max(buckets)
     min_sequence_length = min(buckets)
 
+    total_og_docs = 0
     indices = []
     for start_idx, end_idx in iter_document_indices(path, eos_token_id=eos_token_id, dtype=dtype):
+        total_og_docs += 1
         bin_decomp = capped_powers_of_2(end_idx - start_idx, max_sequence_length)
         for x in bin_decomp:
             if x < min_sequence_length:
@@ -373,6 +381,8 @@ def bucket_documents_python(
 
     with memmap_to_write(target, dtype=indices_dtype, shape=(len(indices),)) as indices_mmap:
         indices_mmap[:] = indices
+
+    return total_og_docs, len(indices)
 
 
 def bucket_documents_numpy(
@@ -385,13 +395,17 @@ def bucket_documents_numpy(
     indices_dtype: Union[
         Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
     ] = np.uint32,
-):
+) -> Tuple[int, int]:
+    """
+    Same as :func:`bucket_documents_python` but implemented in numpy instead of with a Python for-loop.
+    """
     # Ensure buckets sorted smallest to largest.
     buckets = sorted(buckets)
 
     mmap = np.memmap(path, dtype=dtype, mode="r")
 
     doc_end_indices = (mmap == eos_token_id).nonzero()[0]
+    total_og_docs = doc_end_indices.shape[0]
     doc_indices = np.concatenate(
         [np.array([0]), np.repeat(doc_end_indices[:-1], 2) + 1, doc_end_indices[-1:] + 1]
     )
@@ -416,7 +430,7 @@ def bucket_documents_numpy(
             indices_mmap[offset : offset + indices.shape[0]] = indices
             offset += indices.shape[0]
 
-    return np.concatenate(bucket_docs)
+    return total_og_docs, total_size
 
 
 def decompose_documents_once(
