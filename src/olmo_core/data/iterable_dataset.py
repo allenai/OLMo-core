@@ -133,7 +133,9 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
                 )
                 global_indices = self._build_global_indices()
                 with memmap_to_write(
-                    self._global_indices_file, shape=(len(global_indices),), dtype=np.uint32
+                    self._global_indices_file,
+                    shape=global_indices.shape,
+                    dtype=global_indices.dtype,
                 ) as global_indices_mmap:
                     global_indices_mmap[:] = global_indices
                 log.info(f"Global data order indices saved to:\n'{self._global_indices_file}'")
@@ -408,13 +410,6 @@ class IterableVSLDataset(IterableDatasetBase):
             / f"bucket{seq_len}_seed{self.seed}_epoch{self.epoch}_instance_indices.npy"
         )
 
-    def _build_bucket_indices(self, seq_len: int, num_instances: int) -> np.ndarray:
-        instance_indices = np.arange(num_instances, dtype=np.uint32)
-        if self.shuffle:
-            rng = get_rng(self.seed + self.epoch + seq_len)
-            rng.shuffle(instance_indices)
-        return instance_indices
-
     def build_and_save_global_indices(self):
         assert isinstance(self.dataset, NumpyVSLDataset)
 
@@ -433,11 +428,16 @@ class IterableVSLDataset(IterableDatasetBase):
                     f"Saving bucket indices for bucket {seq_len}, seed {self.seed}, and epoch {self.epoch} "
                     f"to:\n'{bucket_indices_file}'..."
                 )
-                bucket_indices = self._build_bucket_indices(seq_len, num_instances)
+                bucket_indices = self.dataset.get_instance_bucket(seq_len)
+                assert bucket_indices.shape[0] == num_instances
                 with memmap_to_write(
                     bucket_indices_file, shape=(num_instances,), dtype=np.uint32
                 ) as bucket_indices_mmap:
                     bucket_indices_mmap[:] = bucket_indices
+                    if self.shuffle:
+                        rng = get_rng(self.seed + self.epoch + seq_len)
+                        rng.shuffle(bucket_indices_mmap)
+
                 log.info(f"Bucket indices saved to:\n'{bucket_indices_file}'")
 
             log.info(f"Using {self.dataset.vsl_curriculum} with {len(self.buckets)} buckets:")

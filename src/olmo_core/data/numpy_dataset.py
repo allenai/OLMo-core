@@ -947,6 +947,14 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         """
         return np.memmap(self._get_instance_lengths_path(), dtype=self.lengths_dtype, mode="r")
 
+    def get_instance_bucket(self, seq_len: int) -> np.ndarray:
+        """
+        Get the instance indices in a bucket.
+        """
+        return np.memmap(
+            self._get_instance_bucket_path(seq_len), dtype=self.indices_dtype, mode="r"
+        )
+
     def get_instance_buckets(self) -> List[Tuple[int, np.ndarray]]:
         """
         Get the buckets of instance indices that all have the same length.
@@ -954,14 +962,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         """
         buckets = []
         for seq_len in self.all_sequence_lengths:
-            buckets.append(
-                (
-                    seq_len,
-                    np.memmap(
-                        self._get_instance_bucket_path(seq_len), dtype=self.indices_dtype, mode="r"
-                    ),
-                )
-            )
+            buckets.append((seq_len, self.get_instance_bucket(seq_len)))
         return buckets
 
     @property
