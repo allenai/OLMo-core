@@ -288,6 +288,7 @@ def iter_batched(
 ) -> Iterable[Tuple[Dict[str, Any], ...]]:
     batch: List[Dict[str, Any]] = []
     tokens = 0
+    shape: Optional[Tuple[int, ...]] = None
     for x in iter(iterable):
         x_num_tokens = x["input_ids"].numel()
         assert x_num_tokens <= batch_num_tokens, f"{x_num_tokens} > {batch_num_tokens}"
@@ -295,8 +296,14 @@ def iter_batched(
             yield tuple(batch)
             batch.clear()
             tokens = 0
-        tokens += x_num_tokens
         batch.append(x)
+        tokens += x_num_tokens
+        if shape is not None and shape != x["input_ids"].shape:
+            raise RuntimeError(
+                f"Items in batch don't have the same shape! Expected {shape}, "
+                f"got {tuple(x['input_ids'].shape)}"
+            )
+        shape = tuple(x["input_ids"])
 
     if batch:
         yield tuple(batch)
