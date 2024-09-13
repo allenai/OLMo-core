@@ -1285,9 +1285,9 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'sequence_length' is only a valid field for FSL datasets"
                 )
-            if self.generate_doc_lengths is not None:
+            if self.generate_doc_lengths:
                 raise OLMoConfigurationError(
-                    "'generate_doc_lengths' is only a valid field for FSL datasets"
+                    "'generate_doc_lengths' is only valid for FSL datasets"
                 )
             dataset = NumpyVSLDataset(
                 *paths,
