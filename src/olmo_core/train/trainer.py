@@ -1164,8 +1164,6 @@ class Trainer:
             self.record_metric(OPTIM_STEP_SKIPPED_METRIC, self.optim.step_skipped)
 
     def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:
-        self.iterable_dataset.reshuffle(self.epoch)
-
         data_loader = DataLoader(
             self.iterable_dataset,
             batch_size=None,
@@ -1188,6 +1186,8 @@ class Trainer:
                 break
 
     def _fit_epoch(self):
+        self.iterable_dataset.reshuffle(self.epoch)
+
         log.info(f"Starting epoch {self.epoch}...")
 
         for callback in self.callbacks.values():
