@@ -132,8 +132,9 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
                     f"to:\n'{self._global_indices_file}'..."
                 )
                 global_indices = self._build_global_indices()
+                assert len(global_indices) < np.iinfo(np.uint32).max
                 with memmap_to_write(
-                    self._global_indices_file, shape=(len(global_indices),), dtype=np.uint32
+                    self._global_indices_file, shape=global_indices.shape, dtype=np.uint32
                 ) as global_indices_mmap:
                     global_indices_mmap[:] = global_indices
                 log.info(f"Global data order indices saved to:\n'{self._global_indices_file}'")
