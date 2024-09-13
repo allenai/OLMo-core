@@ -433,6 +433,8 @@ class IterableVSLDataset(IterableDatasetBase):
                 assert bucket_indices.shape[0] == num_instances
                 new_bucket_indices = np.zeros_like(bucket_indices)
                 new_bucket_indices[:] = bucket_indices
+                del bucket_indices
+
                 if self.shuffle:
                     rng = get_rng(self.seed + self.epoch + seq_len)
                     rng.shuffle(new_bucket_indices)
