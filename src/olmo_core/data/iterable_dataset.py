@@ -276,7 +276,8 @@ class IterableFSLDataset(IterableDatasetBase):
     @property
     def _global_indices_file(self) -> Path:
         global_indices_fname = (
-            f"global_indices_seed{self.seed}_epoch{self.epoch}_size{self.total_size}"
+            f"global_indices_{'shuffled_' if self.shuffle else ''}seed{self.seed}"
+            f"_epoch{self.epoch}_size{self.total_size}"
         )
         if self.chunk_size > 1:
             global_indices_fname += f"_chunk{self.chunk_size}"
@@ -407,7 +408,7 @@ class IterableVSLDataset(IterableDatasetBase):
         return (
             Path(self.work_dir)
             / f"dataset-{self.dataset.fingerprint}"
-            / f"bucket{seq_len}_seed{self.seed}_epoch{self.epoch}_instance_indices.npy"
+            / f"bucket{seq_len}_{'shuffled_' if self.shuffle else ''}seed{self.seed}_epoch{self.epoch}_instance_indices.npy"
         )
 
     def build_and_save_global_indices(self):
@@ -430,13 +431,16 @@ class IterableVSLDataset(IterableDatasetBase):
                 )
                 bucket_indices = self.dataset.get_instance_bucket(seq_len)
                 assert bucket_indices.shape[0] == num_instances
+                new_bucket_indices = np.zeros_like(bucket_indices)
+                new_bucket_indices[:] = bucket_indices
+                if self.shuffle:
+                    rng = get_rng(self.seed + self.epoch + seq_len)
+                    rng.shuffle(new_bucket_indices)
+
                 with memmap_to_write(
                     bucket_indices_file, shape=(num_instances,), dtype=np.uint32
                 ) as bucket_indices_mmap:
-                    bucket_indices_mmap[:] = bucket_indices
-                    if self.shuffle:
-                        rng = get_rng(self.seed + self.epoch + seq_len)
-                        rng.shuffle(bucket_indices_mmap)
+                    bucket_indices_mmap[:] = new_bucket_indices
 
                 log.info(f"Bucket indices saved to:\n'{bucket_indices_file}'")
 

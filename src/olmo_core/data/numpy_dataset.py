@@ -940,6 +940,9 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                     shape=instance_indices.shape,
                 ) as bucket:
                     bucket[:] = instance_indices
+                log.info(
+                    f"Instance indices for seq len {seq_len} bucket written to:\n'{bucket_path}'"
+                )
 
     def get_instance_lengths(self) -> np.ndarray:
         """
