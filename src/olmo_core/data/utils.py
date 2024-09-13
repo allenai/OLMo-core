@@ -292,11 +292,13 @@ def iter_batched(
     for x in iter(iterable):
         x_num_tokens = x["input_ids"].numel()
         assert x_num_tokens <= batch_num_tokens, f"{x_num_tokens} > {batch_num_tokens}"
+
         if (tokens + x_num_tokens) > batch_num_tokens:
             yield tuple(batch)
             batch.clear()
             tokens = 0
             shape = None
+
         batch.append(x)
         tokens += x_num_tokens
         if shape is not None and shape != x["input_ids"].shape:

@@ -389,6 +389,11 @@ class IterableVSLDataset(IterableDatasetBase):
         self.start_index = 0
         if not self.shuffle:
             log.warning("VSL curriculum will be ignored since shuffle=False")
+        if self.rank_batch_size < max(self.buckets):
+            raise OLMoConfigurationError(
+                f"rank batch size ({self.rank_batch_size:,d}) is too small relative to "
+                f"maximum sequence length ({max(self.buckets):,d})"
+            )
 
     @property
     def buckets(self) -> Tuple[int, ...]:
