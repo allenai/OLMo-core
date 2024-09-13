@@ -347,7 +347,7 @@ def get_rng(seed: int) -> np.random.Generator:
     return np.random.Generator(np.random.PCG64(seed=seed))
 
 
-def bucket_documents_python(
+def bucket_documents(
     path: PathOrStr,
     target: Path,
     *,
@@ -382,82 +382,7 @@ def bucket_documents_python(
     with memmap_to_write(target, dtype=indices_dtype, shape=(len(indices),)) as indices_mmap:
         indices_mmap[:] = indices
 
-    return total_og_docs, len(indices)
-
-
-def bucket_documents_numpy(
-    path: PathOrStr,
-    target: Path,
-    *,
-    buckets: Sequence[int],
-    eos_token_id: int,
-    dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]],
-    indices_dtype: Union[
-        Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
-    ] = np.uint32,
-) -> Tuple[int, int]:
-    """
-    Same as :func:`bucket_documents_python` but implemented in numpy instead of with a Python for-loop.
-    """
-    # Ensure buckets sorted smallest to largest.
-    buckets = sorted(buckets)
-
-    mmap = np.memmap(path, dtype=dtype, mode="r")
-
-    doc_end_indices = (mmap == eos_token_id).nonzero()[0]
-    total_og_docs = doc_end_indices.shape[0]
-    doc_indices = np.concatenate(
-        [np.array([0]), np.repeat(doc_end_indices[:-1], 2) + 1, doc_end_indices[-1:] + 1]
-    )
-    doc_lengths = get_doc_lengths_from_indices(doc_indices)
-
-    bucket_docs: List[np.ndarray] = []
-    for b in reversed(buckets):
-        doc_indices, doc_lengths = decompose_documents(b, doc_indices, doc_lengths)
-
-        bucket_mask = doc_lengths == b
-        bucket_mask_indices = np.repeat(bucket_mask, 2)
-
-        bucket_docs.insert(0, doc_indices[bucket_mask_indices])
-        doc_indices = doc_indices[~bucket_mask_indices]
-        doc_lengths = doc_lengths[~bucket_mask]
-
-    total_size = sum([x.shape[0] for x in bucket_docs])
-
-    with memmap_to_write(target, dtype=indices_dtype, shape=(total_size,)) as indices_mmap:
-        offset = 0
-        for indices in bucket_docs:
-            indices_mmap[offset : offset + indices.shape[0]] = indices
-            offset += indices.shape[0]
-
-    return total_og_docs, total_size
-
-
-def decompose_documents_once(
-    b: int, doc_indices: np.ndarray, doc_lengths: np.ndarray
-) -> Tuple[np.ndarray, np.ndarray]:
-    offset = np.repeat(b * ((doc_lengths // b) > 0), 4)
-    offset[::4] = 0
-    offset[3::4] = 0
-
-    new_doc_indices = np.repeat(
-        doc_indices, np.concatenate([np.array([3, 1])] * (doc_indices.shape[0] // 2))
-    )
-    new_doc_indices += offset
-
-    new_doc_lengths = get_doc_lengths_from_indices(new_doc_indices)
-    mask = new_doc_lengths > 0
-    new_doc_indices = new_doc_indices[np.repeat(mask, 2)]
-    new_doc_lengths = new_doc_lengths[mask]
-    return new_doc_indices, new_doc_lengths
-
-
-def decompose_documents(
-    b: int, doc_indices: np.ndarray, doc_lengths: np.ndarray
-) -> Tuple[np.ndarray, np.ndarray]:
-    while (doc_lengths > b).any():
-        doc_indices, doc_lengths = decompose_documents_once(b, doc_indices, doc_lengths)
-    return doc_indices, doc_lengths
+    return total_og_docs, len(indices) // 2
 
 
 def get_doc_lengths_from_indices(doc_indices: np.ndarray) -> np.ndarray:

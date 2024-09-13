@@ -2,8 +2,7 @@ import numpy as np
 import torch
 
 from olmo_core.data.utils import (
-    bucket_documents_numpy,
-    bucket_documents_python,
+    bucket_documents,
     get_cumulative_document_lengths,
     get_document_lengths,
     iter_batched,
@@ -96,18 +95,13 @@ def test_bucket_documents(tmp_path):
 
     write_document_indices(data_path, dtype=np.uint16, eos_token_id=0)
 
-    bucket_documents_python(
-        data_path, tmp_path / "buckets1.npy", buckets=buckets, eos_token_id=0, dtype=np.uint16
+    n_og_docs, n_new_docs = bucket_documents(
+        data_path, tmp_path / "buckets.npy", buckets=buckets, eos_token_id=0, dtype=np.uint16
     )
-    bucket_documents_numpy(
-        data_path, tmp_path / "buckets2.npy", buckets=buckets, eos_token_id=0, dtype=np.uint16
-    )
+    assert n_og_docs == 3
+    assert n_new_docs == 6
 
-    buckets1 = sorted(
-        np.memmap(tmp_path / "buckets1.npy", mode="r", dtype=np.uint32).reshape((-1, 2)).tolist()
+    buckets = (
+        np.memmap(tmp_path / "buckets.npy", mode="r", dtype=np.uint32).reshape((-1, 2)).tolist()
     )
-    buckets2 = sorted(
-        np.memmap(tmp_path / "buckets2.npy", mode="r", dtype=np.uint32).reshape((-1, 2)).tolist()
-    )
-
-    assert buckets1 == buckets2
+    assert buckets == [[0, 4], [4, 8], [8, 12], [13, 17], [17, 19], [19, 21]]

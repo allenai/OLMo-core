@@ -36,7 +36,7 @@ from ..io import _get_s3_client, get_file_size
 from .mixes import DataMix
 from .tokenizer import TokenizerConfig
 from .utils import (
-    bucket_documents_python,
+    bucket_documents,
     chunk_array,
     divide_into_buckets,
     get_doc_lengths_from_indices,
@@ -871,7 +871,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                     indices_path = self._get_document_indices_path(path)
                     log.info(f"Gathering document indices for '{path}'...")
                     future = executor.submit(
-                        bucket_documents_python,  # seems to actually be faster than the np version
+                        bucket_documents,
                         path,
                         indices_path,
                         buckets=self.all_sequence_lengths,
