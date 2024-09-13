@@ -498,7 +498,7 @@ class IterableVSLDataset(IterableDatasetBase):
         bucket_end_offset = 0
         for seq_len, num_batches in self.batches_per_bucket:
             bucket_end_offset += num_batches
-            if batch_index < bucket_end_offset:
+            if bucket_start_offset <= batch_index < bucket_end_offset:
                 return seq_len, batch_index - bucket_start_offset
             bucket_start_offset += num_batches
         raise IndexError(f"Batch index '{batch_index}' out of bounds")
