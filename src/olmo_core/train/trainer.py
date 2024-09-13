@@ -419,14 +419,14 @@ class Trainer:
             )
 
         # Prepare datasets.
-        if isinstance(self.dataset, NumpyDatasetBase):
+        if not self.dataset.work_dir_set:
             self.dataset.work_dir = self.work_dir
-            self.dataset.prepare()
+        self.dataset.prepare()
 
         iterable_dataset_kwargs = dict(
             rank_batch_size=self.rank_batch_size,
             collator=self.collator,
-            work_dir=self.work_dir,
+            work_dir=self.dataset.work_dir,
             dp_world_size=get_world_size(self.dp_process_group),
             dp_rank=get_rank(self.dp_process_group),
             fs_local_rank=get_fs_local_rank(),

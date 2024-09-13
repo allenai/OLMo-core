@@ -62,6 +62,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         sequence_length=1024,
         tokenizer=tokenizer_config,
         max_target_sequence_length=8192,
+        work_dir="/tmp/dataset-cache",
     )
 
     trainer_config = (

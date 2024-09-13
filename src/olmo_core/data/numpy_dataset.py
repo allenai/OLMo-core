@@ -102,6 +102,7 @@ class NumpyDatasetBase(ABC):
         self._dtype = dtype
         self._fs_local_rank = get_fs_local_rank()
         self._work_dir: Optional[Path] = None
+        self._work_dir_set = False
         self._array_file_sizes: Optional[Tuple[int, ...]] = None
 
     @property
@@ -172,6 +173,14 @@ class NumpyDatasetBase(ABC):
     @work_dir.setter
     def work_dir(self, work_dir: PathOrStr):
         self._work_dir = Path(work_dir)
+        self._work_dir_set = True
+
+    @property
+    def work_dir_set(self) -> bool:
+        """
+        Check if the working directory was explicitly set.
+        """
+        return self._work_dir_set
 
     def _get_file_size(self, path: PathOrStr):
         path_idx = self.paths.index(path)
@@ -1116,6 +1125,10 @@ class NumpyDatasetConfig(Config):
     """
     Treat the :data:`paths` as globs.
     """
+    work_dir: Optional[str] = None
+    """
+    The dataset working directory.
+    """
 
     @property
     def effective_sequence_length(self) -> int:
@@ -1210,6 +1223,7 @@ class NumpyDatasetConfig(Config):
                 )
             paths = self.mix.build(self.mix_base_dir, self.tokenizer.identifier)
 
+        dataset: NumpyDatasetBase
         if self.name == NumpyDatasetType.fsl:
             if self.sequence_length is None:
                 raise OLMoConfigurationError("'sequence_length' is required for FSL dataset")
@@ -1231,7 +1245,7 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'vsl_curriculum' is only a valid field for VSL datasets"
                 )
-            return NumpyFSLDataset(
+            dataset = NumpyFSLDataset(
                 *paths,
                 sequence_length=self.sequence_length,
                 max_target_sequence_length=self.max_target_sequence_length,
@@ -1255,7 +1269,7 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'generate_doc_lengths' is only a valid field for FSL datasets"
                 )
-            return NumpyVSLDataset(
+            dataset = NumpyVSLDataset(
                 *paths,
                 max_sequence_length=self.max_sequence_length,
                 min_sequence_length=self.min_sequence_length,
@@ -1268,3 +1282,8 @@ class NumpyDatasetConfig(Config):
             )
         else:
             raise NotImplementedError(self.name)
+
+        if self.work_dir is not None:
+            dataset.work_dir = self.work_dir
+
+        return dataset

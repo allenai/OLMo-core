@@ -108,6 +108,9 @@ def build_common_components(
         mix_base_dir=root_dir,
         sequence_length=4096,
         max_target_sequence_length=8192,
+        work_dir=None
+        if is_url(root_dir)
+        else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache",
     )
 
     return CommonComponents(
