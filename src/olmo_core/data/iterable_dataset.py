@@ -14,7 +14,12 @@ from ..distributed.utils import barrier
 from ..exceptions import OLMoConfigurationError
 from ..utils import roundrobin, threaded_generator
 from .collator import DataCollator
-from .numpy_dataset import NumpyDatasetBase, NumpyFSLDataset, NumpyVSLDataset
+from .numpy_dataset import (
+    NumpyDatasetBase,
+    NumpyDatasetType,
+    NumpyFSLDataset,
+    NumpyVSLDataset,
+)
 from .utils import get_rng, iter_batched, load_array_slice, memmap_to_write
 
 __all__ = [
@@ -340,6 +345,7 @@ class IterableFSLDataset(IterableDatasetBase):
             tokens_processed=tokens_processed,
         )
         assert isinstance(self.dataset, NumpyFSLDataset)
+        state_dict["dataset_type"] = str(NumpyDatasetType.fsl)
         state_dict["sequence_length"] = self.dataset.sequence_length
         state_dict["max_target_sequence_length"] = self.dataset.max_target_sequence_length
         return state_dict
@@ -348,6 +354,11 @@ class IterableFSLDataset(IterableDatasetBase):
         super().load_state_dict(state_dict)
 
         assert isinstance(self.dataset, NumpyFSLDataset)
+        if state_dict["dataset_type"] != NumpyDatasetType.fsl:
+            raise RuntimeError(
+                "Dataset type mismatch: attempting to restore state from a variable sequence length dataset "
+                "into a fixed sequence length dataset"
+            )
 
         if state_dict["max_target_sequence_length"] != self.dataset.max_target_sequence_length:
             raise RuntimeError(
@@ -510,6 +521,7 @@ class IterableVSLDataset(IterableDatasetBase):
             tokens_processed=tokens_processed,
         )
         assert isinstance(self.dataset, NumpyVSLDataset)
+        state_dict["dataset_type"] = str(NumpyDatasetType.vsl)
         state_dict["max_sequence_length"] = self.dataset.max_sequence_length
         state_dict["min_sequence_length"] = self.dataset.min_sequence_length
         return state_dict
@@ -518,6 +530,11 @@ class IterableVSLDataset(IterableDatasetBase):
         super().load_state_dict(state_dict)
 
         assert isinstance(self.dataset, NumpyVSLDataset)
+        if state_dict["dataset_type"] != NumpyDatasetType.vsl:
+            raise RuntimeError(
+                "Dataset type mismatch: attempting to restore state from a fixed sequence length dataset "
+                "into a variable sequence length dataset"
+            )
 
         if state_dict["max_sequence_length"] != self.dataset.max_sequence_length:
             raise RuntimeError(

@@ -654,6 +654,7 @@ class Trainer:
         # For backwards compatibility.
         if "dataset" not in state_dict:
             state_dict["dataset"] = {
+                "dataset_type": "fsl",
                 "dataset_fingerprint_version": state_dict.pop("dataset_fingerprint_version"),
                 "dataset_fingerprint": state_dict.pop("dataset_fingerprint"),
                 "tokens_processed": state_dict["global_train_tokens_seen_this_epoch"],
