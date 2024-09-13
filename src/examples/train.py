@@ -63,7 +63,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         #  sequence_length=1024,
         #  max_target_sequence_length=8192,
         max_sequence_length=2048,
-        min_sequence_legnth=256,
+        min_sequence_length=256,
         vsl_curriculum=VSLGrowP2Curriculum(num_cycles=4),
         tokenizer=tokenizer_config,
         work_dir="/tmp/dataset-cache",
