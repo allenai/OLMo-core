@@ -1203,7 +1203,7 @@ class Trainer:
             if batch["input_ids"].numel() != self.rank_batch_size:
                 raise RuntimeError(
                     f"Expected batch size of {self.rank_batch_size:,d} tokens on rank {get_rank()}, "
-                    f"got input IDs with shape {batch['input_ids'].shape} and {batch['input_ids'].numel():,d} tokens"
+                    f"got input IDs with shape {tuple(batch['input_ids'].shape)} = {batch['input_ids'].numel():,d} tokens"
                 )
             self.global_step += 1
             self.global_train_tokens_seen += self.global_batch_size

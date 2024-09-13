@@ -475,17 +475,23 @@ class IterableVSLDataset(IterableDatasetBase):
                 yield instance_index
 
     def _batch_index_to_local_instance_indices(self, batch_index: int) -> np.ndarray:
-        bucket, bucket_batch_index = self._batch_index_to_bucket_batch_index(batch_index)
-        instances_per_batch = self.global_batch_size // bucket
-        bucket_indices_file = self._bucket_indices_file(bucket)
+        bucket_seq_len, bucket_batch_index = self._batch_index_to_bucket_batch_index(batch_index)
+        instances_per_batch = self.global_batch_size // bucket_seq_len
+        bucket_indices_file = self._bucket_indices_file(bucket_seq_len)
         instance_start_index = bucket_batch_index * instances_per_batch
+
         # Slice up by rank.
         instances_per_rank = instances_per_batch // self.dp_world_size
         instance_start_index += self.dp_rank * instances_per_rank
         instance_end_index = instance_start_index + instances_per_rank
-        return load_array_slice(
+
+        local_instance_indices = load_array_slice(
             bucket_indices_file, instance_start_index, instance_end_index, np.uint32
         )
+        assert (
+            local_instance_indices.shape[0] == instances_per_rank
+        ), f"Expected {instances_per_rank} instances, got {local_instance_indices.shape[0]}"
+        return local_instance_indices
 
     def _batch_index_to_bucket_batch_index(self, batch_index: int) -> Tuple[int, int]:
         bucket_start_offset = 0
