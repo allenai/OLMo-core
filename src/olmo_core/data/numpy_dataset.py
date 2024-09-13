@@ -4,6 +4,7 @@ import concurrent.futures
 import hashlib
 import logging
 import math
+import os
 import tempfile
 from abc import ABC, abstractmethod
 from copy import deepcopy
@@ -143,7 +144,7 @@ class NumpyDatasetBase(ABC):
         """
         The version of the :data:`fingerprint`.
         """
-        return "v1"
+        return "v1.1"
 
     @property
     def fingerprint(self) -> str:
@@ -151,8 +152,13 @@ class NumpyDatasetBase(ABC):
         Can be used to identify/compare the contents of a dataset.
         """
         sha256_hash = hashlib.sha256()
-        for size in self.file_sizes:
-            sha256_hash.update(f"size={size}".encode())
+        sha256_hash.update(
+            f"pad_token_id={self.pad_token_id},"
+            f"eos_token_id={self.eos_token_id},"
+            f"dtype={self.dtype}".encode()
+        )
+        for path, size in zip(self.paths, self.file_sizes):
+            sha256_hash.update(f"name={os.path.basename(path)},size={size}".encode())
         return sha256_hash.hexdigest()
 
     @property
@@ -746,12 +752,21 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         self._instances_per_bucket: Optional[Tuple[Tuple[int, int], ...]] = None
 
     @property
+    def fingerprint_version(self) -> str:
+        return "v1.1"
+
+    @property
     def fingerprint(self) -> str:
         sha256_hash = hashlib.sha256()
-        sha256_hash.update(f"min_sequence_length={self.min_sequence_length}".encode())
-        sha256_hash.update(f"max_sequence_length={self.max_sequence_length}".encode())
-        for size in self.file_sizes:
-            sha256_hash.update(f"size={size}".encode())
+        sha256_hash.update(
+            f"min_sequence_length={self.min_sequence_length},"
+            f"max_sequence_length={self.max_sequence_length},"
+            f"pad_token_id={self.pad_token_id},"
+            f"eos_token_id={self.eos_token_id},"
+            f"dtype={self.dtype}".encode()
+        )
+        for path, size in zip(self.paths, self.file_sizes):
+            sha256_hash.update(f"name={os.path.basename(path)},size={size}".encode())
         return sha256_hash.hexdigest()
 
     @property
@@ -1127,7 +1142,12 @@ class NumpyDatasetConfig(Config):
     """
     work_dir: Optional[str] = None
     """
-    The dataset working directory.
+    The dataset working directory. This is used to cache working files like shuffled indices,
+    instance buckets, etc.
+
+    .. tip::
+        You can save a lot of time and disk space by setting this to a common directory across
+        all of you runs.
     """
 
     @property
