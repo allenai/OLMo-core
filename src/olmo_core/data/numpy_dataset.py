@@ -1284,6 +1284,6 @@ class NumpyDatasetConfig(Config):
             raise NotImplementedError(self.name)
 
         if self.work_dir is not None:
-            dataset.work_dir = self.work_dir
+            dataset.work_dir = Path(self.work_dir)
 
         return dataset
