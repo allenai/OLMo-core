@@ -133,9 +133,7 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
                 )
                 global_indices = self._build_global_indices()
                 with memmap_to_write(
-                    self._global_indices_file,
-                    shape=global_indices.shape,
-                    dtype=global_indices.dtype,
+                    self._global_indices_file, shape=(len(global_indices),), dtype=np.uint32
                 ) as global_indices_mmap:
                     global_indices_mmap[:] = global_indices
                 log.info(f"Global data order indices saved to:\n'{self._global_indices_file}'")
@@ -297,7 +295,7 @@ class IterableFSLDataset(IterableDatasetBase):
             if rng is not None:
                 rng.shuffle(indices)
         else:
-            chunk_indices = np.arange(len(self.dataset) // self.chunk_size)
+            chunk_indices = np.arange(len(self.dataset) // self.chunk_size, dtype=np.uint32)
             if rng is not None:
                 rng.shuffle(chunk_indices)
             indices = np.repeat(chunk_indices * self.chunk_size, self.chunk_size)
