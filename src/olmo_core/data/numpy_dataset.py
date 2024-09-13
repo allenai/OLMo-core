@@ -172,6 +172,10 @@ class NumpyDatasetBase(ABC):
     def work_dir(self, work_dir: PathOrStr):
         self._work_dir = Path(work_dir)
 
+    def _get_file_size(self, path: PathOrStr):
+        path_idx = self.paths.index(path)
+        return self.file_sizes[path_idx]
+
     def _warmup_clients(self):
         # Maybe create client up front to work around a threading issue in boto.
         if any(str(p).startswith("s3://") for p in self.paths):
@@ -208,7 +212,10 @@ class NumpyDatasetBase(ABC):
 
         :returns: The results, in the same order as :data:`paths`.
         """
-        executor_class: Type[concurrent.futures.Executor]
+        executor_class: Union[
+            Type[concurrent.futures.ThreadPoolExecutor],
+            Type[concurrent.futures.ProcessPoolExecutor],
+        ]
         if method == "threads":
             self._warmup_clients()
             executor_class = concurrent.futures.ThreadPoolExecutor
@@ -818,8 +825,11 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     def _get_document_indices_path(self, path: PathOrStr) -> Path:
         sha256_hash = hashlib.sha256()
         sha256_hash.update(str(path).encode())
+        sha256_hash.update(str(self._get_file_size(path)).encode())
+        for seq_len in self.all_sequence_lengths:
+            sha256_hash.update(str(seq_len).encode())
         path_hash = sha256_hash.hexdigest()
-        return self.work_dir / f"dataset-{self.fingerprint}" / f"{path_hash}.npy"
+        return self.work_dir / "dataset-common" / f"bucketed-doc-indices-{path_hash}.npy"
 
     def _get_instance_lengths_path(self) -> Path:
         return self.work_dir / f"dataset-{self.fingerprint}" / "instance-lengths.npy"
