@@ -11,7 +11,12 @@ from dataclasses import dataclass
 from typing import List, cast
 
 from olmo_core.config import Config, DType
-from olmo_core.data import NumpyDatasetConfig, TokenizerConfig, VSLGrowP2Curriculum
+from olmo_core.data import (
+    NumpyDatasetConfig,
+    TokenizerConfig,
+    VSLCurriculumConfig,
+    VSLCurriculumType,
+)
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.distributed.utils import init_hybrid_shard_mesh
 from olmo_core.nn.transformer import TransformerConfig
@@ -64,7 +69,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         #  max_target_sequence_length=8192,
         max_sequence_length=2048,
         min_sequence_length=256,
-        vsl_curriculum=VSLGrowP2Curriculum(num_cycles=4),
+        vsl_curriculum=VSLCurriculumConfig(name=VSLCurriculumType.grow_p2, num_cycles=4),
         tokenizer=tokenizer_config,
         work_dir="/tmp/dataset-cache",
     )
