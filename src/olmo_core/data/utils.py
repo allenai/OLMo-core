@@ -409,7 +409,7 @@ def bucket_documents_numpy(
     doc_indices = np.concatenate(
         [np.array([0]), np.repeat(doc_end_indices[:-1], 2) + 1, doc_end_indices[-1:] + 1]
     )
-    doc_lengths = get_doc_lengths(doc_indices)
+    doc_lengths = get_doc_lengths_from_indices(doc_indices)
 
     bucket_docs: List[np.ndarray] = []
     for b in reversed(buckets):
@@ -445,7 +445,7 @@ def decompose_documents_once(
     )
     new_doc_indices += offset
 
-    new_doc_lengths = get_doc_lengths(new_doc_indices)
+    new_doc_lengths = get_doc_lengths_from_indices(new_doc_indices)
     mask = new_doc_lengths > 0
     new_doc_indices = new_doc_indices[np.repeat(mask, 2)]
     new_doc_lengths = new_doc_lengths[mask]
@@ -460,5 +460,5 @@ def decompose_documents(
     return doc_indices, doc_lengths
 
 
-def get_doc_lengths(doc_indices: np.ndarray) -> np.ndarray:
-    return doc_indices[1::2] - doc_indices[0:-1:2]
+def get_doc_lengths_from_indices(doc_indices: np.ndarray) -> np.ndarray:
+    return doc_indices[1::2] - doc_indices[0::2]

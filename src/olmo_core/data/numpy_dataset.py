@@ -39,6 +39,7 @@ from .utils import (
     bucket_documents_python,
     chunk_array,
     divide_into_buckets,
+    get_doc_lengths_from_indices,
     get_document_lengths,
     get_rng,
     load_array_slice_into_tensor,
@@ -882,8 +883,8 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                 for path, (offset_start, offset_end) in zip(self.paths, self.offsets):
                     indices_path = self._get_document_indices_path(path)
                     indices_mmap = np.memmap(indices_path, dtype=self.indices_dtype, mode="r")
-                    instance_lengths[offset_start:offset_end] = (
-                        indices_mmap[1::2] - indices_mmap[::2]
+                    instance_lengths[offset_start:offset_end] = get_doc_lengths_from_indices(
+                        indices_mmap
                     )
                     del indices_mmap
 
