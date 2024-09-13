@@ -201,18 +201,26 @@ class NumpyDatasetBase(ABC):
     def map(
         self,
         func: Callable[[PathOrStr], T],
+        *,
         max_workers: Optional[int] = None,
         method: Literal["threads", "processes"] = "threads",
+        _paths: Optional[Sequence[PathOrStr]] = None,
     ) -> List[T]:
         """
         Call a function on each path in the dataset, returning a list of the results, in order.
 
         :param func: The function to map to the paths.
-        :param max_workers: The number of workers threads/processes.
+        :param max_workers: The number of workers threads/processes. Set to 0 to execute synchronously
+            in the main thread/process.
         :param method: Whether to use multi-threading or multi-processing.
 
         :returns: The results, in the same order as :data:`paths`.
         """
+        paths = _paths or self.paths
+
+        if max_workers == 0:
+            return [func(path) for path in paths]
+
         executor_class: Union[
             Type[concurrent.futures.ThreadPoolExecutor],
             Type[concurrent.futures.ProcessPoolExecutor],
@@ -227,12 +235,12 @@ class NumpyDatasetBase(ABC):
 
         with executor_class(max_workers=max_workers) as executor:
             path_to_future = {}
-            for path in self.paths:
+            for path in paths:
                 if path not in path_to_future:
                     path_to_future[path] = executor.submit(func, path)
 
             results = []
-            for path in self.paths:
+            for path in paths:
                 results.append(path_to_future[path].result())
 
         return results
@@ -863,7 +871,10 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                         indices_dtype=self.indices_dtype,
                     )
                     futures.append(future)
+
                 concurrent.futures.wait(futures, return_when="ALL_COMPLETED")
+
+                # Log results.
                 for path, future in zip(paths_needed, futures):
                     total_og_docs, total_bucketed_docs = future.result()
                     log.info(
