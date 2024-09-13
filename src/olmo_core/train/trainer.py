@@ -609,8 +609,9 @@ class Trainer:
 
         barrier()
 
-        # Install SIGTERM handler.
-        og_handler = signal.signal(signal.SIGTERM, self._handle_sigterm)
+        # Install SIGTERM + SIGINT handlers.
+        og_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_os_signal)
+        og_sigint_handler = signal.signal(signal.SIGINT, self._handle_os_signal)
 
         try:
             while not self.training_complete:
@@ -620,8 +621,9 @@ class Trainer:
                 callback.on_error(exc)
             raise
         finally:
-            # Restore original SIGTERM handler.
-            signal.signal(signal.SIGTERM, og_handler)
+            # Restore original signal handler.
+            signal.signal(signal.SIGTERM, og_sigterm_handler)
+            signal.signal(signal.SIGINT, og_sigint_handler)
 
         for callback in self.callbacks.values():
             callback.post_train()
@@ -922,10 +924,23 @@ class Trainer:
         else:
             raise NotImplementedError
 
-    def _handle_sigterm(self, *args):
-        del args
-        log.warning("SIGTERM received")
-        self.cancel_run("SIGTERM received")
+    def _handle_os_signal(self, signalnum, stack_frame):
+        del stack_frame
+
+        signame: Optional[str] = None
+        if signalnum == signal.SIGTERM:
+            signame = "SIGTERM"
+        elif signalnum == signal.SIGINT:
+            signame = "SIGINT"
+
+        msg: str
+        if signame is not None:
+            msg = f"{signame} received"
+        else:
+            msg = f"Sig({signalnum}) received"
+
+        log.warning(msg)
+        self.cancel_run(msg)
 
     def _check_if_canceled(self):
         if self._canceled:
