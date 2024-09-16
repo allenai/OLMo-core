@@ -53,8 +53,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     model_config = TransformerConfig.llama2_271M(
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
-        compile=False,
-        use_flash=True,
+        compile=True,
         dp_config=DataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
