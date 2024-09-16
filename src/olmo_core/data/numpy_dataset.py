@@ -53,6 +53,7 @@ __all__ = [
     "VSLCurriculum",
     "VSLNaturalCurriculum",
     "VSLGrowP2Curriculum",
+    "VSLGrowLinearCurriculum",
     "NumpyVSLDataset",
     "NumpyDatasetType",
     "NumpyDatasetConfig",
@@ -541,13 +542,7 @@ class VSLNaturalCurriculum(VSLCurriculum):
 
 
 @dataclass
-class VSLGrowP2Curriculum(VSLCurriculum):
-    """
-    Implements the "Grow-P2" curriculum from
-    `Dataset Decomposition: Faster LLM Training with Variable Sequence Length Curriculum
-    <https://arxiv.org/pdf/2405.13226>`_.
-    """
-
+class VSLBalancedGrowthCurriculum(VSLCurriculum):
     num_cycles: int = 8
 
     def batches_per_bucket(
@@ -586,7 +581,7 @@ class VSLGrowP2Curriculum(VSLCurriculum):
         rng = get_rng(seed)
         num_buckets = len(batches_per_bucket)
 
-        log.info(f"Constructing Grow-P2 VSL curriculum with {num_buckets} buckets:")
+        log.info(f"Constructing {self.__class__.__name__} curriculum with {num_buckets} buckets")
 
         # This is how many batches we'll pull from each bucket for each cycle.
         batch_counts_per_cycle_per_bucket = divide_into_buckets(
@@ -645,17 +640,9 @@ class VSLGrowP2Curriculum(VSLCurriculum):
         return indices
 
     @classmethod
+    @abstractmethod
     def _get_bucket_odds_for_cycle(cls, bucket_idx: int, num_buckets: int) -> List[int]:
-        all_odds = []
-        start_odds = num_buckets - bucket_idx
-        for cycle in range(num_buckets):
-            exp = (
-                start_odds + cycle
-                if start_odds + cycle <= num_buckets
-                else start_odds - ((start_odds + cycle) % num_buckets)
-            )
-            all_odds.append(2 ** (exp - 1))
-        return all_odds
+        raise NotImplementedError
 
     @classmethod
     def _get_num_bucket_batches_for_cycle(
@@ -673,6 +660,50 @@ class VSLGrowP2Curriculum(VSLCurriculum):
         if total < num_batches:
             out[-1] += num_batches - total
         return out
+
+
+@dataclass
+class VSLGrowP2Curriculum(VSLBalancedGrowthCurriculum):
+    """
+    Implements the "Grow-P2" curriculum from
+    `Dataset Decomposition: Faster LLM Training with Variable Sequence Length Curriculum
+    <https://arxiv.org/pdf/2405.13226>`_.
+    """
+
+    @classmethod
+    def _get_bucket_odds_for_cycle(cls, bucket_idx: int, num_buckets: int) -> List[int]:
+        all_odds = []
+        start_odds = num_buckets - bucket_idx
+        for cycle in range(num_buckets):
+            exp = (
+                start_odds + cycle
+                if start_odds + cycle <= num_buckets
+                else start_odds - ((start_odds + cycle) % num_buckets)
+            )
+            all_odds.append(2 ** (exp - 1))
+        return all_odds
+
+
+@dataclass
+class VSLGrowLinearCurriculum(VSLBalancedGrowthCurriculum):
+    """
+    Implements the "Grow-Linear" curriculum from
+    `Dataset Decomposition: Faster LLM Training with Variable Sequence Length Curriculum
+    <https://arxiv.org/pdf/2405.13226>`_.
+    """
+
+    @classmethod
+    def _get_bucket_odds_for_cycle(cls, bucket_idx: int, num_buckets: int) -> List[int]:
+        all_odds = []
+        start_odds = num_buckets - bucket_idx
+        for cycle in range(num_buckets):
+            odds = (
+                start_odds + cycle
+                if start_odds + cycle <= num_buckets
+                else start_odds - ((start_odds + cycle) % num_buckets)
+            )
+            all_odds.append(odds)
+        return all_odds
 
 
 class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
@@ -1050,6 +1081,11 @@ class VSLCurriculumType(StrEnum):
     The "Grow-P2" curriculum ➡️ :class:`VSLGrowP2Curriculum`.
     """
 
+    grow_linear = "grow_linear"
+    """
+    The "Grow-Linear" curriculum ➡️ :class:`VSLGrowLinearCurriculum`.
+    """
+
 
 @dataclass
 class VSLCurriculumConfig(Config):
@@ -1072,6 +1108,12 @@ class VSLCurriculumConfig(Config):
                     f"'num_cycles' is required for the {self.name} curriculum"
                 )
             return VSLGrowP2Curriculum(num_cycles=self.num_cycles)
+        elif self.name == VSLCurriculumType.grow_linear:
+            if self.num_cycles is None:
+                raise OLMoConfigurationError(
+                    f"'num_cycles' is required for the {self.name} curriculum"
+                )
+            return VSLGrowLinearCurriculum(num_cycles=self.num_cycles)
         else:
             raise NotImplementedError(self.name)
 

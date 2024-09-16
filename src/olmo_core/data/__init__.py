@@ -31,6 +31,7 @@ from .numpy_dataset import (
     VSLCurriculum,
     VSLCurriculumConfig,
     VSLCurriculumType,
+    VSLGrowLinearCurriculum,
     VSLGrowP2Curriculum,
     VSLNaturalCurriculum,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "VSLCurriculum",
     "VSLNaturalCurriculum",
     "VSLGrowP2Curriculum",
+    "VSLGrowLinearCurriculum",
     "NumpyDatasetConfig",
     "NumpyDatasetType",
     "VSLCurriculumType",
