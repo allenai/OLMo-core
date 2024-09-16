@@ -289,7 +289,7 @@ class BeakerLaunchConfig(Config):
 
         return dataset
 
-    def build_experiment_spec(self) -> ExperimentSpec:
+    def build_experiment_spec(self, torchrun: bool = True) -> ExperimentSpec:
         """
         Get the Beaker experiment spec corresponding to this config instance.
         """
@@ -311,8 +311,12 @@ class BeakerLaunchConfig(Config):
             'git checkout "${GIT_REF}"',
             "git submodule update --init --recursive",
             *self.setup_steps,
-            " ".join(self._get_torchrun_cmd()) + ' "$@"',
         ]
+
+        if torchrun:
+            entrypoint_script.append(" ".join(self._get_torchrun_cmd()) + ' "$@"')
+        else:
+            entrypoint_script.append('python "$@"')
 
         entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
 
@@ -399,7 +403,7 @@ class BeakerLaunchConfig(Config):
         else:
             log.info("Experiment completed successfully")
 
-    def launch(self, follow: bool = False) -> Experiment:
+    def launch(self, follow: bool = False, torchrun: bool = True) -> Experiment:
         """
         Launch a Beaker experiment using this config.
 
@@ -408,10 +412,11 @@ class BeakerLaunchConfig(Config):
             :meth:`build_experiment_spec()`.
 
         :param follow: Stream the logs and follow the experiment until completion.
+        :param torchrun: Launch the target command with ``torchrun``.
 
         :returns: The Beaker experiment.
         """
-        spec = self.build_experiment_spec()
+        spec = self.build_experiment_spec(torchrun=torchrun)
         experiment = self.beaker.experiment.create(self.name, spec)
         log.info(f"Experiment submitted, see progress at {self.beaker.experiment.url(experiment)}")
 
