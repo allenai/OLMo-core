@@ -185,6 +185,7 @@ class SubCmd(StrEnum):
 
 
 def launch(config: ExperimentConfig):
+    log.info(config)
     config.launch.launch(follow=True)
 
 
