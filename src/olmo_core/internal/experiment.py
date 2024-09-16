@@ -194,7 +194,7 @@ def launch_prep(config: ExperimentConfig):
     config.launch.num_gpus = 0
     config.launch.num_nodes = 1
     log.info(config)
-    config.launch.launch(follow=True)
+    config.launch.launch(follow=True, torchrun=False)
 
 
 def prep(config: ExperimentConfig):
