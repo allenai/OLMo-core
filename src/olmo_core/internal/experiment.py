@@ -6,7 +6,12 @@ from typing import Callable, List, cast
 from beaker import Beaker
 
 from olmo_core.config import Config, StrEnum
-from olmo_core.data import DataMix, NumpyDatasetConfig, TokenizerConfig
+from olmo_core.data import (
+    DataMix,
+    IterableDatasetBase,
+    NumpyDatasetConfig,
+    TokenizerConfig,
+)
 from olmo_core.distributed.utils import get_num_nodes, init_hybrid_shard_mesh
 from olmo_core.io import is_url
 from olmo_core.launch.beaker import (
@@ -149,10 +154,12 @@ def build_config(
 class SubCmd(StrEnum):
     launch = "launch"
     train = "train"
+    prep = "prep"
+    launch_prep = "launch_prep"
     dry_run = "dry_run"
 
     def prepare_environment(self):
-        if self in (SubCmd.launch, SubCmd.dry_run):
+        if self in (SubCmd.launch, SubCmd.dry_run, SubCmd.prep, SubCmd.launch_prep):
             prepare_cli_environment()
         elif self == SubCmd.train:
             prepare_training_environment()
@@ -169,12 +176,37 @@ class SubCmd(StrEnum):
                 train(config)
             finally:
                 teardown_training_environment()
+        elif self == SubCmd.prep:
+            prep(config)
+        elif self == SubCmd.launch_prep:
+            launch_prep(config)
         else:
             raise NotADirectoryError(self)
 
 
 def launch(config: ExperimentConfig):
     config.launch.launch(follow=True)
+
+
+def launch_prep(config: ExperimentConfig):
+    config.launch.cmd[1] = SubCmd.prep
+    config.launch.num_gpus = 0
+    config.launch.num_nodes = 1
+    log.info(config)
+    #  config.launch.launch(follow=True)
+
+
+def prep(config: ExperimentConfig):
+    dataset = config.dataset.build()
+    dataset.prepare()
+
+    itds = IterableDatasetBase.wrap_numpy_dataset(
+        dataset,
+        rank_batch_size=config.trainer.global_batch_size,
+        collator=config.trainer.build_collator(dataset),
+        seed=config.trainer.data_seed,
+    )
+    itds.build_and_save_global_indices()
 
 
 def train(config: ExperimentConfig):
@@ -211,10 +243,12 @@ def main(
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
 
 [b]Subcommands[/]
-[b magenta]launch:[/]  Launch the script on Beaker with the [b magenta]train[/] subcommand.
-[b magenta]train:[/]   Run the trainer. You usually shouldn't invoke the script with this subcommand directly.
-         Instead use [b magenta]launch[/] or run it with torchrun.
-[b magenta]dry_run:[/] Pretty print the config and exit.
+[b magenta]launch:[/]      Launch the script on Beaker with the [b magenta]train[/] subcommand.
+[b magenta]train:[/]       Run the trainer. You usually shouldn't invoke the script with this subcommand directly.
+             Instead use [b magenta]launch[/] or run it with torchrun.
+[b magenta]prep:[/]        Prepare the dataset ahead of training to save GPU time.
+[b magenta]launch_prep:[/] Launch the script on Beaker with the [b magenta]prep[/] subcommand.
+[b magenta]dry_run:[/]     Pretty print the config and exit.
 
 [b]Examples[/]
 $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.num_nodes=2[/]

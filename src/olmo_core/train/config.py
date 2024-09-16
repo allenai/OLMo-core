@@ -65,6 +65,9 @@ class TrainerConfig(Config):
         self.callbacks[name] = callback
         return self
 
+    def build_collator(self, dataset: NumpyDatasetBase) -> DataCollator:
+        return DataCollator(pad_token_id=dataset.pad_token_id)
+
     def build(
         self,
         model: nn.Module,
@@ -95,7 +98,7 @@ class TrainerConfig(Config):
             else:
                 work_dir = os.path.join(tempfile.gettempdir(), os.path.basename(self.save_folder))
 
-        collator = DataCollator(pad_token_id=dataset.pad_token_id)
+        collator = self.build_collator(dataset)
 
         return Trainer(
             model=model,

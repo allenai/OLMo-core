@@ -27,15 +27,7 @@ from torch.utils.data import DataLoader
 
 from ..aliases import PathOrStr
 from ..config import StrEnum
-from ..data import (
-    DataCollator,
-    IterableDatasetBase,
-    IterableFSLDataset,
-    IterableVSLDataset,
-    NumpyDatasetBase,
-    NumpyFSLDataset,
-    NumpyVSLDataset,
-)
+from ..data import DataCollator, IterableDatasetBase, NumpyDatasetBase
 from ..data.utils import split_batch
 from ..distributed.utils import (
     all_reduce_value,
@@ -423,7 +415,8 @@ class Trainer:
             self.dataset.work_dir = self.work_dir
         self.dataset.prepare()
 
-        iterable_dataset_kwargs = dict(
+        self._iterable_dataset = IterableDatasetBase.wrap_numpy_dataset(
+            self.dataset,
             rank_batch_size=self.rank_batch_size,
             collator=self.collator,
             work_dir=self.dataset.work_dir,
@@ -433,22 +426,6 @@ class Trainer:
             seed=self.data_seed,
             epoch=self.epoch,
         )
-        if isinstance(self.dataset, NumpyFSLDataset):
-            self._iterable_dataset = IterableFSLDataset(
-                self.dataset,
-                **iterable_dataset_kwargs,  # type: ignore
-            )
-            if self.dataset.max_target_sequence_length is not None:
-                self._iterable_dataset.chunk_size = (
-                    self.dataset.max_target_sequence_length // self.dataset.sequence_length
-                )
-        elif isinstance(self.dataset, NumpyVSLDataset):
-            self._iterable_dataset = IterableVSLDataset(
-                self.dataset,
-                **iterable_dataset_kwargs,  # type: ignore
-            )
-        else:
-            raise NotImplementedError
 
     @property
     def rank_batch_size(self) -> int:

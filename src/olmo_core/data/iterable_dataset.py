@@ -51,7 +51,7 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         collator: DataCollator,
         work_dir: PathOrStr,
         seed: int = 0,
-        epoch: int = 0,
+        epoch: int = 1,
         shuffle: bool = True,
         num_threads: Optional[int] = None,
         dp_world_size: int = 1,
@@ -73,6 +73,50 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         # NOTE: the semantic of 'start_index' depend on the implementation.
         # It could be an instance index, batch index, or something else.
         self.start_index = start_index
+
+    @classmethod
+    def wrap_numpy_dataset(
+        cls,
+        dataset: NumpyDatasetBase,
+        *,
+        rank_batch_size: int,
+        collator: DataCollator,
+        work_dir: Optional[PathOrStr] = None,
+        seed: int = 0,
+        dp_world_size: int = 1,
+        dp_rank: int = 0,
+        fs_local_rank: int = 0,
+        epoch: int = 1,
+    ) -> "IterableDatasetBase":
+        kwargs = dict(
+            rank_batch_size=rank_batch_size,
+            collator=collator,
+            work_dir=work_dir or dataset.work_dir,
+            dp_world_size=dp_world_size,
+            dp_rank=dp_rank,
+            fs_local_rank=fs_local_rank,
+            seed=seed,
+            epoch=epoch,
+        )
+        iterable_dataset: IterableDatasetBase
+        if isinstance(dataset, NumpyFSLDataset):
+            iterable_dataset = IterableFSLDataset(
+                dataset,
+                **kwargs,  # type: ignore
+            )
+            if dataset.max_target_sequence_length is not None:
+                iterable_dataset.chunk_size = (
+                    dataset.max_target_sequence_length // dataset.sequence_length
+                )
+        elif isinstance(dataset, NumpyVSLDataset):
+            iterable_dataset = IterableVSLDataset(
+                dataset,
+                **kwargs,  # type: ignore
+            )
+        else:
+            raise NotImplementedError
+
+        return iterable_dataset
 
     @property
     @abstractmethod
