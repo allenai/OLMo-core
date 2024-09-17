@@ -11,13 +11,10 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 )
 
 from olmo_core.config import Config, DType, StrEnum
+from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.utils import (
-    get_cumulative_document_lengths,
-    get_default_device,
-    has_flash_attn,
-)
+from olmo_core.utils import get_default_device, has_flash_attn
 
 from ..attention import AttentionConfig, AttentionType
 from ..buffer_cache import BufferCache

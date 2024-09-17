@@ -10,7 +10,7 @@ import torch.nn as nn
 from torch.optim import Optimizer
 
 from ..config import Config, DType
-from ..data import DataCollator, NumpyDataset
+from ..data import DataCollator, NumpyDatasetBase
 from ..exceptions import OLMoConfigurationError
 from ..io import is_url
 from ..utils import get_default_device
@@ -23,12 +23,15 @@ from .utils import Duration, DurationUnit
 @dataclass
 class TrainerConfig(Config):
     """
-    A configuration class for easily building :class:`~olmo_core.train.trainer.Trainer` instances.
+    A configuration class for easily building :class:`Trainer` instances.
+
+    .. seealso::
+        See the :class:`Trainer` documentation for a description of the fields.
     """
 
     save_folder: str
     global_batch_size: int
-    microbatch_size: int
+    rank_microbatch_size: int
 
     work_dir: Optional[str] = None
     load_path: Optional[str] = None
@@ -62,11 +65,14 @@ class TrainerConfig(Config):
         self.callbacks[name] = callback
         return self
 
+    def build_collator(self, dataset: NumpyDatasetBase) -> DataCollator:
+        return DataCollator(pad_token_id=dataset.pad_token_id)
+
     def build(
         self,
         model: nn.Module,
         optim: Optimizer,
-        dataset: NumpyDataset,
+        dataset: NumpyDatasetBase,
         dp_process_group: Optional[dist.ProcessGroup] = None,
         checkpointer_pg: Optional[dist.ProcessGroup] = None,
     ) -> Trainer:
@@ -92,7 +98,7 @@ class TrainerConfig(Config):
             else:
                 work_dir = os.path.join(tempfile.gettempdir(), os.path.basename(self.save_folder))
 
-        collator = DataCollator(pad_token_id=dataset.pad_token_id)
+        collator = self.build_collator(dataset)
 
         return Trainer(
             model=model,
@@ -100,8 +106,6 @@ class TrainerConfig(Config):
             dataset=dataset,
             collator=collator,
             checkpointer=checkpointer,
-            train_sequence_length=dataset.sequence_length,
-            max_train_sequence_length=dataset.max_target_sequence_length,
             autocast_precision=None if autocast_precision is None else autocast_precision.as_pt(),
             work_dir=Path(work_dir),
             device=torch.device(device) if device is not None else get_default_device(),

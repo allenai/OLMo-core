@@ -6,7 +6,12 @@ from typing import Callable, List, cast
 from beaker import Beaker
 
 from olmo_core.config import Config, StrEnum
-from olmo_core.data import DataMix, NumpyDatasetConfig, TokenizerConfig
+from olmo_core.data import (
+    DataMix,
+    IterableDatasetBase,
+    NumpyDatasetConfig,
+    TokenizerConfig,
+)
 from olmo_core.distributed.utils import get_num_nodes, init_hybrid_shard_mesh
 from olmo_core.io import is_url
 from olmo_core.launch.beaker import (
@@ -53,8 +58,42 @@ class ExperimentConfig(Config):
     init_seed: int = 12536
 
 
+class SubCmd(StrEnum):
+    launch = "launch"
+    train = "train"
+    prep = "prep"
+    launch_prep = "launch_prep"
+    dry_run = "dry_run"
+
+    def prepare_environment(self):
+        if self in (SubCmd.launch, SubCmd.dry_run, SubCmd.prep, SubCmd.launch_prep):
+            prepare_cli_environment()
+        elif self == SubCmd.train:
+            prepare_training_environment()
+        else:
+            raise NotADirectoryError(self)
+
+    def run(self, config: ExperimentConfig):
+        if self == SubCmd.launch:
+            launch(config)
+        elif self == SubCmd.dry_run:
+            log.info(config)
+        elif self == SubCmd.train:
+            try:
+                train(config)
+            finally:
+                teardown_training_environment()
+        elif self == SubCmd.prep:
+            prep(config)
+        elif self == SubCmd.launch_prep:
+            launch_prep(config)
+        else:
+            raise NotADirectoryError(self)
+
+
 def build_common_components(
     script: str,
+    cmd: SubCmd,
     run_name: str,
     cluster: str,
     overrides: List[str],
@@ -66,11 +105,14 @@ def build_common_components(
         weka_buckets.append(BeakerWekaBucket("oe-training-default", "/weka/oe-training-default"))
 
     beaker_user = (Beaker.from_env().account.whoami().name).upper()
+    cmd_to_launch = SubCmd.train
+    if cmd == SubCmd.launch_prep:
+        cmd_to_launch = SubCmd.prep
 
     launch_config = BeakerLaunchConfig(
-        name=f"{run_name}-{generate_uuid()[:8]}",
+        name=f"{run_name}-{cmd_to_launch}-{generate_uuid()[:8]}",
         budget="ai2/oe-training",
-        cmd=[script, SubCmd.train, run_name, cluster, *overrides],
+        cmd=[script, cmd_to_launch, run_name, cluster, *overrides],
         task_name="train",
         workspace="ai2/OLMo-core",
         clusters=[cluster],
@@ -108,6 +150,9 @@ def build_common_components(
         mix_base_dir=root_dir,
         sequence_length=4096,
         max_target_sequence_length=8192,
+        work_dir=None
+        if is_url(root_dir)
+        else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache",
     )
 
     return CommonComponents(
@@ -121,6 +166,7 @@ def build_common_components(
 
 def build_config(
     script: str,
+    cmd: SubCmd,
     run_name: str,
     cluster: str,
     overrides: List[str],
@@ -129,7 +175,7 @@ def build_config(
     optim_config_builder: Callable[[CommonComponents], AdamWConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
 ) -> ExperimentConfig:
-    common = build_common_components(script, run_name, cluster, overrides)
+    common = build_common_components(script, cmd, run_name, cluster, overrides)
 
     config = ExperimentConfig(
         run_name=run_name,
@@ -143,35 +189,29 @@ def build_config(
     return config
 
 
-class SubCmd(StrEnum):
-    launch = "launch"
-    train = "train"
-    dry_run = "dry_run"
-
-    def prepare_environment(self):
-        if self in (SubCmd.launch, SubCmd.dry_run):
-            prepare_cli_environment()
-        elif self == SubCmd.train:
-            prepare_training_environment()
-        else:
-            raise NotADirectoryError(self)
-
-    def run(self, config: ExperimentConfig):
-        if self == SubCmd.launch:
-            launch(config)
-        elif self == SubCmd.dry_run:
-            log.info(config)
-        elif self == SubCmd.train:
-            try:
-                train(config)
-            finally:
-                teardown_training_environment()
-        else:
-            raise NotADirectoryError(self)
-
-
 def launch(config: ExperimentConfig):
+    log.info(config)
     config.launch.launch(follow=True)
+
+
+def launch_prep(config: ExperimentConfig):
+    config.launch.num_gpus = 0
+    config.launch.num_nodes = 1
+    log.info(config)
+    config.launch.launch(follow=True, torchrun=False)
+
+
+def prep(config: ExperimentConfig):
+    dataset = config.dataset.build()
+    dataset.prepare()
+
+    itds = IterableDatasetBase.wrap_numpy_dataset(
+        dataset,
+        rank_batch_size=config.trainer.global_batch_size,
+        collator=config.trainer.build_collator(dataset),
+        seed=config.trainer.data_seed,
+    )
+    itds.build_and_save_global_indices()
 
 
 def train(config: ExperimentConfig):
@@ -208,10 +248,12 @@ def main(
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
 
 [b]Subcommands[/]
-[b magenta]launch:[/]  Launch the script on Beaker with the [b magenta]train[/] subcommand.
-[b magenta]train:[/]   Run the trainer. You usually shouldn't invoke the script with this subcommand directly.
-         Instead use [b magenta]launch[/] or run it with torchrun.
-[b magenta]dry_run:[/] Pretty print the config and exit.
+[b magenta]launch:[/]      Launch the script on Beaker with the [b magenta]train[/] subcommand.
+[b magenta]train:[/]       Run the trainer. You usually shouldn't invoke the script with this subcommand directly.
+             Instead use [b magenta]launch[/] or run it with torchrun.
+[b magenta]prep:[/]        Prepare the dataset ahead of training to save GPU time.
+[b magenta]launch_prep:[/] Launch the script on Beaker with the [b magenta]prep[/] subcommand.
+[b magenta]dry_run:[/]     Pretty print the config and exit.
 
 [b]Examples[/]
 $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.num_nodes=2[/]
@@ -230,6 +272,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
 
     config = build_config(
         script,
+        cmd,
         run_name,
         cluster,
         overrides,

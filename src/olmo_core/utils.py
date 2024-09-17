@@ -11,7 +11,7 @@ from datetime import datetime
 from itertools import cycle, islice
 from queue import Queue
 from threading import Thread
-from typing import Any, Callable, Dict, Optional, TypeVar, Union
+from typing import Any, Callable, Dict, List, Optional, TypeVar, Union
 
 import rich
 import torch
@@ -152,40 +152,6 @@ def gc_cuda():
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-
-
-def get_document_lengths(input_ids: torch.Tensor, eos_token_id: int) -> torch.Tensor:
-    """
-    Get the length of documents.
-
-    :param input_ids: An integer-type tensor of token IDs.
-    :param eos_token_id: The ID of the EOS token (use to denote document boundaries).
-    """
-    doc_boundaries = torch.cat(
-        [
-            torch.tensor([-1], dtype=torch.int32),
-            (input_ids == eos_token_id).nonzero(as_tuple=True)[0].to(dtype=torch.int32),
-            torch.tensor(
-                [] if input_ids[-1] == eos_token_id else [input_ids.shape[0] - 1], dtype=torch.int32
-            ),
-        ]
-    )
-    return doc_boundaries[1:] - doc_boundaries[:-1]
-
-
-def get_cumulative_document_lengths(doc_lens: torch.Tensor) -> torch.Tensor:
-    """
-    Transform a batched tensor of document lengths into a 1D tensor of cumulative document
-    lengths for the whole batch.
-
-    :param doc_lens: The document lengths, such as those returned by :func:`get_document_lengths`.
-    """
-    return torch.cat(
-        [
-            torch.tensor([0], dtype=torch.int32, device=doc_lens.device),
-            torch.cumsum(doc_lens.masked_select(doc_lens != 0), 0, dtype=torch.int32),
-        ]
-    )
 
 
 def has_flash_attn() -> bool:
@@ -569,3 +535,25 @@ def roundrobin(*iterables):
             # Remove the iterator we just exhausted from the cycle.
             num_active -= 1
             nexts = cycle(islice(nexts, num_active))
+
+
+def powers_of_2(x: int) -> List[int]:
+    powers: List[int] = []
+    i = 1
+    while i <= x:
+        if i & x:
+            powers.insert(0, i)
+        i <<= 1
+    return powers
+
+
+def capped_powers_of_2(x: int, cap: int) -> List[int]:
+    powers = []
+    for i in powers_of_2(x):
+        if i > cap:
+            assert i % cap == 0
+            for _ in range(i // cap):
+                powers.append(cap)
+        else:
+            powers.append(i)
+    return powers

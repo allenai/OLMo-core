@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, Sequence, Union
 
 import torch
 import torch.nn.functional as F
@@ -28,8 +28,11 @@ class DataCollator:
 
     pad_token_id: int
     pad_direction: PaddingDirection = PaddingDirection.right
+    label_ignore_index: int = -100
 
-    def __call__(self, items: Union[List[Dict[str, Any]], List[torch.Tensor]]) -> Dict[str, Any]:
+    def __call__(
+        self, items: Union[Sequence[Dict[str, Any]], Sequence[torch.Tensor]]
+    ) -> Dict[str, Any]:
         assert items
         max_len = max((len(x["input_ids"] if isinstance(x, dict) else x) for x in items))
         all_input_ids = []

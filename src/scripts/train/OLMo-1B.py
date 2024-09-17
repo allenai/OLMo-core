@@ -51,8 +51,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=common.save_folder,
-            global_batch_size=1024,
-            microbatch_size=4,
+            global_batch_size=1024 * 4096,
+            rank_microbatch_size=4 * 4096,
             autocast_precision=DType.bfloat16,
             save_overwrite=True,
             data_seed=34521,

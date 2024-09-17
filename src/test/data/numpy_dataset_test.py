@@ -1,11 +1,18 @@
 from pathlib import Path
+from typing import List
 
 import numpy as np
 
-from olmo_core.data import NumpyDataset, NumpyDatasetConfig, TokenizerConfig
+from olmo_core.data import (
+    NumpyDatasetConfig,
+    NumpyFSLDataset,
+    NumpyVSLDataset,
+    TokenizerConfig,
+)
+from olmo_core.data.utils import get_document_indices, write_document_indices
 
 
-def test_numpy_dataset(tmp_path: Path):
+def test_numpy_fsl_dataset(tmp_path: Path):
     mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(16,))
     mmap1[:] = np.array(list(range(16)), dtype=np.uint16)
     mmap1.flush()
@@ -14,7 +21,7 @@ def test_numpy_dataset(tmp_path: Path):
     mmap2[:] = np.array(list(range(16, 32)), dtype=np.uint16)
     mmap2.flush()
 
-    ds = NumpyDataset(
+    ds = NumpyFSLDataset(
         tmp_path / "mmap1.npy",
         tmp_path / "mmap2.npy",
         sequence_length=4,
@@ -24,81 +31,60 @@ def test_numpy_dataset(tmp_path: Path):
     assert ds[0]["input_ids"].tolist() == [0, 1, 2, 3]
     assert ds[1]["input_ids"].tolist() == [4, 5, 6, 7]
     assert ds[7]["input_ids"].tolist() == [28, 29, 30, 31]
+    assert len(ds) == 8
 
 
-def test_numpy_dataset_with_label_mask(tmp_path: Path):
-    mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(16,))
-    mmap1[:] = np.array(list(range(16)), dtype=np.uint16)
-    mmap1.flush()
+def write_data_file(data: List[int], path: Path, dtype, eos_token_id: int):
+    path.parent.mkdir(exist_ok=True, parents=True)
+    mmap = np.memmap(path, mode="w+", dtype=dtype, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+    write_document_indices(path, dtype=dtype, eos_token_id=eos_token_id)
 
-    mask1 = [True] * 16
-    mask1[1] = False
-    mask_mmap1 = np.memmap(tmp_path / "mask_mmap1.npy", mode="w+", dtype=np.bool_, shape=(16,))
-    mask_mmap1[:] = np.array(mask1, dtype=np.bool_)
-    mask_mmap1.flush()
 
-    mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(16,))
-    mmap2[:] = np.array(list(range(16, 32)), dtype=np.uint16)
-    mmap2.flush()
+def test_numpy_vsl_dataset(tmp_path: Path):
+    eos_token_id = 0
+    pad_token_id = 0
+    dtype = np.uint32
 
-    mask2 = [True] * 16
-    mask2[-1] = False
-    mask_mmap2 = np.memmap(tmp_path / "mask_mmap2.npy", mode="w+", dtype=np.bool_, shape=(16,))
-    mask_mmap2[:] = np.array(mask2, dtype=np.bool_)
-    mask_mmap2.flush()
+    # Write some fake data.
+    data1 = [1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 0]
+    data1_path = tmp_path / "data" / "part-1-00000.npy"
+    write_data_file(data1, data1_path, dtype, eos_token_id)
+    assert get_document_indices(data1_path) == [(0, 9), (9, len(data1))]
 
-    ds = NumpyDataset(
-        tmp_path / "mmap1.npy",
-        tmp_path / "mmap2.npy",
-        sequence_length=4,
-        label_mask_paths=[tmp_path / "mask_mmap1.npy", tmp_path / "mask_mmap2.npy"],
-        pad_token_id=-1,
-        eos_token_id=-1,
+    data2 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0]
+    data2_path = tmp_path / "data" / "part-2-00000.npy"
+    write_data_file(data2, data2_path, dtype, eos_token_id)
+    assert get_document_indices(data2_path) == [(0, len(data2))]
+
+    ds = NumpyVSLDataset(
+        data1_path,
+        data2_path,
+        pad_token_id=pad_token_id,
+        eos_token_id=eos_token_id,
+        max_sequence_length=8,
+        min_sequence_length=2,
+        dtype=dtype,
     )
-    assert ds[0]["input_ids"].tolist() == [0, 1, 2, 3]
-    assert ds[0]["label_mask"].tolist() == [True, False, True, True]
-    assert ds[1]["input_ids"].tolist() == [4, 5, 6, 7]
-    assert ds[7]["input_ids"].tolist() == [28, 29, 30, 31]
-    assert ds[7]["label_mask"].tolist() == [True, True, True, False]
+    ds.work_dir = tmp_path
+    ds.prepare()
 
+    assert len(ds) == 5
+    assert ds[0]["input_ids"].tolist() == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert ds[1]["input_ids"].tolist() == [1, 2, 3, 4]
+    assert ds[2]["input_ids"].tolist() == [5, 0]
+    assert ds[3]["input_ids"].tolist() == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert ds[4]["input_ids"].tolist() == [9, 10]
 
-def test_concat_numpy_datasets(tmp_path: Path):
-    # Write some data to disk.
-    mmap1 = np.memmap(tmp_path / "tokens1.npy", dtype=np.uint16, mode="w+", shape=(16,))
-    mmap1[:] = list(range(16))
-    mmap1.flush()
-    mmap2 = np.memmap(tmp_path / "tokens2.npy", dtype=np.uint16, mode="w+", shape=(8,))
-    mmap2[:] = list(range(8))
-    mmap2.flush()
-    del mmap1, mmap2
+    assert ds.get_instance_lengths().tolist() == [8, 4, 2, 8, 2]
+    buckets = ds.get_instance_buckets()
+    assert len(buckets) == 3  # for each power of 2 from 2**1 = 2 through 2**3 = 8
+    assert buckets[0][1].tolist() == [2, 4]  # instances of length 2
+    assert buckets[1][1].tolist() == [1]  # instances of length 4
+    assert buckets[2][1].tolist() == [0, 3]  # instances of length 8
 
-    # Initialize two datasets, one for each file.
-    ds1 = NumpyDataset(
-        tmp_path / "tokens1.npy",
-        sequence_length=3,
-        metadata={"label": "test1"},
-        pad_token_id=-1,
-        eos_token_id=-1,
-    )
-    assert len(ds1) == 5
-    ds2 = NumpyDataset(
-        tmp_path / "tokens2.npy",
-        sequence_length=3,
-        metadata={"label": "test2"},
-        pad_token_id=-1,
-        eos_token_id=-1,
-    )
-    assert len(ds2) == 2
-
-    # Now concatenate them.
-    ds = ds1 + ds2
-    assert len(ds) == 7
-    assert ds[0]["input_ids"].tolist() == [0, 1, 2]
-    assert ds[0]["metadata"]["label"] == "test1"
-    assert ds[6]["input_ids"].tolist() == [3, 4, 5]
-    # Should get the same with negative index.
-    assert ds[-1]["input_ids"].tolist() == [3, 4, 5]
-    assert ds[-1]["metadata"]["label"] == "test2"
+    assert ds.instances_per_bucket == ((2, 2), (4, 1), (8, 2))
 
 
 def test_guess_dtype():

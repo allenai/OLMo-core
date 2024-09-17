@@ -11,7 +11,12 @@ from dataclasses import dataclass
 from typing import List, cast
 
 from olmo_core.config import Config, DType
-from olmo_core.data import NumpyDatasetConfig, TokenizerConfig
+from olmo_core.data import (
+    NumpyDatasetConfig,
+    TokenizerConfig,
+    VSLCurriculumConfig,
+    VSLCurriculumType,
+)
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.distributed.utils import init_hybrid_shard_mesh
 from olmo_core.nn.transformer import TransformerConfig
@@ -48,8 +53,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     model_config = TransformerConfig.llama2_271M(
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
-        compile=False,
-        use_flash=True,
+        compile=True,
         dp_config=DataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
@@ -59,16 +63,21 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     dataset_config = NumpyDatasetConfig.glob(
         "/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy",  # can be globs
-        sequence_length=1024,
+        name="vsl",
+        #  sequence_length=1024,
+        #  max_target_sequence_length=8192,
+        max_sequence_length=2048,
+        min_sequence_length=256,
+        vsl_curriculum=VSLCurriculumConfig(name=VSLCurriculumType.grow_p2, num_cycles=4),
         tokenizer=tokenizer_config,
-        max_target_sequence_length=8192,
+        work_dir="/tmp/dataset-cache",
     )
 
     trainer_config = (
         TrainerConfig(
             save_folder=f"/tmp/{run_name}",
-            global_batch_size=256,
-            microbatch_size=16,
+            global_batch_size=256 * 1024,
+            rank_microbatch_size=16 * 1024,
             autocast_precision=DType.bfloat16,
             save_overwrite=True,
             data_loader_workers=4,

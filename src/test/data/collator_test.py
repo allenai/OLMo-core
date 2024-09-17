@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from olmo_core.data.collator import DataCollator, PaddingDirection
-from olmo_core.utils import get_document_lengths
+from olmo_core.data.utils import get_document_lengths
 
 
 @pytest.mark.parametrize(
