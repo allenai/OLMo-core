@@ -58,8 +58,42 @@ class ExperimentConfig(Config):
     init_seed: int = 12536
 
 
+class SubCmd(StrEnum):
+    launch = "launch"
+    train = "train"
+    prep = "prep"
+    launch_prep = "launch_prep"
+    dry_run = "dry_run"
+
+    def prepare_environment(self):
+        if self in (SubCmd.launch, SubCmd.dry_run, SubCmd.prep, SubCmd.launch_prep):
+            prepare_cli_environment()
+        elif self == SubCmd.train:
+            prepare_training_environment()
+        else:
+            raise NotADirectoryError(self)
+
+    def run(self, config: ExperimentConfig):
+        if self == SubCmd.launch:
+            launch(config)
+        elif self == SubCmd.dry_run:
+            log.info(config)
+        elif self == SubCmd.train:
+            try:
+                train(config)
+            finally:
+                teardown_training_environment()
+        elif self == SubCmd.prep:
+            prep(config)
+        elif self == SubCmd.launch_prep:
+            launch_prep(config)
+        else:
+            raise NotADirectoryError(self)
+
+
 def build_common_components(
     script: str,
+    cmd: SubCmd,
     run_name: str,
     cluster: str,
     overrides: List[str],
@@ -71,11 +105,14 @@ def build_common_components(
         weka_buckets.append(BeakerWekaBucket("oe-training-default", "/weka/oe-training-default"))
 
     beaker_user = (Beaker.from_env().account.whoami().name).upper()
+    cmd_to_launch = SubCmd.train
+    if cmd == SubCmd.launch_prep:
+        cmd_to_launch = SubCmd.prep
 
     launch_config = BeakerLaunchConfig(
-        name=f"{run_name}-{generate_uuid()[:8]}",
+        name=f"{run_name}-{cmd_to_launch}-{generate_uuid()[:8]}",
         budget="ai2/oe-training",
-        cmd=[script, SubCmd.train, run_name, cluster, *overrides],
+        cmd=[script, cmd_to_launch, run_name, cluster, *overrides],
         task_name="train",
         workspace="ai2/OLMo-core",
         clusters=[cluster],
@@ -129,6 +166,7 @@ def build_common_components(
 
 def build_config(
     script: str,
+    cmd: SubCmd,
     run_name: str,
     cluster: str,
     overrides: List[str],
@@ -137,7 +175,7 @@ def build_config(
     optim_config_builder: Callable[[CommonComponents], AdamWConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
 ) -> ExperimentConfig:
-    common = build_common_components(script, run_name, cluster, overrides)
+    common = build_common_components(script, cmd, run_name, cluster, overrides)
 
     config = ExperimentConfig(
         run_name=run_name,
@@ -151,46 +189,12 @@ def build_config(
     return config
 
 
-class SubCmd(StrEnum):
-    launch = "launch"
-    train = "train"
-    prep = "prep"
-    launch_prep = "launch_prep"
-    dry_run = "dry_run"
-
-    def prepare_environment(self):
-        if self in (SubCmd.launch, SubCmd.dry_run, SubCmd.prep, SubCmd.launch_prep):
-            prepare_cli_environment()
-        elif self == SubCmd.train:
-            prepare_training_environment()
-        else:
-            raise NotADirectoryError(self)
-
-    def run(self, config: ExperimentConfig):
-        if self == SubCmd.launch:
-            launch(config)
-        elif self == SubCmd.dry_run:
-            log.info(config)
-        elif self == SubCmd.train:
-            try:
-                train(config)
-            finally:
-                teardown_training_environment()
-        elif self == SubCmd.prep:
-            prep(config)
-        elif self == SubCmd.launch_prep:
-            launch_prep(config)
-        else:
-            raise NotADirectoryError(self)
-
-
 def launch(config: ExperimentConfig):
     log.info(config)
     config.launch.launch(follow=True)
 
 
 def launch_prep(config: ExperimentConfig):
-    config.launch.cmd[1] = SubCmd.prep
     config.launch.num_gpus = 0
     config.launch.num_nodes = 1
     log.info(config)
@@ -268,6 +272,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
 
     config = build_config(
         script,
+        cmd,
         run_name,
         cluster,
         overrides,
