@@ -1132,6 +1132,7 @@ class VSLCurriculumType(StrEnum):
 class VSLCurriculumConfig(Config):
     name: VSLCurriculumType = VSLCurriculumType.natural
     num_cycles: Optional[int] = None
+    balanced: Optional[bool] = None
 
     def build(self) -> VSLCurriculum:
         """
@@ -1142,19 +1143,31 @@ class VSLCurriculumConfig(Config):
                 raise OLMoConfigurationError(
                     f"'num_cycles' is not a valid field for the {self.name} curriculum"
                 )
+            elif self.balanced is not None:
+                raise OLMoConfigurationError(
+                    f"'balanced' is not a valid field for the {self.name} curriculum"
+                )
             return VSLNaturalCurriculum()
         elif self.name == VSLCurriculumType.grow_p2:
             if self.num_cycles is None:
                 raise OLMoConfigurationError(
                     f"'num_cycles' is required for the {self.name} curriculum"
                 )
-            return VSLGrowP2Curriculum(num_cycles=self.num_cycles)
+            elif self.balanced is None:
+                raise OLMoConfigurationError(
+                    f"'balanced' is required for the {self.name} curriculum"
+                )
+            return VSLGrowP2Curriculum(num_cycles=self.num_cycles, balanced=self.balanced)
         elif self.name == VSLCurriculumType.grow_linear:
             if self.num_cycles is None:
                 raise OLMoConfigurationError(
                     f"'num_cycles' is required for the {self.name} curriculum"
                 )
-            return VSLGrowLinearCurriculum(num_cycles=self.num_cycles)
+            elif self.balanced is None:
+                raise OLMoConfigurationError(
+                    f"'balanced' is required for the {self.name} curriculum"
+                )
+            return VSLGrowLinearCurriculum(num_cycles=self.num_cycles, balanced=self.balanced)
         else:
             raise NotImplementedError(self.name)
 
