@@ -33,6 +33,7 @@ from .numpy_dataset import (
     VSLCurriculumType,
     VSLGrowLinearCurriculum,
     VSLGrowP2Curriculum,
+    VSLGrowthCurriculum,
     VSLNaturalCurriculum,
 )
 from .tokenizer import TokenizerConfig, TokenizerName
@@ -43,6 +44,7 @@ __all__ = [
     "NumpyVSLDataset",
     "VSLCurriculum",
     "VSLNaturalCurriculum",
+    "VSLGrowthCurriculum",
     "VSLGrowP2Curriculum",
     "VSLGrowLinearCurriculum",
     "NumpyDatasetConfig",

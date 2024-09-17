@@ -52,6 +52,7 @@ __all__ = [
     "NumpyFSLDataset",
     "VSLCurriculum",
     "VSLNaturalCurriculum",
+    "VSLGrowthCurriculum",
     "VSLGrowP2Curriculum",
     "VSLGrowLinearCurriculum",
     "NumpyVSLDataset",
@@ -554,8 +555,22 @@ class VSLNaturalCurriculum(VSLCurriculum):
 
 
 @dataclass
-class VSLBalancedGrowthCurriculum(VSLCurriculum):
+class VSLGrowthCurriculum(VSLCurriculum):
+    """
+    A base class for growth curriculums, like :class:`VSLGrowP2Curriculum` and :class:`VSLGrowLinearCurriculum`.
+    """
+
     num_cycles: int = 8
+    """
+    The number of cycles in the curriculum.
+    """
+    balanced: bool = True
+    """
+    Whether or not to balance the number of batches in each bucket.
+
+    .. note::
+        Balancing the number of batches requires dropping more data.
+    """
 
     def batches_per_bucket(
         self, dataset: NumpyVSLDataset, global_batch_size: int
@@ -563,9 +578,15 @@ class VSLBalancedGrowthCurriculum(VSLCurriculum):
         actual_batches_per_bucket = VSLNaturalCurriculum().batches_per_bucket(
             dataset, global_batch_size
         )
-        batches_per_bucket = min([batches for _, batches in actual_batches_per_bucket])
-        batches_per_bucket = self.num_cycles * (batches_per_bucket // self.num_cycles)
-        return [(seq_len, batches_per_bucket) for seq_len, _ in actual_batches_per_bucket]
+        if self.balanced:
+            batches_per_bucket = min([batches for _, batches in actual_batches_per_bucket])
+            batches_per_bucket = self.num_cycles * (batches_per_bucket // self.num_cycles)
+            return [(seq_len, batches_per_bucket) for seq_len, _ in actual_batches_per_bucket]
+        else:
+            return [
+                (seq_len, self.num_cycles * (batches_per_bucket // self.num_cycles))
+                for seq_len, batches_per_bucket in actual_batches_per_bucket
+            ]
 
     def get_cycle_distribution(
         self, indices: np.ndarray, batches_per_bucket: Sequence[Tuple[int, int]], cycle: int = 0
@@ -595,30 +616,29 @@ class VSLBalancedGrowthCurriculum(VSLCurriculum):
 
         log.info(f"Constructing {self.__class__.__name__} curriculum with {num_buckets} buckets")
 
-        # This is how many batches we'll pull from each bucket for each cycle.
-        batch_counts_per_cycle_per_bucket = divide_into_buckets(
-            batches_per_bucket[0][1], self.num_cycles
-        )
-        # These are the batch indices *within* each bucket that we'll use for each cycle.
-        batches_per_cycle_per_bucket = chunk_array(
-            np.arange(0, batches_per_bucket[0][1], dtype=np.uint32),
-            batch_counts_per_cycle_per_bucket,
-        )
         cycles: List[np.ndarray] = []
         for cycle in range(self.num_cycles):
             # Now we need to chunk the batch indices *within* each bucket in this cycle into the batch
             # indices for each sub-cycle.
             # At the same time we'll translate those *within* bucket indices into global batch indices
             # by adding the right offset for each bucket.
-            batches_this_cycle_per_bucket = batches_per_cycle_per_bucket[cycle]
             all_bucket_subcycle_batches: List[List[np.ndarray]] = []
             for bucket in range(num_buckets):
+                # This is how many batches we'll pull from this bucket for each cycle.
+                batch_counts_per_cycle_this_bucket = divide_into_buckets(
+                    batches_per_bucket[bucket][1], self.num_cycles
+                )
+                # These are the batch indices *within* this bucket that we'll use for this cycle.
+                batches_this_cycle_this_bucket = chunk_array(
+                    np.arange(0, batches_per_bucket[bucket][1], dtype=np.uint32),
+                    batch_counts_per_cycle_this_bucket,
+                )[cycle]
                 bucket_offset = sum([b for _, b in batches_per_bucket[:bucket]])
                 bucket_subcycle_batch_counts = self._get_num_bucket_batches_for_cycle(
-                    bucket, num_buckets, batch_counts_per_cycle_per_bucket[cycle]
+                    bucket, num_buckets, batch_counts_per_cycle_this_bucket[cycle]
                 )
                 bucket_subcycle_batches = chunk_array(
-                    bucket_offset + batches_this_cycle_per_bucket, bucket_subcycle_batch_counts
+                    bucket_offset + batches_this_cycle_this_bucket, bucket_subcycle_batch_counts
                 )
                 all_bucket_subcycle_batches.append(bucket_subcycle_batches)
 
@@ -649,6 +669,7 @@ class VSLBalancedGrowthCurriculum(VSLCurriculum):
         indices[first_long_seq_len_batch] = indices[0]
         indices[0] = batch
 
+        assert indices.shape[0] == self.get_total_batches(batches_per_bucket)
         return indices
 
     @classmethod
@@ -675,7 +696,7 @@ class VSLBalancedGrowthCurriculum(VSLCurriculum):
 
 
 @dataclass
-class VSLGrowP2Curriculum(VSLBalancedGrowthCurriculum):
+class VSLGrowP2Curriculum(VSLGrowthCurriculum):
     """
     Implements the "Grow-P2" curriculum from
     `Dataset Decomposition: Faster LLM Training with Variable Sequence Length Curriculum
@@ -697,11 +718,11 @@ class VSLGrowP2Curriculum(VSLBalancedGrowthCurriculum):
 
     @property
     def short_str(self) -> str:
-        return f"vsl-grow-p2-{self.num_cycles}-cycle"
+        return f"vsl-grow-p2-{self.num_cycles}-cycle{'-balanced' if self.balanced else ''}"
 
 
 @dataclass
-class VSLGrowLinearCurriculum(VSLBalancedGrowthCurriculum):
+class VSLGrowLinearCurriculum(VSLGrowthCurriculum):
     """
     Implements the "Grow-Linear" curriculum from
     `Dataset Decomposition: Faster LLM Training with Variable Sequence Length Curriculum
@@ -723,7 +744,7 @@ class VSLGrowLinearCurriculum(VSLBalancedGrowthCurriculum):
 
     @property
     def short_str(self) -> str:
-        return f"vsl-grow-linear-{self.num_cycles}-cycle"
+        return f"vsl-grow-linear-{self.num_cycles}-cycle{'-balanced' if self.balanced else ''}"
 
 
 class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):

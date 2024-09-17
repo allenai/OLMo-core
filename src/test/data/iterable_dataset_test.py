@@ -137,7 +137,10 @@ def test_restart_with_seq_len_warmup(tmp_path: Path, shuffle: bool):
     [
         pytest.param(True, VSLNaturalCurriculum(), id="shuffle-natural"),
         pytest.param(True, VSLNaturalCurriculum(), id="no-shuffle-natural"),
-        pytest.param(True, VSLGrowP2Curriculum(num_cycles=1), id="grow-p2"),
+        pytest.param(True, VSLGrowP2Curriculum(num_cycles=1, balanced=True), id="grow-p2-balanced"),
+        pytest.param(
+            True, VSLGrowP2Curriculum(num_cycles=1, balanced=False), id="grow-p2-unbalanced"
+        ),
     ],
 )
 def test_variable_sequence_length_dataset(tmp_path: Path, shuffle: bool, curriculum: VSLCurriculum):
