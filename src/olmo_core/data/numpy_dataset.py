@@ -507,6 +507,14 @@ class VSLCurriculum:
             else:
                 log.info(f"- bucket {i}: sequence length {seq_len}, {num_batches:,d} batches")
 
+    @property
+    @abstractmethod
+    def short_str(self) -> str:
+        """
+        Return a unique human-readable identifier for the instance.
+        """
+        raise NotImplementedError
+
 
 @dataclass
 class VSLNaturalCurriculum(VSLCurriculum):
@@ -539,6 +547,10 @@ class VSLNaturalCurriculum(VSLCurriculum):
         batch_indices[0] = batch
         rng.shuffle(batch_indices[1:])
         return batch_indices
+
+    @property
+    def short_str(self) -> str:
+        return "vsl-natural"
 
 
 @dataclass
@@ -683,6 +695,10 @@ class VSLGrowP2Curriculum(VSLBalancedGrowthCurriculum):
             all_odds.append(2 ** (exp - 1))
         return all_odds
 
+    @property
+    def short_str(self) -> str:
+        return f"vsl-grow-p2-{self.num_cycles}-cycle"
+
 
 @dataclass
 class VSLGrowLinearCurriculum(VSLBalancedGrowthCurriculum):
@@ -705,6 +721,10 @@ class VSLGrowLinearCurriculum(VSLBalancedGrowthCurriculum):
             all_odds.append(odds)
         return all_odds
 
+    @property
+    def short_str(self) -> str:
+        return f"vsl-grow-linear-{self.num_cycles}-cycle"
+
 
 class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     """
@@ -726,7 +746,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     :param eos_token_id: The ID of the EOS token.
     :param max_sequence_length: The maximum allowed sequence length. A power of 2, e.g. '4096'.
     :param min_sequence_length: The minimum allowed sequence length. A power of 2, e.g. '256'.
-    :param vsl_curriculum: The variable sequence length curriculum. Determines the sampling
+    :param curriculum: The variable sequence length curriculum. Determines the sampling
         probability of batches from each bucket throughout training.
     :param dtype: The numpy datatype of the arrays.
     :param metadata: Metadata to add to each item. This should be a dictionary or a list of dictionaries
@@ -742,7 +762,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         eos_token_id: int,
         max_sequence_length: int,
         min_sequence_length: int = 256,
-        vsl_curriculum: Optional[VSLCurriculum] = None,
+        curriculum: Optional[VSLCurriculum] = None,
         dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]] = np.uint16,
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
@@ -774,7 +794,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         self._include_instance_metadata = include_instance_metadata
         self._max_sequence_length = max_sequence_length
         self._min_sequence_length = min_sequence_length
-        self._vsl_curriculum = vsl_curriculum or VSLNaturalCurriculum()
+        self._curriculum = curriculum or VSLNaturalCurriculum()
         self._num_instances: Optional[int] = None
         self._array_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
         self._lengths_dtype: Optional[
@@ -809,8 +829,8 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         return self._min_sequence_length
 
     @property
-    def vsl_curriculum(self) -> VSLCurriculum:
-        return self._vsl_curriculum
+    def curriculum(self) -> VSLCurriculum:
+        return self._curriculum
 
     @property
     def all_sequence_lengths(self) -> List[int]:
@@ -1339,7 +1359,7 @@ class NumpyDatasetConfig(Config):
                 *paths,
                 max_sequence_length=self.max_sequence_length,
                 min_sequence_length=self.min_sequence_length,
-                vsl_curriculum=None if self.vsl_curriculum is None else self.vsl_curriculum.build(),
+                curriculum=None if self.vsl_curriculum is None else self.vsl_curriculum.build(),
                 pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=self.tokenizer.eos_token_id,
                 dtype=self.get_dtype(),

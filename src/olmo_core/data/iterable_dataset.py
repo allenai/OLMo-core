@@ -285,6 +285,14 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         else:
             return {"input_ids": item, "index": idx}
 
+    def _format_fname_from_fields(self, prefix: str, **fields) -> str:
+        parts = [prefix]
+        for key in sorted(fields):
+            value = fields[key]
+            if value is not None:
+                parts.append(f"{key}{value}")
+        return "_".join(parts)
+
 
 class IterableFSLDataset(IterableDatasetBase):
     """
@@ -323,12 +331,13 @@ class IterableFSLDataset(IterableDatasetBase):
 
     @property
     def _global_indices_file(self) -> Path:
-        global_indices_fname = (
-            f"global_indices_{'shuffled_' if self.shuffle else ''}seed{self.seed}"
-            f"_epoch{self.epoch}_size{self.total_size}"
+        global_indices_fname = self._format_fname_from_fields(
+            "global_indices",
+            seed=self.seed if self.shuffle else None,
+            epoch=self.epoch if self.shuffle else None,
+            size=self.total_size,
+            chunk=self.chunk_size if self.chunk_size > 1 else None,
         )
-        if self.chunk_size > 1:
-            global_indices_fname += f"_chunk{self.chunk_size}"
         return Path(self.work_dir) / f"{global_indices_fname}.npy"
 
     def _build_global_indices(self) -> np.ndarray:
@@ -450,7 +459,7 @@ class IterableVSLDataset(IterableDatasetBase):
         if self._batches_per_bucket is None:
             assert isinstance(self.dataset, NumpyVSLDataset)
             self._batches_per_bucket = tuple(
-                self.dataset.vsl_curriculum.batches_per_bucket(self.dataset, self.global_batch_size)
+                self.dataset.curriculum.batches_per_bucket(self.dataset, self.global_batch_size)
             )
         return self._batches_per_bucket
 
@@ -460,14 +469,32 @@ class IterableVSLDataset(IterableDatasetBase):
 
     @property
     def _global_indices_file(self) -> Path:
-        global_indices_fname = f"global_batch_indices_seed{self.seed}_epoch{self.epoch}.npy"
-        return Path(self.work_dir) / f"dataset-{self.dataset.fingerprint}" / global_indices_fname
-
-    def _bucket_indices_file(self, seq_len: int) -> Path:
+        assert isinstance(self.dataset, NumpyVSLDataset)
+        global_indices_fname = self._format_fname_from_fields(
+            "global_batch_indices",
+            seed=self.seed if self.shuffle else None,
+            epoch=self.epoch if self.shuffle else None,
+        )
         return (
             Path(self.work_dir)
             / f"dataset-{self.dataset.fingerprint}"
-            / f"bucket{seq_len}_{'shuffled_' if self.shuffle else ''}seed{self.seed}_epoch{self.epoch}_instance_indices.npy"
+            / self.dataset.curriculum.short_str
+            / f"{global_indices_fname}.npy"
+        )
+
+    def _bucket_indices_file(self, seq_len: int) -> Path:
+        assert isinstance(self.dataset, NumpyVSLDataset)
+        bucket_indices_fname = self._format_fname_from_fields(
+            "instance_indices",
+            bucket=seq_len,
+            seed=self.seed if self.shuffle else None,
+            epoch=self.epoch if self.shuffle else None,
+        )
+        return (
+            Path(self.work_dir)
+            / f"dataset-{self.dataset.fingerprint}"
+            / self.dataset.curriculum.short_str
+            / f"{bucket_indices_fname}.npy"
         )
 
     def build_and_save_global_indices(self):
@@ -501,8 +528,8 @@ class IterableVSLDataset(IterableDatasetBase):
 
                 log.info(f"Bucket indices saved to:\n'{bucket_indices_file}'")
 
-            log.info(f"Using {self.dataset.vsl_curriculum} with {len(self.buckets)} buckets:")
-            self.dataset.vsl_curriculum.log_buckets(
+            log.info(f"Using {self.dataset.curriculum} with {len(self.buckets)} buckets:")
+            self.dataset.curriculum.log_buckets(
                 self.dataset, self.global_batch_size, self.batches_per_bucket
             )
 
@@ -511,7 +538,7 @@ class IterableVSLDataset(IterableDatasetBase):
     def _build_global_indices(self) -> np.ndarray:
         if self.shuffle:
             assert isinstance(self.dataset, NumpyVSLDataset)
-            return self.dataset.vsl_curriculum.get_batch_indices(
+            return self.dataset.curriculum.get_batch_indices(
                 self.batches_per_bucket, self.seed + self.epoch
             )
         else:

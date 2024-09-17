@@ -159,7 +159,7 @@ def test_variable_sequence_length_dataset(tmp_path: Path, shuffle: bool, curricu
         min_sequence_length=2,
         max_sequence_length=4,
         dtype=np.uint16,
-        vsl_curriculum=curriculum,
+        curriculum=curriculum,
     )
     dataset.work_dir = tmp_path
     dataset.prepare()
