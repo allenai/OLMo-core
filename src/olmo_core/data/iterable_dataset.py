@@ -598,6 +598,7 @@ class IterableVSLDataset(IterableDatasetBase):
         )
         assert isinstance(self.dataset, NumpyVSLDataset)
         state_dict["dataset_type"] = str(NumpyDatasetType.vsl)
+        state_dict["vsl_curriculum"] = self.dataset.curriculum.short_str
         state_dict["max_sequence_length"] = self.dataset.max_sequence_length
         state_dict["min_sequence_length"] = self.dataset.min_sequence_length
         return state_dict
@@ -611,8 +612,11 @@ class IterableVSLDataset(IterableDatasetBase):
                 "Dataset type mismatch: attempting to restore state from a fixed sequence length dataset "
                 "into a variable sequence length dataset"
             )
-
-        if state_dict["max_sequence_length"] != self.dataset.max_sequence_length:
+        elif state_dict["vsl_curriculum"] != self.dataset.curriculum.short_str:
+            raise RuntimeError(
+                "Restoring dataset state with a different VSL curriculum is not supported"
+            )
+        elif state_dict["max_sequence_length"] != self.dataset.max_sequence_length:
             raise RuntimeError(
                 "Restoring dataset state with a different 'max_sequence_length' is not supported"
             )

@@ -564,7 +564,7 @@ class VSLGrowthCurriculum(VSLCurriculum):
     """
     The number of cycles in the curriculum.
     """
-    balanced: bool = True
+    balanced: bool = False
     """
     Whether or not to balance the number of batches in each bucket.
 
