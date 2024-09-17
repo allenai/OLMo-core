@@ -474,6 +474,7 @@ class IterableVSLDataset(IterableDatasetBase):
             "global_batch_indices",
             seed=self.seed if self.shuffle else None,
             epoch=self.epoch if self.shuffle else None,
+            bz=self.global_batch_size,
         )
         return (
             Path(self.work_dir)
