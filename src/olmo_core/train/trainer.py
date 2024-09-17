@@ -1110,7 +1110,11 @@ class Trainer:
         batch_num_tokens_for_loss = (batch["labels"] != self.collator.label_ignore_index).sum()
 
         # Split into micro-batches.
-        micro_batches = split_batch(batch, self.rank_microbatch_size // batch["input_ids"].shape[1])
+        if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
+            raise RuntimeError(
+                f"Microbatch size ({self.rank_microbatch_size}) is too small relative to sequence length ({seq_len})"
+            )
+        micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
         num_micro_batches = len(micro_batches)
 
         # In case this helps with memory utilization.
