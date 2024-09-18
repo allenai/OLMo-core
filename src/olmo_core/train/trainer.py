@@ -23,11 +23,10 @@ import torch.distributed as dist
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
-from torch.utils.data import DataLoader
 
 from ..aliases import PathOrStr
 from ..config import StrEnum
-from ..data import DataCollator, IterableDatasetBase, NumpyDatasetBase
+from ..data import DataCollator, DataLoaderBase, NumpyDatasetBase
 from ..data.utils import split_batch
 from ..distributed.utils import (
     all_reduce_value,
@@ -97,9 +96,7 @@ class LoadStrategy(StrEnum):
 class TrainerStateDict(TypedDict):
     global_step: int
     global_train_tokens_seen: int
-    global_train_steps_this_epoch: int
-    global_train_tokens_seen_this_epoch: int
-    dataset: Dict[str, Any]
+    data_loader: Dict[str, Any]
     data_seed: int
     epoch: int
     world_size: int
@@ -271,23 +268,12 @@ class Trainer:
     global_step: int = 0
     """
     The current step/batch. 1-based, though it's initialized to 0 before the first step.
-    This does *not* reset after an epoch, unlike :data:`global_train_steps_this_epoch`.
+    This does *not* reset after an epoch.
     """
 
     global_train_tokens_seen: int = 0
     """
-    The total number of training tokens seen. This does *not* reset after an epoch, unlike
-    :data:`global_train_tokens_seen_this_epoch`.
-    """
-
-    global_train_steps_this_epoch: int = 0
-    """
-    The number of steps/batches seen so far during the current epoch.
-    """
-
-    global_train_tokens_seen_this_epoch: int = 0
-    """
-    The total number of training tokens seen in the current epoch.
+    The total number of training tokens seen.
     """
 
     epoch: int = 1
@@ -319,7 +305,7 @@ class Trainer:
     _thread_pool: Optional[ThreadPoolExecutor] = None
     _bookkeeping_pg: Optional[dist.ProcessGroup] = None
     _checkpoint_loaded: bool = False
-    _iterable_dataset: Optional[IterableDatasetBase] = None
+    _data_loader: Optional[DataLoaderBase] = None
 
     def __post_init__(self):
         self.save_folder = normalize_path(self.save_folder)
@@ -415,16 +401,19 @@ class Trainer:
             self.dataset.work_dir = self.work_dir
         self.dataset.prepare()
 
-        self._iterable_dataset = IterableDatasetBase.wrap_numpy_dataset(
+        self._data_loader = DataLoaderBase.wrap_numpy_dataset(
             self.dataset,
-            rank_batch_size=self.rank_batch_size,
+            global_batch_size=self.global_batch_size,
             collator=self.collator,
             work_dir=self.dataset.work_dir,
             dp_world_size=get_world_size(self.dp_process_group),
             dp_rank=get_rank(self.dp_process_group),
             fs_local_rank=get_fs_local_rank(),
             seed=self.data_seed,
-            epoch=self.epoch,
+            num_threads=None,
+            num_workers=self.data_loader_workers,
+            prefetch_factor=self.data_loader_prefetch_factor,
+            target_device_type=self.device.type,
         )
 
     @property
@@ -472,8 +461,7 @@ class Trainer:
         """
         The total number of training steps in an epoch.
         """
-        assert self._iterable_dataset is not None
-        return self._iterable_dataset.total_batches
+        return self.data_loader.total_batches
 
     @property
     def tokens_per_epoch(self) -> int:
@@ -490,14 +478,14 @@ class Trainer:
         if self.max_duration.unit == DurationUnit.steps:
             return self.max_duration.value
         elif self.max_duration.unit == DurationUnit.epochs:
-            # Need to account for a change in batch size.
             max_epochs = self.max_duration.value
             complete_epochs_remaining = max(max_epochs - self.epoch, 0)
-            steps_remaining = complete_epochs_remaining * self.steps_per_epoch
-            tokens_remaining_this_epoch = max(
-                self.tokens_per_epoch - self.global_train_tokens_seen_this_epoch, 0
+            steps_remaining_this_epoch = max(
+                self.data_loader.total_batches - self.data_loader.batches_processed, 0
             )
-            steps_remaining += math.ceil(tokens_remaining_this_epoch / self.tokens_per_batch)
+            steps_remaining = (
+                complete_epochs_remaining * self.steps_per_epoch + steps_remaining_this_epoch
+            )
             return self.global_step + steps_remaining
         elif self.max_duration.unit == DurationUnit.tokens:
             # Need to account for a change in batch size.
@@ -546,9 +534,9 @@ class Trainer:
         return self._checkpoint_loaded
 
     @property
-    def iterable_dataset(self) -> IterableDatasetBase:
-        assert self._iterable_dataset is not None
-        return self._iterable_dataset
+    def data_loader(self) -> DataLoaderBase:
+        assert self._data_loader is not None
+        return self._data_loader
 
     def cancel_run(self, reason: str):
         """
@@ -614,12 +602,7 @@ class Trainer:
         return {
             "global_step": self.global_step,
             "global_train_tokens_seen": self.global_train_tokens_seen,
-            "global_train_steps_this_epoch": self.global_train_steps_this_epoch,
-            "global_train_tokens_seen_this_epoch": self.global_train_tokens_seen_this_epoch,
-            "dataset": self.iterable_dataset.state_dict(
-                batches_processed=self.global_train_steps_this_epoch,
-                tokens_processed=self.global_train_tokens_seen_this_epoch,
-            ),
+            "data_loader": self.data_loader.state_dict(),
             "data_seed": self.data_seed,
             "epoch": self.epoch,
             "world_size": get_world_size(),  # global world size here on purpose
@@ -631,28 +614,28 @@ class Trainer:
         Load trainer state (not model or optimizer state).
         """
         # For backwards compatibility.
-        if "dataset" not in state_dict:
-            state_dict["dataset"] = {
-                "dataset_type": "fsl",
-                "dataset_fingerprint_version": state_dict.pop("dataset_fingerprint_version"),
-                "dataset_fingerprint": state_dict.pop("dataset_fingerprint"),
-                "tokens_processed": state_dict["global_train_tokens_seen_this_epoch"],
-                "batches_processed": state_dict["global_train_tokens_seen_this_epoch"]
-                // self.global_batch_size,
-                "sequence_length": state_dict.pop("train_sequence_length"),
-                "max_target_sequence_length": state_dict.pop("max_train_sequence_length"),
-                "seed": state_dict["data_seed"],
-            }
+        if "data_loader" not in state_dict:
+            if "dataset" in state_dict:
+                state_dict["data_loader"] = state_dict.pop("dataset")
+                state_dict["data_loader"]["epoch"] = state_dict["epoch"]
+            else:
+                state_dict["dataset"] = {
+                    "dataset_type": "fsl",
+                    "dataset_fingerprint_version": state_dict.pop("dataset_fingerprint_version"),
+                    "dataset_fingerprint": state_dict.pop("dataset_fingerprint"),
+                    "tokens_processed": state_dict["global_train_tokens_seen_this_epoch"],
+                    "batches_processed": state_dict["global_train_tokens_seen_this_epoch"]
+                    // self.global_batch_size,
+                    "sequence_length": state_dict.pop("train_sequence_length"),
+                    "max_target_sequence_length": state_dict.pop("max_train_sequence_length"),
+                    "seed": state_dict["data_seed"],
+                    "epoch": state_dict["epoch"],
+                }
 
-        self.iterable_dataset.load_state_dict(state_dict["dataset"])
+        self.data_loader.load_state_dict(state_dict["data_loader"])
         self.data_seed = state_dict.get("data_seed", self.data_seed)
         self.global_step = state_dict["global_step"]
         self.global_train_tokens_seen = state_dict["global_train_tokens_seen"]
-        self.global_train_steps_this_epoch = state_dict.get(
-            "global_train_steps_this_epoch",
-            state_dict["global_train_tokens_seen_this_epoch"] // self.global_batch_size,
-        )
-        self.global_train_tokens_seen_this_epoch = state_dict["global_train_tokens_seen_this_epoch"]
         self.epoch = state_dict["epoch"]
 
         log.info(f"Will resume training from step {self.global_step}, epoch {self.epoch}")
@@ -1161,16 +1144,7 @@ class Trainer:
             self.record_metric(OPTIM_STEP_SKIPPED_METRIC, self.optim.step_skipped)
 
     def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:
-        data_loader = DataLoader(
-            self.iterable_dataset,
-            batch_size=None,
-            num_workers=self.data_loader_workers,
-            pin_memory=True,
-            prefetch_factor=self.data_loader_prefetch_factor,
-            persistent_workers=False,
-            timeout=0,
-        )
-        data_iterator = iter(data_loader)
+        data_iterator = iter(self.data_loader)
 
         while True:
             for callback in self.callbacks.values():
@@ -1183,7 +1157,7 @@ class Trainer:
                 break
 
     def _fit_epoch(self):
-        self.iterable_dataset.reshuffle(self.epoch)
+        self.data_loader.reshuffle(self.epoch)
 
         log.info(f"Starting epoch {self.epoch}...")
 
@@ -1204,8 +1178,6 @@ class Trainer:
                 )
             self.global_step += 1
             self.global_train_tokens_seen += self.global_batch_size
-            self.global_train_steps_this_epoch += 1
-            self.global_train_tokens_seen_this_epoch += self.global_batch_size
 
             for callback in self.callbacks.values():
                 callback.pre_step(batch)
@@ -1241,6 +1213,4 @@ class Trainer:
 
         # Bookkeeping
         self.epoch += 1
-        self.global_train_steps_this_epoch = 0
-        self.global_train_tokens_seen_this_epoch = 0
-        self.iterable_dataset.reset()
+        self.data_loader.reset()

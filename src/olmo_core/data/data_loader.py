@@ -1,3 +1,28 @@
+"""
+Distributed, deterministic, stateful data loaders used by the :class:`~olmo_core.train.Trainer`.
+
+Overview
+--------
+
+Construct a data loader from a :class:`~olmo_core.data.numpy_dataset.NumpyDatasetBase` instance
+using :meth:`DataLoaderBase.wrap_numpy_dataset()`::
+
+    data_loader = DataLoaderBase.wrap_numpy_dataset(dataset, ...)
+
+Then load batches for an epoch like this::
+
+    # Prepare for the epoch.
+    data_loader.reshuffle(epoch=1)
+
+    for batch in data_loader:
+        # process batch
+        pass
+
+    # Reset internal bookkeeping.
+    data_loader.reset()
+
+"""
+
 import logging
 import math
 from abc import ABC, abstractmethod
@@ -23,100 +48,139 @@ from .numpy_dataset import (
 from .utils import get_rng, iter_batched, load_array_slice, memmap_to_write
 
 __all__ = [
-    "IterableDatasetBase",
-    "IterableFSLDataset",
-    "IterableVSLDataset",
+    "DataLoaderBase",
+    "FSLDataLoader",
+    "VSLDataLoader",
 ]
 
 log = logging.getLogger(__name__)
 
 
-class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]]):
+class DataLoaderBase(ABC):
     """
-    Adapted from PyTorch's ``DistributedSampler``, this is a base class for iterable datasets
-    that wrap a :class:`~olmo_core.data.NumpyDatasetBase`
-    and can be deterministically restarted.
+    A distributed, deterministic, stateful data loader for use with
+    :class:`~olmo_core.data.numpy_dataset.NumpyDatasetBase` dataset classes.
 
     .. warning::
-        This is used internally by the :class:`~olmo_core.train.Trainer`.
-        In general you shouldn't be using these classes directly unless you really know what you're
-        doing! It's easy to misuse, resulting in incorrect data order.
+        You must call :meth:`reshuffle()` *before* starting a new epoch
+        (i.e. before calling :meth:`__iter__`) and you must call :meth:`reset()` *after* each
+        epoch (i.e. after the iterator returned from :meth:`__iter__` has been exhausted).
+        Failure to do so will result in incorrect data order.
+
+    :param dataset: The dataset to wrap / load from.
+    :param global_batch_size: The global batch size *in tokens*.
+    :param collator: The data collator to use to create batches from instances.
+    :param work_dir: The working directory. Should be shared among local ranks.
+    :param seed: The seed to use for shuffling / sampling data.
+    :param epoch: The epoch to start from.
+    :param shuffle: Whether or not to shuffle the data instances.
+    :param num_threads: The number of threads to use when loading instances.
+    :param num_workers: The number of workers to use when loading batches.
+    :param prefetch_factor: The number of batches to prefetch from each worker.
+    :param target_device_type: The target device type, i.e. the type of the device where the data
+        will ultimately end up on. Note that this data loader does not move batches any device,
+        it just uses this to optimize certain settings.
+    :param dp_world_size: The data parallel world size.
+    :param dp_rank: The local data parallel rank.
+    :param fs_local_rank: The filesystem-local rank.
     """
 
     def __init__(
         self,
         dataset: NumpyDatasetBase,
         *,
-        rank_batch_size: int,
+        global_batch_size: int,
         collator: DataCollator,
         work_dir: PathOrStr,
         seed: int = 0,
-        epoch: int = 1,
         shuffle: bool = True,
         num_threads: Optional[int] = None,
+        num_workers: int = 0,
+        prefetch_factor: Optional[int] = None,
+        target_device_type: str = "cpu",
         dp_world_size: int = 1,
         dp_rank: int = 0,
         fs_local_rank: int = 0,
-        start_index: int = 0,
     ):
         self.dataset = dataset
-        self.rank_batch_size = rank_batch_size
+        self.global_batch_size = global_batch_size
         self.collator = collator
         self.seed = seed
-        self.epoch = epoch
         self.shuffle = shuffle
         self.num_threads = num_threads
+        self.num_workers = num_workers
+        self.prefetch_factor = prefetch_factor
+        self.target_device_type = target_device_type
         self.work_dir = work_dir
         self.dp_world_size = dp_world_size
         self.dp_rank = dp_rank
         self.fs_local_rank = fs_local_rank
-        # NOTE: the semantic of 'start_index' depend on the implementation.
-        # It could be an instance index, batch index, or something else.
-        self.start_index = start_index
+        self.batches_processed = 0
+        self.tokens_processed = 0
+        self._epoch: Optional[int] = None
 
     @classmethod
     def wrap_numpy_dataset(
         cls,
         dataset: NumpyDatasetBase,
         *,
-        rank_batch_size: int,
+        global_batch_size: int,
         collator: DataCollator,
         work_dir: Optional[PathOrStr] = None,
         seed: int = 0,
         dp_world_size: int = 1,
         dp_rank: int = 0,
         fs_local_rank: int = 0,
-        epoch: int = 1,
-    ) -> "IterableDatasetBase":
+        num_threads: Optional[int] = None,
+        num_workers: int = 0,
+        prefetch_factor: Optional[int] = None,
+        target_device_type: str = "cpu",
+    ) -> "DataLoaderBase":
+        """
+        Construct the corresponding :class:`DataLoaderBase` instance for the given :class:`NumpyDatasetBase`.
+
+        :param dataset: The dataset to wrap.
+        """
         kwargs = dict(
-            rank_batch_size=rank_batch_size,
+            global_batch_size=global_batch_size,
             collator=collator,
             work_dir=work_dir or dataset.work_dir,
             dp_world_size=dp_world_size,
             dp_rank=dp_rank,
             fs_local_rank=fs_local_rank,
             seed=seed,
-            epoch=epoch,
+            num_threads=num_threads,
+            num_workers=num_workers,
+            prefetch_factor=prefetch_factor,
+            target_device_type=target_device_type,
         )
-        iterable_dataset: IterableDatasetBase
+        data_loader: DataLoaderBase
         if isinstance(dataset, NumpyFSLDataset):
-            iterable_dataset = IterableFSLDataset(
+            data_loader = FSLDataLoader(
                 dataset,
                 **kwargs,  # type: ignore
             )
             if dataset.max_target_sequence_length is not None:
-                iterable_dataset.chunk_size = (
+                data_loader.chunk_size = (
                     dataset.max_target_sequence_length // dataset.sequence_length
                 )
         elif isinstance(dataset, NumpyVSLDataset):
-            iterable_dataset = IterableVSLDataset(
+            data_loader = VSLDataLoader(
                 dataset,
                 **kwargs,  # type: ignore
             )
         else:
             raise NotImplementedError
 
-        return iterable_dataset
+        return data_loader
+
+    @property
+    def epoch(self) -> int:
+        if self._epoch is None:
+            raise RuntimeError(
+                "The data loader's epoch has not been set yet, did you forget to call 'reshuffle()'?"
+            )
+        return self._epoch
 
     @property
     @abstractmethod
@@ -125,6 +189,10 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         The total number of batches that the dataset will produce over the course of an epoch.
         """
         raise NotImplementedError
+
+    @property
+    def rank_batch_size(self) -> int:
+        return self.global_batch_size // self.dp_world_size
 
     @property
     @abstractmethod
@@ -146,29 +214,15 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         raise NotImplementedError
 
     @property
-    def global_batch_size(self) -> int:
-        return self.rank_batch_size * self.dp_world_size
-
-    @property
     def worker_info(self):
         return torch.utils.data.get_worker_info()
 
     def get_global_indices(self) -> np.ndarray:
-        """
-        Get the global shuffled indices.
-        """
         if not self._global_indices_file.is_file():
-            raise RuntimeError(
-                "Missing global indices file, did you forget to call 'build_and_save_global_indices()' "
-                "or 'reshuffle()'?"
-            )
+            raise RuntimeError("Missing global indices file, did you forget to call 'reshuffle()'?")
         return np.memmap(self._global_indices_file, mode="r", dtype=np.uint32)  # type: ignore
 
     def build_and_save_global_indices(self):
-        """
-        Construct and save the global shuffled instance indices.
-        Should be called from all ranks after initialization.
-        """
         if self.fs_local_rank == 0:
             if self._global_indices_file.is_file():
                 log.info(
@@ -189,16 +243,23 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
                 log.info(f"Global data order indices saved to:\n'{self._global_indices_file}'")
         barrier()
 
-    def state_dict(self, *, batches_processed: int, tokens_processed: int) -> Dict[str, Any]:
+    def state_dict(self) -> Dict[str, Any]:
+        """
+        Get a state dictionary for checkpointing.
+        """
         return {
             "dataset_fingerprint_version": self.dataset.fingerprint_version,
             "dataset_fingerprint": self.dataset.fingerprint,
-            "batches_processed": batches_processed,
-            "tokens_processed": tokens_processed,
+            "batches_processed": self.batches_processed,
+            "tokens_processed": self.tokens_processed,
             "seed": self.seed,
+            "epoch": self._epoch,
         }
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
+        """
+        Load a state dict from :meth:`state_dict()` to restore the data loader's state.
+        """
         if state_dict["dataset_fingerprint_version"] != self.dataset.fingerprint_version:
             log.warning(
                 "Dataset fingerprint version does not match the version in the checkpoint, "
@@ -216,67 +277,53 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
             )
             self.seed = state_dict["seed"]
 
+        self.batches_processed = state_dict["batches_processed"]
+        self.tokens_processed = state_dict["tokens_processed"]
+        self._epoch = state_dict["epoch"] or self.epoch
+
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         """
-        Iterate over the local rank+worker instances.
+        Iterate over the local rank instances.
         """
-        indices = iter(self._get_local_instance_indices(self.get_global_indices()))
-
-        num_threads = self.num_threads
-        if self.worker_info is None and self.num_threads is None:
-            # If `num_threads` hasn't been specified and we're not using multiprocessing we'll
-            # try to guess a good number of threads.
-            num_threads = 4
-
-        # Potentially slice by threads.
-        instance_iterator: Iterator[Dict[str, Any]]
-        if num_threads:
-            # In order to stay ahead of training the total queue size (sum across all threads)
-            # should be bigger than the maximum number of instances per batch locally.
-            max_instances_per_rank: int
-            if isinstance(self.dataset, NumpyFSLDataset):
-                max_instances_per_rank = self.rank_batch_size // self.dataset.sequence_length
-            elif isinstance(self.dataset, NumpyVSLDataset):
-                max_instances_per_rank = self.rank_batch_size // self.dataset.min_sequence_length
-            else:
-                raise NotImplementedError
-
-            queue_size = math.ceil(max_instances_per_rank * 2 / num_threads)
-
-            thread_generators = []
-            for i in range(num_threads):
-                generator = (
-                    self._get_dataset_item(int(idx))
-                    for idx in islice(indices, i, None, num_threads)
+        for batch in self.get_data_loader():
+            if batch["input_ids"].numel() != self.rank_batch_size:
+                raise RuntimeError(
+                    f"Expected batch size of {self.rank_batch_size:,d} tokens on rank {self.dp_rank}, "
+                    f"got input IDs with shape {tuple(batch['input_ids'].shape)} = {batch['input_ids'].numel():,d} tokens"
                 )
-                thread_generators.append(
-                    threaded_generator(
-                        generator, maxsize=queue_size, thread_name=f"data thread {i}"
-                    )
-                )
-
-            instance_iterator = (x for x in roundrobin(*thread_generators))
-        else:
-            instance_iterator = (self._get_dataset_item(int(idx)) for idx in indices)
-
-        return (
-            self.collator(batch) for batch in iter_batched(instance_iterator, self.rank_batch_size)
-        )
+            self.batches_processed += 1
+            self.tokens_processed += self.global_batch_size
+            yield batch
 
     def reshuffle(self, epoch: int):
         """
-        Reshuffle for the given epoch. Should be called at the beginning of an epoch.
+        Reshuffle for a new epoch. Should be called before starting the epoch, regardless
+        of whether or not you've called :meth:`load_state_dict()`.
 
         :param epoch: The epoch number.
         """
-        self.epoch = epoch
+        if epoch <= 0:
+            raise ValueError(f"'epoch' must be at least 1, got {epoch}")
+        self._epoch = epoch
         self.build_and_save_global_indices()
 
     def reset(self):
         """
         Reset epoch bookkeeping. Should be called at the end of an epoch.
         """
-        self.start_index = 0
+        self.batches_processed = 0
+        self.tokens_processed = 0
+
+    def get_data_loader(self) -> torch.utils.data.DataLoader:
+        return torch.utils.data.DataLoader(
+            _IterableDatasetWrapper(self),
+            batch_size=None,
+            num_workers=self.num_workers,
+            pin_memory=self.target_device_type == "cuda" and self.num_workers > 0,
+            prefetch_factor=self.prefetch_factor,
+            persistent_workers=False,
+            timeout=0,
+        )
 
     def _get_dataset_item(self, idx: int) -> Dict[str, Any]:
         item = self.dataset[idx]
@@ -294,9 +341,10 @@ class IterableDatasetBase(ABC, torch.utils.data.IterableDataset[Dict[str, Any]])
         return "_".join(parts)
 
 
-class IterableFSLDataset(IterableDatasetBase):
+class FSLDataLoader(DataLoaderBase):
     """
-    An iterable dataset that wraps a :class:`~olmo_core.data.NumpyFSLDataset`.
+    A fixed sequence length :class:`DataLoaderBase` for use with a
+    :class:`~olmo_core.data.numpy_dataset.NumpyFSLDataset`.
     """
 
     def __init__(
@@ -376,9 +424,9 @@ class IterableFSLDataset(IterableDatasetBase):
         # shape: (global num batches, global num instances per batch)
         indices = indices.reshape(-1, instances_per_batch)
 
-        # Offset by 'start_index'.
-        if self.start_index > 0:
-            indices = indices[self.start_index :]
+        # Offset by the number of batches already processed.
+        if self.batches_processed > 0:
+            indices = indices[self.batches_processed :]
 
         # Slice batches by data loader worker rank to avoid duplicates.
         if (worker_info := self.worker_info) is not None:
@@ -392,11 +440,8 @@ class IterableFSLDataset(IterableDatasetBase):
 
         return indices
 
-    def state_dict(self, *, batches_processed: int, tokens_processed: int) -> Dict[str, Any]:
-        state_dict = super().state_dict(
-            batches_processed=batches_processed,
-            tokens_processed=tokens_processed,
-        )
+    def state_dict(self) -> Dict[str, Any]:
+        state_dict = super().state_dict()
         assert isinstance(self.dataset, NumpyFSLDataset)
         state_dict["dataset_type"] = str(NumpyDatasetType.fsl)
         state_dict["sequence_length"] = self.dataset.sequence_length
@@ -405,6 +450,11 @@ class IterableFSLDataset(IterableDatasetBase):
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
         super().load_state_dict(state_dict)
+        # Account for change in batch size / sequence length.
+        self.batches_processed = self.tokens_processed // self.global_batch_size
+        log.info(
+            f"Data loader will resume from batch {self.batches_processed}/{self.total_batches}"
+        )
 
         assert isinstance(self.dataset, NumpyFSLDataset)
         if state_dict["dataset_type"] != NumpyDatasetType.fsl:
@@ -419,14 +469,12 @@ class IterableFSLDataset(IterableDatasetBase):
                 "is not supported"
             )
 
-        # Set 'start_index' (which indexes into batches).
-        self.start_index = state_dict["tokens_processed"] // self.global_batch_size
 
-
-class IterableVSLDataset(IterableDatasetBase):
+class VSLDataLoader(DataLoaderBase):
     """
-    An iterable dataset that wraps a :class:`~olmo_core.data.NumpyVSLDataset` and implements
-    a sequence length-based curriculum as introduced in
+    A variable sequence length :class:`DataLoaderBase` for use with a :class:`~olmo_core.data.numpy_dataset.NumpyVSLDataset`.
+
+    This implements a sequence length-based curriculum as introduced in
     `Dataset Decomposition: Faster LLM Training with Variable Sequence Length Curriculum
     <https://arxiv.org/pdf/2405.13226>`_.
     """
@@ -439,7 +487,6 @@ class IterableVSLDataset(IterableDatasetBase):
         super().__init__(dataset, **kwargs)
         self._batches_per_bucket: Optional[Tuple[Tuple[int, int], ...]] = None
         self._buckets: Optional[Tuple[int, ...]] = None
-        self.start_index = 0
         if not self.shuffle:
             log.warning("VSL curriculum will be ignored since shuffle=False")
         if self.rank_batch_size < max(self.buckets):
@@ -549,8 +596,8 @@ class IterableVSLDataset(IterableDatasetBase):
         # NOTE: 'indices' are *batch* indices at this point.
 
         # Start at the specified batch index.
-        if self.start_index > 0:
-            indices = indices[self.start_index :]
+        if self.batches_processed > 0:
+            indices = indices[self.batches_processed :]
 
         # Slice the batch indices by data loader worker rank to avoid duplicates.
         if (worker_info := self.worker_info) is not None:
@@ -592,11 +639,8 @@ class IterableVSLDataset(IterableDatasetBase):
             bucket_start_offset += num_batches
         raise IndexError(f"Batch index '{batch_index}' out of bounds")
 
-    def state_dict(self, *, batches_processed: int, tokens_processed: int) -> Dict[str, Any]:
-        state_dict = super().state_dict(
-            batches_processed=batches_processed,
-            tokens_processed=tokens_processed,
-        )
+    def state_dict(self) -> Dict[str, Any]:
+        state_dict = super().state_dict()
         assert isinstance(self.dataset, NumpyVSLDataset)
         state_dict["dataset_type"] = str(NumpyDatasetType.vsl)
         state_dict["vsl_curriculum"] = self.dataset.curriculum.short_str
@@ -606,6 +650,9 @@ class IterableVSLDataset(IterableDatasetBase):
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
         super().load_state_dict(state_dict)
+        log.info(
+            f"Data loader will resume from batch {self.batches_processed}/{self.total_batches}"
+        )
 
         assert isinstance(self.dataset, NumpyVSLDataset)
         if state_dict["dataset_type"] != NumpyDatasetType.vsl:
@@ -626,5 +673,69 @@ class IterableVSLDataset(IterableDatasetBase):
                 "Restoring dataset state with a different 'min_sequence_length' is not supported"
             )
 
-        # Set 'start_index' (which indexes into batches).
-        self.start_index = state_dict["batches_processed"]
+
+class _IterableDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
+    def __init__(self, data_loader: DataLoaderBase):
+        self.data_loader = data_loader
+
+    @property
+    def dataset(self) -> NumpyDatasetBase:
+        return self.data_loader.dataset
+
+    @property
+    def worker_info(self):
+        return torch.utils.data.get_worker_info()
+
+    def __iter__(self) -> Iterator[Dict[str, Any]]:
+        """
+        Iterate over the local rank+worker instances.
+        """
+        indices = iter(
+            self.data_loader._get_local_instance_indices(self.data_loader.get_global_indices())
+        )
+
+        num_threads = self.data_loader.num_threads
+        if self.worker_info is None and self.data_loader.num_threads is None:
+            # If `num_threads` hasn't been specified and we're not using multiprocessing we'll
+            # try to guess a good number of threads.
+            num_threads = 4
+
+        # Potentially slice by threads.
+        instance_iterator: Iterator[Dict[str, Any]]
+        if num_threads:
+            # In order to stay ahead of training the total queue size (sum across all threads)
+            # should be bigger than the maximum number of instances per batch locally.
+            max_instances_per_rank: int
+            if isinstance(self.dataset, NumpyFSLDataset):
+                max_instances_per_rank = (
+                    self.data_loader.rank_batch_size // self.dataset.sequence_length
+                )
+            elif isinstance(self.dataset, NumpyVSLDataset):
+                max_instances_per_rank = (
+                    self.data_loader.rank_batch_size // self.dataset.min_sequence_length
+                )
+            else:
+                raise NotImplementedError
+
+            queue_size = math.ceil(max_instances_per_rank * 2 / num_threads)
+
+            thread_generators = []
+            for i in range(num_threads):
+                generator = (
+                    self.data_loader._get_dataset_item(int(idx))
+                    for idx in islice(indices, i, None, num_threads)
+                )
+                thread_generators.append(
+                    threaded_generator(
+                        generator, maxsize=queue_size, thread_name=f"data thread {i}"
+                    )
+                )
+
+            instance_iterator = (x for x in roundrobin(*thread_generators))
+        else:
+            instance_iterator = (self.data_loader._get_dataset_item(int(idx)) for idx in indices)
+
+        return (
+            self.data_loader.collator(batch)
+            for batch in iter_batched(instance_iterator, self.data_loader.rank_batch_size)
+        )

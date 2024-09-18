@@ -33,6 +33,9 @@ class DataCollator:
     def __call__(
         self, items: Union[Sequence[Dict[str, Any]], Sequence[torch.Tensor]]
     ) -> Dict[str, Any]:
+        """
+        Create a batch from a sequence of instances.
+        """
         assert items
         max_len = max((len(x["input_ids"] if isinstance(x, dict) else x) for x in items))
         all_input_ids = []

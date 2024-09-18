@@ -96,6 +96,7 @@ class TransformerConfig(Config):
     bias: bool = True
     dtype: DType = DType.float32
     init_method: InitMethod = InitMethod.normal
+    init_seed: int = 0
     compile: bool = False
     dp_config: Optional[DataParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
@@ -136,6 +137,7 @@ class TransformerConfig(Config):
             dtype=self.dtype.as_pt(),
             init_method=self.init_method,
             init_device=init_device,
+            init_seed=self.init_seed,
         )
         log.info("%s", model)
 
@@ -566,6 +568,7 @@ class Transformer(nn.Module):
         dtype: torch.dtype = torch.float32,
         init_method: InitMethod = InitMethod.normal,
         init_device: str = "cpu",
+        init_seed: int = 0,
     ):
         super().__init__()
         cache = BufferCache()
@@ -586,6 +589,7 @@ class Transformer(nn.Module):
         self.norm = layer_norm.build(d_model, init_device=init_device)
         self.w_out = nn.Linear(d_model, vocab_size, bias=bias, dtype=dtype, device=init_device)
         self.init_method = InitMethod(init_method)
+        self.init_seed = init_seed
         self._cache = cache
 
     @property
@@ -610,9 +614,10 @@ class Transformer(nn.Module):
         :param device: The device the local copy of the model will be trained on.
         """
         device = device or self.device
+        generator = torch.Generator(device).manual_seed(self.init_seed)
 
         if self.embeddings is not None:
-            self.init_method.init_embeddings(self.embeddings)
+            self.init_method.init_embeddings(self.embeddings, generator=generator)
 
         for block in self.blocks:
             # This might fail if it's wrapped.
@@ -631,12 +636,15 @@ class Transformer(nn.Module):
 
             # Attention weights.
             self.init_method.init_attention(
-                att, block_idx=block.block_idx, num_blocks=len(self.blocks)
+                att, block_idx=block.block_idx, num_blocks=len(self.blocks), generator=generator
             )
 
             # Feed-forward weights.
             self.init_method.init_feed_forward(
-                block.feed_forward, block_idx=block.block_idx, num_blocks=len(self.blocks)
+                block.feed_forward,
+                block_idx=block.block_idx,
+                num_blocks=len(self.blocks),
+                generator=generator,
             )
 
             # Warm up RoPE cache.
@@ -647,7 +655,7 @@ class Transformer(nn.Module):
             self.norm.reset_parameters()
 
         if self.w_out is not None:
-            self.init_method.init_final_w_out(self.w_out, d_model=self.d_model)
+            self.init_method.init_final_w_out(self.w_out, d_model=self.d_model, generator=generator)
 
     def forward(
         self,
