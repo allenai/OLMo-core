@@ -1,14 +1,13 @@
-``train``
-=========
+``distributed``
+===============
 
-.. automodule:: olmo_core.train
-   :members:
+.. automodule:: olmo_core.distributed
 
 .. toctree::
    :maxdepth: 2
    :caption: Submodules
    :hidden:
 
-   callbacks
    checkpoint
+   parallel
    utils

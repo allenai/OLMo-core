@@ -3,15 +3,14 @@ from typing import List
 
 import numpy as np
 import pytest
-from torch.utils.data import DataLoader
 
 from olmo_core.data import (
     DataCollator,
-    IterableFSLDataset,
-    IterableVSLDataset,
+    FSLDataLoader,
     NumpyFSLDataset,
     NumpyVSLDataset,
     VSLCurriculum,
+    VSLDataLoader,
     VSLGrowP2Curriculum,
     VSLNaturalCurriculum,
 )
@@ -23,7 +22,7 @@ from olmo_core.data import (
         (100, 4, 2, 2, 8),  # 2 instances per batch, 12 instances total
     ],
 )
-def test_iterable_fsl_dataset_with_dataloader(
+def test_fsl_data_loader(
     tmp_path: Path,
     num_tokens: int,
     sequence_length: int,
@@ -51,25 +50,18 @@ def test_iterable_fsl_dataset_with_dataloader(
             eos_token_id=-1,
         )
         for rank in range(world_size):
-            iter_dataset = IterableFSLDataset(
+            data_loader = FSLDataLoader(
                 dataset,
-                rank_batch_size=rank_batch_size,
+                global_batch_size=batch_size,
                 collator=DataCollator(pad_token_id=-1),
                 shuffle=False,
                 num_threads=0,
                 work_dir=tmp_path,
                 dp_rank=rank,
                 dp_world_size=world_size,
-            )
-            iter_dataset.build_and_save_global_indices()
-            data_loader = DataLoader(
-                iter_dataset,
-                batch_size=None,
                 num_workers=num_workers,
-                pin_memory=True,
-                persistent_workers=False,
-                timeout=0,
             )
+            data_loader.reshuffle(epoch=1)
             batches = list(data_loader)
             assert len(batches) == num_batches
             for i, batch in enumerate(batches):
@@ -89,9 +81,110 @@ def test_iterable_fsl_dataset_with_dataloader(
 
 
 @pytest.mark.parametrize(
+    "num_tokens, sequence_length, num_workers, batch_size",
+    [
+        (100, 4, 1, 8),  # 2 instances per batch, 12 instances total
+    ],
+)
+def test_fsl_data_loader_multiple_epochs(
+    tmp_path: Path,
+    num_tokens: int,
+    sequence_length: int,
+    num_workers: int,
+    batch_size: int,  # in tokens
+):
+    assert batch_size % sequence_length == 0
+    num_batches = num_tokens // batch_size
+
+    # Write some data to disk.
+    mmap = np.memmap(tmp_path / "tokens.npy", dtype=np.uint16, mode="w+", shape=(num_tokens,))
+    mmap[:] = list(range(num_tokens))
+    mmap.flush()
+
+    dataset = NumpyFSLDataset(
+        tmp_path / "tokens.npy",
+        sequence_length=sequence_length,
+        pad_token_id=-1,
+        eos_token_id=-1,
+    )
+    data_loader = FSLDataLoader(
+        dataset,
+        global_batch_size=batch_size,
+        collator=DataCollator(pad_token_id=-1),
+        shuffle=False,
+        num_threads=0,
+        work_dir=tmp_path,
+        num_workers=num_workers,
+    )
+
+    ## First epoch ##
+
+    data_loader.reshuffle(1)
+
+    num_batches = 0
+    num_tokens = 0
+    for batch in data_loader:
+        num_batches += 1
+        num_tokens += batch["input_ids"].numel()
+        assert data_loader.batches_processed == num_batches
+        assert data_loader.tokens_processed == num_tokens
+    assert num_batches == data_loader.total_batches
+
+    data_loader.reset()
+
+    assert data_loader.batches_processed == 0
+    assert data_loader.tokens_processed == 0
+
+    ## Second epoch ##
+
+    data_loader.reshuffle(2)
+
+    num_batches = 0
+    num_tokens = 0
+    for batch in data_loader:
+        num_batches += 1
+        num_tokens += batch["input_ids"].numel()
+        assert data_loader.batches_processed == num_batches
+        assert data_loader.tokens_processed == num_tokens
+        # Stop after first batch to checkpoint.
+        break
+
+    # Create a new data loader and restart from the same spot.
+    state_dict = data_loader.state_dict()
+    data_loader = FSLDataLoader(
+        dataset,
+        global_batch_size=batch_size,
+        collator=DataCollator(pad_token_id=-1),
+        shuffle=False,
+        num_threads=0,
+        work_dir=tmp_path,
+        num_workers=num_workers,
+    )
+    data_loader.load_state_dict(state_dict)
+    assert data_loader.epoch == 2
+    assert data_loader.batches_processed == 1
+    assert data_loader.tokens_processed == batch_size
+
+    # Continue the epoch.
+    data_loader.reshuffle(2)
+    for batch in data_loader:
+        num_batches += 1
+        num_tokens += batch["input_ids"].numel()
+        assert data_loader.batches_processed == num_batches
+        assert data_loader.tokens_processed == num_tokens
+
+    assert num_batches == data_loader.total_batches
+
+    data_loader.reset()
+
+    assert data_loader.batches_processed == 0
+    assert data_loader.tokens_processed == 0
+
+
+@pytest.mark.parametrize(
     "shuffle", [pytest.param(True, id="shuffle"), pytest.param(False, id="no-shuffle")]
 )
-def test_restart_with_seq_len_warmup(tmp_path: Path, shuffle: bool):
+def test_fsl_data_loader_with_seq_len_warmup(tmp_path: Path, shuffle: bool):
     max_target_sequence_length = 8
 
     # Write some data to disk.
@@ -103,7 +196,7 @@ def test_restart_with_seq_len_warmup(tmp_path: Path, shuffle: bool):
     mmap2.flush()
     del mmap1, mmap2
 
-    def get_all_tokens(seq_len: int, start_index: int = 0) -> List[int]:
+    def get_all_tokens(seq_len: int, tokens_processed: int = 0) -> List[int]:
         dataset = NumpyFSLDataset(
             tmp_path / "tokens1.npy",
             tmp_path / "tokens2.npy",
@@ -112,24 +205,24 @@ def test_restart_with_seq_len_warmup(tmp_path: Path, shuffle: bool):
             eos_token_id=-1,
             max_target_sequence_length=max_target_sequence_length,
         )
-        iter_dataset = IterableFSLDataset(
+        data_loader = FSLDataLoader(
             dataset,
-            rank_batch_size=seq_len,
+            global_batch_size=seq_len,
             collator=DataCollator(pad_token_id=-1),
             shuffle=shuffle,
             chunk_size=max_target_sequence_length // seq_len,
-            start_index=start_index,
             num_threads=0,
             work_dir=tmp_path,
         )
-        iter_dataset.build_and_save_global_indices()
+        data_loader.tokens_processed = tokens_processed
+        data_loader.reshuffle(epoch=1)
         all_tokens = []
-        for instance in iter_dataset:
+        for instance in data_loader:
             all_tokens.extend(instance["input_ids"].flatten().tolist())
         return all_tokens
 
     assert get_all_tokens(2) == get_all_tokens(4) == get_all_tokens(8)
-    assert get_all_tokens(2, 4) == get_all_tokens(4, 2) == get_all_tokens(8, 1)
+    assert get_all_tokens(2, 8) == get_all_tokens(4, 8) == get_all_tokens(8, 8)
 
 
 @pytest.mark.parametrize(
@@ -143,7 +236,7 @@ def test_restart_with_seq_len_warmup(tmp_path: Path, shuffle: bool):
         ),
     ],
 )
-def test_variable_sequence_length_dataset(tmp_path: Path, shuffle: bool, curriculum: VSLCurriculum):
+def test_vsl_data_loader(tmp_path: Path, shuffle: bool, curriculum: VSLCurriculum):
     data1 = np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 0, 13, 14, 15, 16, 17, 0, 18, 19, 0])
     mmap = np.memmap(tmp_path / "tokens1.npy", dtype=np.uint16, mode="w+", shape=data1.shape)
     mmap[:] = data1
@@ -170,29 +263,30 @@ def test_variable_sequence_length_dataset(tmp_path: Path, shuffle: bool, curricu
     world_size = 2
     global_batch_size = 8
 
-    iter_dataset = IterableVSLDataset(
+    data_loader = VSLDataLoader(
         dataset,
         shuffle=shuffle,
         num_threads=0,
         work_dir=tmp_path,
         dp_world_size=world_size,
         collator=DataCollator(pad_token_id=0),
-        rank_batch_size=global_batch_size // world_size,
+        global_batch_size=global_batch_size,
     )
-    iter_dataset.build_and_save_global_indices()
+    data_loader.reshuffle(epoch=1)
 
     all_tokens = []
     for rank in range(world_size):
-        iter_dataset.dp_rank = rank
+        data_loader.dp_rank = rank
         n_batches = 0
-        for batch in iter_dataset:
+        for batch in data_loader:
             n_batches += 1
             assert batch["input_ids"].numel() == global_batch_size // world_size
             all_tokens.extend(batch["input_ids"].flatten().tolist())
+        data_loader.reset()
 
-        assert n_batches == iter_dataset.total_batches
+        assert n_batches == data_loader.total_batches
 
-    assert len(all_tokens) == iter_dataset.total_batches * global_batch_size
+    assert len(all_tokens) == data_loader.total_batches * global_batch_size
 
     # Make sure batches were unique.
     all_tokens_less_eos = [t for t in all_tokens if t != 0]

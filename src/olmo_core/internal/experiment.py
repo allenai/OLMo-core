@@ -6,12 +6,7 @@ from typing import Callable, List, cast
 from beaker import Beaker
 
 from olmo_core.config import Config, StrEnum
-from olmo_core.data import (
-    DataMix,
-    IterableDatasetBase,
-    NumpyDatasetConfig,
-    TokenizerConfig,
-)
+from olmo_core.data import DataLoaderBase, DataMix, NumpyDatasetConfig, TokenizerConfig
 from olmo_core.distributed.utils import get_num_nodes, init_hybrid_shard_mesh
 from olmo_core.io import is_url
 from olmo_core.launch.beaker import (
@@ -205,13 +200,13 @@ def prep(config: ExperimentConfig):
     dataset = config.dataset.build()
     dataset.prepare()
 
-    itds = IterableDatasetBase.wrap_numpy_dataset(
+    itds = DataLoaderBase.wrap_numpy_dataset(
         dataset,
-        rank_batch_size=config.trainer.global_batch_size,
+        global_batch_size=config.trainer.global_batch_size,
         collator=config.trainer.build_collator(dataset),
         seed=config.trainer.data_seed,
     )
-    itds.build_and_save_global_indices()
+    itds.reshuffle(epoch=1)
 
 
 def train(config: ExperimentConfig):

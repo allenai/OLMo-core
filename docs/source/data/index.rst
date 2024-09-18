@@ -2,6 +2,15 @@
 ========
 
 .. automodule:: olmo_core.data
-   :members:
-   :special-members: __getitem__,__len__
-   :exclude-members: IterableDatasetBase,IterableFSLDataset,IterableVSLDataset
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Submodules
+   :hidden:
+
+   numpy_dataset
+   collator
+   mixes
+   tokenizer
+   data_loader
+   utils

@@ -1,5 +1,5 @@
 """
-Datasets classes and config builders for use with the :class:`~olmo_core.trainer.Trainer`.
+Dataset, data loaders, and config builders for use with the :class:`~olmo_core.train.Trainer`.
 
 Overview
 --------
@@ -7,19 +7,12 @@ Overview
 Prepare your data by writing token IDs to numpy arrays on disk, using the
 `Dolma toolkit <https://allenai.github.io/dolma/>`_ for example.
 
-Configure and build your dataset using the :class:`NumpyDatasetConfig` builder and pass it
-to :meth:`TrainerConfig.build() <olmo_core.train.TrainerConfig.build>`.
-
-API Reference
--------------
+Configure and build your dataset using the :class:`~olmo_core.data.numpy_dataset.NumpyDatasetConfig`
+builder and pass it to :meth:`TrainerConfig.build() <olmo_core.train.TrainerConfig.build>`.
 """
 
 from .collator import DataCollator, PaddingDirection
-from .iterable_dataset import (
-    IterableDatasetBase,
-    IterableFSLDataset,
-    IterableVSLDataset,
-)
+from .data_loader import DataLoaderBase, FSLDataLoader, VSLDataLoader
 from .mixes import DataMix
 from .numpy_dataset import (
     NumpyDatasetBase,
@@ -57,7 +50,7 @@ __all__ = [
     "DataMix",
     "DataCollator",
     "PaddingDirection",
-    "IterableDatasetBase",
-    "IterableFSLDataset",
-    "IterableVSLDataset",
+    "DataLoaderBase",
+    "FSLDataLoader",
+    "VSLDataLoader",
 ]
