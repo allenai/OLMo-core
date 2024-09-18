@@ -617,6 +617,7 @@ class Trainer:
         if "data_loader" not in state_dict:
             if "dataset" in state_dict:
                 state_dict["data_loader"] = state_dict.pop("dataset")
+                state_dict["data_loader"]["epoch"] = state_dict["epoch"]
             else:
                 state_dict["dataset"] = {
                     "dataset_type": "fsl",
