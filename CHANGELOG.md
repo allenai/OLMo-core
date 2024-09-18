@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for sequence length warm-up during training via the callback `SequenceLengthSchedulerCallback`.
 - Added support for variable sequence length (VSL) datasets and VSL curriculums as introduced in ["Dataset Decomposition: Faster LLM Training with Variable Sequence Length Curriculum"](https://arxiv.org/pdf/2405.13226).
 - Added `Lion` and `SkipStepLion` optimizers.
+- Added `init_seed` argument to `Transformer` and `TransformerConfig`.
 
 ### Changed
 
