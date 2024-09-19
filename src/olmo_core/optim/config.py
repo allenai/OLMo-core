@@ -60,9 +60,6 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         param_groups: List[Dict[str, Any]] = [
             {"params": [], **go.opts} for go in self.group_overrides
         ]
-        param_names_per_group: List[List[str]] = [
-            [] for _ in self.group_overrides
-        ]  # just for logging
         for g_idx, (g, go) in enumerate(zip(param_groups, self.group_overrides)):
             for n in go.params:
                 if n not in all_params:
@@ -70,15 +67,10 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
                         f"optim group {g_idx} override param name '{n}' does not match any parameters"
                     )
                 g["params"].append(all_params.pop(n))
-                param_names_per_group[g_idx].append(n)
 
         # Put any left-over params into a default group.
         if all_params:
-            param_groups.append({"params": []})
-            param_names_per_group.append([])
-            for n, p in all_params.items():
-                param_groups[-1]["params"].append(p)
-                param_names_per_group[-1].append(n)
+            param_groups.append({"params": list(all_params.values())})
 
         log.info(
             f"Building {self.optimizer().__name__} optimizer with {len(param_groups)} param groups..."
