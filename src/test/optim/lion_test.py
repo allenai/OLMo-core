@@ -22,6 +22,11 @@ def test_lion(device: torch.device):
     config = LionConfig()
     model = Model().train().to(device)
     optim = config.build(model)
+
+    for group in optim.param_groups:
+        assert "initial_lr" in group
+
+    # Take a step.
     optim.zero_grad(set_to_none=True)
     model(torch.randn(2, 8, device=device)).sum().backward()
     optim.step()
