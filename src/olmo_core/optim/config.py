@@ -1,7 +1,8 @@
-from abc import abstractmethod
+import logging
+from abc import ABCMeta, abstractmethod
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Dict, Generic, Iterable, List, Optional, TypeVar, Union
+from typing import Any, Dict, Generic, Iterable, List, Optional, Type, TypeVar, Union
 
 import torch
 import torch.nn as nn
@@ -14,6 +15,7 @@ __all__ = [
     "OptimGroupOverride",
 ]
 
+log = logging.getLogger(__name__)
 
 Opt = TypeVar("Opt", bound=torch.optim.Optimizer)
 
@@ -32,7 +34,7 @@ class OptimGroupOverride(Config):
 
 
 @dataclass
-class OptimConfig(Config, Generic[Opt]):
+class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
     """
     Base class for :class:`~torch.optim.Optimizer` configs.
     """
@@ -57,6 +59,9 @@ class OptimConfig(Config, Generic[Opt]):
         param_groups: List[Dict[str, Any]] = [
             {"params": [], **go.opts} for go in self.group_overrides
         ]
+        param_names_per_group: List[List[str]] = [
+            [] for _ in self.group_overrides
+        ]  # just for logging
         for g_idx, (g, go) in enumerate(zip(param_groups, self.group_overrides)):
             for n in go.params:
                 if n not in all_params:
@@ -64,16 +69,53 @@ class OptimConfig(Config, Generic[Opt]):
                         f"optim group {g_idx} override param name '{n}' does not match any parameters"
                     )
                 g["params"].append(all_params.pop(n))
+                param_names_per_group[g_idx].append(n)
 
         # Put any left-over params into a default group.
         if all_params:
-            param_groups.append({"params": list(all_params.values())})
+            param_groups.append({"params": []})
+            param_names_per_group.append([])
+            for n, p in all_params.items():
+                param_groups[-1]["params"].append(p)
+                param_names_per_group[-1].append(n)
+
+        log.info(
+            f"Building {self.optimizer().__name__} optimizer with {len(param_groups)} param group(s)..."
+        )
+        for g_idx, group in enumerate(param_groups):
+            param_names_list = "\n - ".join(param_names_per_group[g_idx])
+            log.info(f"Group {g_idx}, {len(group['params'])} parameter(s):\n - {param_names_list}")
 
         return param_groups
 
+    @classmethod
     @abstractmethod
+    def optimizer(cls) -> Type[Opt]:
+        """
+        Get the optimizer class associated with this config.
+        """
+        raise NotImplementedError
+
     def build(self, model: nn.Module) -> Opt:
         """
         Build the optimizer.
         """
-        raise NotImplementedError
+        kwargs = self.as_dict()
+        kwargs.pop("group_overrides")
+        optim = self.optimizer()(self.build_groups(model), **kwargs)
+
+        for group in optim.param_groups:
+            # Set 'initial_lr' in each group for schedulers if needed.
+            if "initial_lr" in group:
+                continue
+
+            lr: Optional[float] = None
+            if "lr" in group:
+                lr = group["lr"]
+            elif hasattr(self, "lr"):
+                lr = getattr(self, "lr")
+
+            if lr is not None:
+                group.setdefault("initial_lr", lr)
+
+        return optim

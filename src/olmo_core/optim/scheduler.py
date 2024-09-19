@@ -4,10 +4,14 @@ from math import cos, pi
 from typing import Optional
 
 
+@dataclass
 class Scheduler(metaclass=ABCMeta):
     """
     Learning rate scheduler base class.
     """
+
+    lr_field: str = "lr"
+    initial_lr_field: str = "initial_lr"
 
     @abstractmethod
     def get_lr(self, initial_lr: float, step: int, max_steps: int) -> float:
@@ -35,7 +39,7 @@ class CosWithWarmup(Scheduler):
     Cosine learning rate schedule with a warmup.
     """
 
-    warmup_steps: int
+    warmup_steps: int = 2000
     alpha_f: float = 0.1
     t_max: Optional[int] = None
     warmup_min_lr: float = 0.0

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Type
 
 import torch
 import torch.nn as nn
@@ -148,13 +148,9 @@ class LionConfig(OptimConfig):
     betas: Tuple[float, float] = (0.9, 0.99)
     weight_decay: float = 0.0
 
-    def build(self, model: nn.Module) -> Lion:
-        kwargs = self.as_dict()
-        kwargs.pop("group_overrides")
-        optim = Lion(self.build_groups(model), **kwargs)
-        for group in optim.param_groups:
-            group.setdefault("initial_lr", self.lr)
-        return optim
+    @classmethod
+    def optimizer(cls) -> Type[Lion]:
+        return Lion
 
 
 @dataclass
@@ -169,10 +165,6 @@ class SkipStepLionConfig(OptimConfig):
     rolling_interval_length: int = 128
     sigma_factor: int = 6
 
-    def build(self, model: nn.Module) -> SkipStepLion:
-        kwargs = self.as_dict()
-        kwargs.pop("group_overrides")
-        optim = SkipStepLion(self.build_groups(model), **kwargs)
-        for group in optim.param_groups:
-            group.setdefault("initial_lr", self.lr)
-        return optim
+    @classmethod
+    def optimizer(cls) -> Type[SkipStepLion]:
+        return SkipStepLion
