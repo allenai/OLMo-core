@@ -85,7 +85,7 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         )
         for g_idx, group in enumerate(param_groups):
             group_fields_list = "\n - ".join(
-                [f"{k}: {v}" for k, v in param_groups[g_idx] if k != "params"]
+                [f"{k}: {v}" for k, v in param_groups[g_idx].items() if k != "params"]
             )
             log.info(f"Group {g_idx}, {len(group['params'])} overrides:\n - {group_fields_list}")
             param_names_list = "\n - ".join(param_names_per_group[g_idx])
