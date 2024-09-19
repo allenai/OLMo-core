@@ -323,7 +323,7 @@ class BeakerLaunchConfig(Config):
         task_spec = (
             TaskSpec.new(
                 self.task_name,
-                beaker_image=self.beaker.image.get(self.beaker_image).full_name,
+                beaker_image=self.beaker.image.get(self.beaker_image).id,
                 priority=self.priority,
                 preemptible=self.preemptible,
                 arguments=self.cmd,
