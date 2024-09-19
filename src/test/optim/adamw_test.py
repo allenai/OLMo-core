@@ -28,7 +28,7 @@ def test_adamw_config_to_optim():
 
 def test_adamw_config_to_optim_with_group_overrides():
     config = AdamWConfig(
-        group_overrides=[OptimGroupOverride(params=["wte.weight"], opts=dict(weight_decay=0.0))]
+        group_overrides=[OptimGroupOverride(params=["wte.*"], opts=dict(weight_decay=0.0))]
     )
 
     model = MyModel()

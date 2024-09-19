@@ -2,6 +2,7 @@ import logging
 from abc import ABCMeta, abstractmethod
 from collections import OrderedDict
 from dataclasses import dataclass
+from fnmatch import fnmatch
 from typing import Any, Dict, Generic, Iterable, List, Optional, Type, TypeVar, Union
 
 import torch
@@ -24,7 +25,7 @@ Opt = TypeVar("Opt", bound=torch.optim.Optimizer)
 class OptimGroupOverride(Config):
     params: List[str]
     """
-    A list of fully qualified parameter names.
+    A list of fully qualified parameter names (FQNs) or wild card to match FQNs.
     """
 
     opts: Dict[str, Any]
@@ -61,12 +62,17 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
             {"params": [], **go.opts} for go in self.group_overrides
         ]
         for g_idx, (g, go) in enumerate(zip(param_groups, self.group_overrides)):
-            for n in go.params:
-                if n not in all_params:
+            for pattern in go.params:
+                matches = 0
+                for name in list(all_params.keys()):
+                    if fnmatch(name, pattern):
+                        g["params"].append(all_params.pop(name))
+                        matches += 1
+
+                if matches == 0:
                     raise OLMoConfigurationError(
-                        f"optim group {g_idx} override param name '{n}' does not match any parameters"
+                        f"optim group {g_idx} override pattern '{pattern}' does not match any parameters"
                     )
-                g["params"].append(all_params.pop(n))
 
         # Put any left-over params into a default group.
         if all_params:
