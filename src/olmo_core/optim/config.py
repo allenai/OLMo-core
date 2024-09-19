@@ -49,6 +49,7 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         Build parameters groups.
         """
         if self.group_overrides is None:
+            log.info(f"Building {self.optimizer().__name__} optimizer with 1 param group...")
             return model.parameters()
 
         all_params: Dict[str, torch.Tensor] = OrderedDict()
@@ -80,9 +81,13 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
                 param_names_per_group[-1].append(n)
 
         log.info(
-            f"Building {self.optimizer().__name__} optimizer with {len(param_groups)} param group(s)..."
+            f"Building {self.optimizer().__name__} optimizer with {len(param_groups)} param groups..."
         )
         for g_idx, group in enumerate(param_groups):
+            group_fields_list = "\n - ".join(
+                [f"{k}: {v}" for k, v in param_groups[g_idx] if k != "params"]
+            )
+            log.info(f"Group {g_idx}, {len(group['params'])} overrides:\n - {group_fields_list}")
             param_names_list = "\n - ".join(param_names_per_group[g_idx])
             log.info(f"Group {g_idx}, {len(group['params'])} parameter(s):\n - {param_names_list}")
 
