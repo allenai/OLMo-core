@@ -87,9 +87,12 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
             group_fields_list = "\n - ".join(
                 [f"{k}: {v}" for k, v in param_groups[g_idx].items() if k != "params"]
             )
-            log.info(f"Group {g_idx}, {len(group['params'])} overrides:\n - {group_fields_list}")
-            param_names_list = "\n - ".join(param_names_per_group[g_idx])
-            log.info(f"Group {g_idx}, {len(group['params'])} parameter(s):\n - {param_names_list}")
+            if group_fields_list:
+                log.info(
+                    f"Group {g_idx}, {len(group['params'])} parameter(s) with overrides:\n - {group_fields_list}"
+                )
+            else:
+                log.info(f"Group {g_idx}, {len(group['params'])} parameter(s)")
 
         return param_groups
 
