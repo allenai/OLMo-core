@@ -1520,7 +1520,7 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'max_target_sequence_length' is only valid for the (non-padded) FSL dataset"
                 )
-            if self.generate_doc_lengths is not None:
+            if self.generate_doc_lengths:
                 raise OLMoConfigurationError(
                     "'generate_doc_lengths' is only valid for the (non-padded) FSL dataset"
                 )
