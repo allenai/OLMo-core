@@ -854,6 +854,7 @@ class Trainer:
     def add_callback(self, name: str, callback: Callback):
         if name in self.callbacks:
             raise OLMoConfigurationError(f"A callback with name '{name}' already exists!")
+        callback.trainer = self
         self.callbacks[name] = callback
         self._sort_callbacks()
 
