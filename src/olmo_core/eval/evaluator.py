@@ -46,6 +46,7 @@ class Evaluator(metaclass=ABCMeta):
         if isinstance(self.batches, DataLoaderBase):
             self.batches.reset()
 
+    @property
     def total_batches(self) -> Optional[int]:
         """
         Get the total number of batches in an eval loop if it's known ahead of time.
