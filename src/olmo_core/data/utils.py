@@ -287,7 +287,7 @@ def get_cumulative_document_lengths(doc_lens: torch.Tensor) -> torch.Tensor:
 
 
 def iter_batched(
-    iterable: Iterable[Dict[str, Any]], batch_num_tokens: int, strict: bool = False
+    iterable: Iterable[Dict[str, Any]], batch_num_tokens: int
 ) -> Iterable[Tuple[Dict[str, Any], ...]]:
     batch: List[Dict[str, Any]] = []
     tokens = 0
@@ -304,7 +304,7 @@ def iter_batched(
 
         batch.append(x)
         tokens += x_num_tokens
-        if strict and shape is not None and shape != x["input_ids"].shape:
+        if shape is not None and shape != x["input_ids"].shape:
             raise RuntimeError(
                 f"Items in batch don't have the same shape! Expected {shape}, "
                 f"got {tuple(x['input_ids'].shape)}"

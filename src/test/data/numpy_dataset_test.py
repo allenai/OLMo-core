@@ -56,10 +56,10 @@ def test_numpy_padded_fsl_dataset(tmp_path: Path):
     ds.prepare()
     assert ds[0]["input_ids"].tolist() == [1, 2, 3, 4, 5, 6, 7, 0]
     assert ds[0]["label_mask"].tolist() == [True] * 8
-    assert ds[1]["input_ids"].tolist() == [8, 9, 10, 0]
-    assert ds[1]["label_mask"].tolist() == [True] * 4
+    assert ds[1]["input_ids"].tolist() == [8, 9, 10, 0, 0, 0, 0, 0]
+    assert ds[1]["label_mask"].tolist() == [True] * 4 + [False] * 4
     assert ds[2]["input_ids"].tolist() == [11, 12, 13, 14, 15, 16, 17, 18]
-    assert ds[3]["input_ids"].tolist() == [21, 22, 0]
+    assert ds[3]["input_ids"].tolist() == [21, 22, 0, 0, 0, 0, 0, 0]
     assert len(ds) == 4
 
 

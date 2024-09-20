@@ -26,6 +26,7 @@ from typing import (
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import Dataset
 
 from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
@@ -479,7 +480,7 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
 class NumpyPaddedFSLDataset(NumpyFSLDataset):
     """
     A version of :class:`NumpyFSLDataset` that creates a single instance from each document.
-    The resulting instances may be padded by the :class:`~olmo_core.data.collator.DataCollator`.
+    The resulting instances may be padded out to ``sequence_length``.
     """
 
     def __init__(
@@ -533,7 +534,11 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         item = super().__getitem__(index)
-        item["label_mask"] = torch.ones_like(item["input_ids"])
+        pad_shape = (0, self.sequence_length - len(item["input_ids"]))
+        item["label_mask"] = F.pad(
+            torch.ones_like(item["input_ids"]), pad_shape, value=self.pad_token_id
+        )
+        item["input_ids"] = F.pad(item["input_ids"], pad_shape, value=self.pad_token_id)
         return item
 
     def _read_chunk_from_array(self, path: PathOrStr, index: int) -> torch.Tensor:
