@@ -80,6 +80,7 @@ class EvaluatorCallback(Callback):
 class LMEvaluatorCallbackConfig(CallbackConfig):
     eval_dataset: NumpyDatasetConfig
     eval_interval: int = 1000
+    log_interval: int = 5
 
     def build(self, trainer: "Trainer") -> Callback:
         eval_batch_size = trainer.rank_batch_size
@@ -95,4 +96,6 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
             collator=trainer.collator,
             device=trainer.device,
         )
-        return EvaluatorCallback(evaluators=[evaluator], eval_interval=self.eval_interval)
+        return EvaluatorCallback(
+            evaluators=[evaluator], eval_interval=self.eval_interval, log_interval=self.log_interval
+        )
