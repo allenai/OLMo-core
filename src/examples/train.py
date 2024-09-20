@@ -11,9 +11,10 @@ from dataclasses import dataclass
 from typing import List, cast
 
 from olmo_core.config import Config, DType
-from olmo_core.data import NumpyDatasetConfig, TokenizerConfig
+from olmo_core.data import NumpyDatasetConfig, NumpyPaddedFSLDataset, TokenizerConfig
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
-from olmo_core.distributed.utils import init_hybrid_shard_mesh
+from olmo_core.distributed.utils import get_world_size, init_hybrid_shard_mesh
+from olmo_core.eval.lm_evaluator import LMEvaluator
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
@@ -24,6 +25,7 @@ from olmo_core.train import (
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
     ConfigSaverCallback,
+    EvaluatorCallback,
     GPUMemoryMonitorCallback,
     GradClipperCallback,
     ProfilerCallback,
@@ -134,6 +136,32 @@ def main(run_name: str, overrides: List[str]):
     optim = config.optim.build(model)
     dataset = config.dataset.build()
     trainer = config.trainer.build(model, optim, dataset)
+
+    # Add in-loop evals.
+    eval_batch_size = trainer.rank_microbatch_size * get_world_size(trainer.dp_process_group)
+    eval_dataset = NumpyPaddedFSLDataset(
+        "/net/nfs/allennlp/llm-data/c4/en/c4-validation.00000-00008.npy",
+        sequence_length=config.dataset.effective_sequence_length,
+        pad_token_id=config.dataset.tokenizer.pad_token_id,
+        eos_token_id=config.dataset.tokenizer.eos_token_id,
+        metadata=[{"label": "c4-validation"}],
+    )
+    trainer.add_callback(
+        "evaluator",
+        EvaluatorCallback(
+            evaluators=[
+                LMEvaluator.from_numpy_dataset(
+                    eval_dataset,
+                    name="lm",
+                    global_batch_size=eval_batch_size,
+                    collator=trainer.collator,
+                    work_dir=trainer.work_dir,
+                    device=trainer.device,
+                )
+            ],
+            eval_interval=250,
+        ),
+    )
 
     # Save config to W&B and each checkpoint dir.
     config_dict = config.as_config_dict()

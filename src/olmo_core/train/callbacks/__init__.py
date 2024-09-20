@@ -2,6 +2,7 @@ from .callback import Callback
 from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy
 from .config_saver import ConfigSaverCallback
 from .console_logger import ConsoleLoggerCallback
+from .evaluator_callback import EvaluatorCallback
 from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
 from .grad_clipper import GradClipperCallback
@@ -17,6 +18,7 @@ __all__ = [
     "CheckpointRemovalStrategy",
     "ConfigSaverCallback",
     "ConsoleLoggerCallback",
+    "EvaluatorCallback",
     "GarbageCollectorCallback",
     "GPUMemoryMonitorCallback",
     "GradClipperCallback",

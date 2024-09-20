@@ -295,13 +295,15 @@ class DataLoaderBase(ABC):
             self.tokens_processed += self.global_batch_size
             yield batch
 
-    def reshuffle(self, epoch: int):
+    def reshuffle(self, epoch: Optional[int] = None):
         """
         Reshuffle for a new epoch. Should be called before starting the epoch, regardless
         of whether or not you've called :meth:`load_state_dict()`.
 
         :param epoch: The epoch number.
         """
+        if epoch is None:
+            epoch = 1 if self._epoch is None else self._epoch + 1
         if epoch <= 0:
             raise ValueError(f"'epoch' must be at least 1, got {epoch}")
         self._epoch = epoch

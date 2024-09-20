@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added support for wildcards in `OptimGroupOverride.params`.
+- Added `NumpyPaddedFSLDataset` variant.
+- Added `Evaluator` class and `EvaluatorCallback`.
 
 ## [v1.1.0](https://github.com/allenai/OLMo-core/releases/tag/v1.1.0) - 2024-09-18
 

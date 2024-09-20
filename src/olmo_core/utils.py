@@ -89,13 +89,15 @@ def apply_to_tensors(fn, container: Any) -> None:
 T = TypeVar("T")
 
 
-def move_to_device(o: T, device: torch.device, non_blocking: bool = False) -> T:
+def move_to_device(o: T, device: torch.device, non_blocking: Optional[bool] = None) -> T:
     """
     Move a tensor or container of tensors to the given device.
 
     :param o: The object to move.
     :param device: The device to move to.
     """
+    if non_blocking is None:
+        non_blocking = device.type != "cpu"
     if isinstance(o, torch.Tensor):
         return o.to(device, non_blocking=non_blocking)  # type: ignore[return-value]
     elif isinstance(o, dict):
@@ -557,3 +559,20 @@ def capped_powers_of_2(x: int, cap: int) -> List[int]:
         else:
             powers.append(i)
     return powers
+
+
+def format_float(value: float) -> str:
+    if value == 0.0:
+        return "0.0"
+    elif value < 0.0001:
+        return f"{value:.2E}"
+    elif value > 1000:
+        return f"{int(value):,d}"
+    elif value > 100:
+        return f"{value:.1f}"
+    elif value > 10:
+        return f"{value:.2f}"
+    elif value > 1:
+        return f"{value:.3f}"
+    else:
+        return f"{value:.4f}"
