@@ -279,7 +279,7 @@ class DataLoaderBase(ABC):
 
         self.batches_processed = state_dict["batches_processed"]
         self.tokens_processed = state_dict["tokens_processed"]
-        self._epoch = state_dict["epoch"] or self.epoch
+        self._epoch = state_dict["epoch"] or self._epoch
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         """
