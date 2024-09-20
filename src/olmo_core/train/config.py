@@ -101,8 +101,10 @@ class TrainerConfig(Config):
         collator = self.build_collator(dataset)
 
         all_callbacks = kwargs.pop("callbacks")
-        callbacks = {k: cb for k, cb in all_callbacks if not isinstance(cb, CallbackConfig)}
-        callback_configs = {k: cb for k, cb in all_callbacks if isinstance(cb, CallbackConfig)}
+        callbacks = {k: cb for k, cb in all_callbacks.items() if not isinstance(cb, CallbackConfig)}
+        callback_configs = {
+            k: cb for k, cb in all_callbacks.items() if isinstance(cb, CallbackConfig)
+        }
 
         trainer = Trainer(
             model=model,
