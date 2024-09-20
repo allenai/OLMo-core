@@ -528,6 +528,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         if self.fs_local_rank == 0:
             log.info("Gathering dataset document indices...")
             self._write_instance_indices()
+        barrier()
         len(self)
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
