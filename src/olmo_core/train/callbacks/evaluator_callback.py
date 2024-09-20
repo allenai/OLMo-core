@@ -57,7 +57,7 @@ class EvaluatorCallback(Callback):
                         batch, loss_reduction="none", compute_z_loss=False
                     )
                 evaluator.update_metrics(batch, ce_loss, logits)
-                if eval_step + 1 % self.log_interval == 0:
+                if (eval_step + 1) % self.log_interval == 0:
                     if evaluator.total_batches is not None:
                         log.info(
                             f"[eval={evaluator.name},step={eval_step+1}/{evaluator.total_batches}]"
