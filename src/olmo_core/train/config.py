@@ -14,7 +14,7 @@ from ..data import DataCollator, NumpyDatasetBase
 from ..exceptions import OLMoConfigurationError
 from ..io import is_url
 from ..utils import get_default_device
-from .callbacks import Callback
+from .callbacks import Callback, CallbackConfig
 from .checkpoint import Checkpointer
 from .trainer import LoadStrategy, Trainer
 from .utils import Duration, DurationUnit
@@ -100,7 +100,11 @@ class TrainerConfig(Config):
 
         collator = self.build_collator(dataset)
 
-        return Trainer(
+        all_callbacks = kwargs.pop("callbacks")
+        callbacks = {k: cb for k, cb in all_callbacks if not isinstance(cb, CallbackConfig)}
+        callback_configs = {k: cb for k, cb in all_callbacks if isinstance(cb, CallbackConfig)}
+
+        trainer = Trainer(
             model=model,
             optim=optim,
             dataset=dataset,
@@ -110,5 +114,12 @@ class TrainerConfig(Config):
             work_dir=Path(work_dir),
             device=torch.device(device) if device is not None else get_default_device(),
             dp_process_group=dp_process_group,
+            callbacks=callbacks,
             **kwargs,
         )
+
+        for cb_name, cb_config in callback_configs.items():
+            cb = cb_config.build(trainer)
+            trainer.add_callback(cb_name, cb)
+
+        return trainer

@@ -46,6 +46,15 @@ class Evaluator(metaclass=ABCMeta):
         if isinstance(self.batches, DataLoaderBase):
             self.batches.reset()
 
+    def total_batches(self) -> Optional[int]:
+        """
+        Get the total number of batches in an eval loop if it's known ahead of time.
+        """
+        try:
+            return len(self.batches)  # type: ignore
+        except TypeError:
+            return None
+
     @abstractmethod
     def update_metrics(
         self, batch: Dict[str, Any], ce_loss: torch.Tensor, logits: torch.Tensor

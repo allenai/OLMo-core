@@ -190,6 +190,9 @@ class DataLoaderBase(ABC):
         """
         raise NotImplementedError
 
+    def __len__(self) -> int:
+        return self.total_batches
+
     @property
     def rank_batch_size(self) -> int:
         return self.global_batch_size // self.dp_world_size

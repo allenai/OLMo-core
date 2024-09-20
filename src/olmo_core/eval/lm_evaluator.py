@@ -3,7 +3,6 @@ from typing import Any, Dict, Iterable, Optional, Sequence, Set
 import torch
 import torch.distributed as dist
 
-from ..aliases import PathOrStr
 from ..data import DataCollator, FSLDataLoader, NumpyPaddedFSLDataset
 from ..distributed.utils import get_fs_local_rank, get_rank, get_world_size
 from ..exceptions import OLMoConfigurationError
@@ -52,7 +51,6 @@ class LMEvaluator(Evaluator):
         collator: DataCollator,
         device: Optional[torch.device] = None,
         dp_process_group: Optional[dist.ProcessGroup] = None,
-        work_dir: Optional[PathOrStr] = None,
         seed: int = 0,
         num_threads: Optional[int] = None,
         num_workers: int = 0,
@@ -76,7 +74,7 @@ class LMEvaluator(Evaluator):
             dataset,
             global_batch_size=global_batch_size,
             collator=collator,
-            work_dir=work_dir,
+            work_dir=dataset.work_dir,
             seed=seed,
             dp_world_size=get_world_size(dp_process_group),
             dp_rank=get_rank(dp_process_group),
