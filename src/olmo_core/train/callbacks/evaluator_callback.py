@@ -29,6 +29,9 @@ class EvaluatorCallback(Callback):
     """
 
     def post_step(self):
+        if self.step <= 1 or self.step % self.eval_interval != 0:
+            return
+
         # Put model in eval train mode.
         self.trainer.optim.zero_grad(set_to_none=True)
         self.trainer.model.eval()
