@@ -118,6 +118,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             LMEvaluatorCallbackConfig(
                 eval_dataset=NumpyDatasetConfig(
                     paths=["/net/nfs/allennlp/llm-data/c4/en/c4-validation.00000-00008.npy"],
+                    metadata=[{"label": "c4-validation"}],
                     name=NumpyDatasetType.padded_fsl,
                     sequence_length=1024,
                     tokenizer=tokenizer_config,
