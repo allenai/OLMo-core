@@ -102,7 +102,7 @@ class LMEvaluator(Evaluator):
         for idx, (metadata, tokens_loss) in enumerate(zip(batch["metadata"], ce_loss)):
             metric = self.metrics[metadata["label"]]
             if "label_mask" in batch:
-                tokens_loss = tokens_loss.masked_select(batch["label_mask"][idx])
+                tokens_loss = tokens_loss.masked_select(batch["label_mask"][idx][1:])
             metric.update(tokens_loss)
 
     def compute_metrics(self) -> Dict[str, torch.Tensor]:
