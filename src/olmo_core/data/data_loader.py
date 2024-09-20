@@ -43,6 +43,7 @@ from .numpy_dataset import (
     NumpyDatasetBase,
     NumpyDatasetType,
     NumpyFSLDataset,
+    NumpyPaddedFSLDataset,
     NumpyVSLDataset,
 )
 from .utils import get_rng, iter_batched, load_array_slice, memmap_to_write
@@ -318,7 +319,9 @@ class DataLoaderBase(ABC):
 
     def get_data_loader(self) -> torch.utils.data.DataLoader:
         return torch.utils.data.DataLoader(
-            _IterableDatasetWrapper(self),
+            _IterableDatasetWrapper(
+                self, strict_shapes=not isinstance(self.dataset, NumpyPaddedFSLDataset)
+            ),
             batch_size=None,
             num_workers=self.num_workers,
             pin_memory=self.target_device_type == "cuda" and self.num_workers > 0,
@@ -677,8 +680,9 @@ class VSLDataLoader(DataLoaderBase):
 
 
 class _IterableDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
-    def __init__(self, data_loader: DataLoaderBase):
+    def __init__(self, data_loader: DataLoaderBase, strict_shapes: bool = False):
         self.data_loader = data_loader
+        self.strict_shapes = strict_shapes
 
     @property
     def dataset(self) -> NumpyDatasetBase:
@@ -739,5 +743,7 @@ class _IterableDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
 
         return (
             self.data_loader.collator(batch)
-            for batch in iter_batched(instance_iterator, self.data_loader.rank_batch_size)
+            for batch in iter_batched(
+                instance_iterator, self.data_loader.rank_batch_size, strict=self.strict_shapes
+            )
         )
