@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `NumpyPaddedFSLDataset` variant.
 - Added `Evaluator` class and `EvaluatorCallback`.
 
+### Fixed
+
+- Fixed bug with data loader when using threading.
+
 ## [v1.1.0](https://github.com/allenai/OLMo-core/releases/tag/v1.1.0) - 2024-09-18
 
 ### Added
