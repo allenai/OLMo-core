@@ -66,6 +66,13 @@ class EvaluatorCallback(Callback):
                     else:
                         log.info(f"[eval={evaluator.name},step={eval_step+1}]")
 
+                if (eval_step + 1) % self.trainer.cancel_check_interval == 0:
+                    self.trainer.check_if_canceled()
+
+                if self.trainer.is_canceled:
+                    self.trainer.model.train()
+                    return
+
             for name, value in evaluator.compute_metrics().items():
                 name = f"eval/{evaluator.name}/{name}"
                 self.trainer.record_metric(name, value)

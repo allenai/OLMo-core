@@ -413,11 +413,9 @@ class Trainer:
             and self.global_step > 0
             and self.global_step % self.cancel_check_interval == 0
         ):
-            # NOTE: any collective operations done in a separate thread should use the bookkeeping
-            # process group to avoid race conditions.
             self.thread_pool.submit(self._check_if_canceled)
 
-        if self._canceled:
+        if self.is_canceled:
             return True
         elif self._duration_due(self.max_duration):
             return True
@@ -425,6 +423,12 @@ class Trainer:
             return True
         else:
             return False
+
+    @property
+    def is_canceled(self) -> bool:
+        if self._error is not None:
+            raise RuntimeError("An error occurred") from self._error
+        return self._canceled
 
     @property
     def tokens_per_batch(self) -> int:
@@ -524,6 +528,13 @@ class Trainer:
         #  self._canceled = True  # NOTE: important not to set this!! Leads to distributed hang.
         self._canceling_rank = get_rank()
         self._cancel_reason = reason
+
+    def check_if_canceled(self):
+        """
+        Asynchronously check if the run is canceled. Use :data:`is_canceled` to see the result.
+        This needs to be called by all ranks at the same point in the training loop.
+        """
+        self.thread_pool.submit(self._check_if_canceled)
 
     def fit(self):
         """
