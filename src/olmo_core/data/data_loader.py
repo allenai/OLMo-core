@@ -695,8 +695,8 @@ class _IterableDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
         """
         Iterate over the local rank+worker instances.
         """
-        indices = iter(
-            self.data_loader._get_local_instance_indices(self.data_loader.get_global_indices())
+        indices = self.data_loader._get_local_instance_indices(
+            self.data_loader.get_global_indices()
         )
 
         num_threads = self.data_loader.num_threads
