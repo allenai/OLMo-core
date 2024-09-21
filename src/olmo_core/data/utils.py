@@ -292,7 +292,7 @@ def iter_batched(
     batch: List[Dict[str, Any]] = []
     tokens = 0
     shape: Optional[Tuple[int, ...]] = None
-    for x in iter(iterable):
+    for x in iterable:
         x_num_tokens = x["input_ids"].numel()
         assert x_num_tokens <= batch_num_tokens, f"{x_num_tokens} > {batch_num_tokens}"
 

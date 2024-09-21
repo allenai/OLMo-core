@@ -736,7 +736,7 @@ class _IterableDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
                     )
                 )
 
-            instance_iterator = (x for x in roundrobin(*thread_generators))
+            instance_iterator = roundrobin(*thread_generators)
         else:
             instance_iterator = (self.data_loader._get_dataset_item(int(idx)) for idx in indices)
 

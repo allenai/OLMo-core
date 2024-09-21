@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, List
 import torch
 
 from olmo_core.data import NumpyDatasetConfig, NumpyPaddedFSLDataset
+from olmo_core.distributed.utils import get_world_size
 from olmo_core.eval import Evaluator
 from olmo_core.eval.lm_evaluator import LMEvaluator
 from olmo_core.exceptions import OLMoConfigurationError
@@ -83,7 +84,7 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
     log_interval: int = 5
 
     def build(self, trainer: "Trainer") -> Callback:
-        eval_batch_size = trainer.rank_batch_size
+        eval_batch_size = trainer.rank_microbatch_size * get_world_size(trainer.dp_process_group)
         dataset = self.eval_dataset.build()
         if not isinstance(dataset, NumpyPaddedFSLDataset):
             raise OLMoConfigurationError(

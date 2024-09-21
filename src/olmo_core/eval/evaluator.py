@@ -40,7 +40,7 @@ class Evaluator(metaclass=ABCMeta):
         Iterator over the evaluator's batches.
         """
         if isinstance(self.batches, DataLoaderBase):
-            self.batches.reshuffle()
+            self.batches.reshuffle(1)
         for batch in self.batches:
             yield batch
         if isinstance(self.batches, DataLoaderBase):
