@@ -47,6 +47,7 @@ class AttentionConfig(Config):
     n_heads: int = 16
     n_kv_heads: Optional[int] = None
     bias: bool = True
+    qkv_bias: Optional[bool] = None
     rope: Optional[RoPEConfig] = None
     clip_qkv: Optional[float] = None
     qk_norm: Optional[LayerNormConfig] = None
@@ -102,6 +103,7 @@ class Attention(nn.Module):
     :param n_heads: The number of attention heads.
     :param n_kv_heads: The number of key and value heads, if different.
     :param bias: Include biases with linear layers.
+    :param qkv_bias: Include biases with the QKV linear layers. If ``None``, the value of ``bias`` is used.
     :param rope: The config for RoPE, if RoPE should be used.
     :param clip_qkv: Clip QKV to this value, if set.
     :param qk_norm: Configuration a layer norm for queries and keys.
@@ -119,6 +121,7 @@ class Attention(nn.Module):
         n_heads: int,
         n_kv_heads: Optional[int] = None,
         bias: bool = True,
+        qkv_bias: Optional[bool] = None,
         rope: Optional[RoPEConfig] = None,
         clip_qkv: Optional[float] = None,
         qk_norm: Optional[LayerNormConfig] = None,
@@ -133,12 +136,14 @@ class Attention(nn.Module):
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads or n_heads
         self.head_dim = d_model // n_heads
-        self.w_q = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
+        if qkv_bias is None:
+            qkv_bias = bias
+        self.w_q = nn.Linear(d_model, d_model, bias=qkv_bias, dtype=dtype, device=init_device)
         self.w_k = nn.Linear(
-            d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+            d_model, self.n_kv_heads * self.head_dim, bias=qkv_bias, dtype=dtype, device=init_device
         )
         self.w_v = nn.Linear(
-            d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+            d_model, self.n_kv_heads * self.head_dim, bias=qkv_bias, dtype=dtype, device=init_device
         )
         self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
         self.clip_qkv = clip_qkv
@@ -284,6 +289,7 @@ class FusedAttention(nn.Module):
     :param d_model: The model hidden size.
     :param n_heads: The number of attention heads.
     :param bias: Include biases with linear layers.
+    :param qkv_bias: Include biases with the QKV linear layers. If ``None``, the value of ``bias`` is used.
     :param rope: The config for RoPE, if RoPE should be used.
     :param clip_qkv: Clip QKV to this value, if set.
     :param dropout: Dropout probability.
@@ -297,6 +303,7 @@ class FusedAttention(nn.Module):
         d_model: int,
         n_heads: int,
         bias: bool = True,
+        qkv_bias: Optional[bool] = None,
         rope: Optional[RoPEConfig] = None,
         clip_qkv: Optional[float] = None,
         dropout: float = 0.0,
@@ -313,7 +320,9 @@ class FusedAttention(nn.Module):
 
         self.n_heads = n_heads
         self.head_dim = d_model // n_heads
-        self.w_qkv = nn.Linear(d_model, 3 * d_model, bias=bias, dtype=dtype, device=init_device)
+        if qkv_bias is None:
+            qkv_bias = bias
+        self.w_qkv = nn.Linear(d_model, 3 * d_model, bias=qkv_bias, dtype=dtype, device=init_device)
         self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
         self.clip_qkv = clip_qkv
         self.dropout_p = dropout

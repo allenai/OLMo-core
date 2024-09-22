@@ -5,6 +5,7 @@ from typing import List, Optional, Sequence, cast
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     checkpoint_wrapper as ptd_checkpoint_wrapper,
@@ -100,6 +101,8 @@ class TransformerConfig(Config):
     compile: bool = False
     dp_config: Optional[DataParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
+    weight_tying: bool = False
+    qkv_bias: bool = False
 
     def build(
         self,
@@ -138,6 +141,7 @@ class TransformerConfig(Config):
             init_method=self.init_method,
             init_device=init_device,
             init_seed=self.init_seed,
+            weight_tying=self.weight_tying,
         )
         log.info("%s", model)
 
@@ -470,6 +474,8 @@ class TransformerConfig(Config):
         block_name: TransformerBlockType = TransformerBlockType.default,
         dtype: DType = DType.float32,
         compile: bool = False,
+        weight_tying: bool = False,
+        qkv_bias: bool = False,
         **kwargs,
     ) -> "TransformerConfig":
         """
@@ -499,7 +505,7 @@ class TransformerConfig(Config):
         # Configure global layer norm.
         layer_norm = LayerNormConfig(
             name=LayerNormType.fused_rms if fused_ops else LayerNormType.rms,
-            eps=1e-5,
+            eps=kwargs.pop("layer_norm_eps", 1e-5),
             bias=False,
             #  dtype=dtype,  # TODO: allow low precision LN?
         )
@@ -520,6 +526,7 @@ class TransformerConfig(Config):
                 n_heads=n_heads,
                 n_kv_heads=n_kv_heads,
                 bias=False,
+                qkv_bias=qkv_bias,
                 rope=RoPEConfig(name=rope_type, theta=rope_theta),
                 qk_norm=layer_norm if qk_norm else None,
                 use_flash=use_flash,
@@ -538,6 +545,7 @@ class TransformerConfig(Config):
             bias=False,
             dtype=dtype,
             compile=compile,
+            weight_tying=weight_tying,
             **kwargs,
         )
 
@@ -552,6 +560,7 @@ class Transformer(nn.Module):
     :param block: The block configuration.
     :param layer_norm: The layer norm config for the final layer norm.
     :param bias: Whether to use a bias in the final linear layer.
+    :param weight_tying: Whether to tie the weights of the input and output embeddings.
     :param dtype: The datatype to use for the linear output layer.
     :param init_device: The device used when initializing parameters.
     """
@@ -565,6 +574,7 @@ class Transformer(nn.Module):
         block: TransformerBlockConfig,
         layer_norm: LayerNormConfig,
         bias: bool = True,
+        weight_tying: bool = False,
         dtype: torch.dtype = torch.float32,
         init_method: InitMethod = InitMethod.normal,
         init_device: str = "cpu",
@@ -587,7 +597,9 @@ class Transformer(nn.Module):
             ]
         )
         self.norm = layer_norm.build(d_model, init_device=init_device)
-        self.w_out = nn.Linear(d_model, vocab_size, bias=bias, dtype=dtype, device=init_device)
+        if not weight_tying:
+            self.w_out = nn.Linear(d_model, vocab_size, bias=bias, dtype=dtype, device=init_device)
+        self.weight_tying = weight_tying
         self.init_method = InitMethod(init_method)
         self.init_seed = init_seed
         self._cache = cache
@@ -654,7 +666,7 @@ class Transformer(nn.Module):
         if self.norm is not None:
             self.norm.reset_parameters()
 
-        if self.w_out is not None:
+        if not self.weight_tying and self.w_out is not None:
             self.init_method.init_final_w_out(self.w_out, d_model=self.d_model, generator=generator)
 
     def forward(
@@ -688,7 +700,10 @@ class Transformer(nn.Module):
             h = block(h, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
 
         h = self.norm(h) if self.norm is not None else h
-        out = self.w_out(h).float() if self.w_out is not None else h
+        if self.weight_tying:
+            out = F.linear(h, self.embeddings.weight, None).float()
+        else:
+            out = self.w_out(h).float() if self.w_out is not None else h
         return out
 
     def apply_activation_checkpointing(
@@ -793,8 +808,9 @@ class Transformer(nn.Module):
 
         from torch.distributed._composable.fsdp import MixedPrecisionPolicy, fully_shard
 
+        _param_dtype = self.w_out.weight.dtype if self.weight_tying else self.embeddings.weight.dtype
         mp_policy = MixedPrecisionPolicy(
-            param_dtype=param_dtype or self.w_out.weight.dtype, reduce_dtype=reduce_dtype
+            param_dtype=param_dtype or _param_dtype, reduce_dtype=reduce_dtype
         )
         fsdp_config = dict(mesh=dp_mesh, mp_policy=mp_policy)
 
