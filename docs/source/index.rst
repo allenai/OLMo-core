@@ -38,6 +38,7 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
    config
    data/index
    distributed/index
+   eval/index
    exceptions
    io
    launch

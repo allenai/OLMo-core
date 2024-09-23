@@ -14,10 +14,10 @@ from ..data import DataCollator, NumpyDatasetBase
 from ..exceptions import OLMoConfigurationError
 from ..io import is_url
 from ..utils import get_default_device
-from .callbacks import Callback
+from .callbacks import Callback, CallbackConfig
 from .checkpoint import Checkpointer
 from .trainer import LoadStrategy, Trainer
-from .utils import Duration, DurationUnit
+from .utils import Duration
 
 
 @dataclass
@@ -39,9 +39,7 @@ class TrainerConfig(Config):
 
     device: Optional[str] = None
     save_overwrite: bool = False
-    max_duration: Duration = field(
-        default_factory=lambda: Duration(value=1, unit=DurationUnit.epochs)
-    )
+    max_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     cancel_check_interval: int = 25
     hard_stop: Optional[Duration] = None
     metrics_collect_interval: int = 5
@@ -100,7 +98,13 @@ class TrainerConfig(Config):
 
         collator = self.build_collator(dataset)
 
-        return Trainer(
+        all_callbacks = kwargs.pop("callbacks")
+        callbacks = {k: cb for k, cb in all_callbacks.items() if not isinstance(cb, CallbackConfig)}
+        callback_configs = {
+            k: cb for k, cb in all_callbacks.items() if isinstance(cb, CallbackConfig)
+        }
+
+        trainer = Trainer(
             model=model,
             optim=optim,
             dataset=dataset,
@@ -110,5 +114,12 @@ class TrainerConfig(Config):
             work_dir=Path(work_dir),
             device=torch.device(device) if device is not None else get_default_device(),
             dp_process_group=dp_process_group,
+            callbacks=callbacks,
             **kwargs,
         )
+
+        for cb_name, cb_config in callback_configs.items():
+            cb = cb_config.build(trainer)
+            trainer.add_callback(cb_name, cb)
+
+        return trainer

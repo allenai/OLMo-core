@@ -20,6 +20,7 @@ from .numpy_dataset import (
     NumpyDatasetDType,
     NumpyDatasetType,
     NumpyFSLDataset,
+    NumpyPaddedFSLDataset,
     NumpyVSLDataset,
     VSLCurriculum,
     VSLCurriculumConfig,
@@ -34,6 +35,7 @@ from .tokenizer import TokenizerConfig, TokenizerName
 __all__ = [
     "NumpyDatasetBase",
     "NumpyFSLDataset",
+    "NumpyPaddedFSLDataset",
     "NumpyVSLDataset",
     "VSLCurriculum",
     "VSLNaturalCurriculum",

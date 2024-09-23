@@ -6,6 +6,7 @@ import numpy as np
 from olmo_core.data import (
     NumpyDatasetConfig,
     NumpyFSLDataset,
+    NumpyPaddedFSLDataset,
     NumpyVSLDataset,
     TokenizerConfig,
 )
@@ -32,6 +33,34 @@ def test_numpy_fsl_dataset(tmp_path: Path):
     assert ds[1]["input_ids"].tolist() == [4, 5, 6, 7]
     assert ds[7]["input_ids"].tolist() == [28, 29, 30, 31]
     assert len(ds) == 8
+
+
+def test_numpy_padded_fsl_dataset(tmp_path: Path):
+    data1 = [1, 2, 3, 4, 5, 6, 7, 0, 8, 9, 10, 0]
+    mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
+    mmap1[:] = np.array(data1, dtype=np.uint16)
+    mmap1.flush()
+
+    data2 = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 21, 22, 0]
+    mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(len(data2),))
+    mmap2[:] = np.array(data2, dtype=np.uint16)
+    mmap2.flush()
+
+    ds = NumpyPaddedFSLDataset(
+        tmp_path / "mmap1.npy",
+        tmp_path / "mmap2.npy",
+        sequence_length=8,
+        pad_token_id=0,
+        eos_token_id=0,
+    )
+    ds.prepare()
+    assert ds[0]["input_ids"].tolist() == [1, 2, 3, 4, 5, 6, 7, 0]
+    assert ds[0]["label_mask"].tolist() == [True] * 8
+    assert ds[1]["input_ids"].tolist() == [8, 9, 10, 0, 0, 0, 0, 0]
+    assert ds[1]["label_mask"].tolist() == [True] * 4 + [False] * 4
+    assert ds[2]["input_ids"].tolist() == [11, 12, 13, 14, 15, 16, 17, 18]
+    assert ds[3]["input_ids"].tolist() == [21, 22, 0, 0, 0, 0, 0, 0]
+    assert len(ds) == 4
 
 
 def write_data_file(data: List[int], path: Path, dtype, eos_token_id: int):

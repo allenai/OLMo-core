@@ -27,7 +27,7 @@ from torch.optim import Optimizer
 from ..aliases import PathOrStr
 from ..config import StrEnum
 from ..data import DataCollator, DataLoaderBase, NumpyDatasetBase
-from ..data.utils import split_batch
+from ..data.utils import get_labels, split_batch
 from ..distributed.utils import (
     all_reduce_value,
     backend_supports_cpu,
@@ -330,31 +330,15 @@ class Trainer:
                 Path(self.save_folder).mkdir(exist_ok=True, parents=True)
 
         # Ensure we have necessary callbacks.
-        has_console_logger_callback = False
-        has_checkpointer_callback = False
-        has_speed_monitor_callback = False
-        has_gc_collector_callback = False
-        for callback in self.callbacks.values():
-            if isinstance(callback, ConsoleLoggerCallback):
-                has_console_logger_callback = True
-            elif isinstance(callback, CheckpointerCallback):
-                has_checkpointer_callback = True
-            elif isinstance(callback, SpeedMonitorCallback):
-                has_speed_monitor_callback = True
-            elif isinstance(callback, GarbageCollectorCallback):
-                has_gc_collector_callback = True
-        if not has_console_logger_callback:
-            self.callbacks.setdefault(
-                "console_logger",
-                ConsoleLoggerCallback(
-                    log_interval=1, metrics_log_interval=self.metrics_collect_interval
-                ),
-            )
-        if not has_checkpointer_callback:
-            self.callbacks.setdefault("checkpointer", CheckpointerCallback())
-        if not has_speed_monitor_callback:
-            self.callbacks.setdefault("speed_monitor", SpeedMonitorCallback())
-        if is_distributed() and not has_gc_collector_callback:
+        self.callbacks.setdefault(
+            "console_logger",
+            ConsoleLoggerCallback(
+                log_interval=1, metrics_log_interval=self.metrics_collect_interval
+            ),
+        )
+        self.callbacks.setdefault("checkpointer", CheckpointerCallback())
+        self.callbacks.setdefault("speed_monitor", SpeedMonitorCallback())
+        if is_distributed():
             self.callbacks.setdefault("garbage_collector", GarbageCollectorCallback())
 
         # Set pointer to self in all callbacks.
@@ -365,14 +349,7 @@ class Trainer:
         # We do this for 2 reasons: (1) to respect the priority, and (2) to ensure the callback
         # order is consistent across the process group since some callbacks make distributed
         # synchronization/communication calls.
-        self.callbacks = OrderedDict(
-            (
-                (k, cb)
-                for k, cb in sorted(
-                    self.callbacks.items(), key=lambda x: (x[1].priority, x[0]), reverse=True
-                )
-            )
-        )
+        self._sort_callbacks()
 
         # Maybe create separate process group for bookkeeping.
         if self._bookkeeping_pg is None and is_distributed():
@@ -436,11 +413,9 @@ class Trainer:
             and self.global_step > 0
             and self.global_step % self.cancel_check_interval == 0
         ):
-            # NOTE: any collective operations done in a separate thread should use the bookkeeping
-            # process group to avoid race conditions.
             self.thread_pool.submit(self._check_if_canceled)
 
-        if self._canceled:
+        if self.is_canceled:
             return True
         elif self._duration_due(self.max_duration):
             return True
@@ -448,6 +423,12 @@ class Trainer:
             return True
         else:
             return False
+
+    @property
+    def is_canceled(self) -> bool:
+        if self._error is not None:
+            raise RuntimeError("An error occurred") from self._error
+        return self._canceled
 
     @property
     def tokens_per_batch(self) -> int:
@@ -547,6 +528,13 @@ class Trainer:
         #  self._canceled = True  # NOTE: important not to set this!! Leads to distributed hang.
         self._canceling_rank = get_rank()
         self._cancel_reason = reason
+
+    def check_if_canceled(self):
+        """
+        Asynchronously check if the run is canceled. Use :data:`is_canceled` to see the result.
+        This needs to be called by all ranks at the same point in the training loop.
+        """
+        self.thread_pool.submit(self._check_if_canceled)
 
     def fit(self):
         """
@@ -874,15 +862,27 @@ class Trainer:
             raise FileNotFoundError(source)
         return target
 
+    def add_callback(self, name: str, callback: Callback):
+        if name in self.callbacks:
+            raise OLMoConfigurationError(f"A callback with name '{name}' already exists!")
+        callback.trainer = self
+        self.callbacks[name] = callback
+        self._sort_callbacks()
+
+    def _sort_callbacks(self):
+        self.callbacks = OrderedDict(
+            (
+                (k, cb)
+                for k, cb in sorted(
+                    self.callbacks.items(), key=lambda x: (x[1].priority, x[0]), reverse=True
+                )
+            )
+        )
+
     def _duration_due(self, duration: Duration) -> bool:
-        if duration.unit == DurationUnit.steps:
-            return self.global_step >= duration.value
-        elif duration.unit == DurationUnit.tokens:
-            return self.global_train_tokens_seen >= duration.value
-        elif duration.unit == DurationUnit.epochs:
-            return self.epoch > duration.value
-        else:
-            raise NotImplementedError
+        return duration.due(
+            step=self.global_step, tokens=self.global_train_tokens_seen, epoch=self.epoch
+        )
 
     def _handle_os_signal(self, signalnum, stack_frame):
         del stack_frame
@@ -973,22 +973,7 @@ class Trainer:
                 callback.log_metrics(step, metrics[step])
 
     def _get_labels(self, batch: Dict[str, Any]) -> torch.Tensor:
-        # Labels are just input IDs shifted to the left (first item is ignored).
-        labels, label_mask, attention_mask, instance_mask = (
-            batch["input_ids"].clone(),
-            batch.get("label_mask"),
-            batch.get("attention_mask"),
-            batch.get("instance_mask"),
-        )
-        if label_mask is not None:
-            labels.masked_fill_(~label_mask, self.collator.label_ignore_index)
-        if attention_mask is not None:
-            labels.masked_fill_(attention_mask == 0.0, self.collator.label_ignore_index)
-        if instance_mask is not None:
-            labels.masked_fill_(
-                ~instance_mask.unsqueeze(-1), value=self.collator.label_ignore_index
-            )
-        return labels[..., 1:].contiguous()
+        return get_labels(batch, label_ignore_index=self.collator.label_ignore_index)
 
     @contextlib.contextmanager
     def _model_forward_context(self) -> Generator[None, None, None]:
@@ -1085,7 +1070,7 @@ class Trainer:
         self.optim.zero_grad(set_to_none=True)
 
         # Move tensors to the right device.
-        batch = move_to_device(batch, self.device, non_blocking=True)
+        batch = move_to_device(batch, self.device)
 
         # Generate labels, calculate how many tokens are going to be use in the loss.
         if "labels" not in batch:
@@ -1186,8 +1171,6 @@ class Trainer:
 
             for callback in self.callbacks.values():
                 callback.post_train_batch()
-
-            # TODO: evals
 
             for callback in self.callbacks.values():
                 callback.post_step()

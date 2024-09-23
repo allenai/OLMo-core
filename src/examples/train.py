@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import List, cast
 
 from olmo_core.config import Config, DType
-from olmo_core.data import NumpyDatasetConfig, TokenizerConfig
+from olmo_core.data import NumpyDatasetConfig, NumpyDatasetType, TokenizerConfig
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.distributed.utils import init_hybrid_shard_mesh
 from olmo_core.nn.transformer import TransformerConfig
@@ -26,11 +26,13 @@ from olmo_core.train.callbacks import (
     ConfigSaverCallback,
     GPUMemoryMonitorCallback,
     GradClipperCallback,
+    LMEvaluatorCallbackConfig,
     ProfilerCallback,
     SchedulerCallback,
     SequenceLengthSchedulerCallback,
     WandBCallback,
 )
+from olmo_core.train.utils import Duration
 from olmo_core.utils import get_default_device, seed_all
 
 
@@ -63,10 +65,10 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     dataset_config = NumpyDatasetConfig.glob(
         "/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy",  # can be globs
-        name="fsl",
+        name=NumpyDatasetType.fsl,
         sequence_length=1024,
         max_target_sequence_length=8192,
-        #  name="vsl",
+        #  name=NumpyDatasetType.vsl,
         #  max_sequence_length=2048,
         #  min_sequence_length=256,
         #  vsl_curriculum=VSLCurriculumConfig(name=VSLCurriculumType.grow_p2, num_cycles=4),
@@ -112,6 +114,21 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         )
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("profiler", ProfilerCallback(enabled=False))
+        .with_callback(
+            "evaluator",
+            LMEvaluatorCallbackConfig(
+                eval_dataset=NumpyDatasetConfig(
+                    paths=["/net/nfs/allennlp/llm-data/c4/en/c4-validation.00000-00008.npy"],
+                    metadata=[{"label": "c4-validation"}],
+                    name=NumpyDatasetType.padded_fsl,
+                    sequence_length=1024,
+                    tokenizer=tokenizer_config,
+                    work_dir="/tmp/dataset-cache",
+                ),
+                eval_interval=250,
+                eval_duration=Duration.steps(10),
+            ),
+        )
     )
 
     return ExperimentConfig(

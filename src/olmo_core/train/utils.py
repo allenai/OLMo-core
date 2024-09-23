@@ -35,6 +35,28 @@ class Duration:
     value: int
     unit: DurationUnit
 
+    @classmethod
+    def steps(cls, steps: int) -> "Duration":
+        return cls(value=steps, unit=DurationUnit.steps)
+
+    @classmethod
+    def epochs(cls, epochs: int) -> "Duration":
+        return cls(value=epochs, unit=DurationUnit.epochs)
+
+    @classmethod
+    def tokens(cls, tokens: int) -> "Duration":
+        return cls(value=tokens, unit=DurationUnit.tokens)
+
+    def due(self, *, step: int, tokens: int, epoch: int) -> bool:
+        if self.unit == DurationUnit.steps:
+            return step >= self.value
+        elif self.unit == DurationUnit.tokens:
+            return tokens >= self.value
+        elif self.unit == DurationUnit.epochs:
+            return epoch > self.value
+        else:
+            raise NotImplementedError
+
 
 class ReduceType(StrEnum):
     """

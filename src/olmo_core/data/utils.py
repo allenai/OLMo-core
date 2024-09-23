@@ -292,7 +292,7 @@ def iter_batched(
     batch: List[Dict[str, Any]] = []
     tokens = 0
     shape: Optional[Tuple[int, ...]] = None
-    for x in iter(iterable):
+    for x in iterable:
         x_num_tokens = x["input_ids"].numel()
         assert x_num_tokens <= batch_num_tokens, f"{x_num_tokens} > {batch_num_tokens}"
 
@@ -401,5 +401,54 @@ def bucket_documents(
     return total_og_docs, len(indices) // 2
 
 
+def segment_documents_into_instances(
+    path: PathOrStr,
+    target: Path,
+    *,
+    max_sequence_length: int,
+    eos_token_id: int,
+    dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]],
+    indices_dtype: Union[
+        Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
+    ] = np.uint32,
+) -> Tuple[int, int]:
+    """
+    Segment documents into instances of at most ``sequence_length`` tokens.
+    Saving the indices of the instances to ``target``.
+
+    Returns the number of original documents and the number of resulting instances documents.
+    """
+    total_og_docs = 0
+    indices = []
+    for start_idx, end_idx in iter_document_indices(path, eos_token_id=eos_token_id, dtype=dtype):
+        total_og_docs += 1
+        length = end_idx - start_idx
+        indices.append(start_idx)
+        indices.append(start_idx + min(length, max_sequence_length))
+        start_idx += length
+
+    with memmap_to_write(target, dtype=indices_dtype, shape=(len(indices),)) as indices_mmap:
+        indices_mmap[:] = indices
+
+    return total_og_docs, len(indices) // 2
+
+
 def get_doc_lengths_from_indices(doc_indices: np.ndarray) -> np.ndarray:
     return doc_indices[1::2] - doc_indices[0::2]
+
+
+def get_labels(batch: Dict[str, Any], label_ignore_index: int = -100) -> torch.Tensor:
+    # Labels are just input IDs shifted to the left (first item is ignored).
+    labels, label_mask, attention_mask, instance_mask = (
+        batch["input_ids"].clone(),
+        batch.get("label_mask"),
+        batch.get("attention_mask"),
+        batch.get("instance_mask"),
+    )
+    if label_mask is not None:
+        labels.masked_fill_(~label_mask, label_ignore_index)
+    if attention_mask is not None:
+        labels.masked_fill_(attention_mask == 0.0, label_ignore_index)
+    if instance_mask is not None:
+        labels.masked_fill_(~instance_mask.unsqueeze(-1), value=label_ignore_index)
+    return labels[..., 1:].contiguous()

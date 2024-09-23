@@ -118,6 +118,7 @@ class DataLoaderBase(ABC):
         self.batches_processed = 0
         self.tokens_processed = 0
         self._epoch: Optional[int] = None
+        self._global_indices: Optional[np.ndarray] = None
 
     @classmethod
     def wrap_numpy_dataset(
@@ -190,6 +191,9 @@ class DataLoaderBase(ABC):
         """
         raise NotImplementedError
 
+    def __len__(self) -> int:
+        return self.total_batches
+
     @property
     def rank_batch_size(self) -> int:
         return self.global_batch_size // self.dp_world_size
@@ -218,29 +222,35 @@ class DataLoaderBase(ABC):
         return torch.utils.data.get_worker_info()
 
     def get_global_indices(self) -> np.ndarray:
+        if self._global_indices is not None:
+            return self._global_indices
         if not self._global_indices_file.is_file():
             raise RuntimeError("Missing global indices file, did you forget to call 'reshuffle()'?")
         return np.memmap(self._global_indices_file, mode="r", dtype=np.uint32)  # type: ignore
 
-    def build_and_save_global_indices(self):
-        if self.fs_local_rank == 0:
-            if self._global_indices_file.is_file():
-                log.info(
-                    f"Using existing global indices file for seed {self.seed} and epoch {self.epoch} "
-                    f"at:\n'{self._global_indices_file}'"
-                )
-            else:
-                log.info(
-                    f"Saving global data order indices for seed {self.seed} and epoch {self.epoch} "
-                    f"to:\n'{self._global_indices_file}'..."
-                )
-                global_indices = self._build_global_indices()
-                assert len(global_indices) < np.iinfo(np.uint32).max
-                with memmap_to_write(
-                    self._global_indices_file, shape=global_indices.shape, dtype=np.uint32
-                ) as global_indices_mmap:
-                    global_indices_mmap[:] = global_indices
-                log.info(f"Global data order indices saved to:\n'{self._global_indices_file}'")
+    def build_and_save_global_indices(self, in_memory: bool = False):
+        if in_memory:
+            self._global_indices = self._build_global_indices()
+        else:
+            self._global_indices = None
+            if self.fs_local_rank == 0:
+                if self._global_indices_file.is_file():
+                    log.info(
+                        f"Using existing global indices file for seed {self.seed} and epoch {self.epoch} "
+                        f"at:\n'{self._global_indices_file}'"
+                    )
+                else:
+                    log.info(
+                        f"Saving global data order indices for seed {self.seed} and epoch {self.epoch} "
+                        f"to:\n'{self._global_indices_file}'..."
+                    )
+                    global_indices = self._build_global_indices()
+                    assert len(global_indices) < np.iinfo(np.uint32).max
+                    with memmap_to_write(
+                        self._global_indices_file, shape=global_indices.shape, dtype=np.uint32
+                    ) as global_indices_mmap:
+                        global_indices_mmap[:] = global_indices
+                    log.info(f"Global data order indices saved to:\n'{self._global_indices_file}'")
         barrier()
 
     def state_dict(self) -> Dict[str, Any]:
@@ -279,7 +289,7 @@ class DataLoaderBase(ABC):
 
         self.batches_processed = state_dict["batches_processed"]
         self.tokens_processed = state_dict["tokens_processed"]
-        self._epoch = state_dict["epoch"] or self.epoch
+        self._epoch = state_dict["epoch"] or self._epoch
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         """
@@ -295,17 +305,20 @@ class DataLoaderBase(ABC):
             self.tokens_processed += self.global_batch_size
             yield batch
 
-    def reshuffle(self, epoch: int):
+    def reshuffle(self, epoch: Optional[int] = None, in_memory: bool = False):
         """
         Reshuffle for a new epoch. Should be called before starting the epoch, regardless
         of whether or not you've called :meth:`load_state_dict()`.
 
         :param epoch: The epoch number.
+        :param in_memory: Shuffle the indices in-memory as opposed to on disk.
         """
+        if epoch is None:
+            epoch = 1 if self._epoch is None else self._epoch + 1
         if epoch <= 0:
             raise ValueError(f"'epoch' must be at least 1, got {epoch}")
         self._epoch = epoch
-        self.build_and_save_global_indices()
+        self.build_and_save_global_indices(in_memory=in_memory)
 
     def reset(self):
         """
@@ -545,8 +558,11 @@ class VSLDataLoader(DataLoaderBase):
             / f"{bucket_indices_fname}.npy"
         )
 
-    def build_and_save_global_indices(self):
+    def build_and_save_global_indices(self, in_memory: bool = False):
         assert isinstance(self.dataset, NumpyVSLDataset)
+
+        if in_memory:
+            raise NotImplementedError("VSL dataset indices must be shuffled on disk")
 
         # We also need to build and save the bucket instance indices.
         if self.fs_local_rank == 0:
@@ -690,9 +706,7 @@ class _IterableDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
         """
         Iterate over the local rank+worker instances.
         """
-        indices = iter(
-            self.data_loader._get_local_instance_indices(self.data_loader.get_global_indices())
-        )
+        global_indices = self.data_loader.get_global_indices()
 
         num_threads = self.data_loader.num_threads
         if self.worker_info is None and self.data_loader.num_threads is None:
@@ -721,6 +735,10 @@ class _IterableDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
 
             thread_generators = []
             for i in range(num_threads):
+                # NOTE: `_get_local_instance_indices` might return an iterator, so we have to
+                # create a unique one for each thread otherwise it would be exhausted prematurely
+                # and give the wrong order.
+                indices = self.data_loader._get_local_instance_indices(global_indices)
                 generator = (
                     self.data_loader._get_dataset_item(int(idx))
                     for idx in islice(indices, i, None, num_threads)
@@ -731,8 +749,9 @@ class _IterableDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
                     )
                 )
 
-            instance_iterator = (x for x in roundrobin(*thread_generators))
+            instance_iterator = roundrobin(*thread_generators)
         else:
+            indices = self.data_loader._get_local_instance_indices(global_indices)
             instance_iterator = (self.data_loader._get_dataset_item(int(idx)) for idx in indices)
 
         return (
