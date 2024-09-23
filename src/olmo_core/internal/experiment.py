@@ -166,6 +166,7 @@ def build_common_components(
         eval_dataset=NumpyDatasetConfig.from_data_mix(
             DataMix.v3_small_ppl_validation,
             name=NumpyDatasetType.padded_fsl,
+            mix_base_dir=root_dir,
             sequence_length=dataset_config.effective_sequence_length,
             tokenizer=tokenizer_config,
             work_dir=None
