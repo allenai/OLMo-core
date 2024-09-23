@@ -118,6 +118,7 @@ class DataLoaderBase(ABC):
         self.batches_processed = 0
         self.tokens_processed = 0
         self._epoch: Optional[int] = None
+        self._global_indices: Optional[np.ndarray] = None
 
     @classmethod
     def wrap_numpy_dataset(
@@ -221,29 +222,35 @@ class DataLoaderBase(ABC):
         return torch.utils.data.get_worker_info()
 
     def get_global_indices(self) -> np.ndarray:
+        if self._global_indices is not None:
+            return self._global_indices
         if not self._global_indices_file.is_file():
             raise RuntimeError("Missing global indices file, did you forget to call 'reshuffle()'?")
         return np.memmap(self._global_indices_file, mode="r", dtype=np.uint32)  # type: ignore
 
-    def build_and_save_global_indices(self):
-        if self.fs_local_rank == 0:
-            if self._global_indices_file.is_file():
-                log.info(
-                    f"Using existing global indices file for seed {self.seed} and epoch {self.epoch} "
-                    f"at:\n'{self._global_indices_file}'"
-                )
-            else:
-                log.info(
-                    f"Saving global data order indices for seed {self.seed} and epoch {self.epoch} "
-                    f"to:\n'{self._global_indices_file}'..."
-                )
-                global_indices = self._build_global_indices()
-                assert len(global_indices) < np.iinfo(np.uint32).max
-                with memmap_to_write(
-                    self._global_indices_file, shape=global_indices.shape, dtype=np.uint32
-                ) as global_indices_mmap:
-                    global_indices_mmap[:] = global_indices
-                log.info(f"Global data order indices saved to:\n'{self._global_indices_file}'")
+    def build_and_save_global_indices(self, in_memory: bool = False):
+        if in_memory:
+            self._global_indices = self._build_global_indices()
+        else:
+            self._global_indices = None
+            if self.fs_local_rank == 0:
+                if self._global_indices_file.is_file():
+                    log.info(
+                        f"Using existing global indices file for seed {self.seed} and epoch {self.epoch} "
+                        f"at:\n'{self._global_indices_file}'"
+                    )
+                else:
+                    log.info(
+                        f"Saving global data order indices for seed {self.seed} and epoch {self.epoch} "
+                        f"to:\n'{self._global_indices_file}'..."
+                    )
+                    global_indices = self._build_global_indices()
+                    assert len(global_indices) < np.iinfo(np.uint32).max
+                    with memmap_to_write(
+                        self._global_indices_file, shape=global_indices.shape, dtype=np.uint32
+                    ) as global_indices_mmap:
+                        global_indices_mmap[:] = global_indices
+                    log.info(f"Global data order indices saved to:\n'{self._global_indices_file}'")
         barrier()
 
     def state_dict(self) -> Dict[str, Any]:
@@ -298,19 +305,20 @@ class DataLoaderBase(ABC):
             self.tokens_processed += self.global_batch_size
             yield batch
 
-    def reshuffle(self, epoch: Optional[int] = None):
+    def reshuffle(self, epoch: Optional[int] = None, in_memory: bool = False):
         """
         Reshuffle for a new epoch. Should be called before starting the epoch, regardless
         of whether or not you've called :meth:`load_state_dict()`.
 
         :param epoch: The epoch number.
+        :param in_memory: Shuffle the indices in-memory as opposed to on disk.
         """
         if epoch is None:
             epoch = 1 if self._epoch is None else self._epoch + 1
         if epoch <= 0:
             raise ValueError(f"'epoch' must be at least 1, got {epoch}")
         self._epoch = epoch
-        self.build_and_save_global_indices()
+        self.build_and_save_global_indices(in_memory=in_memory)
 
     def reset(self):
         """
@@ -550,8 +558,11 @@ class VSLDataLoader(DataLoaderBase):
             / f"{bucket_indices_fname}.npy"
         )
 
-    def build_and_save_global_indices(self):
+    def build_and_save_global_indices(self, in_memory: bool = False):
         assert isinstance(self.dataset, NumpyVSLDataset)
+
+        if in_memory:
+            raise NotImplementedError("VSL dataset indices must be shuffled on disk")
 
         # We also need to build and save the bucket instance indices.
         if self.fs_local_rank == 0:

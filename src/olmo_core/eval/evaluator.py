@@ -40,9 +40,7 @@ class Evaluator(metaclass=ABCMeta):
         Iterator over the evaluator's batches.
         """
         if isinstance(self.batches, DataLoaderBase):
-            # TODO: shuffle in memory, not on disk, to save disk space so we can use a different
-            # epoch every time.
-            self.batches.reshuffle(1)
+            self.batches.reshuffle(in_memory=True)
         for batch in self.batches:
             yield batch
         if isinstance(self.batches, DataLoaderBase):
