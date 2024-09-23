@@ -6,7 +6,13 @@ from typing import Callable, List, cast
 from beaker import Beaker
 
 from olmo_core.config import Config, StrEnum
-from olmo_core.data import DataLoaderBase, DataMix, NumpyDatasetConfig, TokenizerConfig
+from olmo_core.data import (
+    DataLoaderBase,
+    DataMix,
+    NumpyDatasetConfig,
+    NumpyDatasetType,
+    TokenizerConfig,
+)
 from olmo_core.distributed.utils import get_num_nodes, init_hybrid_shard_mesh
 from olmo_core.io import is_url
 from olmo_core.launch.beaker import (
@@ -22,7 +28,12 @@ from olmo_core.train import (
     prepare_training_environment,
     teardown_training_environment,
 )
-from olmo_core.train.callbacks import ConfigSaverCallback, WandBCallback
+from olmo_core.train.callbacks import (
+    ConfigSaverCallback,
+    LMEvaluatorCallbackConfig,
+    WandBCallback,
+)
+from olmo_core.train.utils import Duration
 from olmo_core.utils import (
     generate_uuid,
     get_default_device,
@@ -40,6 +51,7 @@ class CommonComponents(Config):
     launch: BeakerLaunchConfig
     tokenizer: TokenizerConfig
     dataset: NumpyDatasetConfig
+    lm_evaluator: LMEvaluatorCallbackConfig
 
 
 @dataclass
@@ -150,12 +162,27 @@ def build_common_components(
         else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache",
     )
 
+    lm_evaluator = LMEvaluatorCallbackConfig(
+        eval_dataset=NumpyDatasetConfig.from_data_mix(
+            DataMix.v3_small_ppl_validation,
+            name=NumpyDatasetType.padded_fsl,
+            sequence_length=dataset_config.effective_sequence_length,
+            tokenizer=tokenizer_config,
+            work_dir=None
+            if is_url(root_dir)
+            else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache",
+        ),
+        eval_interval=1000,
+        eval_duration=Duration.steps(10),
+    )
+
     return CommonComponents(
         run_name=run_name,
         save_folder=f"{root_dir}/checkpoints/{beaker_user.lower()}/{run_name}",
         launch=launch_config,
         tokenizer=tokenizer_config,
         dataset=dataset_config,
+        lm_evaluator=lm_evaluator,
     )
 
 
@@ -178,7 +205,10 @@ def build_config(
         model=model_config_builder(common),
         optim=optim_config_builder(common),
         dataset=common.dataset,
-        trainer=trainer_config_builder(common),
+        trainer=trainer_config_builder(common).with_callback(
+            "evaluator",
+            common.lm_evaluator,
+        ),
     ).merge(overrides)
 
     return config

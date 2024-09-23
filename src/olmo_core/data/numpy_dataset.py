@@ -1454,6 +1454,7 @@ class NumpyDatasetConfig(Config):
             raise OLMoConfigurationError("Exactly one of 'paths' or 'mix' is required")
 
         paths: List[str] = []
+        metadata = self.metadata
         if self.paths and self.expand_glob:
             from glob import glob
 
@@ -1477,7 +1478,9 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "Missing tokenizer identifier required to construct data mix"
                 )
-            paths = self.mix.build(self.mix_base_dir, self.tokenizer.identifier)
+            paths, labels = self.mix.build(self.mix_base_dir, self.tokenizer.identifier)
+            if metadata is None:
+                metadata = [{"label": label} for label in labels]
 
         dataset: NumpyDatasetBase
         if self.name == NumpyDatasetType.fsl:
@@ -1508,7 +1511,7 @@ class NumpyDatasetConfig(Config):
                 pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=self.tokenizer.eos_token_id,
                 dtype=self.get_dtype(),
-                metadata=self.metadata,
+                metadata=metadata,
                 include_instance_metadata=self.include_instance_metadata,
                 generate_doc_lengths=self.generate_doc_lengths,
             )
@@ -1547,7 +1550,7 @@ class NumpyDatasetConfig(Config):
                 pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=self.tokenizer.eos_token_id,
                 dtype=self.get_dtype(),
-                metadata=self.metadata,
+                metadata=metadata,
                 include_instance_metadata=self.include_instance_metadata,
             )
         elif self.name == NumpyDatasetType.vsl:
@@ -1571,7 +1574,7 @@ class NumpyDatasetConfig(Config):
                 pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=self.tokenizer.eos_token_id,
                 dtype=self.get_dtype(),
-                metadata=self.metadata,
+                metadata=metadata,
                 include_instance_metadata=self.include_instance_metadata,
             )
         else:
