@@ -32,6 +32,7 @@ from olmo_core.train.callbacks import (
     SequenceLengthSchedulerCallback,
     WandBCallback,
 )
+from olmo_core.train.utils import Duration
 from olmo_core.utils import get_default_device, seed_all
 
 
@@ -125,6 +126,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
                     work_dir="/tmp/dataset-cache",
                 ),
                 eval_interval=250,
+                eval_duration=Duration.steps(10),
             ),
         )
     )

@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, List, Optional
 
 import torch
 
@@ -11,6 +11,7 @@ from olmo_core.eval.lm_evaluator import LMEvaluator
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import format_float, move_to_device
 
+from ..utils import Duration
 from .callback import Callback, CallbackConfig
 
 if TYPE_CHECKING:
@@ -35,6 +36,11 @@ class EvaluatorCallback(Callback):
     The interval (in steps) with which to run the evaluators.
     """
 
+    eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
+    """
+    The duration to run each evaluator for.
+    """
+
     log_interval: int = 5
     """
     How often to log eval progress to the console during an eval loop.
@@ -47,11 +53,14 @@ class EvaluatorCallback(Callback):
         # Put model in eval train mode.
         self.trainer.optim.zero_grad(set_to_none=True)
         self.trainer.model.eval()
+        dp_world_size = get_world_size(self.trainer.dp_process_group)
 
         for evaluator in self.evaluators:
             log.info(f"Running {evaluator.name} evals...")
             evaluator.reset_metrics()
+            eval_tokens = 0
             for eval_step, batch in enumerate(evaluator):
+                eval_tokens += batch["input_ids"].numel() * dp_world_size
                 batch = move_to_device(batch, self.trainer.device)
                 with torch.no_grad():
                     ce_loss, _, logits = self.trainer._model_forward(
@@ -73,6 +82,9 @@ class EvaluatorCallback(Callback):
                     self.trainer.model.train()
                     return
 
+                if self.eval_duration.due(step=eval_step + 1, tokens=eval_tokens, epoch=1):
+                    break
+
             for name, value in evaluator.compute_metrics().items():
                 name = f"eval/{evaluator.name}/{name}"
                 self.trainer.record_metric(name, value)
@@ -88,10 +100,16 @@ class EvaluatorCallback(Callback):
 class LMEvaluatorCallbackConfig(CallbackConfig):
     eval_dataset: NumpyDatasetConfig
     eval_interval: int = 1000
+    eval_batch_size: Optional[int] = None
+    eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     log_interval: int = 5
 
     def build(self, trainer: "Trainer") -> Callback:
-        eval_batch_size = trainer.rank_microbatch_size * get_world_size(trainer.dp_process_group)
+        eval_batch_size = (
+            self.eval_batch_size
+            if self.eval_batch_size is not None
+            else trainer.rank_microbatch_size * get_world_size(trainer.dp_process_group)
+        )
         dataset = self.eval_dataset.build()
         if not isinstance(dataset, NumpyPaddedFSLDataset):
             raise OLMoConfigurationError(
@@ -105,5 +123,8 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
             device=trainer.device,
         )
         return EvaluatorCallback(
-            evaluators=[evaluator], eval_interval=self.eval_interval, log_interval=self.log_interval
+            evaluators=[evaluator],
+            eval_interval=self.eval_interval,
+            log_interval=self.log_interval,
+            eval_duration=self.eval_duration,
         )

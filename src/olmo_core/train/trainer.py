@@ -880,14 +880,9 @@ class Trainer:
         )
 
     def _duration_due(self, duration: Duration) -> bool:
-        if duration.unit == DurationUnit.steps:
-            return self.global_step >= duration.value
-        elif duration.unit == DurationUnit.tokens:
-            return self.global_train_tokens_seen >= duration.value
-        elif duration.unit == DurationUnit.epochs:
-            return self.epoch > duration.value
-        else:
-            raise NotImplementedError
+        return duration.due(
+            step=self.global_step, tokens=self.global_train_tokens_seen, epoch=self.epoch
+        )
 
     def _handle_os_signal(self, signalnum, stack_frame):
         del stack_frame

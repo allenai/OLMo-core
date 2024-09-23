@@ -17,7 +17,7 @@ from ..utils import get_default_device
 from .callbacks import Callback, CallbackConfig
 from .checkpoint import Checkpointer
 from .trainer import LoadStrategy, Trainer
-from .utils import Duration, DurationUnit
+from .utils import Duration
 
 
 @dataclass
@@ -39,9 +39,7 @@ class TrainerConfig(Config):
 
     device: Optional[str] = None
     save_overwrite: bool = False
-    max_duration: Duration = field(
-        default_factory=lambda: Duration(value=1, unit=DurationUnit.epochs)
-    )
+    max_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     cancel_check_interval: int = 25
     hard_stop: Optional[Duration] = None
     metrics_collect_interval: int = 5
