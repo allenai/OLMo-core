@@ -695,9 +695,7 @@ class _IterableDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
         """
         Iterate over the local rank+worker instances.
         """
-        indices = self.data_loader._get_local_instance_indices(
-            self.data_loader.get_global_indices()
-        )
+        global_indices = self.data_loader.get_global_indices()
 
         num_threads = self.data_loader.num_threads
         if self.worker_info is None and self.data_loader.num_threads is None:
@@ -726,6 +724,10 @@ class _IterableDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
 
             thread_generators = []
             for i in range(num_threads):
+                # NOTE: `_get_local_instance_indices` might return an iterator, so we have to
+                # create a unique one for each thread otherwise it would be exhausted prematurely
+                # and give the wrong order.
+                indices = self.data_loader._get_local_instance_indices(global_indices)
                 generator = (
                     self.data_loader._get_dataset_item(int(idx))
                     for idx in islice(indices, i, None, num_threads)
@@ -738,6 +740,7 @@ class _IterableDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
 
             instance_iterator = roundrobin(*thread_generators)
         else:
+            indices = self.data_loader._get_local_instance_indices(global_indices)
             instance_iterator = (self.data_loader._get_dataset_item(int(idx)) for idx in indices)
 
         return (
