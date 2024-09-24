@@ -174,7 +174,6 @@ def build_common_components(
             else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache",
         ),
         eval_interval=1000,
-        eval_duration=Duration.steps(10),
     )
 
     return CommonComponents(
