@@ -33,7 +33,6 @@ from olmo_core.train.callbacks import (
     LMEvaluatorCallbackConfig,
     WandBCallback,
 )
-from olmo_core.train.utils import Duration
 from olmo_core.utils import (
     generate_uuid,
     get_default_device,
