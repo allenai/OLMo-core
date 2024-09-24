@@ -15,11 +15,11 @@ from olmo_core.data.utils import get_document_indices, write_document_indices
 
 def test_numpy_fsl_dataset(tmp_path: Path):
     mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(16,))
-    mmap1[:] = np.array(list(range(16)), dtype=np.uint16)
+    mmap1[:] = list(range(16))
     mmap1.flush()
 
     mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(16,))
-    mmap2[:] = np.array(list(range(16, 32)), dtype=np.uint16)
+    mmap2[:] = list(range(16, 32))
     mmap2.flush()
 
     ds = NumpyFSLDataset(
@@ -38,12 +38,12 @@ def test_numpy_fsl_dataset(tmp_path: Path):
 def test_numpy_padded_fsl_dataset(tmp_path: Path):
     data1 = [1, 2, 3, 4, 5, 6, 7, 0, 8, 9, 10, 0]
     mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
-    mmap1[:] = np.array(data1, dtype=np.uint16)
+    mmap1[:] = data1
     mmap1.flush()
 
     data2 = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 21, 22, 0]
     mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(len(data2),))
-    mmap2[:] = np.array(data2, dtype=np.uint16)
+    mmap2[:] = data2
     mmap2.flush()
 
     ds = NumpyPaddedFSLDataset(
