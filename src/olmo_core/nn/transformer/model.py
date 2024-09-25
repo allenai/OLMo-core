@@ -501,7 +501,7 @@ class TransformerConfig(Config):
             name=LayerNormType.fused_rms if fused_ops else LayerNormType.rms,
             eps=1e-5,
             bias=False,
-            #  dtype=dtype,  # TODO: allow low precision LN?
+            dtype=dtype,
         )
 
         # Decide on attention/rope implementations.

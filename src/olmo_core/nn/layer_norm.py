@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -51,11 +52,12 @@ class LayerNormConfig(Config):
         """
         kwargs = self.as_dict(exclude_none=True)
         kwargs.pop("name")
-        kwargs["dtype"] = kwargs["dtype"].as_pt()
+        dtype = kwargs["dtype"].as_pt()
         kwargs.update(
             dict(
                 size=size,
                 init_device=init_device,
+                dtype=dtype,
             )
         )
 
@@ -137,9 +139,6 @@ class LayerNorm(nn.Module):
             if self.full_precision:
                 x = x.float()
 
-            variance = x.pow(2).mean(-1, keepdim=True)
-            x = x * torch.rsqrt(variance + self.eps)
-
             x = F.layer_norm(
                 x,
                 self.normalized_shape,
@@ -211,6 +210,11 @@ class FusedRMSNorm(RMSNorm):
         if not elementwise_affine:
             raise NotImplementedError(
                 f"Currently only 'elementwise_affine=True' is supported with '{self.__class__.__name__}'"
+            )
+        if not full_precision:
+            # the triton kernel always casts to full precision internally
+            raise NotImplementedError(
+                f"Currently only 'full_precision=True' is supported with '{self.__class__.__name__}'"
             )
 
         super().__init__(
