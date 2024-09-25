@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for wildcards in `OptimGroupOverride.params`.
 - Added `NumpyPaddedFSLDataset` variant.
 - Added `Evaluator` class and `EvaluatorCallback` for in-loop evals.
+- Added `v3-small-ppl-validation` data mix.
 
 ### Fixed
 

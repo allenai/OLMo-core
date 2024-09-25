@@ -500,6 +500,7 @@ class VSLDataLoader(DataLoaderBase):
         super().__init__(dataset, **kwargs)
         self._batches_per_bucket: Optional[Tuple[Tuple[int, int], ...]] = None
         self._buckets: Optional[Tuple[int, ...]] = None
+        self._bucket_indices: Optional[Dict[int, np.ndarray]] = None
         if not self.shuffle:
             log.warning("VSL curriculum will be ignored since shuffle=False")
         if self.rank_batch_size < max(self.buckets):
@@ -558,14 +559,29 @@ class VSLDataLoader(DataLoaderBase):
             / f"{bucket_indices_fname}.npy"
         )
 
+    def _get_bucket_indices(self, seq_len: int) -> np.ndarray:
+        assert isinstance(self.dataset, NumpyVSLDataset)
+        bucket_indices = self.dataset.get_instance_bucket(seq_len)
+        if self.shuffle:
+            rng = get_rng(self.seed + self.epoch + seq_len)
+            return rng.permutation(bucket_indices)
+        else:
+            return bucket_indices
+
     def build_and_save_global_indices(self, in_memory: bool = False):
         assert isinstance(self.dataset, NumpyVSLDataset)
 
         if in_memory:
-            raise NotImplementedError("VSL dataset indices must be shuffled on disk")
+            self._bucket_indices = {}
+            for seq_len, num_instances in self.dataset.instances_per_bucket:
+                bucket_indices = self._get_bucket_indices(seq_len)
+                assert bucket_indices.shape[0] == num_instances
+                self._bucket_indices[seq_len] = bucket_indices
+        else:
+            self._bucket_indices = None
 
         # We also need to build and save the bucket instance indices.
-        if self.fs_local_rank == 0:
+        if not in_memory and self.fs_local_rank == 0:
             for seq_len, num_instances in self.dataset.instances_per_bucket:
                 bucket_indices_file = self._bucket_indices_file(seq_len)
                 if bucket_indices_file.is_file():
@@ -579,16 +595,12 @@ class VSLDataLoader(DataLoaderBase):
                     f"Saving bucket indices for bucket {seq_len}, seed {self.seed}, and epoch {self.epoch} "
                     f"to:\n'{bucket_indices_file}'..."
                 )
-                bucket_indices = self.dataset.get_instance_bucket(seq_len)
+                bucket_indices = self._get_bucket_indices(seq_len)
                 assert bucket_indices.shape[0] == num_instances
                 with memmap_to_write(
                     bucket_indices_file, shape=(num_instances,), dtype=np.uint32
                 ) as bucket_indices_mmap:
-                    if self.shuffle:
-                        rng = get_rng(self.seed + self.epoch + seq_len)
-                        bucket_indices_mmap[:] = rng.permutation(bucket_indices)
-                    else:
-                        bucket_indices_mmap[:] = bucket_indices
+                    bucket_indices_mmap[:] = bucket_indices
 
                 log.info(f"Bucket indices saved to:\n'{bucket_indices_file}'")
 
@@ -597,7 +609,7 @@ class VSLDataLoader(DataLoaderBase):
                 self.dataset, self.global_batch_size, self.batches_per_bucket
             )
 
-        super().build_and_save_global_indices()
+        super().build_and_save_global_indices(in_memory=in_memory)
 
     def _build_global_indices(self) -> np.ndarray:
         if self.shuffle:
@@ -629,7 +641,6 @@ class VSLDataLoader(DataLoaderBase):
     def _batch_index_to_local_instance_indices(self, batch_index: int) -> np.ndarray:
         bucket_seq_len, bucket_batch_index = self._batch_index_to_bucket_batch_index(batch_index)
         instances_per_batch = self.global_batch_size // bucket_seq_len
-        bucket_indices_file = self._bucket_indices_file(bucket_seq_len)
         instance_start_index = bucket_batch_index * instances_per_batch
 
         # Slice up by rank.
@@ -637,12 +648,21 @@ class VSLDataLoader(DataLoaderBase):
         instance_start_index += self.dp_rank * instances_per_rank
         instance_end_index = instance_start_index + instances_per_rank
 
-        local_instance_indices = load_array_slice(
-            bucket_indices_file, instance_start_index, instance_end_index, np.uint32
-        )
+        local_instance_indices: np.ndarray
+        if self._bucket_indices is not None:
+            local_instance_indices = self._bucket_indices[bucket_seq_len][
+                instance_start_index:instance_end_index
+            ]
+        else:
+            bucket_indices_file = self._bucket_indices_file(bucket_seq_len)
+            local_instance_indices = load_array_slice(
+                bucket_indices_file, instance_start_index, instance_end_index, np.uint32
+            )
+
         assert (
             local_instance_indices.shape[0] == instances_per_rank
         ), f"Expected {instances_per_rank} instances, got {local_instance_indices.shape[0]}"
+
         return local_instance_indices
 
     def _batch_index_to_bucket_batch_index(self, batch_index: int) -> Tuple[int, int]:

@@ -58,8 +58,10 @@ class EvaluatorCallback(Callback):
         for evaluator in self.evaluators:
             log.info(f"Running {evaluator.name} evals...")
             evaluator.reset_metrics()
+            eval_step = 0
             eval_tokens = 0
-            for eval_step, batch in enumerate(evaluator):
+            for batch in evaluator:
+                eval_step += 1
                 eval_tokens += batch["input_ids"].numel() * dp_world_size
                 batch = move_to_device(batch, self.trainer.device)
                 with torch.no_grad():
@@ -67,33 +69,40 @@ class EvaluatorCallback(Callback):
                         batch, loss_reduction="none", compute_z_loss=False
                     )
                 evaluator.update_metrics(batch, ce_loss, logits)
-                if (eval_step + 1) % self.log_interval == 0:
-                    if evaluator.total_batches is not None:
-                        log.info(
-                            f"[eval={evaluator.name},step={eval_step+1}/{evaluator.total_batches}]"
-                        )
-                    else:
-                        log.info(f"[eval={evaluator.name},step={eval_step+1}]")
 
-                if (eval_step + 1) % self.trainer.cancel_check_interval == 0:
+                if eval_step % self.trainer.cancel_check_interval == 0:
                     self.trainer.check_if_canceled()
 
                 if self.trainer.is_canceled:
+                    self._log_progress(evaluator, eval_step)
                     self.trainer.model.train()
                     return
-
-                if self.eval_duration.due(step=eval_step + 1, tokens=eval_tokens, epoch=1):
+                elif self.eval_duration.due(step=eval_step, tokens=eval_tokens, epoch=1):
+                    self._log_progress(evaluator, eval_step)
                     break
+                elif eval_step % self.log_interval == 0 or eval_step == evaluator.total_batches:
+                    self._log_progress(evaluator, eval_step)
 
-            for name, value in evaluator.compute_metrics().items():
-                name = f"eval/{evaluator.name}/{name}"
-                self.trainer.record_metric(name, value)
-                # NOTE: going to have a host-device sync here but that's okay. It's only once
-                # per evaluator.
-                log.info(f"{name}={format_float(value.item())}")
+            # NOTE: going to have a host-device sync here but that's okay. It's only once
+            # per evaluator.
+            log.info(
+                "Eval metrics:\n"
+                + "\n".join(
+                    [
+                        f"    {name}={format_float(value.item())}"
+                        for name, value in evaluator.compute_metrics().items()
+                    ]
+                )
+            )
 
         # Restore model to train mode.
         self.trainer.model.train()
+
+    def _log_progress(self, evaluator: Evaluator, eval_step: int):
+        if evaluator.total_batches is not None:
+            log.info(f"[eval={evaluator.name},step={eval_step}/{evaluator.total_batches}]")
+        else:
+            log.info(f"[eval={evaluator.name},step={eval_step}]")
 
 
 @dataclass
