@@ -808,7 +808,7 @@ class Transformer(nn.Module):
 
         from torch.distributed._composable.fsdp import MixedPrecisionPolicy, fully_shard
 
-        _param_dtype = self.w_out.weight.dtype if self.weight_tying else self.embeddings.weight.dtype
+        _param_dtype = self.w_out.weight.dtype if not self.weight_tying else self.embeddings.weight.dtype
         mp_policy = MixedPrecisionPolicy(
             param_dtype=param_dtype or _param_dtype, reduce_dtype=reduce_dtype
         )

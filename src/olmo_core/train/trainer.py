@@ -202,6 +202,11 @@ class Trainer:
     Defaults to ``save_folder``.
     """
 
+    load_pretrained_path: Optional[PathOrStr] = None
+    """
+    Where to load a pretrained model from prior to training.
+    """
+
     load_strategy: LoadStrategy = LoadStrategy.if_available
     """
     The strategy for loading a checkpoint prior to training.
@@ -557,6 +562,15 @@ class Trainer:
         self._cancel_reason = None
         self._canceling_rank = None
 
+        if self.load_pretrained_path is not None:
+            log.info(f"Loading pretrained model from '{self.load_pretrained_path}'...")
+            # Only load the model weights.
+            self.load_pretrained_checkpoint(
+                self.load_pretrained_path, 
+                load_optimizer_state=False,
+                load_trainer_state=False
+            )
+
         # Maybe load a checkpoint.
         if not self.checkpoint_loaded:
             load_path = self.load_path if self.load_path is not None else self.save_folder
@@ -691,6 +705,41 @@ class Trainer:
 
         self._checkpoint_loaded = True
         log.info("Checkpoint successfully loaded")
+
+
+    def load_pretrained_checkpoint(
+        self, dir: PathOrStr, *, load_optimizer_state: bool = True, load_trainer_state: bool = True
+    ):
+        """
+        Load a checkpoint.
+
+        .. note::
+            :meth:`fit()` may call this method automatically depending on the :data:`load_strategy`.
+
+        :param dir: The path/URL to a checkpoint or a folder of checkpoints.
+        :param load_optimizer_state: Load optimizer state.
+        :param load_trainer_state: Load trainer state.
+        """
+        dir = normalize_path(dir)
+        dir = scatter_object(dir)
+
+        log.info(f"Loading checkpoint from '{dir}'...")
+        trainer_state = self.checkpointer.load(
+            dir,
+            self.model,
+            self.optim,
+            load_optimizer_state=load_optimizer_state,
+            load_trainer_state=load_trainer_state,
+        )
+        if load_trainer_state:
+            assert trainer_state is not None
+            self.load_state_dict(cast(TrainerStateDict, trainer_state))
+
+        for callback in self.callbacks.values():
+            callback.post_checkpoint_loaded(dir)
+
+        self._checkpoint_loaded = True
+        log.info("Pretrained checkpoint successfully loaded")
 
     def maybe_load_checkpoint(
         self, dir: PathOrStr, *, load_optimizer_state: bool = True, load_trainer_state: bool = True

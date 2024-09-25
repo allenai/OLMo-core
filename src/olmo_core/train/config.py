@@ -35,6 +35,7 @@ class TrainerConfig(Config):
 
     work_dir: Optional[str] = None
     load_path: Optional[str] = None
+    load_pretrained_path: Optional[str] = None
     load_strategy: LoadStrategy = LoadStrategy.if_available
 
     device: Optional[str] = None

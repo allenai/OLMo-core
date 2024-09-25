@@ -12,6 +12,7 @@ class TokenizerName(StrEnum):
     dolma2 = "allenai/dolma2-tokenizer"
     gpt_neox_olmo_dolma_v1_5 = "allenai/gpt-neox-olmo-dolma-v1_5"
     gpt2 = "gpt2"
+    qwen2_5_1_5B = "Qwen/Qwen2.5-1.5B"
 
 
 @dataclass
@@ -58,4 +59,13 @@ class TokenizerConfig(Config):
             eos_token_id=50256,
             pad_token_id=50256,
             identifier=TokenizerName.gpt2,
+        )
+
+    @classmethod
+    def qwen2_5_1_5B(cls) -> "TokenizerConfig":
+        return cls(
+            vocab_size=151665,
+            eos_token_id=151643,
+            pad_token_id=151643,
+            identifier=TokenizerName.qwen2_5_1_5B,
         )
