@@ -48,6 +48,12 @@ class Callback:
     #  def load_state_dict(self, state_dict: Dict[str, Any]):
     #      del state_dict
 
+    def post_attach(self):
+        """
+        Called right after the callback is attached to the :class:`~olmo_core.train.Trainer`.
+        """
+        pass
+
     def post_checkpoint_loaded(self, path: PathOrStr):
         """
         Called when a checkpoint is successfully loaded.

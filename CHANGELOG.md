@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added `torchao` to the Docker/Beaker images.
+- Added support for `torchao` `float8` training via the `Float8HandlerCallback`.
+- Added `Callback.post_attach()` method.
 
 ## [v1.2.0](https://github.com/allenai/OLMo-core/releases/tag/v1.2.0) - 2024-09-25
 

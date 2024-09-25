@@ -31,6 +31,7 @@ from olmo_core.train import (
 from olmo_core.train.callbacks import (
     Callback,
     ConfigSaverCallback,
+    Float8HandlerCallback,
     GPUMemoryMonitorCallback,
     GradClipperCallback,
     LMEvaluatorCallbackConfig,
@@ -172,6 +173,7 @@ def build_common_components(
         "grad_clipper": GradClipperCallback(max_grad_norm=1.0),
         "config_saver": ConfigSaverCallback(),
         "profiler": ProfilerCallback(enabled=False),
+        "float8_handler": Float8HandlerCallback(enabled=False),
         "lm_evaluator": LMEvaluatorCallbackConfig(
             eval_dataset=NumpyDatasetConfig.from_data_mix(
                 DataMix.v3_small_ppl_validation,
