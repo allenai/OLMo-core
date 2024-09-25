@@ -1,7 +1,7 @@
 _MAJOR = "1"
-_MINOR = "2"
+_MINOR = "3"
 _PATCH = "0"
-_SUFFIX = ""
+_SUFFIX = ".dev"
 
 VERSION_SHORT = "{0}.{1}".format(_MAJOR, _MINOR)
 VERSION = "{0}.{1}.{2}{3}".format(_MAJOR, _MINOR, _PATCH, _SUFFIX)
