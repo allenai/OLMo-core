@@ -146,13 +146,14 @@ class TransformerConfig(Config):
             init_device=init_device,
             init_seed=self.init_seed,
         )
-        log.info("%s", model)
 
         # Maybe convert linear layers to Float8 linear layers.
         if self.float8_config is not None and self.float8_config.enabled:
             if self.float8_config.compile is None and self.compile:
                 self.float8_config.compile = True
             self.float8_config.convert_to_float8_training(model, modules_to_ignore={"w_out"})
+
+        log.info("%s", model)
 
         # Maybe apply activation checkpointing.
         if self.ac_config is not None:
