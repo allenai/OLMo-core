@@ -51,16 +51,22 @@ class TrainerConfig(Config):
     data_loader_workers: int = 0
     data_loader_prefetch_factor: Optional[int] = None
 
-    def with_callback(self, name: str, callback: Callback) -> "TrainerConfig":
+    def add_callback(self, name: str, callback: Callback):
         """
         Add another callback.
-
-        :param name: A name to assign the callback. Must be unique.
-        :param callback: The callback to add.
         """
         if name in self.callbacks:
             raise OLMoConfigurationError(f"A callback with name '{name}' already exists")
         self.callbacks[name] = callback
+
+    def with_callback(self, name: str, callback: Callback) -> "TrainerConfig":
+        """
+        Add another callback, returning the trainer config.
+
+        :param name: A name to assign the callback. Must be unique.
+        :param callback: The callback to add.
+        """
+        self.add_callback(name, callback)
         return self
 
     def build_collator(self, dataset: NumpyDatasetBase) -> DataCollator:

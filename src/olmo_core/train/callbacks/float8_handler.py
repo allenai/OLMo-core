@@ -1,6 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from olmo_core.float8 import Float8Handler, Float8ScalingType
+from olmo_core.float8 import Float8Config, Float8Handler
 
 from .callback import Callback
 
@@ -14,47 +14,31 @@ class Float8HandlerCallback(Callback):
         See :class:`~olmo_core.float8.Float8Handler` for parameter descriptions.
     """
 
-    scaling_type_input: Float8ScalingType = Float8ScalingType.dynamic
-    scaling_type_weight: Float8ScalingType = Float8ScalingType.dynamic
-    scaling_type_grad_output: Float8ScalingType = Float8ScalingType.dynamic
-    enable_fsdp_float8_all_gather: bool = True
-    precompute_float8_dynamic_scale_for_fsdp: bool = True
-    compile: bool = True
-    enabled: bool = True
+    config: Float8Config = field(default_factory=Float8Config)
 
     _handler = None
 
     @property
     def handler(self) -> Float8Handler:
         if self._handler is None:
-            raise RuntimeError("Float8Handler has not been configured yet")
+            self._handler = self.config.build()
         return self._handler
 
     def post_attach(self):
-        if not self.enabled:
+        if not self.config.enabled:
             return
 
-        self._handler = Float8Handler(
-            scaling_type_input=self.scaling_type_input,
-            scaling_type_weight=self.scaling_type_weight,
-            scaling_type_grad_output=self.scaling_type_grad_output,
-            enable_fsdp_float8_all_gather=self.enable_fsdp_float8_all_gather,
-            precompute_float8_dynamic_scale_for_fsdp=self.precompute_float8_dynamic_scale_for_fsdp,
-            compile=self.compile,
-        )
-
-        # Swap `nn.Linear` modules with `Float8Linear` in place.
-        self.handler.convert_to_float8_training(self.trainer.model)
+        self.handler
 
     def pre_optim_step(self):
-        if not self.enabled:
+        if not self.config.enabled:
             return
 
         # Sync Float8 AMAXs (argmax of abs(max)) and scales.
         self.handler.sync_float8_amax_and_scale_history(self.trainer.model)
 
     def post_train_batch(self):
-        if not self.enabled:
+        if not self.config.enabled:
             return
 
         # Calculate Float8 dynamic AMAX/scale for all parameters.

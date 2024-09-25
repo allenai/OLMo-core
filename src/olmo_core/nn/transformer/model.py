@@ -14,6 +14,7 @@ from olmo_core.config import Config, DType, StrEnum
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.float8 import Float8Config
 from olmo_core.utils import get_default_device, has_flash_attn
 
 from ..attention import AttentionConfig, AttentionType
@@ -100,6 +101,7 @@ class TransformerConfig(Config):
     compile: bool = False
     dp_config: Optional[DataParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
+    float8_config: Optional[Float8Config] = None
 
     def build(
         self,
@@ -140,6 +142,12 @@ class TransformerConfig(Config):
             init_seed=self.init_seed,
         )
         log.info("%s", model)
+
+        # Maybe convert linear layers to Float8 linear layers.
+        if self.float8_config is not None and self.float8_config.enabled:
+            if self.float8_config.compile is None and self.compile:
+                self.float8_config.compile = True
+            self.float8_config.convert_to_float8_training(model, modules_to_ignore={"w_out"})
 
         # Maybe apply activation checkpointing.
         if self.ac_config is not None:
