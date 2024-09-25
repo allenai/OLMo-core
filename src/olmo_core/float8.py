@@ -184,7 +184,7 @@ class Float8Config(Config):
         """
         Build the Float8 handler.
         """
-        return Float8Handler(**self.as_dict(recurse=False))
+        return Float8Handler(config=self)
 
 
 def _is_sm89_or_later():
