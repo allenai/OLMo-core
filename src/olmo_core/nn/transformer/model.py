@@ -86,7 +86,12 @@ class TransformerConfig(Config):
     """
     A config for easily building transformer models.
 
-    See :class:`Transformer` for a description of the parameters.
+    :param compile: Whether to compile the model with ``torch.compile``.
+    :param dp_config: Data parallel configuration.
+    :param ac_config: Activation checkpointing configuration.
+    :param float8_config: Float8 training configuration.
+
+    See :class:`Transformer` for a description of the other parameters.
     """
 
     d_model: int

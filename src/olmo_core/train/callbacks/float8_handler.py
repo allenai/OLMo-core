@@ -12,6 +12,10 @@ class Float8HandlerCallback(Callback):
 
     .. seealso::
         See :class:`~olmo_core.float8.Float8Handler` for parameter descriptions.
+
+    .. important::
+        You need to call :meth:`~olmo_core.float8.Float8Config.convert_to_float8_training()`
+        on your model prior to training to replace the linear layers with ``Float8Linear`` layers.
     """
 
     config: Float8Config = field(default_factory=Float8Config)

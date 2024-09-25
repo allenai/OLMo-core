@@ -38,6 +38,8 @@ class Float8Handler:
     .. seealso::
         See :class:`~olmo_core.train.callbacks.Float8HandlerCallback` for enabling Float8 training
         with the :class:`~olmo_core.train.Trainer`.
+        Note that even with the callback you will need to call :meth:`convert_to_float8_training()`
+        on your model manually.
 
     :param config: The handler config.
     """
@@ -66,9 +68,7 @@ class Float8Handler:
 
     def convert_to_float8_training(self, model: nn.Module):
         """
-        This method converts the linear layers of ``model`` to ``Float8Linear``.
-        Note that today, only dynamic tensor scaling (the default) is supported.
-        This will mutate the model in place.
+        This just calls out to :meth:`Float8Config.convert_to_float8_training()`.
         """
         if not self.config.enabled:
             return
@@ -125,6 +125,7 @@ class Float8Config(Config):
     :param precompute_float8_dynamic_scale_for_fsdp: Communicate AMAX/scales efficiently in a single
         all-reduce for all parameters instead of doing many small all-reduce for each parameter.
     :param compile: If using ``torch.compile``.
+    :param enabled: If ``False`` this will be a no-op.
     """
 
     scaling_type_input: Float8ScalingType = Float8ScalingType.dynamic
@@ -164,8 +165,22 @@ class Float8Config(Config):
     ):
         """
         This method converts the linear layers of ``model`` to ``Float8Linear``.
-        Note that today, only dynamic tensor scaling (the default) is supported.
-        This will mutate the model in place.
+
+        .. note::
+            Note only dynamic tensor scaling (the default) is supported at the moment.
+
+        .. warning::
+            This will mutate the model in place.
+
+        .. warning::
+            This should be called before compiling the model, applying activation checkpointing,
+            or wrapping it with FSDP(2) or any other parallel wrapper.
+
+        .. hint::
+            If you're using a :class:`~olmo_core.nn.transformer.Transformer` model the config
+            builder (:class:`~olmo_core.nn.transformer.TransformerConfig`) will call this
+            automatically from :meth:`~olmo_core.nn.transformer.TransformerConfig.build()` if
+            the :data:`~olmo_core.nn.transformer.TransformerConfig.float8_config` field is set.
         """
         if not self.enabled:
             return
