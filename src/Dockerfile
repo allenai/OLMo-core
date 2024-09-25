@@ -2,6 +2,10 @@
 ARG BASE
 FROM ${BASE} as stable
 
+# Install torchao
+ARG TORCHAO_VERSION
+RUN pip install --no-cache-dir torchao==${TORCHAO_VERSION}
+
 # Install other dependencies, but not the source code.
 COPY pyproject.toml .
 COPY src/olmo_core/__init__.py src/olmo_core/__init__.py
