@@ -1,7 +1,7 @@
 import logging
 import sys
 from dataclasses import dataclass
-from typing import Callable, List, cast
+from typing import Callable, Dict, List, cast
 
 from beaker import Beaker
 
@@ -22,15 +22,20 @@ from olmo_core.launch.beaker import (
     OLMoCoreBeakerImage,
 )
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import AdamWConfig
+from olmo_core.optim import AdamWConfig, CosWithWarmup
 from olmo_core.train import (
     TrainerConfig,
     prepare_training_environment,
     teardown_training_environment,
 )
 from olmo_core.train.callbacks import (
+    Callback,
     ConfigSaverCallback,
+    GPUMemoryMonitorCallback,
+    GradClipperCallback,
     LMEvaluatorCallbackConfig,
+    ProfilerCallback,
+    SchedulerCallback,
     WandBCallback,
 )
 from olmo_core.utils import (
@@ -50,7 +55,7 @@ class CommonComponents(Config):
     launch: BeakerLaunchConfig
     tokenizer: TokenizerConfig
     dataset: NumpyDatasetConfig
-    lm_evaluator: LMEvaluatorCallbackConfig
+    callbacks: Dict[str, Callback]
 
 
 @dataclass
@@ -161,19 +166,26 @@ def build_common_components(
         else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache",
     )
 
-    lm_evaluator = LMEvaluatorCallbackConfig(
-        eval_dataset=NumpyDatasetConfig.from_data_mix(
-            DataMix.v3_small_ppl_validation,
-            name=NumpyDatasetType.padded_fsl,
-            mix_base_dir=root_dir,
-            sequence_length=dataset_config.effective_sequence_length,
-            tokenizer=tokenizer_config,
-            work_dir=None
-            if is_url(root_dir)
-            else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache",
+    callbacks: Dict[str, Callback] = {
+        "lr_scheduler": SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=2000)),
+        "gpu_monitor": GPUMemoryMonitorCallback(),
+        "grad_clipper": GradClipperCallback(max_grad_norm=1.0),
+        "config_saver": ConfigSaverCallback(),
+        "profiler": ProfilerCallback(enabled=False),
+        "lm_evaluator": LMEvaluatorCallbackConfig(
+            eval_dataset=NumpyDatasetConfig.from_data_mix(
+                DataMix.v3_small_ppl_validation,
+                name=NumpyDatasetType.padded_fsl,
+                mix_base_dir=root_dir,
+                sequence_length=dataset_config.effective_sequence_length,
+                tokenizer=tokenizer_config,
+                work_dir=None
+                if is_url(root_dir)
+                else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache",
+            ),
+            eval_interval=1000,
         ),
-        eval_interval=1000,
-    )
+    }
 
     return CommonComponents(
         run_name=run_name,
@@ -181,7 +193,7 @@ def build_common_components(
         launch=launch_config,
         tokenizer=tokenizer_config,
         dataset=dataset_config,
-        lm_evaluator=lm_evaluator,
+        callbacks=callbacks,
     )
 
 
@@ -198,16 +210,17 @@ def build_config(
 ) -> ExperimentConfig:
     common = build_common_components(script, cmd, run_name, cluster, overrides)
 
+    trainer = trainer_config_builder(common)
+    for name, cb in common.callbacks.items():
+        trainer.with_callback(name, cb)
+
     config = ExperimentConfig(
         run_name=run_name,
         launch=common.launch,
         model=model_config_builder(common),
         optim=optim_config_builder(common),
         dataset=common.dataset,
-        trainer=trainer_config_builder(common).with_callback(
-            "evaluator",
-            common.lm_evaluator,
-        ),
+        trainer=trainer,
     ).merge(overrides)
 
     return config

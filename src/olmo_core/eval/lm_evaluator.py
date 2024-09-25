@@ -19,8 +19,8 @@ class LMEvaluator(Evaluator):
     .. important::
         The :data:`batches` generated from these evaluators must contain a "metadata" field which
         should be a list of dictionaries, and each dictionary item in the list should contain
-        a string field called "label" which indicates which dataset the instance is associated
-        with, which should be included in the ``labels`` argument to this class.
+        a string field called "label" which indicates which dataset the data file is associated
+        with, and should be included in the ``labels`` argument to this class.
 
     :param labels: All of the task labels.
     """
