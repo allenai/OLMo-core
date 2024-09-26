@@ -393,6 +393,9 @@ class Trainer:
             target_device_type=self.device.type,
         )
 
+        for callback in self.callbacks.values():
+            callback.post_attach()
+
     @property
     def rank_batch_size(self) -> int:
         """
@@ -868,6 +871,7 @@ class Trainer:
         callback.trainer = self
         self.callbacks[name] = callback
         self._sort_callbacks()
+        callback.post_attach()
 
     def _sort_callbacks(self):
         self.callbacks = OrderedDict(

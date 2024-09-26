@@ -14,6 +14,7 @@ from olmo_core.config import Config, DType, StrEnum
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.float8 import Float8Config
 from olmo_core.utils import get_default_device, has_flash_attn
 
 from ..attention import AttentionConfig, AttentionType
@@ -85,7 +86,12 @@ class TransformerConfig(Config):
     """
     A config for easily building transformer models.
 
-    See :class:`Transformer` for a description of the parameters.
+    :param compile: Whether to compile the model with ``torch.compile``.
+    :param dp_config: Data parallel configuration.
+    :param ac_config: Activation checkpointing configuration.
+    :param float8_config: Float8 training configuration.
+
+    See :class:`Transformer` for a description of the other parameters.
     """
 
     d_model: int
@@ -100,6 +106,7 @@ class TransformerConfig(Config):
     compile: bool = False
     dp_config: Optional[DataParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
+    float8_config: Optional[Float8Config] = None
 
     def build(
         self,
@@ -139,6 +146,13 @@ class TransformerConfig(Config):
             init_device=init_device,
             init_seed=self.init_seed,
         )
+
+        # Maybe convert linear layers to Float8 linear layers.
+        if self.float8_config is not None and self.float8_config.enabled:
+            if self.float8_config.compile is None and self.compile:
+                self.float8_config.compile = True
+            self.float8_config.convert_to_float8_training(model, modules_to_ignore={"w_out"})
+
         log.info("%s", model)
 
         # Maybe apply activation checkpointing.

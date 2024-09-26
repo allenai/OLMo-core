@@ -3,6 +3,7 @@ from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy
 from .config_saver import ConfigSaverCallback
 from .console_logger import ConsoleLoggerCallback
 from .evaluator_callback import EvaluatorCallback, LMEvaluatorCallbackConfig
+from .float8_handler import Float8HandlerCallback
 from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
 from .grad_clipper import GradClipperCallback
@@ -20,6 +21,7 @@ __all__ = [
     "ConfigSaverCallback",
     "ConsoleLoggerCallback",
     "EvaluatorCallback",
+    "Float8HandlerCallback",
     "LMEvaluatorCallbackConfig",
     "GarbageCollectorCallback",
     "GPUMemoryMonitorCallback",

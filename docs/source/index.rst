@@ -47,6 +47,7 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
    distributed/index
    eval/index
    exceptions
+   float8
    io
    launch
    nn/index

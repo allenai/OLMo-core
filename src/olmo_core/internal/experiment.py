@@ -14,6 +14,7 @@ from olmo_core.data import (
     TokenizerConfig,
 )
 from olmo_core.distributed.utils import get_num_nodes, init_hybrid_shard_mesh
+from olmo_core.float8 import Float8Config
 from olmo_core.io import is_url
 from olmo_core.launch.beaker import (
     BeakerEnvSecret,
@@ -31,6 +32,7 @@ from olmo_core.train import (
 from olmo_core.train.callbacks import (
     Callback,
     ConfigSaverCallback,
+    Float8HandlerCallback,
     GPUMemoryMonitorCallback,
     GradClipperCallback,
     LMEvaluatorCallbackConfig,
@@ -210,6 +212,10 @@ def build_config(
 ) -> ExperimentConfig:
     common = build_common_components(script, cmd, run_name, cluster, overrides)
 
+    model = model_config_builder(common)
+    if model.float8_config is None:
+        model.float8_config = Float8Config(compile=model.compile, enabled=False)
+
     trainer = trainer_config_builder(common)
     for name, cb in common.callbacks.items():
         trainer.with_callback(name, cb)
@@ -217,11 +223,16 @@ def build_config(
     config = ExperimentConfig(
         run_name=run_name,
         launch=common.launch,
-        model=model_config_builder(common),
+        model=model,
         optim=optim_config_builder(common),
         dataset=common.dataset,
         trainer=trainer,
     ).merge(overrides)
+
+    if config.model.float8_config is not None and config.model.float8_config.enabled:
+        config.trainer.add_callback(
+            "float8_handler", Float8HandlerCallback(config=config.model.float8_config)
+        )
 
     return config
 
