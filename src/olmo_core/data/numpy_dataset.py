@@ -46,6 +46,7 @@ from .utils import (
     get_rng,
     load_array_slice_into_tensor,
     memmap_to_write,
+    run_worker_func,
     segment_documents_into_instances,
 )
 
@@ -577,6 +578,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                     indices_path = self._get_instance_indices_path(path)
                     log.info(f"Gathering instance indices for '{path}'...")
                     future = executor.submit(
+                        run_worker_func,
                         segment_documents_into_instances,
                         path,
                         indices_path,
@@ -1089,6 +1091,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                     indices_path = self._get_document_indices_path(path)
                     log.info(f"Gathering document indices for '{path}'...")
                     future = executor.submit(
+                        run_worker_func,
                         bucket_documents,
                         path,
                         indices_path,

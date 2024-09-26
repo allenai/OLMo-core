@@ -20,7 +20,7 @@ import numpy as np
 import torch
 
 from olmo_core.aliases import PathOrStr
-from olmo_core.io import get_bytes_range, is_url, resource_path
+from olmo_core.io import add_cached_path_clients, get_bytes_range, is_url, resource_path
 from olmo_core.utils import capped_powers_of_2
 
 
@@ -431,6 +431,11 @@ def segment_documents_into_instances(
         indices_mmap[:] = indices
 
     return total_og_docs, len(indices) // 2
+
+
+def run_worker_func(func, *args, **kwargs):
+    add_cached_path_clients()
+    return func(*args, **kwargs)
 
 
 def get_doc_lengths_from_indices(doc_indices: np.ndarray) -> np.ndarray:
