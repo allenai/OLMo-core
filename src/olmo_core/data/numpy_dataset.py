@@ -1389,6 +1389,15 @@ class NumpyDatasetConfig(Config):
         all of you runs.
     """
 
+    def validate(self):
+        if self.name in (NumpyDatasetType.fsl, NumpyDatasetType.padded_fsl):
+            self.max_sequence_length = None
+            self.min_sequence_length = None
+            self.vsl_curriculum = None
+        elif self.name == NumpyDatasetType.vsl:
+            self.sequence_length = None
+            self.max_target_sequence_length = None
+
     @property
     def effective_sequence_length(self) -> int:
         if self.sequence_length is not None:

@@ -22,15 +22,18 @@ pip install ai2-olmo-core
 ## Official training scripts
 
 Official training scripts for various model sizes can be found in [`src/scripts/train/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/train).
-Throughput numbers from a cluster with NVIDIA H100 GPUs are reported below.
+To see the exact usage for each script, run the script without any arguments.
 
-| Model size | Context length | Precision | Throughput[^1] | Launch command | 
-| :--------: | :------------: | :-------: | -----------: | :------ | 
-| 1B  | 4K | BF16 | 44,000 TPS | `python src/scripts/train/OLMo-1B.py launch "${run_name}" "${cluster}"` |
-| | | FP8 | 51,000 TPS | `python src/scripts/train/OLMo-1B.py launch "${run_name}" "${cluster}" --model.float8_config.enabled=true` |
-| 7B  | 4K | BF16 | 10,000 TPS | `python src/scripts/train/OLMo-7B.py launch "${run_name}" "${cluster}"` |
-| | | FP8 | 13,000 TPS | `python src/scripts/train/OLMo-7B.py launch "${run_name}" "${cluster}" --model.float8_config.enabled=true` |
-| 13B | 4K | BF16 | 4,600 TPS | `python src/scripts/train/OLMo-13B.py launch "${run_name}" "${cluster}"` |
+Throughput numbers from these scripts with various different configuration settings are reported below, measured on a cluster with NVIDIA H100 GPUs.
+
+| Model size | Context length | Precision | Throughput[^1] | Train script | Overrides |
+| :--------: | :------------: | :-------: | -----------: | :----------- | :-------- |
+| 1B  | 4K | BF16 | 44,000 TPS | `OLMo-1B.py` | |
+| 1B  | 256-8196 VSL | BF16 | 49,000 TPS | `OLMo-1B.py` | `--dataset.name=vsl` |
+| | | FP8 | 51,000 TPS | `OLMo-1B.py` | `--model.float8_config.enabled=true` |
+| 7B  | 4K | BF16 | 10,000 TPS | `OLMo-7B.py` | |
+| | | FP8 | 13,000 TPS | `OLMo-7B.py` | `--model.float8_config.enabled=true` |
+| 13B | 4K | BF16 | 4,600 TPS | `OLMo-13B.py` | |
 
 [^1]: Throughput reported in tokens per second per device.
 

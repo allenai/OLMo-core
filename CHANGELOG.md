@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Added `Config.validate()`, `Config.replace()`, and `Config.apply()` methods.
+
 ### Fixed
 
 - Ensure additional cached-path clients are added in the process pool workers from some dataset preparation methods.

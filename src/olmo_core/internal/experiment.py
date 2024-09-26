@@ -12,6 +12,8 @@ from olmo_core.data import (
     NumpyDatasetConfig,
     NumpyDatasetType,
     TokenizerConfig,
+    VSLCurriculumConfig,
+    VSLCurriculumType,
 )
 from olmo_core.distributed.utils import get_num_nodes, init_hybrid_shard_mesh
 from olmo_core.float8 import Float8Config
@@ -163,6 +165,11 @@ def build_common_components(
         mix_base_dir=root_dir,
         sequence_length=4096,
         max_target_sequence_length=8192,
+        min_sequence_length=256,
+        max_sequence_length=8192,
+        vsl_curriculum=VSLCurriculumConfig(
+            name=VSLCurriculumType.grow_p2, num_cycles=8, balanced=False
+        ),
         work_dir=None
         if is_url(root_dir)
         else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache",
