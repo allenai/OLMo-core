@@ -537,7 +537,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         item = super().__getitem__(index)
         pad_shape = (0, self.sequence_length - len(item["input_ids"]))
         item["label_mask"] = F.pad(
-            torch.ones_like(item["input_ids"]), pad_shape, value=self.pad_token_id
+            torch.ones_like(item["input_ids"], dtype=torch.bool), pad_shape, value=False
         )
         item["input_ids"] = F.pad(item["input_ids"], pad_shape, value=self.pad_token_id)
         return item

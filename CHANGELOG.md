@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Ensure additional cached-path clients are added in the process pool workers from some dataset preparation methods.
+- Fixed `label_mask` tensor created by `NumpyPaddedFSLDataset`.
 
 ## [v1.3.1](https://github.com/allenai/OLMo-core/releases/tag/v1.3.1) - 2024-09-26
 
