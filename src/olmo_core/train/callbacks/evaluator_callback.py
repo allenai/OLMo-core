@@ -85,15 +85,12 @@ class EvaluatorCallback(Callback):
 
             # NOTE: going to have a host-device sync here but that's okay. It's only once
             # per evaluator.
-            log.info(
-                "Eval metrics:\n"
-                + "\n".join(
-                    [
-                        f"    {name}={format_float(value.item())}"
-                        for name, value in evaluator.compute_metrics().items()
-                    ]
-                )
-            )
+            metrics = []
+            for name, value in evaluator.compute_metrics().items():
+                value = value.item()
+                metrics.append(f"    {name}={format_float(value)}")
+                self.trainer.record_metric(name, value)
+            log.info("Eval metrics:\n" + "\n".join(metrics))
 
         # Restore model to train mode.
         self.trainer.model.train()
