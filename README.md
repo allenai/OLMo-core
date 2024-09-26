@@ -24,7 +24,7 @@ pip install ai2-olmo-core
 Official training scripts for various model sizes can be found in [`src/scripts/train/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/train).
 Throughput numbers on a cluster with NVIDIA H100 GPUs are reported below.
 
-| Model size | Context Length | Precision | Throughput[^1] | Command | 
+| Model size | Context length | Precision | Throughput[^1] | Launch command | 
 | :--------: | :------------: | :-------: | -----------: | :------ | 
 | 1B  | 4K | BF16 | 44,000 TPS | `python src/scripts/train/OLMo-1B.py launch "${run_name}" "${cluster}"` |
 | | | FP8 | 51,000 TPS | `python src/scripts/train/OLMo-1B.py launch "${run_name}" "${cluster}" --model.float8_config.enabled=true` |
