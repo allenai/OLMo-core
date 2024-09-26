@@ -70,6 +70,7 @@ TRAIN_CE_LOSS_METRIC = "train/CE loss"
 TRAIN_PPL_METRIC = "train/PPL"
 TRAIN_Z_LOSS_METRIC = "train/Z loss"
 OPTIM_STEP_SKIPPED_METRIC = "optim/step skipped"
+SEQ_LEN_METRIC = "data/sequence length"
 
 
 class LoadStrategy(StrEnum):
@@ -1167,6 +1168,8 @@ class Trainer:
                 )
             self.global_step += 1
             self.global_train_tokens_seen += self.global_batch_size
+
+            self.record_metric(SEQ_LEN_METRIC, float(batch["input_ids"].shape[1]))
 
             for callback in self.callbacks.values():
                 callback.pre_step(batch)

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added `Config.validate()`, `Config.replace()`, and `Config.apply()` methods.
+- Trainer now records sequence length as a metric.
 
 ### Fixed
 
