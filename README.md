@@ -26,16 +26,17 @@ To see the exact usage for each script, run the script without any arguments.
 
 Throughput numbers from these scripts with various different configuration settings are reported below, measured on a cluster with NVIDIA H100 GPUs.
 
-| Model size | Context length | Precision | Throughput[^1] | Train script | Overrides |
+| Model&nbsp;size | Context&nbsp;length | Precision | Throughput[^1] | Training&nbsp;script | Commandline&nbsp;overrides&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; |
 | :--------: | :------------: | :-------: | -----------: | :----------- | :-------- |
-| 1B  | 4K | BF16 | 44,000 TPS | `OLMo-1B.py` | |
-| 1B  | 256-8196 VSL | BF16 | 49,000 TPS | `OLMo-1B.py` | `--dataset.name=vsl` |
-| | | FP8 | 51,000 TPS | `OLMo-1B.py` | `--model.float8_config.enabled=true` |
-| 7B  | 4K | BF16 | 10,000 TPS | `OLMo-7B.py` | |
+| **1B**  | 4096 | BF16 | 44,000 TPS | `OLMo-1B.py` | |
+| | 256-8192[^2] | BF16 | 49,000 TPS | `OLMo-1B.py` | `--dataset.name=vsl` |
+| | 4096 | FP8 | 51,000 TPS | `OLMo-1B.py` | `--model.float8_config.enabled=true` |
+| **7B**  | 4096 | BF16 | 10,000 TPS | `OLMo-7B.py` | |
 | | | FP8 | 13,000 TPS | `OLMo-7B.py` | `--model.float8_config.enabled=true` |
-| 13B | 4K | BF16 | 4,600 TPS | `OLMo-13B.py` | |
+| **13B** | 4096 | BF16 | 4,600 TPS | `OLMo-13B.py` | |
 
 [^1]: Throughput reported in tokens per second per device.
+[^2]: Denotes variable sequence length (VSL) with the Grow-P2 curriculum from [Dataset Decomposition: Faster LLM Training with Variable Sequence Length Curriculum](https://arxiv.org/abs/2405.13226).
 
 ## Development
 
