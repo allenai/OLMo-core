@@ -89,7 +89,7 @@ class EvaluatorCallback(Callback):
             for name, value in evaluator.compute_metrics().items():
                 value = value.item()
                 metrics.append(f"    {name}={format_float(value)}")
-                self.trainer.record_metric(name, value)
+                self.trainer.record_metric(f"eval/{evaluator.name}/{name}", value)
             log.info("Eval metrics:\n" + "\n".join(metrics))
 
         # Restore model to train mode.
