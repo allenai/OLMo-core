@@ -126,7 +126,6 @@ class CheckpointerCallback(Callback):
                         lambda: self.checkpointer.dir_is_checkpoint(self._latest_checkpoint_path),
                         "waiting to finalize checkpoint",
                     )
-                barrier()
                 self._future = None
                 return fut
         return None
