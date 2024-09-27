@@ -8,7 +8,6 @@ import torch.distributed as dist
 from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import (
     backend_supports_cpu,
-    barrier,
     get_fs_local_rank,
     get_rank,
     is_distributed,
