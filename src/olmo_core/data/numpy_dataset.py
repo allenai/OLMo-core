@@ -1285,6 +1285,11 @@ class VSLCurriculumConfig(Config):
     num_cycles: Optional[int] = None
     balanced: Optional[bool] = None
 
+    def validate(self):
+        if self.name == VSLCurriculumType.natural:
+            self.num_cycles = None
+            self.balanced = None
+
     def build(self) -> VSLCurriculum:
         """
         Build the VSL curriculum.
