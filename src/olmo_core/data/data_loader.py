@@ -5,9 +5,9 @@ Overview
 --------
 
 Construct a data loader from a :class:`~olmo_core.data.numpy_dataset.NumpyDatasetBase` instance
-using :meth:`DataLoaderBase.wrap_numpy_dataset()`::
+using :meth:`NumpyDataLoaderBase.wrap_numpy_dataset()`::
 
-    data_loader = DataLoaderBase.wrap_numpy_dataset(dataset, ...)
+    data_loader = NumpyDataLoaderBase.wrap_numpy_dataset(dataset, ...)
 
 Then load batches for an epoch like this::
 
@@ -26,18 +26,21 @@ Then load batches for an epoch like this::
 import logging
 import math
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, Optional, Tuple
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.utils.data
 
 from ..aliases import PathOrStr
-from ..distributed.utils import barrier
+from ..config import Config
+from ..distributed.utils import barrier, get_fs_local_rank, get_rank, get_world_size
 from ..exceptions import OLMoConfigurationError
-from ..utils import roundrobin, threaded_generator
+from ..utils import get_default_device, roundrobin, threaded_generator
 from .collator import DataCollator
 from .numpy_dataset import (
     NumpyDatasetBase,
@@ -49,8 +52,10 @@ from .utils import get_rng, iter_batched, load_array_slice, memmap_to_write
 
 __all__ = [
     "DataLoaderBase",
-    "FSLDataLoader",
-    "VSLDataLoader",
+    "NumpyDataLoaderBase",
+    "NumpyFSLDataLoader",
+    "NumpyVSLDataLoader",
+    "NumpyDataLoaderConfig",
 ]
 
 log = logging.getLogger(__name__)
@@ -58,18 +63,142 @@ log = logging.getLogger(__name__)
 
 class DataLoaderBase(ABC):
     """
-    A distributed, deterministic, stateful data loader for use with
-    :class:`~olmo_core.data.numpy_dataset.NumpyDatasetBase` dataset classes.
+    An abstract base class for data loaders used by the :class:`~olmo_core.train.Trainer`.
 
     .. warning::
-        You must call :meth:`reshuffle()` *before* starting a new epoch
+        When using a :class:`DataLoaderBase` directly (outside of the :class:`~olmo_core.train.Trainer`),
+        you must call :meth:`reshuffle()` *before* starting a new epoch
         (i.e. before calling :meth:`__iter__`) and you must call :meth:`reset()` *after* each
         epoch (i.e. after the iterator returned from :meth:`__iter__` has been exhausted).
         Failure to do so will result in incorrect data order.
 
-    :param dataset: The dataset to wrap / load from.
-    :param global_batch_size: The global batch size *in tokens*.
     :param collator: The data collator to use to create batches from instances.
+    :param work_dir: The working directory. Should be shared among local ranks.
+    :param global_batch_size: The global batch size *in tokens*.
+    :param dp_world_size: The data parallel world size.
+    :param dp_rank: The local data parallel rank.
+    :param fs_local_rank: The filesystem-local rank.
+    """
+
+    def __init__(
+        self,
+        *,
+        collator: DataCollator,
+        work_dir: PathOrStr,
+        global_batch_size: int,
+        dp_world_size: int = 1,
+        dp_rank: int = 0,
+        fs_local_rank: int = 0,
+    ):
+        self.collator = collator
+        self.work_dir = work_dir
+        self.global_batch_size = global_batch_size
+        self.dp_world_size = dp_world_size
+        self.dp_rank = dp_rank
+        self.fs_local_rank = fs_local_rank
+        self.batches_processed = 0
+        self.tokens_processed = 0
+        self._epoch: Optional[int] = None
+
+    @property
+    def epoch(self) -> int:
+        """
+        Get the current epoch (1-based).
+        """
+        if self._epoch is None:
+            raise RuntimeError(
+                "The data loader's epoch has not been set yet, did you forget to call 'reshuffle()'?"
+            )
+        return self._epoch
+
+    @property
+    @abstractmethod
+    def total_batches(self) -> int:
+        """
+        The total number of batches that the dataset will produce over the course of an epoch.
+        """
+        raise NotImplementedError
+
+    def __len__(self) -> int:
+        """
+        Returns the total number of batches in an epoch, the same as :data:`total_batches`.
+        """
+        return self.total_batches
+
+    def __iter__(self) -> Iterator[Dict[str, Any]]:
+        """
+        Iterate over the local rank batches.
+        """
+        for batch in self._iter_batches():
+            if batch["input_ids"].numel() != self.rank_batch_size:
+                raise RuntimeError(
+                    f"Expected batch size of {self.rank_batch_size:,d} tokens on rank {self.dp_rank}, "
+                    f"got input IDs with shape {tuple(batch['input_ids'].shape)} = {batch['input_ids'].numel():,d} tokens"
+                )
+            self.batches_processed += 1
+            self.tokens_processed += self.global_batch_size
+            yield batch
+
+    @property
+    def rank_batch_size(self) -> int:
+        return self.global_batch_size // self.dp_world_size
+
+    @abstractmethod
+    def state_dict(self) -> Dict[str, Any]:
+        """
+        Get a state dictionary for checkpointing.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        """
+        Load a state dict from :meth:`state_dict()` to restore the data loader's state.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def reshuffle(self, epoch: Optional[int] = None, in_memory: bool = False):
+        """
+        Reshuffle for a new epoch. Should be called before starting the epoch, regardless
+        of whether or not you've called :meth:`load_state_dict()`.
+
+        :param epoch: The epoch number.
+        :param in_memory: Shuffle the indices in-memory as opposed to on disk.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def _iter_batches(self) -> Iterable[Dict[str, Any]]:
+        """
+        Returns an iterable over all batches in the epoch.
+
+        .. important::
+            This should account for data parallelism in that only the local rank's portion of each
+            batch should be generated from this method.
+        """
+        raise NotImplementedError
+
+    def reset(self):
+        """
+        Reset epoch bookkeeping. Should be called at the end of an epoch.
+        """
+        self.batches_processed = 0
+        self.tokens_processed = 0
+
+
+class NumpyDataLoaderBase(DataLoaderBase):
+    """
+    A distributed, deterministic, stateful data loader base class for use with
+    :class:`~olmo_core.data.numpy_dataset.NumpyDatasetBase` dataset classes.
+
+    .. seealso::
+        - :class:`NumpyFSLDataLoader`
+        - :class:`NumpyVSLDataLoader`
+
+    :param dataset: The dataset to wrap / load from.
+    :param collator: The data collator to use to create batches from instances.
+    :param global_batch_size: The global batch size *in tokens*.
     :param work_dir: The working directory. Should be shared among local ranks.
     :param seed: The seed to use for shuffling / sampling data.
     :param epoch: The epoch to start from.
@@ -89,8 +218,8 @@ class DataLoaderBase(ABC):
         self,
         dataset: NumpyDatasetBase,
         *,
-        global_batch_size: int,
         collator: DataCollator,
+        global_batch_size: int,
         work_dir: PathOrStr,
         seed: int = 0,
         shuffle: bool = True,
@@ -102,22 +231,21 @@ class DataLoaderBase(ABC):
         dp_rank: int = 0,
         fs_local_rank: int = 0,
     ):
+        super().__init__(
+            collator=collator,
+            work_dir=work_dir,
+            global_batch_size=global_batch_size,
+            dp_world_size=dp_world_size,
+            dp_rank=dp_rank,
+            fs_local_rank=fs_local_rank,
+        )
         self.dataset = dataset
-        self.global_batch_size = global_batch_size
-        self.collator = collator
         self.seed = seed
         self.shuffle = shuffle
         self.num_threads = num_threads
         self.num_workers = num_workers
         self.prefetch_factor = prefetch_factor
         self.target_device_type = target_device_type
-        self.work_dir = work_dir
-        self.dp_world_size = dp_world_size
-        self.dp_rank = dp_rank
-        self.fs_local_rank = fs_local_rank
-        self.batches_processed = 0
-        self.tokens_processed = 0
-        self._epoch: Optional[int] = None
         self._global_indices: Optional[np.ndarray] = None
 
     @classmethod
@@ -136,9 +264,9 @@ class DataLoaderBase(ABC):
         num_workers: int = 0,
         prefetch_factor: Optional[int] = None,
         target_device_type: str = "cpu",
-    ) -> "DataLoaderBase":
+    ) -> "NumpyDataLoaderBase":
         """
-        Construct the corresponding :class:`DataLoaderBase` instance for the given :class:`NumpyDatasetBase`.
+        Construct the corresponding :class:`NumpyDataLoaderBase` instance for the given :class:`NumpyDatasetBase`.
 
         :param dataset: The dataset to wrap.
         """
@@ -157,7 +285,7 @@ class DataLoaderBase(ABC):
         )
         data_loader: DataLoaderBase
         if isinstance(dataset, NumpyFSLDataset):
-            data_loader = FSLDataLoader(
+            data_loader = NumpyFSLDataLoader(
                 dataset,
                 **kwargs,  # type: ignore
             )
@@ -166,7 +294,7 @@ class DataLoaderBase(ABC):
                     dataset.max_target_sequence_length // dataset.sequence_length
                 )
         elif isinstance(dataset, NumpyVSLDataset):
-            data_loader = VSLDataLoader(
+            data_loader = NumpyVSLDataLoader(
                 dataset,
                 **kwargs,  # type: ignore
             )
@@ -175,28 +303,37 @@ class DataLoaderBase(ABC):
 
         return data_loader
 
-    @property
-    def epoch(self) -> int:
-        if self._epoch is None:
-            raise RuntimeError(
-                "The data loader's epoch has not been set yet, did you forget to call 'reshuffle()'?"
+    def state_dict(self) -> Dict[str, Any]:
+        return {
+            "dataset_fingerprint_version": self.dataset.fingerprint_version,
+            "dataset_fingerprint": self.dataset.fingerprint,
+            "batches_processed": self.batches_processed,
+            "tokens_processed": self.tokens_processed,
+            "seed": self.seed,
+            "epoch": self._epoch,
+        }
+
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        if state_dict["dataset_fingerprint_version"] != self.dataset.fingerprint_version:
+            log.warning(
+                "Dataset fingerprint version does not match the version in the checkpoint, "
+                "this could mean the data has changed"
             )
-        return self._epoch
+        elif state_dict["dataset_fingerprint"] != self.dataset.fingerprint:
+            raise RuntimeError(
+                "Restoring state from a different dataset is not supported! (fingerprint doesn't match)"
+            )
 
-    @property
-    @abstractmethod
-    def total_batches(self) -> int:
-        """
-        The total number of batches that the dataset will produce over the course of an epoch.
-        """
-        raise NotImplementedError
+        if state_dict["seed"] != self.seed:
+            log.warning(
+                "Restoring data loading state with a different data seed, "
+                "will use data seed from state dict for data order consistency."
+            )
+            self.seed = state_dict["seed"]
 
-    def __len__(self) -> int:
-        return self.total_batches
-
-    @property
-    def rank_batch_size(self) -> int:
-        return self.global_batch_size // self.dp_world_size
+        self.batches_processed = state_dict["batches_processed"]
+        self.tokens_processed = state_dict["tokens_processed"]
+        self._epoch = state_dict["epoch"] or self._epoch
 
     @property
     @abstractmethod
@@ -253,66 +390,7 @@ class DataLoaderBase(ABC):
                     log.info(f"Global data order indices saved to:\n'{self._global_indices_file}'")
         barrier()
 
-    def state_dict(self) -> Dict[str, Any]:
-        """
-        Get a state dictionary for checkpointing.
-        """
-        return {
-            "dataset_fingerprint_version": self.dataset.fingerprint_version,
-            "dataset_fingerprint": self.dataset.fingerprint,
-            "batches_processed": self.batches_processed,
-            "tokens_processed": self.tokens_processed,
-            "seed": self.seed,
-            "epoch": self._epoch,
-        }
-
-    def load_state_dict(self, state_dict: Dict[str, Any]):
-        """
-        Load a state dict from :meth:`state_dict()` to restore the data loader's state.
-        """
-        if state_dict["dataset_fingerprint_version"] != self.dataset.fingerprint_version:
-            log.warning(
-                "Dataset fingerprint version does not match the version in the checkpoint, "
-                "this could mean the data has changed"
-            )
-        elif state_dict["dataset_fingerprint"] != self.dataset.fingerprint:
-            raise RuntimeError(
-                "Restoring state from a different dataset is not supported! (fingerprint doesn't match)"
-            )
-
-        if state_dict["seed"] != self.seed:
-            log.warning(
-                "Restoring data loading state with a different data seed, "
-                "will use data seed from state dict for data order consistency."
-            )
-            self.seed = state_dict["seed"]
-
-        self.batches_processed = state_dict["batches_processed"]
-        self.tokens_processed = state_dict["tokens_processed"]
-        self._epoch = state_dict["epoch"] or self._epoch
-
-    def __iter__(self) -> Iterator[Dict[str, Any]]:
-        """
-        Iterate over the local rank instances.
-        """
-        for batch in self.get_data_loader():
-            if batch["input_ids"].numel() != self.rank_batch_size:
-                raise RuntimeError(
-                    f"Expected batch size of {self.rank_batch_size:,d} tokens on rank {self.dp_rank}, "
-                    f"got input IDs with shape {tuple(batch['input_ids'].shape)} = {batch['input_ids'].numel():,d} tokens"
-                )
-            self.batches_processed += 1
-            self.tokens_processed += self.global_batch_size
-            yield batch
-
     def reshuffle(self, epoch: Optional[int] = None, in_memory: bool = False):
-        """
-        Reshuffle for a new epoch. Should be called before starting the epoch, regardless
-        of whether or not you've called :meth:`load_state_dict()`.
-
-        :param epoch: The epoch number.
-        :param in_memory: Shuffle the indices in-memory as opposed to on disk.
-        """
         if epoch is None:
             epoch = 1 if self._epoch is None else self._epoch + 1
         if epoch <= 0:
@@ -320,14 +398,7 @@ class DataLoaderBase(ABC):
         self._epoch = epoch
         self.build_and_save_global_indices(in_memory=in_memory)
 
-    def reset(self):
-        """
-        Reset epoch bookkeeping. Should be called at the end of an epoch.
-        """
-        self.batches_processed = 0
-        self.tokens_processed = 0
-
-    def get_data_loader(self) -> torch.utils.data.DataLoader:
+    def _iter_batches(self) -> Iterable[Dict[str, Any]]:
         return torch.utils.data.DataLoader(
             _IterableDatasetWrapper(self),
             batch_size=None,
@@ -354,7 +425,7 @@ class DataLoaderBase(ABC):
         return "_".join(parts)
 
 
-class FSLDataLoader(DataLoaderBase):
+class NumpyFSLDataLoader(NumpyDataLoaderBase):
     """
     A fixed sequence length :class:`DataLoaderBase` for use with a
     :class:`~olmo_core.data.numpy_dataset.NumpyFSLDataset`.
@@ -483,7 +554,7 @@ class FSLDataLoader(DataLoaderBase):
             )
 
 
-class VSLDataLoader(DataLoaderBase):
+class NumpyVSLDataLoader(NumpyDataLoaderBase):
     """
     A variable sequence length :class:`DataLoaderBase` for use with a :class:`~olmo_core.data.numpy_dataset.NumpyVSLDataset`.
 
@@ -711,7 +782,7 @@ class VSLDataLoader(DataLoaderBase):
 
 
 class _IterableDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
-    def __init__(self, data_loader: DataLoaderBase):
+    def __init__(self, data_loader: NumpyDataLoaderBase):
         self.data_loader = data_loader
 
     @property
@@ -778,3 +849,49 @@ class _IterableDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
             self.data_loader.collator(batch)
             for batch in iter_batched(instance_iterator, self.data_loader.rank_batch_size)
         )
+
+
+@dataclass
+class NumpyDataLoaderConfig(Config):
+    """
+    A configuration class for building :class:`NumpyDataLoaderBase` data loaders.
+    """
+
+    global_batch_size: int
+    seed: int
+    work_dir: Optional[str] = None
+    num_threads: Optional[int] = None
+    num_workers: int = 0
+    prefetch_factor: Optional[int] = None
+    target_device_type: Optional[str] = None
+
+    def build(
+        self,
+        dataset: NumpyDatasetBase,
+        *,
+        collator: Optional[DataCollator] = None,
+        dp_process_group: Optional[dist.ProcessGroup] = None,
+    ) -> NumpyDataLoaderBase:
+        """
+        Construct the :class:`NumpyDataLoaderBase`.
+        """
+        if self.work_dir is not None and not dataset.work_dir_set:
+            dataset.work_dir = Path(self.work_dir)
+
+        dataset.prepare()
+
+        data_loader = NumpyDataLoaderBase.wrap_numpy_dataset(
+            dataset,
+            global_batch_size=self.global_batch_size,
+            collator=collator or DataCollator(pad_token_id=dataset.pad_token_id),
+            work_dir=self.work_dir or dataset.work_dir,
+            dp_world_size=get_world_size(dp_process_group),
+            dp_rank=get_rank(dp_process_group),
+            fs_local_rank=get_fs_local_rank(),
+            seed=self.seed,
+            num_threads=self.num_threads,
+            num_workers=self.num_workers,
+            prefetch_factor=self.prefetch_factor,
+            target_device_type=self.target_device_type or get_default_device().type,
+        )
+        return data_loader

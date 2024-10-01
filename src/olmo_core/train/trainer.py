@@ -26,7 +26,7 @@ from torch.optim import Optimizer
 
 from ..aliases import PathOrStr
 from ..config import StrEnum
-from ..data import DataCollator, DataLoaderBase, NumpyDatasetBase
+from ..data import DataLoaderBase
 from ..data.utils import get_labels, split_batch
 from ..distributed.utils import (
     all_reduce_value,
@@ -134,14 +134,9 @@ class Trainer:
     The optimizer to use.
     """
 
-    dataset: NumpyDatasetBase
+    data_loader: DataLoaderBase
     """
-    The training dataset.
-    """
-
-    collator: DataCollator
-    """
-    The data collator.
+    The train data loader.
     """
 
     device: torch.device
@@ -176,11 +171,6 @@ class Trainer:
     max_duration: Duration
     """
     The duration to train for.
-    """
-
-    global_batch_size: int
-    """
-    Global training batch size *in tokens*.
     """
 
     rank_microbatch_size: int
@@ -249,21 +239,6 @@ class Trainer:
     The distributed process group for all data parallel ranks.
     """
 
-    data_seed: int = 0
-    """
-    The seed to use to shuffle the dataset.
-    """
-
-    data_loader_workers: int = 0
-    """
-    The number of data loading workers to use.
-    """
-
-    data_loader_prefetch_factor: Optional[int] = None
-    """
-    The number of batches to prefetch.
-    """
-
     # Bookkeeping
 
     global_step: int = 0
@@ -306,7 +281,6 @@ class Trainer:
     _thread_pool: Optional[ThreadPoolExecutor] = None
     _bookkeeping_pg: Optional[dist.ProcessGroup] = None
     _checkpoint_loaded: bool = False
-    _data_loader: Optional[DataLoaderBase] = None
 
     def __post_init__(self):
         self.save_folder = normalize_path(self.save_folder)
@@ -363,6 +337,23 @@ class Trainer:
                     "backend and will be blocking. This may result in slower training throughput."
                 )
 
+        # Check data loader configuration.
+        if self.data_loader.dp_world_size != get_world_size(self.dp_process_group):
+            raise OLMoConfigurationError(
+                "data loader's DP world size appears to be configured incorrectly, "
+                f"got {self.data_loader.dp_world_size}, expected {get_world_size(self.dp_process_group)}."
+            )
+        if self.data_loader.dp_rank != get_rank(self.dp_process_group):
+            raise OLMoConfigurationError(
+                "data loader's DP rank appears to be configured incorrectly, "
+                f"got {self.data_loader.dp_rank}, expected {get_rank(self.dp_process_group)}."
+            )
+        if self.data_loader.fs_local_rank != get_fs_local_rank():
+            raise OLMoConfigurationError(
+                "data loader's FS local rank appears to be configured incorrectly, "
+                f"got {self.data_loader.fs_local_rank}, expected {get_fs_local_rank()}."
+            )
+
         # Make sure global batch size is divisible by microbatch size times world size
         if (
             self.global_batch_size
@@ -374,28 +365,15 @@ class Trainer:
                 f"micro-batch size ({self.rank_microbatch_size}) x DP world size ({ws})"
             )
 
-        # Prepare datasets.
-        if not self.dataset.work_dir_set:
-            self.dataset.work_dir = self.work_dir
-        self.dataset.prepare()
-
-        self._data_loader = DataLoaderBase.wrap_numpy_dataset(
-            self.dataset,
-            global_batch_size=self.global_batch_size,
-            collator=self.collator,
-            work_dir=self.dataset.work_dir,
-            dp_world_size=get_world_size(self.dp_process_group),
-            dp_rank=get_rank(self.dp_process_group),
-            fs_local_rank=get_fs_local_rank(),
-            seed=self.data_seed,
-            num_threads=None,
-            num_workers=self.data_loader_workers,
-            prefetch_factor=self.data_loader_prefetch_factor,
-            target_device_type=self.device.type,
-        )
-
         for callback in self.callbacks.values():
             callback.post_attach()
+
+    @property
+    def global_batch_size(self) -> int:
+        """
+        Global training batch size *in tokens*.
+        """
+        return self.data_loader.global_batch_size
 
     @property
     def rank_batch_size(self) -> int:
@@ -517,11 +495,6 @@ class Trainer:
         If a checkpoint has been loaded.
         """
         return self._checkpoint_loaded
-
-    @property
-    def data_loader(self) -> DataLoaderBase:
-        assert self._data_loader is not None
-        return self._data_loader
 
     def cancel_run(self, reason: str):
         """
@@ -979,7 +952,7 @@ class Trainer:
                 callback.log_metrics(step, metrics[step])
 
     def _get_labels(self, batch: Dict[str, Any]) -> torch.Tensor:
-        return get_labels(batch, label_ignore_index=self.collator.label_ignore_index)
+        return get_labels(batch, label_ignore_index=self.data_loader.collator.label_ignore_index)
 
     @contextlib.contextmanager
     def _model_forward_context(self) -> Generator[None, None, None]:
@@ -1017,7 +990,7 @@ class Trainer:
         ce_loss, z_loss = loss_fn(
             logits_for_loss,
             labels,
-            ignore_index=self.collator.label_ignore_index,
+            ignore_index=self.data_loader.collator.label_ignore_index,
             reduction=loss_reduction,
             compute_z_loss=compute_z_loss,
             z_loss_multiplier=self.z_loss_multiplier or 1e-4,
@@ -1081,7 +1054,9 @@ class Trainer:
         # Generate labels, calculate how many tokens are going to be use in the loss.
         if "labels" not in batch:
             batch["labels"] = self._get_labels(batch)
-        batch_num_tokens_for_loss = (batch["labels"] != self.collator.label_ignore_index).sum()
+        batch_num_tokens_for_loss = (
+            batch["labels"] != self.data_loader.collator.label_ignore_index
+        ).sum()
 
         # Split into micro-batches.
         if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):

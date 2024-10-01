@@ -6,11 +6,11 @@ import pytest
 
 from olmo_core.data import (
     DataCollator,
-    FSLDataLoader,
+    NumpyFSLDataLoader,
     NumpyFSLDataset,
+    NumpyVSLDataLoader,
     NumpyVSLDataset,
     VSLCurriculum,
-    VSLDataLoader,
     VSLGrowP2Curriculum,
     VSLNaturalCurriculum,
 )
@@ -51,12 +51,12 @@ def test_fsl_data_loader(
             eos_token_id=-1,
         )
         for rank in range(world_size):
-            data_loader = FSLDataLoader(
+            data_loader = NumpyFSLDataLoader(
                 dataset,
                 global_batch_size=batch_size,
                 collator=DataCollator(pad_token_id=-1),
                 shuffle=False,
-                num_threads=0,
+                num_threads=num_threads,
                 work_dir=tmp_path,
                 dp_rank=rank,
                 dp_world_size=world_size,
@@ -108,7 +108,7 @@ def test_fsl_data_loader_multiple_epochs(
         pad_token_id=-1,
         eos_token_id=-1,
     )
-    data_loader = FSLDataLoader(
+    data_loader = NumpyFSLDataLoader(
         dataset,
         global_batch_size=batch_size,
         collator=DataCollator(pad_token_id=-1),
@@ -152,7 +152,7 @@ def test_fsl_data_loader_multiple_epochs(
 
     # Create a new data loader and restart from the same spot.
     state_dict = data_loader.state_dict()
-    data_loader = FSLDataLoader(
+    data_loader = NumpyFSLDataLoader(
         dataset,
         global_batch_size=batch_size,
         collator=DataCollator(pad_token_id=-1),
@@ -206,7 +206,7 @@ def test_fsl_data_loader_with_seq_len_warmup(tmp_path: Path, shuffle: bool):
             eos_token_id=-1,
             max_target_sequence_length=max_target_sequence_length,
         )
-        data_loader = FSLDataLoader(
+        data_loader = NumpyFSLDataLoader(
             dataset,
             global_batch_size=seq_len,
             collator=DataCollator(pad_token_id=-1),
@@ -272,7 +272,7 @@ def test_vsl_data_loader(
     world_size = 2
     global_batch_size = 8
 
-    data_loader = VSLDataLoader(
+    data_loader = NumpyVSLDataLoader(
         dataset,
         shuffle=shuffle,
         num_threads=num_threads,

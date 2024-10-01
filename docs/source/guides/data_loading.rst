@@ -34,8 +34,8 @@ Concat and chunk
 ~~~~~~~~~~~~~~~~
 
 The simplest strategy is the "concat and chunk" approach, which means all tokenized documents are concatenated together and then chunked into training instances of the desired sequence length.
-To use this method you just need to pass a :class:`~olmo_core.data.numpy_dataset.NumpyFSLDataset`
-dataset to your :class:`~olmo_core.train.Trainer` with the paths to your tokenized numpy data files.
+To use this method you just need to set a :class:`~olmo_core.data.data_loader.NumpyFSLDataLoader`
+data loader as your trainer's :data:`~olmo_core.train.Trainer.data_loader`.
 
 While this strategy is simple and efficient, it does have several downsides.
 For one, documents may end up fragmented across multiple training instances.
@@ -51,7 +51,7 @@ Variable sequence length training
 
 A promising alternative to the simple fixed sequence length "concat and chunk" strategy is variable sequence length training through "dataset decomposition" (`Pouransari et al. (2024) <Pouransari et al 2024_>`_).
 With dataset decomposition, every training instance is a unique subset of tokens from a single document. Therefore there's no need for intra-document masking.
-You can use this approach by passing a :class:`~olmo_core.data.numpy_dataset.NumpyVSLDataset` to your training with the paths to your numpy data files.
+You can use this approach by setting a :class:`~olmo_core.data.data_loader.NumpyVSLDataLoader` as your trainer's :data:`~olmo_core.train.Trainer.data_loader`.
 
 This requires you set a ``min_sequence_length`` and ``max_sequence_length`` which must both be powers of 2 (e.g. 256 and 4096). Each training batch will be composed of instances of the same sequence length such that the total number of tokens in the batch is equal to your :data:`~olmo_core.train.Trainer.global_batch_size`.
 

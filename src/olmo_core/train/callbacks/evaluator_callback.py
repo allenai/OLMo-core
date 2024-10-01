@@ -125,7 +125,7 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
             dataset,
             name="lm",
             global_batch_size=eval_batch_size,
-            collator=trainer.collator,
+            collator=trainer.data_loader.collator,
             device=trainer.device,
         )
         return EvaluatorCallback(
