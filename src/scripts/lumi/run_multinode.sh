@@ -22,7 +22,7 @@
 module load LUMI/24.03 partition/G
 
 ## Container-dependent settings
-export OLMO_CONTAINER=$PROJECT_DIR/containers/lumi-torch25.sif
+export OLMO_CONTAINER=$PROJECT_DIR/containers/lumi-torch25rc-rocm62-py312.sif
 export PYTHONPATH=.:${PYTHONPATH}
 export ROCM_PATH=/opt/rocm
 export CONDA_ENV=pytorch
