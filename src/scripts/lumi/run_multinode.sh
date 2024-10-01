@@ -44,6 +44,7 @@ export FI_CXI_DISABLE_CQ_HUGETLB=1
 export GPU_MAX_HW_QUEUES=8
 # We need to set this to avoid "Cassini Event Queue overflow detected." errors.
 export FI_CXI_DEFAULT_CQ_SIZE=131072
+export OLMO_SHARED_FS=1
 
 ## Job settings
 # Try playing with max_split_size_mb if you run into OOM errors.
