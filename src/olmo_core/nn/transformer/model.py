@@ -294,6 +294,7 @@ class TransformerConfig(Config):
             block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
             **kwargs,
         )
 
@@ -307,6 +308,7 @@ class TransformerConfig(Config):
             block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
             **kwargs,
         )
 
@@ -320,6 +322,7 @@ class TransformerConfig(Config):
             block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
             **kwargs,
         )
 
@@ -475,6 +478,7 @@ class TransformerConfig(Config):
         n_heads: int,
         n_kv_heads: Optional[int] = None,
         qk_norm: bool = False,
+        layer_norm_eps: float = 1e-5,
         rope_theta: int = 500_000,
         rope_type: Optional[RoPEType] = None,
         hidden_size_multiple_of: int = 256,
@@ -513,7 +517,7 @@ class TransformerConfig(Config):
         # Configure global layer norm.
         layer_norm = LayerNormConfig(
             name=LayerNormType.fused_rms if fused_ops else LayerNormType.rms,
-            eps=1e-5,
+            eps=layer_norm_eps,
             bias=False,
             dtype=dtype,
         )
