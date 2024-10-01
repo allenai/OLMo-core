@@ -114,7 +114,7 @@ def build_common_components(
     cluster: str,
     overrides: List[str],
 ) -> CommonComponents:
-    root_dir: str = "weka://oe-training-default/ai2-llm"
+    root_dir: str = os.environ.get("ROOT_DIR", "weka://oe-training-default/ai2-llm")
     weka_buckets: List[BeakerWekaBucket] = []
     if "jupiter" in cluster:
         root_dir = "/weka/oe-training-default/ai2-llm"
