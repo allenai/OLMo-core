@@ -96,8 +96,17 @@ class DataLoaderBase(ABC):
         self.dp_world_size = dp_world_size
         self.dp_rank = dp_rank
         self.fs_local_rank = fs_local_rank
+
         self.batches_processed = 0
+        """
+        The total number of batches processed so far in the current epoch.
+        """
+
         self.tokens_processed = 0
+        """
+        The total number of tokens processed globally so far in the current epoch.
+        """
+
         self._epoch: Optional[int] = None
 
     @property
@@ -141,6 +150,9 @@ class DataLoaderBase(ABC):
 
     @property
     def rank_batch_size(self) -> int:
+        """
+        The batch size, per rank, in tokens.
+        """
         return self.global_batch_size // self.dp_world_size
 
     @abstractmethod
@@ -158,13 +170,12 @@ class DataLoaderBase(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def reshuffle(self, epoch: Optional[int] = None, in_memory: bool = False):
+    def reshuffle(self, epoch: Optional[int] = None, **kwargs):
         """
         Reshuffle for a new epoch. Should be called before starting the epoch, regardless
         of whether or not you've called :meth:`load_state_dict()`.
 
         :param epoch: The epoch number.
-        :param in_memory: Shuffle the indices in-memory as opposed to on disk.
         """
         raise NotImplementedError
 
@@ -176,6 +187,9 @@ class DataLoaderBase(ABC):
         .. important::
             This should account for data parallelism in that only the local rank's portion of each
             batch should be generated from this method.
+
+        :returns: All batches in the epoch, where each batch just contains the local rank's portion
+            of the batch, which should have exactly :data:`rank_batch_size` tokens.
         """
         raise NotImplementedError
 
@@ -390,7 +404,8 @@ class NumpyDataLoaderBase(DataLoaderBase):
                     log.info(f"Global data order indices saved to:\n'{self._global_indices_file}'")
         barrier()
 
-    def reshuffle(self, epoch: Optional[int] = None, in_memory: bool = False):
+    def reshuffle(self, epoch: Optional[int] = None, in_memory: bool = False, **kwargs):
+        del kwargs
         if epoch is None:
             epoch = 1 if self._epoch is None else self._epoch + 1
         if epoch <= 0:

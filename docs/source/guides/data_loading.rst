@@ -1,8 +1,11 @@
 Data loading
 ============
 
+Using OLMo-core's builtin data loading
+--------------------------------------
+
 Data preparation
-----------------
+~~~~~~~~~~~~~~~~
 
 OLMo-core's builtin data loading functionality requires you to pre-tokenize your data into 1D numpy arrays of token IDs. These arrays should include all special tokens already -- such as "end of sentence" (EOS) tokens -- except for padding tokens.
 
@@ -26,12 +29,12 @@ For example::
     The `dolma <https://github.com/allenai/dolma>`_ project includes an optimized toolkit for pre-processing data into this format.
 
 Train data loading
-------------------
+~~~~~~~~~~~~~~~~~~
 
 Once you're data is pre-processed as above there are several different strategies available for loading that data for training.
 
 Concat and chunk
-~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^
 
 The simplest strategy is the "concat and chunk" approach, which means all tokenized documents are concatenated together and then chunked into training instances of the desired sequence length.
 To use this method you just need to set a :class:`~olmo_core.data.data_loader.NumpyFSLDataLoader`
@@ -42,12 +45,12 @@ For one, documents may end up fragmented across multiple training instances.
 Second, since each training instance may be composed of multiple documents, the model will be attending to tokens across different documents, which could potentially have adverse affects on the model (see `Zhao et al. (2024) <Zhao et al 2024_>`_ for example).
 
 Concat and chunk with intra-document masking
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The latter point downside, however, can be addressed by using `intra-document masking <intra-document masking_>`_. This requires you set ``generate_doc_lengths=True`` in your :class:`~olmo_core.data.numpy_dataset.NumpyFSLDataset` and use a model implementation that accepts the parameters ``doc_lens`` and ``max_doc_lens`` to its ``forward()`` method. See the :class:`~olmo_core.nn.transformer.Transformer` model implementation for example.
 
 Variable sequence length training
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 A promising alternative to the simple fixed sequence length "concat and chunk" strategy is variable sequence length training through "dataset decomposition" (`Pouransari et al. (2024) <Pouransari et al 2024_>`_).
 With dataset decomposition, every training instance is a unique subset of tokens from a single document. Therefore there's no need for intra-document masking.
@@ -57,6 +60,19 @@ This requires you set a ``min_sequence_length`` and ``max_sequence_length`` whic
 
 You can also configure a :class:`~olmo_core.data.numpy_dataset.VSLCurriculum` to control the sampling probability of different sequence lengths over the course of an epoch.
 
+Using a custom data loader
+--------------------------
+
+Using a custom data loader with the :class:`~olmo_core.train.Trainer` just requires implementing your own :class:`~olmo_core.data.data_loader.DataLoaderBase` subclass.
+
+In particular you need to take care when implementing the :meth:`~olmo_core.data.data_loader.DataLoaderBase._iter_batches` method to ensure each batch returned only contains the rank's local portion of the batch (with exactly :data:`~olmo_core.data.data_loader.DataLoaderBase.rank_batch_size` tokens).
+You should also implement :meth:`~olmo_core.data.data_loader.DataLoaderBase.state_dict()` and :meth:`~olmo_core.data.data_loader.DataLoaderBase.load_state_dict()` such that your data loader will pick up where it left off in an epoch after :meth:`~olmo_core.data.data_loader.DataLoaderBase.load_state_dict()` is called.
+
+For a real-world example see the source code of :class:`~olmo_core.data.data_loader.NumpyDataLoaderBase`.
+But for simplicity here's a toy example that just generates random token IDs.
+
+.. literalinclude:: ../../../src/test/data/custom_data_loader.py
+   :language: py
 
 .. _intra-document masking: https://www.semanticscholar.org/paper/c4673ed74c1f25a67c346dfddb4944e64b0d00a6
 .. _Zhao et al 2024: `intra-document masking`_
