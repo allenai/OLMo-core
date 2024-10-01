@@ -11,7 +11,12 @@ from dataclasses import dataclass
 from typing import List, cast
 
 from olmo_core.config import Config, DType
-from olmo_core.data import NumpyDatasetConfig, NumpyDatasetType, TokenizerConfig
+from olmo_core.data import (
+    NumpyDataLoaderConfig,
+    NumpyDatasetConfig,
+    NumpyDatasetType,
+    TokenizerConfig,
+)
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.distributed.utils import init_hybrid_shard_mesh
 from olmo_core.nn.transformer import TransformerConfig
@@ -41,6 +46,7 @@ class ExperimentConfig(Config):
     model: TransformerConfig
     optim: AdamWConfig
     dataset: NumpyDatasetConfig
+    data_loader: NumpyDataLoaderConfig
     trainer: TrainerConfig
     init_seed: int = 12536
 
@@ -76,13 +82,17 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         work_dir="/tmp/dataset-cache",
     )
 
+    data_loader_config = NumpyDataLoaderConfig(
+        global_batch_size=256 * 1024,
+        seed=0,
+        num_workers=4,
+    )
+
     trainer_config = (
         TrainerConfig(
             save_folder=f"/tmp/{run_name}",
-            global_batch_size=256 * 1024,
             rank_microbatch_size=16 * 1024,
             save_overwrite=True,
-            data_loader_workers=4,
             metrics_collect_interval=5,
             cancel_check_interval=5,
         )
@@ -131,7 +141,11 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     )
 
     return ExperimentConfig(
-        model=model_config, optim=optim_config, dataset=dataset_config, trainer=trainer_config
+        model=model_config,
+        optim=optim_config,
+        dataset=dataset_config,
+        data_loader=data_loader_config,
+        trainer=trainer_config,
     ).merge(overrides)
 
 
@@ -149,7 +163,8 @@ def main(run_name: str, overrides: List[str]):
     )
     optim = config.optim.build(model)
     dataset = config.dataset.build()
-    trainer = config.trainer.build(model, optim, dataset)
+    data_loader = config.data_loader.build(dataset)
+    trainer = config.trainer.build(model, optim, data_loader)
 
     # Save config to W&B and each checkpoint dir.
     config_dict = config.as_config_dict()

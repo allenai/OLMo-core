@@ -7,8 +7,8 @@ from beaker import Beaker
 
 from olmo_core.config import Config, StrEnum
 from olmo_core.data import (
-    DataLoaderBase,
     DataMix,
+    NumpyDataLoaderConfig,
     NumpyDatasetConfig,
     NumpyDatasetType,
     TokenizerConfig,
@@ -59,6 +59,7 @@ class CommonComponents(Config):
     launch: BeakerLaunchConfig
     tokenizer: TokenizerConfig
     dataset: NumpyDatasetConfig
+    data_loader: NumpyDataLoaderConfig
     callbacks: Dict[str, Callback]
 
 
@@ -69,6 +70,7 @@ class ExperimentConfig(Config):
     model: TransformerConfig
     optim: AdamWConfig
     dataset: NumpyDatasetConfig
+    data_loader: NumpyDataLoaderConfig
     trainer: TrainerConfig
     init_seed: int = 12536
 
@@ -112,6 +114,8 @@ def build_common_components(
     run_name: str,
     cluster: str,
     overrides: List[str],
+    *,
+    global_batch_size: int,
 ) -> CommonComponents:
     root_dir: str = "weka://oe-training-default/ai2-llm"
     weka_buckets: List[BeakerWekaBucket] = []
@@ -175,6 +179,10 @@ def build_common_components(
         else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache",
     )
 
+    data_loader_config = NumpyDataLoaderConfig(
+        global_batch_size=global_batch_size, seed=34521, num_workers=4
+    )
+
     callbacks: Dict[str, Callback] = {
         "lr_scheduler": SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=2000)),
         "gpu_monitor": GPUMemoryMonitorCallback(),
@@ -202,6 +210,7 @@ def build_common_components(
         launch=launch_config,
         tokenizer=tokenizer_config,
         dataset=dataset_config,
+        data_loader=data_loader_config,
         callbacks=callbacks,
     )
 
@@ -213,11 +222,14 @@ def build_config(
     cluster: str,
     overrides: List[str],
     *,
+    global_batch_size: int,
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
     optim_config_builder: Callable[[CommonComponents], AdamWConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
 ) -> ExperimentConfig:
-    common = build_common_components(script, cmd, run_name, cluster, overrides)
+    common = build_common_components(
+        script, cmd, run_name, cluster, overrides, global_batch_size=global_batch_size
+    )
 
     model = model_config_builder(common)
     if model.float8_config is None:
@@ -233,6 +245,7 @@ def build_config(
         model=model,
         optim=optim_config_builder(common),
         dataset=common.dataset,
+        data_loader=common.data_loader,
         trainer=trainer,
     ).merge(overrides)
 
@@ -258,15 +271,8 @@ def launch_prep(config: ExperimentConfig):
 
 def prep(config: ExperimentConfig):
     dataset = config.dataset.build()
-    dataset.prepare()
-
-    itds = DataLoaderBase.wrap_numpy_dataset(
-        dataset,
-        global_batch_size=config.trainer.global_batch_size,
-        collator=config.trainer.build_collator(dataset),
-        seed=config.trainer.data_seed,
-    )
-    itds.reshuffle(epoch=1)
+    data_loader = config.data_loader.build(dataset)
+    data_loader.reshuffle(epoch=1)
 
 
 def train(config: ExperimentConfig):
@@ -282,7 +288,8 @@ def train(config: ExperimentConfig):
     )
     optim = config.optim.build(model)
     dataset = config.dataset.build()
-    trainer = config.trainer.build(model, optim, dataset)
+    data_loader = config.data_loader.build(dataset)
+    trainer = config.trainer.build(model, optim, data_loader)
 
     # Record the config to W&B and each checkpoint dir.
     config_dict = config.as_config_dict()
@@ -295,6 +302,7 @@ def train(config: ExperimentConfig):
 
 def main(
     *,
+    global_batch_size: int,
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
     optim_config_builder: Callable[[CommonComponents], AdamWConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
@@ -331,6 +339,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         run_name,
         cluster,
         overrides,
+        global_batch_size=global_batch_size,
         model_config_builder=model_config_builder,
         optim_config_builder=optim_config_builder,
         trainer_config_builder=trainer_config_builder,

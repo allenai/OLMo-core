@@ -3,7 +3,7 @@ from typing import Any, Dict, Iterable, Optional, Sequence, Set
 import torch
 import torch.distributed as dist
 
-from ..data import DataCollator, FSLDataLoader, NumpyPaddedFSLDataset
+from ..data import DataCollator, NumpyFSLDataLoader, NumpyPaddedFSLDataset
 from ..distributed.utils import get_fs_local_rank, get_rank, get_world_size
 from ..exceptions import OLMoConfigurationError
 from ..utils import get_default_device
@@ -70,7 +70,7 @@ class LMEvaluator(Evaluator):
         dataset.prepare()
 
         device = device or get_default_device()
-        data_loader = FSLDataLoader(
+        data_loader = NumpyFSLDataLoader(
             dataset,
             global_batch_size=global_batch_size,
             collator=collator,
