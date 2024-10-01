@@ -23,7 +23,7 @@ module load LUMI/24.03 partition/G
 
 ## Container-dependent settings
 export OLMO_CONTAINER=$PROJECT_DIR/containers/lumi-torch25rc-rocm62-py312.sif
-export PYTHONPATH=.:${PYTHONPATH}
+export PYTHONPATH=src:.:${PYTHONPATH}
 export ROCM_PATH=/opt/rocm
 export CONDA_ENV=pytorch
 # Setting LD_LIBRARY_PATH in the container allows us to leverage HPE cray libfabric on LUMI,
