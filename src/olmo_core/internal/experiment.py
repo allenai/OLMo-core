@@ -1,7 +1,8 @@
 import logging
+import os
 import sys
 from dataclasses import dataclass
-from typing import Callable, Dict, List, cast
+from typing import Callable, Dict, List, Optional, cast
 
 from beaker import Beaker
 
@@ -56,7 +57,7 @@ log = logging.getLogger(__name__)
 class CommonComponents(Config):
     run_name: str
     save_folder: str
-    launch: BeakerLaunchConfig
+    launch: Optional[BeakerLaunchConfig]
     tokenizer: TokenizerConfig
     dataset: NumpyDatasetConfig
     callbacks: Dict[str, Callback]
@@ -65,7 +66,7 @@ class CommonComponents(Config):
 @dataclass
 class ExperimentConfig(Config):
     run_name: str
-    launch: BeakerLaunchConfig
+    launch: Optional[BeakerLaunchConfig]
     model: TransformerConfig
     optim: AdamWConfig
     dataset: NumpyDatasetConfig
@@ -119,43 +120,48 @@ def build_common_components(
         root_dir = "/weka/oe-training-default/ai2-llm"
         weka_buckets.append(BeakerWekaBucket("oe-training-default", "/weka/oe-training-default"))
 
-    beaker_user = (Beaker.from_env().account.whoami().name).upper()
-    cmd_to_launch = SubCmd.train
-    if cmd == SubCmd.launch_prep:
-        cmd_to_launch = SubCmd.prep
+    launch_config = None
+    user = os.environ.get("USER", "anonymous")
+    if cmd in (SubCmd.launch, SubCmd.launch_prep):
+        # All launches are assumed to be in beaker for now
+        beaker_user = (Beaker.from_env().account.whoami().name).upper()
+        user = beaker_user
+        cmd_to_launch = SubCmd.train
+        if cmd == SubCmd.launch_prep:
+            cmd_to_launch = SubCmd.prep
 
-    launch_config = BeakerLaunchConfig(
-        name=f"{run_name}-{cmd_to_launch}-{generate_uuid()[:8]}",
-        budget="ai2/oe-training",
-        cmd=[script, cmd_to_launch, run_name, cluster, *overrides],
-        task_name="train",
-        workspace="ai2/OLMo-core",
-        clusters=[cluster],
-        weka_buckets=weka_buckets,
-        beaker_image=OLMoCoreBeakerImage.nightly,  # some features require nightly at the moment
-        num_nodes=1,
-        num_gpus=8,
-        shared_filesystem=not is_url(root_dir),
-        allow_dirty=False,
-        env_secrets=[
-            BeakerEnvSecret(name="BEAKER_TOKEN", secret=f"{beaker_user}_BEAKER_TOKEN"),
-            BeakerEnvSecret(name="WANDB_API_KEY", secret=f"{beaker_user}_WANDB_API_KEY"),
-            BeakerEnvSecret(name="AWS_CONFIG", secret=f"{beaker_user}_AWS_CONFIG"),
-            BeakerEnvSecret(name="AWS_CREDENTIALS", secret=f"{beaker_user}_AWS_CREDENTIALS"),
-            BeakerEnvSecret(name="R2_ENDPOINT_URL", secret="R2_ENDPOINT_URL"),
-            BeakerEnvSecret(name="WEKA_ENDPOINT_URL", secret="WEKA_ENDPOINT_URL"),
-        ],
-        setup_steps=[
-            # Setup python environment.
-            "conda shell.bash activate base",
-            "pip install -e '.[all]'",
-            "pip freeze",
-            # Move AWS credentials from env to relevant files
-            "mkdir -p ~/.aws",
-            "printenv AWS_CONFIG > ~/.aws/config",
-            "printenv AWS_CREDENTIALS > ~/.aws/credentials",
-        ],
-    )
+        launch_config = BeakerLaunchConfig(
+            name=f"{run_name}-{cmd_to_launch}-{generate_uuid()[:8]}",
+            budget="ai2/oe-training",
+            cmd=[script, cmd_to_launch, run_name, cluster, *overrides],
+            task_name="train",
+            workspace="ai2/OLMo-core",
+            clusters=[cluster],
+            weka_buckets=weka_buckets,
+            beaker_image=OLMoCoreBeakerImage.nightly,  # some features require nightly at the moment
+            num_nodes=1,
+            num_gpus=8,
+            shared_filesystem=not is_url(root_dir),
+            allow_dirty=False,
+            env_secrets=[
+                BeakerEnvSecret(name="BEAKER_TOKEN", secret=f"{beaker_user}_BEAKER_TOKEN"),
+                BeakerEnvSecret(name="WANDB_API_KEY", secret=f"{beaker_user}_WANDB_API_KEY"),
+                BeakerEnvSecret(name="AWS_CONFIG", secret=f"{beaker_user}_AWS_CONFIG"),
+                BeakerEnvSecret(name="AWS_CREDENTIALS", secret=f"{beaker_user}_AWS_CREDENTIALS"),
+                BeakerEnvSecret(name="R2_ENDPOINT_URL", secret="R2_ENDPOINT_URL"),
+                BeakerEnvSecret(name="WEKA_ENDPOINT_URL", secret="WEKA_ENDPOINT_URL"),
+            ],
+            setup_steps=[
+                # Setup python environment.
+                "conda shell.bash activate base",
+                "pip install -e '.[all]'",
+                "pip freeze",
+                # Move AWS credentials from env to relevant files
+                "mkdir -p ~/.aws",
+                "printenv AWS_CONFIG > ~/.aws/config",
+                "printenv AWS_CREDENTIALS > ~/.aws/credentials",
+            ],
+        )
 
     tokenizer_config = TokenizerConfig.dolma2()
 
@@ -172,7 +178,7 @@ def build_common_components(
         ),
         work_dir=None
         if is_url(root_dir)
-        else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache",
+        else f"{root_dir}/checkpoints/{user.lower()}/dataset-cache",
     )
 
     callbacks: Dict[str, Callback] = {
@@ -190,7 +196,7 @@ def build_common_components(
                 tokenizer=tokenizer_config,
                 work_dir=None
                 if is_url(root_dir)
-                else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache",
+                else f"{root_dir}/checkpoints/{user.lower()}/dataset-cache",
             ),
             eval_interval=1000,
         ),
@@ -198,7 +204,7 @@ def build_common_components(
 
     return CommonComponents(
         run_name=run_name,
-        save_folder=f"{root_dir}/checkpoints/{beaker_user.lower()}/{run_name}",
+        save_folder=f"{root_dir}/checkpoints/{user.lower()}/{run_name}",
         launch=launch_config,
         tokenizer=tokenizer_config,
         dataset=dataset_config,
@@ -245,11 +251,13 @@ def build_config(
 
 
 def launch(config: ExperimentConfig):
+    assert config.launch is not None
     log.info(config)
     config.launch.launch(follow=True)
 
 
 def launch_prep(config: ExperimentConfig):
+    assert config.launch is not None
     config.launch.num_gpus = 0
     config.launch.num_nodes = 1
     log.info(config)
