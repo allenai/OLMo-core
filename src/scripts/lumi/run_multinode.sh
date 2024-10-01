@@ -62,11 +62,11 @@ srun \
   --cpus-per-task=$SLURM_CPUS_PER_TASK \
   --distribution=block:block \
   --kill-on-bad-exit \
-  scripts/lumi/run_with_environment.sh \
+  src/scripts/lumi/run_with_environment.sh \
     singularity exec \
     -B"$PROJECT_DIR:$PROJECT_DIR" \
     -B"$FLASH_DIR:$FLASH_DIR" \
     -B"$SCRATCH_DIR:$SCRATCH_DIR" \
     -B /var/spool/slurmd,/opt/cray/,/usr/lib64/libcxi.so.1,/usr/lib64/libjansson.so.4,/usr/lib64/libjson-c.so.3 \
     $OLMO_CONTAINER \
-    scripts/lumi/run_in_container.sh ${@}
+    src/scripts/lumi/run_in_container.sh ${@}
