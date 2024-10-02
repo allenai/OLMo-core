@@ -240,6 +240,7 @@ class CrossEntropyLoss(torch.autograd.Function):
         del grad_z_losses  # z_losses are only for logging.
 
         logits, lse, labels = ctx.saved_tensors
+        logits = logits.contiguous()
         dlogits = logits if ctx.inplace_backward else torch.empty_like(logits)
         n_rows, n_cols = logits.shape
         BLOCK_SIZE = min(triton.next_power_of_2(n_cols), 4 * 1024)
