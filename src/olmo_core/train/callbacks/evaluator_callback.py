@@ -11,7 +11,7 @@ from olmo_core.eval.lm_evaluator import LMEvaluator
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import format_float, move_to_device
 
-from ..utils import Duration
+from ..common import Duration
 from .callback import Callback, CallbackConfig
 
 if TYPE_CHECKING:

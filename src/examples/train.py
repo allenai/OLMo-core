@@ -22,6 +22,7 @@ from olmo_core.distributed.utils import init_hybrid_shard_mesh
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
+    Duration,
     TrainerConfig,
     prepare_training_environment,
     teardown_training_environment,
@@ -37,7 +38,6 @@ from olmo_core.train.callbacks import (
     SequenceLengthSchedulerCallback,
     WandBCallback,
 )
-from olmo_core.train.utils import Duration
 from olmo_core.utils import get_default_device, seed_all
 
 

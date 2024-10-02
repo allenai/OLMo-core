@@ -16,8 +16,8 @@ from ..io import is_url
 from ..utils import get_default_device
 from .callbacks import Callback, CallbackConfig
 from .checkpoint import Checkpointer
-from .trainer import LoadStrategy, Trainer
-from .utils import Duration
+from .common import Duration, LoadStrategy
+from .trainer import Trainer
 
 
 @dataclass

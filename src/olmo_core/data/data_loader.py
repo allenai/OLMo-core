@@ -113,6 +113,9 @@ class DataLoaderBase(ABC):
     def epoch(self) -> int:
         """
         Get the current epoch (1-based).
+
+        .. warning::
+            Accessing this before :meth:`reshuffle()` is called will raise an error.
         """
         if self._epoch is None:
             raise RuntimeError(
@@ -122,17 +125,22 @@ class DataLoaderBase(ABC):
 
     @property
     @abstractmethod
-    def total_batches(self) -> int:
+    def total_batches(self) -> Optional[int]:
         """
-        The total number of batches that the dataset will produce over the course of an epoch.
+        The total number of batches that the dataset will produce over the course of an epoch, if known.
+        Otherwise this should return ``None``.
         """
         raise NotImplementedError
 
     def __len__(self) -> int:
         """
-        Returns the total number of batches in an epoch, the same as :data:`total_batches`.
+        Returns the total number of batches in an epoch (same as :data:`total_batches`) if known,
+        otherwise a :class:`TypeError` is raised.
         """
-        return self.total_batches
+        if self.total_batches is not None:
+            return self.total_batches
+        else:
+            raise TypeError("data loader length (number of batches) is unknown")
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         """

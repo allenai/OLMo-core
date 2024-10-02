@@ -25,7 +25,6 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 
 from ..aliases import PathOrStr
-from ..config import StrEnum
 from ..data import DataLoaderBase
 from ..data.utils import get_labels, split_batch
 from ..distributed.utils import (
@@ -55,14 +54,8 @@ from .callbacks import (
     SpeedMonitorCallback,
 )
 from .checkpoint import Checkpointer
-from .utils import (
-    Duration,
-    DurationUnit,
-    EnvRngStates,
-    ReduceType,
-    move_metrics,
-    reduce_metrics,
-)
+from .common import Duration, DurationUnit, LoadStrategy, ReduceType
+from .utils import EnvRngStates, move_metrics, reduce_metrics
 
 log = logging.getLogger(__name__)
 
@@ -71,27 +64,6 @@ TRAIN_PPL_METRIC = "train/PPL"
 TRAIN_Z_LOSS_METRIC = "train/Z loss"
 OPTIM_STEP_SKIPPED_METRIC = "optim/step skipped"
 SEQ_LEN_METRIC = "data/sequence length"
-
-
-class LoadStrategy(StrEnum):
-    """
-    Determines the strategy for loading checkpoints prior to training.
-    """
-
-    if_available = "if_available"
-    """
-    Only load from the load path if a checkpoint exists there.
-    """
-
-    always = "always"
-    """
-    Always try loading from the load path.
-    """
-
-    never = "never"
-    """
-    Never load from the load path.
-    """
 
 
 class TrainerStateDict(TypedDict):
@@ -171,6 +143,13 @@ class Trainer:
     max_duration: Duration
     """
     The duration to train for.
+
+    .. important::
+        The total number of training steps must be known ahead of time for various reasons such
+        as setting a learning rate schedule. Therefore if your data loader's number of batches
+        (:data:`~olmo_core.data.data_loader.DataLoaderBase.total_batches`) is unknown ahead of time,
+        you must set the ``max_duration`` in terms of :meth:`tokens <Duration.tokens>`
+        or :meth:`steps <Duration.steps>`, but not epochs.
     """
 
     rank_microbatch_size: int
@@ -420,18 +399,21 @@ class Trainer:
         return self.global_batch_size
 
     @property
-    def steps_per_epoch(self) -> int:
+    def steps_per_epoch(self) -> Optional[int]:
         """
-        The total number of training steps in an epoch.
+        The total number of training steps in an epoch, if known.
         """
         return self.data_loader.total_batches
 
     @property
-    def tokens_per_epoch(self) -> int:
+    def tokens_per_epoch(self) -> Optional[int]:
         """
         The total number of tokens in the training dataset, minus left-overs.
         """
-        return self.steps_per_epoch * self.tokens_per_batch
+        if self.steps_per_epoch is not None:
+            return self.steps_per_epoch * self.tokens_per_batch
+        else:
+            return None
 
     @property
     def max_steps(self) -> int:
@@ -441,13 +423,19 @@ class Trainer:
         if self.max_duration.unit == DurationUnit.steps:
             return self.max_duration.value
         elif self.max_duration.unit == DurationUnit.epochs:
+            if self.data_loader.total_batches is None:
+                raise RuntimeError(
+                    "the number of steps cannot be determined from an 'epochs' duration since "
+                    "the data loader's number of batches is unknown"
+                )
             max_epochs = self.max_duration.value
             complete_epochs_remaining = max(max_epochs - self.epoch, 0)
             steps_remaining_this_epoch = max(
                 self.data_loader.total_batches - self.data_loader.batches_processed, 0
             )
             steps_remaining = (
-                complete_epochs_remaining * self.steps_per_epoch + steps_remaining_this_epoch
+                complete_epochs_remaining * self.data_loader.total_batches
+                + steps_remaining_this_epoch
             )
             return self.global_step + steps_remaining
         elif self.max_duration.unit == DurationUnit.tokens:
