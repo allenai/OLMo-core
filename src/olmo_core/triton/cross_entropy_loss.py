@@ -161,8 +161,7 @@ class CrossEntropyLoss(torch.autograd.Function):
         rank = 0 if process_group is None else dist.get_rank(process_group)
         class_start_idx = rank * n_cols
 
-        if logits.stride(-1) != 1:
-            logits = logits.contiguous()
+        logits = logits.contiguous()
         MAX_BLOCK_SIZE = 16 * 1024
         BLOCK_SIZE = min(triton.next_power_of_2(n_cols), MAX_BLOCK_SIZE)
         num_warps = (
@@ -189,7 +188,7 @@ class CrossEntropyLoss(torch.autograd.Function):
                 total_classes,
                 class_start_idx,
                 n_cols,  # shapes
-                logits.stride(0),  # strides
+                logits.numel() // logits.size(0),  # strides
                 BLOCK_SIZE=BLOCK_SIZE,  # constants
                 num_warps=num_warps,
                 SPLIT=world_size > 1,
@@ -262,9 +261,9 @@ class CrossEntropyLoss(torch.autograd.Function):
                 ctx.total_classes,
                 ctx.class_start_idx,
                 n_cols,  # shapes
-                logits.stride(0),  # strides
-                dlogits.stride(0),
-                grad_losses.stride(0),
+                logits.numel() // logits.size(0),  # strides
+                dlogits.numel() // dlogits.size(0),
+                grad_losses.numel() // grad_losses.size(0),
                 BLOCK_SIZE=BLOCK_SIZE,  # constants
                 num_warps=num_warps,
             )
