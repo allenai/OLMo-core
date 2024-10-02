@@ -77,9 +77,16 @@ class CustomDataLoader(DataLoaderBase):
         ]
 
     def _iter_batches(self) -> Iterable[Dict[str, Any]]:
-        assert self._dataset is not None
+        assert self._dataset is not None, "did you forget to call 'reshuffle()'?"
+
+        # Get global batch instance indices. Shape: (total batches, instances per batch)
         instances_per_batch = self.global_batch_size // self.sequence_length
         indices = torch.arange(len(self._dataset)).view(self.total_batches, instances_per_batch)
+
+        # Offset by batches processed so far.
+        indices = indices[self.batches_processed :]
+
         for batch_indices in indices:
+            # Slice batch indices up by rank to create data parallel micro-batches.
             local_batch_indices = batch_indices[self.dp_rank :: self.dp_world_size]
             yield self.collator([self._dataset[idx] for idx in local_batch_indices])

@@ -23,7 +23,6 @@ def test_custom_data_loader(tmp_path):
     data_loader.load_state_dict(state_dict)
     assert data_loader.batches_processed == batches_processed
 
-    batches_processed = 0
     for batch in data_loader:
         batches_processed += 1
         assert batch["input_ids"].numel() == 512
