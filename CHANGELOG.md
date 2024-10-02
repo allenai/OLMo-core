@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [v1.4.0](https://github.com/allenai/OLMo-core/releases/tag/v1.4.0) - 2024-10-02
+
 ### Changed
 
 - Updated default layer norm epsilon for OLMo models from `1e-5` to `1e-6` to match latest model.
