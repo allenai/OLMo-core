@@ -168,9 +168,15 @@ def _get_torch_version() -> Tuple[int, int]:
 
 def _get_cuda_version() -> Optional[Tuple[int, int]]:
     if torch.cuda.is_available() and torch.cuda.is_initialized():
-        assert torch.version.cuda is not None
-        version = parse_version(torch.version.cuda)
-        return (version.major, version.minor)
+        if torch.version.cuda is not None:
+            version = parse_version(torch.version.cuda)
+            return (version.major, version.minor)
+        elif torch.version.hip is not None:
+            # Version may be something like 6.2.41133-dd7f95766
+            version = parse_version(torch.version.hip.split("-")[0])
+            return (version.major, version.minor)
+        else:
+            raise RuntimeError("Cuda/hip is initialized but cannot retrieve cuda/hip version")
     else:
         return None
 
