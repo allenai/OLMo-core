@@ -54,7 +54,6 @@ def build_config(run_name: str, platform: Platform, overrides: List[str]) -> Exp
 
     model_config = TransformerConfig.olmo_1B(
         vocab_size=tokenizer_config.padded_vocab_size(),
-        layer_norm_eps=1e-6,
         compile=True,
         dp_config=DataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
