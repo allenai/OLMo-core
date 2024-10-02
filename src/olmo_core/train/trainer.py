@@ -70,7 +70,6 @@ class TrainerStateDict(TypedDict):
     global_step: int
     global_train_tokens_seen: int
     data_loader: Dict[str, Any]
-    data_seed: int
     epoch: int
     world_size: int
     rng: Dict[str, Any]
@@ -557,7 +556,6 @@ class Trainer:
             "global_step": self.global_step,
             "global_train_tokens_seen": self.global_train_tokens_seen,
             "data_loader": self.data_loader.state_dict(),
-            "data_seed": self.data_seed,
             "epoch": self.epoch,
             "world_size": get_world_size(),  # global world size here on purpose
             "rng": EnvRngStates.current_state().as_dict(),
@@ -573,7 +571,7 @@ class Trainer:
                 state_dict["data_loader"] = state_dict.pop("dataset")
                 state_dict["data_loader"]["epoch"] = state_dict["epoch"]
             else:
-                state_dict["dataset"] = {
+                state_dict["data_loader"] = {
                     "dataset_type": "fsl",
                     "dataset_fingerprint_version": state_dict.pop("dataset_fingerprint_version"),
                     "dataset_fingerprint": state_dict.pop("dataset_fingerprint"),
@@ -587,7 +585,6 @@ class Trainer:
                 }
 
         self.data_loader.load_state_dict(state_dict["data_loader"])
-        self.data_seed = state_dict.get("data_seed", self.data_seed)
         self.global_step = state_dict["global_step"]
         self.global_train_tokens_seen = state_dict["global_train_tokens_seen"]
         self.epoch = state_dict["epoch"]
