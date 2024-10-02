@@ -118,7 +118,7 @@ def build_config(run_name: str, platform: Platform, overrides: List[str]) -> Exp
         TrainerConfig(
             save_folder=os.path.join(save_base_path, run_name),
             global_batch_size=1024 * 4096,
-            rank_microbatch_size=4 * 4096,
+            rank_microbatch_size=2 * 4096,
             save_overwrite=True,
             data_seed=6198,
             data_loader_workers=4,
