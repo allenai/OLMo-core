@@ -1,0 +1,11 @@
+c4_en-validation,eval-data/perplexity/v3_small_dolma2-tokenizer/c4_en/val/part-0-00000.npy
+dolma_books-validation,eval-data/perplexity/v3_small_dolma2-tokenizer/dolma_books/val/part-0-00000.npy
+dolma_common-crawl-validation,eval-data/perplexity/v3_small_dolma2-tokenizer/dolma_common-crawl/val/part-0-00000.npy
+dolma_pes2o-validation,eval-data/perplexity/v3_small_dolma2-tokenizer/dolma_pes2o/val/part-0-00000.npy
+dolma_reddit-validation,eval-data/perplexity/v3_small_dolma2-tokenizer/dolma_reddit/val/part-0-00000.npy
+dolma_stack-validation,eval-data/perplexity/v3_small_dolma2-tokenizer/dolma_stack/val/part-0-00000.npy
+dolma_wiki-validation,eval-data/perplexity/v3_small_dolma2-tokenizer/dolma_wiki/val/part-0-00000.npy
+ice-validation,eval-data/perplexity/v3_small_dolma2-tokenizer/ice/val/part-0-00000.npy
+m2d2_s2orc-validation,eval-data/perplexity/v3_small_dolma2-tokenizer/m2d2_s2orc/val/part-0-00000.npy
+pile-validation,eval-data/perplexity/v3_small_dolma2-tokenizer/pile/val/part-0-00000.npy
+wikitext_103-validation,eval-data/perplexity/v3_small_dolma2-tokenizer/wikitext_103/val/part-0-00000.npy

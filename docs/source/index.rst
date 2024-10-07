@@ -26,6 +26,13 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
 .. toctree::
    :hidden:
    :maxdepth: 2
+   :caption: Guides
+
+   guides/data_loading.rst
+
+.. toctree::
+   :hidden:
+   :maxdepth: 2
    :caption: Examples
 
    examples/train.rst
@@ -35,23 +42,18 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
    :maxdepth: 2
    :caption: API Reference
 
-   config.rst
-   data.rst
-   distributed/checkpoint.rst
-   distributed/parallel.rst
-   distributed/utils.rst
-   exceptions.rst
-   io.rst
-   launch.rst
-   nn/index.rst
-   nn/functional.rst
-   nn/transformer.rst
-   optim.rst
-   train/index.rst
-   train/callbacks.rst
-   train/checkpoint.rst
-   train/utils.rst
-   utils.rst
+   config
+   data/index
+   distributed/index
+   eval/index
+   exceptions
+   float8
+   io
+   launch
+   nn/index
+   optim
+   train/index
+   utils
 
 .. toctree::
    :hidden:

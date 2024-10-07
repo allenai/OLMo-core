@@ -23,11 +23,10 @@ import torch.distributed as dist
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
-from torch.utils.data import DataLoader
 
 from ..aliases import PathOrStr
-from ..config import StrEnum
-from ..data import DataCollator, IterableDataset, NumpyDataset, split_batch
+from ..data import DataLoaderBase
+from ..data.utils import get_labels, split_batch
 from ..distributed.utils import (
     all_reduce_value,
     backend_supports_cpu,
@@ -55,14 +54,8 @@ from .callbacks import (
     SpeedMonitorCallback,
 )
 from .checkpoint import Checkpointer
-from .utils import (
-    Duration,
-    DurationUnit,
-    EnvRngStates,
-    ReduceType,
-    move_metrics,
-    reduce_metrics,
-)
+from .common import Duration, DurationUnit, LoadStrategy, ReduceType
+from .utils import EnvRngStates, move_metrics, reduce_metrics
 
 log = logging.getLogger(__name__)
 
@@ -70,41 +63,15 @@ TRAIN_CE_LOSS_METRIC = "train/CE loss"
 TRAIN_PPL_METRIC = "train/PPL"
 TRAIN_Z_LOSS_METRIC = "train/Z loss"
 OPTIM_STEP_SKIPPED_METRIC = "optim/step skipped"
-
-
-class LoadStrategy(StrEnum):
-    """
-    Determines the strategy for loading checkpoints prior to training.
-    """
-
-    if_available = "if_available"
-    """
-    Only load from the load path if a checkpoint exists there.
-    """
-
-    always = "always"
-    """
-    Always try loading from the load path.
-    """
-
-    never = "never"
-    """
-    Never load from the load path.
-    """
+SEQ_LEN_METRIC = "data/sequence length"
 
 
 class TrainerStateDict(TypedDict):
     global_step: int
     global_train_tokens_seen: int
-    global_train_tokens_seen_this_epoch: int
-    global_train_examples_seen_this_epoch: int
-    dataset_fingerprint: str
-    dataset_fingerprint_version: str
-    data_seed: int
+    data_loader: Dict[str, Any]
     epoch: int
     world_size: int
-    train_sequence_length: int
-    max_train_sequence_length: Optional[int]
     rng: Dict[str, Any]
 
 
@@ -122,6 +89,10 @@ class Trainer:
     A local working directory to use for temporary files needed during training.
     Files added to this working directory can be persisted to the :data:`save_folder` via
     :meth:`persist_working_file()`.
+
+    .. note::
+        When constructing your trainer through a :class:`TrainerConfig` this will default to
+        the :data:`save_folder` if it's a local directory.
     """
 
     model: nn.Module
@@ -134,26 +105,25 @@ class Trainer:
     The optimizer to use.
     """
 
-    dataset: NumpyDataset
+    data_loader: DataLoaderBase
     """
-    The training dataset.
-    """
-
-    collator: DataCollator
-    """
-    The data collator.
+    The train data loader.
     """
 
     device: torch.device
     """
     The default device to use. Should match the device the model is on and be appropriate for the
-    distributed backend, if there is one.
+    main distributed backend.
     """
 
     save_folder: str
     """
     The folder to save all checkpoints to. Could be a local directory (if using a shared filesytem)
     or a URL.
+
+    .. warning::
+        If you try to use a local directory without a globally shared filesystem across all ranks
+        you will get an error.
     """
 
     checkpointer: Checkpointer
@@ -161,7 +131,7 @@ class Trainer:
     The checkpointer. This is a wrapper around the functionality in
     :mod:`olmo_core.distributed.checkpoint`, which means you can use
     :func:`~olmo_core.distributed.checkpoint.unshard_checkpoint` to unshard the model and optimizer
-    state from a trainer checkpoint.
+    state from a train checkpoint after the fact.
     """
 
     callbacks: Dict[str, Callback]
@@ -172,39 +142,22 @@ class Trainer:
     max_duration: Duration
     """
     The duration to train for.
-    """
-
-    train_sequence_length: int
-    """
-    Training sequence length.
 
     .. important::
-        If you're using a :class:`~olmo_core.data.NumpyDataset`, the value here must match
-        :data:`NumpyDataset.sequence_length <olmo_core.data.NumpyDataset.sequence_length>`.
-
-    .. seealso::
-        :data:`max_train_sequence_length`
+        The total number of training steps must be known ahead of time for various reasons such
+        as setting a learning rate schedule. Therefore if your data loader's number of batches
+        (:data:`~olmo_core.data.data_loader.DataLoaderBase.total_batches`) is unknown ahead of time,
+        you must set the ``max_duration`` in terms of :meth:`tokens <Duration.tokens>`
+        or :meth:`steps <Duration.steps>`, but not epochs.
     """
 
-    global_batch_size: int
+    rank_microbatch_size: int
     """
-    Global training batch size (in terms of instances, not tokens).
-    """
+    Microbatch size *in tokens* per rank, i.e. the number of tokens to process at a time from each rank.
 
-    microbatch_size: int
-    """
-    Microbatch size per rank, i.e. the number of instances to process at a time from each rank.
-    """
-
-    max_train_sequence_length: Optional[int] = None
-    """
-    Set this to the maximum target train sequence length if you're planning on changing
-    the train sequence length during a training run, e.g. for sequence length warm-up.
-
-    .. important::
-        If set this must be a multiple of :data:`train_sequence_length`, and if you're using
-        a :class:`~olmo_core.data.NumpyDataset`, the value here must match
-        :data:`NumpyDataset.max_target_sequence_length <olmo_core.data.NumpyDataset.max_target_sequence_length>`.
+    This must evently divide into :data:`global_batch_size` by a factor of the data parallel world size.
+    If this is less than :data:`global_batch_size` divided by the data parallel world size then
+    gradient accumulation is used.
     """
 
     save_overwrite: bool = False
@@ -244,7 +197,9 @@ class Trainer:
 
     fused_loss: bool = False
     """
-    Used the fused cross-entropy loss function.
+    Use the fused cross-entropy loss function (:func:`~olmo_core.nn.functional.fused_cross_entropy_loss`)
+    instead the PyTorch built-in. This can help reduce GPU memory usage. Relative performance will
+    depend on the input sizes.
     """
 
     z_loss_multiplier: Optional[float] = None
@@ -262,41 +217,17 @@ class Trainer:
     The distributed process group for all data parallel ranks.
     """
 
-    data_seed: int = 0
-    """
-    The seed to use to shuffle the dataset.
-    """
-
-    data_loader_workers: int = 0
-    """
-    The number of data loading workers to use.
-    """
-
-    data_loader_prefetch_factor: Optional[int] = None
-    """
-    The number of batches to prefetch.
-    """
-
     # Bookkeeping
 
     global_step: int = 0
     """
-    The current step (1-based), though it's initialized to 0 before the first step.
+    The current step/batch. 1-based, though it's initialized to 0 before the first step.
+    This does *not* reset after an epoch.
     """
 
     global_train_tokens_seen: int = 0
     """
     The total number of training tokens seen.
-    """
-
-    global_train_tokens_seen_this_epoch: int = 0
-    """
-    The total number of training tokens seen in the current epoch.
-    """
-
-    global_train_examples_seen_this_epoch: int = 0
-    """
-    The total number of examples seen in the current epoch.
     """
 
     epoch: int = 1
@@ -306,7 +237,9 @@ class Trainer:
 
     cancel_check_interval: int = 25
     """
-    The interval (in steps) to check if the run is canceled. Checking requires distributed comms.
+    The interval (in steps) to check if the run is canceled. Checking requires distributed comms,
+    but if you've configured a separate CPU-only backend (like "gloo") then this shouldn't impact
+    training throughput.
     """
 
     hard_stop: Optional[Duration] = None
@@ -350,31 +283,15 @@ class Trainer:
                 Path(self.save_folder).mkdir(exist_ok=True, parents=True)
 
         # Ensure we have necessary callbacks.
-        has_console_logger_callback = False
-        has_checkpointer_callback = False
-        has_speed_monitor_callback = False
-        has_gc_collector_callback = False
-        for callback in self.callbacks.values():
-            if isinstance(callback, ConsoleLoggerCallback):
-                has_console_logger_callback = True
-            elif isinstance(callback, CheckpointerCallback):
-                has_checkpointer_callback = True
-            elif isinstance(callback, SpeedMonitorCallback):
-                has_speed_monitor_callback = True
-            elif isinstance(callback, GarbageCollectorCallback):
-                has_gc_collector_callback = True
-        if not has_console_logger_callback:
-            self.callbacks.setdefault(
-                "console_logger",
-                ConsoleLoggerCallback(
-                    log_interval=1, metrics_log_interval=self.metrics_collect_interval
-                ),
-            )
-        if not has_checkpointer_callback:
-            self.callbacks.setdefault("checkpointer", CheckpointerCallback())
-        if not has_speed_monitor_callback:
-            self.callbacks.setdefault("speed_monitor", SpeedMonitorCallback())
-        if is_distributed() and not has_gc_collector_callback:
+        self.callbacks.setdefault(
+            "console_logger",
+            ConsoleLoggerCallback(
+                log_interval=1, metrics_log_interval=self.metrics_collect_interval
+            ),
+        )
+        self.callbacks.setdefault("checkpointer", CheckpointerCallback())
+        self.callbacks.setdefault("speed_monitor", SpeedMonitorCallback())
+        if is_distributed():
             self.callbacks.setdefault("garbage_collector", GarbageCollectorCallback())
 
         # Set pointer to self in all callbacks.
@@ -385,14 +302,7 @@ class Trainer:
         # We do this for 2 reasons: (1) to respect the priority, and (2) to ensure the callback
         # order is consistent across the process group since some callbacks make distributed
         # synchronization/communication calls.
-        self.callbacks = OrderedDict(
-            (
-                (k, cb)
-                for k, cb in sorted(
-                    self.callbacks.items(), key=lambda x: (x[1].priority, x[0]), reverse=True
-                )
-            )
-        )
+        self._sort_callbacks()
 
         # Maybe create separate process group for bookkeeping.
         if self._bookkeeping_pg is None and is_distributed():
@@ -405,26 +315,49 @@ class Trainer:
                     "backend and will be blocking. This may result in slower training throughput."
                 )
 
+        # Check data loader configuration.
+        if self.data_loader.dp_world_size != get_world_size(self.dp_process_group):
+            raise OLMoConfigurationError(
+                "data loader's DP world size appears to be configured incorrectly, "
+                f"got {self.data_loader.dp_world_size}, expected {get_world_size(self.dp_process_group)}."
+            )
+        if self.data_loader.dp_rank != get_rank(self.dp_process_group):
+            raise OLMoConfigurationError(
+                "data loader's DP rank appears to be configured incorrectly, "
+                f"got {self.data_loader.dp_rank}, expected {get_rank(self.dp_process_group)}."
+            )
+        if self.data_loader.fs_local_rank != get_fs_local_rank():
+            raise OLMoConfigurationError(
+                "data loader's FS local rank appears to be configured incorrectly, "
+                f"got {self.data_loader.fs_local_rank}, expected {get_fs_local_rank()}."
+            )
+
         # Make sure global batch size is divisible by microbatch size times world size
         if (
             self.global_batch_size
-            % (self.microbatch_size * (ws := get_world_size(self.dp_process_group)))
+            % (self.rank_microbatch_size * (ws := get_world_size(self.dp_process_group)))
             != 0
         ):
             raise OLMoConfigurationError(
                 f"global batch size ({self.global_batch_size}) must be divisible by "
-                f"micro-batch size ({self.microbatch_size}) x DP world size ({ws})"
+                f"micro-batch size ({self.rank_microbatch_size}) x DP world size ({ws})"
             )
 
-        # Other validation.
-        if isinstance(self.dataset, NumpyDataset):
-            if self.dataset.sequence_length != self.train_sequence_length:
-                raise OLMoConfigurationError("trainer and dataset sequence length do not match")
-            if self.dataset.max_target_sequence_length != self.max_train_sequence_length:
-                raise OLMoConfigurationError("trainer and dataset max sequence length do not match")
+        for callback in self.callbacks.values():
+            callback.post_attach()
+
+    @property
+    def global_batch_size(self) -> int:
+        """
+        Global training batch size *in tokens*.
+        """
+        return self.data_loader.global_batch_size
 
     @property
     def rank_batch_size(self) -> int:
+        """
+        The number of tokens in each training batch per rank.
+        """
         if self._rank_batch_size is None:
             assert self.global_batch_size % get_world_size(self.dp_process_group) == 0
             self._rank_batch_size = self.global_batch_size // get_world_size(self.dp_process_group)
@@ -440,11 +373,9 @@ class Trainer:
             and self.global_step > 0
             and self.global_step % self.cancel_check_interval == 0
         ):
-            # NOTE: any collective operations done in a separate thread should use the bookkeeping
-            # process group to avoid race conditions.
             self.thread_pool.submit(self._check_if_canceled)
 
-        if self._canceled:
+        if self.is_canceled:
             return True
         elif self._duration_due(self.max_duration):
             return True
@@ -454,37 +385,34 @@ class Trainer:
             return False
 
     @property
+    def is_canceled(self) -> bool:
+        if self._error is not None:
+            raise RuntimeError("An error occurred") from self._error
+        return self._canceled
+
+    @property
     def tokens_per_batch(self) -> int:
         """
         The number of tokens in each training batch.
         """
-        return self.global_batch_size * self.train_sequence_length
+        return self.global_batch_size
 
     @property
-    def steps_per_epoch(self) -> int:
+    def steps_per_epoch(self) -> Optional[int]:
         """
-        The total number of training steps in an epoch.
+        The total number of training steps in an epoch, if known.
         """
-        return self.dataset_total_size // self.global_batch_size
+        return self.data_loader.total_batches
 
     @property
-    def tokens_per_epoch(self) -> int:
+    def tokens_per_epoch(self) -> Optional[int]:
         """
         The total number of tokens in the training dataset, minus left-overs.
         """
-        return self.dataset_total_size * self.train_sequence_length
-
-    @property
-    def dataset_total_size(self) -> int:
-        """
-        The total number of complete examples in the training dataset.
-        """
-        dp_world_size = get_world_size(self.dp_process_group)
-        if len(self.dataset) % dp_world_size == 0:
-            return len(self.dataset)
+        if self.steps_per_epoch is not None:
+            return self.steps_per_epoch * self.tokens_per_batch
         else:
-            num_samples = math.ceil((len(self.dataset) - dp_world_size) / dp_world_size)
-            return num_samples * dp_world_size
+            return None
 
     @property
     def max_steps(self) -> int:
@@ -494,14 +422,20 @@ class Trainer:
         if self.max_duration.unit == DurationUnit.steps:
             return self.max_duration.value
         elif self.max_duration.unit == DurationUnit.epochs:
-            # Need to account for a change in batch size.
+            if self.data_loader.total_batches is None:
+                raise RuntimeError(
+                    "the number of steps cannot be determined from an 'epochs' duration since "
+                    "the data loader's number of batches is unknown"
+                )
             max_epochs = self.max_duration.value
             complete_epochs_remaining = max(max_epochs - self.epoch, 0)
-            steps_remaining = complete_epochs_remaining * self.steps_per_epoch
-            tokens_remaining_this_epoch = max(
-                self.tokens_per_epoch - self.global_train_tokens_seen_this_epoch, 0
+            steps_remaining_this_epoch = max(
+                self.data_loader.total_batches - self.data_loader.batches_processed, 0
             )
-            steps_remaining += math.ceil(tokens_remaining_this_epoch / self.tokens_per_batch)
+            steps_remaining = (
+                complete_epochs_remaining * self.data_loader.total_batches
+                + steps_remaining_this_epoch
+            )
             return self.global_step + steps_remaining
         elif self.max_duration.unit == DurationUnit.tokens:
             # Need to account for a change in batch size.
@@ -559,6 +493,13 @@ class Trainer:
         self._canceling_rank = get_rank()
         self._cancel_reason = reason
 
+    def check_if_canceled(self):
+        """
+        Asynchronously check if the run is canceled. Use :data:`is_canceled` to see the result.
+        This needs to be called by all ranks at the same point in the training loop.
+        """
+        self.thread_pool.submit(self._check_if_canceled)
+
     def fit(self):
         """
         Fit the model, potentially loading a checkpoint before hand depending on the
@@ -585,19 +526,22 @@ class Trainer:
 
         barrier()
 
-        # Install SIGTERM handler.
-        og_handler = signal.signal(signal.SIGTERM, self._handle_sigterm)
+        # Install SIGTERM + SIGINT handlers.
+        og_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_os_signal)
+        og_sigint_handler = signal.signal(signal.SIGINT, self._handle_os_signal)
 
         try:
             while not self.training_complete:
                 self._fit_epoch()
         except BaseException as exc:
+            log.error(f"Training failed due to:\n{exc}")
             for callback in self.callbacks.values():
                 callback.on_error(exc)
             raise
         finally:
-            # Restore original SIGTERM handler.
-            signal.signal(signal.SIGTERM, og_handler)
+            # Restore original signal handlers.
+            signal.signal(signal.SIGTERM, og_sigterm_handler)
+            signal.signal(signal.SIGINT, og_sigint_handler)
 
         for callback in self.callbacks.values():
             callback.post_train()
@@ -611,15 +555,9 @@ class Trainer:
         return {
             "global_step": self.global_step,
             "global_train_tokens_seen": self.global_train_tokens_seen,
-            "global_train_tokens_seen_this_epoch": self.global_train_tokens_seen_this_epoch,
-            "global_train_examples_seen_this_epoch": self.global_train_examples_seen_this_epoch,
-            "dataset_fingerprint": self.dataset.fingerprint,
-            "dataset_fingerprint_version": self.dataset.fingerprint_version,
-            "data_seed": self.data_seed,
+            "data_loader": self.data_loader.state_dict(),
             "epoch": self.epoch,
             "world_size": get_world_size(),  # global world size here on purpose
-            "train_sequence_length": self.train_sequence_length,
-            "max_train_sequence_length": self.max_train_sequence_length,
             "rng": EnvRngStates.current_state().as_dict(),
         }
 
@@ -627,57 +565,29 @@ class Trainer:
         """
         Load trainer state (not model or optimizer state).
         """
-        if state_dict.get("max_train_sequence_length") != self.max_train_sequence_length:
-            raise RuntimeError(
-                "Restoring trainer state with a different 'max_train_sequence_length' is not supported"
-            )
+        # For backwards compatibility.
+        if "data_loader" not in state_dict:
+            if "dataset" in state_dict:
+                state_dict["data_loader"] = state_dict.pop("dataset")
+                state_dict["data_loader"]["epoch"] = state_dict["epoch"]
+            else:
+                state_dict["data_loader"] = {
+                    "dataset_type": "fsl",
+                    "dataset_fingerprint_version": state_dict.pop("dataset_fingerprint_version"),
+                    "dataset_fingerprint": state_dict.pop("dataset_fingerprint"),
+                    "tokens_processed": state_dict["global_train_tokens_seen_this_epoch"],
+                    "batches_processed": state_dict["global_train_tokens_seen_this_epoch"]
+                    // self.global_batch_size,
+                    "sequence_length": state_dict.pop("train_sequence_length"),
+                    "max_target_sequence_length": state_dict.pop("max_train_sequence_length"),
+                    "seed": state_dict["data_seed"],
+                    "epoch": state_dict["epoch"],
+                }
 
-        if state_dict.get("dataset_fingerprint_version") != self.dataset.fingerprint_version:
-            log.warning(
-                "Dataset fingerprint version does not match the version in the checkpoint, "
-                "this could mean the data has changed"
-            )
-        elif (
-            state_dict.get("dataset_fingerprint", self.dataset.fingerprint)
-            != self.dataset.fingerprint
-        ):
-            raise RuntimeError(
-                "Restoring trainer state with a different dataset is not supported! (fingerprint doesn't match)"
-            )
-
-        if (data_seed := state_dict.get("data_seed", self.data_seed)) != self.data_seed:
-            log.warning(
-                "Restoring from trainer state with a different data seed, "
-                "will use data seed from state dict for data order consistency."
-            )
-            self.data_seed = data_seed
-
+        self.data_loader.load_state_dict(state_dict["data_loader"])
         self.global_step = state_dict["global_step"]
         self.global_train_tokens_seen = state_dict["global_train_tokens_seen"]
-        self.global_train_tokens_seen_this_epoch = state_dict["global_train_tokens_seen_this_epoch"]
         self.epoch = state_dict["epoch"]
-
-        if self.train_sequence_length == state_dict["train_sequence_length"]:
-            self.global_train_examples_seen_this_epoch = state_dict[
-                "global_train_examples_seen_this_epoch"
-            ]
-        elif self.train_sequence_length % state_dict["train_sequence_length"] == 0:
-            # Adjust for current larger sequence length.
-            ratio = self.train_sequence_length // state_dict["train_sequence_length"]
-            self.global_train_examples_seen_this_epoch = (
-                state_dict["global_train_examples_seen_this_epoch"] // ratio
-            )
-        elif state_dict["train_sequence_length"] % self.train_sequence_length == 0:
-            # Adjust for current smaller sequence length.
-            ratio = state_dict["train_sequence_length"] // self.train_sequence_length
-            self.global_train_examples_seen_this_epoch = (
-                state_dict["global_train_examples_seen_this_epoch"] * ratio
-            )
-        else:
-            raise RuntimeError(
-                "You can only restore trainer state from a sequence length that is a multiple "
-                "of the current configured sequence length, or vice versa"
-            )
 
         log.info(f"Will resume training from step {self.global_step}, epoch {self.epoch}")
 
@@ -858,6 +768,8 @@ class Trainer:
             - :meth:`~olmo_core.train.callbacks.Callback.pre_optim_step()`
             - :meth:`~olmo_core.train.callbacks.Callback.post_train_batch()`
             - :meth:`~olmo_core.train.callbacks.Callback.post_step()`
+
+        :returns: The loss scalar tensor, typically on GPU.
         """
         return self.get_metric(TRAIN_CE_LOSS_METRIC)
 
@@ -872,6 +784,8 @@ class Trainer:
             - :meth:`~olmo_core.train.callbacks.Callback.pre_optim_step()`
             - :meth:`~olmo_core.train.callbacks.Callback.post_train_batch()`
             - :meth:`~olmo_core.train.callbacks.Callback.post_step()`
+
+        :returns: The Z-loss scalar tensor, typically on GPU.
         """
         return self.get_metric(TRAIN_Z_LOSS_METRIC)
 
@@ -911,20 +825,46 @@ class Trainer:
             raise FileNotFoundError(source)
         return target
 
-    def _duration_due(self, duration: Duration) -> bool:
-        if duration.unit == DurationUnit.steps:
-            return self.global_step >= duration.value
-        elif duration.unit == DurationUnit.tokens:
-            return self.global_train_tokens_seen >= duration.value
-        elif duration.unit == DurationUnit.epochs:
-            return self.epoch > duration.value
-        else:
-            raise NotImplementedError
+    def add_callback(self, name: str, callback: Callback):
+        if name in self.callbacks:
+            raise OLMoConfigurationError(f"A callback with name '{name}' already exists!")
+        callback.trainer = self
+        self.callbacks[name] = callback
+        self._sort_callbacks()
+        callback.post_attach()
 
-    def _handle_sigterm(self, *args):
-        del args
-        log.warning("SIGTERM received")
-        self.cancel_run("SIGTERM received")
+    def _sort_callbacks(self):
+        self.callbacks = OrderedDict(
+            (
+                (k, cb)
+                for k, cb in sorted(
+                    self.callbacks.items(), key=lambda x: (x[1].priority, x[0]), reverse=True
+                )
+            )
+        )
+
+    def _duration_due(self, duration: Duration) -> bool:
+        return duration.due(
+            step=self.global_step, tokens=self.global_train_tokens_seen, epoch=self.epoch
+        )
+
+    def _handle_os_signal(self, signalnum, stack_frame):
+        del stack_frame
+
+        signame: Optional[str] = None
+        if signalnum == signal.SIGTERM:
+            signame = "SIGTERM"
+        elif signalnum == signal.SIGINT:
+            signame = "SIGINT"
+
+        msg: str
+        if signame is not None:
+            msg = f"{signame} received"
+        else:
+            msg = f"Sig({signalnum}) received"
+
+        log.warning(msg)
+        self.cancel_run(msg)
 
     def _check_if_canceled(self):
         if self._canceled:
@@ -997,20 +937,7 @@ class Trainer:
                 callback.log_metrics(step, metrics[step])
 
     def _get_labels(self, batch: Dict[str, Any]) -> torch.Tensor:
-        # Labels are just input IDs shifted to the left (first item is ignored).
-        labels, label_mask, attention_mask, instance_mask = (
-            batch["input_ids"].clone(),
-            batch.get("label_mask"),
-            batch.get("attention_mask"),
-            batch.get("instance_mask"),
-        )
-        if label_mask is not None:
-            labels.masked_fill_(~label_mask, -100)
-        if attention_mask is not None:
-            labels.masked_fill_(attention_mask == 0.0, -100)
-        if instance_mask is not None:
-            labels.masked_fill_(~instance_mask.unsqueeze(-1), value=-100)
-        return labels[..., 1:].contiguous()
+        return get_labels(batch, label_ignore_index=self.data_loader.collator.label_ignore_index)
 
     @contextlib.contextmanager
     def _model_forward_context(self) -> Generator[None, None, None]:
@@ -1048,7 +975,7 @@ class Trainer:
         ce_loss, z_loss = loss_fn(
             logits_for_loss,
             labels,
-            ignore_index=-100,
+            ignore_index=self.data_loader.collator.label_ignore_index,
             reduction=loss_reduction,
             compute_z_loss=compute_z_loss,
             z_loss_multiplier=self.z_loss_multiplier or 1e-4,
@@ -1107,15 +1034,21 @@ class Trainer:
         self.optim.zero_grad(set_to_none=True)
 
         # Move tensors to the right device.
-        batch = move_to_device(batch, self.device, non_blocking=True)
+        batch = move_to_device(batch, self.device)
 
         # Generate labels, calculate how many tokens are going to be use in the loss.
         if "labels" not in batch:
             batch["labels"] = self._get_labels(batch)
-        batch_num_tokens_for_loss = (batch["labels"] != -100).sum()
+        batch_num_tokens_for_loss = (
+            batch["labels"] != self.data_loader.collator.label_ignore_index
+        ).sum()
 
         # Split into micro-batches.
-        micro_batches = split_batch(batch, self.microbatch_size)
+        if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
+            raise RuntimeError(
+                f"Microbatch size ({self.rank_microbatch_size}) is too small relative to sequence length ({seq_len})"
+            )
+        micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
         num_micro_batches = len(micro_batches)
 
         # In case this helps with memory utilization.
@@ -1162,34 +1095,7 @@ class Trainer:
             self.record_metric(OPTIM_STEP_SKIPPED_METRIC, self.optim.step_skipped)
 
     def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:
-        iterable_dataset = IterableDataset(
-            self.dataset,
-            seed=self.data_seed,
-            epoch=self.epoch,
-            start_index=self.global_train_examples_seen_this_epoch,
-            rank_batch_size=self.rank_batch_size,
-            dp_world_size=get_world_size(self.dp_process_group),
-            dp_rank=get_rank(self.dp_process_group),
-            fs_local_rank=get_fs_local_rank(),
-            drop_last=True,
-            work_dir=self.work_dir,
-            chunk_size=(self.max_train_sequence_length or self.train_sequence_length)
-            // self.train_sequence_length,
-        )
-        iterable_dataset.build_and_save_global_indices()
-        barrier()
-        data_loader = DataLoader(
-            iterable_dataset,
-            batch_size=self.rank_batch_size,
-            drop_last=True,
-            collate_fn=self.collator,
-            num_workers=self.data_loader_workers,
-            pin_memory=True,
-            prefetch_factor=self.data_loader_prefetch_factor,
-            persistent_workers=False,
-            timeout=0,
-        )
-        data_iterator = iter(data_loader)
+        data_iterator = iter(self.data_loader)
 
         while True:
             for callback in self.callbacks.values():
@@ -1202,6 +1108,8 @@ class Trainer:
                 break
 
     def _fit_epoch(self):
+        self.data_loader.reshuffle(self.epoch)
+
         log.info(f"Starting epoch {self.epoch}...")
 
         for callback in self.callbacks.values():
@@ -1210,17 +1118,19 @@ class Trainer:
         first_batch = True
         for batch in self._iter_batches():
             # Bookkeeping.
-            # NOTE: To track the global batch size / number of tokens per batch we make the
-            # assumption that all batches see the same number of tokens, which should always be
-            # the case except for potentially the last batch in an epoch if drop_last=False.
+            # NOTE: To track the global number of tokens seen per batch we make the
+            # assumption that all ranks see the same number batch size in tokens per step,
+            # which should always be the case for training efficiency at least.
             # Alternatively we'd have to use a distributed collective which isn't worth it.
-            batch_size, seq_len = batch["input_ids"].shape
-            assert seq_len == self.train_sequence_length
-            assert batch_size == self.rank_batch_size
+            if batch["input_ids"].numel() != self.rank_batch_size:
+                raise RuntimeError(
+                    f"Expected batch size of {self.rank_batch_size:,d} tokens on rank {get_rank()}, "
+                    f"got input IDs with shape {tuple(batch['input_ids'].shape)} = {batch['input_ids'].numel():,d} tokens"
+                )
             self.global_step += 1
-            self.global_train_tokens_seen_this_epoch += self.global_batch_size * seq_len
-            self.global_train_examples_seen_this_epoch += self.global_batch_size
-            self.global_train_tokens_seen += self.global_batch_size * seq_len
+            self.global_train_tokens_seen += self.global_batch_size
+
+            self.record_metric(SEQ_LEN_METRIC, float(batch["input_ids"].shape[1]))
 
             for callback in self.callbacks.values():
                 callback.pre_step(batch)
@@ -1229,8 +1139,6 @@ class Trainer:
 
             for callback in self.callbacks.values():
                 callback.post_train_batch()
-
-            # TODO: evals
 
             for callback in self.callbacks.values():
                 callback.post_step()
@@ -1256,5 +1164,4 @@ class Trainer:
 
         # Bookkeeping
         self.epoch += 1
-        self.global_train_tokens_seen_this_epoch = 0
-        self.global_train_examples_seen_this_epoch = 0
+        self.data_loader.reset()

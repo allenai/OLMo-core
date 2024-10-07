@@ -48,8 +48,9 @@ import torch.multiprocessing as mp
 from ..distributed.utils import init_distributed, is_distributed
 from ..io import add_cached_path_clients
 from ..utils import LogFilterType, prepare_cli_environment, seed_all
+from .common import Duration, DurationUnit, LoadStrategy, ReduceType
 from .config import TrainerConfig
-from .trainer import LoadStrategy, Trainer
+from .trainer import Trainer
 
 __all__ = [
     "prepare_training_environment",
@@ -57,6 +58,9 @@ __all__ = [
     "TrainerConfig",
     "Trainer",
     "LoadStrategy",
+    "Duration",
+    "DurationUnit",
+    "ReduceType",
 ]
 
 

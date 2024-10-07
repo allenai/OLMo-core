@@ -2,6 +2,7 @@ BASE_IMAGE = ghcr.io/allenai/pytorch:2.4.0-cuda12.1-python3.11
 # NOTE: when upgrading the nightly version you also need to upgrade the torch version specification
 # in 'pyproject.toml' to include that nightly version.
 NIGHTLY_VERSION = "2.5.0.dev20240826+cu121 --index-url https://download.pytorch.org/whl/nightly/cu121"
+TORCHAO_VERSION = "0.5.0 --extra-index-url https://download.pytorch.org/whl/cu121"
 
 VERSION = $(shell python src/olmo_core/version.py)
 VERSION_SHORT = $(shell python src/olmo_core/version.py short)
@@ -44,6 +45,7 @@ stable-image :
 	docker build -f src/Dockerfile \
 		--build-arg BUILDKIT_INLINE_CACHE=1 \
 		--build-arg BASE=$(BASE_IMAGE) \
+		--build-arg TORCHAO_VERSION=$(TORCHAO_VERSION) \
 		--target stable \
 		-t $(IMAGE_BASENAME) .
 
@@ -58,6 +60,7 @@ nightly-image :
 	docker build -f src/Dockerfile \
 		--build-arg BUILDKIT_INLINE_CACHE=1 \
 		--build-arg BASE=$(BASE_IMAGE) \
+		--build-arg TORCHAO_VERSION=$(TORCHAO_VERSION) \
 		--build-arg NIGHTLY_VERSION=$(NIGHTLY_VERSION) \
 		--target nightly \
 		-t $(IMAGE_BASENAME)-nightly .

@@ -69,7 +69,7 @@ intersphinx_mapping = {
 
 # By default, sort documented members by type within classes and modules.
 autodoc_member_order = "bysource"
-autodoc_default_options = {"show-inheritance": True, "undoc-members": True}
+autodoc_default_options = {"show-inheritance": True}
 
 # Include default values when documenting parameter types.
 typehints_defaults = "comma"

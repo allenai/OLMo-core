@@ -16,6 +16,7 @@ class GPUMemoryMonitorCallback(Callback):
     """
 
     device_id: Optional[int] = None
+    _num_alloc_retries: int = 0
 
     @property
     def device(self) -> torch.device:
@@ -56,8 +57,9 @@ class GPUMemoryMonitorCallback(Callback):
         self.trainer.record_metric("system/GPU reserved mem (%)", max_reserved_pct)
 
         num_retries = cuda_info["num_alloc_retries"]
-        if num_retries > 0:
+        if num_retries > self._num_alloc_retries:
             log.warning(f"{num_retries} CUDA memory allocation retries.")
+            self._num_alloc_retries = num_retries
 
         num_ooms = cuda_info["num_ooms"]
         if num_ooms > 0:

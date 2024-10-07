@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Type
 
 import torch
 import torch.nn as nn
@@ -60,10 +60,6 @@ class AdamWConfig(OptimConfig):  # NOTE: omagaconf doesn't like "OptimConfig[tor
     foreach: Optional[bool] = None
     fused: Optional[bool] = None
 
-    def build(self, model: nn.Module) -> torch.optim.AdamW:
-        kwargs = self.as_dict()
-        kwargs.pop("group_overrides")
-        optim = torch.optim.AdamW(self.build_groups(model), **kwargs)
-        for group in optim.param_groups:
-            group.setdefault("initial_lr", self.lr)
-        return optim
+    @classmethod
+    def optimizer(cls) -> Type[torch.optim.AdamW]:
+        return torch.optim.AdamW

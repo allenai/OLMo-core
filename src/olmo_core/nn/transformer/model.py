@@ -11,13 +11,11 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 )
 
 from olmo_core.config import Config, DType, StrEnum
+from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.utils import (
-    get_cumulative_document_lengths,
-    get_default_device,
-    has_flash_attn,
-)
+from olmo_core.float8 import Float8Config
+from olmo_core.utils import get_default_device, has_flash_attn
 
 from ..attention import AttentionConfig, AttentionType
 from ..buffer_cache import BufferCache
@@ -88,7 +86,12 @@ class TransformerConfig(Config):
     """
     A config for easily building transformer models.
 
-    See :class:`Transformer` for a description of the parameters.
+    :param compile: Whether to compile the model with ``torch.compile``.
+    :param dp_config: Data parallel configuration.
+    :param ac_config: Activation checkpointing configuration.
+    :param float8_config: Float8 training configuration.
+
+    See :class:`Transformer` for a description of the other parameters.
     """
 
     d_model: int
@@ -99,9 +102,11 @@ class TransformerConfig(Config):
     bias: bool = True
     dtype: DType = DType.float32
     init_method: InitMethod = InitMethod.normal
+    init_seed: int = 0
     compile: bool = False
     dp_config: Optional[DataParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
+    float8_config: Optional[Float8Config] = None
 
     def build(
         self,
@@ -139,7 +144,15 @@ class TransformerConfig(Config):
             dtype=self.dtype.as_pt(),
             init_method=self.init_method,
             init_device=init_device,
+            init_seed=self.init_seed,
         )
+
+        # Maybe convert linear layers to Float8 linear layers.
+        if self.float8_config is not None and self.float8_config.enabled:
+            if self.float8_config.compile is None and self.compile:
+                self.float8_config.compile = True
+            self.float8_config.convert_to_float8_training(model, modules_to_ignore={"w_out"})
+
         log.info("%s", model)
 
         # Maybe apply activation checkpointing.
@@ -281,6 +294,7 @@ class TransformerConfig(Config):
             block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
             **kwargs,
         )
 
@@ -294,6 +308,7 @@ class TransformerConfig(Config):
             block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
             **kwargs,
         )
 
@@ -307,6 +322,7 @@ class TransformerConfig(Config):
             block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
             **kwargs,
         )
 
@@ -462,6 +478,7 @@ class TransformerConfig(Config):
         n_heads: int,
         n_kv_heads: Optional[int] = None,
         qk_norm: bool = False,
+        layer_norm_eps: float = 1e-5,
         rope_theta: int = 500_000,
         rope_type: Optional[RoPEType] = None,
         hidden_size_multiple_of: int = 256,
@@ -500,9 +517,9 @@ class TransformerConfig(Config):
         # Configure global layer norm.
         layer_norm = LayerNormConfig(
             name=LayerNormType.fused_rms if fused_ops else LayerNormType.rms,
-            eps=1e-5,
+            eps=layer_norm_eps,
             bias=False,
-            #  dtype=dtype,  # TODO: allow low precision LN?
+            dtype=dtype,
         )
 
         # Decide on attention/rope implementations.
@@ -569,6 +586,7 @@ class Transformer(nn.Module):
         dtype: torch.dtype = torch.float32,
         init_method: InitMethod = InitMethod.normal,
         init_device: str = "cpu",
+        init_seed: int = 0,
     ):
         super().__init__()
         cache = BufferCache()
@@ -589,6 +607,7 @@ class Transformer(nn.Module):
         self.norm = layer_norm.build(d_model, init_device=init_device)
         self.w_out = nn.Linear(d_model, vocab_size, bias=bias, dtype=dtype, device=init_device)
         self.init_method = InitMethod(init_method)
+        self.init_seed = init_seed
         self._cache = cache
 
     @property
@@ -613,9 +632,10 @@ class Transformer(nn.Module):
         :param device: The device the local copy of the model will be trained on.
         """
         device = device or self.device
+        generator = torch.Generator(device).manual_seed(self.init_seed)
 
         if self.embeddings is not None:
-            self.init_method.init_embeddings(self.embeddings)
+            self.init_method.init_embeddings(self.embeddings, generator=generator)
 
         for block in self.blocks:
             # This might fail if it's wrapped.
@@ -634,12 +654,15 @@ class Transformer(nn.Module):
 
             # Attention weights.
             self.init_method.init_attention(
-                att, block_idx=block.block_idx, num_blocks=len(self.blocks)
+                att, block_idx=block.block_idx, num_blocks=len(self.blocks), generator=generator
             )
 
             # Feed-forward weights.
             self.init_method.init_feed_forward(
-                block.feed_forward, block_idx=block.block_idx, num_blocks=len(self.blocks)
+                block.feed_forward,
+                block_idx=block.block_idx,
+                num_blocks=len(self.blocks),
+                generator=generator,
             )
 
             # Warm up RoPE cache.
@@ -650,7 +673,7 @@ class Transformer(nn.Module):
             self.norm.reset_parameters()
 
         if self.w_out is not None:
-            self.init_method.init_final_w_out(self.w_out, d_model=self.d_model)
+            self.init_method.init_final_w_out(self.w_out, d_model=self.d_model, generator=generator)
 
     def forward(
         self,

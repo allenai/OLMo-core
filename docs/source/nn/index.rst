@@ -30,3 +30,11 @@ LayerNorms
 .. automodule:: olmo_core.nn.layer_norm
    :members:
    :member-order: bysource
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Submodules
+   :hidden:
+
+   functional
+   transformer

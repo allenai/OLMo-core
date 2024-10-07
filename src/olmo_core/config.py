@@ -1,6 +1,17 @@
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
-from typing import Any, Dict, Generator, List, Optional, Tuple, Type, TypeVar, cast
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generator,
+    List,
+    Optional,
+    Tuple,
+    Type,
+    TypeVar,
+    cast,
+)
 
 import torch
 from omegaconf import OmegaConf as om
@@ -117,6 +128,36 @@ class Config:
             recurse=True,
         )
 
+    def apply(self, func: Callable[["Config"], None]):
+        """
+        Recursively apply a function to every config instance field, including ``self``.
+
+        :param func: The function to apply.
+        """
+
+        def apply(d):
+            if isinstance(d, Config):
+                func(d)
+
+            if is_dataclass(d):
+                for field in fields(d):
+                    value = getattr(d, field.name)
+                    apply(value)
+            elif isinstance(d, dict):
+                for value in d.values():
+                    apply(value)
+            elif isinstance(d, (list, tuple, set)):
+                for x in d:
+                    apply(x)
+
+        apply(self)
+
+    def validate(self):
+        """
+        Validate fields in ``self``. This may modify ``self`` in-place.
+        """
+        pass
+
     def merge(self, dotlist: List[str]) -> Self:
         """
         Merge self with fields from a "dotlist", creating a new object.
@@ -126,9 +167,17 @@ class Config:
         try:
             merge_fields = om.from_dotlist(_clean_opts(dotlist))
             merged = om.merge(self, merge_fields)
-            return cast(Self, om.to_object(merged))
+            out = cast(Self, om.to_object(merged))
+            out.apply(lambda c: c.validate())
+            return out
         except OmegaConfBaseException as e:
             raise OLMoConfigurationError(str(e))
+
+    def replace(self, **changes) -> Self:
+        """
+        Creates a new object of the same type, replacing fields with values from ``changes``.
+        """
+        return replace(self, **changes)
 
     @classmethod
     def from_dict(cls: Type[C], data: Dict[str, Any], overrides: Optional[List[str]] = None) -> C:
