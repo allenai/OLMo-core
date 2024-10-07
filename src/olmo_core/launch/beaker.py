@@ -84,6 +84,16 @@ class BeakerWekaBucket(Config):
     mount: str
 
 
+DEFAULT_SETUP_STEPS = (
+    'git clone "${REPO_URL}" .',
+    'git checkout "${GIT_REF}"',
+    "git submodule update --init --recursive",
+    "conda shell.bash activate base",
+    "pip install -e '.[all]'",
+    "pip freeze",
+)
+
+
 @dataclass
 class BeakerLaunchConfig(Config):
     """
@@ -120,16 +130,7 @@ class BeakerLaunchConfig(Config):
     A description for the experiment.
     """
 
-    setup_steps: List[str] = field(
-        default_factory=lambda: [
-            'git clone "${REPO_URL}" .',
-            'git checkout "${GIT_REF}"',
-            "git submodule update --init --recursive",
-            "conda shell.bash activate base",
-            "pip install -e '.[all]'",
-            "pip freeze",
-        ]
-    )
+    setup_steps: List[str] = field(default_factory=lambda: list(DEFAULT_SETUP_STEPS))
     """
     A list of shell commands to run for cloning your repo, installing dependencies,
     and other arbitrary setup steps.
@@ -299,10 +300,10 @@ class BeakerLaunchConfig(Config):
         # Get repository account, name, and current ref.
         github_account, github_repo, git_ref, is_public = ensure_repo(self.allow_dirty)
 
-        if not is_public:
+        if not is_public and self.setup_steps == DEFAULT_SETUP_STEPS:
             raise OLMoConfigurationError(
-                "Only public repositories are supported at the moment. "
-                "Please use beaker-gantry to launch jobs with private repos."
+                "It looks like your repository is private and private repositories will require "
+                "custom 'setup_steps' in order to clone the repo."
             )
 
         entrypoint_script = [
