@@ -296,18 +296,13 @@ class BeakerLaunchConfig(Config):
         # Get repository account, name, and current ref.
         github_account, github_repo, git_ref, is_public = ensure_repo(self.allow_dirty)
 
-        if not is_public:
-            raise OLMoConfigurationError(
-                "Only public repositories are supported at the moment. "
-                "Please use beaker-gantry to launch jobs with private repos."
-            )
-
         entrypoint_script = [
             "#!/usr/bin/env bash",
             "set -exuo pipefail",
             "mkdir -p /olmo-core-runtime",
             "cd /olmo-core-runtime",
-            'git clone "${REPO_URL}" .',
+            "conda install gh --channel conda-forge",
+            'gh repo clone "${REPO_URL}" .',
             'git checkout "${GIT_REF}"',
             "git submodule update --init --recursive",
             *self.setup_steps,
