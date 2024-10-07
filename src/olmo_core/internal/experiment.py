@@ -150,6 +150,10 @@ def build_common_components(
             BeakerEnvSecret(name="WEKA_ENDPOINT_URL", secret="WEKA_ENDPOINT_URL"),
         ],
         setup_steps=[
+            # Clone repo.
+            'git clone "${REPO_URL}" .',
+            'git checkout "${GIT_REF}"',
+            "git submodule update --init --recursive",
             # Setup python environment.
             "conda shell.bash activate base",
             "pip install -e '.[all]'",
