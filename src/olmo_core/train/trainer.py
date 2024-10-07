@@ -207,6 +207,11 @@ class Trainer:
     Where to load a pretrained model from prior to training.
     """
 
+    load_resume_path: Optional[PathOrStr] = None
+    """
+    Where to load a checkpoint from prior to training.
+    """
+
     load_strategy: LoadStrategy = LoadStrategy.if_available
     """
     The strategy for loading a checkpoint prior to training.
@@ -562,14 +567,25 @@ class Trainer:
         self._cancel_reason = None
         self._canceling_rank = None
 
-        if self.load_pretrained_path is not None:
-            log.info(f"Loading pretrained model from '{self.load_pretrained_path}'...")
-            # Only load the model weights.
-            self.load_pretrained_checkpoint(
-                self.load_pretrained_path, 
-                load_optimizer_state=False,
-                load_trainer_state=False
-            )
+        load_path = self.load_path if self.load_path is not None else self.save_folder
+        should_load: bool = True
+        if get_rank() == 0:
+            should_load = self.checkpointer.contains_checkpoint(load_path)
+        should_load = scatter_object(should_load)
+
+        if not should_load:
+            # We only load the pretrained or resume checkpoint if the load path doesn't have a checkpoint.
+            if self.load_pretrained_path is not None:
+                log.info(f"Loading pretrained model from '{self.load_pretrained_path}'...")
+                # Only load the model weights.
+                self.load_pretrained_checkpoint(
+                    self.load_pretrained_path, 
+                    load_optimizer_state=False,
+                    load_trainer_state=False
+                )
+            if self.load_resume_path is not None:
+                log.info(f"Loading checkpoint from '{self.load_resume_path}'...")
+                self.load_checkpoint(self.load_resume_path)
 
         # Maybe load a checkpoint.
         if not self.checkpoint_loaded:

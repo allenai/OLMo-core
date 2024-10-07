@@ -12,6 +12,7 @@ from .init import InitMethod
 from .model import (
     Transformer,
     TransformerActivationCheckpointingConfig,
+    TransformerActivationCheckpointingMode,
     TransformerConfig,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "TransformerBlock",
     "ReorderedNormTransformerBlock",
     "TransformerActivationCheckpointingConfig",
+    "TransformerActivationCheckpointingMode",
     "InitMethod",
 ]
