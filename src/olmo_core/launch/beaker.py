@@ -122,14 +122,17 @@ class BeakerLaunchConfig(Config):
 
     setup_steps: List[str] = field(
         default_factory=lambda: [
+            'git clone "${REPO_URL}" .',
+            'git checkout "${GIT_REF}"',
+            "git submodule update --init --recursive",
             "conda shell.bash activate base",
             "pip install -e '.[all]'",
             "pip freeze",
         ]
     )
     """
-    A list of shell commands to run for installing dependencies, running arbitrary scripts,
-    and other setup steps.
+    A list of shell commands to run for cloning your repo, installing dependencies,
+    and other arbitrary setup steps.
     """
 
     beaker_image: str = OLMoCoreBeakerImage.stable
@@ -307,9 +310,6 @@ class BeakerLaunchConfig(Config):
             "set -exuo pipefail",
             "mkdir -p /olmo-core-runtime",
             "cd /olmo-core-runtime",
-            'git clone "${REPO_URL}" .',
-            'git checkout "${GIT_REF}"',
-            "git submodule update --init --recursive",
             *self.setup_steps,
         ]
 
