@@ -25,7 +25,7 @@ from beaker import (
 
 from ..config import Config, StrEnum
 from ..distributed.utils import OLMO_SHARED_FS_ENV_VAR
-from ..exceptions import BeakerExperimentFailedError, OLMoConfigurationError
+from ..exceptions import BeakerExperimentFailedError
 from ..utils import LOG_FILTER_TYPE_ENV_VAR, LogFilterType
 from ..version import VERSION
 from .utils import ensure_repo
