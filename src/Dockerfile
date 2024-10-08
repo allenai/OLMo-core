@@ -2,13 +2,11 @@
 ARG BASE
 FROM ${BASE} as stable
 
-# Install torchao
-ARG TORCHAO_VERSION
-RUN pip install --no-cache-dir \
-    torchao==${TORCHAO_VERSION} \
-    git+https://git@github.com/databricks/megablocks.git@7b0337fa7278d224bf0c9be71c3a92c392fdd340
+# Install special extra dependencies.
+ARG EXTRA_DEPS
+RUN pip install --no-cache-dir ${EXTRA_DEPS}
 
-# Install other dependencies, but not the source code.
+# Install direct dependencies, but not source code.
 COPY pyproject.toml .
 COPY src/olmo_core/__init__.py src/olmo_core/__init__.py
 COPY src/olmo_core/version.py src/olmo_core/version.py
