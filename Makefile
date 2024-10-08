@@ -2,8 +2,8 @@ BASE_IMAGE = ghcr.io/allenai/pytorch:2.4.0-cuda12.1-python3.11
 # NOTE: when upgrading the nightly version you also need to upgrade the torch version specification
 # in 'pyproject.toml' to include that nightly version.
 NIGHTLY_VERSION = "2.5.0.dev20240826+cu121 --index-url https://download.pytorch.org/whl/nightly/cu121"
-TORCHAO_VERSION = "torchao==0.5.0 --extra-index-url https://download.pytorch.org/whl/cu121"
-MEGABLOCKS_VERSION = "git+https://git@github.com/databricks/megablocks.git@7b0337fa7278d224bf0c9be71c3a92c392fdd340"
+TORCHAO_VERSION = torchao==0.5.0 --extra-index-url https://download.pytorch.org/whl/cu121
+MEGABLOCKS_VERSION = git+https://git@github.com/databricks/megablocks.git@7b0337fa7278d224bf0c9be71c3a92c392fdd340
 
 EXTRA_DEPS = "$(TORCHAO_VERSION) $(MEGABLOCKS_VERSION)"
 VERSION = $(shell python src/olmo_core/version.py)
