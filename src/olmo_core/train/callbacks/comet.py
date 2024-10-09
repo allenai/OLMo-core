@@ -109,6 +109,7 @@ class CometCallback(Callback):
                 api_key=os.environ[COMET_API_KEY_ENV_VAR],
                 project_name=self.project,
                 workspace=self.workspace,
+                auto_output_logging="native",
             )
 
             if self.name is not None:
