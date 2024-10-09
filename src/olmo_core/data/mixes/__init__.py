@@ -14,6 +14,7 @@ class BaseDataMix(StrEnum):
     """
     Base class for enumeration of data mixes.
     """
+
     def build(self, base_dir: str, tokenizer: TokenizerName) -> Tuple[List[str], List[str]]:
         raise NotImplementedError
 
