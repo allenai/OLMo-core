@@ -148,11 +148,12 @@ class CometCallback(Callback):
 
     def check_if_canceled(self):
         if self.enabled and not self.finalized and self.cancel_tags:
-            from comet_ml.api import API, APIExperiment
+            from comet_ml.api import API
 
             try:
                 api = API(api_key=os.environ[COMET_API_KEY_ENV_VAR])
                 exp = api.get_experiment_by_key(self.exp.get_key())
+                assert exp is not None
                 tags = exp.get_tags()
             except Exception as exc:
                 log.exception(exc)
