@@ -152,15 +152,10 @@ class CometCallback(Callback):
 
             try:
                 api = API(api_key=os.environ[COMET_API_KEY_ENV_VAR])
-                exp = api.get(
-                    workspace=self.workspace,
-                    project_name=self.project,
-                    experiment=self.exp.get_key(),
-                )
-                assert isinstance(exp, APIExperiment)
+                exp = api.get_experiment_by_key(self.exp.get_key())
                 tags = exp.get_tags()
             except Exception as exc:
-                log.warning(f"Failed to pull tags for Comet.ml experiment:\n{exc}")
+                log.exception(exc)
                 return
 
             for tag in tags or []:
