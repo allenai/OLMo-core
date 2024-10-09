@@ -1,7 +1,7 @@
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from olmo_core.distributed.utils import get_rank
 from olmo_core.exceptions import OLMoEnvironmentError
@@ -52,6 +52,11 @@ class CometCallback(Callback):
     tags: Optional[List[str]] = None
     """
     Tags to assign the experiment.
+    """
+
+    config: Optional[Dict[str, Any]] = None
+    """
+    The config to save to Comet.ml.
     """
 
     cancel_tags: Optional[List[str]] = field(
@@ -111,6 +116,9 @@ class CometCallback(Callback):
 
             if self.tags:
                 self.exp.add_tags(self.tags)
+
+            if self.config is not None:
+                self.exp.log_others(self.config)
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):
         if self.enabled and get_rank() == 0:
