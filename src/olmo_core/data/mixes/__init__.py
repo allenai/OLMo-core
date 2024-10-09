@@ -16,6 +16,15 @@ class BaseDataMix(StrEnum):
     """
 
     def build(self, base_dir: str, tokenizer: TokenizerName) -> Tuple[List[str], List[str]]:
+        """
+        Construct the data mix.
+
+        :param base_dir: Where the mix is stored, e.g. "s3://ai2-llm" or "/weka/oe-training-default/ai2-llm".
+        :param tokenizer: The tokenizer identifier.
+
+        :returns: A list of paths/URLs to the tokenized numpy data files in the mix and list
+            of corresponding labels.
+        """
         raise NotImplementedError
 
 
@@ -29,15 +38,6 @@ class DataMix(BaseDataMix):
     v3_small_ppl_validation = "v3-small-ppl-validation"
 
     def build(self, base_dir: str, tokenizer: TokenizerName) -> Tuple[List[str], List[str]]:
-        """
-        Construct the data mix.
-
-        :param base_dir: Where the mix is stored, e.g. "s3://ai2-llm" or "/weka/oe-training-default/ai2-llm".
-        :param tokenizer: The tokenizer identifier.
-
-        :returns: A list of paths/URLs to the tokenized numpy data files in the mix and list
-            of corresponding labels.
-        """
         if not base_dir.endswith("/"):
             base_dir = base_dir + "/"
 

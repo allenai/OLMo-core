@@ -56,6 +56,7 @@ __all__ = [
     "NumpyDatasetDType",
     "TokenizerConfig",
     "TokenizerName",
+    "BaseDataMix",
     "DataMix",
     "DataCollator",
     "PaddingDirection",
