@@ -3,6 +3,8 @@ ARG BASE
 FROM ${BASE} as stable
 
 # Install special extra dependencies.
+ENV TORCH_CUDA_ARCH_LIST=8.0
+ENV GROUPED_GEMM_CUTLASS=1
 ARG EXTRA_DEPS
 RUN pip install --no-cache-dir ${EXTRA_DEPS}
 
