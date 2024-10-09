@@ -113,6 +113,7 @@ class CometCallback(Callback):
                 project_name=self.project,
                 workspace=self.workspace,
                 auto_output_logging="simple",
+                display_summary=False,
             )
 
             if self.name is not None:
