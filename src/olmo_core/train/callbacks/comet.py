@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from olmo_core.distributed.utils import get_rank
 from olmo_core.exceptions import OLMoEnvironmentError
+from olmo_core.utils import set_env_var
 
 from .callback import Callback
 
@@ -100,6 +101,8 @@ class CometCallback(Callback):
 
     def pre_train(self):
         if self.enabled and get_rank() == 0:
+            set_env_var("COMET_DISABLE_AUTO_LOGGING", "1")
+
             import comet_ml as comet
 
             if COMET_API_KEY_ENV_VAR not in os.environ:
@@ -110,8 +113,6 @@ class CometCallback(Callback):
                 project_name=self.project,
                 workspace=self.workspace,
                 auto_output_logging="native",
-                auto_param_logging=False,
-                auto_metric_logging=False,
             )
 
             if self.name is not None:
