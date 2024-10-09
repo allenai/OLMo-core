@@ -151,8 +151,8 @@ def build_common_components(
         ],
         setup_steps=[
             # Clone repo.
-            'git clone "${REPO_URL}" .',
-            'git checkout "${GIT_REF}"',
+            'git clone "$REPO_URL" .',
+            'git checkout "$GIT_REF"',
             "git submodule update --init --recursive",
             # Setup python environment.
             "conda shell.bash activate base",
