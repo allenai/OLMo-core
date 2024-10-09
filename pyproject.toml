@@ -58,8 +58,11 @@ beaker = [
 wandb = [
     "wandb",
 ]
+comet = [
+    "comet_ml",
+]
 all = [
-    "ai2-olmo-core[dev,beaker,wandb]",
+    "ai2-olmo-core[dev,beaker,wandb,comet]",
 ]
 
 [tool.setuptools]
