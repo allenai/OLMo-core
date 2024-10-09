@@ -405,6 +405,7 @@ def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
     - :func:`install_excepthook()`
     - :func:`filter_warnings()`
     - :func:`set_env_variables()`
+    - :func:`~olmo_core.io.add_cached_path_clients()`
 
     .. tip::
         If you're looking to setup the environment specifically for distributed training,
@@ -417,6 +418,8 @@ def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
         .. note::
             All ranks will always emit messages at the ``WARNING`` level or higher.
     """
+    from .io import add_cached_path_clients
+
     if log_filter_type is None:
         log_filter_type = LogFilterType(os.environ.get(LOG_FILTER_TYPE_ENV_VAR, "rank0_only"))
     rich.reconfigure(width=max(rich.get_console().width, 180), soft_wrap=True)
@@ -424,6 +427,7 @@ def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
     install_excepthook()
     filter_warnings()
     set_env_variables()
+    add_cached_path_clients()
 
 
 class _RichHandler(logging.Handler):
