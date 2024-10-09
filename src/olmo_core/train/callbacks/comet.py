@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from olmo_core.distributed.utils import get_rank
 from olmo_core.exceptions import OLMoEnvironmentError
-from olmo_core.utils import set_env_var
+from olmo_core.utils import flatten_dict, set_env_var
 
 from .callback import Callback
 
@@ -112,7 +112,7 @@ class CometCallback(Callback):
                 api_key=os.environ[COMET_API_KEY_ENV_VAR],
                 project_name=self.project,
                 workspace=self.workspace,
-                auto_output_logging="native",
+                auto_output_logging="simple",
             )
 
             if self.name is not None:
@@ -122,7 +122,7 @@ class CometCallback(Callback):
                 self.exp.add_tags(self.tags)
 
             if self.config is not None:
-                self.exp.log_others(self.config)
+                self.exp.log_others(flatten_dict(self.config))
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):
         if self.enabled and get_rank() == 0:
