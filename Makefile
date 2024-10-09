@@ -1,7 +1,7 @@
-BASE_IMAGE = ghcr.io/allenai/pytorch:2.4.0-cuda12.1-python3.11
+BASE_IMAGE = ghcr.io/allenai/pytorch:2.4.1-cuda12.1-python3.11
 # NOTE: when upgrading the nightly version you also need to upgrade the torch version specification
 # in 'pyproject.toml' to include that nightly version.
-NIGHTLY_VERSION = "2.5.0.dev20240826+cu121 --index-url https://download.pytorch.org/whl/nightly/cu121"
+NIGHTLY_VERSION = "2.6.0.dev20241009+cu121 --index-url https://download.pytorch.org/whl/nightly/cu121"
 TORCHAO_VERSION = "0.5.0 --extra-index-url https://download.pytorch.org/whl/cu121"
 
 VERSION = $(shell python src/olmo_core/version.py)
