@@ -109,10 +109,17 @@ jobs:
       matrix:
         task:
           - name: Test (GPU)
-            run: pytest -v --color=yes --durations=3 -m gpu src/test/ --ignore-glob='src/test/distributed/checkpoint*'
+            image: olmo-core
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                --ignore-glob='src/test/distributed/checkpoint*' \
+                src/test/
 
           - name: Test checkpoint (GPU)
-            run: pytest -v --color=yes --durations=3 -m gpu src/test/distributed/checkpoint*
+            image: olmo-core
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                src/test/distributed/checkpoint*
     steps:
       - uses: actions/checkout@v3
 
@@ -142,7 +149,7 @@ jobs:
       - name: Get full image name
         if: env.BEAKER_TOKEN != ''
         run:
-          echo "BEAKER_IMAGE=$(make get-full-beaker-image-name)" >> $GITHUB_ENV
+          echo "BEAKER_IMAGE=$(make get-full-beaker-image-name IMAGE_NAME=${{ matrix.task.image }})" >> $GITHUB_ENV
 
       - name: GPU Tests
         uses: allenai/beaker-run-action@v1.2

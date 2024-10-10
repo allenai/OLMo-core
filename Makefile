@@ -104,4 +104,4 @@ get-beaker-workspace :
 
 .PHONY : get-full-beaker-image-name
 get-full-beaker-image-name :
-	@./src/scripts/beaker/get_full_image_name.sh $(IMAGE_BASENAME)-dev $(BEAKER_WORKSPACE)
+	@./src/scripts/beaker/get_full_image_name.sh $(IMAGE_NAME) $(BEAKER_WORKSPACE)
