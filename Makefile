@@ -51,7 +51,7 @@ stable-image :
 		--build-arg TORCHAO_VERSION=$(TORCHAO_VERSION) \
 		--build-arg MEGABLOCKS_VERSION=$(MEGABLOCKS_VERSION) \
 		--target stable \
-		--progress=plain \
+		--progress plain \
 		-t $(IMAGE_BASENAME) .
 	echo "Built image '$(IMAGE_BASENAME)', size: $$(docker inspect -f '{{ .Size }}' $(IMAGE_BASENAME) | numfmt --to=si)"
 
@@ -61,10 +61,9 @@ nightly-image :
 		--build-arg BUILDKIT_INLINE_CACHE=1 \
 		--build-arg BASE=$(BASE_IMAGE) \
 		--build-arg TORCHAO_VERSION=$(TORCHAO_VERSION) \
-		--build-arg MEGABLOCKS_VERSION=$(MEGABLOCKS_VERSION) \
 		--build-arg NIGHTLY_VERSION=$(NIGHTLY_VERSION) \
 		--target nightly \
-		--progress=plain \
+		--progress plain \
 		-t $(IMAGE_BASENAME)-nightly .
 	echo "Built image '$(IMAGE_BASENAME)-nightly', size: $$(docker inspect -f '{{ .Size }}' $(IMAGE_BASENAME)-nightly | numfmt --to=si)"
 
@@ -76,8 +75,8 @@ dev-image :
 		--build-arg TORCHAO_VERSION=$(TORCHAO_VERSION) \
 		--build-arg MEGABLOCKS_VERSION=$(MEGABLOCKS_VERSION) \
 		--build-arg NIGHTLY_VERSION=$(NIGHTLY_VERSION) \
-		--target nightly \
-		--progress=plain \
+		--target dev \
+		--progress plain \
 		-t $(IMAGE_BASENAME)-dev .
 	echo "Built image '$(IMAGE_BASENAME)-dev', size: $$(docker inspect -f '{{ .Size }}' $(IMAGE_BASENAME)-nightly | numfmt --to=si)"
 
