@@ -65,6 +65,11 @@ class OLMoCoreBeakerImage(StrEnum):
     Built with the latest compatible nightly version of PyTorch.
     """
 
+    dev = "olmo-core-dev"
+    """
+    Like :data:`nightly` but includes experimental dependencies and the CUDA toolkit.
+    """
+
 
 @dataclass
 class BeakerEnvVar(Config):

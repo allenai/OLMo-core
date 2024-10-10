@@ -1,4 +1,6 @@
-BASE_IMAGE = ghcr.io/allenai/pytorch:2.4.1-cuda12.1-python3.11-dev
+BASE_IMAGE = ghcr.io/allenai/pytorch:2.4.1-cuda12.1-python3.11
+DEV_BASE_IMAGE = ghcr.io/allenai/pytorch:2.4.1-cuda12.1-python3.11-dev
+
 # NOTE: when upgrading the nightly version you also need to upgrade the torch version specification
 # in 'pyproject.toml' to include that nightly version.
 NIGHTLY_VERSION = "2.5.0.dev20240826+cu121 --index-url https://download.pytorch.org/whl/nightly/cu121"
@@ -53,12 +55,6 @@ stable-image :
 		-t $(IMAGE_BASENAME) .
 	echo "Built image '$(IMAGE_BASENAME)', size: $$(docker inspect -f '{{ .Size }}' $(IMAGE_BASENAME) | numfmt --to=si)"
 
-.PHONY : beaker-image-stable
-beaker-image-stable : stable-image
-	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME) $(IMAGE_BASENAME) $(BEAKER_WORKSPACE)
-	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME) $(IMAGE_BASENAME)-v$(VERSION_SHORT) $(BEAKER_WORKSPACE)
-	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME) $(IMAGE_BASENAME)-v$(VERSION) $(BEAKER_WORKSPACE)
-
 .PHONY : nightly-image
 nightly-image :
 	docker build -f src/Dockerfile \
@@ -72,11 +68,36 @@ nightly-image :
 		-t $(IMAGE_BASENAME)-nightly .
 	echo "Built image '$(IMAGE_BASENAME)-nightly', size: $$(docker inspect -f '{{ .Size }}' $(IMAGE_BASENAME)-nightly | numfmt --to=si)"
 
+.PHONY : dev-image
+dev-image :
+	docker build -f src/Dockerfile \
+		--build-arg BUILDKIT_INLINE_CACHE=1 \
+		--build-arg BASE=$(DEV_BASE_IMAGE) \
+		--build-arg TORCHAO_VERSION=$(TORCHAO_VERSION) \
+		--build-arg MEGABLOCKS_VERSION=$(MEGABLOCKS_VERSION) \
+		--build-arg NIGHTLY_VERSION=$(NIGHTLY_VERSION) \
+		--target nightly \
+		--progress=plain \
+		-t $(IMAGE_BASENAME)-dev .
+	echo "Built image '$(IMAGE_BASENAME)-dev', size: $$(docker inspect -f '{{ .Size }}' $(IMAGE_BASENAME)-nightly | numfmt --to=si)"
+
+.PHONY : beaker-image-stable
+beaker-image-stable : stable-image
+	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME) $(IMAGE_BASENAME) $(BEAKER_WORKSPACE)
+	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME) $(IMAGE_BASENAME)-v$(VERSION_SHORT) $(BEAKER_WORKSPACE)
+	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME) $(IMAGE_BASENAME)-v$(VERSION) $(BEAKER_WORKSPACE)
+
 .PHONY : beaker-image-nightly
 beaker-image-nightly : nightly-image
 	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME)-nightly $(IMAGE_BASENAME)-nightly $(BEAKER_WORKSPACE)
 	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME)-nightly $(IMAGE_BASENAME)-v$(VERSION_SHORT)-nightly $(BEAKER_WORKSPACE)
 	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME)-nightly $(IMAGE_BASENAME)-v$(VERSION)-nightly $(BEAKER_WORKSPACE)
+
+.PHONY : beaker-image-dev
+beaker-image-dev : dev-image
+	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME)-dev $(IMAGE_BASENAME)-dev $(BEAKER_WORKSPACE)
+	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME)-dev $(IMAGE_BASENAME)-v$(VERSION_SHORT)-dev $(BEAKER_WORKSPACE)
+	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME)-dev $(IMAGE_BASENAME)-v$(VERSION)-dev $(BEAKER_WORKSPACE)
 
 .PHONY : get-beaker-workspace
 get-beaker-workspace :
