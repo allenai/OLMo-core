@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added `BaseDataMix` class, to allow extending to new data mix groups.
+- Added `DataMixBase` class, to allow extending to new data mix groups.
 
 ### Changed
 

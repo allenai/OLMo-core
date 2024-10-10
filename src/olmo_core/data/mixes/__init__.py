@@ -7,10 +7,10 @@ from olmo_core.config import StrEnum
 
 from ..tokenizer import TokenizerName
 
-__all__ = ["BaseDataMix", "DataMix"]
+__all__ = ["DataMixBase", "DataMix"]
 
 
-class BaseDataMix(StrEnum):
+class DataMixBase(StrEnum):
     """
     Base class for enumeration of data mixes.
     """
@@ -28,7 +28,7 @@ class BaseDataMix(StrEnum):
         raise NotImplementedError
 
 
-class DataMix(BaseDataMix):
+class DataMix(DataMixBase):
     """
     An enumeration of data mix names.
     """

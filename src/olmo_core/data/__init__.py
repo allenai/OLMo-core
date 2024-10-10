@@ -20,7 +20,7 @@ from .data_loader import (
     NumpyFSLDataLoader,
     NumpyVSLDataLoader,
 )
-from .mixes import DataMix
+from .mixes import DataMix, DataMixBase
 from .numpy_dataset import (
     NumpyDatasetBase,
     NumpyDatasetConfig,
@@ -56,7 +56,7 @@ __all__ = [
     "NumpyDatasetDType",
     "TokenizerConfig",
     "TokenizerName",
-    "BaseDataMix",
+    "DataMixBase",
     "DataMix",
     "DataCollator",
     "PaddingDirection",
