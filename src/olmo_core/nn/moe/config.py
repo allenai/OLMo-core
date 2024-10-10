@@ -144,6 +144,17 @@ class MoEConfig(Config):
     The total number of MoE layers.
     """
 
+    def num_params(self, d_model: int) -> int:
+        num_params = 0
+
+        # Router.
+        num_params += self.num_experts * d_model
+
+        # Experts.
+        num_params += self.num_experts * (2 * d_model * self.hidden_size)
+
+        return num_params
+
     def as_megablocks_args(self, *, d_model: int, init_device: str = "cpu"):
         from megablocks.layers.arguments import Arguments  # type: ignore
 

@@ -10,8 +10,15 @@ from ..utils import requires_gpu, requires_megablocks
 @requires_megablocks
 @pytest.mark.parametrize("moe_type", [MoEType.default, MoEType.dropless])
 def test_moe(moe_type):
-    d_model = 128
-    config = MoEConfig(name=moe_type, hidden_size=256)
+    d_model = 64
+    config = MoEConfig(name=moe_type, hidden_size=256, num_experts=4)
     moe = config.build(d_model=d_model, init_device="cuda")
-    print(moe)
+
+    # Check num params calculation.
+    num_params = 0
+    for p in moe.parameters():
+        num_params += p.numel()
+    assert config.num_params(d_model) == num_params
+
+    # Run forward pass.
     moe(torch.randn(2, d_model, device="cuda"))
