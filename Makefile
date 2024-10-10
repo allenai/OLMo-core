@@ -51,6 +51,7 @@ stable-image :
 		--target stable \
 		--progress=plain \
 		-t $(IMAGE_BASENAME) .
+	echo "Built image '$(IMAGE_BASENAME)', size: $$(docker inspect -f '{{ .Size }}' $(IMAGE_BASENAME) | numfmt --to=si)"
 
 .PHONY : beaker-image-stable
 beaker-image-stable : stable-image
@@ -69,8 +70,7 @@ nightly-image :
 		--target nightly \
 		--progress=plain \
 		-t $(IMAGE_BASENAME)-nightly .
-	image_size=$(docker inspect -f "{{ .Size }}" $(IMAGE_BASENAME)-nightly | numfmt --to=si)
-	echo "Built image '$(IMAGE_BASENAME)-nightly' ($$image_size)"
+	echo "Built image '$(IMAGE_BASENAME)-nightly', size: $$(docker inspect -f '{{ .Size }}' $(IMAGE_BASENAME)-nightly | numfmt --to=si)"
 
 .PHONY : beaker-image-nightly
 beaker-image-nightly : nightly-image
