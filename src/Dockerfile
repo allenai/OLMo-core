@@ -3,10 +3,12 @@ ARG BASE
 FROM ${BASE} as stable
 
 # Install special extra dependencies.
+ARG TORCHAO_VERSION
+RUN pip install --no-cache-dir ${TORCHAO_VERSION}
 ENV TORCH_CUDA_ARCH_LIST=8.0
 ENV GROUPED_GEMM_CUTLASS=1
-ARG EXTRA_DEPS
-RUN pip install --no-cache-dir ${EXTRA_DEPS}
+ARG MEGABLOCKS_VERSION
+RUN pip install --no-cache-dir "${MEGABLOCKS_VERSION}"
 
 # Install direct dependencies, but not source code.
 COPY pyproject.toml .
