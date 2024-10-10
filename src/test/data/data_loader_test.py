@@ -6,20 +6,20 @@ import pytest
 
 from olmo_core.data import (
     DataCollator,
-    FSLDataLoader,
+    NumpyFSLDataLoader,
     NumpyFSLDataset,
+    NumpyVSLDataLoader,
     NumpyVSLDataset,
     VSLCurriculum,
-    VSLDataLoader,
     VSLGrowP2Curriculum,
     VSLNaturalCurriculum,
 )
 
 
 @pytest.mark.parametrize(
-    "num_tokens, sequence_length, world_size, num_workers, batch_size",
+    "num_tokens, sequence_length, world_size, num_workers, num_threads, batch_size",
     [
-        (100, 4, 2, 2, 8),  # 2 instances per batch, 12 instances total
+        (100, 4, 2, 2, 2, 8),  # 2 instances per batch, 12 instances total
     ],
 )
 def test_fsl_data_loader(
@@ -28,6 +28,7 @@ def test_fsl_data_loader(
     sequence_length: int,
     world_size: int,
     num_workers: int,
+    num_threads: int,
     batch_size: int,  # in tokens
 ):
     assert batch_size % sequence_length == 0
@@ -50,12 +51,12 @@ def test_fsl_data_loader(
             eos_token_id=-1,
         )
         for rank in range(world_size):
-            data_loader = FSLDataLoader(
+            data_loader = NumpyFSLDataLoader(
                 dataset,
                 global_batch_size=batch_size,
                 collator=DataCollator(pad_token_id=-1),
                 shuffle=False,
-                num_threads=0,
+                num_threads=num_threads,
                 work_dir=tmp_path,
                 dp_rank=rank,
                 dp_world_size=world_size,
@@ -107,7 +108,7 @@ def test_fsl_data_loader_multiple_epochs(
         pad_token_id=-1,
         eos_token_id=-1,
     )
-    data_loader = FSLDataLoader(
+    data_loader = NumpyFSLDataLoader(
         dataset,
         global_batch_size=batch_size,
         collator=DataCollator(pad_token_id=-1),
@@ -151,7 +152,7 @@ def test_fsl_data_loader_multiple_epochs(
 
     # Create a new data loader and restart from the same spot.
     state_dict = data_loader.state_dict()
-    data_loader = FSLDataLoader(
+    data_loader = NumpyFSLDataLoader(
         dataset,
         global_batch_size=batch_size,
         collator=DataCollator(pad_token_id=-1),
@@ -205,7 +206,7 @@ def test_fsl_data_loader_with_seq_len_warmup(tmp_path: Path, shuffle: bool):
             eos_token_id=-1,
             max_target_sequence_length=max_target_sequence_length,
         )
-        data_loader = FSLDataLoader(
+        data_loader = NumpyFSLDataLoader(
             dataset,
             global_batch_size=seq_len,
             collator=DataCollator(pad_token_id=-1),
@@ -236,7 +237,15 @@ def test_fsl_data_loader_with_seq_len_warmup(tmp_path: Path, shuffle: bool):
         ),
     ],
 )
-def test_vsl_data_loader(tmp_path: Path, shuffle: bool, curriculum: VSLCurriculum):
+@pytest.mark.parametrize(
+    "num_threads", [pytest.param(2, id="2-threads"), pytest.param(0, id="no-threads")]
+)
+@pytest.mark.parametrize(
+    "in_memory", [pytest.param(True, id="in-memory"), pytest.param(False, id="on-disk")]
+)
+def test_vsl_data_loader(
+    tmp_path: Path, shuffle: bool, num_threads: int, curriculum: VSLCurriculum, in_memory: bool
+):
     data1 = np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 0, 13, 14, 15, 16, 17, 0, 18, 19, 0])
     mmap = np.memmap(tmp_path / "tokens1.npy", dtype=np.uint16, mode="w+", shape=data1.shape)
     mmap[:] = data1
@@ -263,16 +272,16 @@ def test_vsl_data_loader(tmp_path: Path, shuffle: bool, curriculum: VSLCurriculu
     world_size = 2
     global_batch_size = 8
 
-    data_loader = VSLDataLoader(
+    data_loader = NumpyVSLDataLoader(
         dataset,
         shuffle=shuffle,
-        num_threads=0,
+        num_threads=num_threads,
         work_dir=tmp_path,
         dp_world_size=world_size,
         collator=DataCollator(pad_token_id=0),
         global_batch_size=global_batch_size,
     )
-    data_loader.reshuffle(epoch=1)
+    data_loader.reshuffle(epoch=1, in_memory=in_memory)
 
     all_tokens = []
     for rank in range(world_size):

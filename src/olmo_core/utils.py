@@ -89,13 +89,15 @@ def apply_to_tensors(fn, container: Any) -> None:
 T = TypeVar("T")
 
 
-def move_to_device(o: T, device: torch.device, non_blocking: bool = False) -> T:
+def move_to_device(o: T, device: torch.device, non_blocking: Optional[bool] = None) -> T:
     """
     Move a tensor or container of tensors to the given device.
 
     :param o: The object to move.
     :param device: The device to move to.
     """
+    if non_blocking is None:
+        non_blocking = device.type != "cpu"
     if isinstance(o, torch.Tensor):
         return o.to(device, non_blocking=non_blocking)  # type: ignore[return-value]
     elif isinstance(o, dict):
@@ -403,6 +405,7 @@ def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
     - :func:`install_excepthook()`
     - :func:`filter_warnings()`
     - :func:`set_env_variables()`
+    - :func:`~olmo_core.io.add_cached_path_clients()`
 
     .. tip::
         If you're looking to setup the environment specifically for distributed training,
@@ -415,6 +418,8 @@ def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
         .. note::
             All ranks will always emit messages at the ``WARNING`` level or higher.
     """
+    from .io import add_cached_path_clients
+
     if log_filter_type is None:
         log_filter_type = LogFilterType(os.environ.get(LOG_FILTER_TYPE_ENV_VAR, "rank0_only"))
     rich.reconfigure(width=max(rich.get_console().width, 180), soft_wrap=True)
@@ -422,6 +427,7 @@ def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
     install_excepthook()
     filter_warnings()
     set_env_variables()
+    add_cached_path_clients()
 
 
 class _RichHandler(logging.Handler):
@@ -557,3 +563,20 @@ def capped_powers_of_2(x: int, cap: int) -> List[int]:
         else:
             powers.append(i)
     return powers
+
+
+def format_float(value: float) -> str:
+    if value == 0.0:
+        return "0.0"
+    elif value < 0.0001:
+        return f"{value:.2E}"
+    elif value > 1000:
+        return f"{int(value):,d}"
+    elif value > 100:
+        return f"{value:.1f}"
+    elif value > 10:
+        return f"{value:.2f}"
+    elif value > 1:
+        return f"{value:.3f}"
+    else:
+        return f"{value:.4f}"

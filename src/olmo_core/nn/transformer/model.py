@@ -15,6 +15,7 @@ from olmo_core.config import Config, DType, StrEnum
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.float8 import Float8Config
 from olmo_core.utils import get_default_device, has_flash_attn
 
 from ..attention import AttentionConfig, AttentionType
@@ -86,7 +87,12 @@ class TransformerConfig(Config):
     """
     A config for easily building transformer models.
 
-    See :class:`Transformer` for a description of the parameters.
+    :param compile: Whether to compile the model with ``torch.compile``.
+    :param dp_config: Data parallel configuration.
+    :param ac_config: Activation checkpointing configuration.
+    :param float8_config: Float8 training configuration.
+
+    See :class:`Transformer` for a description of the other parameters.
     """
 
     d_model: int
@@ -103,6 +109,7 @@ class TransformerConfig(Config):
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
     weight_tying: bool = False
     qkv_bias: bool = False
+    float8_config: Optional[Float8Config] = None
 
     def build(
         self,
@@ -143,6 +150,13 @@ class TransformerConfig(Config):
             init_seed=self.init_seed,
             weight_tying=self.weight_tying,
         )
+
+        # Maybe convert linear layers to Float8 linear layers.
+        if self.float8_config is not None and self.float8_config.enabled:
+            if self.float8_config.compile is None and self.compile:
+                self.float8_config.compile = True
+            self.float8_config.convert_to_float8_training(model, modules_to_ignore={"w_out"})
+
         log.info("%s", model)
 
         # Maybe apply activation checkpointing.
@@ -284,6 +298,7 @@ class TransformerConfig(Config):
             block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
             **kwargs,
         )
 
@@ -297,6 +312,7 @@ class TransformerConfig(Config):
             block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
             **kwargs,
         )
 
@@ -310,6 +326,7 @@ class TransformerConfig(Config):
             block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
             **kwargs,
         )
 
@@ -465,6 +482,7 @@ class TransformerConfig(Config):
         n_heads: int,
         n_kv_heads: Optional[int] = None,
         qk_norm: bool = False,
+        layer_norm_eps: float = 1e-5,
         rope_theta: int = 500_000,
         rope_type: Optional[RoPEType] = None,
         hidden_size_multiple_of: int = 256,
@@ -505,9 +523,9 @@ class TransformerConfig(Config):
         # Configure global layer norm.
         layer_norm = LayerNormConfig(
             name=LayerNormType.fused_rms if fused_ops else LayerNormType.rms,
-            eps=kwargs.pop("layer_norm_eps", 1e-5),
+            eps=layer_norm_eps,
             bias=False,
-            #  dtype=dtype,  # TODO: allow low precision LN?
+            dtype=dtype,
         )
 
         # Decide on attention/rope implementations.

@@ -8,18 +8,9 @@ from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
+from olmo_core.optim import AdamWConfig, OptimGroupOverride
 from olmo_core.train import TrainerConfig
-from olmo_core.train.callbacks import (
-    CheckpointerCallback,
-    ConfigSaverCallback,
-    GPUMemoryMonitorCallback,
-    GradClipperCallback,
-    ProfilerCallback,
-    SchedulerCallback,
-    SequenceLengthSchedulerCallback,
-    WandBCallback,
-)
+from olmo_core.train.callbacks import CheckpointerCallback, WandBCallback
 
 log = logging.getLogger(__name__)
 
@@ -51,27 +42,12 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=common.save_folder,
-            global_batch_size=1024 * 4096,
             rank_microbatch_size=4 * 4096,
-            autocast_precision=DType.bfloat16,
             save_overwrite=True,
-            data_seed=34521,
-            data_loader_workers=4,
             metrics_collect_interval=10,
             cancel_check_interval=1,
             z_loss_multiplier=1e-5,
         )
-        .with_callback(
-            "lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=2000))
-        )
-        .with_callback(
-            "seq_len_scheduler",
-            SequenceLengthSchedulerCallback(
-                min_sequence_length=128, warmup_steps=2000, enabled=False
-            ),
-        )
-        .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
-        .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0))
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
@@ -90,13 +66,12 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 cancel_check_interval=10,
             ),
         )
-        .with_callback("config_saver", ConfigSaverCallback())
-        .with_callback("profiler", ProfilerCallback(enabled=False))
     )
 
 
 if __name__ == "__main__":
     main(
+        global_batch_size=1024 * 4096,
         model_config_builder=build_model_config,
         optim_config_builder=build_optim_config,
         trainer_config_builder=build_trainer_config,

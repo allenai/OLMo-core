@@ -7,9 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Changed
+
+- `BeakerLaunchConfig.setup_steps` should now include steps to clone your repo (which it will by default). This change allows support for private repos.
+
+### Fixed
+
+- `prepare_cli_environment()` now calls `add_cached_path_clients()`.
+
+## [v1.4.0](https://github.com/allenai/OLMo-core/releases/tag/v1.4.0) - 2024-10-02
+
+### Changed
+
+- Updated default layer norm epsilon for OLMo models from `1e-5` to `1e-6` to match latest model.
+- Renamed `FSLDataLoader` to `NumpyFSLDataLoader`.
+- Renamed `VSLDataLoader` to `NumpyVSLDataLoader`.
+- The trainer now takes a `data_loader: DataLoaderBase` instead of a `dataset: NumpyDatasetBase`.
+
+## [v1.3.2](https://github.com/allenai/OLMo-core/releases/tag/v1.3.2) - 2024-09-27
+
+### Added
+
+- Added `Config.validate()`, `Config.replace()`, and `Config.apply()` methods.
+- Trainer now records sequence length as a metric.
+
+### Fixed
+
+- Ensure additional cached-path clients are added in the process pool workers from some dataset preparation methods.
+- Fixed `label_mask` tensor created by `NumpyPaddedFSLDataset`.
+- Removed redundant warning messages about CUDA alloc retries.
+- Fixed non-deterministic deadlock bug with async checkpointing.
+
+## [v1.3.1](https://github.com/allenai/OLMo-core/releases/tag/v1.3.1) - 2024-09-26
+
+### Fixed
+
+- Fixed the name given to evaluator metrics logged.
+
+## [v1.3.0](https://github.com/allenai/OLMo-core/releases/tag/v1.3.0) - 2024-09-26
+
+### Added
+
+- Added `torchao` to the Docker/Beaker images.
+- Added support for `torchao` `float8` training via the `Float8HandlerCallback`.
+- Added `Callback.post_attach()` method.
+
+## [v1.2.0](https://github.com/allenai/OLMo-core/releases/tag/v1.2.0) - 2024-09-25
+
 ### Added
 
 - Added support for wildcards in `OptimGroupOverride.params`.
+- Added `NumpyPaddedFSLDataset` variant.
+- Added `Evaluator` class and `EvaluatorCallback` for in-loop evals.
+- Added `v3-small-ppl-validation` data mix.
+
+### Fixed
+
+- Fixed bug with data loader when using threading.
 
 ## [v1.1.0](https://github.com/allenai/OLMo-core/releases/tag/v1.1.0) - 2024-09-18
 

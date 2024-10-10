@@ -1,7 +1,9 @@
+from abc import abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Dict
 
 from olmo_core.aliases import PathOrStr
+from olmo_core.config import Config
 
 if TYPE_CHECKING:
     from ..trainer import Trainer
@@ -45,6 +47,12 @@ class Callback:
 
     #  def load_state_dict(self, state_dict: Dict[str, Any]):
     #      del state_dict
+
+    def post_attach(self):
+        """
+        Called right after the callback is attached to the :class:`~olmo_core.train.Trainer`.
+        """
+        pass
 
     def post_checkpoint_loaded(self, path: PathOrStr):
         """
@@ -127,3 +135,17 @@ class Callback:
         Called when the training loop exits with an error.
         """
         del exc
+
+
+@dataclass
+class CallbackConfig(Callback, Config):
+    """
+    An alternative way to define callbacks when the callback class itself can't be serialized.
+    """
+
+    @abstractmethod
+    def build(self, trainer: "Trainer") -> Callback:
+        """
+        Build the actual :class:`Callback`.
+        """
+        raise NotImplementedError

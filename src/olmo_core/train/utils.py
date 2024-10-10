@@ -13,54 +13,16 @@ import torch.nn.functional as F
 import torch.version
 from packaging.version import parse as parse_version
 
-from ..config import Config, StrEnum
+from ..config import Config
 from ..distributed.utils import (
     get_local_tensor,
     get_reduce_divide_factor,
     get_world_size,
     is_distributed,
 )
+from .common import ReduceType
 
 log = logging.getLogger(__name__)
-
-
-class DurationUnit(StrEnum):
-    steps = "steps"
-    epochs = "epochs"
-    tokens = "tokens"
-
-
-@dataclass
-class Duration:
-    value: int
-    unit: DurationUnit
-
-
-class ReduceType(StrEnum):
-    """
-    An enumeration of the allowed ways to reduce a metric across ranks.
-    """
-
-    mean = "mean"
-    """
-    Average across the process group.
-    """
-
-    sum = "sum"
-    """
-    Add across the process group.
-    """
-
-    max = "max"
-    """
-    Take the max across the process group.
-    """
-
-    l2_norm = "l2_norm"
-    """
-    For metrics that are computed as L2 norms on each rank, this will correctly reduce the norm
-    across the process group to produce the global L2 norm.
-    """
 
 
 @dataclass

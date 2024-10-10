@@ -12,15 +12,10 @@ from ..utils import requires_flash_attn, requires_gpu
 @pytest.mark.parametrize(
     "dtype", [pytest.param(torch.float32, id="fp32"), pytest.param(torch.bfloat16, id="bf16")]
 )
-@pytest.mark.parametrize(
-    "full_precision", [pytest.param(True, id="full-prec"), pytest.param(False, id="input-prec")]
-)
-def test_fused_rms_norm(bias, dtype, full_precision):
+def test_fused_rms_norm(bias, dtype):
     dim = 64
-    norm = RMSNorm(size=dim, bias=bias, full_precision=full_precision, init_device="cuda")
-    norm_fused = FusedRMSNorm(
-        size=dim, bias=bias, full_precision=full_precision, init_device="cuda"
-    )
+    norm = RMSNorm(size=dim, bias=bias, init_device="cuda")
+    norm_fused = FusedRMSNorm(size=dim, bias=bias, init_device="cuda")
 
     x = torch.randn(4, dim, device="cuda", dtype=dtype)
     y1 = norm(x)

@@ -324,8 +324,9 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
             if read_item.type == LoadItemType.BYTE_IO:
                 planner.load_bytes(read_item, bytes)
             else:
+                # NOTE: 'weights_only=False' needed to load torchao's float8 linear layer checkpoints
                 tensor = cast(
-                    torch.Tensor, torch.load(bytes, map_location="cpu", weights_only=True)
+                    torch.Tensor, torch.load(bytes, map_location="cpu", weights_only=False)
                 )
                 tensor = _narrow_tensor_by_index(
                     tensor, read_item.storage_offsets, read_item.lengths

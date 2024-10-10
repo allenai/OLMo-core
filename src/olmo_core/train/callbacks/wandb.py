@@ -132,11 +132,13 @@ class WandBCallback(Callback):
 
     def post_train(self):
         if self.enabled and get_rank() == 0 and self.run is not None:
+            log.info("Finalizing successful W&B run...")
             self.wandb.finish(exit_code=0, quiet=True)
 
     def on_error(self, exc: BaseException):
         del exc
         if self.enabled and get_rank() == 0 and self.run is not None:
+            log.warning("Finalizing failed W&B run...")
             self.wandb.finish(exit_code=1, quiet=True)
 
     def check_if_canceled(self):
