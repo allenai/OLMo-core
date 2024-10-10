@@ -237,9 +237,14 @@ class TransformerConfig(Config):
         block_params += layer_norm_params(self.block.layer_norm)
 
         # Block feed forward.
-        block_params += 3 * self.d_model * self.block.feed_forward.hidden_size
-        if self.block.feed_forward.bias:
-            block_params += 2 * self.block.feed_forward.hidden_size + self.d_model
+        if "moe" not in self.block.name:
+            assert self.block.feed_forward is not None
+            block_params += 3 * self.d_model * self.block.feed_forward.hidden_size
+            if self.block.feed_forward.bias:
+                block_params += 2 * self.block.feed_forward.hidden_size + self.d_model
+        else:
+            assert self.block.feed_forward_moe is not None
+            raise NotImplementedError
 
         # Block feed forward norm.
         block_params += layer_norm_params(self.block.layer_norm)

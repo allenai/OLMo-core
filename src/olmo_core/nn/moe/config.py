@@ -20,15 +20,32 @@ class MoEType(StrEnum):
 
     dropless = "dropless"
     """
-    The `dropless <https://arxiv.org/pdf/2211.15841>`_ version.
+    The `dropless
+    <https://arxiv.org/pdf/2211.15841>`_ version.
     """
 
 
 class MoEActivationFn(StrEnum):
+    """
+    An enumeration of the different MoE activation functions available.
+    """
+
     swiglu = "swiglu"
+    """
+    SwiGLU.
+    """
     gelu = "gelu"
+    """
+    GeLU.
+    """
     gelu_tanh = "gelu_tanh"
+    """
+    GeLU with tanh approximation.
+    """
     relu = "relu"
+    """
+    ReLU.
+    """
 
     def build(self) -> Callable[[torch.Tensor], torch.Tensor]:
         if self == MoEActivationFn.swiglu:
@@ -44,29 +61,32 @@ class MoEActivationFn(StrEnum):
 
 
 class MoEMLPImplementation(StrEnum):
+    """
+    An enumeration of the different MoE implementations.
+    """
+
     sparse = "sparse"
     """
     Spare implementation.
     """
     grouped = "grouped"
     """
-    Requires the grouped GEMM package https://github.com/tgale96/grouped_gemm.
+    Requires the `grouped GEMM
+    <https://github.com/tgale96/grouped_gemm>`_ package.
     """
 
 
 class MoEConfig(Config):
     """
     Configuration class for building MoE layers.
-    Requires `megablocks <https://github.com/databricks/megablocks>`_.
+
+    .. important::
+        Requires `megablocks <https://github.com/databricks/megablocks>`_.
     """
 
     name: MoEType = MoEType.default
     """
     The MoE implementation.
-    """
-    d_model: int = 1024
-    """
-    The model dimensionality.
     """
     hidden_size: int = 4096
     """
@@ -110,7 +130,8 @@ class MoEConfig(Config):
     """
     shared_expert: bool = False
     """
-    Whether to have an always-used expert like in `DeepSeekMoE <https://arxiv.org/abs/2401.06066>`_.
+    Whether to have an always-used expert like in `DeepSeekMoE
+    <https://arxiv.org/abs/2401.06066>`_.
     """
     lbl_in_fp32: bool = False
     """
@@ -120,16 +141,12 @@ class MoEConfig(Config):
     """
     The total number of MoE layers.
     """
-    init_device: str = "cpu"
-    """
-    The device to initialize weights on.
-    """
 
-    def as_megablocks_args(self):
+    def as_megablocks_args(self, *, d_model: int, init_device: str = "cpu"):
         from megablocks.layers.arguments import Arguments  # type: ignore
 
         return Arguments(
-            hidden_size=self.d_model,
+            hidden_size=d_model,
             activation_fn=self.activation_fn.build(),
             mlp_type="glu" if "glu" in self.activation_fn.lower() else "mlp",
             mlp_impl=self.mlp_implementation,
@@ -145,14 +162,17 @@ class MoEConfig(Config):
             bias=self.bias,
             return_bias=False,
             num_layers=self.num_layers,
-            device=torch.device(self.init_device),
+            device=torch.device(init_device),
             fp16=False,
             bf16=False,
         )
 
-    def build(self) -> nn.Module:
+    def build(self, *, d_model: int, init_device: str = "cpu") -> nn.Module:
         """
         Build the MoE layer.
+
+        :param d_model: The model dimensionality.
+        :param init_device: The device to initialize weights on.
         """
         try:
             from megablocks.layers.dmoe import dMoE
@@ -162,7 +182,7 @@ class MoEConfig(Config):
                 "megablocks is not installed. Please install it to use MoE layers"
             ) from e
 
-        args = self.as_megablocks_args()
+        args = self.as_megablocks_args(d_model=d_model, init_device=init_device)
         if self.name == MoEType.default:
             return MoE(args)
         elif self.name == MoEType.dropless:

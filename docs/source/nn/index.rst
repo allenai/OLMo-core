@@ -38,3 +38,10 @@ LayerNorms
 
    functional
    transformer
+
+MoE
+---
+
+.. automodule:: olmo_core.nn.moe
+   :members:
+   :member-order: bysource

@@ -3,8 +3,11 @@ Transformer building blocks.
 """
 
 from .block import (
+    MoEReorderedNormTransformerBlock,
+    MoETransformerBlock,
     ReorderedNormTransformerBlock,
     TransformerBlock,
+    TransformerBlockBase,
     TransformerBlockConfig,
     TransformerBlockType,
 )
@@ -20,8 +23,11 @@ __all__ = [
     "Transformer",
     "TransformerBlockType",
     "TransformerBlockConfig",
+    "TransformerBlockBase",
     "TransformerBlock",
     "ReorderedNormTransformerBlock",
+    "MoETransformerBlock",
+    "MoEReorderedNormTransformerBlock",
     "TransformerActivationCheckpointingConfig",
     "InitMethod",
 ]
