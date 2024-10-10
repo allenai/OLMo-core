@@ -113,8 +113,6 @@ class CometCallback(Callback):
                 project_name=self.project,
                 workspace=self.workspace,
                 auto_output_logging="simple",
-                auto_weight_logging=False,
-                auto_metric_logging=False,
                 display_summary_level=0,
             )
 
