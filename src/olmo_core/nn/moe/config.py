@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from functools import partial
 from typing import Callable
 
@@ -76,6 +77,7 @@ class MoEMLPImplementation(StrEnum):
     """
 
 
+@dataclass
 class MoEConfig(Config):
     """
     Configuration class for building MoE layers.

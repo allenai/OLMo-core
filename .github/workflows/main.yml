@@ -113,6 +113,7 @@ jobs:
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 --ignore-glob='src/test/distributed/checkpoint*' \
+                --ignore-glob='src/test/nn/moe*' \
                 src/test/
 
           - name: Test checkpoint (GPU)
@@ -120,6 +121,12 @@ jobs:
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/distributed/checkpoint*
+
+          - name: Test MoE (GPU)
+            image: olmo-core-dev
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                src/test/nn/moe*
     steps:
       - uses: actions/checkout@v3
 
