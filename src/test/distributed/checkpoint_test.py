@@ -15,6 +15,7 @@ from olmo_core.distributed.checkpoint import (
     async_save_model_and_optim_state,
     load_model_and_optim_state,
     save_model_and_optim_state,
+    save_state_dict,
     unshard_checkpoint,
 )
 
@@ -106,6 +107,10 @@ def run_save_and_load_tensor_parallel_model(dir, take_step_before_checkpoint, ru
     tp_mesh = init_device_mesh(get_default_device().type, (dist.get_world_size(),))
 
     feed_forward = FeedForward().to(get_default_device())
+
+    # Save a checkpoint from the unsharded model.
+    save_state_dict(dir / "unsharded", {"model": feed_forward.state_dict()})
+
     parallelize_module(
         feed_forward,
         tp_mesh,
@@ -131,9 +136,9 @@ def run_save_and_load_tensor_parallel_model(dir, take_step_before_checkpoint, ru
 
     # Save checkpoint.
     if run_async:
-        async_save_model_and_optim_state(dir, feed_forward, optim).result()
+        async_save_model_and_optim_state(dir / "sharded", feed_forward, optim).result()
     else:
-        save_model_and_optim_state(dir, feed_forward, optim)
+        save_model_and_optim_state(dir / "sharded", feed_forward, optim)
 
     # Create another sharded model, load the checkpoint and make sure the state matches.
     feed_forward2 = FeedForward().to(get_default_device())
@@ -149,14 +154,18 @@ def run_save_and_load_tensor_parallel_model(dir, take_step_before_checkpoint, ru
         },
     )
     optim2 = torch.optim.AdamW(feed_forward2.parameters())
-    load_model_and_optim_state(dir, feed_forward2, optim2)
+    load_model_and_optim_state(dir / "sharded", feed_forward2, optim2)
     torch.testing.assert_close(feed_forward.state_dict(), feed_forward2.state_dict())
     torch.testing.assert_close(optim.state_dict(), optim2.state_dict())
 
     # Now load the checkpoint with a different topology, in this case an unsharded model.
     unsharded_feed_forward = FeedForward().to(get_default_device())
     unsharded_optim = torch.optim.AdamW(unsharded_feed_forward.parameters())
-    load_model_and_optim_state(dir, unsharded_feed_forward, unsharded_optim)
+    load_model_and_optim_state(dir / "sharded", unsharded_feed_forward, unsharded_optim)
+
+    # Now make sure we can load the checkpoint saved from the original unsharded model into both models.
+    load_model_and_optim_state(dir / "unsharded", unsharded_feed_forward)
+    load_model_and_optim_state(dir / "unsharded", feed_forward2)
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
