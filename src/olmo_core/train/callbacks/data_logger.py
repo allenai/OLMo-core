@@ -23,7 +23,7 @@ class DataLoggerCallback(Callback):
     def pre_step(self, batch: Dict[str, Any]):
         input_ids_hash = hash_long_tensor(batch["input_ids"]).item()
         with self.path.open(mode="a") as f:
-            f.write(f"{self.step}\t{input_ids_hash}")
+            f.write(f"{self.step}\t{input_ids_hash}\n")
 
 
 _HASH_MULTIPLIER = 6364136223846793005
