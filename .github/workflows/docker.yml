@@ -17,8 +17,8 @@ on:
 jobs:
   beaker:
     name: Beaker image (${{ matrix.version }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    runs-on: ubuntu-latest-m
+    timeout-minutes: 60
     env:
       BEAKER_TOKEN: ${{ secrets.BEAKER_TOKEN }}
     strategy:
