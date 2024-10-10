@@ -580,3 +580,25 @@ def format_float(value: float) -> str:
         return f"{value:.3f}"
     else:
         return f"{value:.4f}"
+
+
+def flatten_dict(d: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Flatten a nested dictionary with strings keys using dot notation.
+    """
+    out = {}
+
+    def add_sub_dict(prefix: str, sub_dict: Dict[str, Any]):
+        for k, v in sub_dict.items():
+            if isinstance(v, dict):
+                add_sub_dict(f"{prefix}.{k}", v)
+            else:
+                out[f"{prefix}.{k}"] = v
+
+    for k, v in d.items():
+        if isinstance(v, dict):
+            add_sub_dict(k, v)
+        else:
+            out[k] = v
+
+    return out
