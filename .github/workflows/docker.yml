@@ -48,4 +48,5 @@ jobs:
       - name: Push
         if: env.BEAKER_TOKEN != '' && startsWith(github.ref, 'refs/tags/')
         run: |
+          rm -rf /opt/hostedtoolcache  # clear up some disk space
           make beaker-image-${{ matrix.version }}
