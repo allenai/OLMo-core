@@ -1,8 +1,9 @@
-BASE_IMAGE = ghcr.io/allenai/pytorch:2.4.1-cuda12.1-python3.11
+BASE_IMAGE = ghcr.io/allenai/pytorch:2.4.1-cuda12.1-python3.11-dev
 # NOTE: when upgrading the nightly version you also need to upgrade the torch version specification
 # in 'pyproject.toml' to include that nightly version.
-NIGHTLY_VERSION = "2.6.0.dev20241009+cu121 --index-url https://download.pytorch.org/whl/nightly/cu121"
-TORCHAO_VERSION = "0.5.0 --extra-index-url https://download.pytorch.org/whl/cu121"
+NIGHTLY_VERSION = "2.5.0.dev20240826+cu121 --index-url https://download.pytorch.org/whl/nightly/cu121"
+TORCHAO_VERSION = "torchao==0.5.0 --extra-index-url https://download.pytorch.org/whl/cu121"
+MEGABLOCKS_VERSION = "megablocks[gg] @ git+https://git@github.com/epwalsh/megablocks.git@epwalsh/deps"
 
 VERSION = $(shell python src/olmo_core/version.py)
 VERSION_SHORT = $(shell python src/olmo_core/version.py short)
@@ -46,8 +47,11 @@ stable-image :
 		--build-arg BUILDKIT_INLINE_CACHE=1 \
 		--build-arg BASE=$(BASE_IMAGE) \
 		--build-arg TORCHAO_VERSION=$(TORCHAO_VERSION) \
+		--build-arg MEGABLOCKS_VERSION=$(MEGABLOCKS_VERSION) \
 		--target stable \
+		--progress=plain \
 		-t $(IMAGE_BASENAME) .
+	echo "Built image '$(IMAGE_BASENAME)', size: $$(docker inspect -f '{{ .Size }}' $(IMAGE_BASENAME) | numfmt --to=si)"
 
 .PHONY : beaker-image-stable
 beaker-image-stable : stable-image
@@ -61,9 +65,12 @@ nightly-image :
 		--build-arg BUILDKIT_INLINE_CACHE=1 \
 		--build-arg BASE=$(BASE_IMAGE) \
 		--build-arg TORCHAO_VERSION=$(TORCHAO_VERSION) \
+		--build-arg MEGABLOCKS_VERSION=$(MEGABLOCKS_VERSION) \
 		--build-arg NIGHTLY_VERSION=$(NIGHTLY_VERSION) \
 		--target nightly \
+		--progress=plain \
 		-t $(IMAGE_BASENAME)-nightly .
+	echo "Built image '$(IMAGE_BASENAME)-nightly', size: $$(docker inspect -f '{{ .Size }}' $(IMAGE_BASENAME)-nightly | numfmt --to=si)"
 
 .PHONY : beaker-image-nightly
 beaker-image-nightly : nightly-image
