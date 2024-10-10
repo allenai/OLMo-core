@@ -137,6 +137,10 @@ class CometCallback(Callback):
     def post_train(self):
         if self.enabled and get_rank() == 0:
             log.info("Finalizing successful Comet.ml experiment...")
+            self.exp.send_notification(
+                f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
+                status="completed successfully",
+            )
             self.finalize()
 
     def on_error(self, exc: BaseException):
@@ -144,6 +148,10 @@ class CometCallback(Callback):
         if self.enabled and get_rank() == 0:
             log.warning("Finalizing failed Comet.ml experiment...")
             self.exp.add_tag(self.failure_tag)
+            self.exp.send_notification(
+                f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
+                status="failed",
+            )
             self.finalize()
 
     def check_if_canceled(self):
