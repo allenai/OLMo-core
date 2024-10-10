@@ -1,6 +1,6 @@
 from .callback import Callback, CallbackConfig
 from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy
-from .comet import CometCallback
+from .comet import CometCallback, CometNotificationSetting
 from .config_saver import ConfigSaverCallback
 from .console_logger import ConsoleLoggerCallback
 from .evaluator_callback import EvaluatorCallback, LMEvaluatorCallbackConfig
@@ -20,6 +20,7 @@ __all__ = [
     "CheckpointerCallback",
     "CheckpointRemovalStrategy",
     "CometCallback",
+    "CometNotificationSetting",
     "ConfigSaverCallback",
     "ConsoleLoggerCallback",
     "EvaluatorCallback",

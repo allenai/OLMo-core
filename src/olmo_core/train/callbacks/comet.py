@@ -3,9 +3,10 @@ import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import get_rank
 from olmo_core.exceptions import OLMoEnvironmentError
-from olmo_core.utils import flatten_dict, set_env_var
+from olmo_core.utils import set_env_var
 
 from .callback import Callback
 
@@ -15,6 +16,32 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 COMET_API_KEY_ENV_VAR = "COMET_API_KEY"
+
+
+class CometNotificationSetting(StrEnum):
+    """
+    Defines the notifications settings for the Comet.ml callback.
+    """
+
+    all = "all"
+    """
+    Send all types notifications.
+    """
+
+    end_only = "end_only"
+    """
+    Only send a notification when the experiment ends (successfully or with a failure).
+    """
+
+    failure_only = "failure_only"
+    """
+    Only send a notification when the experiment fails.
+    """
+
+    none = "none"
+    """
+    Don't send any notifcations.
+    """
 
 
 @dataclass
@@ -72,6 +99,11 @@ class CometCallback(Callback):
     """
     Check for cancel tags every this many steps. Defaults to
     :data:`olmo_core.train.Trainer.cancel_check_interval`.
+    """
+
+    notifications: CometNotificationSetting = CometNotificationSetting.end_only
+    """
+    The notification settings.
     """
 
     failure_tag: str = "failed"
@@ -137,10 +169,14 @@ class CometCallback(Callback):
     def post_train(self):
         if self.enabled and get_rank() == 0:
             log.info("Finalizing successful Comet.ml experiment...")
-            self.exp.send_notification(
-                f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
-                status="completed successfully",
-            )
+            if self.notifications in (
+                CometNotificationSetting.all,
+                CometNotificationSetting.end_only,
+            ):
+                self.exp.send_notification(
+                    f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
+                    status="completed successfully",
+                )
             self.finalize()
 
     def on_error(self, exc: BaseException):
@@ -148,10 +184,15 @@ class CometCallback(Callback):
         if self.enabled and get_rank() == 0:
             log.warning("Finalizing failed Comet.ml experiment...")
             self.exp.add_tag(self.failure_tag)
-            self.exp.send_notification(
-                f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
-                status="failed",
-            )
+            if self.notifications in (
+                CometNotificationSetting.all,
+                CometNotificationSetting.end_only,
+                CometNotificationSetting.failure_only,
+            ):
+                self.exp.send_notification(
+                    f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
+                    status="failed",
+                )
             self.finalize()
 
     def check_if_canceled(self):
