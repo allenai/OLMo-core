@@ -123,7 +123,7 @@ class CometCallback(Callback):
                 self.exp.add_tags(self.tags)
 
             if self.config is not None:
-                self.exp.log_others(flatten_dict(self.config))
+                self.exp.log_parameters(self.config)
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):
         if self.enabled and get_rank() == 0:
