@@ -22,7 +22,6 @@ __all__ = [
     "CometCallback",
     "ConfigSaverCallback",
     "ConsoleLoggerCallback",
-    "DataLoggerCallback",
     "EvaluatorCallback",
     "Float8HandlerCallback",
     "LMEvaluatorCallbackConfig",
