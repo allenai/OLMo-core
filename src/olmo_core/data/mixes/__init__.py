@@ -7,17 +7,13 @@ from olmo_core.config import StrEnum
 
 from ..tokenizer import TokenizerName
 
-__all__ = ["DataMix"]
+__all__ = ["DataMixBase", "DataMix"]
 
 
-class DataMix(StrEnum):
+class DataMixBase(StrEnum):
     """
-    An enumeration of data mix names.
+    Base class for enumeration of data mixes.
     """
-
-    OLMoE_mix_0824 = "OLMoE-mix-0824"
-    dolma17 = "dolma17"
-    v3_small_ppl_validation = "v3-small-ppl-validation"
 
     def build(self, base_dir: str, tokenizer: TokenizerName) -> Tuple[List[str], List[str]]:
         """
@@ -29,6 +25,19 @@ class DataMix(StrEnum):
         :returns: A list of paths/URLs to the tokenized numpy data files in the mix and list
             of corresponding labels.
         """
+        raise NotImplementedError
+
+
+class DataMix(DataMixBase):
+    """
+    An enumeration of data mix names.
+    """
+
+    OLMoE_mix_0824 = "OLMoE-mix-0824"
+    dolma17 = "dolma17"
+    v3_small_ppl_validation = "v3-small-ppl-validation"
+
+    def build(self, base_dir: str, tokenizer: TokenizerName) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
             base_dir = base_dir + "/"
 

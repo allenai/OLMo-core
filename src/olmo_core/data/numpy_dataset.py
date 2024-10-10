@@ -35,7 +35,7 @@ from ..aliases import PathOrStr
 from ..config import Config, StrEnum
 from ..distributed.utils import barrier, get_fs_local_rank
 from ..io import _get_s3_client, get_file_size
-from .mixes import DataMix
+from .mixes import DataMixBase
 from .tokenizer import TokenizerConfig
 from .utils import (
     bucket_documents,
@@ -1366,7 +1366,7 @@ class NumpyDatasetConfig(Config):
     """
     The paths/URLs to the numpy token ID arrays.
     """
-    mix: Optional[DataMix] = None
+    mix: Optional[DataMixBase] = None
     """
     The name of a data mix.
     """
@@ -1440,7 +1440,7 @@ class NumpyDatasetConfig(Config):
 
     @classmethod
     def from_data_mix(
-        cls, mix: DataMix, *, tokenizer: TokenizerConfig, **kwargs
+        cls, mix: DataMixBase, *, tokenizer: TokenizerConfig, **kwargs
     ) -> "NumpyDatasetConfig":
         """
         Initialize a dataset config from an official data mix.
