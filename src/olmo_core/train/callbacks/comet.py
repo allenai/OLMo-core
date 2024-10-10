@@ -101,7 +101,7 @@ class CometCallback(Callback):
     :data:`olmo_core.train.Trainer.cancel_check_interval`.
     """
 
-    notifications: CometNotificationSetting = CometNotificationSetting.end_only
+    notifications: CometNotificationSetting = CometNotificationSetting.none
     """
     The notification settings.
     """
@@ -156,6 +156,12 @@ class CometCallback(Callback):
 
             if self.config is not None:
                 self.exp.log_parameters(self.config)
+
+            if self.notifications == CometNotificationSetting.all:
+                self.exp.send_notification(
+                    f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
+                    status="started",
+                )
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):
         if self.enabled and get_rank() == 0:
