@@ -29,6 +29,7 @@ from olmo_core.train import (
 )
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
+    CometCallback,
     ConfigSaverCallback,
     GPUMemoryMonitorCallback,
     GradClipperCallback,
@@ -114,6 +115,14 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             ),
         )
         .with_callback(
+            "comet",
+            CometCallback(
+                name=run_name,
+                cancel_check_interval=10,
+                enabled=False,  # change to true to enable
+            ),
+        )
+        .with_callback(
             "wandb",
             WandBCallback(
                 name=run_name,
@@ -168,6 +177,7 @@ def main(run_name: str, overrides: List[str]):
 
     # Save config to W&B and each checkpoint dir.
     config_dict = config.as_config_dict()
+    cast(CometCallback, trainer.callbacks["comet"]).config = config_dict
     cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 

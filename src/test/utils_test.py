@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import pytest
 import torch
 
-from olmo_core.utils import apply_to_tensors
+from olmo_core.utils import apply_to_tensors, flatten_dict
 
 
 @dataclass
@@ -34,3 +34,16 @@ def test_apply_to_tensors(container, tensor_count):
     apply_to_tensors(count_tensors, container)
 
     assert count == tensor_count
+
+
+def test_flatten_dict():
+    assert flatten_dict(
+        {
+            "a": {"foo": 1, "bar": {"baz": 2}},
+            "b": 2,
+        }
+    ) == {
+        "a.foo": 1,
+        "a.bar.baz": 2,
+        "b": 2,
+    }
