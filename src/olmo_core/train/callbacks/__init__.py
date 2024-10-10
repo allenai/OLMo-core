@@ -3,6 +3,7 @@ from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy
 from .comet import CometCallback
 from .config_saver import ConfigSaverCallback
 from .console_logger import ConsoleLoggerCallback
+from .data_logger import DataLoggerCallback
 from .evaluator_callback import EvaluatorCallback, LMEvaluatorCallbackConfig
 from .float8_handler import Float8HandlerCallback
 from .garbage_collector import GarbageCollectorCallback
@@ -22,6 +23,7 @@ __all__ = [
     "CometCallback",
     "ConfigSaverCallback",
     "ConsoleLoggerCallback",
+    "DataLoggerCallback",
     "EvaluatorCallback",
     "Float8HandlerCallback",
     "LMEvaluatorCallbackConfig",

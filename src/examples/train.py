@@ -31,6 +31,7 @@ from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
     ConfigSaverCallback,
+    DataLoggerCallback,
     GPUMemoryMonitorCallback,
     GradClipperCallback,
     LMEvaluatorCallbackConfig,
@@ -109,10 +110,16 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=1000,
-                ephemeral_save_interval=100,
+                save_interval=50,
+                ephemeral_save_interval=None,
+                #  save_interval=1000,
+                #  ephemeral_save_interval=100,
                 save_async=True,
             ),
+        )
+        .with_callback(
+            "data_logger",
+            DataLoggerCallback(),
         )
         .with_callback(
             "comet",
