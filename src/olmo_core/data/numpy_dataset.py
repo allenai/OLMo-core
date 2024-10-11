@@ -98,6 +98,7 @@ class NumpyDatasetBase(ABC):
         *paths: PathOrStr,
         pad_token_id: int,
         eos_token_id: int,
+        vocab_size: int,
         dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]] = np.uint16,
     ):
         if not paths:
@@ -106,6 +107,7 @@ class NumpyDatasetBase(ABC):
         self._array_paths = tuple(paths)
         self._pad_token_id = pad_token_id
         self._eos_token_id = eos_token_id
+        self._vocab_size = vocab_size
         self._dtype = dtype
         self._fs_local_rank = get_fs_local_rank()
         self._work_dir: Optional[Path] = None
@@ -143,6 +145,10 @@ class NumpyDatasetBase(ABC):
     @property
     def eos_token_id(self) -> int:
         return self._eos_token_id
+
+    @property
+    def vocab_size(self) -> int:
+        return self._vocab_size
 
     @property
     def dtype(
@@ -340,6 +346,7 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         sequence_length: int,
         pad_token_id: int,
         eos_token_id: int,
+        vocab_size: int,
         dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]] = np.uint16,
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
@@ -365,7 +372,13 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         else:
             metadata = [metadata or {}] * len(paths)
 
-        super().__init__(*paths, pad_token_id=pad_token_id, eos_token_id=eos_token_id, dtype=dtype)
+        super().__init__(
+            *paths,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            vocab_size=vocab_size,
+            dtype=dtype,
+        )
         self._metadata = tuple(metadata)
         self._sequence_length = sequence_length
         self._max_target_sequence_length = max_target_sequence_length
@@ -502,6 +515,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         sequence_length: int,
         pad_token_id: int,
         eos_token_id: int,
+        vocab_size: int,
         dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]] = np.uint16,
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
@@ -511,6 +525,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
             sequence_length=sequence_length,
             pad_token_id=pad_token_id,
             eos_token_id=eos_token_id,
+            vocab_size=vocab_size,
             dtype=dtype,
             metadata=metadata,
             include_instance_metadata=include_instance_metadata,
@@ -605,7 +620,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
 
                 # Log results.
                 for path, future in zip(paths_needed, futures):
-                    total_og_docs, total_instances = future.result()
+                    _, total_instances = future.result()
                     log.info(
                         f"Created {total_instances:,d} instances of sequence length up to "
                         f"{self.sequence_length} from '{path}'"
@@ -926,6 +941,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         *paths: PathOrStr,
         pad_token_id: int,
         eos_token_id: int,
+        vocab_size: int,
         max_sequence_length: int,
         min_sequence_length: int = 256,
         curriculum: Optional[VSLCurriculum] = None,
@@ -955,7 +971,13 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         else:
             metadata = [metadata or {}] * len(paths)
 
-        super().__init__(*paths, pad_token_id=pad_token_id, eos_token_id=eos_token_id, dtype=dtype)
+        super().__init__(
+            *paths,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            vocab_size=vocab_size,
+            dtype=dtype,
+        )
         self._metadata = metadata
         self._include_instance_metadata = include_instance_metadata
         self._max_sequence_length = max_sequence_length
@@ -1539,6 +1561,7 @@ class NumpyDatasetConfig(Config):
                 max_target_sequence_length=self.max_target_sequence_length,
                 pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=self.tokenizer.eos_token_id,
+                vocab_size=self.tokenizer.vocab_size,
                 dtype=self.get_dtype(),
                 metadata=metadata,
                 include_instance_metadata=self.include_instance_metadata,
@@ -1578,6 +1601,7 @@ class NumpyDatasetConfig(Config):
                 sequence_length=self.sequence_length,
                 pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=self.tokenizer.eos_token_id,
+                vocab_size=self.tokenizer.vocab_size,
                 dtype=self.get_dtype(),
                 metadata=metadata,
                 include_instance_metadata=self.include_instance_metadata,
@@ -1602,6 +1626,7 @@ class NumpyDatasetConfig(Config):
                 curriculum=None if self.vsl_curriculum is None else self.vsl_curriculum.build(),
                 pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=self.tokenizer.eos_token_id,
+                vocab_size=self.tokenizer.vocab_size,
                 dtype=self.get_dtype(),
                 metadata=metadata,
                 include_instance_metadata=self.include_instance_metadata,
