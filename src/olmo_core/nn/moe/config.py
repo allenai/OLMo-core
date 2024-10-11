@@ -152,6 +152,8 @@ class MoEConfig(Config):
 
         # Experts.
         num_params += self.num_experts * (2 * d_model * self.hidden_size)
+        if self.name == MoEType.dropless and "glu" in self.activation_fn.lower():
+            num_params += self.num_experts * d_model * self.hidden_size
 
         # Bias.
         if self.bias:

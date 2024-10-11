@@ -24,4 +24,4 @@ def test_moe(moe_type):
     assert config.num_params(d_model) == num_params
 
     # Run forward pass.
-    moe(torch.randn(2, d_model, device="cuda"))
+    moe(torch.randn(2, 16, d_model, device="cuda"))
