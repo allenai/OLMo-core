@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `prepare_cli_environment()` now calls `add_cached_path_clients()`.
+- Removed an unnecessary host-device sync.
 
 ## [v1.4.0](https://github.com/allenai/OLMo-core/releases/tag/v1.4.0) - 2024-10-02
 
