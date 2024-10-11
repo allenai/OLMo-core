@@ -339,8 +339,8 @@ class TransformerConfig(Config):
         return cls.llama_like(
             d_model=1024,
             vocab_size=vocab_size,
-            n_layers=16,
-            n_heads=8,
+            n_layers=kwargs.pop("n_layers", 16),
+            n_heads=kwargs.pop("n_heads", 8),
             rope_theta=kwargs.pop("rope_theta", 10_000),
             **kwargs,
         )
@@ -353,8 +353,8 @@ class TransformerConfig(Config):
         return cls.llama_like(
             d_model=2048,
             vocab_size=vocab_size,
-            n_layers=18,
-            n_heads=16,
+            n_layers=kwargs.pop("n_layers", 18),
+            n_heads=kwargs.pop("n_heads", 16),
             rope_theta=kwargs.pop("rope_theta", 10_000),
             **kwargs,
         )
@@ -367,8 +367,8 @@ class TransformerConfig(Config):
         return cls.llama_like(
             d_model=4096,
             vocab_size=vocab_size,
-            n_layers=32,
-            n_heads=32,
+            n_layers=kwargs.pop("n_layers", 32),
+            n_heads=kwargs.pop("n_heads", 32),
             rope_theta=kwargs.pop("rope_theta", 10_000),
             **kwargs,
         )
@@ -381,8 +381,8 @@ class TransformerConfig(Config):
         return cls.llama_like(
             d_model=5120,
             vocab_size=vocab_size,
-            n_layers=40,
-            n_heads=40,
+            n_layers=kwargs.pop("n_layers", 40),
+            n_heads=kwargs.pop("n_heads", 40),
             rope_theta=kwargs.pop("rope_theta", 10_000),
             **kwargs,
         )
@@ -395,8 +395,8 @@ class TransformerConfig(Config):
         return cls.llama_like(
             d_model=5120,
             vocab_size=vocab_size,
-            n_layers=80,
-            n_heads=40,
+            n_layers=kwargs.pop("n_layers", 80),
+            n_heads=kwargs.pop("n_heads", 40),
             rope_theta=kwargs.pop("rope_theta", 10_000),
             **kwargs,
         )
@@ -409,9 +409,9 @@ class TransformerConfig(Config):
         return cls.llama_like(
             d_model=8192,
             vocab_size=vocab_size,
-            n_layers=80,
-            n_heads=64,
-            n_kv_heads=8,
+            n_layers=kwargs.pop("n_layers", 80),
+            n_heads=kwargs.pop("n_heads", 64),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
             rope_theta=kwargs.pop("rope_theta", 10_000),
             hidden_size_multiplier=1.3,
             hidden_size_multiple_of=4096,
@@ -426,9 +426,9 @@ class TransformerConfig(Config):
         return cls.llama_like(
             d_model=4096,
             vocab_size=vocab_size,
-            n_layers=32,
-            n_heads=32,
-            n_kv_heads=8,
+            n_layers=kwargs.pop("n_layers", 32),
+            n_heads=kwargs.pop("n_heads", 32),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             hidden_size_multiplier=1.3,
             hidden_size_multiple_of=1024,
@@ -443,9 +443,9 @@ class TransformerConfig(Config):
         return cls.llama_like(
             d_model=8196,
             vocab_size=vocab_size,
-            n_layers=80,
-            n_heads=64,
-            n_kv_heads=8,
+            n_layers=kwargs.pop("n_layers", 80),
+            n_heads=kwargs.pop("n_heads", 64),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             hidden_size_multiplier=1.3,
             hidden_size_multiple_of=4096,
@@ -464,9 +464,9 @@ class TransformerConfig(Config):
         return cls.llama_like(
             d_model=16384,
             vocab_size=vocab_size,
-            n_layers=126,
-            n_heads=128,
-            n_kv_heads=8,
+            n_layers=kwargs.pop("n_layers", 126),
+            n_heads=kwargs.pop("n_heads", 128),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             hidden_size_multiplier=1.2,
             hidden_size_multiple_of=4096,

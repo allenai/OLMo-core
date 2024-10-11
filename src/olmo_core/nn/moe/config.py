@@ -69,7 +69,7 @@ class MoEMLPImplementation(StrEnum):
 
     sparse = "sparse"
     """
-    Spare implementation.
+    Sparse implementation.
     """
     grouped = "grouped"
     """
