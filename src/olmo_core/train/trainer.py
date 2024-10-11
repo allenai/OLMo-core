@@ -1057,9 +1057,11 @@ class Trainer:
         # In case this helps with memory utilization.
         del batch
 
-        ce_batch_loss = torch.tensor(0.0, device=self.device)
+        ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
         z_batch_loss = (
-            None if self.z_loss_multiplier is None else torch.tensor(0.0, device=self.device)
+            None
+            if self.z_loss_multiplier is None
+            else move_to_device(torch.tensor(0.0), self.device)
         )
 
         # Train one micro-batch at a time.
@@ -1170,6 +1172,7 @@ class Trainer:
 
             if first_batch or self.global_step % self.metrics_collect_interval == 0:
                 self._log_metrics()
+                torch.cuda.set_sync_debug_mode("warn")
 
             first_batch = False
 

@@ -365,6 +365,12 @@ def filter_warnings():
     )
     warnings.filterwarnings(
         action="ignore",
+        category=UserWarning,
+        message="Synchronization debug mode is a prototype feature.*",
+        module="torch.cuda",
+    )
+    warnings.filterwarnings(
+        action="ignore",
         category=FutureWarning,
         message="You are using `torch.load` with `weights_only=False`.*",
     )
