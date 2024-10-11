@@ -126,5 +126,5 @@ class InitMethod(StrEnum):
                 b=3 * std,
                 generator=generator,
             )
-        if hasattr(m.inner.experts, "bias"):
-            nn.init.zeros_(m.inner.experts.bias)
+        if (bias := getattr(m.inner.experts, "bias", None)) is not None:
+            nn.init.zeros_(bias)
