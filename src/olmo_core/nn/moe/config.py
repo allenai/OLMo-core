@@ -3,10 +3,11 @@ from functools import partial
 from typing import Callable
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
 from olmo_core.config import Config, StrEnum
+
+from .layers import MoE as MoEWrapper
 
 
 class MoEType(StrEnum):
@@ -186,7 +187,7 @@ class MoEConfig(Config):
             bf16=False,
         )
 
-    def build(self, *, d_model: int, init_device: str = "cpu") -> nn.Module:
+    def build(self, *, d_model: int, init_device: str = "cpu") -> MoEWrapper:
         """
         Build the MoE layer.
 
@@ -203,8 +204,8 @@ class MoEConfig(Config):
 
         args = self.as_megablocks_args(d_model=d_model, init_device=init_device)
         if self.name == MoEType.default:
-            return MoE(args)
+            return MoEWrapper(args, MoE(args))
         elif self.name == MoEType.dropless:
-            return dMoE(args)
+            return MoEWrapper(args, dMoE(args))
         else:
             raise NotImplementedError(self.name)
