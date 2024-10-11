@@ -7,6 +7,7 @@ from olmo_core.config import StrEnum
 
 from ..attention import Attention, FusedAttention
 from ..feed_forward import FeedForward
+from ..moe import MoE
 
 
 class InitMethod(StrEnum):
@@ -94,3 +95,25 @@ class InitMethod(StrEnum):
         self._init_linear(m.w1, std=0.02, generator=generator)
         self._init_linear(m.w2, std=std, generator=generator)
         self._init_linear(m.w3, std=std, generator=generator)
+
+    def init_feed_forward_moe(
+        self,
+        m: MoE,
+        *,
+        block_idx: int,
+        num_blocks: int,
+        generator: Optional[torch.Generator] = None,
+    ):
+        std = 0.02
+        if self == InitMethod.llama:
+            std = 0.02 / (2 * num_blocks) ** 0.5
+        elif self == InitMethod.llama_depth:
+            std = 0.02 / (2 * (block_idx + 1)) ** 0.5
+
+        self._init_linear(m.inner.router.layer, std=0.02, generator=generator)
+        self._init_linear(m.inner.experts.mlp.w1, std=0.02, generator=generator)
+        self._init_linear(m.inner.experts.mlp.w2, std=std, generator=generator)
+        if hasattr(m.inner.experts.mlp, "v1"):
+            self._init_linear(m.inner.experts.mlp.v1, std=std, generator=generator)
+        if hasattr(m.inner.experts, "bias"):
+            nn.init.zeros_(m.inner.experts.bias)

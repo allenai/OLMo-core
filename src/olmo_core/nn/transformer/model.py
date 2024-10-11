@@ -663,12 +663,20 @@ class Transformer(nn.Module):
             )
 
             # Feed-forward weights.
-            self.init_method.init_feed_forward(
-                block.feed_forward,
-                block_idx=block.block_idx,
-                num_blocks=len(self.blocks),
-                generator=generator,
-            )
+            if hasattr(block, "feed_forward"):
+                self.init_method.init_feed_forward(
+                    block.feed_forward,
+                    block_idx=block.block_idx,
+                    num_blocks=len(self.blocks),
+                    generator=generator,
+                )
+            else:
+                self.init_method.init_feed_forward_moe(
+                    block.feed_forward_moe,
+                    block_idx=block.block_idx,
+                    num_blocks=len(self.blocks),
+                    generator=generator,
+                )
 
             # Warm up RoPE cache.
             if max_seq_len is not None and att.rope is not None:
