@@ -44,7 +44,7 @@ class MoE(nn.Module):
             clear_router_zloss,
         )
 
-        _, expert_scores, _ = zip(*get_load_balancing_loss())
+        _, expert_scores = zip(*get_load_balancing_loss())
         tokens = expert_scores[0].shape[0]
 
         loss = batched_load_balancing_loss(self.args)
