@@ -209,11 +209,10 @@ class DataLoaderBase(ABC):
         self.tokens_processed = 0
 
     @abstractmethod
-    def get_test_batch(self) -> Dict[str, Any]:
+    def get_mock_batch(self) -> Dict[str, Any]:
         """
         Return a batch with arbitrary data. This can just be random data as it's only used by the
-        trainer to check for OOMs and potentially to compile the model. The resulting gradients are
-        thrown away.
+        trainer to do a dry-run of the forward and backward pass before training officially starts.
         """
         raise NotImplementedError
 
@@ -430,7 +429,7 @@ class NumpyDataLoaderBase(DataLoaderBase):
         self._epoch = epoch
         self.build_and_save_global_indices(in_memory=in_memory)
 
-    def get_test_batch(self) -> Dict[str, Any]:
+    def get_mock_batch(self) -> Dict[str, Any]:
         num_instances = self.rank_batch_size // self.dataset.max_sequence_length
         input_ids = torch.randint(
             0, self.dataset.vocab_size, (num_instances, self.dataset.max_sequence_length)

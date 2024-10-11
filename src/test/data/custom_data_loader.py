@@ -76,7 +76,7 @@ class CustomDataLoader(DataLoaderBase):
             )
         ]
 
-    def get_test_batch(self) -> Dict[str, Any]:
+    def get_mock_batch(self) -> Dict[str, Any]:
         num_instances = self.rank_batch_size // self.sequence_length
         input_ids = torch.randint(0, self.vocab_size, (num_instances, self.sequence_length))
         return {"input_ids": input_ids}
