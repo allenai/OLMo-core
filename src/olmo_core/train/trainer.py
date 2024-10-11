@@ -530,6 +530,9 @@ class Trainer:
         og_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_os_signal)
         og_sigint_handler = signal.signal(signal.SIGINT, self._handle_os_signal)
 
+        # Do a dry-run for compiling and catch OOMs.
+        self._dry_run_batch()
+
         try:
             while not self.training_complete:
                 self._fit_epoch()
@@ -1025,9 +1028,9 @@ class Trainer:
                 stack.enter_context(self.model.no_sync())
             yield
 
-    def _train_batch(self, batch: Dict[str, Any]):
+    def _train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         # Record how many instances are going to be skipped (masked out).
-        if (instance_mask := batch.get("instance_mask")) is not None:
+        if (instance_mask := batch.get("instance_mask")) is not None and not dry_run:
             self.record_metric("train/masked instances", (~instance_mask).sum(), ReduceType.sum)
 
         # Zero-gradients.
@@ -1078,6 +1081,11 @@ class Trainer:
                 # Run backward pass.
                 loss.backward()
 
+        if dry_run:
+            # Zero-gradients again.
+            self.optim.zero_grad(set_to_none=True)
+            return
+
         self.record_metric(TRAIN_CE_LOSS_METRIC, ce_batch_loss, ReduceType.mean)
         if z_batch_loss is not None:
             self.record_metric(TRAIN_Z_LOSS_METRIC, z_batch_loss, ReduceType.mean)
@@ -1107,6 +1115,32 @@ class Trainer:
             except StopIteration:
                 break
 
+    def _validate_batch(self, batch: Dict[str, Any]) -> int:
+        """
+        Validate the data in a batch and return the global total number of tokens in the batch.
+        """
+        # NOTE: To track the global number of tokens seen per batch we make the
+        # assumption that all ranks see the same number batch size in tokens per step,
+        # which should always be the case for training efficiency at least.
+        # Alternatively we'd have to use a distributed collective which isn't worth it.
+        if batch["input_ids"].numel() != self.rank_batch_size:
+            raise RuntimeError(
+                f"Expected batch size of {self.rank_batch_size:,d} tokens on rank {get_rank()}, "
+                f"got input IDs with shape {tuple(batch['input_ids'].shape)} = {batch['input_ids'].numel():,d} tokens"
+            )
+        return self.global_batch_size
+
+    def _dry_run_batch(self):
+        try:
+            batch = self.data_loader.get_mock_batch()
+        except NotImplementedError:
+            return  # for backwards compatibility
+
+        log.info("Starting forward/backward dry-run batch...")
+        self._validate_batch(batch)
+        self._train_batch(batch, dry_run=True)
+        log.info("Dry-run complete")
+
     def _fit_epoch(self):
         self.data_loader.reshuffle(self.epoch)
 
@@ -1118,17 +1152,8 @@ class Trainer:
         first_batch = True
         for batch in self._iter_batches():
             # Bookkeeping.
-            # NOTE: To track the global number of tokens seen per batch we make the
-            # assumption that all ranks see the same number batch size in tokens per step,
-            # which should always be the case for training efficiency at least.
-            # Alternatively we'd have to use a distributed collective which isn't worth it.
-            if batch["input_ids"].numel() != self.rank_batch_size:
-                raise RuntimeError(
-                    f"Expected batch size of {self.rank_batch_size:,d} tokens on rank {get_rank()}, "
-                    f"got input IDs with shape {tuple(batch['input_ids'].shape)} = {batch['input_ids'].numel():,d} tokens"
-                )
             self.global_step += 1
-            self.global_train_tokens_seen += self.global_batch_size
+            self.global_train_tokens_seen += self._validate_batch(batch)
 
             self.record_metric(SEQ_LEN_METRIC, float(batch["input_ids"].shape[1]))
 

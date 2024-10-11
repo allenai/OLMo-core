@@ -28,6 +28,7 @@ def test_numpy_fsl_dataset(tmp_path: Path):
         sequence_length=4,
         pad_token_id=-1,
         eos_token_id=-1,
+        vocab_size=32_000,
     )
     assert ds[0]["input_ids"].tolist() == [0, 1, 2, 3]
     assert ds[1]["input_ids"].tolist() == [4, 5, 6, 7]
@@ -52,6 +53,7 @@ def test_numpy_padded_fsl_dataset(tmp_path: Path):
         sequence_length=8,
         pad_token_id=0,
         eos_token_id=0,
+        vocab_size=32_000,
     )
     ds.prepare()
     assert ds[0]["input_ids"].tolist() == [1, 2, 3, 4, 5, 6, 7, 0]
@@ -92,6 +94,7 @@ def test_numpy_vsl_dataset(tmp_path: Path):
         data2_path,
         pad_token_id=pad_token_id,
         eos_token_id=eos_token_id,
+        vocab_size=32_000,
         max_sequence_length=8,
         min_sequence_length=2,
         dtype=dtype,
