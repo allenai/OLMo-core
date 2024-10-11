@@ -10,8 +10,8 @@ from ..utils import requires_gpu, requires_megablocks
 @requires_megablocks
 @pytest.mark.parametrize("moe_type", [MoEType.default, MoEType.dropless])
 def test_moe(moe_type):
-    d_model = 64
-    config = MoEConfig(name=moe_type, hidden_size=256, num_experts=4)
+    d_model = 128
+    config = MoEConfig(name=moe_type, hidden_size=512, num_experts=4)
     moe = config.build(d_model=d_model, init_device="cuda")
 
     # Check num params calculation.
