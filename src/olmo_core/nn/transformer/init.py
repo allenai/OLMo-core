@@ -111,9 +111,20 @@ class InitMethod(StrEnum):
             std = 0.02 / (2 * (block_idx + 1)) ** 0.5
 
         self._init_linear(m.inner.router.layer, std=0.02, generator=generator)
-        self._init_linear(m.inner.experts.mlp.w1, std=0.02, generator=generator)
-        self._init_linear(m.inner.experts.mlp.w2, std=std, generator=generator)
+        nn.init.trunc_normal_(
+            m.inner.experts.mlp.w1, mean=0.0, std=0.02, a=-3 * std, b=3 * std, generator=generator
+        )
+        nn.init.trunc_normal_(
+            m.inner.experts.mlp.w2, mean=0.0, std=std, a=-3 * std, b=3 * std, generator=generator
+        )
         if hasattr(m.inner.experts.mlp, "v1"):
-            self._init_linear(m.inner.experts.mlp.v1, std=std, generator=generator)
+            nn.init.trunc_normal_(
+                m.inner.experts.mlp.v1,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
         if hasattr(m.inner.experts, "bias"):
             nn.init.zeros_(m.inner.experts.bias)
