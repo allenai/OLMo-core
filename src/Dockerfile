@@ -36,7 +36,7 @@ RUN pip install --no-cache-dir --pre torch==${NIGHTLY_VERSION}
 FROM nightly as dev
 
 # Install core dev dependencies.
-ENV TORCH_CUDA_ARCH_LIST=8.0
+ENV TORCH_CUDA_ARCH_LIST="8.0 9.0"
 ENV GROUPED_GEMM_CUTLASS=1
 ARG MEGABLOCKS_VERSION
 RUN pip install --no-cache-dir "${MEGABLOCKS_VERSION}"
