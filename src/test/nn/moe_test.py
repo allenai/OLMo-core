@@ -25,7 +25,7 @@ def test_moe(moe_type):
     assert config.num_params(d_model) == num_params
 
     # Run forward pass.
-    x = torch.randn(2, 16, d_model, device="cuda")
+    x = torch.randn(2, 16, d_model, device="cuda", requires_grad=True)
     output = moe(x)
     assert output.shape == x.shape
     loss = output.sum() + moe.get_loss()
