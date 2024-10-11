@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `CometCallback` for logging training runs to Comet.ml.
 - Added `DataMixBase` class, to allow extending to new data mix groups.
 - Added support for MoE transformer models.
+- Added method `DataLoaderBase.get_mock_batch()`.
+- Trainer now starts with a dry-run of a fake batch created by `DataLoaderBase.get_mock_batch()`.
 
 ### Changed
 
@@ -20,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `prepare_cli_environment()` now calls `add_cached_path_clients()`.
+- Removed an unnecessary host-device sync.
 
 ## [v1.4.0](https://github.com/allenai/OLMo-core/releases/tag/v1.4.0) - 2024-10-02
 

@@ -33,6 +33,7 @@ from olmo_core.train import (
 )
 from olmo_core.train.callbacks import (
     Callback,
+    CometCallback,
     ConfigSaverCallback,
     Float8HandlerCallback,
     GPUMemoryMonitorCallback,
@@ -144,6 +145,7 @@ def build_common_components(
         env_secrets=[
             BeakerEnvSecret(name="BEAKER_TOKEN", secret=f"{beaker_user}_BEAKER_TOKEN"),
             BeakerEnvSecret(name="WANDB_API_KEY", secret=f"{beaker_user}_WANDB_API_KEY"),
+            BeakerEnvSecret(name="COMET_API_KEY", secret=f"{beaker_user}_COMET_API_KEY"),
             BeakerEnvSecret(name="AWS_CONFIG", secret=f"{beaker_user}_AWS_CONFIG"),
             BeakerEnvSecret(name="AWS_CREDENTIALS", secret=f"{beaker_user}_AWS_CREDENTIALS"),
             BeakerEnvSecret(name="R2_ENDPOINT_URL", secret="R2_ENDPOINT_URL"),
@@ -297,6 +299,7 @@ def train(config: ExperimentConfig):
 
     # Record the config to W&B and each checkpoint dir.
     config_dict = config.as_config_dict()
+    cast(CometCallback, trainer.callbacks["comet"]).config = config_dict
     cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 

@@ -17,14 +17,22 @@ on:
 jobs:
   beaker:
     name: Beaker image (${{ matrix.version }})
-    runs-on: ubuntu-latest-m
+    runs-on: ${{ matrix.build.runs-on }}
     timeout-minutes: 60
     env:
       BEAKER_TOKEN: ${{ secrets.BEAKER_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
-        version: [stable, nightly, dev]
+        build:
+          - version: stable
+            runs-on: ubuntu-latest
+
+          - version: nightly
+            runs-on: ubuntu-latest
+
+          - version: dev
+            runs-on: ubuntu-latest-m  # requires a larger instance
     steps:
       - uses: actions/checkout@v3
 
@@ -37,7 +45,7 @@ jobs:
 
       - name: Build
         run: |
-          make ${{ matrix.version }}-image
+          make ${{ matrix.build.version }}-image
 
       - uses: allenai/setup-beaker@v2
         if: env.BEAKER_TOKEN != ''
@@ -49,4 +57,4 @@ jobs:
         if: env.BEAKER_TOKEN != '' && startsWith(github.ref, 'refs/tags/')
         run: |
           rm -rf /opt/hostedtoolcache  # clear up some disk space
-          make beaker-image-${{ matrix.version }}
+          make beaker-image-${{ matrix.build.version }}

@@ -76,6 +76,11 @@ class CustomDataLoader(DataLoaderBase):
             )
         ]
 
+    def get_mock_batch(self) -> Dict[str, Any]:
+        num_instances = self.rank_batch_size // self.sequence_length
+        input_ids = torch.randint(0, self.vocab_size, (num_instances, self.sequence_length))
+        return {"input_ids": input_ids}
+
     def _iter_batches(self) -> Iterable[Dict[str, Any]]:
         assert self._dataset is not None, "did you forget to call 'reshuffle()'?"
 

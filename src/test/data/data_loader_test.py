@@ -49,6 +49,7 @@ def test_fsl_data_loader(
             sequence_length=sequence_length,
             pad_token_id=-1,
             eos_token_id=-1,
+            vocab_size=32_000,
         )
         for rank in range(world_size):
             data_loader = NumpyFSLDataLoader(
@@ -107,6 +108,7 @@ def test_fsl_data_loader_multiple_epochs(
         sequence_length=sequence_length,
         pad_token_id=-1,
         eos_token_id=-1,
+        vocab_size=32_000,
     )
     data_loader = NumpyFSLDataLoader(
         dataset,
@@ -204,6 +206,7 @@ def test_fsl_data_loader_with_seq_len_warmup(tmp_path: Path, shuffle: bool):
             sequence_length=seq_len,
             pad_token_id=-1,
             eos_token_id=-1,
+            vocab_size=32_000,
             max_target_sequence_length=max_target_sequence_length,
         )
         data_loader = NumpyFSLDataLoader(
@@ -261,6 +264,7 @@ def test_vsl_data_loader(
         tmp_path / "tokens2.npy",
         pad_token_id=0,
         eos_token_id=0,
+        vocab_size=32_000,
         min_sequence_length=2,
         max_sequence_length=4,
         dtype=np.uint16,
