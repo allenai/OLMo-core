@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added `CometCallback` for logging training runs to Comet.ml.
 - Added `DataMixBase` class, to allow extending to new data mix groups.
-- Added support for MoE transformer models.
+- Added support for MoE-based models.
+- Added callback method `Callback.post_model_forward()`.
 - Added method `DataLoaderBase.get_mock_batch()`.
 - Trainer now starts with a dry-run of a fake batch created by `DataLoaderBase.get_mock_batch()`.
 

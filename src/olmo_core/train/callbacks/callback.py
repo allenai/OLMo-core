@@ -1,6 +1,8 @@
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Dict
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, Optional
+
+import torch
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
@@ -85,6 +87,32 @@ class Callback:
         Runs right before a training batch is processed.
         """
         del batch
+
+    def post_model_forward(
+        self,
+        *,
+        batch: Dict[str, Any],
+        micro_batch: Dict[str, Any],
+        num_micro_batches: int,
+        batch_num_tokens_for_loss: torch.Tensor,
+        loss: torch.Tensor,
+        ce_loss: torch.Tensor,
+        z_loss: Optional[torch.Tensor] = None,
+    ):
+        """
+        Runs right after the train forward pass on a micro-batch. This can be used to modify the
+        ``loss`` before ``loss.backward()`` is called.
+
+        :param batch: The full batch.
+        :param micro_batch: The micro-batch just used.
+        :param num_micro_batches: The number of micro-batches in the full batch.
+        :param batch_num_tokens_for_loss: The total number of tokens in the local full batch that
+            will be counted towards the loss.
+        :param loss: The combined loss from the micro-batch (``ce_loss`` plus the optional ``z_loss``).
+        :param ce_loss: The cross-entropy loss from the micro-batch.
+        :param z_loss: The Z-loss from the micro-batch.
+        """
+        del batch, micro_batch, num_micro_batches, batch_num_tokens_for_loss, loss, ce_loss, z_loss
 
     def pre_optim_step(self):
         """

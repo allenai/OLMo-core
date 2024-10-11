@@ -1054,9 +1054,6 @@ class Trainer:
         micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
         num_micro_batches = len(micro_batches)
 
-        # In case this helps with memory utilization.
-        del batch
-
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
         z_batch_loss = (
             None
@@ -1072,6 +1069,17 @@ class Trainer:
                     micro_batch, batch_num_tokens_for_loss
                 )
 
+                for callback in self.callbacks.values():
+                    callback.post_model_forward(
+                        batch=batch,
+                        micro_batch=micro_batch,
+                        num_micro_batches=num_micro_batches,
+                        batch_num_tokens_for_loss=batch_num_tokens_for_loss,
+                        loss=loss,
+                        ce_loss=ce_loss,
+                        z_loss=z_loss,
+                    )
+
                 # Update overall CE batch loss.
                 ce_batch_loss += get_local_tensor(ce_loss.detach())
 
@@ -1082,6 +1090,9 @@ class Trainer:
 
                 # Run backward pass.
                 loss.backward()
+
+        # In case this helps with memory utilization.
+        del batch
 
         if dry_run:
             # Zero-gradients again.

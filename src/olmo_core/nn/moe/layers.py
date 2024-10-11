@@ -8,9 +8,14 @@ class MoE(nn.Module):
 
     .. tip::
         Use :class:`MoEConfig` to build instances of this module.
+
+    .. important::
+        This should always be used in conjunction with the
+        :class:`~olmo_core.train.callbacks.MoEHandlerCallback` for training.
     """
 
     def __init__(self, args, inner):
+        super().__init__()
         self.args = args
         self.inner = inner
 
