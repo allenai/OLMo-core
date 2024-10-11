@@ -10,7 +10,7 @@ from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
 from olmo_core.train import TrainerConfig
-from olmo_core.train.callbacks import CheckpointerCallback, WandBCallback
+from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 
 log = logging.getLogger(__name__)
 
@@ -58,12 +58,22 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             ),
         )
         .with_callback(
+            "comet",
+            CometCallback(
+                name=common.run_name,
+                workspace="ai2",
+                project="OLMo-core-13B",
+                enabled=True,
+                cancel_check_interval=10,
+            ),
+        )
+        .with_callback(
             "wandb",
             WandBCallback(
                 name=common.run_name,
                 entity="ai2-llm",
                 project="OLMo-core-13B",
-                enabled=True,
+                enabled=False,
                 cancel_check_interval=10,
             ),
         )
