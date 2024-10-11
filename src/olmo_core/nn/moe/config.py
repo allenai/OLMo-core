@@ -153,6 +153,10 @@ class MoEConfig(Config):
         # Experts.
         num_params += self.num_experts * (2 * d_model * self.hidden_size)
 
+        # Bias.
+        if self.bias:
+            num_params += d_model
+
         return num_params
 
     def as_megablocks_args(self, *, d_model: int, init_device: str = "cpu"):
