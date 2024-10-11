@@ -19,6 +19,7 @@ def test_moe(moe_type):
     for p in moe.parameters():
         num_params += p.numel()
     if config.num_params(d_model) != num_params:
+        # For debugging...
         for n, p in moe.named_parameters():
             print(f"{n}: {p.shape}")
     assert config.num_params(d_model) == num_params
