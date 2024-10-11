@@ -16,7 +16,7 @@ on:
 
 jobs:
   beaker:
-    name: Beaker image (${{ matrix.version }})
+    name: Beaker image (${{ matrix.build.version }})
     runs-on: ${{ matrix.build.runs-on }}
     timeout-minutes: 60
     env:
