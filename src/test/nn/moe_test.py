@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from olmo_core.nn.moe import MoEConfig, MoEType
+from olmo_core.nn.moe import MoEConfig, MoEMLPImplementation, MoEType
 
 from ..utils import requires_gpu, requires_megablocks
 
@@ -9,9 +9,10 @@ from ..utils import requires_gpu, requires_megablocks
 @requires_gpu
 @requires_megablocks
 @pytest.mark.parametrize("moe_type", [MoEType.default, MoEType.dropless])
-def test_moe(moe_type):
+@pytest.mark.parametrize("mlp_impl", [MoEMLPImplementation.sparse, MoEMLPImplementation.grouped])
+def test_moe(moe_type, mlp_impl):
     d_model = 128
-    config = MoEConfig(name=moe_type, hidden_size=512, num_experts=4)
+    config = MoEConfig(name=moe_type, mlp_implementation=mlp_impl, hidden_size=512, num_experts=4)
     moe = config.build(d_model=d_model, init_device="cuda")
 
     # Check num params calculation.
