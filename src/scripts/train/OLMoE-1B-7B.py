@@ -48,6 +48,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         zloss_weight=0.001,
         loss_weight=0.01,
         bias=False,
+        dtype=model_config.dtype,
     )
     return model_config
 

@@ -1,6 +1,7 @@
 import pytest
 import torch
 
+from olmo_core.config import DType
 from olmo_core.nn.moe import MoEConfig, MoEMLPImplementation, MoEType
 
 from ..utils import requires_gpu, requires_megablocks
@@ -10,10 +11,16 @@ from ..utils import requires_gpu, requires_megablocks
 @requires_megablocks
 @pytest.mark.parametrize("moe_type", [MoEType.default, MoEType.dropless])
 @pytest.mark.parametrize("mlp_impl", [MoEMLPImplementation.sparse, MoEMLPImplementation.grouped])
-@pytest.mark.parametrize("inp_dtype", [torch.bfloat16])
-def test_moe(moe_type, mlp_impl, inp_dtype):
+@pytest.mark.parametrize("dtype", [torch.bfloat16])
+def test_moe(moe_type, mlp_impl, dtype):
     d_model = 128
-    config = MoEConfig(name=moe_type, mlp_implementation=mlp_impl, hidden_size=512, num_experts=4)
+    config = MoEConfig(
+        name=moe_type,
+        mlp_implementation=mlp_impl,
+        hidden_size=512,
+        num_experts=4,
+        dtype=DType.from_pt(dtype),
+    )
     moe = config.build(d_model=d_model, init_device="cuda")
 
     # Check num params calculation.
@@ -27,7 +34,7 @@ def test_moe(moe_type, mlp_impl, inp_dtype):
     assert config.num_params(d_model) == num_params
 
     # Run forward pass.
-    x = torch.randn(2, 16, d_model, dtype=inp_dtype, device="cuda", requires_grad=True)
+    x = torch.randn(2, 16, d_model, dtype=dtype, device="cuda", requires_grad=True)
     output = moe(x)
     assert output.shape == x.shape
     loss = output.sum() + moe.get_loss()

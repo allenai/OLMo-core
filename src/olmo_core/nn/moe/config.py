@@ -5,7 +5,7 @@ from typing import Callable
 import torch
 import torch.nn.functional as F
 
-from olmo_core.config import Config, StrEnum
+from olmo_core.config import Config, DType, StrEnum
 
 from .layers import MoE as MoEWrapper
 
@@ -144,6 +144,10 @@ class MoEConfig(Config):
     """
     The total number of MoE layers.
     """
+    dtype: DType = DType.float32
+    """
+    The data type for the parameters.
+    """
 
     def num_params(self, d_model: int) -> int:
         num_params = 0
@@ -184,7 +188,7 @@ class MoEConfig(Config):
             num_layers=self.num_layers,
             device=torch.device(init_device),
             fp16=False,
-            bf16=False,
+            bf16=self.dtype == DType.bfloat16,
         )
 
     def build(self, *, d_model: int, init_device: str = "cpu") -> MoEWrapper:
