@@ -11,7 +11,7 @@ from ..utils import requires_gpu, requires_megablocks
 @requires_megablocks
 @pytest.mark.parametrize("moe_type", [MoEType.default, MoEType.dropless])
 @pytest.mark.parametrize("mlp_impl", [MoEMLPImplementation.sparse, MoEMLPImplementation.grouped])
-@pytest.mark.parametrize("dtype", [torch.bfloat16])
+@pytest.mark.parametrize("dtype", [pytest.param(torch.bfloat16, id="BF16")])
 def test_moe(moe_type, mlp_impl, dtype):
     d_model = 128
     config = MoEConfig(
