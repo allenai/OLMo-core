@@ -25,6 +25,10 @@ class MoEHandlerCallback(Callback):
     def clear_loss_buffers(self):
         assert self._moe_layer is not None
         self._moe_layer.clear_losses()
+        if self._batch_lb_loss is not None:
+            self._batch_lb_loss.zero_()
+        if self._batch_z_loss is not None:
+            self._batch_z_loss.zero_()
 
     def pre_train(self):
         for module in self.trainer.model.modules():
@@ -78,7 +82,5 @@ class MoEHandlerCallback(Callback):
     def post_train_batch(self):
         if self._batch_lb_loss is not None:
             self.trainer.record_metric("train/load balancing loss", self._batch_lb_loss)
-            self._batch_lb_loss = None
         if self._batch_z_loss is not None:
             self.trainer.record_metric("train/router Z loss", self._batch_z_loss)
-            self._batch_z_loss = None
