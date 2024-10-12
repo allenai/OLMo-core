@@ -22,6 +22,10 @@ class MoEHandlerCallback(Callback):
     _batch_z_loss = None
     _moe_layer = None
 
+    def clear_loss_buffers(self):
+        assert self._moe_layer is not None
+        self._moe_layer.get_loss()
+
     def pre_train(self):
         for module in self.trainer.model.modules():
             if isinstance(module, MoE):
@@ -32,30 +36,34 @@ class MoEHandlerCallback(Callback):
                 f"No MoE layer found in model, required by {self.__class__.__name__}"
             )
 
-    def post_model_forward(
+    def pre_step(self, batch: Dict[str, Any]):
+        del batch
+        self.clear_loss_buffers()
+
+    def post_eval_batch(self):
+        self.clear_loss_buffers()
+
+    def pre_backward(
         self,
         *,
         batch: Dict[str, Any],
         micro_batch: Dict[str, Any],
-        num_micro_batches: int,
-        batch_num_tokens_for_loss: torch.Tensor,
         loss: torch.Tensor,
-        ce_loss: torch.Tensor,
-        z_loss: Optional[torch.Tensor] = None,
     ):
-        del batch, micro_batch, batch_num_tokens_for_loss, ce_loss, z_loss
         assert self._moe_layer is not None
+
+        scale_factor = micro_batch["input_ids"].shape[0] / batch["input_ids"].shape[0]
 
         moe_loss: Optional[torch.Tensor] = None
         if (lb_loss := self._moe_layer.get_load_balancing_loss()) is not None:
-            lb_loss.div_(num_micro_batches)
+            lb_loss.mul_(scale_factor)
             moe_loss = lb_loss
             if self._batch_lb_loss is None:
                 self._batch_lb_loss = move_to_device(torch.tensor(0.0), lb_loss.device)
             self._batch_lb_loss += get_local_tensor(lb_loss)
 
         if (rz_loss := self._moe_layer.get_router_z_loss()) is not None:
-            rz_loss.div_(num_micro_batches)
+            rz_loss.mul_(scale_factor)
             if moe_loss is not None:
                 moe_loss += rz_loss
             else:
