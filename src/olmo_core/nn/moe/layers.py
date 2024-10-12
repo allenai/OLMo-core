@@ -29,9 +29,9 @@ class MoE(nn.Module):
         """
         return self.inner(x)
 
-    def get_loss(self) -> Optional[torch.Tensor]:
+    def get_load_balancing_loss(self) -> Optional[torch.Tensor]:
         """
-        Get the batched load-balancing and router Z-loss from the internal buffers.
+        Get the batched load-balancing loss from the internal buffers.
 
         .. important::
             This method will clear the internal buffers so can only be called once per forward pass.
@@ -40,27 +40,49 @@ class MoE(nn.Module):
             batched_load_balancing_loss,
             clear_load_balancing_loss,
         )
+
+        if isinstance(lb_loss := batched_load_balancing_loss(self.args), torch.Tensor):
+            clear_load_balancing_loss()
+            return lb_loss
+        else:
+            return None
+
+    def get_router_z_loss(self) -> Optional[torch.Tensor]:
+        """
+        Get the batched router Z-loss from the internal buffers.
+
+        .. important::
+            This method will clear the internal buffers so can only be called once per forward pass.
+        """
         from megablocks.layers.router import (  # type: ignore
             batched_router_zloss,
             clear_router_zloss,
         )
 
-        loss: Optional[torch.Tensor] = None
-
-        lb_loss = batched_load_balancing_loss(self.args)
-        if isinstance(lb_loss, torch.Tensor):
-            loss = lb_loss
-
         if self.args.moe_zloss_weight != 0 and isinstance(
             (z_loss_per_layer := batched_router_zloss(self.args)), torch.Tensor
         ):
             z_loss = z_loss_per_layer.sum() / self.args.num_layers
+            clear_router_zloss()
+            return z_loss
+        else:
+            return None
+
+    def get_loss(self) -> Optional[torch.Tensor]:
+        """
+        Get the batched combined load-balancing loss and router Z-loss from the internal buffers.
+
+        .. important::
+            This method will clear the internal buffers so can only be called once per forward pass.
+        """
+        loss: Optional[torch.Tensor] = None
+        if (lb_loss := self.get_load_balancing_loss()) is not None:
+            loss = lb_loss
+
+        if (rz_loss := self.get_router_z_loss()) is not None:
             if loss is not None:
-                loss += z_loss
+                loss += rz_loss
             else:
-                loss = z_loss
+                loss = rz_loss
 
-        clear_load_balancing_loss()
-        clear_router_zloss()
-
-        return loss  # type: ignore
+        return loss
