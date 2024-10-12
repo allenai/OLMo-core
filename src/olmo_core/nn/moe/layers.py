@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 import torch.nn as nn
 
@@ -27,7 +29,7 @@ class MoE(nn.Module):
         """
         return self.inner(x)
 
-    def get_loss(self) -> torch.Tensor:
+    def get_loss(self) -> Optional[torch.Tensor]:
         """
         Get the batched load-balancing and router Z-loss from the internal buffers.
 
@@ -37,26 +39,28 @@ class MoE(nn.Module):
         from megablocks.layers.moe import (  # type: ignore
             batched_load_balancing_loss,
             clear_load_balancing_loss,
-            get_load_balancing_loss,
         )
         from megablocks.layers.router import (  # type: ignore
             batched_router_zloss,
             clear_router_zloss,
         )
 
-        _, expert_scores = zip(*get_load_balancing_loss())
-        tokens = expert_scores[0].shape[0]
+        loss: Optional[torch.Tensor] = None
 
-        loss = batched_load_balancing_loss(self.args)
-        assert loss is not None
+        lb_loss = batched_load_balancing_loss(self.args)
+        if isinstance(lb_loss, torch.Tensor):
+            loss = lb_loss
 
-        if self.args.moe_zloss_weight != 0:
-            unscaled_z_loss = batched_router_zloss(self.args)
-            assert isinstance(unscaled_z_loss, torch.Tensor)
-            z_loss = unscaled_z_loss.sum() / (self.args.num_layers * tokens * self.args.moe_top_k)
-            loss += z_loss
-            clear_router_zloss()
+        if self.args.moe_zloss_weight != 0 and isinstance(
+            (z_loss_per_layer := batched_router_zloss(self.args)), torch.Tensor
+        ):
+            z_loss = z_loss_per_layer.sum() / self.args.num_layers
+            if loss is not None:
+                loss += z_loss
+            else:
+                loss = z_loss
 
         clear_load_balancing_loss()
+        clear_router_zloss()
 
         return loss  # type: ignore

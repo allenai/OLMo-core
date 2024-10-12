@@ -41,6 +41,7 @@ class MoEHandlerCallback(Callback):
     ):
         del batch_num_tokens_for_loss, ce_loss, z_loss
         assert self._moe_layer is not None
-        num_micro_batches = batch["input_ids"].shape[0] // micro_batch["input_ids"].shape[0]
-        moe_loss = self._moe_layer.get_loss() / num_micro_batches
-        loss += moe_loss
+
+        if (moe_loss := self._moe_layer.get_loss()) is not None:
+            num_micro_batches = batch["input_ids"].shape[0] // micro_batch["input_ids"].shape[0]
+            loss += moe_loss / num_micro_batches
