@@ -86,3 +86,13 @@ class MoE(nn.Module):
                 loss = rz_loss
 
         return loss
+
+    def clear_losses(self):
+        """
+        Clear internal loss buffers.
+        """
+        from megablocks.layers.moe import clear_load_balancing_loss  # type: ignore
+        from megablocks.layers.router import clear_router_zloss  # type: ignore
+
+        clear_load_balancing_loss()
+        clear_router_zloss()

@@ -24,7 +24,7 @@ class MoEHandlerCallback(Callback):
 
     def clear_loss_buffers(self):
         assert self._moe_layer is not None
-        self._moe_layer.get_loss()
+        self._moe_layer.clear_losses()
 
     def pre_train(self):
         for module in self.trainer.model.modules():
