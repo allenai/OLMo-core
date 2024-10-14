@@ -103,6 +103,10 @@ class MoEConfig(Config):
     """
     The MLP implementation.
     """
+    memory_optimized_mlp: bool = False
+    """
+    Use the memory-optimized version of the MLP.
+    """
     num_experts: int = 8
     """
     The number of experts to use in the MoE block.
@@ -174,6 +178,7 @@ class MoEConfig(Config):
             activation_fn=self.activation_fn.build(),
             mlp_type="glu" if "glu" in self.activation_fn.lower() else "mlp",
             mlp_impl=self.mlp_implementation,
+            memory_optimized_mlp=self.memory_optimized_mlp,
             ffn_hidden_size=self.hidden_size,
             moe_num_experts=self.num_experts,
             moe_top_k=self.top_k,
