@@ -15,7 +15,10 @@ from .init import InitMethod
 from .model import (
     Transformer,
     TransformerActivationCheckpointingConfig,
+    TransformerActivationCheckpointingMode,
     TransformerConfig,
+    TransformerDataParallelConfig,
+    TransformerDataParallelWrappingStrategy,
 )
 
 __all__ = [
@@ -28,6 +31,9 @@ __all__ = [
     "ReorderedNormTransformerBlock",
     "MoETransformerBlock",
     "MoEReorderedNormTransformerBlock",
+    "TransformerDataParallelConfig",
+    "TransformerDataParallelWrappingStrategy",
     "TransformerActivationCheckpointingConfig",
+    "TransformerActivationCheckpointingMode",
     "InitMethod",
 ]

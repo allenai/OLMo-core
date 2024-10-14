@@ -28,12 +28,39 @@ from .init import InitMethod
 __all__ = [
     "TransformerConfig",
     "Transformer",
+    "TransformerDataParallelConfig",
+    "TransformerDataParallelWrappingStrategy",
     "TransformerActivationCheckpointingConfig",
     "TransformerActivationCheckpointingMode",
 ]
 
 
 log = logging.getLogger(__name__)
+
+
+class TransformerDataParallelWrappingStrategy(StrEnum):
+    """
+    An enumeration of the different wrapping strategy for the data parallel implementations.
+    """
+
+    full = "full"
+    """
+    Wrap each block (only applies to FSDP).
+    """
+    fine_grained = "fine_grained"
+    """
+    Wrap certain modules within each block in addition to wrapping each block (only applies to FSDP).
+    """
+
+
+@dataclass
+class TransformerDataParallelConfig(DataParallelConfig):
+    wrapping_strategy: TransformerDataParallelWrappingStrategy = (
+        TransformerDataParallelWrappingStrategy.full
+    )
+    """
+    Wrapping strategy.
+    """
 
 
 class TransformerActivationCheckpointingMode(StrEnum):
@@ -104,7 +131,7 @@ class TransformerConfig(Config):
     init_method: InitMethod = InitMethod.normal
     init_seed: int = 0
     compile: bool = False
-    dp_config: Optional[DataParallelConfig] = None
+    dp_config: Optional[TransformerDataParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
     float8_config: Optional[Float8Config] = None
 
@@ -806,6 +833,7 @@ class Transformer(nn.Module):
         param_dtype: Optional[torch.dtype] = None,
         reduce_dtype: torch.dtype = torch.float32,
         pp_enabled: bool = False,
+        wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
     ):
         """
         Apply FSDP(2) to the model.
@@ -818,6 +846,7 @@ class Transformer(nn.Module):
         :param param_dtype: The data type to materialize params in. Defaults to the current param dtype.
         :param reduce_dtype: The data type for gradient reduction.
         :pp_enabled: If pipeline parallelism is also enabled.
+        :wrapping_strategy: The wrapping strategy.
         """
         # Adapted from
         # https://github.com/pytorch/torchtitan/blob/90c889e972b56b9faadebbb78fc985dedc537ed9/torchtitan/parallelisms/parallelize_llama.py#L289
@@ -830,15 +859,35 @@ class Transformer(nn.Module):
         fsdp_config = dict(mesh=dp_mesh, mp_policy=mp_policy)
 
         for block_id, block in enumerate(self.blocks):
+            reshard_after_forward = True
             if pp_enabled:
                 # For PP, do not reshard after forward to avoid per-microbatch
                 # all-gathers, which can be expensive and non-overlapped
                 reshard_after_forward = False
-            else:
+            elif wrapping_strategy == TransformerDataParallelWrappingStrategy.full:
                 # As an optimization, do not reshard after forward for the last
                 # transformer block since FSDP would prefetch it immediately
                 reshard_after_forward = int(block_id) < len(self.blocks) - 1
+
+            if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
+                if hasattr(block, "feed_forward"):
+                    fully_shard(
+                        block.feed_forward,
+                        reshard_after_forward=reshard_after_forward,
+                        **fsdp_config,
+                    )
+                else:
+                    fully_shard(
+                        block.feed_forward_moe,
+                        reshard_after_forward=reshard_after_forward,
+                        **fsdp_config,
+                    )
+
             fully_shard(block, reshard_after_forward=reshard_after_forward, **fsdp_config)
+
+        if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
+            fully_shard(self.embeddings, reshard_after_forward=not pp_enabled, **fsdp_config)
+            fully_shard(self.w_out, reshard_after_forward=False, **fsdp_config)
 
         fully_shard(self, reshard_after_forward=not pp_enabled, **fsdp_config)
 
