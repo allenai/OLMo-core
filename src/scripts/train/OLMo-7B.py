@@ -5,9 +5,9 @@ Train a 7B OLMo model. Run this script without any arguments to see usage info.
 import logging
 
 from olmo_core.config import DType
-from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
+from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.experiment import CommonComponents, main
-from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
@@ -19,7 +19,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     return TransformerConfig.olmo_7B(
         vocab_size=common.tokenizer.padded_vocab_size(),
         compile=True,
-        dp_config=DataParallelConfig(
+        dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
     )
