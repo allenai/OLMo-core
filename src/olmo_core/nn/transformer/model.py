@@ -203,6 +203,7 @@ class TransformerConfig(Config):
                     if self.dp_config.param_dtype is not None
                     else None,
                     reduce_dtype=self.dp_config.reduce_dtype.as_pt(),
+                    wrapping_strategy=self.dp_config.wrapping_strategy,
                 )
             elif self.dp_config.name == DataParallelType.ddp:
                 model.apply_ddp(dp_mesh=dp_mesh, compile_enabled=self.compile)
