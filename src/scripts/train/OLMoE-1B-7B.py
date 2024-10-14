@@ -29,7 +29,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         vocab_size=common.tokenizer.padded_vocab_size(),
         n_layers=16,
         n_heads=16,
-        compile=False,
+        compile=True,
         fused_ops=False,
         block_name=TransformerBlockType.moe_reordered_norm,
         dp_config=DataParallelConfig(
