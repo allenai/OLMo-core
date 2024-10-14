@@ -125,7 +125,7 @@ jobs:
                 src/test/distributed/checkpoint*
 
           - name: Test MoE (GPU)
-            image: olmo-core-dev
+            image: olmo-core-nightly
             gpus: 1
             run: |
               pytest -v --color=yes --durations=3 -m gpu \

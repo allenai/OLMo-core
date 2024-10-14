@@ -5,8 +5,7 @@ Run this script without any arguments to see usage info.
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
-from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, main
-from olmo_core.launch.beaker import OLMoCoreBeakerImage
+from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.moe import MoEActivationFn, MoEConfig, MoEMLPImplementation, MoEType
 from olmo_core.nn.transformer import TransformerBlockType, TransformerConfig
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
@@ -17,11 +16,6 @@ from olmo_core.train.callbacks import (
     MoEHandlerCallback,
     WandBCallback,
 )
-
-
-def finalize_config(config: ExperimentConfig):
-    # need dev image for megablocks and grouped-gemm
-    config.launch.beaker_image = OLMoCoreBeakerImage.dev
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -117,5 +111,4 @@ if __name__ == "__main__":
         model_config_builder=build_model_config,
         optim_config_builder=build_optim_config,
         trainer_config_builder=build_trainer_config,
-        finalize_config=finalize_config,
     )

@@ -22,23 +22,11 @@ on:
 
 jobs:
   beaker:
-    name: Beaker image (${{ matrix.build.version }})
-    runs-on: ${{ matrix.build.runs-on }}
+    name: Beaker images
+    runs-on: ubuntu-latest-m
     timeout-minutes: 60
     env:
       BEAKER_TOKEN: ${{ secrets.BEAKER_TOKEN }}
-    strategy:
-      fail-fast: false
-      matrix:
-        build:
-          - version: stable
-            runs-on: ubuntu-latest
-
-          - version: nightly
-            runs-on: ubuntu-latest
-
-          - version: dev
-            runs-on: ubuntu-latest-m  # requires a larger instance
     steps:
       - uses: actions/checkout@v3
 
@@ -49,9 +37,13 @@ jobs:
         run: |
           echo "BEAKER_WORKSPACE=$(make get-beaker-workspace)" >> $GITHUB_ENV
 
-      - name: Build
+      - name: Build stable image
         run: |
-          make ${{ matrix.build.version }}-image
+          make stable-image
+
+      - name: Build nightly image
+        run: |
+          make nightly-image
 
       - uses: allenai/setup-beaker@v2
         if: env.BEAKER_TOKEN != ''
@@ -59,8 +51,14 @@ jobs:
           token: ${{ env.BEAKER_TOKEN }}
           workspace: ${{ env.BEAKER_WORKSPACE }}
 
-      - name: Push
+      - name: Push stable image
         if: env.BEAKER_TOKEN != '' && startsWith(github.ref, 'refs/tags/')
         run: |
           rm -rf /opt/hostedtoolcache  # clear up some disk space
-          make beaker-image-${{ matrix.build.version }}
+          make beaker-image-stable
+
+      - name: Push nightly image
+        if: env.BEAKER_TOKEN != '' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          rm -rf /opt/hostedtoolcache  # clear up some disk space
+          make beaker-image-nightly
