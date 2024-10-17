@@ -3,12 +3,21 @@ import torch
 
 has_cuda = torch.cuda.is_available()
 has_flash_attn = False
+has_megablocks = False
 
 try:
     import flash_attn  # type: ignore
 
     has_flash_attn = True
     del flash_attn
+except ModuleNotFoundError:
+    pass
+
+try:
+    import megablocks  # type: ignore
+
+    has_megablocks = True
+    del megablocks
 except ModuleNotFoundError:
     pass
 
@@ -30,6 +39,18 @@ FLASH_MARKS = (
 
 def requires_flash_attn(func):
     for mark in FLASH_MARKS:
+        func = mark(func)
+    return func
+
+
+MEGABLOCKS_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_megablocks, reason="Requires megablocks"),
+)
+
+
+def requires_megablocks(func):
+    for mark in MEGABLOCKS_MARKS:
         func = mark(func)
     return func
 

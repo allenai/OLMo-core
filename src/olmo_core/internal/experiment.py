@@ -1,7 +1,7 @@
 import logging
 import sys
 from dataclasses import dataclass
-from typing import Callable, Dict, List, cast
+from typing import Callable, Dict, List, Optional, cast
 
 from beaker import Beaker
 
@@ -232,6 +232,7 @@ def build_config(
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
     optim_config_builder: Callable[[CommonComponents], AdamWConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
+    finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
 ) -> ExperimentConfig:
     common = build_common_components(
         script, cmd, run_name, cluster, overrides, global_batch_size=global_batch_size
@@ -253,7 +254,12 @@ def build_config(
         dataset=common.dataset,
         data_loader=common.data_loader,
         trainer=trainer,
-    ).merge(overrides)
+    )
+
+    if finalize_config is not None:
+        finalize_config(config)
+
+    config = config.merge(overrides)
 
     if config.model.float8_config is not None and config.model.float8_config.enabled:
         config.trainer.add_callback(
@@ -313,6 +319,7 @@ def main(
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
     optim_config_builder: Callable[[CommonComponents], AdamWConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
+    finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
 ):
     usage = f"""
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
@@ -350,6 +357,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         model_config_builder=model_config_builder,
         optim_config_builder=optim_config_builder,
         trainer_config_builder=trainer_config_builder,
+        finalize_config=finalize_config,
     )
 
     cmd.run(config)

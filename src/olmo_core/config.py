@@ -217,5 +217,14 @@ class DType(StrEnum):
     float32 = "float32"
     bfloat16 = "bfloat16"
 
+    @classmethod
+    def from_pt(cls, dtype: torch.dtype) -> "DType":
+        if dtype == torch.float32:
+            return DType.float32
+        elif dtype == torch.bfloat16:
+            return DType.bfloat16
+        else:
+            raise NotImplementedError(dtype)
+
     def as_pt(self) -> torch.dtype:
         return getattr(torch, self)
