@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added Google Cloud support for `list_directory()` and `clear_directory()`.
 - Added `CometCallback` for logging training runs to Comet.ml.
 - Added `DataMixBase` class, to allow extending to new data mix groups.
 - Added method `DataLoaderBase.get_mock_batch()`.
