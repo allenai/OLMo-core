@@ -1,3 +1,5 @@
+import pytest
+
 from olmo_core.io import (
     deserialize_from_tensor,
     list_directory,
@@ -45,4 +47,9 @@ def test_list_remote_directory_s3(tmp_path, s3_checkpoint_dir):
 
 
 def test_list_remote_directory_gcs(tmp_path, gcs_checkpoint_dir):
-    _run_list_remote_directory(tmp_path, gcs_checkpoint_dir)
+    from google.auth.exceptions import DefaultCredentialsError
+
+    try:
+        _run_list_remote_directory(tmp_path, gcs_checkpoint_dir)
+    except DefaultCredentialsError:
+        pytest.skip("Requires authentication with Google Cloud")
