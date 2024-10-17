@@ -250,7 +250,7 @@ def clear_directory(dir: PathOrStr, force: bool = False):
         from urllib.parse import urlparse
 
         parsed = urlparse(str(dir))
-        if parsed.scheme in ("s3", "r2", "weka"):
+        if parsed.scheme in ("s3", "r2", "weka", "gs"):
             prefix = parsed.path.strip("/")
             # For safety (so people don't accidentally delete a whole bunch of important data),
             # ensure prefix is at least 2 folders deep.
@@ -259,6 +259,12 @@ def clear_directory(dir: PathOrStr, force: bool = False):
                     "For safety, clearing a remote directory this close to the root of a bucket is "
                     "not allowed by default. To override this behavior set ``force=True``."
                 )
+
+        if parsed.scheme == "gs":
+            prefix = parsed.path.strip("/")
+            return _gcs_clear_directory(parsed.netloc, prefix)
+        elif parsed.scheme in ("s3", "r2", "weka"):
+            prefix = parsed.path.strip("/")
             return _s3_clear_directory(parsed.scheme, parsed.netloc, prefix)
         else:
             raise NotImplementedError(
@@ -270,7 +276,7 @@ def clear_directory(dir: PathOrStr, force: bool = False):
 
 def list_directory(dir: PathOrStr) -> Generator[str, None, None]:
     """
-    List the contents of a local or remote directory.
+    List the immediate contents of a local or remote directory.
 
     :param dir: Path/URL to the directory.
     """
@@ -283,7 +289,9 @@ def list_directory(dir: PathOrStr) -> Generator[str, None, None]:
         from urllib.parse import urlparse
 
         parsed = urlparse(dir)
-        if parsed.scheme in ("s3", "r2", "weka"):
+        if parsed.scheme == "gs":
+            yield from _gcs_list_directory(parsed.netloc, parsed.path.strip("/"))
+        elif parsed.scheme in ("s3", "r2", "weka"):
             yield from _s3_list_directory(parsed.scheme, parsed.netloc, parsed.path.strip("/"))
         else:
             raise NotImplementedError(
@@ -437,6 +445,54 @@ def _gcs_upload(source: Path, bucket_name: str, key: str, save_overwrite: bool =
             f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
         )
     blob.upload_from_filename(source)
+
+
+def _gcs_list_directory(bucket_name: str, prefix: str) -> Generator[str, None, None]:
+    from google.api_core.exceptions import NotFound
+
+    storage_client = _get_gcs_client()
+
+    prefix = prefix.strip("/")
+    if prefix:
+        prefix += "/"
+
+    for match_glob in (
+        prefix + "*",  # only immediate files
+        prefix + "**/",  # only immediate sub-folders
+    ):
+        try:
+            bucket = storage_client.bucket(bucket_name)
+            blobs = bucket.list_blobs(
+                prefix=prefix,
+                delimiter="/",
+                match_glob=match_glob,
+            )
+        except NotFound:
+            raise FileNotFoundError(f"gs://{bucket_name}/{prefix}")
+
+        for blob in blobs:
+            yield f"gs://{bucket_name}/{blob.name}"
+
+        for folder in blobs.prefixes:
+            yield f"gs://{bucket_name}/{folder.strip('/')}"
+
+
+def _gcs_clear_directory(bucket_name: str, prefix: str):
+    from google.api_core.exceptions import NotFound
+
+    storage_client = _get_gcs_client()
+
+    prefix = prefix.strip("/")
+    if prefix:
+        prefix += "/"
+
+    try:
+        bucket = storage_client.bucket(bucket_name)
+        blobs = bucket.list_blobs(prefix=prefix)
+        for blob in blobs:
+            bucket.delete_blob(blob.name)
+    except NotFound:
+        return
 
 
 ###################
