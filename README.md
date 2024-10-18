@@ -19,6 +19,10 @@ First install [PyTorch](https://pytorch.org) according to the instructions speci
 pip install ai2-olmo-core
 ```
 
+## API stability
+
+Even though this library is under rapid development we are trying hard to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with every release except for features that are explicitly marked as beta features.
+
 ## Official training scripts
 
 Official training scripts for various model sizes can be found in [`src/scripts/train/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/train).

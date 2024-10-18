@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 
 from olmo_core.config import Config, DType, StrEnum
+from olmo_core.doc_utils import beta_feature
 
 from .layers import MoE as MoEWrapper
 
@@ -78,6 +79,7 @@ class MoEMLPImplementation(StrEnum):
     """
 
 
+@beta_feature
 @dataclass
 class MoEConfig(Config):
     """

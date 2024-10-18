@@ -3,7 +3,10 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
+from olmo_core.doc_utils import beta_feature
 
+
+@beta_feature
 class MoE(nn.Module):
     """
     A thin wrapper around `megablocks <https://github.com/databricks/megablocks>`_ MoE layers.

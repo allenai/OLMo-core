@@ -13,6 +13,7 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
+from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.utils import get_default_device, has_flash_attn
@@ -63,7 +64,12 @@ class TransformerDataParallelConfig(DataParallelConfig):
     """
 
 
+@beta_feature
 class TransformerActivationCheckpointingMode(StrEnum):
+    """
+    An enumeration of the different activation checkpointing modes.
+    """
+
     full = "full"
     """Checkpoint every block."""
     selected_blocks = "selected_blocks"
@@ -72,6 +78,7 @@ class TransformerActivationCheckpointingMode(StrEnum):
     """Checkpoint only selected modules."""
 
 
+@beta_feature
 @dataclass
 class TransformerActivationCheckpointingConfig(Config):
     """
