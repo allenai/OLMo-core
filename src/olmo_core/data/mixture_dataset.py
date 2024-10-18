@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
 
-import smart_open
 import tabulate
 
 from olmo_core.aliases import PathOrStr
@@ -14,7 +13,7 @@ from olmo_core.config import Config
 from olmo_core.data import NumpyDatasetDType
 from olmo_core.data.utils import load_array_slice, memmap_to_write
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.io import get_bytes_range, get_file_size
+from olmo_core.io import get_file_size
 
 
 @dataclass
@@ -186,6 +185,7 @@ class SourceMixtureDatasetConfig(Config):
         written: List[str] = []
 
         # Make sure we have enough paths to accommodate repetitions
+        # TODO: Need to make this go birrr
         for idx, path in enumerate(paths * math.ceil(source_config.max_repetion_ratio)):
             # Stop if we've taken enough tokens
             if tokens_taken >= tokens_to_take:
@@ -228,11 +228,3 @@ class SourceMixtureDatasetConfig(Config):
         """
         npdtype = dtype.as_np_dtype()
         return num_bytes // npdtype(int(0)).itemsize
-
-    def _tokens_to_bytes(self, num_tokens: int, dtype: NumpyDatasetDType) -> int:
-        """
-        Convert tokens to bytes based on the dtype.
-        """
-
-        npdtype = dtype.as_np_dtype()
-        return num_tokens * npdtype(int(0)).itemsize

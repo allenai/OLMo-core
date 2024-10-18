@@ -18,7 +18,6 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 DATA = {
     "dtype": NumpyDatasetDType.uint32,
-    "itemsize": np.dtype(np.uint32).itemsize,
     "tokens_per_file": 1_000_000,
 }
 
@@ -171,7 +170,7 @@ def test_dataset_mixture_build(tmp_path: Path):
         config = SourceMixtureDatasetConfig(
             max_tokens=max_tokens,
             source_configs=source_configs,
-            dtype=NumpyDatasetDType.uint32,
+            dtype=DATA["dtype"],
             output_dir=tmp_dir,
         )
 
@@ -211,11 +210,11 @@ def test_dataset_mixture_build_insufficient_source_data(tmp_path: Path):
         config = SourceMixtureDatasetConfig(
             max_tokens=max_tokens,
             source_configs=source_configs,
-            dtype=NumpyDatasetDType.uint32,
+            dtype=DATA["dtype"],
             output_dir=tmp_dir,
         )
 
-        # Should raise exception because the target ratio for source 1 @50% (2.5M) is infeasible without repetition
+        # Should raise exception because the target ratio for source 1 @50% (2.5M) is infeasible without repetition (default max_repetition_ratio=1)
         with pytest.raises(OLMoConfigurationError):
             config.build()
 
@@ -259,7 +258,7 @@ def test_dataset_mixture_build_with_repetition(tmp_path: Path):
         config = SourceMixtureDatasetConfig(
             max_tokens=max_tokens,
             source_configs=source_configs,
-            dtype=NumpyDatasetDType.uint32,
+            dtype=DATA["dtype"],
             output_dir=tmp_dir,
         )
 
@@ -305,7 +304,7 @@ def test_dataset_mixture_build_insufficient_source_max_fraction(tmp_path: Path):
         config = SourceMixtureDatasetConfig(
             max_tokens=max_tokens,
             source_configs=source_configs,
-            dtype=NumpyDatasetDType.uint32,
+            dtype=DATA["dtype"],
             output_dir=tmp_dir,
         )
 
@@ -351,7 +350,7 @@ def test_dataset_mixture_build_expected_files(tmp_path: Path):
         config = SourceMixtureDatasetConfig(
             max_tokens=max_tokens,
             source_configs=source_configs,
-            dtype=NumpyDatasetDType.uint32,
+            dtype=DATA["dtype"],
             output_dir=tmp_dir,
         )
 
@@ -410,7 +409,7 @@ def test_dataset_mixture_render_table(tmp_path: Path, capsys):
         config = SourceMixtureDatasetConfig(
             max_tokens=max_tokens,
             source_configs=source_configs,
-            dtype=NumpyDatasetDType.uint32,
+            dtype=DATA["dtype"],
             output_dir=tmp_dir,
         )
 
