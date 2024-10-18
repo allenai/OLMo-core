@@ -8,6 +8,7 @@ from .float8_handler import Float8HandlerCallback
 from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
 from .grad_clipper import GradClipperCallback
+from .moe_handler import MoEHandlerCallback
 from .profiler import ProfilerCallback
 from .scheduler import SchedulerCallback
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
@@ -26,6 +27,7 @@ __all__ = [
     "EvaluatorCallback",
     "Float8HandlerCallback",
     "LMEvaluatorCallbackConfig",
+    "MoEHandlerCallback",
     "GarbageCollectorCallback",
     "GPUMemoryMonitorCallback",
     "GradClipperCallback",
