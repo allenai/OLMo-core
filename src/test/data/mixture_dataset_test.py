@@ -36,6 +36,50 @@ def _make_mmaps(tmp_path: Path, prefix: str, num_files: int, size: int) -> List[
     return mmaps
 
 
+def test_source_mixture_config_dry_run(tmp_path: Path, capsys):
+    source_paths = {
+        "1": _make_mmaps(
+            tmp_path=tmp_path, prefix="source1", num_files=2, size=DATA["tokens_per_file"]
+        ),
+        "2": _make_mmaps(
+            tmp_path=tmp_path, prefix="source2", num_files=2, size=DATA["tokens_per_file"]
+        ),
+        "3": _make_mmaps(
+            tmp_path=tmp_path, prefix="source3", num_files=2, size=DATA["tokens_per_file"]
+        ),
+    }
+
+    source_configs = [
+        SourceMixtureConfig(
+            source_name="1",
+            target_ratio=0.33,
+            paths=source_paths["1"],
+        ),
+        SourceMixtureConfig(source_name="2", target_ratio=0.33, paths=source_paths["2"]),
+        SourceMixtureConfig(
+            source_name="3",
+            target_ratio=0.34,
+            paths=source_paths["3"],
+        ),
+    ]
+
+    max_tokens = 5_000_000
+
+    with TemporaryDirectory() as tmp_dir:
+        config = SourceMixtureDatasetConfig(
+            max_tokens=max_tokens,
+            source_configs=source_configs,
+            dtype=NumpyDatasetDType.uint32,
+            output_dir=tmp_dir,
+            dry_run=True,
+        )
+
+        with capsys.disabled():
+            print("\n")
+            mixture = config.build()
+            assert isinstance(mixture, SourceMixtureDataset)
+
+
 def test_source_mixture_config_validation():
     with pytest.raises(OLMoConfigurationError):
         SourceMixtureConfig(

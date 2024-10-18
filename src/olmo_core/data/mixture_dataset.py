@@ -96,11 +96,18 @@ class SourceMixtureDatasetConfig(Config):
     output_dir: PathOrStr
     processes: int = 1
     seed: int = 42
+    dry_run: bool = False
 
     def __post_init__(self):
         os.makedirs(self.output_dir, exist_ok=True)
 
     def validate(self):
+        if self.max_tokens <= 0:
+            raise OLMoConfigurationError("max_tokens must be > 0")
+
+        if not self.source_configs:
+            raise OLMoConfigurationError("source_configs must not be empty")
+
         if (total := sum([source.target_ratio for source in self.source_configs])) != 1.0:
             raise OLMoConfigurationError(f"target_ratios must sum to 1, got {total}")
 
@@ -142,10 +149,11 @@ class SourceMixtureDatasetConfig(Config):
             )
 
         completed = []
-        for outcome in tokens_outcome_per_source:
-            completed.append(self._handle_source_outcome(outcome))
+        if not self.dry_run:
+            for outcome in tokens_outcome_per_source:
+                completed.append(self._handle_source_outcome(outcome))
 
-        print("Mixing outcome by source:")
+        print(f"Mixing outcome by source: {'' if not self.dry_run else '(DRY RUN)'}")
         print(
             tabulate.tabulate(
                 [item.for_table(self.max_tokens) for item in tokens_outcome_per_source],
