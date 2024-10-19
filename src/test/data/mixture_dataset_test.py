@@ -241,7 +241,7 @@ def test_dataset_mixture_build_with_repetition(tmp_path: Path):
         SourceMixtureConfig(
             source_name="1",
             target_ratio=0.5,
-            max_repetion_ratio=3.0,  # Allow 3x repetition of source1 so that we can meet the target of 2.5M
+            max_repetition_ratio=3.0,  # Allow 3x repetition of source1 so that we can meet the target of 2.5M
             paths=source_paths["1"],
         ),
         SourceMixtureConfig(source_name="2", target_ratio=0.25, paths=source_paths["2"]),
@@ -376,19 +376,19 @@ def test_dataset_mixture_build_expected_files(tmp_path: Path):
 def test_dataset_mixture_render_table(tmp_path: Path, capsys):
     source_paths = {
         "1": _make_mmaps(
-            tmp_path=tmp_path, prefix="source1", num_files=1, size=DATA["tokens_per_file"]
+            tmp_path=tmp_path, prefix="source1", num_files=5, size=DATA["tokens_per_file"]
         ),
         "2": _make_mmaps(
-            tmp_path=tmp_path, prefix="source2", num_files=2, size=DATA["tokens_per_file"]
+            tmp_path=tmp_path, prefix="source2", num_files=5, size=DATA["tokens_per_file"]
         ),
         "3": _make_mmaps(
-            tmp_path=tmp_path, prefix="source3", num_files=2, size=DATA["tokens_per_file"]
+            tmp_path=tmp_path, prefix="source3", num_files=5, size=DATA["tokens_per_file"]
         ),
     }
     source_configs = [
         SourceMixtureConfig(
             source_name="1",
-            target_ratio=0.10,
+            target_ratio=0.30,
             paths=source_paths["1"],
         ),
         SourceMixtureConfig(
@@ -398,12 +398,12 @@ def test_dataset_mixture_render_table(tmp_path: Path, capsys):
         ),
         SourceMixtureConfig(
             source_name="3",
-            target_ratio=0.5,
+            target_ratio=0.30,
             paths=source_paths["3"],
         ),
     ]
 
-    max_tokens = 10 * 1000
+    max_tokens = 10_123_000
 
     with TemporaryDirectory() as tmp_dir:
         config = SourceMixtureDatasetConfig(

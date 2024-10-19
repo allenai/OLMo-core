@@ -1,10 +1,13 @@
 import math
+import multiprocessing as mp
 import os
 import random
-from concurrent.futures import ThreadPoolExecutor
+import threading
+from concurrent.futures import as_completed, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
+from tqdm import tqdm
 
 import tabulate
 
@@ -16,13 +19,33 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.io import get_file_size
 
 
+class ValueLock:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._value = 0
+
+    def increment(self) -> int:
+        with self._lock:
+            self._value += 1
+            return self._value
+
+    def add(self, value) -> int:
+        with self._lock:
+            self._value = self._value + value
+            return self._value
+
+    def value(self) -> int:
+        with self._lock:
+            return self._value
+
+
 @dataclass
 class SourceMixtureConfig(Config):
     source_name: str
     target_ratio: float
     paths: List[PathOrStr]
     # 1.0 will result in a maximum of 1 repitition of the source data per epoch
-    max_repetion_ratio: float = 1.0
+    max_repetition_ratio: float = 1.0
     max_source_fraction: float = 1.0
 
     def validate(self):
@@ -57,7 +80,7 @@ class SourceTokenDetails:
             "source_population": f"{self.source_population:.2e}",
             "num_sampled": f"{self.num_selected:.2e}",
             "target_ratio": self.source.target_ratio,
-            "max_repetion_ratio": self.source.max_repetion_ratio,
+            "max_repetion_ratio": self.source.max_repetition_ratio,
             "max_source_fraction": self.source.max_source_fraction,
             "observed_source_ratio": self.num_selected / self.source_population,
             "observed_global_ratio": self.num_selected / max_tokens,
@@ -117,8 +140,9 @@ class SourceMixtureDatasetConfig(Config):
 
         # Count the number of tokens available for each source
         for source_config in self.source_configs:
-            available_tokens_by_source[source_config.source_name] = self._count_tokens_for_source(
-                source_config, self.dtype
+            print("Counting tokens for source: ", source_config.source_name)
+            available_tokens_by_source[source_config.source_name] = self._count_tokens_for_paths(
+                source_config.paths
             )
 
         tokens_outcome_per_source: List[SourceTokenDetails] = []
@@ -130,7 +154,7 @@ class SourceMixtureDatasetConfig(Config):
             max_for_source = int(
                 available_for_source
                 * source_config.max_source_fraction
-                * source_config.max_repetion_ratio
+                * source_config.max_repetition_ratio
             )
 
             # Ensure that the available source tokens meet the target ratio requirement
@@ -176,51 +200,92 @@ class SourceMixtureDatasetConfig(Config):
         self, dtype: NumpyDatasetDType, tokens_to_take: int, source_config: SourceMixtureConfig
     ) -> List[str]:
         """
-        Stream selected tokens into a local file based on selection criteria.
+        Write selected tokens into a local file based on selection criteria.
         """
         # Shuffle the paths to avoid biasing our selection to sequential file paths
         paths = source_config.paths.copy()
         random.shuffle(paths)
-        tokens_taken = 0
         written: List[str] = []
+        taken = ValueLock()
+        m = mp.Manager()
+        write_lock = m.Lock()
 
-        # Make sure we have enough paths to accommodate repetitions
-        # TODO: Need to make this go birrr
-        for idx, path in enumerate(paths * math.ceil(source_config.max_repetion_ratio)):
-            # Stop if we've taken enough tokens
-            if tokens_taken >= tokens_to_take:
-                break
+        with ThreadPoolExecutor(max_workers=self.processes) as executor:
+            print(f"Collecting {tokens_to_take:.2e} tokens for {source_config.source_name}")
+            futures = []
+            for idx, path in enumerate(paths * math.ceil(source_config.max_repetition_ratio)):
+                futures.append(
+                    executor.submit(
+                        self._load_and_write_tokens,
+                        idx,
+                        path,
+                        dtype,
+                        tokens_to_take,
+                        source_config.source_name,
+                        taken,
+                        write_lock,
+                    )
+                )
 
-            filename = f"{self.output_dir}/{idx:05}_{source_config.source_name}.npy"
-            nda = load_array_slice(path, 0, tokens_to_take - tokens_taken, dtype.as_np_dtype())
+            for future in tqdm(
+                as_completed(futures),
+                total=len(futures),
+                desc=f"Processing {source_config.source_name}",
+            ):
+                written.append(future.result())
+
+        return [path for path in written if path is not None]
+
+    def _load_and_write_tokens(
+        self,
+        index: int,
+        path: PathOrStr,
+        dtype: NumpyDatasetDType,
+        tokens_to_take: int,
+        source_name: str,
+        taken: ValueLock,
+        write_lock: threading.Lock,
+    ) -> Optional[str]:
+        """
+        Load tokens from a source file and write them to a local file.
+        """
+        if taken.value() >= tokens_to_take:
+            return None
+
+        filename = f"{self.output_dir}/{index:05}_{source_name}.npy"
+        print(f"Fetching {path} for {source_name}")
+        nda = load_array_slice(path, 0, tokens_to_take, dtype.as_np_dtype())
+        print(f"Fetched {len(nda):.2e} tokens for {source_name} {path}")
+
+        # TODO: Why are we repeating files and or have empty arrays?
+        with write_lock:
+            nda = nda[: tokens_to_take - taken.value()]
+            if len(nda) <= 0:
+                print(f"Skipping {path} as it has no tokens left")
+                return None
             with memmap_to_write(
                 path=Path(filename), shape=(len(nda),), dtype=dtype.as_np_dtype()
             ) as mm:
                 mm[:] = nda
+                taken.add(len(nda))
+                print(f"Wrote {len(nda):.2e} tokens to {filename}")
 
-            written.append(filename)
-            tokens_taken += tokens_to_take - tokens_taken
+        return filename
 
-        return written
-
-    def _count_tokens_for_source(
-        self, source_config: SourceMixtureConfig, dtype: NumpyDatasetDType
-    ) -> int:
+    def _count_tokens_for_paths(self, paths: List[PathOrStr]) -> int:
         """
-        Count the number of tokens for a set of source token files in parallel.
+        Count the number of tokens for a set of source files in parallel.
 
         Args:
             source_config: The source configuration.
             dtype: The data type of the source tokens.
         """
 
-        def _count_tokens(path) -> int:
-            size = get_file_size(path)
-            tokens = self._bytes_to_tokens(size, dtype)
-            return tokens
-
         with ThreadPoolExecutor(max_workers=self.processes) as executor:
-            return sum(executor.map(_count_tokens, source_config.paths))
+            return sum(executor.map(self._count_tokens_for_file, paths))
+
+    def _count_tokens_for_file(self, path) -> int:
+        return self._bytes_to_tokens(get_file_size(path), self.dtype)
 
     def _bytes_to_tokens(self, num_bytes: int, dtype: NumpyDatasetDType) -> int:
         """
