@@ -11,13 +11,15 @@ from .block import (
     TransformerBlockConfig,
     TransformerBlockType,
 )
+from .config import (
+    TransformerActivationCheckpointingConfig,
+    TransformerConfig,
+    TransformerDataParallelConfig,
+)
 from .init import InitMethod
 from .model import (
     Transformer,
-    TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
-    TransformerConfig,
-    TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
 )
 
