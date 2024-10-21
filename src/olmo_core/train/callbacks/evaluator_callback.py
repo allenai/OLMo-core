@@ -2,8 +2,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List, Optional
 
-import torch
-
 from olmo_core.data import NumpyDatasetConfig, NumpyPaddedFSLDataset
 from olmo_core.distributed.utils import get_world_size
 from olmo_core.eval import Evaluator
@@ -64,10 +62,9 @@ class EvaluatorCallback(Callback):
                 eval_step += 1
                 eval_tokens += batch["input_ids"].numel() * dp_world_size
                 batch = move_to_device(batch, self.trainer.device)
-                with torch.no_grad():
-                    ce_loss, _, logits = self.trainer._model_forward(
-                        batch, loss_reduction="none", compute_z_loss=False
-                    )
+                logits, ce_loss, _ = self.trainer.eval_batch(
+                    batch, loss_reduction="none", compute_z_loss=False
+                )
                 evaluator.update_metrics(batch, ce_loss, logits)
 
                 if eval_step % self.trainer.cancel_check_interval == 0:

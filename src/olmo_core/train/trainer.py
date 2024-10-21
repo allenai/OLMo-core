@@ -836,6 +836,98 @@ class Trainer:
         self._sort_callbacks()
         callback.post_attach()
 
+    def model_forward(self, micro_batch: Dict[str, Any]) -> torch.Tensor:
+        """
+        Run a forward pass on a micro-batch, returning the logits.
+        """
+        with self._model_forward_context():
+            # shape: (batch_size, seq_len, vocab_size)
+            logits = self.model(
+                input_ids=micro_batch["input_ids"],
+                #  attention_mask=micro_batch.get("attention_mask"),
+                #  attention_bias=micro_batch.get("attention_bias"),
+                doc_lens=micro_batch.get("doc_lens"),
+                max_doc_lens=micro_batch.get("max_doc_lens"),
+            )
+        return logits
+
+    def get_losses(
+        self,
+        micro_batch: Dict[str, Any],
+        logits: torch.Tensor,
+        loss_reduction: Literal["mean", "sum", "none"] = "mean",
+        compute_z_loss: Optional[bool] = None,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Compute the cross-entropy loss and optionally the Z-loss from a micro-batch and the
+        corresponding logits returned from :meth:`model_forward()`.
+
+        :param micro_batch: The micro-batch to evaluate.
+        :param logits: The logits from the forward pass.
+        :param loss_reduction: The (local) reduction to apply to the loss(es).
+        :param compute_z_loss: Whether or not to compute and return the Z-loss.
+
+        :returns: The cross entropy and optional Z-loss, respectively.
+        """
+        loss_fn = cross_entropy_loss if not self.fused_loss else fused_cross_entropy_loss
+        if compute_z_loss is None:
+            compute_z_loss = self.z_loss_multiplier is not None
+
+        # shape: (batch_size, seq_len - 1, vocab_size)
+        logits_for_loss = logits[..., :-1, :].contiguous()
+        # shape: (batch_size * (seq_len - 1), vocab_size)
+        logits_for_loss = logits_for_loss.view(-1, logits_for_loss.size(-1))
+
+        # shape: (batch_size, seq_len - 1)
+        labels = micro_batch.get("labels", self._get_labels(micro_batch))
+        # shape: (batch_size * (seq_len - 1),)
+        labels = labels.view(-1)
+
+        ce_loss, z_loss = loss_fn(
+            logits_for_loss,
+            labels,
+            ignore_index=self.data_loader.collator.label_ignore_index,
+            reduction=loss_reduction,
+            compute_z_loss=compute_z_loss,
+            z_loss_multiplier=self.z_loss_multiplier or 1e-4,
+        )
+
+        if loss_reduction == "none":
+            # Reshape (batch_size * (seq_len - 1),) -> (batch_size, seq_len - 1)
+            ce_loss = ce_loss.view(micro_batch["input_ids"].shape[0], -1)
+            if z_loss is not None:
+                z_loss = z_loss.view(micro_batch["input_ids"].shape[0], -1)
+
+        return ce_loss, z_loss
+
+    def eval_batch(
+        self,
+        batch: Dict[str, Any],
+        loss_reduction: Literal["mean", "sum", "none"] = "mean",
+        compute_z_loss: Optional[bool] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Get the loss for an eval batch.
+
+        .. important::
+            You are responsible for ensuring the model is in ``.eval()`` mode before calling this.
+
+        :param batch: The batch to evaluate.
+        :param loss_reduction: The (local) reduction to apply to the loss(es).
+        :param compute_z_loss: Whether or not to compute and return the Z-loss.
+
+        :returns: The logits, cross-entropy loss, and Z-loss, respectively.
+        """
+        batch = move_to_device(batch, self.device)
+        for callback in self.callbacks.values():
+            callback.pre_eval_batch(batch)
+        with torch.no_grad():
+            logits = self.model_forward(batch)
+            ce_loss, z_loss = self.get_losses(
+                batch, logits, loss_reduction=loss_reduction, compute_z_loss=compute_z_loss
+            )
+        return logits, ce_loss, z_loss
+
     def _sort_callbacks(self):
         self.callbacks = OrderedDict(
             (
@@ -955,68 +1047,12 @@ class Trainer:
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         compute_z_loss: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
-        with self._model_forward_context():
-            # shape: (batch_size, seq_len, vocab_size)
-            logits = self.model(
-                input_ids=batch["input_ids"],
-                #  attention_mask=batch.get("attention_mask"),
-                #  attention_bias=batch.get("attention_bias"),
-                doc_lens=batch.get("doc_lens"),
-                max_doc_lens=batch.get("max_doc_lens"),
-            )
-
-        # shape: (batch_size, seq_len - 1, vocab_size)
-        logits_for_loss = logits[..., :-1, :].contiguous()
-        # shape: (batch_size * (seq_len - 1), vocab_size)
-        logits_for_loss = logits_for_loss.view(-1, logits_for_loss.size(-1))
-        # shape: (batch_size, seq_len - 1)
-        labels = batch.get("labels", self._get_labels(batch))
-        # shape: (batch_size * (seq_len - 1),)
-        labels = labels.view(-1)
-
-        loss_fn = cross_entropy_loss if not self.fused_loss else fused_cross_entropy_loss
-        ce_loss, z_loss = loss_fn(
-            logits_for_loss,
-            labels,
-            ignore_index=self.data_loader.collator.label_ignore_index,
-            reduction=loss_reduction,
-            compute_z_loss=compute_z_loss,
-            z_loss_multiplier=self.z_loss_multiplier or 1e-4,
+        # NOTE: keep this method for backwards compatibility.
+        logits = self.model_forward(batch)
+        ce_loss, z_loss = self.get_losses(
+            batch, logits, loss_reduction=loss_reduction, compute_z_loss=compute_z_loss
         )
-
-        if loss_reduction == "none":
-            # Reshape (batch_size * (seq_len - 1),) -> (batch_size, seq_len - 1)
-            ce_loss = ce_loss.view(batch["input_ids"].shape[0], -1)
-            if z_loss is not None:
-                z_loss = z_loss.view(batch["input_ids"].shape[0], -1)
-
         return ce_loss, z_loss, logits
-
-    def _get_microbatch_loss(
-        self, micro_batch: Dict[str, Any], batch_num_tokens_for_loss: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-        # NOTE: we use the "sum" loss reduction and then divide by 'batch_num_tokens_for_loss'
-        # (the total number of tokens used in the loss across the whole batch, not just the micro batch)
-        # to avoid biasing the loss in the case where micro-batches might not be the same size.
-        ce_loss, z_loss, logits = self._model_forward(
-            micro_batch, compute_z_loss=self.z_loss_multiplier is not None, loss_reduction="sum"
-        )
-        ce_loss = ce_loss / batch_num_tokens_for_loss
-
-        # In case this helps with memory utilization.
-        del micro_batch
-
-        # Get loss to optimize for.
-        if self.z_loss_multiplier is not None:
-            assert z_loss is not None
-            z_loss = z_loss / batch_num_tokens_for_loss
-            loss = ce_loss + z_loss
-        else:
-            loss = ce_loss
-
-        del logits
-
-        return loss, ce_loss, z_loss
 
     @contextlib.contextmanager
     def _train_microbatch_context(
@@ -1054,9 +1090,6 @@ class Trainer:
         micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
         num_micro_batches = len(micro_batches)
 
-        # In case this helps with memory utilization.
-        del batch
-
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
         z_batch_loss = (
             None
@@ -1068,9 +1101,22 @@ class Trainer:
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
             with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
                 # Run forward pass.
-                loss, ce_loss, z_loss = self._get_microbatch_loss(
-                    micro_batch, batch_num_tokens_for_loss
-                )
+                logits = self.model_forward(micro_batch)
+
+                # NOTE: we use the "sum" loss reduction and then divide by 'batch_num_tokens_for_loss'
+                # (the total number of tokens used in the loss across the whole batch, not just the micro batch)
+                # to avoid biasing the loss in the case where micro-batches might not be the same size.
+                ce_loss, z_loss = self.get_losses(micro_batch, logits, loss_reduction="sum")
+                ce_loss.div_(batch_num_tokens_for_loss)
+                if z_loss is not None:
+                    z_loss.div_(batch_num_tokens_for_loss)
+
+                # Get loss to optimize for.
+                loss: torch.Tensor
+                if z_loss is not None:
+                    loss = ce_loss + z_loss
+                else:
+                    loss = ce_loss
 
                 # Update overall CE batch loss.
                 ce_batch_loss += get_local_tensor(ce_loss.detach())
@@ -1080,8 +1126,15 @@ class Trainer:
                     assert z_batch_loss is not None
                     z_batch_loss += get_local_tensor(z_loss.detach())
 
+                # Run through callbacks.
+                for callback in self.callbacks.values():
+                    callback.pre_backward(batch=batch, micro_batch=micro_batch, loss=loss)
+
                 # Run backward pass.
                 loss.backward()
+
+        # In case this helps with memory utilization.
+        del batch
 
         if dry_run:
             # Zero-gradients again.
@@ -1103,6 +1156,10 @@ class Trainer:
         self.optim.step()
         if isinstance(self.optim, SkipStepOptimizer):
             self.record_metric(OPTIM_STEP_SKIPPED_METRIC, self.optim.step_skipped)
+
+        # Run through callbacks.
+        for callback in self.callbacks.values():
+            callback.post_train_batch()
 
     def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:
         data_iterator = iter(self.data_loader)
@@ -1163,9 +1220,6 @@ class Trainer:
                 callback.pre_step(batch)
 
             self._train_batch(batch)
-
-            for callback in self.callbacks.values():
-                callback.post_train_batch()
 
             for callback in self.callbacks.values():
                 callback.post_step()

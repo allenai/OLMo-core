@@ -109,10 +109,27 @@ jobs:
       matrix:
         task:
           - name: Test (GPU)
-            run: pytest -v --color=yes --durations=3 -m gpu src/test/ --ignore-glob='src/test/distributed/checkpoint*'
+            image: olmo-core
+            gpus: 2
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                --ignore-glob='src/test/distributed/checkpoint*' \
+                --ignore-glob='src/test/nn/moe*' \
+                src/test/
 
           - name: Test checkpoint (GPU)
-            run: pytest -v --color=yes --durations=3 -m gpu src/test/distributed/checkpoint*
+            image: olmo-core
+            gpus: 2
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                src/test/distributed/checkpoint*
+
+          - name: Test MoE (GPU)
+            image: olmo-core-nightly
+            gpus: 1
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                src/test/nn/moe*
     steps:
       - uses: actions/checkout@v3
 
@@ -142,7 +159,7 @@ jobs:
       - name: Get full image name
         if: env.BEAKER_TOKEN != ''
         run:
-          echo "BEAKER_IMAGE=$(make get-full-beaker-image-name)" >> $GITHUB_ENV
+          echo "BEAKER_IMAGE=$(make get-full-beaker-image-name IMAGE_NAME=${{ matrix.task.image }})" >> $GITHUB_ENV
 
       - name: GPU Tests
         uses: allenai/beaker-run-action@v1.2
@@ -160,7 +177,7 @@ jobs:
                   priority: low
                   preemptible: true
                 resources:
-                  gpuCount: 2
+                  gpuCount: ${{ matrix.task.gpus }}
                 constraints:
                   cluster:
                     - ai2/allennlp-cirrascale

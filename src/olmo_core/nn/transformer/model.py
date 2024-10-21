@@ -13,6 +13,7 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
+from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.utils import get_default_device, has_flash_attn
@@ -28,6 +29,8 @@ from .init import InitMethod
 __all__ = [
     "TransformerConfig",
     "Transformer",
+    "TransformerDataParallelConfig",
+    "TransformerDataParallelWrappingStrategy",
     "TransformerActivationCheckpointingConfig",
     "TransformerActivationCheckpointingMode",
 ]
@@ -36,7 +39,37 @@ __all__ = [
 log = logging.getLogger(__name__)
 
 
+class TransformerDataParallelWrappingStrategy(StrEnum):
+    """
+    An enumeration of the different wrapping strategy for the data parallel implementations.
+    """
+
+    full = "full"
+    """
+    Wrap each block (only applies to FSDP).
+    """
+    fine_grained = "fine_grained"
+    """
+    Wrap certain modules within each block in addition to wrapping each block (only applies to FSDP).
+    """
+
+
+@dataclass
+class TransformerDataParallelConfig(DataParallelConfig):
+    wrapping_strategy: TransformerDataParallelWrappingStrategy = (
+        TransformerDataParallelWrappingStrategy.full
+    )
+    """
+    Wrapping strategy.
+    """
+
+
+@beta_feature
 class TransformerActivationCheckpointingMode(StrEnum):
+    """
+    An enumeration of the different activation checkpointing modes.
+    """
+
     full = "full"
     """Checkpoint every block."""
     selected_blocks = "selected_blocks"
@@ -45,6 +78,7 @@ class TransformerActivationCheckpointingMode(StrEnum):
     """Checkpoint only selected modules."""
 
 
+@beta_feature
 @dataclass
 class TransformerActivationCheckpointingConfig(Config):
     """
@@ -104,7 +138,7 @@ class TransformerConfig(Config):
     init_method: InitMethod = InitMethod.normal
     init_seed: int = 0
     compile: bool = False
-    dp_config: Optional[DataParallelConfig] = None
+    dp_config: Optional[TransformerDataParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
     float8_config: Optional[Float8Config] = None
 
@@ -176,6 +210,7 @@ class TransformerConfig(Config):
                     if self.dp_config.param_dtype is not None
                     else None,
                     reduce_dtype=self.dp_config.reduce_dtype.as_pt(),
+                    wrapping_strategy=self.dp_config.wrapping_strategy,
                 )
             elif self.dp_config.name == DataParallelType.ddp:
                 model.apply_ddp(dp_mesh=dp_mesh, compile_enabled=self.compile)
@@ -237,9 +272,14 @@ class TransformerConfig(Config):
         block_params += layer_norm_params(self.block.layer_norm)
 
         # Block feed forward.
-        block_params += 3 * self.d_model * self.block.feed_forward.hidden_size
-        if self.block.feed_forward.bias:
-            block_params += 2 * self.block.feed_forward.hidden_size + self.d_model
+        if "moe" not in self.block.name:
+            assert self.block.feed_forward is not None
+            block_params += 3 * self.d_model * self.block.feed_forward.hidden_size
+            if self.block.feed_forward.bias:
+                block_params += 2 * self.block.feed_forward.hidden_size + self.d_model
+        else:
+            assert self.block.feed_forward_moe is not None
+            block_params += self.block.feed_forward_moe.num_params(self.d_model)
 
         # Block feed forward norm.
         block_params += layer_norm_params(self.block.layer_norm)
@@ -334,8 +374,8 @@ class TransformerConfig(Config):
         return cls.llama_like(
             d_model=1024,
             vocab_size=vocab_size,
-            n_layers=16,
-            n_heads=8,
+            n_layers=kwargs.pop("n_layers", 16),
+            n_heads=kwargs.pop("n_heads", 8),
             rope_theta=kwargs.pop("rope_theta", 10_000),
             **kwargs,
         )
@@ -348,8 +388,8 @@ class TransformerConfig(Config):
         return cls.llama_like(
             d_model=2048,
             vocab_size=vocab_size,
-            n_layers=18,
-            n_heads=16,
+            n_layers=kwargs.pop("n_layers", 18),
+            n_heads=kwargs.pop("n_heads", 16),
             rope_theta=kwargs.pop("rope_theta", 10_000),
             **kwargs,
         )
@@ -362,8 +402,8 @@ class TransformerConfig(Config):
         return cls.llama_like(
             d_model=4096,
             vocab_size=vocab_size,
-            n_layers=32,
-            n_heads=32,
+            n_layers=kwargs.pop("n_layers", 32),
+            n_heads=kwargs.pop("n_heads", 32),
             rope_theta=kwargs.pop("rope_theta", 10_000),
             **kwargs,
         )
@@ -376,8 +416,8 @@ class TransformerConfig(Config):
         return cls.llama_like(
             d_model=5120,
             vocab_size=vocab_size,
-            n_layers=40,
-            n_heads=40,
+            n_layers=kwargs.pop("n_layers", 40),
+            n_heads=kwargs.pop("n_heads", 40),
             rope_theta=kwargs.pop("rope_theta", 10_000),
             **kwargs,
         )
@@ -390,8 +430,8 @@ class TransformerConfig(Config):
         return cls.llama_like(
             d_model=5120,
             vocab_size=vocab_size,
-            n_layers=80,
-            n_heads=40,
+            n_layers=kwargs.pop("n_layers", 80),
+            n_heads=kwargs.pop("n_heads", 40),
             rope_theta=kwargs.pop("rope_theta", 10_000),
             **kwargs,
         )
@@ -404,9 +444,9 @@ class TransformerConfig(Config):
         return cls.llama_like(
             d_model=8192,
             vocab_size=vocab_size,
-            n_layers=80,
-            n_heads=64,
-            n_kv_heads=8,
+            n_layers=kwargs.pop("n_layers", 80),
+            n_heads=kwargs.pop("n_heads", 64),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
             rope_theta=kwargs.pop("rope_theta", 10_000),
             hidden_size_multiplier=1.3,
             hidden_size_multiple_of=4096,
@@ -421,9 +461,9 @@ class TransformerConfig(Config):
         return cls.llama_like(
             d_model=4096,
             vocab_size=vocab_size,
-            n_layers=32,
-            n_heads=32,
-            n_kv_heads=8,
+            n_layers=kwargs.pop("n_layers", 32),
+            n_heads=kwargs.pop("n_heads", 32),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             hidden_size_multiplier=1.3,
             hidden_size_multiple_of=1024,
@@ -438,9 +478,9 @@ class TransformerConfig(Config):
         return cls.llama_like(
             d_model=8196,
             vocab_size=vocab_size,
-            n_layers=80,
-            n_heads=64,
-            n_kv_heads=8,
+            n_layers=kwargs.pop("n_layers", 80),
+            n_heads=kwargs.pop("n_heads", 64),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             hidden_size_multiplier=1.3,
             hidden_size_multiple_of=4096,
@@ -459,9 +499,9 @@ class TransformerConfig(Config):
         return cls.llama_like(
             d_model=16384,
             vocab_size=vocab_size,
-            n_layers=126,
-            n_heads=128,
-            n_kv_heads=8,
+            n_layers=kwargs.pop("n_layers", 126),
+            n_heads=kwargs.pop("n_heads", 128),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             hidden_size_multiplier=1.2,
             hidden_size_multiple_of=4096,
@@ -658,12 +698,20 @@ class Transformer(nn.Module):
             )
 
             # Feed-forward weights.
-            self.init_method.init_feed_forward(
-                block.feed_forward,
-                block_idx=block.block_idx,
-                num_blocks=len(self.blocks),
-                generator=generator,
-            )
+            if hasattr(block, "feed_forward"):
+                self.init_method.init_feed_forward(
+                    block.feed_forward,
+                    block_idx=block.block_idx,
+                    num_blocks=len(self.blocks),
+                    generator=generator,
+                )
+            else:
+                self.init_method.init_feed_forward_moe(
+                    block.feed_forward_moe,
+                    block_idx=block.block_idx,
+                    num_blocks=len(self.blocks),
+                    generator=generator,
+                )
 
             # Warm up RoPE cache.
             if max_seq_len is not None and att.rope is not None:
@@ -793,6 +841,7 @@ class Transformer(nn.Module):
         param_dtype: Optional[torch.dtype] = None,
         reduce_dtype: torch.dtype = torch.float32,
         pp_enabled: bool = False,
+        wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
     ):
         """
         Apply FSDP(2) to the model.
@@ -805,6 +854,7 @@ class Transformer(nn.Module):
         :param param_dtype: The data type to materialize params in. Defaults to the current param dtype.
         :param reduce_dtype: The data type for gradient reduction.
         :pp_enabled: If pipeline parallelism is also enabled.
+        :wrapping_strategy: The wrapping strategy.
         """
         # Adapted from
         # https://github.com/pytorch/torchtitan/blob/90c889e972b56b9faadebbb78fc985dedc537ed9/torchtitan/parallelisms/parallelize_llama.py#L289
@@ -817,15 +867,35 @@ class Transformer(nn.Module):
         fsdp_config = dict(mesh=dp_mesh, mp_policy=mp_policy)
 
         for block_id, block in enumerate(self.blocks):
+            reshard_after_forward = True
             if pp_enabled:
                 # For PP, do not reshard after forward to avoid per-microbatch
                 # all-gathers, which can be expensive and non-overlapped
                 reshard_after_forward = False
-            else:
+            elif wrapping_strategy == TransformerDataParallelWrappingStrategy.full:
                 # As an optimization, do not reshard after forward for the last
                 # transformer block since FSDP would prefetch it immediately
                 reshard_after_forward = int(block_id) < len(self.blocks) - 1
+
+            if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
+                if hasattr(block, "feed_forward"):
+                    fully_shard(
+                        block.feed_forward,
+                        reshard_after_forward=reshard_after_forward,
+                        **fsdp_config,
+                    )
+                else:
+                    fully_shard(
+                        block.feed_forward_moe,
+                        reshard_after_forward=reshard_after_forward,
+                        **fsdp_config,
+                    )
+
             fully_shard(block, reshard_after_forward=reshard_after_forward, **fsdp_config)
+
+        if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
+            fully_shard(self.embeddings, reshard_after_forward=not pp_enabled, **fsdp_config)
+            fully_shard(self.w_out, reshard_after_forward=False, **fsdp_config)
 
         fully_shard(self, reshard_after_forward=not pp_enabled, **fsdp_config)
 
