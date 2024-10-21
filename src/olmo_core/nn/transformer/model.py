@@ -5,9 +5,6 @@ from typing import List, Optional, Sequence, cast
 import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-    checkpoint_wrapper as ptd_checkpoint_wrapper,
-)
 
 from olmo_core.config import StrEnum
 from olmo_core.data.utils import get_cumulative_document_lengths
@@ -16,6 +13,7 @@ from olmo_core.utils import get_default_device
 
 from ..buffer_cache import BufferCache
 from ..layer_norm import LayerNorm, LayerNormConfig
+from ..utils import selective_checkpointing_context_fn
 from .block import TransformerBlock, TransformerBlockConfig
 from .init import InitMethod
 
@@ -56,6 +54,8 @@ class TransformerActivationCheckpointingMode(StrEnum):
     """Checkpoint only selected blocks."""
     selected_modules = "selected_modules"
     """Checkpoint only selected modules."""
+    selected_ops = "selected_ops"
+    """Checkpoint only a specific set of operations."""
 
 
 class Transformer(nn.Module):
@@ -234,6 +234,10 @@ class Transformer(nn.Module):
         :param modules: Required when :data:`mode` is "selected_modules". A list of modules names
             to wrap for activation checkpointing. Globs are supported.
         """
+        from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+            checkpoint_wrapper as ptd_checkpoint_wrapper,
+        )
+
         if (
             mode == TransformerActivationCheckpointingMode.selected_blocks
             and block_interval is None
@@ -270,6 +274,12 @@ class Transformer(nn.Module):
                         block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
                 elif mode == TransformerActivationCheckpointingMode.full:
                     block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
+                elif mode == TransformerActivationCheckpointingMode.selected_ops:
+                    block = ptd_checkpoint_wrapper(
+                        block,
+                        context_fn=selective_checkpointing_context_fn,
+                        preserve_rng_state=preserve_rng_state,
+                    )
 
                 self.blocks.register_module(str(block_idx), block)
 
