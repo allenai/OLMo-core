@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Trainer now starts with a dry-run of a fake batch created by `DataLoaderBase.get_mock_batch()`.
 - Added `Callback.pre_backward()`, `.pre_eval_batch()`, and `.post_eval_batch()` methods.
 - Added `Trainer.model_forward()`, `.get_losses()`, and `.eval_batch()` methods.
+- Added a new `TransformerActivationCheckpointingMode`, "selected_ops" (requires torch 2.5 or newer).
 
 ### Changed
 
