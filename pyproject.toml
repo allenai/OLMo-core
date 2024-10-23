@@ -23,6 +23,8 @@ dependencies = [
     "safetensors",
     "importlib_resources",
     "s3fs", # REMOVE THIS IN FAVOR OF SOMETHING CONSISTENT ELSEWHERE
+    "tabulate",
+    "tqdm",
 ]
 
 [project.urls]
