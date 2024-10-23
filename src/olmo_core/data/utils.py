@@ -411,6 +411,7 @@ def segment_documents_into_instances(
     indices_dtype: Union[
         Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
     ] = np.uint32,
+    max_instances: Optional[int] = None,
 ) -> Tuple[int, int]:
     """
     Segment documents into instances of at most ``sequence_length`` tokens.
@@ -421,6 +422,8 @@ def segment_documents_into_instances(
     total_og_docs = 0
     indices = []
     for start_idx, end_idx in iter_document_indices(path, eos_token_id=eos_token_id, dtype=dtype):
+        if max_instances and len(indices) // 2 >= max_instances:
+            break
         total_og_docs += 1
         length = end_idx - start_idx
         indices.append(start_idx)

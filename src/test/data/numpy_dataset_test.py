@@ -1,16 +1,47 @@
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 
 from olmo_core.data import (
     NumpyDatasetConfig,
+    NumpyFSLDatasetMixtureConfig,
     NumpyFSLDataset,
     NumpyPaddedFSLDataset,
     NumpyVSLDataset,
     TokenizerConfig,
 )
+
+from olmo_core.aliases import PathOrStr
+from olmo_core.data.types import NumpyDatasetDType
+from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixtureConfig
 from olmo_core.data.utils import get_document_indices, write_document_indices
+
+
+def _make_mmaps(
+    tmp_path: Path,
+    prefix: str,
+    num_files: int,
+    size: int,
+    dtype,
+    eos: int,
+    seq_length: int = 4,
+    seed: int = 42,
+) -> List[Tuple[PathOrStr, List]]:
+    mmaps = []
+    for i in range(num_files):
+        filepath = f"{tmp_path}/{prefix}_{i}.npy"
+        np.random.seed(seed)
+        data = np.random.randint(0, np.iinfo(dtype).max, size=size, dtype=dtype)
+        data = np.append(
+            np.insert(data, np.arange(seq_length + 1, len(data), seq_length), eos), eos
+        )
+        mm = np.memmap(filepath, mode="w+", dtype=dtype, shape=(len(data),))
+        mm[:] = data
+        mm.flush()
+        mmaps.append((Path(filepath), data))
+
+    return mmaps
 
 
 def test_numpy_fsl_dataset(tmp_path: Path):
@@ -63,6 +94,59 @@ def test_numpy_padded_fsl_dataset(tmp_path: Path):
     assert ds[2]["input_ids"].tolist() == [11, 12, 13, 14, 15, 16, 17, 18]
     assert ds[3]["input_ids"].tolist() == [21, 22, 0, 0, 0, 0, 0, 0]
     assert len(ds) == 4
+
+
+def test_numpy_fsl_mixture_dataset(tmp_path: Path):
+    # NOTE: At very small token counts (10's of tokens)
+    # the take_ratio gets finicky so we test at small but real world-ish scale)
+    npdtype = np.uint16
+    seed = 42
+    mmap1 = _make_mmaps(tmp_path, "mmap1", 1, 20 * 1000, npdtype, eos=0, seed=seed)
+    mmap2 = _make_mmaps(tmp_path, "mmap2", 1, 20 * 1000, npdtype, eos=0, seed=seed)
+
+    sequence_length = 4
+    tokenizer = TokenizerConfig(
+        vocab_size=32_000,
+        eos_token_id=0,
+        pad_token_id=-1,
+    )
+
+    mixture_config = SourceMixtureDatasetConfig(
+        max_tokens=10_000,
+        sequence_length=sequence_length,
+        source_configs=[
+            SourceMixtureConfig(
+                source_name="mmap1",
+                paths=[i[0] for i in mmap1],
+                target_ratio=0.8,
+            ),
+            SourceMixtureConfig(
+                source_name="mmap2",
+                paths=[i[0] for i in mmap2],
+                target_ratio=0.2,
+            ),
+        ],
+        dtype=NumpyDatasetDType.uint16,
+        processes=1,
+        seed=seed,
+    )
+
+    ds = NumpyFSLDatasetMixtureConfig(
+        source_mixture_config=mixture_config,
+        sequence_length=sequence_length,
+        tokenizer=tokenizer,
+        bust_index_cache=True,
+        include_instance_metadata=False,
+    ).build()
+    ds.prepare()
+
+    expected = "68144f"
+    assert ds.fingerprint.endswith(
+        expected
+    ), f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update the expected fingerprint?"
+    assert ds[0]["input_ids"].tolist() == [56422, 24545, 15795, 52202]
+    assert ds.num_tokens == 10000
+    assert len(ds) == 2500
 
 
 def write_data_file(data: List[int], path: Path, dtype, eos_token_id: int):

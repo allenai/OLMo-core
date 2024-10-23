@@ -8,7 +8,7 @@ import pytest
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.data import NumpyDatasetDType
-from olmo_core.data.mixture_dataset import (
+from olmo_core.data.source_mixture import (
     SourceMixtureConfig,
     SourceMixtureDataset,
     SourceMixtureDatasetConfig,
@@ -35,7 +35,7 @@ def _make_mmaps(tmp_path: Path, prefix: str, num_files: int, size: int) -> List[
     return mmaps
 
 
-def test_source_mixture_config_dry_run(tmp_path: Path, capsys):
+def test_source_mixture_config(tmp_path: Path, capsys):
     source_paths = {
         "1": _make_mmaps(
             tmp_path=tmp_path, prefix="source1", num_files=2, size=DATA["tokens_per_file"]
@@ -64,19 +64,17 @@ def test_source_mixture_config_dry_run(tmp_path: Path, capsys):
 
     max_tokens = 5_000_000
 
-    with TemporaryDirectory() as tmp_dir:
-        config = SourceMixtureDatasetConfig(
-            max_tokens=max_tokens,
-            source_configs=source_configs,
-            dtype=NumpyDatasetDType.uint32,
-            output_dir=tmp_dir,
-            dry_run=True,
-        )
+    config = SourceMixtureDatasetConfig(
+        max_tokens=max_tokens,
+        source_configs=source_configs,
+        dtype=NumpyDatasetDType.uint32,
+        sequence_length=1024,
+    )
 
-        with capsys.disabled():
-            print("\n")
-            mixture = config.build()
-            assert isinstance(mixture, SourceMixtureDataset)
+    with capsys.disabled():
+        print("\n")
+        mixture = config.build()
+        assert isinstance(mixture, SourceMixtureDataset)
 
 
 def test_source_mixture_config_validation():
@@ -108,33 +106,28 @@ def test_dataset_mixture_config_validation():
         SourceMixtureConfig(source_name="source2", target_ratio=0.5, paths=["/path/to/source2"]),
     ]
 
-    with TemporaryDirectory() as tmp_dir:
-        config = SourceMixtureDatasetConfig(
-            max_tokens=1000,
-            source_configs=source_configs,
-            dtype=NumpyDatasetDType.uint32,
-            output_dir=tmp_dir,
-        )
-        config.validate()
+    config = SourceMixtureDatasetConfig(
+        max_tokens=1000,
+        source_configs=source_configs,
+        dtype=NumpyDatasetDType.uint32,
+        sequence_length=1024,
+    )
+    config.validate()
 
-        source_configs_invalid = [
-            SourceMixtureConfig(
-                source_name="source1", target_ratio=0.7, paths=["/path/to/source1"]
-            ),
-            SourceMixtureConfig(
-                source_name="source2", target_ratio=0.5, paths=["/path/to/source2"]
-            ),
-        ]
+    source_configs_invalid = [
+        SourceMixtureConfig(source_name="source1", target_ratio=0.7, paths=["/path/to/source1"]),
+        SourceMixtureConfig(source_name="source2", target_ratio=0.5, paths=["/path/to/source2"]),
+    ]
 
-        config_invalid = SourceMixtureDatasetConfig(
-            max_tokens=1000,
-            source_configs=source_configs_invalid,
-            dtype=NumpyDatasetDType.uint32,
-            output_dir=tmp_dir,
-        )
+    config_invalid = SourceMixtureDatasetConfig(
+        max_tokens=1000,
+        source_configs=source_configs_invalid,
+        dtype=NumpyDatasetDType.uint32,
+        sequence_length=1024,
+    )
 
-        with pytest.raises(OLMoConfigurationError):
-            config_invalid.validate()
+    with pytest.raises(OLMoConfigurationError):
+        config_invalid.validate()
 
 
 def test_dataset_mixture_build(tmp_path: Path):
@@ -166,16 +159,15 @@ def test_dataset_mixture_build(tmp_path: Path):
 
     max_tokens = 5_000_000
 
-    with TemporaryDirectory() as tmp_dir:
-        config = SourceMixtureDatasetConfig(
-            max_tokens=max_tokens,
-            source_configs=source_configs,
-            dtype=DATA["dtype"],
-            output_dir=tmp_dir,
-        )
+    config = SourceMixtureDatasetConfig(
+        max_tokens=max_tokens,
+        source_configs=source_configs,
+        dtype=DATA["dtype"],
+        sequence_length=1024,
+    )
 
-        mixture = config.build()
-        assert isinstance(mixture, SourceMixtureDataset)
+    mixture = config.build()
+    assert isinstance(mixture, SourceMixtureDataset)
 
 
 def test_dataset_mixture_build_insufficient_source_data(tmp_path: Path):
@@ -206,17 +198,16 @@ def test_dataset_mixture_build_insufficient_source_data(tmp_path: Path):
 
     max_tokens = 5_000_000
 
-    with TemporaryDirectory() as tmp_dir:
-        config = SourceMixtureDatasetConfig(
-            max_tokens=max_tokens,
-            source_configs=source_configs,
-            dtype=DATA["dtype"],
-            output_dir=tmp_dir,
-        )
+    config = SourceMixtureDatasetConfig(
+        max_tokens=max_tokens,
+        source_configs=source_configs,
+        dtype=DATA["dtype"],
+        sequence_length=1024,
+    )
 
-        # Should raise exception because the target ratio for source 1 @50% (2.5M) is infeasible without repetition (default max_repetition_ratio=1)
-        with pytest.raises(OLMoConfigurationError):
-            config.build()
+    # Should raise exception because the target ratio for source 1 @50% (2.5M) is infeasible without repetition (default max_repetition_ratio=1)
+    with pytest.raises(OLMoConfigurationError):
+        config.build()
 
 
 def test_dataset_mixture_build_with_repetition(tmp_path: Path):
@@ -254,16 +245,15 @@ def test_dataset_mixture_build_with_repetition(tmp_path: Path):
 
     max_tokens = 5_000_000
 
-    with TemporaryDirectory() as tmp_dir:
-        config = SourceMixtureDatasetConfig(
-            max_tokens=max_tokens,
-            source_configs=source_configs,
-            dtype=DATA["dtype"],
-            output_dir=tmp_dir,
-        )
+    config = SourceMixtureDatasetConfig(
+        max_tokens=max_tokens,
+        source_configs=source_configs,
+        dtype=DATA["dtype"],
+        sequence_length=1024,
+    )
 
-        mixture = config.build()
-        assert isinstance(mixture, SourceMixtureDataset)
+    mixture = config.build()
+    assert isinstance(mixture, SourceMixtureDataset)
 
 
 def test_dataset_mixture_build_insufficient_source_max_fraction(tmp_path: Path):
@@ -300,120 +290,14 @@ def test_dataset_mixture_build_insufficient_source_max_fraction(tmp_path: Path):
     # 5 source files * 1_000_000 tokens per file
     max_tokens = len(list(chain(*source_paths.values()))) * DATA["tokens_per_file"]
 
-    with TemporaryDirectory() as tmp_dir:
-        config = SourceMixtureDatasetConfig(
-            max_tokens=max_tokens,
-            source_configs=source_configs,
-            dtype=DATA["dtype"],
-            output_dir=tmp_dir,
-        )
+    config = SourceMixtureDatasetConfig(
+        max_tokens=max_tokens,
+        source_configs=source_configs,
+        dtype=DATA["dtype"],
+        sequence_length=1024,
+    )
 
-        # Should raise exception because the target ratio for source 1 is infeasible because
-        # we limit usage to 10% of the source
-        with pytest.raises(OLMoConfigurationError):
-            config.build()
-
-
-def test_dataset_mixture_build_expected_files(tmp_path: Path):
-    source_paths = {
-        "1": _make_mmaps(
-            tmp_path=tmp_path, prefix="source1", num_files=1, size=DATA["tokens_per_file"]
-        ),
-        "2": _make_mmaps(
-            tmp_path=tmp_path, prefix="source2", num_files=2, size=DATA["tokens_per_file"]
-        ),
-        "3": _make_mmaps(
-            tmp_path=tmp_path, prefix="source3", num_files=2, size=DATA["tokens_per_file"]
-        ),
-    }
-    source_configs = [
-        SourceMixtureConfig(
-            source_name="1",
-            target_ratio=0.10,
-            paths=source_paths["1"],
-        ),
-        SourceMixtureConfig(
-            source_name="2",
-            target_ratio=0.40,
-            paths=source_paths["2"],
-        ),
-        SourceMixtureConfig(
-            source_name="3",
-            target_ratio=0.5,
-            paths=source_paths["3"],
-        ),
-    ]
-
-    max_tokens = 10 * 1000
-
-    with TemporaryDirectory() as tmp_dir:
-        config = SourceMixtureDatasetConfig(
-            max_tokens=max_tokens,
-            source_configs=source_configs,
-            dtype=DATA["dtype"],
-            output_dir=tmp_dir,
-        )
-
-        mixture = config.build()
-        assert isinstance(mixture, SourceMixtureDataset)
-
-        out_tokens = []
-
-        for source in mixture.sources:
-            for path in source.paths:
-                out_tokens.extend(
-                    load_array_slice(
-                        path=path,
-                        start_idx=0,
-                        end_idx=DATA["tokens_per_file"],
-                        dtype=DATA["dtype"].as_np_dtype(),
-                    )
-                )
-
-        assert len(out_tokens) == max_tokens
-
-
-def test_dataset_mixture_render_table(tmp_path: Path, capsys):
-    source_paths = {
-        "1": _make_mmaps(
-            tmp_path=tmp_path, prefix="source1", num_files=5, size=DATA["tokens_per_file"]
-        ),
-        "2": _make_mmaps(
-            tmp_path=tmp_path, prefix="source2", num_files=5, size=DATA["tokens_per_file"]
-        ),
-        "3": _make_mmaps(
-            tmp_path=tmp_path, prefix="source3", num_files=5, size=DATA["tokens_per_file"]
-        ),
-    }
-    source_configs = [
-        SourceMixtureConfig(
-            source_name="1",
-            target_ratio=0.30,
-            paths=source_paths["1"],
-        ),
-        SourceMixtureConfig(
-            source_name="2",
-            target_ratio=0.40,
-            paths=source_paths["2"],
-        ),
-        SourceMixtureConfig(
-            source_name="3",
-            target_ratio=0.30,
-            paths=source_paths["3"],
-        ),
-    ]
-
-    max_tokens = 10_123_000
-
-    with TemporaryDirectory() as tmp_dir:
-        config = SourceMixtureDatasetConfig(
-            max_tokens=max_tokens,
-            source_configs=source_configs,
-            dtype=DATA["dtype"],
-            output_dir=tmp_dir,
-        )
-
-        with capsys.disabled():
-            print("\n")
-            mixture = config.build()
-            assert isinstance(mixture, SourceMixtureDataset)
+    # Should raise exception because the target ratio for source 1 is infeasible because
+    # we limit usage to 10% of the source
+    with pytest.raises(OLMoConfigurationError):
+        config.build()
