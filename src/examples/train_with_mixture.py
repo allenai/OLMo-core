@@ -168,7 +168,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             "evaluator",
             LMEvaluatorCallbackConfig(
                 eval_dataset=NumpyDatasetConfig(
-                    paths=["/net/nfs/allennlp/llm-data/c4/en/c4-validation.00000-00008.npy"],
+                    paths=[
+                        "s3://ai2-llm/eval-data/perplexity/v3_small_dolma2-tokenizer/c4_en/val/part-0-00000.npy"
+                    ],
                     metadata=[{"label": "c4-validation"}],
                     name=NumpyDatasetType.padded_fsl,
                     sequence_length=sequence_length,
