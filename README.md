@@ -37,9 +37,9 @@ Throughput numbers from these scripts with various different configuration setti
 | **1B**  | 4096 | BF16 | 44,000 TPS | `OLMo-1B.py` | |
 | | 4096 | BF16/FP8[^2] | 51,000 TPS | `OLMo-1B.py` | `--model.float8_config.enabled=true` |
 | **7B**  | 4096 | BF16 | 10,000 TPS | `OLMo-7B.py` | |
-| | 4096 | BF16/FP8[^2] | 13,000 TPS | `OLMo-7B.py` | `--model.float8_config.enabled=true` |
+| | 4096 | BF16/FP8 | 13,000 TPS | `OLMo-7B.py` | `--model.float8_config.enabled=true` |
 | **13B** | 4096 | BF16 | 4,600 TPS | `OLMo-13B.py` | |
-| | 4096 | BF16/FP8[^2] | 5,500 TPS | `OLMo-13B.py` | `--model.float8_config.enabled=true` |
+| | 4096 | BF16/FP8 | 5,500 TPS | `OLMo-13B.py` | `--model.float8_config.enabled=true` |
 
 [^1]: Throughput reported in tokens per second per device.
 [^2]: In this setup most matrix multiplications are computed in `float8`, everything else is in `bfloat16`.
