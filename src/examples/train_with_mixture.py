@@ -10,7 +10,6 @@ import sys
 from dataclasses import dataclass
 from typing import List, cast, Union
 
-from aiobotocore.session import get_session
 import s3fs
 
 from olmo_core.config import Config, DType
@@ -21,6 +20,7 @@ from olmo_core.data import (
     NumpyDatasetType,
     TokenizerConfig,
 )
+from olmo_core.io import _get_s3_client
 from olmo_core.data.types import NumpyDatasetDType
 from olmo_core.data.source_mixture import SourceMixtureConfig, SourceMixtureDatasetConfig
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
@@ -76,9 +76,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         ],
     )
 
-    session = get_session()
-    client = session.create_client("s3", region_name="us-east-1", profile_name="S3")
-    s3 = s3fs.S3FileSystem(client=client)
+    session = _get_s3_client("s3")
+    s3 = s3fs.S3FileSystem(session=session)
 
     # DCLM docs
     baseline = s3.glob(
