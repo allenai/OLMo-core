@@ -42,7 +42,7 @@ Throughput numbers from these scripts with various different configuration setti
 | | 4096 | BF16/FP8[^2] | 5,500 TPS | `OLMo-13B.py` | `--model.float8_config.enabled=true` |
 
 [^1]: Throughput reported in tokens per second per device.
-[^2]: In this setup most GEMMs are computed in `float8`, everything else is in `bfloat16`.
+[^2]: In this setup most matrix multiplications are computed in `float8`, everything else is in `bfloat16`.
 
 ## Development
 
