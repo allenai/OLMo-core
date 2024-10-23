@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import List, cast, Union
 
 import s3fs
+import boto3
 
 from olmo_core.config import Config, DType
 from olmo_core.data import (
@@ -76,7 +77,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         ],
     )
 
-    session = _get_s3_client("s3")
+    session = boto3.Session(profile_name="S3_PROFILE")
     s3 = s3fs.S3FileSystem(session=session)
 
     # DCLM docs
