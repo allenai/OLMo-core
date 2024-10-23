@@ -3,7 +3,7 @@ Example of how to train a transformer language model.
 
 Launch this with torchrun:
 
-    torchrun --nproc-per-node=4 src/examples/train.py run_name [OVERRIDES...]
+    torchrun --nproc-per-node=4 src/examples/train_with_mixture.py run_name [OVERRIDES...]
 """
 
 import sys
