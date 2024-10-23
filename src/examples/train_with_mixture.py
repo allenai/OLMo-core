@@ -10,6 +10,7 @@ import sys
 from dataclasses import dataclass
 from typing import List, cast, Union
 
+from aiobotocore.session import get_session
 import s3fs
 
 from olmo_core.config import Config, DType
@@ -75,7 +76,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         ],
     )
 
-    s3 = s3fs.S3FileSystem()
+    session = get_session()
+    client = session.create_client("s3", region_name="us-east-1", profile_name="S3")
+    s3 = s3fs.S3FileSystem(client=client)
 
     # DCLM docs
     baseline = s3.glob(
