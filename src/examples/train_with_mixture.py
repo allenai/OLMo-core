@@ -78,12 +78,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         ],
     )
 
-    # TODO: Maybe move the globbing into SourceMixtureConfig?
-    session = boto3.Session(
-        aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
-    )
-    s3 = s3fs.S3FileSystem(session=session)
+    s3 = s3fs.S3FileSystem()
 
     # DCLM docs + rewrites
     baseline = s3.glob(

@@ -22,8 +22,8 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         description="Testing OLMo-core launch utilities",
         clusters=["ai2/allennlp-elanding-a100-40g"],
         env_secrets=[
-            BeakerEnvSecret("AWS_CREDENTIALS", "AWS_CREDENTIALS"),
-            BeakerEnvSecret("AWS_CONFIG", "AWS_CONFIG"),
+            BeakerEnvSecret("AWS_ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID"),
+            BeakerEnvSecret("AWS_SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY"),
         ],
         num_nodes=1,
         num_gpus=4,
