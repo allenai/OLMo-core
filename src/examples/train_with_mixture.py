@@ -170,7 +170,7 @@ def build_config(run_name: str) -> ExperimentConfig:
             LMEvaluatorCallbackConfig(
                 eval_dataset=NumpyDatasetConfig(
                     paths=[
-                        # "s3://ai2-llm/eval-data/perplexity/v3_small_dolma2-tokenizer/c4_en/val/part-0-00000.npy"
+                        "s3://ai2-llm/eval-data/perplexity/v3_small_dolma2-tokenizer/c4_en/val/part-0-00000.npy"
                     ],
                     metadata=[{"label": "c4-validation"}],
                     name=NumpyDatasetType.padded_fsl,
