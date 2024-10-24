@@ -3,6 +3,7 @@ from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy
 from .comet import CometCallback, CometNotificationSetting
 from .config_saver import ConfigSaverCallback
 from .console_logger import ConsoleLoggerCallback
+from .downstream import DownstreamEvaluatorCallbackConfig
 from .evaluator_callback import EvaluatorCallback, LMEvaluatorCallbackConfig
 from .float8_handler import Float8HandlerCallback
 from .garbage_collector import GarbageCollectorCallback
@@ -24,6 +25,7 @@ __all__ = [
     "CometNotificationSetting",
     "ConfigSaverCallback",
     "ConsoleLoggerCallback",
+    "DownstreamEvaluatorCallbackConfig",
     "EvaluatorCallback",
     "Float8HandlerCallback",
     "LMEvaluatorCallbackConfig",
