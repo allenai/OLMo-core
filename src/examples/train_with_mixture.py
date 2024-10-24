@@ -77,7 +77,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         ],
     )
 
-    session = boto3.Session(profile_name="S3_PROFILE")
+    session = boto3.Session(profile_name="S3")
     s3 = s3fs.S3FileSystem(session=session)
 
     # DCLM docs

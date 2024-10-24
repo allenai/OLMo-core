@@ -213,7 +213,7 @@ class BeakerLaunchConfig(Config):
             (LOG_FILTER_TYPE_ENV_VAR, LogFilterType.local_rank0_only),
             ("OMP_NUM_THREADS", "8"),
             ("R2_PROFILE", "R2"),
-            # ("S3_PROFILE", "S3"),
+            ("S3_PROFILE", "S3"),
             ("WEKA_PROFILE", "WEKA"),
             ("NUM_NODES", str(self.num_nodes)),
             ("OLMO_CORE_VERSION", VERSION),
