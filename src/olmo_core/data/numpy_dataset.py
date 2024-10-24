@@ -1643,7 +1643,14 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         self._path_offset_index = path_offset_index
         self._bust_index_cache = bust_index_cache
 
-    # TODO: overload __getitem__ to read the stuff we need, maybe just with read_chunk_from_array
+    # TODO: overload __getitem__ to read the stuff we need, maybe just with read_chunk_from_array??
+
+    def prepare(self):
+        if self.fs_local_rank == 0:
+            log.info("Gathering indices...")
+            self._write_document_indices()
+        barrier()
+        len(self)
 
     def _get_indices_path(self, path: PathOrStr) -> Path:
         sha256_hash = hashlib.sha256()
@@ -1696,13 +1703,6 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                         f"{self.sequence_length} from '{path}'"
                     )
 
-    def prepare(self):
-        if self.fs_local_rank == 0:
-            log.info("Gathering indices...")
-            self._write_document_indices()
-        barrier()
-        len(self)
-
     def _read_chunk_from_array(self, path: PathOrStr, index: int) -> torch.Tensor:
         start_idx = index * self.sequence_length
         return load_array_slice_into_tensor(
@@ -1743,7 +1743,7 @@ class NumpyFSLDatasetMixtureConfig(Config):
     """
     A config class for easily building :class:`NumpyFSLDatasetMixture` class.
     This is a special case of :class:`NumpyFSLDataset` that is built from a mixture of source
-    datasets based on a mixture configuration.
+    datasets based on a source mixture configuration.
     """
 
     source_mixture_config: SourceMixtureDatasetConfig

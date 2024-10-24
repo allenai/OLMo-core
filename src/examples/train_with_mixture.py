@@ -77,10 +77,11 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         ],
     )
 
-    session = boto3.Session(profile_name="S3")
+    # TODO: Maybe move the globbing into SourceMixtureConfig?
+    session = _get_s3_client("s3")
     s3 = s3fs.S3FileSystem(session=session)
 
-    # DCLM docs
+    # DCLM docs + rewrites
     baseline = s3.glob(
         "s3://ai2-llm/preprocessed/dclm/samples/src-100b/**/allenai/dolma2-tokenizer/*.npy"
     )
@@ -97,12 +98,12 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
                 paths=[f"s3://{path}" for path in baseline],
                 source_name="baseline",
                 max_repetition_ratio=1.0,
-                target_ratio=0.7,
+                target_ratio=0.8,
             ),
             SourceMixtureConfig(
                 source_name="rewrites",
                 paths=[f"s3://{path}" for path in rewrites],
-                target_ratio=0.3,
+                target_ratio=0.2,
             ),
         ],
         dtype=NumpyDatasetDType.uint32,
