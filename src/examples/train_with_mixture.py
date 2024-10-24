@@ -59,7 +59,7 @@ class ExperimentConfig(Config):
 
 
 def build_config(run_name: str) -> ExperimentConfig:
-    tokenizer_config = TokenizerConfig.gpt2()
+    tokenizer_config = TokenizerConfig.dolma2()
 
     model_config = TransformerConfig.llama2_271M(
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
