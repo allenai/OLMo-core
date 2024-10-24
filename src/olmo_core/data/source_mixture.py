@@ -5,6 +5,7 @@ from itertools import chain
 from concurrent.futures import as_completed, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Dict, List, Optional
+from pprint import pprint
 
 import tabulate
 from tqdm import tqdm
@@ -141,6 +142,11 @@ class SourceMixtureDatasetConfig(Config):
         self.validate()
         random.seed(self.seed)
         available_tokens_by_source: Dict[str, int] = {}
+
+        print("--------------------------------------------------------------------------------")
+        print("Generating a source mixture from configurations:")
+        for source_config in self.source_configs:
+            pprint(source_config)
 
         # Count the number of tokens available for each source
         for source_config in self.source_configs:

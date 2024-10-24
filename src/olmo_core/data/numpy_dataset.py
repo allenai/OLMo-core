@@ -1662,8 +1662,6 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         self._path_offset_index = path_offset_index
         self._bust_index_cache = bust_index_cache
 
-    # TODO: overload __getitem__ to read the stuff we need, maybe just with read_chunk_from_array??
-
     def prepare(self):
         if self.fs_local_rank == 0:
             log.info("Gathering indices...")
