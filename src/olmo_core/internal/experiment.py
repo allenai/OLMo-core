@@ -180,9 +180,11 @@ def build_common_components(
         vsl_curriculum=VSLCurriculumConfig(
             name=VSLCurriculumType.grow_p2, num_cycles=8, balanced=False
         ),
-        work_dir=None
-        if is_url(root_dir)
-        else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache",
+        work_dir=(
+            None
+            if is_url(root_dir)
+            else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache"
+        ),
     )
 
     data_loader_config = NumpyDataLoaderConfig(
@@ -202,9 +204,11 @@ def build_common_components(
                 mix_base_dir=root_dir,
                 sequence_length=dataset_config.effective_sequence_length,
                 tokenizer=tokenizer_config,
-                work_dir=None
-                if is_url(root_dir)
-                else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache",
+                work_dir=(
+                    None
+                    if is_url(root_dir)
+                    else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache"
+                ),
             ),
             eval_interval=1000,
         ),

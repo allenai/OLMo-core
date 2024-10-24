@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Added `SourceMixtureDataset` for composing a training mixture based on ratios of source datasets.
+- Added `NumpyFSLDatasetMixture` for constructing a `NumpyDatasetBase` from a `SourceMixtureDataset`. Note this is only supported for FSL datasets.
+- Added tests for `SourceMixture*` and `NumpyFSLDatasetMixture`.
+- Added example launch script for training a model using a `NumpyFSLDatasetMixture`.
+
+### Changed
+- Moved some types into `olmo_core.data.types` to avoid some circular dependencies.
+
 ## [v1.5.0](https://github.com/allenai/OLMo-core/releases/tag/v1.5.0) - 2024-10-23
 
 ### Added
