@@ -8,7 +8,7 @@ Run this with:
 import sys
 from typing import List
 
-from olmo_core.launch.beaker import BeakerLaunchConfig
+from olmo_core.launch.beaker import BeakerLaunchConfig, BeakerEnvSecret
 from olmo_core.utils import generate_uuid, prepare_cli_environment
 
 
@@ -21,6 +21,10 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         workspace="ai2/OLMo-core",
         description="Testing OLMo-core launch utilities",
         clusters=["ai2/allennlp-elanding-a100-40g"],
+        env_secrets=[
+            BeakerEnvSecret("AWS_CREDENTIALS", "AWS_CREDENTIALS"),
+            BeakerEnvSecret("AWS_CONFIG", "AWS_CONFIG"),
+        ],
         num_nodes=1,
         num_gpus=4,
         shared_filesystem=True,

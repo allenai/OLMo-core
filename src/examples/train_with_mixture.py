@@ -6,6 +6,7 @@ Launch this with torchrun:
     torchrun --nproc-per-node=4 src/examples/train_with_mixture.py run_name [OVERRIDES...]
 """
 
+import os
 import sys
 from dataclasses import dataclass
 from typing import List, cast, Union
@@ -78,7 +79,10 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     )
 
     # TODO: Maybe move the globbing into SourceMixtureConfig?
-    session = _get_s3_client("s3")
+    session = boto3.Session(
+        aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
+    )
     s3 = s3fs.S3FileSystem(session=session)
 
     # DCLM docs + rewrites
