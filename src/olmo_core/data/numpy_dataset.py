@@ -1703,12 +1703,6 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                         f"{self.sequence_length} from '{path}'"
                     )
 
-    def _read_chunk_from_array(self, path: PathOrStr, index: int) -> torch.Tensor:
-        start_idx = index * self.sequence_length
-        return load_array_slice_into_tensor(
-            path, start_idx, start_idx + self.sequence_length, self.dtype
-        )
-
     def _get_file_size_and_length(
         self, path: PathOrStr, dtype: Optional[SupportedDType] = None
     ) -> Tuple[int, int]:
