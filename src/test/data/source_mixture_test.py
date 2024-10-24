@@ -1,33 +1,30 @@
 from itertools import chain
+from os import PathLike
 from pathlib import Path
-from tempfile import TemporaryDirectory
-from typing import List
+from typing import Any, List, Union
 
 import numpy as np
 import pytest
 
-from olmo_core.aliases import PathOrStr
 from olmo_core.data import NumpyDatasetDType
 from olmo_core.data.source_mixture import (
     SourceMixtureConfig,
     SourceMixtureDataset,
     SourceMixtureDatasetConfig,
 )
-from olmo_core.data.utils import load_array_slice
 from olmo_core.exceptions import OLMoConfigurationError
 
-DATA = {
-    "dtype": NumpyDatasetDType.uint32,
-    "tokens_per_file": 1_000_000,
-}
+Mmaps = List[Union[Path, PathLike[Any], str]]
 
 
-def _make_mmaps(tmp_path: Path, prefix: str, num_files: int, size: int) -> List[PathOrStr]:
-    mmaps = []
+def _make_mmaps(tmp_path: Path, prefix: str, num_files: int, size: int) -> Mmaps:
+    mmaps: Mmaps = []
     for i in range(num_files):
         filepath = f"{tmp_path}/{prefix}_{i}.npy"
         data = np.random.randint(0, 2**32, size=size, dtype=np.uint32)
-        mm = np.memmap(filepath, mode="w+", dtype=DATA["dtype"].as_np_dtype(), shape=(size,))
+        mm = np.memmap(
+            filepath, mode="w+", dtype=NumpyDatasetDType.uint32.as_np_dtype(), shape=(size,)
+        )
         mm[:] = data
         mm.flush()
         mmaps.append(Path(filepath))
@@ -37,15 +34,9 @@ def _make_mmaps(tmp_path: Path, prefix: str, num_files: int, size: int) -> List[
 
 def test_source_mixture_config(tmp_path: Path, capsys):
     source_paths = {
-        "1": _make_mmaps(
-            tmp_path=tmp_path, prefix="source1", num_files=2, size=DATA["tokens_per_file"]
-        ),
-        "2": _make_mmaps(
-            tmp_path=tmp_path, prefix="source2", num_files=2, size=DATA["tokens_per_file"]
-        ),
-        "3": _make_mmaps(
-            tmp_path=tmp_path, prefix="source3", num_files=2, size=DATA["tokens_per_file"]
-        ),
+        "1": _make_mmaps(tmp_path=tmp_path, prefix="source1", num_files=2, size=1_000_000),
+        "2": _make_mmaps(tmp_path=tmp_path, prefix="source2", num_files=2, size=1_000_000),
+        "3": _make_mmaps(tmp_path=tmp_path, prefix="source3", num_files=2, size=1_000_000),
     }
 
     source_configs = [
@@ -132,15 +123,9 @@ def test_dataset_mixture_config_validation():
 
 def test_dataset_mixture_build(tmp_path: Path):
     source_paths = {
-        "1": _make_mmaps(
-            tmp_path=tmp_path, prefix="source1", num_files=2, size=DATA["tokens_per_file"]
-        ),
-        "2": _make_mmaps(
-            tmp_path=tmp_path, prefix="source2", num_files=2, size=DATA["tokens_per_file"]
-        ),
-        "3": _make_mmaps(
-            tmp_path=tmp_path, prefix="source3", num_files=2, size=DATA["tokens_per_file"]
-        ),
+        "1": _make_mmaps(tmp_path=tmp_path, prefix="source1", num_files=2, size=1_000_000),
+        "2": _make_mmaps(tmp_path=tmp_path, prefix="source2", num_files=2, size=1_000_000),
+        "3": _make_mmaps(tmp_path=tmp_path, prefix="source3", num_files=2, size=1_000_000),
     }
 
     source_configs = [
@@ -162,7 +147,7 @@ def test_dataset_mixture_build(tmp_path: Path):
     config = SourceMixtureDatasetConfig(
         max_tokens=max_tokens,
         source_configs=source_configs,
-        dtype=DATA["dtype"],
+        dtype=NumpyDatasetDType.uint32,
         sequence_length=1024,
     )
 
@@ -172,15 +157,9 @@ def test_dataset_mixture_build(tmp_path: Path):
 
 def test_dataset_mixture_build_insufficient_source_data(tmp_path: Path):
     source_paths = {
-        "1": _make_mmaps(
-            tmp_path=tmp_path, prefix="source1", num_files=1, size=DATA["tokens_per_file"]
-        ),
-        "2": _make_mmaps(
-            tmp_path=tmp_path, prefix="source2", num_files=2, size=DATA["tokens_per_file"]
-        ),
-        "3": _make_mmaps(
-            tmp_path=tmp_path, prefix="source3", num_files=2, size=DATA["tokens_per_file"]
-        ),
+        "1": _make_mmaps(tmp_path=tmp_path, prefix="source1", num_files=1, size=1_000_000),
+        "2": _make_mmaps(tmp_path=tmp_path, prefix="source2", num_files=2, size=1_000_000),
+        "3": _make_mmaps(tmp_path=tmp_path, prefix="source3", num_files=2, size=1_000_000),
     }
     source_configs = [
         SourceMixtureConfig(
@@ -201,7 +180,7 @@ def test_dataset_mixture_build_insufficient_source_data(tmp_path: Path):
     config = SourceMixtureDatasetConfig(
         max_tokens=max_tokens,
         source_configs=source_configs,
-        dtype=DATA["dtype"],
+        dtype=NumpyDatasetDType.uint32,
         sequence_length=1024,
     )
 
@@ -217,15 +196,9 @@ def test_dataset_mixture_build_with_repetition(tmp_path: Path):
     Source 1 has a target ratio of 90% and a max repetition ratio of 4.0, so it should be possible to meet the target of 3600 tokens with 1 file of 1000 tokens repeated 4 times.
     """
     source_paths = {
-        "1": _make_mmaps(
-            tmp_path=tmp_path, prefix="source1", num_files=1, size=DATA["tokens_per_file"]
-        ),
-        "2": _make_mmaps(
-            tmp_path=tmp_path, prefix="source2", num_files=2, size=DATA["tokens_per_file"]
-        ),
-        "3": _make_mmaps(
-            tmp_path=tmp_path, prefix="source3", num_files=2, size=DATA["tokens_per_file"]
-        ),
+        "1": _make_mmaps(tmp_path=tmp_path, prefix="source1", num_files=1, size=1_000_000),
+        "2": _make_mmaps(tmp_path=tmp_path, prefix="source2", num_files=2, size=1_000_000),
+        "3": _make_mmaps(tmp_path=tmp_path, prefix="source3", num_files=2, size=1_000_000),
     }
 
     source_configs = [
@@ -248,7 +221,7 @@ def test_dataset_mixture_build_with_repetition(tmp_path: Path):
     config = SourceMixtureDatasetConfig(
         max_tokens=max_tokens,
         source_configs=source_configs,
-        dtype=DATA["dtype"],
+        dtype=NumpyDatasetDType.uint32,
         sequence_length=1024,
     )
 
@@ -258,15 +231,9 @@ def test_dataset_mixture_build_with_repetition(tmp_path: Path):
 
 def test_dataset_mixture_build_insufficient_source_max_fraction(tmp_path: Path):
     source_paths = {
-        "1": _make_mmaps(
-            tmp_path=tmp_path, prefix="source1", num_files=1, size=DATA["tokens_per_file"]
-        ),
-        "2": _make_mmaps(
-            tmp_path=tmp_path, prefix="source2", num_files=2, size=DATA["tokens_per_file"]
-        ),
-        "3": _make_mmaps(
-            tmp_path=tmp_path, prefix="source3", num_files=2, size=DATA["tokens_per_file"]
-        ),
+        "1": _make_mmaps(tmp_path=tmp_path, prefix="source1", num_files=1, size=1_000_000),
+        "2": _make_mmaps(tmp_path=tmp_path, prefix="source2", num_files=2, size=1_000_000),
+        "3": _make_mmaps(tmp_path=tmp_path, prefix="source3", num_files=2, size=1_000_000),
     }
     source_configs = [
         SourceMixtureConfig(
@@ -288,12 +255,12 @@ def test_dataset_mixture_build_insufficient_source_max_fraction(tmp_path: Path):
     ]
 
     # 5 source files * 1_000_000 tokens per file
-    max_tokens = len(list(chain(*source_paths.values()))) * DATA["tokens_per_file"]
+    max_tokens = len(list(chain(*source_paths.values()))) * 1_000_000
 
     config = SourceMixtureDatasetConfig(
         max_tokens=max_tokens,
         source_configs=source_configs,
-        dtype=DATA["dtype"],
+        dtype=NumpyDatasetDType.uint32,
         sequence_length=1024,
     )
 

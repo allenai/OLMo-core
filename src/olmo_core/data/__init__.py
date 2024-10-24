@@ -24,8 +24,8 @@ from .mixes import DataMix, DataMixBase
 from .numpy_dataset import (
     NumpyDatasetBase,
     NumpyDatasetConfig,
-    NumpyFSLDatasetMixtureConfig,
     NumpyFSLDataset,
+    NumpyFSLDatasetMixtureConfig,
     NumpyPaddedFSLDataset,
     NumpyVSLDataset,
     VSLCurriculum,

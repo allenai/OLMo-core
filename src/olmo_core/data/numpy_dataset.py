@@ -29,9 +29,9 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
+from olmo_core.data.source_mixture import SourceMixtureDatasetConfig
+from olmo_core.data.types import NumpyDatasetDType, NumpyDatasetType, SupportedDType
 from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
-from olmo_core.data.types import NumpyDatasetType, NumpyDatasetDType, SupportedDType
-from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourcePathTokens
 
 from ..aliases import PathOrStr
 from ..config import Config, StrEnum
@@ -1653,7 +1653,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
             generate_doc_lengths=generate_doc_lengths,
             max_target_sequence_length=max_target_sequence_length,
         )
-        self._metadata = metadata
+        self._metadata = tuple(metadata)
         self._include_instance_metadata = include_instance_metadata
         self._num_instances: Optional[int] = None
         self._array_offsets: Optional[Tuple[Tuple[int, int], ...]] = None

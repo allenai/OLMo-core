@@ -17,12 +17,15 @@ from olmo_core.config import Config, DType
 from olmo_core.data import (
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
-    NumpyFSLDatasetMixtureConfig,
     NumpyDatasetType,
+    NumpyFSLDatasetMixtureConfig,
     TokenizerConfig,
 )
+from olmo_core.data.source_mixture import (
+    SourceMixtureConfig,
+    SourceMixtureDatasetConfig,
+)
 from olmo_core.data.types import NumpyDatasetDType
-from olmo_core.data.source_mixture import SourceMixtureConfig, SourceMixtureDatasetConfig
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.distributed.utils import init_hybrid_shard_mesh
 from olmo_core.nn.transformer import TransformerConfig

@@ -1,11 +1,11 @@
 import logging
 import math
 import random
-from itertools import chain
-from concurrent.futures import as_completed, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from itertools import chain
 from pprint import pprint
+from typing import Dict, List, Optional
 
 import tabulate
 from tqdm import tqdm
@@ -220,9 +220,9 @@ class SourceMixtureDatasetConfig(Config):
             ),
         )
 
-        for source in completed:
-            for item in source.path_tokens:
-                log.info(f"Selected {item.tokens} tokens from {source.name} at {item.path}")
+        for outcome in completed:
+            for item in outcome.path_tokens:
+                log.info(f"Selected {item.tokens} tokens from {outcome.name} at {item.path}")
 
         return SourceMixtureDataset(completed)
 

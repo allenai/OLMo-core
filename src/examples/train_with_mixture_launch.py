@@ -9,7 +9,7 @@ import sys
 
 from beaker import Beaker
 
-from olmo_core.launch.beaker import BeakerLaunchConfig, BeakerEnvSecret
+from olmo_core.launch.beaker import BeakerEnvSecret, BeakerLaunchConfig
 from olmo_core.utils import generate_uuid, prepare_cli_environment
 
 

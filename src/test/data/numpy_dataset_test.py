@@ -1,21 +1,25 @@
+from os import PathLike
 from pathlib import Path
-from typing import List, Tuple
+from typing import Any, List, Tuple, Union
 
 import numpy as np
 
 from olmo_core.data import (
     NumpyDatasetConfig,
-    NumpyFSLDatasetMixtureConfig,
     NumpyFSLDataset,
+    NumpyFSLDatasetMixtureConfig,
     NumpyPaddedFSLDataset,
     NumpyVSLDataset,
     TokenizerConfig,
 )
-
-from olmo_core.aliases import PathOrStr
+from olmo_core.data.source_mixture import (
+    SourceMixtureConfig,
+    SourceMixtureDatasetConfig,
+)
 from olmo_core.data.types import NumpyDatasetDType
-from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixtureConfig
 from olmo_core.data.utils import get_document_indices, write_document_indices
+
+Mmaps = List[Tuple[Union[Path, PathLike[Any], str], Any]]
 
 
 def _make_mmaps(
@@ -27,8 +31,8 @@ def _make_mmaps(
     eos: int,
     seq_length: int = 4,
     seed: int = 42,
-) -> List[Tuple[PathOrStr, List]]:
-    mmaps = []
+) -> Mmaps:
+    mmaps: Mmaps = []
     for i in range(num_files):
         filepath = f"{tmp_path}/{prefix}_{i}.npy"
         np.random.seed(seed)
