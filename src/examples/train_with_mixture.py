@@ -12,6 +12,7 @@ from typing import cast
 
 import s3fs
 from torch.distributed.elastic.multiprocessing.errors import record
+from beaker import Beaker
 
 from olmo_core.config import Config, DType
 from olmo_core.data import (
@@ -195,6 +196,8 @@ def build_config(run_name: str) -> ExperimentConfig:
 
 @record
 def main(run_name: str):
+    beaker_user = (Beaker.from_env().account.whoami().name).upper()
+    print(f"Running as: {beaker_user}")
     config = build_config(run_name)
 
     # Set RNG states on all devices.
