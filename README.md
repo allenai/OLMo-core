@@ -19,6 +19,12 @@ First install [PyTorch](https://pytorch.org) according to the instructions speci
 pip install ai2-olmo-core
 ```
 
+## API stability
+
+Even though this library is under rapid development we are trying hard to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with every release except for features that are explicitly marked as beta features. Those features will be tagged like this in the [API docs](https://olmo-core.readthedocs.io/en/latest/):
+
+![image](https://github.com/user-attachments/assets/c666686d-3ae6-4c88-8381-befd698d3fd0)
+
 ## Official training scripts
 
 Official training scripts for various model sizes can be found in [`src/scripts/train/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/train).
@@ -29,14 +35,14 @@ Throughput numbers from these scripts with various different configuration setti
 | Model&nbsp;size | Context&nbsp;length | Precision | Throughput[^1] | Training&nbsp;script | Commandline&nbsp;overrides&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; |
 | :--------: | :------------: | :-------: | -----------: | :----------- | :-------- |
 | **1B**  | 4096 | BF16 | 44,000 TPS | `OLMo-1B.py` | |
-| | 256-8192[^2] | BF16 | 49,000 TPS | `OLMo-1B.py` | `--dataset.name=vsl` |
-| | 4096 | FP8 | 51,000 TPS | `OLMo-1B.py` | `--model.float8_config.enabled=true` |
+| | 4096 | BF16/FP8[^2] | 51,000 TPS | `OLMo-1B.py` | `--model.float8_config.enabled=true` |
 | **7B**  | 4096 | BF16 | 10,000 TPS | `OLMo-7B.py` | |
-| | | FP8 | 13,000 TPS | `OLMo-7B.py` | `--model.float8_config.enabled=true` |
+| | 4096 | BF16/FP8 | 13,000 TPS | `OLMo-7B.py` | `--model.float8_config.enabled=true` |
 | **13B** | 4096 | BF16 | 4,600 TPS | `OLMo-13B.py` | |
+| | 4096 | BF16/FP8 | 5,500 TPS | `OLMo-13B.py` | `--model.float8_config.enabled=true` |
 
 [^1]: Throughput reported in tokens per second per device.
-[^2]: Denotes variable sequence length (VSL) with the Grow-P2 curriculum from [Dataset Decomposition: Faster LLM Training with Variable Sequence Length Curriculum](https://arxiv.org/abs/2405.13226).
+[^2]: In this setup most matrix multiplications are computed in `float8`, everything else is in `bfloat16`.
 
 ## Development
 
