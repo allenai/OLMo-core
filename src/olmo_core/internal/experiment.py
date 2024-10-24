@@ -125,7 +125,6 @@ def build_common_components(
         weka_buckets.append(BeakerWekaBucket("oe-training-default", "/weka/oe-training-default"))
 
     beaker_user = (Beaker.from_env().account.whoami().name).upper()
-    print(f"Beaker user: {beaker_user}")
     cmd_to_launch = SubCmd.train
     if cmd == SubCmd.launch_prep:
         cmd_to_launch = SubCmd.prep
