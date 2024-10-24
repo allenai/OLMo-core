@@ -6,13 +6,12 @@ Launch this with torchrun:
     torchrun --nproc-per-node=4 src/examples/train_with_mixture.py run_name [OVERRIDES...]
 """
 
-import os
 import sys
 from dataclasses import dataclass
-from typing import List, cast, Union
+from typing import List, cast
 
 import s3fs
-import boto3
+from torch.distributed.elastic.multiprocessing.errors import record
 
 from olmo_core.config import Config, DType
 from olmo_core.data import (
@@ -22,7 +21,6 @@ from olmo_core.data import (
     NumpyDatasetType,
     TokenizerConfig,
 )
-from olmo_core.io import _get_s3_client
 from olmo_core.data.types import NumpyDatasetDType
 from olmo_core.data.source_mixture import SourceMixtureConfig, SourceMixtureDatasetConfig
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
@@ -172,7 +170,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             LMEvaluatorCallbackConfig(
                 eval_dataset=NumpyDatasetConfig(
                     paths=[
-                        "s3://ai2-llm/eval-data/perplexity/v3_small_dolma2-tokenizer/c4_en/val/part-0-00000.npy"
+                        # "s3://ai2-llm/eval-data/perplexity/v3_small_dolma2-tokenizer/c4_en/val/part-0-00000.npy"
                     ],
                     metadata=[{"label": "c4-validation"}],
                     name=NumpyDatasetType.padded_fsl,
@@ -195,6 +193,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     ).merge(overrides)
 
 
+@record
 def main(run_name: str, overrides: List[str]):
     config = build_config(run_name, overrides)
 
