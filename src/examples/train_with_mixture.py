@@ -209,7 +209,6 @@ def main(run_name: str, overrides: List[str]):
     )
     optim = config.optim.build(model)
     dataset = config.dataset.build()
-    dataset.prepare()
     data_loader = config.data_loader.build(dataset)
     trainer = config.trainer.build(model, optim, data_loader)
 
