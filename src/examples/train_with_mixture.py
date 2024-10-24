@@ -54,7 +54,7 @@ from olmo_core.utils import get_default_device, seed_all
 class ExperimentConfig(Config):
     model: TransformerConfig
     optim: AdamWConfig
-    dataset: Union[NumpyDatasetConfig, NumpyFSLDatasetMixtureConfig]
+    dataset: NumpyFSLDatasetMixtureConfig
     data_loader: NumpyDataLoaderConfig
     trainer: TrainerConfig
     init_seed: int = 12536
