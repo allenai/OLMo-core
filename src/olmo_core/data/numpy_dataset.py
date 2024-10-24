@@ -1622,6 +1622,25 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         max_target_sequence_length: Optional[int] = None,
         bust_index_cache: bool = False,
     ):
+        if max_target_sequence_length is not None and (
+            max_target_sequence_length < sequence_length
+            or max_target_sequence_length % sequence_length != 0
+        ):
+            raise OLMoConfigurationError(
+                "'max_target_sequence_length' should be a multiple of 'sequence_length'"
+            )
+
+        if include_instance_metadata is None and metadata:
+            include_instance_metadata = True
+
+        if isinstance(metadata, list):
+            if len(metadata) != len(paths):
+                raise OLMoConfigurationError(
+                    "'metadata' should have the same length as the number of file paths"
+                )
+        else:
+            metadata = [metadata or {}] * len(paths)
+
         super().__init__(
             *paths,
             pad_token_id=pad_token_id,
@@ -1764,7 +1783,7 @@ class NumpyFSLDatasetMixtureConfig(Config):
     """
     Metadata for the numpy arrays.
     """
-    include_instance_metadata: bool = True
+    include_instance_metadata: bool = False
     """
     Whether or not to include the :data:`metadata` in the instances returned from
     :meth:`NumpyDatasetBase.__getitem__()`.
