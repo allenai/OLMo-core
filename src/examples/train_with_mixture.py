@@ -3,12 +3,12 @@ Example of how to train a transformer language model.
 
 Launch this with torchrun:
 
-    torchrun --nproc-per-node=4 src/examples/train_with_mixture.py run_name [OVERRIDES...]
+    torchrun --nproc-per-node=4 src/examples/train_with_mixture.py run_name
 """
 
 import sys
 from dataclasses import dataclass
-from typing import List, cast
+from typing import cast
 
 import s3fs
 from torch.distributed.elastic.multiprocessing.errors import record
@@ -58,7 +58,7 @@ class ExperimentConfig(Config):
     init_seed: int = 12536
 
 
-def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
+def build_config(run_name: str) -> ExperimentConfig:
     tokenizer_config = TokenizerConfig.gpt2()
 
     model_config = TransformerConfig.llama2_271M(
@@ -190,12 +190,12 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         dataset=dataset_config,
         data_loader=data_loader_config,
         trainer=trainer_config,
-    ).merge(overrides)
+    )
 
 
 @record
-def main(run_name: str, overrides: List[str]):
-    config = build_config(run_name, overrides)
+def main(run_name: str):
+    config = build_config(run_name)
 
     # Set RNG states on all devices.
     seed_all(config.init_seed)
@@ -223,13 +223,13 @@ def main(run_name: str, overrides: List[str]):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print(f"Usage: python {sys.argv[0]} run_name [OVERRIDES...]")
+        print(f"Usage: python {sys.argv[0]} run_name")
         sys.exit(1)
 
-    run_name, *overrides = sys.argv[1:]
+    run_name = sys.argv[1]
 
     prepare_training_environment()
     try:
-        main(run_name, overrides=overrides)
+        main(run_name)
     finally:
         teardown_training_environment()

@@ -6,17 +6,16 @@ Run this with:
 """
 
 import sys
-from typing import List
 
 from olmo_core.launch.beaker import BeakerLaunchConfig, BeakerEnvSecret
 from olmo_core.utils import generate_uuid, prepare_cli_environment
 
 
-def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
+def build_config(run_name: str) -> BeakerLaunchConfig:
     return BeakerLaunchConfig(
         name=f"olmo-core-test-{generate_uuid()[:8]}",
         budget="ai2/oe-training",
-        cmd=["src/examples/train_with_mixture.py", run_name, *overrides],
+        cmd=["src/examples/train_with_mixture.py", run_name],
         task_name="train",
         workspace="ai2/OLMo-core",
         description="Testing OLMo-core launch utilities",
@@ -38,8 +37,8 @@ if __name__ == "__main__":
         print(f"Usage: python {sys.argv[0]} run_name [OVERRIDES...]")
         sys.exit(1)
 
-    run_name, *overrides = sys.argv[1:]
+    run_name = sys.argv[1]
 
     prepare_cli_environment()
 
-    build_config(run_name, overrides).launch(follow=True)
+    build_config(run_name).launch(follow=True)
