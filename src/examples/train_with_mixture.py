@@ -77,7 +77,6 @@ def build_config(run_name: str) -> ExperimentConfig:
             name=DataParallelType.fsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
     )
 
