@@ -37,7 +37,7 @@ from .numpy_dataset import (
     VSLGrowthCurriculum,
     VSLNaturalCurriculum,
 )
-from .tokenizer import TokenizerConfig, TokenizerName
+from .tokenizer import HFTokenizer, Tokenizer, TokenizerConfig, TokenizerName
 
 __all__ = [
     "NumpyDatasetBase",
@@ -54,6 +54,8 @@ __all__ = [
     "VSLCurriculumType",
     "VSLCurriculumConfig",
     "NumpyDatasetDType",
+    "Tokenizer",
+    "HFTokenizer",
     "TokenizerConfig",
     "TokenizerName",
     "DataMixBase",
