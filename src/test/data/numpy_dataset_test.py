@@ -1,6 +1,5 @@
-from os import PathLike
 from pathlib import Path
-from typing import Any, List, Tuple, Union
+from typing import List
 
 import numpy as np
 
@@ -19,33 +18,7 @@ from olmo_core.data.source_mixture import (
 from olmo_core.data.types import NumpyDatasetDType
 from olmo_core.data.utils import get_document_indices, write_document_indices
 
-Mmaps = List[Tuple[Union[Path, PathLike[Any], str], Any]]
-
-
-def _make_mmaps(
-    tmp_path: Path,
-    prefix: str,
-    num_files: int,
-    size: int,
-    dtype,
-    eos: int,
-    seq_length: int = 4,
-    seed: int = 42,
-) -> Mmaps:
-    mmaps: Mmaps = []
-    for i in range(num_files):
-        filepath = f"{tmp_path}/{prefix}_{i}.npy"
-        np.random.seed(seed)
-        data = np.random.randint(0, np.iinfo(dtype).max, size=size, dtype=dtype)
-        data = np.append(
-            np.insert(data, np.arange(seq_length + 1, len(data), seq_length), eos), eos
-        )
-        mm = np.memmap(filepath, mode="w+", dtype=dtype, shape=(len(data),))
-        mm[:] = data
-        mm.flush()
-        mmaps.append((Path(filepath), data))
-
-    return mmaps
+from ..utils import mk_mmaps
 
 
 def test_numpy_fsl_dataset(tmp_path: Path):
@@ -104,8 +77,8 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
     # NOTE: At small token counts the take_ratio can be finicky so we test at small but real world-ish scale
     npdtype = np.uint16
     seed = 42
-    mmap1 = _make_mmaps(tmp_path, "mmap1", 1, 20 * 1000, npdtype, eos=0, seed=seed)
-    mmap2 = _make_mmaps(tmp_path, "mmap2", 1, 20 * 1000, npdtype, eos=0, seed=seed)
+    mmap1 = mk_mmaps(tmp_path, "mmap1", 1, 20 * 1000, npdtype, eos=0, seed=seed)
+    mmap2 = mk_mmaps(tmp_path, "mmap2", 1, 20 * 1000, npdtype, eos=0, seed=seed)
 
     sequence_length = 4
     tokenizer = TokenizerConfig(
@@ -161,8 +134,8 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
     # NOTE: At small token counts the take_ratio can be finicky so we test at small but real world-ish scale
     npdtype = np.uint16
     seed = 42
-    mmap1 = _make_mmaps(tmp_path, "mmap1", 1, 10 * 1000, npdtype, eos=0, seed=seed)
-    mmap2 = _make_mmaps(tmp_path, "mmap2", 1, 20 * 1000, npdtype, eos=0, seed=seed)
+    mmap1 = mk_mmaps(tmp_path, "mmap1", 1, 10 * 1000, npdtype, eos=0, seed=seed)
+    mmap2 = mk_mmaps(tmp_path, "mmap2", 1, 20 * 1000, npdtype, eos=0, seed=seed)
 
     sequence_length = 4
     tokenizer = TokenizerConfig(

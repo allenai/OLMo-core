@@ -1,3 +1,4 @@
+from itertools import chain
 from pathlib import Path
 from typing import List
 
@@ -14,6 +15,8 @@ from olmo_core.data import (
     VSLGrowP2Curriculum,
     VSLNaturalCurriculum,
 )
+
+from .fixtures import get_fsl_mixture
 
 
 @pytest.mark.parametrize(
@@ -182,6 +185,64 @@ def test_fsl_data_loader_multiple_epochs(
 
     assert data_loader.batches_processed == 0
     assert data_loader.tokens_processed == 0
+
+
+@pytest.mark.parametrize(
+    "num_tokens, sequence_length, world_size, num_workers, num_threads, batch_size",
+    [
+        (100, 4, 2, 2, 2, 8),  # 2 instances per batch, 12 instances total
+    ],
+)
+def test_fsl_data_loader_with_mixture(
+    tmp_path: Path,
+    num_tokens: int,
+    sequence_length: int,
+    world_size: int,
+    num_workers: int,
+    num_threads: int,
+    batch_size: int,  # in tokens
+):
+
+    dataset = get_fsl_mixture(tmp_path, sequence_length=sequence_length, num_tokens=num_tokens)
+    assert batch_size % sequence_length == 0
+    assert batch_size % world_size == 0
+    rank_batch_size = batch_size // world_size
+    assert rank_batch_size > 0
+    num_batches = num_tokens // batch_size
+
+    def get_all_batches() -> List[List[int]]:
+        all_batches: List[List[int]] = [[] for _ in range(num_batches)]
+        for rank in range(world_size):
+            data_loader = NumpyFSLDataLoader(
+                dataset,
+                global_batch_size=batch_size,
+                collator=DataCollator(pad_token_id=-1),
+                shuffle=False,
+                num_threads=num_threads,
+                work_dir=tmp_path,
+                dp_rank=rank,
+                dp_world_size=world_size,
+                num_workers=num_workers,
+            )
+            data_loader.reshuffle(epoch=1)
+            batches = list(data_loader)
+            assert len(batches) == num_batches
+            for i, batch in enumerate(batches):
+                for instance in batch["input_ids"]:
+                    all_batches[i].extend(instance.tolist())
+        return all_batches
+
+    all_batches = get_all_batches()
+    all_tokens = []
+    assert len(all_batches) == num_batches
+    for batch in all_batches:
+        assert len(batch) == batch_size
+        all_tokens.extend(batch)
+
+    ds_tokens = list(chain.from_iterable([i["input_ids"].tolist() for i in dataset]))
+
+    assert len(all_tokens) == num_batches * batch_size
+    assert set(all_tokens) == set(ds_tokens)
 
 
 @pytest.mark.parametrize(
