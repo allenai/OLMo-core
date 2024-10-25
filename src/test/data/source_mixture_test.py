@@ -226,7 +226,14 @@ def test_dataset_mixture_build_with_repetition(tmp_path: Path):
     )
 
     mixture = config.build()
+    sources = [source for source in mixture.sources]
+    all_paths = []
+    for source in sources:
+        all_paths.extend([item for item in source.path_tokens])
+
+    total_tokens = sum([item.tokens for item in all_paths])
     assert isinstance(mixture, SourceMixtureDataset)
+    assert total_tokens == 5_000_000
 
 
 def test_dataset_mixture_build_insufficient_source_max_fraction(tmp_path: Path):
@@ -268,3 +275,44 @@ def test_dataset_mixture_build_insufficient_source_max_fraction(tmp_path: Path):
     # we limit usage to 10% of the source
     with pytest.raises(OLMoConfigurationError):
         config.build()
+
+
+# TODO: Handle duplicate paths in source mixture
+def test_dataset_mixture_build_duplicate_paths(tmp_path: Path):
+    sources = {
+        "1": _make_mmaps(tmp_path=tmp_path, prefix="source1", num_files=1, size=500_000),
+        "2": _make_mmaps(tmp_path=tmp_path, prefix="source2", num_files=2, size=1_000_000),
+        "3": _make_mmaps(tmp_path=tmp_path, prefix="source3", num_files=2, size=1_000_000),
+    }
+
+    source_configs = [
+        SourceMixtureConfig(
+            source_name="1",
+            target_ratio=0.33,  # 990k tokens
+            max_repetition_ratio=2.0,
+            paths=[sources["1"][0], sources["1"][0]],  # Duplicate the 1 path for source 1
+        ),
+        SourceMixtureConfig(source_name="2", target_ratio=0.33, paths=sources["2"]),
+        SourceMixtureConfig(
+            source_name="3",
+            target_ratio=0.34,
+            paths=sources["3"],
+        ),
+    ]
+
+    max_tokens = 3_000_000
+
+    config = SourceMixtureDatasetConfig(
+        max_tokens=max_tokens,
+        source_configs=source_configs,
+        dtype=NumpyDatasetDType.uint32,
+        sequence_length=1024,
+    )
+
+    mixture = config.build()
+    index = mixture.to_index()
+    paths = mixture.to_paths()
+    assert paths == [sources["1"][0], sources["1"][0]] + sources["2"] + sources["3"]
+    assert len(index) == 6
+    assert isinstance(mixture, SourceMixtureDataset)
+    assert len(mixture.sources) == 3

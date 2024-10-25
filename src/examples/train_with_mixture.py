@@ -1,5 +1,5 @@
 """
-Example of how to train a transformer language model.
+Example of how to train a transformer language model with a source mixture config.
 
 Launch this with torchrun:
 
@@ -91,13 +91,13 @@ def build_config(run_name: str) -> ExperimentConfig:
 
     sequence_length = 1024
     source_config = SourceMixtureDatasetConfig(
-        max_tokens=20_000_000,
+        max_tokens=int(10e8),  # 100M tokens
         sequence_length=sequence_length,
         source_configs=[
             SourceMixtureConfig(
                 paths=[f"s3://{path}" for path in baseline],
                 source_name="baseline",
-                max_repetition_ratio=1.0,
+                max_repetition_ratio=1.0,  # 1.0 is a no-op but added here to illustrate the option
                 target_ratio=0.8,
             ),
             SourceMixtureConfig(
@@ -120,7 +120,7 @@ def build_config(run_name: str) -> ExperimentConfig:
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=256 * 1024,
+        global_batch_size=256 * sequence_length,
         seed=0,
         num_workers=4,
     )
@@ -128,7 +128,7 @@ def build_config(run_name: str) -> ExperimentConfig:
     trainer_config = (
         TrainerConfig(
             save_folder=f"/tmp/{run_name}",
-            rank_microbatch_size=16 * 1024,
+            rank_microbatch_size=16 * sequence_length,
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=5,

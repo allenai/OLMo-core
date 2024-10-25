@@ -1,6 +1,7 @@
 import gzip
 import math
 import os
+import random
 from contextlib import contextmanager
 from pathlib import Path
 from typing import (
@@ -328,7 +329,7 @@ def memmap_to_write(
     file until the context exists successfully.
     """
     path.parent.mkdir(exist_ok=True, parents=True)
-    tmp_path = path.with_suffix(".npy.tmp")
+    tmp_path = path.with_suffix(f".{random.randint(0,2**16)}.npy.tmp")
     mmap = np.memmap(tmp_path, dtype=dtype, mode="w+", shape=shape)
     try:
         yield mmap

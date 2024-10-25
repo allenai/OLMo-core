@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from itertools import chain
 from pprint import pprint
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import tabulate
 from tqdm import tqdm
@@ -107,12 +107,25 @@ class SourceMixtureDataset:
 
     sources: List[SourceMixtureOutcome]
 
-    def to_path_instance_index(self) -> Dict[str, int]:
+    def to_index(self) -> Dict[Tuple[str, int], int]:
         """
-        Convert the dataset to a dictionary of paths and instance counts to retain.
+        Convert the dataset to an indexed array of dict((int, path), int).
         """
-        outcomes = chain.from_iterable([outcome.path_tokens for outcome in self.sources])
-        return {str(outcome.path): outcome.tokens for outcome in outcomes}
+        return {
+            (str(outcome.path), idx): outcome.tokens
+            for idx, outcome in enumerate(
+                list(chain.from_iterable([outcome.path_tokens for outcome in self.sources]))
+            )
+        }
+
+    def to_paths(self) -> List[PathOrStr]:
+        """
+        Convert the dataset to a list of paths while maintaining stable ordering.
+        """
+        return [
+            item.path
+            for item in list(chain.from_iterable([outcome.path_tokens for outcome in self.sources]))
+        ]
 
 
 @dataclass
@@ -143,7 +156,7 @@ class SourceMixtureDatasetConfig(Config):
         random.seed(self.seed)
         available_tokens_by_source: Dict[str, int] = {}
 
-        print("--------------------------------------------------------------------------------")
+        print("---------------------------------------------------------")
         print("Generating a source mixture from configurations:")
         for source_config in self.source_configs:
             pprint(source_config)
@@ -157,7 +170,7 @@ class SourceMixtureDatasetConfig(Config):
 
         tokens_details_by_source: List[SourceTokenDetails] = []
 
-        # Calculate the number of tokens to include for each source
+        # Calculate the number of tokens available and to include for each source
         for source_config in self.source_configs:
             num_for_source = available_tokens_by_source[source_config.source_name]
             needed_for_source = int(self.max_tokens * source_config.target_ratio)
@@ -187,7 +200,7 @@ class SourceMixtureDatasetConfig(Config):
                     name=source.config.source_name,
                     path_tokens=self.get_paths_and_tokens_for_source(
                         source_config=source.config,
-                        take_ratio=source.num_selected / source.population,
+                        token_details=source,
                     ),
                 )
             )
@@ -227,13 +240,31 @@ class SourceMixtureDatasetConfig(Config):
         return SourceMixtureDataset(completed)
 
     def get_paths_and_tokens_for_source(
-        self, source_config: SourceMixtureConfig, take_ratio: float
+        self, source_config: SourceMixtureConfig, token_details: SourceTokenDetails
     ) -> List[SourcePathTokens]:
         """
         Get the paths and resulting token count for a source.
         """
-        # TODO: Handle repetition ratio by adding paths multiple times, max_repetition_ratio
+        take_ratio = token_details.num_selected / token_details.population
         path_tokens = []
+
+        # When we need more than 1 repetition of the source data we have a take ration > 1
+        if take_ratio > 1:
+            take_ratios = []
+            remaining = take_ratio
+
+            while remaining > 0:
+                chunk = min(1.0, remaining)
+                take_ratios.append(chunk)
+                remaining -= chunk
+
+            for ratio in take_ratios:
+                for path in source_config.paths:
+                    tokens_to_keep = int(math.ceil(self._count_tokens_for_file(path) * ratio))
+                    path_tokens.append(SourcePathTokens(path=path, tokens=tokens_to_keep))
+
+            return path_tokens
+
         for path in source_config.paths:
             tokens_to_keep = int(math.ceil(self._count_tokens_for_file(path) * take_ratio))
             path_tokens.append(SourcePathTokens(path=path, tokens=tokens_to_keep))

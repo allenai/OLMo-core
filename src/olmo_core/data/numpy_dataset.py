@@ -136,7 +136,7 @@ class NumpyDatasetBase(ABC):
         The size, in bytes, of each numpy array.
         """
         if self._array_file_sizes is None:
-            self._array_file_sizes = tuple(self.map(get_file_size))
+            self._array_file_sizes = tuple(self.map(lambda item: get_file_size(item[0])))
         return self._array_file_sizes
 
     @property
@@ -236,7 +236,7 @@ class NumpyDatasetBase(ABC):
 
     def map(
         self,
-        func: Callable[[PathOrStr], T],
+        func: Callable[[Tuple[PathOrStr, int]], T],
         *,
         max_workers: Optional[int] = None,
         method: Literal["threads", "processes"] = "threads",
@@ -255,7 +255,7 @@ class NumpyDatasetBase(ABC):
         paths = _paths or self.paths
 
         if max_workers == 0:
-            return [func(path) for path in paths]
+            return [func((path, idx)) for idx, path in enumerate(paths)]
 
         executor_class: Union[
             Type[concurrent.futures.ThreadPoolExecutor],
@@ -271,9 +271,9 @@ class NumpyDatasetBase(ABC):
 
         with executor_class(max_workers=max_workers) as executor:
             path_to_future = {}
-            for path in paths:
+            for idx, path in enumerate(paths):
                 if path not in path_to_future:
-                    path_to_future[path] = executor.submit(func, path)
+                    path_to_future[path] = executor.submit(func, (path, idx))
 
             results = []
             for path in paths:
@@ -484,7 +484,10 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
             path, start_idx, start_idx + self.sequence_length, self.dtype
         )
 
-    def _get_file_size_and_length(self, path, dtype=None) -> Tuple[int, int]:
+    def _get_file_size_and_length(
+        self, item: Tuple[PathOrStr, int], dtype: Optional[SupportedDType] = None
+    ) -> Tuple[int, int]:
+        path, _ = item
         dtype = dtype or self.dtype
         item_size = dtype(0).itemsize
         file_size = get_file_size(path)
@@ -538,7 +541,8 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         if self._array_instance_offsets is None:
             item_size = self.indices_dtype(0).itemsize
             num_instances_per_path = self.map(
-                lambda path: get_file_size(self._get_instance_indices_path(path)) // (item_size * 2)
+                lambda item: get_file_size(self._get_instance_indices_path(item[0]))
+                // (item_size * 2)
             )
             array_instance_offsets = []
             start_offset = 0
@@ -1610,7 +1614,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
     def __init__(
         self,
         *paths: PathOrStr,
-        path_offset_index: Dict[str, int],
+        path_offset_index: Dict[Tuple[str, int], int],
         sequence_length: int,
         pad_token_id: int,
         eos_token_id: int,
@@ -1681,22 +1685,24 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         )
 
     def _write_document_indices(self):
-        paths_needed: List[PathOrStr] = []
-        for path in self.paths:
+        paths_needed: List[Tuple[PathOrStr, int]] = []
+        for idx, path in enumerate(self.paths):
             indices_path = self._get_indices_path(path)
             if indices_path.is_file() and not self._bust_index_cache:
                 log.info(f"Reusing document indices for '{path}' at:\n'{indices_path}'")
             elif path not in paths_needed:
-                paths_needed.append(path)
+                paths_needed.append((path, idx))
 
         if paths_needed:
             with concurrent.futures.ProcessPoolExecutor() as executor:
                 futures = []
-                for path in paths_needed:
+                for path, idx in paths_needed:
                     indices_path = self._get_indices_path(path)
                     log.info(f"Gathering instance indices for '{path}'...")
-                    # NOTE: We limit the number of instances to the number by total target token count
-                    max_instances = self._path_offset_index[str(path)] // self.sequence_length
+                    # NOTE: We limit the number of instances by total target token count // sequence length
+                    max_instances = (
+                        self._path_offset_index[(str(path), idx)] // self.sequence_length
+                    )
                     future = executor.submit(
                         run_worker_func,
                         segment_documents_into_instances,
@@ -1713,7 +1719,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                 concurrent.futures.wait(futures, return_when="ALL_COMPLETED")
 
                 # Log results.
-                for path, future in zip(paths_needed, futures):
+                for path, future in zip([item[0] for item in paths_needed], futures):
                     _, total_instances = future.result()
                     log.info(
                         f"Created {total_instances:,d} instances of sequence length up to "
@@ -1721,11 +1727,12 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                     )
 
     def _get_file_size_and_length(
-        self, path: PathOrStr, dtype: Optional[SupportedDType] = None
+        self, item: Tuple[PathOrStr, int], dtype: Optional[SupportedDType] = None
     ) -> Tuple[int, int]:
+        path, idx = item
         dtype = dtype or self.dtype
         item_size = dtype(0).itemsize
-        file_size = self._get_size_from_offset_index(path)
+        file_size = self._get_size_from_offset_index(item)
         if (
             self.max_target_sequence_length is None
             or self.max_target_sequence_length == self.sequence_length
@@ -1741,12 +1748,13 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         else:
             raise RuntimeError("invalid 'max_target_sequence_length' or 'sequence_length'")
 
-    def _get_size_from_offset_index(self, path: PathOrStr) -> int:
+    def _get_size_from_offset_index(self, path_index: Tuple[PathOrStr, int]) -> int:
         try:
+            path, idx = path_index
             # Get size in bytes from tokens in the supplied index * itemsize
-            return self._path_offset_index[str(path)] * self.dtype(0).itemsize
+            return self._path_offset_index[(str(path), idx)] * self.dtype(0).itemsize
         except KeyError:
-            raise OLMoEnvironmentError(f"Path {path} not found in path index")
+            raise OLMoEnvironmentError(f"Item not found in path index @ {path_index}")
 
 
 @dataclass
@@ -1828,9 +1836,9 @@ class NumpyFSLDatasetMixtureConfig(Config):
         """
         Construct the corresponding :class:`NumpyFSLDatasetMixture`.
         """
-        mixture = self.source_mixture_config.build().to_path_instance_index()
+        mixture = self.source_mixture_config.build()
         return NumpyFSLDatasetMixture(
-            *mixture.keys(),
+            *mixture.to_paths(),
             sequence_length=self.sequence_length or 1024,
             max_target_sequence_length=self.max_target_sequence_length,
             pad_token_id=self.tokenizer.pad_token_id,
@@ -1840,6 +1848,6 @@ class NumpyFSLDatasetMixtureConfig(Config):
             metadata=self.metadata,
             include_instance_metadata=self.include_instance_metadata,
             generate_doc_lengths=self.generate_doc_lengths,
-            path_offset_index=mixture,
+            path_offset_index=mixture.to_index(),
             bust_index_cache=self.bust_index_cache,
         )
