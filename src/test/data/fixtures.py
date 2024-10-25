@@ -8,11 +8,11 @@ from olmo_core.data import (
     NumpyFSLDatasetMixtureConfig,
     TokenizerConfig,
 )
-from olmo_core.data.types import NumpyDatasetDType
 from olmo_core.data.source_mixture import (
     SourceMixtureConfig,
     SourceMixtureDatasetConfig,
 )
+from olmo_core.data.types import NumpyDatasetDType
 
 from ..utils import mk_mmaps
 

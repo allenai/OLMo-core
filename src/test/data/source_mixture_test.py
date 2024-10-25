@@ -1,9 +1,6 @@
 from itertools import chain
-from os import PathLike
 from pathlib import Path
-from typing import Any, List, Union
 
-import numpy as np
 import pytest
 
 from olmo_core.data import NumpyDatasetDType
@@ -15,21 +12,6 @@ from olmo_core.data.source_mixture import (
 from olmo_core.exceptions import OLMoConfigurationError
 
 from ..utils import mk_mmaps
-
-
-# def mk_mmaps(tmp_path: Path, prefix: str, num_files: int, size: int) -> Mmaps:
-#     mmaps: Mmaps = []
-#     for i in range(num_files):
-#         filepath = f"{tmp_path}/{prefix}_{i}.npy"
-#         data = np.random.randint(0, 2**32, size=size, dtype=np.uint32)
-#         mm = np.memmap(
-#             filepath, mode="w+", dtype=NumpyDatasetDType.uint32.as_np_dtype(), shape=(size,)
-#         )
-#         mm[:] = data
-#         mm.flush()
-#         mmaps.append(Path(filepath))
-
-#     return mmaps
 
 
 def test_source_mixture_config(tmp_path: Path, capsys):

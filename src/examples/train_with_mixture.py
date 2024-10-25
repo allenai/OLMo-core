@@ -27,13 +27,8 @@ from olmo_core.data.source_mixture import (
 )
 from olmo_core.data.types import NumpyDatasetDType
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.nn.transformer import (
-    TransformerConfig,
-    TransformerDataParallelConfig,
-    TransformerDataParallelWrappingStrategy,
-)
 from olmo_core.distributed.utils import init_hybrid_shard_mesh
-from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
     Duration,

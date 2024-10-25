@@ -202,7 +202,6 @@ def test_fsl_data_loader_with_mixture(
     num_threads: int,
     batch_size: int,  # in tokens
 ):
-
     dataset = get_fsl_mixture(tmp_path, sequence_length=sequence_length, num_tokens=num_tokens)
     assert batch_size % sequence_length == 0
     assert batch_size % world_size == 0
