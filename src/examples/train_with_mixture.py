@@ -26,7 +26,12 @@ from olmo_core.data.source_mixture import (
     SourceMixtureDatasetConfig,
 )
 from olmo_core.data.types import NumpyDatasetDType
-from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
+from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.nn.transformer import (
+    TransformerConfig,
+    TransformerDataParallelConfig,
+    TransformerDataParallelWrappingStrategy,
+)
 from olmo_core.distributed.utils import init_hybrid_shard_mesh
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
@@ -65,10 +70,14 @@ def build_config(run_name: str) -> ExperimentConfig:
     tokenizer_config = TokenizerConfig.dolma2()
 
     model_config = TransformerConfig.llama2_271M(
-        vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
+        # a little bigger than actual vocab size to make it a multiple of 128
+        vocab_size=tokenizer_config.padded_vocab_size(),
         compile=True,
-        dp_config=DataParallelConfig(
-            name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
+        dp_config=TransformerDataParallelConfig(
+            name=DataParallelType.fsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
     )
 
