@@ -74,7 +74,7 @@ def build_config(run_name: str) -> ExperimentConfig:
         vocab_size=tokenizer_config.padded_vocab_size(),
         compile=True,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.ddp,
+            name=DataParallelType.fsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
         ),
@@ -105,7 +105,7 @@ def build_config(run_name: str) -> ExperimentConfig:
             SourceMixtureConfig(
                 paths=[f"s3://{path}" for path in baseline],
                 source_name="baseline",
-                max_repetition_ratio=1.0,  # 1.0 is a no-op but added here to illustrate the option
+                max_repetition_ratio=1.0,  # 1.0 is default but here to illustrate options
                 target_ratio=0.8,
             ),
             SourceMixtureConfig(
@@ -114,6 +114,7 @@ def build_config(run_name: str) -> ExperimentConfig:
                 target_ratio=0.2,
             ),
         ],
+        processes=10,
         dtype=NumpyDatasetDType.uint32,
         seed=42,
     )
