@@ -74,7 +74,7 @@ def build_config(run_name: str) -> ExperimentConfig:
         vocab_size=tokenizer_config.padded_vocab_size(),
         compile=True,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp,
+            name=DataParallelType.ddp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
         ),

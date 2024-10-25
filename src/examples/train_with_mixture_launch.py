@@ -22,7 +22,7 @@ def build_config(run_name: str) -> BeakerLaunchConfig:
         task_name="train",
         workspace="ai2/OLMo-core",
         description="Testing OLMo-core launch utilities",
-        clusters=["ai2/allennlp-elanding-a100-40g"],
+        clusters=["ai2/allennlp-cirrascale"],
         env_secrets=[
             BeakerEnvSecret(name="BEAKER_TOKEN", secret=f"{beaker_user}_BEAKER_TOKEN"),
             BeakerEnvSecret(name="WANDB_API_KEY", secret=f"{beaker_user}_WANDB_API_KEY"),
