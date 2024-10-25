@@ -94,7 +94,7 @@ def build_config(run_name: str) -> ExperimentConfig:
 
     sequence_length = 1024
     source_config = SourceMixtureDatasetConfig(
-        max_tokens=int(10e8),  # 100M tokens
+        max_tokens=int(10e7),  # 100M tokens
         sequence_length=sequence_length,
         source_configs=[
             SourceMixtureConfig(
