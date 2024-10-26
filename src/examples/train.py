@@ -34,6 +34,7 @@ from olmo_core.train.callbacks import (
     GPUMemoryMonitorCallback,
     GradClipperCallback,
     LMEvaluatorCallbackConfig,
+    DownstreamEvaluatorCallbackConfig,
     ProfilerCallback,
     SchedulerCallback,
     SequenceLengthSchedulerCallback,
@@ -88,6 +89,11 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         seed=0,
         num_workers=4,
     )
+
+    downstream_evaluators = [
+        "pubmedqa_mc",
+        "scifact_rc",
+    ]
 
     trainer_config = (
         TrainerConfig(
@@ -145,6 +151,16 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
                 ),
                 eval_interval=250,
                 eval_duration=Duration.steps(10),
+            ),
+        )
+        .with_callback(
+            "downstream",
+            DownstreamEvaluatorCallbackConfig(
+                labels=downstream_evaluators,
+                eval_batch_size=4,
+                tokenizer="Qwen/Qwen2.5-1.5B",
+                eval_interval=250,
+                # eval_duration=Duration.steps(10),
             ),
         )
     )
