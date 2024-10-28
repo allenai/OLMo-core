@@ -3,12 +3,7 @@ from typing import Type, Union
 
 import numpy as np
 
-from olmo_core.data import (
-    NumpyDatasetBase,
-    NumpyFSLDataset,
-    NumpyDatasetConfig,
-    TokenizerConfig,
-)
+from olmo_core.data import NumpyDatasetBase, NumpyDatasetConfig, TokenizerConfig
 from olmo_core.data.source_mixture import (
     SourceMixtureConfig,
     SourceMixtureDatasetConfig,

@@ -7,9 +7,8 @@ from itertools import chain
 from typing import Dict, List, Optional, Tuple
 
 from rich.console import Console
+from rich.progress import Progress
 from rich.table import Table
-import tabulate
-from tqdm import tqdm
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
@@ -65,7 +64,7 @@ class SourceTokenDetails:
         return {
             "source_name": self.config.source_name,
             "source_population": f"{self.population:.2e}",
-            "num_sampled": f"{self.num_selected:.2e}",
+            "num_selected": f"{self.num_selected:.2e}",
             "target_ratio": str(self.config.target_ratio),
             "max_repetion_ratio": str(self.config.max_repetition_ratio),
             "max_source_fraction": str(self.config.max_source_fraction),
@@ -245,16 +244,16 @@ class SourceMixtureDatasetConfig(Config):
             for path in paths:
                 futures.append(executor.submit(self._count_tokens_for_file, path))
 
-            return sum(
-                [
-                    future.result()
-                    for future in tqdm(
-                        as_completed(futures),
-                        total=len(futures),
-                        desc=f"Counting tokens {'for ' + source if source else ''}",
-                    )
-                ]
-            )
+            with Progress() as progress:
+                results = []
+                task = progress.add_task(
+                    f"Counting available tokens for source: {source}", total=len(futures)
+                )
+                for future in as_completed(futures):
+                    progress.update(task, advance=1)
+                    results.append(future.result())
+
+            return sum(results)
 
     def _count_tokens_for_file(self, path: PathOrStr) -> int:
         return self._bytes_to_tokens(get_file_size(path), self.dtype)

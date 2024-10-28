@@ -1,4 +1,3 @@
-from itertools import chain
 from pathlib import Path
 from typing import List
 
@@ -15,8 +14,6 @@ from olmo_core.data import (
     VSLGrowP2Curriculum,
     VSLNaturalCurriculum,
 )
-
-from .fixtures import get_fsl_mixture
 
 
 @pytest.mark.parametrize(
