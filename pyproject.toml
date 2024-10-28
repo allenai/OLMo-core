@@ -15,8 +15,6 @@ license = { file = "LICENSE" }
 dependencies = [
     "numpy<2.0",
     "torch>=2.4,<=2.6.0.dev20241009",
-    "scikit-learn",
-    "tokenizers",
     "cached-path",
     "requests",
     "packaging",
@@ -24,6 +22,7 @@ dependencies = [
     "omegaconf",
     "safetensors",
     "importlib_resources",
+    "ai2-olmo-eval==0.1.0",
 ]
 
 [project.urls]
