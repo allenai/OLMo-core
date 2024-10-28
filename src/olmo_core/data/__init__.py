@@ -54,8 +54,6 @@ __all__ = [
     "VSLCurriculumType",
     "VSLCurriculumConfig",
     "NumpyDatasetDType",
-    "Tokenizer",
-    "HFTokenizer",
     "TokenizerConfig",
     "TokenizerName",
     "DataMixBase",
