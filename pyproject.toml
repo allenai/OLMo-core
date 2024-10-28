@@ -22,8 +22,6 @@ dependencies = [
     "omegaconf",
     "safetensors",
     "importlib_resources",
-    "tabulate",
-    "tqdm",
 ]
 
 [project.urls]
