@@ -271,7 +271,6 @@ def test_dataset_mixture_build_insufficient_source_max_fraction(tmp_path: Path):
         config.build()
 
 
-# TODO: Handle duplicate paths in source mixture
 def test_dataset_mixture_build_duplicate_paths(tmp_path: Path):
     sources = {
         "1": mk_mmaps(tmp_path=tmp_path, prefix="source1", num_files=1, size=500_000),
