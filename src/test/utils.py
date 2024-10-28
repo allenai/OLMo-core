@@ -113,7 +113,7 @@ def mk_mmaps(
     for i in range(num_files):
         filepath = f"{tmp_path}/{prefix}_{i}.npy"
         np.random.seed(seed)
-        data = np.random.randint(0, np.iinfo(dtype).max, size=size, dtype=dtype)
+        data = np.random.randint(1, np.iinfo(dtype).max, size=size, dtype=dtype)
         data = np.append(
             np.insert(data, np.arange(seq_length + 1, len(data), seq_length), eos), eos
         )

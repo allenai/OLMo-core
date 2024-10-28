@@ -120,10 +120,10 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
         expected
     ), f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
     assert ds[0]["input_ids"].tolist() == [
-        56422,
-        24545,
-        15795,
-        52202,
+        56423,
+        24546,
+        15796,
+        52203,
     ]  # stable because we pass a seed
     assert ds.num_tokens == 10000
     assert len(ds) == 2500
@@ -179,10 +179,10 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
         expected
     ), f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
     assert ds[0]["input_ids"].tolist() == [
-        56422,
-        24545,
-        15795,
-        52202,
+        56423,
+        24546,
+        15796,
+        52203,
     ]  # stable because we pass a seed
     assert ds.num_tokens == 10000
     assert len(ds) == 2500
