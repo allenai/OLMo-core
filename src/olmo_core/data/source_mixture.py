@@ -4,9 +4,10 @@ import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from itertools import chain
-from pprint import pprint
 from typing import Dict, List, Optional, Tuple
 
+from rich.console import Console
+from rich.table import Table
 import tabulate
 from tqdm import tqdm
 
@@ -22,21 +23,7 @@ __all__ = [
     "SourceMixtureDatasetConfig",
 ]
 
-logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
-
-# Disable some noisy loggers
-for name in logging.Logger.manager.loggerDict.keys():
-    if name in (
-        "boto",
-        "urllib3",
-        "s3transfer",
-        "boto3",
-        "botocore",
-        "aiobotocore",
-        "nose",
-    ):
-        logging.getLogger(name).setLevel(logging.CRITICAL)
 
 
 @dataclass
@@ -79,9 +66,9 @@ class SourceTokenDetails:
             "source_name": self.config.source_name,
             "source_population": f"{self.population:.2e}",
             "num_sampled": f"{self.num_selected:.2e}",
-            "target_ratio": self.config.target_ratio,
-            "max_repetion_ratio": self.config.max_repetition_ratio,
-            "max_source_fraction": self.config.max_source_fraction,
+            "target_ratio": str(self.config.target_ratio),
+            "max_repetion_ratio": str(self.config.max_repetition_ratio),
+            "max_source_fraction": str(self.config.max_source_fraction),
             "observed_source_ratio": f"{(self.num_selected / self.population):.4}",
             "observed_global_ratio": f"{(self.num_selected / max_tokens):.4}",
         }
@@ -156,10 +143,9 @@ class SourceMixtureDatasetConfig(Config):
         random.seed(self.seed)
         available_tokens_by_source: Dict[str, int] = {}
 
-        print("---------------------------------------------------------")
-        print("Generating a source mixture from configurations:")
-        for source_config in self.source_configs:
-            pprint(source_config)
+        log.info("---------------------------------------------------------")
+        log.info("Generating a source mixture from configurations:")
+        log.info(self.source_configs)
 
         # Count the number of tokens available for each source
         for source_config in self.source_configs:
@@ -205,33 +191,7 @@ class SourceMixtureDatasetConfig(Config):
                 )
             )
 
-        log.info("Outcome by source => ")
-        print(
-            tabulate.tabulate(
-                [item.for_table(self.max_tokens) for item in tokens_details_by_source],
-                headers="keys",
-                tablefmt="pretty",
-            ),
-        )
-
-        total_tokens = sum([item.population for item in tokens_details_by_source])
-        selected_tokens = sum([item.num_selected for item in tokens_details_by_source])
-        observed_global_ratio = selected_tokens / total_tokens
-
-        log.info("Global outcome => ")
-        print(
-            tabulate.tabulate(
-                [
-                    {
-                        "total_tokens": f"{total_tokens:.2e}",
-                        "selected_tokens": f"{selected_tokens:.2e}",
-                        "observed_global_ratio": f"{observed_global_ratio:.4}",
-                    }
-                ],
-                tablefmt="pretty",
-                headers="keys",
-            ),
-        )
+        self.render_mixture_outcome_tables(tokens_details_by_source)
 
         for outcome in completed:
             for item in outcome.path_tokens:
@@ -305,3 +265,39 @@ class SourceMixtureDatasetConfig(Config):
         """
         npdtype = dtype.as_np_dtype()
         return num_bytes // npdtype(int(0)).itemsize
+
+    def render_mixture_outcome_tables(self, results: List[SourceTokenDetails]) -> None:
+        """
+        Render tables enumerating the global and per-source mixture outcomes.
+        """
+
+        console = Console()
+
+        source_rows = [item.for_table(self.max_tokens) for item in results]
+        source_headers = source_rows[0].keys()
+
+        source_table = Table(title="Outcome by source")
+        for header in source_headers:
+            source_table.add_column(header)
+
+        for row in source_rows:
+            source_table.add_row(*[row[header] for header in source_headers])
+
+        console.print(source_table)
+
+        total_tokens = sum([item.population for item in results])
+        selected_tokens = sum([item.num_selected for item in results])
+        observed_global_ratio = f"{(selected_tokens / total_tokens):.4}"
+
+        global_table = Table(title="Global outcome")
+        global_headers = [
+            "total_tokens",
+            "selected_tokens",
+            "observed_global_ratio",
+        ]
+
+        for header in global_headers:
+            global_table.add_column(header)
+
+        global_table.add_row(f"{total_tokens:.2e}", f"{selected_tokens:.2e}", observed_global_ratio)
+        console.print(global_table)

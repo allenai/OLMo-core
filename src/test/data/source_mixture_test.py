@@ -1,3 +1,4 @@
+import logging
 from itertools import chain
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from ..utils import mk_mmaps
 
 
-def test_source_mixture_config(tmp_path: Path, capsys):
+def test_source_mixture_config(tmp_path: Path, caplog, capsys):
     source_paths = {
         "1": mk_mmaps(tmp_path=tmp_path, prefix="source1", num_files=2, size=1_000_000),
         "2": mk_mmaps(tmp_path=tmp_path, prefix="source2", num_files=2, size=1_000_000),
@@ -46,9 +47,12 @@ def test_source_mixture_config(tmp_path: Path, capsys):
         sequence_length=1024,
     )
 
-    with capsys.disabled():
-        print("\n")
+    # NOTE: We need to disable capsys so we can override log capture as
+    # we want to see the rendered tables in the case
+    with capsys.disabled(), caplog.at_level(logging.DEBUG):
+        config.validate()
         mixture = config.build()
+        print(caplog.text)
         assert isinstance(mixture, SourceMixtureDataset)
 
 

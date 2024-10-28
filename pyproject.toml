@@ -22,7 +22,6 @@ dependencies = [
     "omegaconf",
     "safetensors",
     "importlib_resources",
-    "s3fs", # REMOVE THIS IN FAVOR OF SOMETHING CONSISTENT ELSEWHERE
     "tabulate",
     "tqdm",
 ]
@@ -53,6 +52,7 @@ dev = [
     "sphinx-copybutton==0.5.2",
     "sphinx-autobuild==2021.3.14",
     "sphinx-autodoc-typehints==1.23.3",
+    "s3fs",
 ]
 beaker = [
     "beaker-py",

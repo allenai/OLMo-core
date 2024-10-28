@@ -4,7 +4,7 @@ import numpy as np
 
 from olmo_core.config import StrEnum
 
-SupportedDType = Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]
+NumpyUIntTypes = Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]
 
 
 class NumpyDatasetType(StrEnum):

@@ -4,8 +4,9 @@ from typing import Type, Union
 import numpy as np
 
 from olmo_core.data import (
+    NumpyDatasetBase,
     NumpyFSLDataset,
-    NumpyFSLDatasetMixtureConfig,
+    NumpyDatasetConfig,
     TokenizerConfig,
 )
 from olmo_core.data.source_mixture import (
@@ -24,13 +25,13 @@ def get_fsl_mixture(
     sequence_length: int = 4,
     num_tokens: int = 20 * 1000,
     eos: int = 0,
-) -> NumpyFSLDataset:
+) -> NumpyDatasetBase:
     seed = 42
     mmap1 = mk_mmaps(
-        tmp_path, "mmap1", 1, num_tokens // 2, dtype, eos=eos, seed=seed, seq_length=sequence_length
+        tmp_path, "mmap1", 1, num_tokens * 2, dtype, eos=eos, seed=seed, seq_length=sequence_length
     )
     mmap2 = mk_mmaps(
-        tmp_path, "mmap2", 1, num_tokens // 2, dtype, eos=eos, seed=seed, seq_length=sequence_length
+        tmp_path, "mmap2", 1, num_tokens * 2, dtype, eos=eos, seed=seed, seq_length=sequence_length
     )
 
     tokenizer = TokenizerConfig(
@@ -59,7 +60,7 @@ def get_fsl_mixture(
         seed=seed,
     )
 
-    ds = NumpyFSLDatasetMixtureConfig(
+    ds = NumpyDatasetConfig(
         source_mixture_config=mixture_config,
         sequence_length=sequence_length,
         tokenizer=tokenizer,

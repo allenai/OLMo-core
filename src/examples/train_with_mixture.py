@@ -18,7 +18,6 @@ from olmo_core.data import (
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
     NumpyDatasetType,
-    NumpyFSLDatasetMixtureConfig,
     TokenizerConfig,
 )
 from olmo_core.data.source_mixture import (
@@ -55,7 +54,7 @@ from olmo_core.utils import get_default_device, seed_all
 class ExperimentConfig(Config):
     model: TransformerConfig
     optim: AdamWConfig
-    dataset: NumpyFSLDatasetMixtureConfig
+    dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
     trainer: TrainerConfig
     init_seed: int = 12536
@@ -114,7 +113,7 @@ def build_config(run_name: str) -> ExperimentConfig:
         seed=42,
     )
 
-    dataset_config = NumpyFSLDatasetMixtureConfig(
+    dataset_config = NumpyDatasetConfig(
         source_mixture_config=source_config,
         sequence_length=sequence_length,
         max_target_sequence_length=8192,
