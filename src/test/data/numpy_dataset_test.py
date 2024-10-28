@@ -125,7 +125,7 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
         15795,
         52202,
     ]  # stable because we pass a seed
-    # assert ds.num_tokens == 10000
+    assert ds.num_tokens == 10000
     assert len(ds) == 2500
 
 
@@ -184,7 +184,7 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
         15795,
         52202,
     ]  # stable because we pass a seed
-    # assert ds.num_tokens == 10000
+    assert ds.num_tokens == 10000
     assert len(ds) == 2500
 
 

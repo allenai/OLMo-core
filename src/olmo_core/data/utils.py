@@ -423,7 +423,7 @@ def segment_documents_into_instances(
     total_og_docs = 0
     indices: List[int] = []
     for start_idx, end_idx in iter_document_indices(path, eos_token_id=eos_token_id, dtype=dtype):
-        if max_instances and len(indices) // 2 >= max_instances:
+        if max_instances is not None and len(indices) // 2 >= max_instances:
             break
         total_og_docs += 1
         length = end_idx - start_idx
