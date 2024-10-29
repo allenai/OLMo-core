@@ -236,7 +236,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
                     task=task,
                     rank_batch_size=self.eval_rank_batch_size_instances,
                     tokenizer=tokenizer,
-                    device=self.trainer.device,
+                    device=trainer.device,
                     dp_process_group=trainer.dp_process_group,
                 )
             )
