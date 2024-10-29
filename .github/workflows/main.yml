@@ -109,7 +109,7 @@ jobs:
       matrix:
         task:
           - name: Test (GPU)
-            image: olmo-core-nightly
+            image: olmo-core
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
