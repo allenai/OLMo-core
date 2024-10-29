@@ -508,7 +508,7 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
 
 class NumpyFSLDatasetMixture(NumpyFSLDataset):
     """
-    A version of :class:`NumpyFSLDataset` built from a mixture of sources and their expected token ratios relative to each other. A path_offset_index is used to determine the number of instances to retain from a path when constructing the local indices.
+    A version of :class:`NumpyFSLDataset` built from a mixture of sources and their expected token ratios relative to each other. A ``path_offset_index`` is used to determine the number of instances to retain from a path when constructing the local indices.
     """
 
     def __init__(
@@ -1652,7 +1652,7 @@ class NumpyDatasetConfig(Config):
                 paths.extend(matches)
         elif self.paths:
             paths = self.paths
-        elif self.source_mixture_config:
+        elif self.source_mixture_config and self.name == NumpyDatasetType.fsl:
             log.info("Building dataset from source mixture...")
         else:
             assert self.mix is not None
