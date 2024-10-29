@@ -246,8 +246,8 @@ class Attention(nn.Module):
             #        (batch_size, n_kv_heads, seq_len, head_dim)
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
-            # PyTorch's SDPA doesn't support GQA, so we have to do this.
-            if self.n_heads != self.n_kv_heads and self.n_kv_heads > 1:
+            # PyTorch's SDPA doesn't support MQA/GQA, so we have to do this.
+            if self.n_heads != self.n_kv_heads:
                 k = k.repeat_interleave(
                     self.n_heads // self.n_kv_heads, dim=1, output_size=self.n_heads
                 )
