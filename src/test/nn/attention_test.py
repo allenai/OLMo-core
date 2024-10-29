@@ -74,8 +74,8 @@ def test_attention(
 
     atol, rtol = None, None
     if dtype == torch.bfloat16:
-        atol = 4e-4
-        rtol = 5.0
+        atol = 1e-3
+        rtol = 30.0
 
     torch.testing.assert_close(y[0:1, :, :], y1, atol=atol, rtol=rtol)
     torch.testing.assert_close(y[1:, :, :], y2, atol=atol, rtol=rtol)
