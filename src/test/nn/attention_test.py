@@ -20,7 +20,7 @@ from ..utils import DEVICES, FLASH_MARKS, GPU_MARKS, requires_flash_attn, requir
 )
 @pytest.mark.parametrize(
     "n_kv_heads",
-    [pytest.param(None, id="MHA"), pytest.param(1, id="MQA"), pytest.param(2, id="GQA")],
+    [pytest.param(None, id="MHA"), pytest.param(1, id="MQA"), pytest.param(4, id="GQA")],
 )
 @pytest.mark.parametrize(
     "use_flash",
@@ -50,7 +50,7 @@ def test_attention(
 
     torch.random.manual_seed(0)
 
-    d_model = 512
+    d_model = 128
     seq_len = 32
 
     attention = Attention(
@@ -72,13 +72,8 @@ def test_attention(
         y2 = attention(x2)
         y = attention(x)
 
-    atol, rtol = None, None
-    if dtype == torch.bfloat16:
-        atol = 1e-3
-        rtol = 30.0
-
-    torch.testing.assert_close(y[0:1, :, :], y1, atol=atol, rtol=rtol)
-    torch.testing.assert_close(y[1:, :, :], y2, atol=atol, rtol=rtol)
+    torch.testing.assert_close(y[0:1, :, :], y1)
+    torch.testing.assert_close(y[1:, :, :], y2)
 
 
 @requires_gpu
