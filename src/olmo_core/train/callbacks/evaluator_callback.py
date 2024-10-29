@@ -11,7 +11,12 @@ from olmo_core.distributed.utils import get_rank, get_world_size, is_distributed
 from olmo_core.eval import Evaluator
 from olmo_core.eval.lm_evaluator import LMEvaluator
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.utils import format_float, get_default_device, move_to_device
+from olmo_core.utils import (
+    cuda_sync_debug_mode,
+    format_float,
+    get_default_device,
+    move_to_device,
+)
 
 from ..common import Duration
 from .callback import Callback, CallbackConfig
@@ -71,7 +76,10 @@ class EvaluatorCallback(Callback):
                 logits, ce_loss, _ = self.trainer.eval_batch(
                     batch, loss_reduction="none", compute_z_loss=False
                 )
-                evaluator.update_metrics(batch, ce_loss, logits)
+
+                # NOTE: might have host-device syncs here but that's okay.
+                with cuda_sync_debug_mode(0):
+                    evaluator.update_metrics(batch, ce_loss, logits)
 
                 if eval_step % self.trainer.cancel_check_interval == 0:
                     self.trainer.check_if_canceled()
@@ -89,10 +97,11 @@ class EvaluatorCallback(Callback):
             # NOTE: going to have a host-device sync here but that's okay. It's only once
             # per evaluator.
             metrics = []
-            for name, value in evaluator.compute_metrics().items():
-                value = value.item()
-                metrics.append(f"    {name}={format_float(value)}")
-                self.trainer.record_metric(f"eval/{evaluator.name}/{name}", value)
+            with cuda_sync_debug_mode(0):
+                for name, value in evaluator.compute_metrics().items():
+                    value = value.item()
+                    metrics.append(f"    {name}={format_float(value)}")
+                    self.trainer.record_metric(f"eval/{evaluator.name}/{name}", value)
             log.info("Eval metrics:\n" + "\n".join(metrics))
 
         # Restore model to train mode.
@@ -180,7 +189,7 @@ class DownstreamEvaluator(Evaluator):
         rank_batch_size_instances = max(0, rank_batch_size // self.task.max_sequence_length)
         log.info(
             f"Using per-rank batch size of {rank_batch_size_instances} instances "
-            f"for downstream eval task '{task}'"
+            f"for downstream eval task '{task}' with max sequence length {self.task.max_sequence_length:,d} tokens"
         )
 
         data_loader = DataLoader(

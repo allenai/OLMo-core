@@ -7,6 +7,7 @@ import sys
 import time
 import uuid
 import warnings
+from contextlib import contextmanager
 from datetime import datetime
 from itertools import cycle, islice
 from queue import Queue
@@ -608,3 +609,20 @@ def flatten_dict(d: Dict[str, Any]) -> Dict[str, Any]:
             out[k] = v
 
     return out
+
+
+@contextmanager
+def cuda_sync_debug_mode(debug_mode: Union[int, str]):
+    """
+    A context manager for temporarily setting the CUDA sync debug mode.
+    """
+    current_mode: Optional[int] = None
+
+    try:
+        if torch.cuda.is_available():
+            current_mode = torch.cuda.get_sync_debug_mode()
+            torch.cuda.set_sync_debug_mode(debug_mode)
+        yield
+    finally:
+        if current_mode is not None:
+            torch.cuda.set_sync_debug_mode(debug_mode)
