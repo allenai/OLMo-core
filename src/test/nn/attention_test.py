@@ -20,7 +20,7 @@ from ..utils import DEVICES, FLASH_MARKS, GPU_MARKS, requires_flash_attn, requir
 )
 @pytest.mark.parametrize(
     "n_kv_heads",
-    [pytest.param(None, id="MHA"), pytest.param(1, id="MQA"), pytest.param(4, id="GQA")],
+    [pytest.param(None, id="MHA"), pytest.param(1, id="MQA"), pytest.param(2, id="GQA")],
 )
 @pytest.mark.parametrize(
     "use_flash",
