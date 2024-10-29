@@ -515,6 +515,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         self,
         *paths: PathOrStr,
         path_offset_index: Dict[Tuple[str, int], int],
+        seed: int,
         sequence_length: int,
         pad_token_id: int,
         eos_token_id: int,
@@ -565,6 +566,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         self._instances_per_bucket: Optional[Tuple[Tuple[int, int], ...]] = None
         self._path_offset_index = path_offset_index
         self._bust_index_cache = bust_index_cache
+        self._seed = seed
 
     def prepare(self):
         if self.fs_local_rank == 0:
@@ -612,7 +614,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                         eos_token_id=self.eos_token_id,
                         dtype=self.dtype,
                         indices_dtype=self.dtype,
-                        max_instances=max_instances,
+                        sample=(max_instances, self._seed),
                     )
                     futures.append(future)
 
@@ -1694,6 +1696,7 @@ class NumpyDatasetConfig(Config):
                 mixture = self.source_mixture_config.build()
                 return NumpyFSLDatasetMixture(
                     *mixture.to_paths(),
+                    seed=mixture.seed,
                     sequence_length=self.sequence_length,
                     max_target_sequence_length=self.max_target_sequence_length,
                     pad_token_id=self.tokenizer.pad_token_id,

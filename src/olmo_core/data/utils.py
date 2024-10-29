@@ -412,24 +412,31 @@ def segment_documents_into_instances(
     indices_dtype: Union[
         Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
     ] = np.uint32,
-    max_instances: Optional[int] = None,
+    sample: Optional[Tuple[int, int]] = None,
 ) -> Tuple[int, int]:
     """
     Segment documents into instances of at most ``sequence_length`` tokens.
     Saving the indices of the instances to ``target``.
+
+    Sample a subset of the instances if ``sample`` is provided as a tuple of ``(max_instances, seed)``.
 
     Returns the number of original documents and the number of resulting instances documents.
     """
     total_og_docs = 0
     indices: List[int] = []
     for start_idx, end_idx in iter_document_indices(path, eos_token_id=eos_token_id, dtype=dtype):
-        if max_instances is not None and len(indices) // 2 >= max_instances:
-            break
         total_og_docs += 1
         length = end_idx - start_idx
         indices.append(start_idx)
         indices.append(start_idx + min(length, max_sequence_length))
         start_idx += length
+
+    if sample is not None:
+        max_instances, seed = sample
+        rng = get_rng(seed)
+        indices = (
+            rng.choice(np.array(indices).reshape(-1, 2).tolist(), size=max_instances).flatten()
+        ).tolist()
 
     with memmap_to_write(target, dtype=indices_dtype, shape=(len(indices),)) as indices_mmap:
         indices_mmap[:] = indices

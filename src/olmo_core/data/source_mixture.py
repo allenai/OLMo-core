@@ -91,6 +91,7 @@ class SourceMixtureDataset:
     A dataset consisting of a fractionalized mixture of data sources.
     """
 
+    seed: int
     sources: List[SourceMixtureOutcome]
 
     def to_index(self) -> Dict[Tuple[str, int], int]:
@@ -196,7 +197,7 @@ class SourceMixtureDatasetConfig(Config):
             for item in outcome.path_tokens:
                 log.info(f"Selected {item.tokens} tokens from {outcome.name} at {item.path}")
 
-        return SourceMixtureDataset(completed)
+        return SourceMixtureDataset(seed=self.seed, sources=completed)
 
     def get_paths_and_tokens_for_source(
         self, source_config: SourceMixtureConfig, token_details: SourceTokenDetails
