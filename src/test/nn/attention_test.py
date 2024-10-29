@@ -50,7 +50,7 @@ def test_attention(
 
     torch.random.manual_seed(0)
 
-    d_model = 128
+    d_model = 1024
     seq_len = 32
 
     attention = Attention(
