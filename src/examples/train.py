@@ -153,7 +153,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             DownstreamEvaluatorCallbackConfig(
                 tasks=["hellaswag"],
                 tokenizer=tokenizer_config,
-                eval_rank_batch_size_instances=4,
                 eval_interval=250,
             ),
         )

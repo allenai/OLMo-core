@@ -177,9 +177,15 @@ class DownstreamEvaluator(Evaluator):
                 rank=get_rank(dp_process_group),
             )
 
+        rank_batch_size_instances = max(0, rank_batch_size // self.task.max_sequence_length)
+        log.info(
+            f"Using per-rank batch size of {rank_batch_size_instances} instances "
+            f"for downstream eval task '{task}'"
+        )
+
         data_loader = DataLoader(
             self.task,  # type: ignore
-            batch_size=rank_batch_size,
+            batch_size=rank_batch_size_instances,
             collate_fn=self.task.collate_fn,
             num_workers=0,
             sampler=sampler,
@@ -208,13 +214,24 @@ class DownstreamEvaluator(Evaluator):
 class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     tasks: List[str]
     tokenizer: TokenizerConfig
-    eval_rank_batch_size_instances: int
+    eval_batch_size: Optional[int] = None
     eval_interval: int = 1000
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     log_interval: int = 5
 
     def build(self, trainer: "Trainer") -> Callback:
         from olmo_eval import HFTokenizer
+
+        global_eval_batch_size = (
+            self.eval_batch_size
+            if self.eval_batch_size is not None
+            else trainer.rank_microbatch_size * get_world_size(trainer.dp_process_group)
+        )
+        rank_eval_batch_size = global_eval_batch_size // get_world_size(trainer.dp_process_group)
+        if rank_eval_batch_size == 0:
+            raise OLMoConfigurationError(
+                f"'eval_batch_size' of {global_eval_batch_size:,d} tokens is too small for the given world size"
+            )
 
         if self.tokenizer.identifier is None:
             raise OLMoConfigurationError(
@@ -234,7 +251,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
                 DownstreamEvaluator(
                     name="downstream",
                     task=task,
-                    rank_batch_size=self.eval_rank_batch_size_instances,
+                    rank_batch_size=rank_eval_batch_size,
                     tokenizer=tokenizer,
                     device=trainer.device,
                     dp_process_group=trainer.dp_process_group,
