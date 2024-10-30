@@ -9,8 +9,8 @@ from olmo_core.data.utils import (
     iter_batched,
     iter_document_indices,
     melt_batch,
-    write_document_indices,
     segment_documents_into_instances,
+    write_document_indices,
 )
 
 
