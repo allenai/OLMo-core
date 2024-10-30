@@ -13,6 +13,7 @@ try:
 except ImportError:
     from functools import lru_cache as cache
 
+import requests
 import torch
 from cached_path import cached_path
 from cached_path.schemes import S3Client, SchemeClient, add_scheme_client
@@ -409,6 +410,20 @@ def _get_gcs_client():
     return gcs.Client()
 
 
+def _gcs_is_retriable(exc: Exception) -> bool:
+    from google.api_core.retry import if_transient_error
+
+    return if_transient_error(exc) or isinstance(exc, requests.exceptions.Timeout)
+
+
+def _get_gcs_retry():
+    from google.api_core.retry import Retry
+
+    return Retry(
+        predicate=_gcs_is_retriable, initial=1.0, maximum=10.0, multiplier=2.0, timeout=600.0
+    )
+
+
 def _gcs_file_size(bucket_name: str, key: str) -> int:
     from google.api_core.exceptions import NotFound
 
@@ -416,7 +431,7 @@ def _gcs_file_size(bucket_name: str, key: str) -> int:
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(key)
     try:
-        blob.reload()
+        blob.reload(retry=_get_gcs_retry())
     except NotFound:
         raise FileNotFoundError(f"gs://{bucket_name}/{key}")
     assert blob.size is not None
@@ -433,7 +448,9 @@ def _gcs_get_bytes_range(bucket_name: str, key: str, bytes_start: int, num_bytes
         blob.reload()
     except NotFound:
         raise FileNotFoundError(f"gs://{bucket_name}/{key}")
-    return blob.download_as_bytes(start=bytes_start, end=bytes_start + num_bytes - 1)
+    return blob.download_as_bytes(
+        start=bytes_start, end=bytes_start + num_bytes - 1, retry=_get_gcs_retry()
+    )
 
 
 def _gcs_upload(source: Path, bucket_name: str, key: str, save_overwrite: bool = False):
@@ -466,6 +483,7 @@ def _gcs_list_directory(bucket_name: str, prefix: str) -> Generator[str, None, N
                 prefix=prefix,
                 delimiter="/",
                 match_glob=match_glob,
+                retry=_get_gcs_retry(),
             )
         except NotFound:
             raise FileNotFoundError(f"gs://{bucket_name}/{prefix}")
@@ -488,7 +506,7 @@ def _gcs_clear_directory(bucket_name: str, prefix: str):
 
     try:
         bucket = storage_client.bucket(bucket_name)
-        blobs = bucket.list_blobs(prefix=prefix)
+        blobs = bucket.list_blobs(prefix=prefix, retry=_get_gcs_retry())
         for blob in blobs:
             bucket.delete_blob(blob.name)
     except NotFound:
