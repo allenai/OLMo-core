@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Moved some types into `olmo_core.data.types` to avoid some circular dependencies.
+- Added `DownstreamEvaluatorCallbackConfig` class for running in-loop downstream eval via [OLMo-in-loop-evals](https://github.com/allenai/OLMo-in-loop-evals).
+
+### Removed
+
+- Removed `flash-attn` from the Beaker images since `flash-attn` currently can't be built for torch 2.5.1. We are waiting on updates from the `flash-attn` maintainers. See https://github.com/Dao-AILab/flash-attention/issues/1302.
 
 ## [v1.5.0](https://github.com/allenai/OLMo-core/releases/tag/v1.5.0) - 2024-10-23
 

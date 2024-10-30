@@ -308,7 +308,11 @@ class Trainer:
         if self._bookkeeping_pg is None and is_distributed():
             if backend_supports_cpu():
                 log.info("Creating new process group for bookkeeping")
-                self._bookkeeping_pg = dist.new_group()
+                self._bookkeeping_pg = dist.new_group(
+                    ranks=None
+                    if self.dp_process_group is None
+                    else dist.get_process_group_ranks(self.dp_process_group)
+                )
             else:
                 log.warning(
                     "No CPU backend configured, bookkeeping collectives will occur on the default "
@@ -460,7 +464,8 @@ class Trainer:
     @property
     def bookkeeping_pg(self) -> Optional[dist.ProcessGroup]:
         """
-        The process group used for bookkeeping collectives.
+        The process group used for bookkeeping collectives. This should include the same ranks
+        as the :data:`dp_process_group`.
 
         Since bookkeeping collectives might be done in a separate thread, we need a separate process
         group to avoid potential race conditions.

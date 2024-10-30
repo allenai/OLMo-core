@@ -3,7 +3,11 @@ from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy
 from .comet import CometCallback, CometNotificationSetting
 from .config_saver import ConfigSaverCallback
 from .console_logger import ConsoleLoggerCallback
-from .evaluator_callback import EvaluatorCallback, LMEvaluatorCallbackConfig
+from .evaluator_callback import (
+    DownstreamEvaluatorCallbackConfig,
+    EvaluatorCallback,
+    LMEvaluatorCallbackConfig,
+)
 from .float8_handler import Float8HandlerCallback
 from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
@@ -27,6 +31,7 @@ __all__ = [
     "EvaluatorCallback",
     "Float8HandlerCallback",
     "LMEvaluatorCallbackConfig",
+    "DownstreamEvaluatorCallbackConfig",
     "MoEHandlerCallback",
     "GarbageCollectorCallback",
     "GPUMemoryMonitorCallback",

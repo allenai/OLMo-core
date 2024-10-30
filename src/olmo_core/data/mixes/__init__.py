@@ -1,4 +1,5 @@
 import os
+from abc import abstractmethod
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator, List, Tuple
@@ -15,7 +16,8 @@ class DataMixBase(StrEnum):
     Base class for enumeration of data mixes.
     """
 
-    def build(self, base_dir: str, tokenizer: TokenizerName) -> Tuple[List[str], List[str]]:
+    @abstractmethod
+    def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         """
         Construct the data mix.
 
@@ -37,7 +39,7 @@ class DataMix(DataMixBase):
     dolma17 = "dolma17"
     v3_small_ppl_validation = "v3-small-ppl-validation"
 
-    def build(self, base_dir: str, tokenizer: TokenizerName) -> Tuple[List[str], List[str]]:
+    def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
             base_dir = base_dir + "/"
 
