@@ -21,11 +21,16 @@ ENV GROUPED_GEMM_CUTLASS=1
 ARG MEGABLOCKS_VERSION
 RUN pip wheel --no-build-isolation --no-cache-dir \
     --extra-index-url https://download.pytorch.org/whl/${TORCH_CUDA_VERSION} \
-    "${MEGABLOCKS_VERSION}" \
-    && rm -rf torch-*.whl numpy-*.whl triton-*.whl nvidia*.whl
+    "${MEGABLOCKS_VERSION}"
 
 # Flash-attn from pre-built wheel (can't get this to work at the moment)
 #RUN wget https://github.com/Dao-AILab/flash-attention/releases/download/v2.6.3/flash_attn-2.6.3+cu123torch2.4cxx11abiTRUE-cp311-cp311-linux_x86_64.whl
+
+RUN echo "Built wheels:" \
+    && ls -lh . \
+    && rm -rf torch-*.whl numpy-*.whl triton-*.whl nvidia*.whl \
+    && echo "Final wheels:" \
+    && ls -lh .
 
 #########################################################################
 # Stable image
