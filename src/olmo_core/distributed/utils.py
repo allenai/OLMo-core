@@ -13,7 +13,7 @@ from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 
 from ..config import StrEnum
 from ..exceptions import OLMoConfigurationError, OLMoEnvironmentError
-from ..utils import get_default_device, set_env_var
+from ..utils import get_default_device, move_to_device, set_env_var
 
 OLMO_SHARED_FS_ENV_VAR = "OLMO_SHARED_FS"
 OLMO_FS_LOCAL_RANK_ENV_VAR = "FS_LOCAL_RANK"
@@ -268,6 +268,23 @@ def scatter_object(obj: T, src: int = 0, group: Optional[dist.ProcessGroup] = No
     input_list = [obj] * get_world_size(group) if get_rank(group) == src else None
     dist.scatter_object_list(output_list, input_list, src=src, group=group)
     return output_list[0]
+
+
+def all_gather(
+    tensor: torch.Tensor, group: Optional[dist.ProcessGroup] = None
+) -> List[torch.Tensor]:
+    """
+    All-gather tensors from the whole group into a list.
+    """
+    if not is_distributed():
+        return [tensor]
+
+    shapes = all_gather_object(tensor.shape, group=group)
+    output_list = [
+        move_to_device(torch.zeros(shape, dtype=tensor.dtype), tensor.device) for shape in shapes
+    ]
+    dist.all_gather(output_list, tensor, group=group)
+    return output_list
 
 
 def all_gather_object(obj: T, group: Optional[dist.ProcessGroup] = None) -> List[T]:

@@ -31,6 +31,7 @@ from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
     ConfigSaverCallback,
+    DownstreamEvaluatorCallbackConfig,
     GPUMemoryMonitorCallback,
     GradClipperCallback,
     LMEvaluatorCallbackConfig,
@@ -133,7 +134,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("profiler", ProfilerCallback(enabled=False))
         .with_callback(
-            "evaluator",
+            "lm_evaluator",
             LMEvaluatorCallbackConfig(
                 eval_dataset=NumpyDatasetConfig(
                     paths=["/net/nfs/allennlp/llm-data/c4/en/c4-validation.00000-00008.npy"],
@@ -145,6 +146,14 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
                 ),
                 eval_interval=250,
                 eval_duration=Duration.steps(10),
+            ),
+        )
+        .with_callback(
+            "downstream_evaluator",
+            DownstreamEvaluatorCallbackConfig(
+                tasks=["hellaswag"],
+                tokenizer=tokenizer_config,
+                eval_interval=250,
             ),
         )
     )

@@ -67,6 +67,10 @@ class MeanMetric(Metric):
     def update(
         self, value: Union[float, torch.Tensor], weight: Union[float, torch.Tensor] = 1.0
     ) -> None:
+        """
+        :param value: The latest value to update the metric with. Could be a tensor of values.
+        :param weight: The corresponding weight(s) for the value. Should be the same shape as ``value``.
+        """
         value = self.as_tensor(value)
         weight = torch.broadcast_to(self.as_tensor(weight), value.shape)
         if value.numel() == 0:
@@ -75,6 +79,9 @@ class MeanMetric(Metric):
         self.weight += weight.sum()
 
     def compute(self) -> torch.Tensor:
+        """
+        Computes the mean over the values and weights given.
+        """
         weighted_sum = all_reduce_value(
             self.weighted_sum, device=self.device, group=self.process_group
         )

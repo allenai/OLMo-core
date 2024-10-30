@@ -118,7 +118,7 @@ jobs:
                 src/test/
 
           - name: Test checkpoint (GPU)
-            image: olmo-core
+            image: olmo-core-nightly
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
@@ -180,10 +180,11 @@ jobs:
                   gpuCount: ${{ matrix.task.gpus }}
                 constraints:
                   cluster:
-                    - ai2/allennlp-cirrascale
-                    - ai2/allennlp-elanding-a100-40g
+                    # - ai2/allennlp-cirrascale
+                    # - ai2/allennlp-elanding-a100-40g
                     - ai2/pluto-cirrascale
                     - ai2/jupiter-cirrascale-2
+                    # - ai2/saturn-cirrascale
                 envVars:
                   - name: CUBLAS_WORKSPACE_CONFIG
                     value: ":16:8"
