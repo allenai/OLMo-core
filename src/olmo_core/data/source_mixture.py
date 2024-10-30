@@ -27,12 +27,31 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class SourceMixtureConfig(Config):
+    """
+    A configuration class for building a source mixture.
+    """
+
     source_name: str
+    """
+    The name of the source.
+    """
     target_ratio: float
+    """
+    The target ratio of the source in the mixture.
+    """
     paths: List[PathOrStr]
-    # 1.0 will result in a maximum of 1 repitition of the source data per epoch
+    """
+    A list of paths to the source data.
+    """
     max_repetition_ratio: float = 1.0
+    """
+    The maximum ratio of repetitions of the source data to include in the mixture.
+    This can be used to upsample the source data by setting the repetition ratio > 1.
+    """
     max_source_fraction: float = 1.0
+    """
+    The maximum ratio of the source data to include in the mixture.
+    """
 
     def validate(self):
         if self.target_ratio:
@@ -42,6 +61,9 @@ class SourceMixtureConfig(Config):
                 raise OLMoConfigurationError("max_source_fraction must be in the range [0, 1]")
             if self.max_source_fraction < self.target_ratio:
                 raise OLMoConfigurationError("max_source_fraction must be >= target_ratio")
+
+        if self.max_repetition_ratio < 1:
+            raise OLMoConfigurationError("max_repetition_ratio must be >= 1")
 
         if not self.paths:
             raise OLMoConfigurationError("paths must not be empty")
@@ -57,8 +79,17 @@ class SourceTokenDetails:
     """
 
     config: SourceMixtureConfig
+    """
+    The configuration object associated with the source.
+    """
     population: int
+    """
+    The total number of tokens available for the source.
+    """
     num_selected: int
+    """
+    The number of tokens to select for the source.
+    """
 
     def for_table(self, max_tokens: int) -> Dict:
         return {
@@ -82,7 +113,13 @@ class SourcePathTokens:
 @dataclass
 class SourceMixtureOutcome:
     name: str
+    """
+    The name of the source.
+    """
     path_tokens: List[SourcePathTokens]
+    """
+    A list of paths and the associated token counts.
+    """
 
 
 @dataclass
@@ -92,7 +129,13 @@ class SourceMixtureDataset:
     """
 
     seed: int
+    """
+    The seed used to generate the dataset.
+    """
     sources: List[SourceMixtureOutcome]
+    """
+    A list of sources and the associated paths and token counts.
+    """
 
     def to_index(self) -> Dict[Tuple[str, int], int]:
         """
@@ -122,11 +165,29 @@ class SourceMixtureDatasetConfig(Config):
     """
 
     max_tokens: int
+    """
+    The maximum number of tokens to include in the dataset.
+    """
     source_configs: List[SourceMixtureConfig]
+    """
+    A list of source configurations.
+    """
     sequence_length: int
+    """
+    The instance sequence length of the dataset.
+    """
     dtype: NumpyDatasetDType
+    """
+    The data type of the dataset.
+    """
     processes: int = 1
+    """
+    The number of processes to use for counting tokens in parallel.
+    """
     seed: int = 42
+    """
+    The seed used to generate the dataset.
+    """
 
     def validate(self):
         if self.max_tokens <= 0:

@@ -135,7 +135,7 @@ class NumpyDatasetBase(ABC):
         The size, in bytes, of each numpy array.
         """
         if self._array_file_sizes is None:
-            self._array_file_sizes = tuple(self.map(lambda item: get_file_size(item[0])))
+            self._array_file_sizes = tuple(self.map(lambda path, _: get_file_size(path)))
         return self._array_file_sizes
 
     @property
@@ -242,7 +242,7 @@ class NumpyDatasetBase(ABC):
 
     def map(
         self,
-        func: Callable[[Tuple[PathOrStr, int]], T],
+        func: Callable[[PathOrStr, int], T],
         *,
         max_workers: Optional[int] = None,
         method: Literal["threads", "processes"] = "threads",
@@ -251,7 +251,7 @@ class NumpyDatasetBase(ABC):
         """
         Call a function on each path in the dataset, returning a list of the results, in order.
 
-        :param func: The function to map to the paths.
+        :param func: The function to map to the paths and their indices.
         :param max_workers: The number of workers threads/processes. Set to 0 to execute synchronously
             in the main thread/process.
         :param method: Whether to use multi-threading or multi-processing.
@@ -261,7 +261,7 @@ class NumpyDatasetBase(ABC):
         paths = _paths or self.paths
 
         if max_workers == 0:
-            return [func((path, idx)) for idx, path in enumerate(paths)]
+            return [func(path, idx) for idx, path in enumerate(paths)]
 
         executor_class: Union[
             Type[concurrent.futures.ThreadPoolExecutor],
@@ -276,7 +276,7 @@ class NumpyDatasetBase(ABC):
             raise ValueError(method)
 
         with executor_class(max_workers=max_workers) as executor:
-            futures = [executor.submit(func, (path, idx)) for idx, path in enumerate(paths)]
+            futures = [executor.submit(func, path, idx) for idx, path in enumerate(paths)]
 
         return [future.result() for future in futures]
 
@@ -484,9 +484,8 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         )
 
     def _get_file_size_and_length(
-        self, item: Tuple[PathOrStr, int], dtype: Optional[NumpyUIntTypes] = None
+        self, path: PathOrStr, idx: int, dtype: Optional[NumpyUIntTypes] = None
     ) -> Tuple[int, int]:
-        path, _ = item
         dtype = dtype or self.dtype
         item_size = dtype(0).itemsize
         file_size = get_file_size(path)
@@ -525,7 +524,6 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         include_instance_metadata: Optional[bool] = None,
         generate_doc_lengths: bool = False,
         max_target_sequence_length: Optional[int] = None,
-        bust_index_cache: bool = False,
     ):
         if max_target_sequence_length is not None and (
             max_target_sequence_length < sequence_length
@@ -565,7 +563,6 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         self._lengths_dtype: Optional[NumpyUIntTypes] = None
         self._instances_per_bucket: Optional[Tuple[Tuple[int, int], ...]] = None
         self._path_offset_index = path_offset_index
-        self._bust_index_cache = bust_index_cache
         self._seed = seed
 
     def prepare(self):
@@ -629,11 +626,11 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                     )
 
     def _get_file_size_and_length(
-        self, item: Tuple[PathOrStr, int], dtype: Optional[NumpyUIntTypes] = None
+        self, path: PathOrStr, idx: int, dtype: Optional[NumpyUIntTypes] = None
     ) -> Tuple[int, int]:
         dtype = dtype or self.dtype
         item_size = dtype(0).itemsize
-        file_size = self._get_size_from_offset_index(item)
+        file_size = self._get_size_from_offset_index((path, idx))
         if (
             self.max_target_sequence_length is None
             or self.max_target_sequence_length == self.sequence_length
@@ -692,7 +689,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         if self._array_instance_offsets is None:
             item_size = self.indices_dtype(0).itemsize
             num_instances_per_path = self.map(
-                lambda item: get_file_size(self._get_instance_indices_path(item[0]))
+                lambda path, _: get_file_size(self._get_instance_indices_path(path))
                 // (item_size * 2)
             )
             array_instance_offsets = []
@@ -1485,10 +1482,6 @@ class NumpyDatasetConfig(Config):
     """
     The type of dataset.
     """
-    bust_index_cache: bool = False
-    """
-    Whether or not to bust the index cache.
-    """
     source_mixture_config: Optional[SourceMixtureDatasetConfig] = None
     """
     The source mixture dataset config.
@@ -1707,7 +1700,6 @@ class NumpyDatasetConfig(Config):
                     include_instance_metadata=self.include_instance_metadata,
                     generate_doc_lengths=self.generate_doc_lengths,
                     path_offset_index=mixture.to_index(),
-                    bust_index_cache=self.bust_index_cache,
                 )
             else:
                 dataset = NumpyFSLDataset(

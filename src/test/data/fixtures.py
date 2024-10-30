@@ -59,7 +59,6 @@ def get_fsl_mixture(
         source_mixture_config=mixture_config,
         sequence_length=sequence_length,
         tokenizer=tokenizer,
-        bust_index_cache=True,
         include_instance_metadata=False,
     ).build()
     ds.prepare()
