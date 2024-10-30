@@ -1,4 +1,4 @@
-BASE_IMAGE = ghcr.io/allenai/pytorch:2.4.1-cuda12.1-python3.11
+BASE_IMAGE = ghcr.io/allenai/pytorch:2.5.1-cuda12.1-python3.11-v2024.10.29
 
 # NOTE: when upgrading the nightly version you also need to upgrade the torch version specification
 # in 'pyproject.toml' to include that nightly version.
