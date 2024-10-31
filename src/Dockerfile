@@ -1,32 +1,22 @@
-# Base image comes with PyTorch, numpy, flash-attn
-ARG BASE
-
 #########################################################################
 # Build image
 #########################################################################
 
-FROM ${BASE} as build
+ARG BASE_BUILD
+FROM ${BASE_BUILD} as build
 
 WORKDIR /app/build
 
-# Install CUDA toolkit.
-ARG CUDA_TOOLKIT_VERSION
-RUN conda install -y -c nvidia cuda-toolkit==${CUDA_TOOLKIT_VERSION}
+RUN pip install --upgrade --no-cache-dir pip wheel packing "setuptools<70.0.0" ninja
 
-ARG TORCH_CUDA_VERSION
-
-# Build megablocks and grouped-gemm.
+# Build megablocks, grouped-gemm, stanford-stk
 ENV TORCH_CUDA_ARCH_LIST="8.0 9.0"
 ENV GROUPED_GEMM_CUTLASS=1
 ARG MEGABLOCKS_VERSION
-RUN pip wheel --no-build-isolation --no-cache-dir \
-    --extra-index-url https://download.pytorch.org/whl/cu${TORCH_CUDA_VERSION} \
-    "${MEGABLOCKS_VERSION}"
+RUN pip wheel --no-build-isolation --no-cache-dir "${MEGABLOCKS_VERSION}"
 
 # Build flash-attn.
-RUN pip install --no-cache-dir "setuptools<70.0.0" \
-    && pip uninstall -y flash-attn \
-    && pip wheel --no-build-isolation "flash-attn==2.6.3"
+RUN pip wheel --no-build-isolation --no-cache-dir "flash-attn==2.6.3"
 
 # Flash-attn from pre-built wheel (can't get this to work at the moment)
 #RUN wget https://github.com/Dao-AILab/flash-attention/releases/download/v2.6.3/flash_attn-2.6.3+cu123torch2.4cxx11abiTRUE-cp311-cp311-linux_x86_64.whl
@@ -42,11 +32,11 @@ RUN echo "Built wheels:" \
 # Stable image
 #########################################################################
 
-FROM ${BASE} as stable
-
-ARG TORCH_CUDA_VERSION
+ARG BASE_RUNTIME
+FROM ${BASE_RUNTIME} as stable
 
 # Install torchao.
+ARG TORCH_CUDA_VERSION
 ARG TORCHAO_VERSION
 RUN pip install --no-cache-dir \
     --extra-index-url https://download.pytorch.org/whl/cu${TORCH_CUDA_VERSION} \
@@ -73,7 +63,6 @@ WORKDIR /app/olmo-core
 FROM stable as nightly
 
 ARG TORCH_CUDA_VERSION
-
 ARG NIGHTLY_VERSION
 RUN pip install --no-cache-dir --pre \
     --index-url https://download.pytorch.org/whl/nightly/cu${TORCH_CUDA_VERSION} \
