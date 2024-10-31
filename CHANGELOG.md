@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Made GCS client more robust by automatically retrying timeout errors for most operations.
 
+### Fixed
+
+- Made GCS client more robust by automatically retrying timeout errors for most operations.
+
 ## [v1.5.0](https://github.com/allenai/OLMo-core/releases/tag/v1.5.0) - 2024-10-23
 
 ### Added
