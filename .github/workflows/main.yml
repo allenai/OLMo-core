@@ -174,8 +174,7 @@ jobs:
                 image:
                   beaker: ${{ env.BEAKER_IMAGE }}
                 context:
-                  # priority: normal
-                  priority: high
+                  priority: normal
                   preemptible: true
                 resources:
                   gpuCount: ${{ matrix.task.gpus }}
