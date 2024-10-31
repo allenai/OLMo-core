@@ -103,7 +103,7 @@ jobs:
   gpu_checks:
     name: ${{ matrix.task.name }}
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -118,14 +118,14 @@ jobs:
                 src/test/
 
           - name: Test checkpoint (GPU)
-            image: olmo-core-nightly
+            image: olmo-core
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/distributed/checkpoint*
 
           - name: Test MoE (GPU)
-            image: olmo-core-nightly
+            image: olmo-core
             gpus: 1
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
@@ -174,17 +174,17 @@ jobs:
                 image:
                   beaker: ${{ env.BEAKER_IMAGE }}
                 context:
-                  priority: low
+                  priority: normal
                   preemptible: true
                 resources:
                   gpuCount: ${{ matrix.task.gpus }}
                 constraints:
                   cluster:
+                    - ai2/jupiter-cirrascale-2
+                    - ai2/pluto-cirrascale
                     # - ai2/allennlp-cirrascale
                     # - ai2/allennlp-elanding-a100-40g
-                    - ai2/pluto-cirrascale
-                    - ai2/jupiter-cirrascale-2
-                    # - ai2/saturn-cirrascale
+                    - ai2/saturn-cirrascale
                 envVars:
                   - name: CUBLAS_WORKSPACE_CONFIG
                     value: ":16:8"
