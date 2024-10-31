@@ -174,16 +174,17 @@ jobs:
                 image:
                   beaker: ${{ env.BEAKER_IMAGE }}
                 context:
-                  priority: normal
+                  # priority: normal
+                  priority: high
                   preemptible: true
                 resources:
                   gpuCount: ${{ matrix.task.gpus }}
                 constraints:
                   cluster:
+                    - ai2/jupiter-cirrascale-2
+                    - ai2/pluto-cirrascale
                     # - ai2/allennlp-cirrascale
                     # - ai2/allennlp-elanding-a100-40g
-                    - ai2/pluto-cirrascale
-                    - ai2/jupiter-cirrascale-2
                     # - ai2/saturn-cirrascale
                 envVars:
                   - name: CUBLAS_WORKSPACE_CONFIG
@@ -201,7 +202,8 @@ jobs:
                 result:
                   path: /unused
           token: ${{ env.BEAKER_TOKEN }}
-          workspace: ${{ env.BEAKER_WORKSPACE }}
+          # workspace: ${{ env.BEAKER_WORKSPACE }}
+          workspace: ai2/OLMo-pretraining-stability
 
   release:
     name: Release

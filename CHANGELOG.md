@@ -11,10 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added `DownstreamEvaluatorCallbackConfig` class for running in-loop downstream eval via [OLMo-in-loop-evals](https://github.com/allenai/OLMo-in-loop-evals).
 
-### Removed
-
-- Removed `flash-attn` from the Beaker images since `flash-attn` currently can't be built for torch 2.5.1. We are waiting on updates from the `flash-attn` maintainers. See https://github.com/Dao-AILab/flash-attention/issues/1302.
-
 ### Fixed
 
 - Made GCS client more robust by automatically retrying timeout errors for most operations.
