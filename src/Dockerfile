@@ -58,7 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install MLNX OFED user-space drivers
 # See https://docs.nvidia.com/networking/pages/releaseview.action?pageId=15049785#Howto:DeployRDMAacceleratedDockercontaineroverInfiniBandfabric.-Dockerfile
 ENV MOFED_VER 24.01-0.3.3.1
-ENV OS_VER ubuntu20.04
+ENV OS_VER ubuntu22.04
 ENV PLATFORM x86_64
 RUN wget --quiet https://content.mellanox.com/ofed/MLNX_OFED-${MOFED_VER}/MLNX_OFED_LINUX-${MOFED_VER}-${OS_VER}-${PLATFORM}.tgz && \
     tar -xvf MLNX_OFED_LINUX-${MOFED_VER}-${OS_VER}-${PLATFORM}.tgz && \
