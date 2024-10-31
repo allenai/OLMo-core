@@ -5,6 +5,7 @@ concurrency:
   cancel-in-progress: true
 
 on:
+  workflow_dispatch:
   # TODO: disabled for now because it takes too long in CI
   # pull_request:
   #   branches:
