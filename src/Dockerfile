@@ -23,6 +23,11 @@ RUN pip wheel --no-build-isolation --no-cache-dir \
     --extra-index-url https://download.pytorch.org/whl/cu${TORCH_CUDA_VERSION} \
     "${MEGABLOCKS_VERSION}"
 
+# Build flash-attn.
+RUN pip install --no-cache-dir "setuptools<70.0.0" \
+    && pip uninstall -y flash-attn \
+    && pip wheel --no-build-isolation "flash-attn==2.6.3"
+
 # Flash-attn from pre-built wheel (can't get this to work at the moment)
 #RUN wget https://github.com/Dao-AILab/flash-attention/releases/download/v2.6.3/flash_attn-2.6.3+cu123torch2.4cxx11abiTRUE-cp311-cp311-linux_x86_64.whl
 
