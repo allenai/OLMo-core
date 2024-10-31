@@ -10,8 +10,7 @@ FROM ${BASE_BUILD} as build
 WORKDIR /app/build
 
 # Install system dependencies.
-RUN --mount=type=cache,id=apt-dev,target=/var/cache/apt \
-    apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
         curl \
@@ -47,8 +46,7 @@ RUN echo "Built wheels:" \
 FROM ${BASE_RUNTIME} as stable
 
 # Install system dependencies.
-RUN --mount=type=cache,id=apt-dev,target=/var/cache/apt \
-    apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
         curl \
