@@ -1,22 +1,33 @@
+ARG BASE_BUILD
+ARG BASE_RUNTIME
+
 #########################################################################
 # Build image
 #########################################################################
 
-ARG BASE_BUILD
 FROM ${BASE_BUILD} as build
 
 WORKDIR /app/build
 
-RUN pip install --upgrade --no-cache-dir pip wheel packing "setuptools<70.0.0" ninja
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        wget \
+        libxml2-dev \
+        git && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN pip install --upgrade --no-cache-dir pip wheel packaging "setuptools<70.0.0" ninja
+
+# Build flash-attn.
+RUN pip wheel --no-build-isolation --no-cache-dir "flash-attn==2.6.3"
 
 # Build megablocks, grouped-gemm, stanford-stk
 ENV TORCH_CUDA_ARCH_LIST="8.0 9.0"
 ENV GROUPED_GEMM_CUTLASS=1
 ARG MEGABLOCKS_VERSION
 RUN pip wheel --no-build-isolation --no-cache-dir "${MEGABLOCKS_VERSION}"
-
-# Build flash-attn.
-RUN pip wheel --no-build-isolation --no-cache-dir "flash-attn==2.6.3"
 
 # Flash-attn from pre-built wheel (can't get this to work at the moment)
 #RUN wget https://github.com/Dao-AILab/flash-attention/releases/download/v2.6.3/flash_attn-2.6.3+cu123torch2.4cxx11abiTRUE-cp311-cp311-linux_x86_64.whl
@@ -32,7 +43,6 @@ RUN echo "Built wheels:" \
 # Stable image
 #########################################################################
 
-ARG BASE_RUNTIME
 FROM ${BASE_RUNTIME} as stable
 
 # Install torchao.
