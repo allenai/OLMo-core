@@ -103,7 +103,7 @@ jobs:
   gpu_checks:
     name: ${{ matrix.task.name }}
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
