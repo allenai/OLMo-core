@@ -9,7 +9,9 @@ FROM ${BASE_BUILD} as build
 
 WORKDIR /app/build
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install system dependencies.
+RUN --mount=type=cache,id=apt-dev,target=/var/cache/apt \
+    apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
         curl \
@@ -18,19 +20,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git && \
     rm -rf /var/lib/apt/lists/*
 
+# Install/upgrade Python build dependencies.
 RUN pip install --upgrade --no-cache-dir pip wheel packaging "setuptools<70.0.0" ninja
 
 # Build flash-attn.
-RUN pip wheel --no-build-isolation --no-cache-dir "flash-attn==2.6.3"
+ARG FLASH_ATTN_VERSION
+RUN pip wheel --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
 
 # Build megablocks, grouped-gemm, stanford-stk
 ENV TORCH_CUDA_ARCH_LIST="8.0 9.0"
 ENV GROUPED_GEMM_CUTLASS=1
 ARG MEGABLOCKS_VERSION
 RUN pip wheel --no-build-isolation --no-cache-dir "${MEGABLOCKS_VERSION}"
-
-# Flash-attn from pre-built wheel (can't get this to work at the moment)
-#RUN wget https://github.com/Dao-AILab/flash-attention/releases/download/v2.6.3/flash_attn-2.6.3+cu123torch2.4cxx11abiTRUE-cp311-cp311-linux_x86_64.whl
 
 # Only keep the target wheels and dependencies with CUDA extensions.
 RUN echo "Built wheels:" \
@@ -45,12 +46,26 @@ RUN echo "Built wheels:" \
 
 FROM ${BASE_RUNTIME} as stable
 
+# Install system dependencies.
+RUN --mount=type=cache,id=apt-dev,target=/var/cache/apt \
+    apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        wget \
+        libxml2-dev \
+        git && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install/upgrade Python build dependencies.
+RUN pip install --upgrade --no-cache-dir pip wheel packaging
+
 # Install torchao.
 ARG TORCH_CUDA_VERSION
 ARG TORCHAO_VERSION
 RUN pip install --no-cache-dir \
     --extra-index-url https://download.pytorch.org/whl/cu${TORCH_CUDA_VERSION} \
-    ${TORCHAO_VERSION}
+    torchao==${TORCHAO_VERSION}
 
 # Copy and install wheels from build image.
 COPY --from=build /app/build /app/build
