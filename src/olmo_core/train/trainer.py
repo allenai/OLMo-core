@@ -202,6 +202,11 @@ class Trainer:
     depend on the input sizes.
     """
 
+    compile_loss: bool = False
+    """
+    Compile the loss function.
+    """
+
     z_loss_multiplier: Optional[float] = None
     """
     Use Z-loss with this multiplier.
@@ -259,6 +264,9 @@ class Trainer:
     _thread_pool: Optional[ThreadPoolExecutor] = None
     _bookkeeping_pg: Optional[dist.ProcessGroup] = None
     _checkpoint_loaded: bool = False
+    # NOTE: do not assign a default here or it will become a bound method due to the way
+    # dataclasses work.
+    _loss_fn = None
 
     def __post_init__(self):
         self.save_folder = normalize_path(self.save_folder)
@@ -349,6 +357,14 @@ class Trainer:
 
         for callback in self.callbacks.values():
             callback.post_attach()
+
+        # Set loss function.
+        if self.fused_loss:
+            self._loss_fn = fused_cross_entropy_loss
+        else:
+            self._loss_fn = cross_entropy_loss
+        if self.compile_loss:
+            self._loss_fn = torch.compile(self._loss_fn)
 
     @property
     def global_batch_size(self) -> int:
@@ -874,7 +890,6 @@ class Trainer:
 
         :returns: The cross entropy and optional Z-loss, respectively.
         """
-        loss_fn = cross_entropy_loss if not self.fused_loss else fused_cross_entropy_loss
         if compute_z_loss is None:
             compute_z_loss = self.z_loss_multiplier is not None
 
@@ -888,7 +903,7 @@ class Trainer:
         # shape: (batch_size * (seq_len - 1),)
         labels = labels.view(-1)
 
-        ce_loss, z_loss = loss_fn(
+        ce_loss, z_loss = self._loss_fn(  # type: ignore
             logits_for_loss,
             labels,
             ignore_index=self.data_loader.collator.label_ignore_index,

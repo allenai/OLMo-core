@@ -212,7 +212,7 @@ class Transformer(nn.Module):
             h = block(h, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
 
         h = self.norm(h) if self.norm is not None else h
-        out = self.w_out(h).float() if self.w_out is not None else h
+        out = self.w_out(h) if self.w_out is not None else h
         return out
 
     def apply_activation_checkpointing(

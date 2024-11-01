@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added option to compile the trainer's loss function (`Trainer.compile_loss`).
 - Added `SourceMixtureDataset` for composing a training mixture based on ratios of source datasets.
 - Added `NumpyFSLDatasetMixture` for constructing a `NumpyDatasetBase` from a `SourceMixtureDataset`. Note this is only supported for FSL datasets.
 - Added tests for `SourceMixture*` and `NumpyFSLDatasetMixture`.
