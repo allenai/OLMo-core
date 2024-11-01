@@ -13,11 +13,16 @@
 
 ## Installation
 
-First install [PyTorch](https://pytorch.org) according to the instructions specific to your operating system. Then you can install from PyPI with:
+First install [PyTorch](https://pytorch.org) according to the instructions specific to your operating system and hardware. Then you can install from PyPI with:
 
 ```bash
 pip install ai2-olmo-core
 ```
+
+There are a number of optional dependencies that must be installed to use certain functionality as well, including:
+- [flash-attn](https://github.com/Dao-AILab/flash-attention) for flash attention and certain other fused operations.
+- [torchao](https://github.com/pytorch/ao) for float8 training.
+- [megablocks](https://github.com/databricks/megablocks) for mixture-of-experts (MoE) models.
 
 ## API stability
 
