@@ -37,6 +37,7 @@ dev = [
     "black>=23.1,<24.0",
     "isort>=5.12,<5.13",
     "pytest",
+    "pytest-memray",
     "pytest-sphinx",
     "pytest-xdist",
     "twine>=1.11.0",

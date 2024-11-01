@@ -29,6 +29,8 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
+from olmo_core.data.source_mixture import SourceMixtureDatasetConfig
+from olmo_core.data.types import NumpyDatasetDType, NumpyDatasetType, NumpyUIntTypes
 from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
 
 from ..aliases import PathOrStr
@@ -60,11 +62,9 @@ __all__ = [
     "VSLGrowP2Curriculum",
     "VSLGrowLinearCurriculum",
     "NumpyVSLDataset",
-    "NumpyDatasetType",
     "NumpyDatasetConfig",
     "VSLCurriculumType",
     "VSLCurriculumConfig",
-    "NumpyDatasetDType",
 ]
 
 
@@ -99,7 +99,7 @@ class NumpyDatasetBase(ABC):
         pad_token_id: int,
         eos_token_id: int,
         vocab_size: int,
-        dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]] = np.uint16,
+        dtype: NumpyUIntTypes = np.uint16,
     ):
         if not paths:
             raise OLMoConfigurationError("At least one path is required")
@@ -135,7 +135,7 @@ class NumpyDatasetBase(ABC):
         The size, in bytes, of each numpy array.
         """
         if self._array_file_sizes is None:
-            self._array_file_sizes = tuple(self.map(get_file_size))
+            self._array_file_sizes = tuple(self.map(lambda path, _: get_file_size(path)))
         return self._array_file_sizes
 
     @property
@@ -153,7 +153,7 @@ class NumpyDatasetBase(ABC):
     @property
     def dtype(
         self,
-    ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
+    ) -> NumpyUIntTypes:
         """
         The numpy datatype of the arrays.
         """
@@ -208,6 +208,13 @@ class NumpyDatasetBase(ABC):
         """
         return self._work_dir_set
 
+    @property
+    def num_tokens(self) -> int:
+        """
+        Get the total number of tokens in the dataset.
+        """
+        raise NotImplementedError
+
     def _get_file_size(self, path: PathOrStr):
         path_idx = self.paths.index(path)
         return self.file_sizes[path_idx]
@@ -235,7 +242,7 @@ class NumpyDatasetBase(ABC):
 
     def map(
         self,
-        func: Callable[[PathOrStr], T],
+        func: Callable[[PathOrStr, int], T],
         *,
         max_workers: Optional[int] = None,
         method: Literal["threads", "processes"] = "threads",
@@ -244,7 +251,7 @@ class NumpyDatasetBase(ABC):
         """
         Call a function on each path in the dataset, returning a list of the results, in order.
 
-        :param func: The function to map to the paths.
+        :param func: The function to map to the paths and their indices.
         :param max_workers: The number of workers threads/processes. Set to 0 to execute synchronously
             in the main thread/process.
         :param method: Whether to use multi-threading or multi-processing.
@@ -254,7 +261,7 @@ class NumpyDatasetBase(ABC):
         paths = _paths or self.paths
 
         if max_workers == 0:
-            return [func(path) for path in paths]
+            return [func(path, idx) for idx, path in enumerate(paths)]
 
         executor_class: Union[
             Type[concurrent.futures.ThreadPoolExecutor],
@@ -269,16 +276,9 @@ class NumpyDatasetBase(ABC):
             raise ValueError(method)
 
         with executor_class(max_workers=max_workers) as executor:
-            path_to_future = {}
-            for path in paths:
-                if path not in path_to_future:
-                    path_to_future[path] = executor.submit(func, path)
+            futures = [executor.submit(func, path, idx) for idx, path in enumerate(paths)]
 
-            results = []
-            for path in paths:
-                results.append(path_to_future[path].result())
-
-        return results
+        return [future.result() for future in futures]
 
     def prepare(self):
         """
@@ -347,7 +347,7 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         pad_token_id: int,
         eos_token_id: int,
         vocab_size: int,
-        dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]] = np.uint16,
+        dtype: NumpyUIntTypes = np.uint16,
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
         generate_doc_lengths: bool = False,
@@ -483,7 +483,9 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
             path, start_idx, start_idx + self.sequence_length, self.dtype
         )
 
-    def _get_file_size_and_length(self, path, dtype=None) -> Tuple[int, int]:
+    def _get_file_size_and_length(
+        self, path: PathOrStr, idx: int, dtype: Optional[NumpyUIntTypes] = None
+    ) -> Tuple[int, int]:
         dtype = dtype or self.dtype
         item_size = dtype(0).itemsize
         file_size = get_file_size(path)
@@ -503,6 +505,156 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
             raise RuntimeError("invalid 'max_target_sequence_length' or 'sequence_length'")
 
 
+class NumpyFSLDatasetMixture(NumpyFSLDataset):
+    """
+    A version of :class:`NumpyFSLDataset` built from a mixture of sources and their expected token ratios relative to each other. A ``path_offset_index`` is used to determine the number of instances to retain from a path when constructing the local indices.
+    """
+
+    def __init__(
+        self,
+        *paths: PathOrStr,
+        path_offset_index: Dict[Tuple[str, int], int],
+        seed: int,
+        sequence_length: int,
+        pad_token_id: int,
+        eos_token_id: int,
+        vocab_size: int,
+        dtype: NumpyUIntTypes = np.uint16,
+        metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
+        include_instance_metadata: Optional[bool] = None,
+        generate_doc_lengths: bool = False,
+        max_target_sequence_length: Optional[int] = None,
+    ):
+        if max_target_sequence_length is not None and (
+            max_target_sequence_length < sequence_length
+            or max_target_sequence_length % sequence_length != 0
+        ):
+            raise OLMoConfigurationError(
+                "'max_target_sequence_length' should be a multiple of 'sequence_length'"
+            )
+
+        if include_instance_metadata is None and metadata:
+            include_instance_metadata = True
+
+        if isinstance(metadata, list):
+            if len(metadata) != len(paths):
+                raise OLMoConfigurationError(
+                    "'metadata' should have the same length as the number of file paths"
+                )
+        else:
+            metadata = [metadata or {}] * len(paths)
+
+        super().__init__(
+            *paths,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            vocab_size=vocab_size,
+            dtype=dtype,
+            sequence_length=sequence_length,
+            metadata=metadata,
+            include_instance_metadata=include_instance_metadata,
+            generate_doc_lengths=generate_doc_lengths,
+            max_target_sequence_length=max_target_sequence_length,
+        )
+        self._metadata = tuple(metadata)
+        self._include_instance_metadata = include_instance_metadata
+        self._num_instances: Optional[int] = None
+        self._array_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
+        self._lengths_dtype: Optional[NumpyUIntTypes] = None
+        self._instances_per_bucket: Optional[Tuple[Tuple[int, int], ...]] = None
+        self._path_offset_index = path_offset_index
+        self._seed = seed
+
+    def prepare(self):
+        if self.fs_local_rank == 0:
+            log.info("Gathering indices...")
+            self._write_document_indices()
+        barrier()
+        len(self)
+
+    def _get_indices_path(self, path: PathOrStr) -> Path:
+        sha256_hash = hashlib.sha256()
+        sha256_hash.update(str(path).encode())
+        sha256_hash.update(str(self._get_file_size(path)).encode())
+        path_hash = sha256_hash.hexdigest()
+        return (
+            self.work_dir
+            / "dataset-common"
+            / f"mixture-instance-indices-{self.sequence_length}-{path_hash}.npy"
+        )
+
+    def _write_document_indices(self):
+        paths_needed: List[Tuple[PathOrStr, int]] = []
+        for idx, path in enumerate(self.paths):
+            indices_path = self._get_indices_path(path)
+            if indices_path.is_file() and not self._bust_index_cache:
+                log.info(f"Reusing document indices for '{path}' at:\n'{indices_path}'")
+            elif path not in paths_needed:
+                paths_needed.append((path, idx))
+
+        if paths_needed:
+            with concurrent.futures.ProcessPoolExecutor() as executor:
+                futures = []
+                for path, idx in paths_needed:
+                    indices_path = self._get_indices_path(path)
+                    log.info(f"Gathering instance indices for '{path}'...")
+                    # NOTE: We limit the number of instances by total target token count // sequence length
+                    max_instances = (
+                        self._path_offset_index[(str(path), idx)] // self.sequence_length
+                    )
+                    future = executor.submit(
+                        run_worker_func,
+                        segment_documents_into_instances,
+                        path,
+                        indices_path,
+                        max_sequence_length=self.sequence_length,
+                        eos_token_id=self.eos_token_id,
+                        dtype=self.dtype,
+                        indices_dtype=self.dtype,
+                        sample=(max_instances, self._seed),
+                    )
+                    futures.append(future)
+
+                concurrent.futures.wait(futures, return_when="ALL_COMPLETED")
+
+                # Log results.
+                for path, future in zip([item[0] for item in paths_needed], futures):
+                    _, total_instances = future.result()
+                    log.info(
+                        f"Created {total_instances:,d} instances of sequence length up to "
+                        f"{self.sequence_length} from '{path}'"
+                    )
+
+    def _get_file_size_and_length(
+        self, path: PathOrStr, idx: int, dtype: Optional[NumpyUIntTypes] = None
+    ) -> Tuple[int, int]:
+        dtype = dtype or self.dtype
+        item_size = dtype(0).itemsize
+        file_size = self._get_size_from_offset_index((path, idx))
+        if (
+            self.max_target_sequence_length is None
+            or self.max_target_sequence_length == self.sequence_length
+        ):
+            return file_size, file_size // (item_size * self.sequence_length)
+        elif self.max_target_sequence_length > self.sequence_length:
+            num_max_seq_len_instances = file_size // (item_size * self.max_target_sequence_length)
+            return (
+                file_size,
+                num_max_seq_len_instances
+                * (self.max_target_sequence_length // self.sequence_length),
+            )
+        else:
+            raise RuntimeError("invalid 'max_target_sequence_length' or 'sequence_length'")
+
+    def _get_size_from_offset_index(self, path_index: Tuple[PathOrStr, int]) -> int:
+        try:
+            path, idx = path_index
+            # Get size in bytes from tokens in the supplied index * itemsize
+            return self._path_offset_index[(str(path), idx)] * self.dtype(0).itemsize
+        except KeyError:
+            raise OLMoEnvironmentError(f"Item not found in path index @ {path_index}")
+
+
 class NumpyPaddedFSLDataset(NumpyFSLDataset):
     """
     A version of :class:`NumpyFSLDataset` that creates a single instance from each document.
@@ -516,7 +668,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         pad_token_id: int,
         eos_token_id: int,
         vocab_size: int,
-        dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]] = np.uint16,
+        dtype: NumpyUIntTypes = np.uint16,
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
     ):
@@ -537,7 +689,8 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         if self._array_instance_offsets is None:
             item_size = self.indices_dtype(0).itemsize
             num_instances_per_path = self.map(
-                lambda path: get_file_size(self._get_instance_indices_path(path)) // (item_size * 2)
+                lambda path, _: get_file_size(self._get_instance_indices_path(path))
+                // (item_size * 2)
             )
             array_instance_offsets = []
             start_offset = 0
@@ -550,7 +703,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
     @property
     def indices_dtype(
         self,
-    ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
+    ) -> NumpyUIntTypes:
         return np.uint32
 
     def prepare(self):
@@ -945,7 +1098,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         max_sequence_length: int,
         min_sequence_length: int = 256,
         curriculum: Optional[VSLCurriculum] = None,
-        dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]] = np.uint16,
+        dtype: NumpyUIntTypes = np.uint16,
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
     ):
@@ -985,9 +1138,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         self._curriculum = curriculum or VSLNaturalCurriculum()
         self._num_instances: Optional[int] = None
         self._array_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
-        self._lengths_dtype: Optional[
-            Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]
-        ] = None
+        self._lengths_dtype: Optional[NumpyUIntTypes] = None
         self._instances_per_bucket: Optional[Tuple[Tuple[int, int], ...]] = None
 
     @property
@@ -1226,13 +1377,13 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     @property
     def indices_dtype(
         self,
-    ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
+    ) -> NumpyUIntTypes:
         return np.uint32
 
     @property
     def lengths_dtype(
         self,
-    ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
+    ) -> NumpyUIntTypes:
         if self._lengths_dtype is None:
             for dtype in (
                 np.uint8,
@@ -1245,39 +1396,6 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                     break
             assert self._lengths_dtype is not None
         return self._lengths_dtype
-
-
-class NumpyDatasetType(StrEnum):
-    """
-    An enumeration of the different :class:`NumpyDatasetBase` implementations.
-    """
-
-    fsl = "fsl"
-    """
-    Fixed sequenced length ➡️ :class:`NumpyFSLDataset`.
-    """
-
-    padded_fsl = "padded_fsl"
-    """
-    Padded fixed sequence length ➡️ :class:`NumpyPaddedFSLDataset`.
-    """
-
-    vsl = "vsl"
-    """
-    Variable sequenced length ➡️ :class:`NumpyVSLDataset`.
-    """
-
-
-class NumpyDatasetDType(StrEnum):
-    uint8 = "uint8"
-    uint16 = "uint16"
-    uint32 = "uint32"
-    uint64 = "uint64"
-
-    def as_np_dtype(
-        self,
-    ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
-        return getattr(np, str(self))
 
 
 class VSLCurriculumType(StrEnum):
@@ -1364,6 +1482,10 @@ class NumpyDatasetConfig(Config):
     """
     The type of dataset.
     """
+    source_mixture_config: Optional[SourceMixtureDatasetConfig] = None
+    """
+    The source mixture dataset config.
+    """
     sequence_length: Optional[int] = None
     """
     The sequence length for a :class:`NumpyFSLDataset`.
@@ -1437,6 +1559,10 @@ class NumpyDatasetConfig(Config):
             self.sequence_length = None
             self.max_target_sequence_length = None
 
+        if self.source_mixture_config and self.mix:
+            # NOTE(tylerm): This could be revisited as I think they could play nicely together.
+            raise OLMoConfigurationError("Only one of 'source_mixture_config' or 'mix' can be set")
+
     @property
     def effective_sequence_length(self) -> int:
         if self.sequence_length is not None:
@@ -1480,7 +1606,7 @@ class NumpyDatasetConfig(Config):
 
     def get_dtype(
         self,
-    ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
+    ) -> NumpyUIntTypes:
         if self.dtype is not None:
             return NumpyDatasetDType(self.dtype).as_np_dtype()
 
@@ -1501,8 +1627,10 @@ class NumpyDatasetConfig(Config):
         """
         Construct the corresponding :class:`NumpyDatasetBase`.
         """
-        if (self.paths is None) == (self.mix is None):
-            raise OLMoConfigurationError("Exactly one of 'paths' or 'mix' is required")
+        if (self.paths is None) == (self.mix is None) == (self.source_mixture_config is None):
+            raise OLMoConfigurationError(
+                "Exactly one of 'paths' or 'mix' or 'source_mixture' is required"
+            )
 
         paths: List[str] = []
         metadata = self.metadata
@@ -1519,6 +1647,8 @@ class NumpyDatasetConfig(Config):
                 paths.extend(matches)
         elif self.paths:
             paths = self.paths
+        elif self.source_mixture_config and self.name == NumpyDatasetType.fsl:
+            log.info("Building dataset from source mixture...")
         else:
             assert self.mix is not None
             if self.mix_base_dir is None:
@@ -1555,18 +1685,35 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'vsl_curriculum' is only a valid field for VSL datasets"
                 )
-            dataset = NumpyFSLDataset(
-                *paths,
-                sequence_length=self.sequence_length,
-                max_target_sequence_length=self.max_target_sequence_length,
-                pad_token_id=self.tokenizer.pad_token_id,
-                eos_token_id=self.tokenizer.eos_token_id,
-                vocab_size=self.tokenizer.vocab_size,
-                dtype=self.get_dtype(),
-                metadata=metadata,
-                include_instance_metadata=self.include_instance_metadata,
-                generate_doc_lengths=self.generate_doc_lengths,
-            )
+            if self.source_mixture_config:
+                mixture = self.source_mixture_config.build()
+                return NumpyFSLDatasetMixture(
+                    *mixture.to_paths(),
+                    seed=mixture.seed,
+                    sequence_length=self.sequence_length,
+                    max_target_sequence_length=self.max_target_sequence_length,
+                    pad_token_id=self.tokenizer.pad_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                    vocab_size=self.tokenizer.vocab_size,
+                    dtype=self.get_dtype(),
+                    metadata=self.metadata,
+                    include_instance_metadata=self.include_instance_metadata,
+                    generate_doc_lengths=self.generate_doc_lengths,
+                    path_offset_index=mixture.to_index(),
+                )
+            else:
+                dataset = NumpyFSLDataset(
+                    *paths,
+                    sequence_length=self.sequence_length,
+                    max_target_sequence_length=self.max_target_sequence_length,
+                    pad_token_id=self.tokenizer.pad_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                    vocab_size=self.tokenizer.vocab_size,
+                    dtype=self.get_dtype(),
+                    metadata=metadata,
+                    include_instance_metadata=self.include_instance_metadata,
+                    generate_doc_lengths=self.generate_doc_lengths,
+                )
         elif self.name == NumpyDatasetType.padded_fsl:
             if self.sequence_length is None:
                 raise OLMoConfigurationError("'sequence_length' is required for padded FSL dataset")

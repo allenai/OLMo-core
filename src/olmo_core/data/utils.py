@@ -1,6 +1,7 @@
 import gzip
 import math
 import os
+import random
 from contextlib import contextmanager
 from pathlib import Path
 from typing import (
@@ -328,7 +329,7 @@ def memmap_to_write(
     file until the context exists successfully.
     """
     path.parent.mkdir(exist_ok=True, parents=True)
-    tmp_path = path.with_suffix(".npy.tmp")
+    tmp_path = path.with_suffix(f".{random.randint(0,2**32)}.npy.tmp")
     mmap = np.memmap(tmp_path, dtype=dtype, mode="w+", shape=shape)
     try:
         yield mmap
@@ -411,23 +412,33 @@ def segment_documents_into_instances(
     indices_dtype: Union[
         Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
     ] = np.uint32,
+    sample: Optional[Tuple[int, int]] = None,
 ) -> Tuple[int, int]:
     """
     Segment documents into instances of at most ``sequence_length`` tokens.
     Saving the indices of the instances to ``target``.
 
+    Sample a subset of the instances if ``sample`` is provided as a tuple of ``(max_instances, seed)``.
+
     Returns the number of original documents and the number of resulting instances documents.
     """
     total_og_docs = 0
-    indices = []
-    for start_idx, end_idx in iter_document_indices(path, eos_token_id=eos_token_id, dtype=dtype):
-        total_og_docs += 1
-        length = end_idx - start_idx
-        indices.append(start_idx)
-        indices.append(start_idx + min(length, max_sequence_length))
-        start_idx += length
+    idx_gen = (
+        idx
+        for start_idx, end_idx in iter_document_indices(
+            path, eos_token_id=eos_token_id, dtype=dtype
+        )
+        for idx in (start_idx, start_idx + min(end_idx - start_idx, max_sequence_length))
+    )
+    indices = np.fromiter(idx_gen, dtype=indices_dtype)
+    total_og_docs = len(indices) // 2
 
-    with memmap_to_write(target, dtype=indices_dtype, shape=(len(indices),)) as indices_mmap:
+    if sample is not None:
+        max_instances, seed = sample
+        rng = get_rng(seed)
+        indices = rng.choice(indices.reshape(-1, 2), size=max_instances).reshape(-1)
+
+    with memmap_to_write(target, dtype=indices_dtype, shape=(indices.size,)) as indices_mmap:
         indices_mmap[:] = indices
 
     return total_og_docs, len(indices) // 2

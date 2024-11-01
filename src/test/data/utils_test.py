@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import torch
 
 from olmo_core.data.utils import (
@@ -8,8 +9,39 @@ from olmo_core.data.utils import (
     iter_batched,
     iter_document_indices,
     melt_batch,
+    segment_documents_into_instances,
     write_document_indices,
 )
+
+
+@pytest.mark.limit_memory("245 KB")
+def test_segment_documents_into_instances(tmp_path):
+    data = [1, 2, 3, 4, 0, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 0] * 1000
+    data_path = tmp_path / "data.npy"
+    max_sequence_length = 4
+    mmap = np.memmap(data_path, mode="w+", dtype=np.uint16, shape=(len(data),))
+    indices_path = tmp_path / "indices.npy"
+    mmap[:] = data
+    mmap.flush()
+
+    eos = 0
+    dtype = np.uint16
+    sample = (2, 42)
+
+    results = []
+    for _ in range(10):
+        results.append(
+            segment_documents_into_instances(
+                path=data_path,
+                target=indices_path,
+                max_sequence_length=max_sequence_length,
+                eos_token_id=eos,
+                dtype=dtype,
+                sample=sample,
+            )
+        )
+
+    assert all([r[1] == 2 for r in results])
 
 
 def test_iter_document_indices(tmp_path):
