@@ -1,30 +1,36 @@
-# Base image comes with PyTorch, numpy, flash-attn
-ARG BASE
+ARG BASE_BUILD
+ARG BASE_RUNTIME
 
 #########################################################################
 # Build image
 #########################################################################
 
-FROM ${BASE} as build
+FROM ${BASE_BUILD} as build
 
 WORKDIR /app/build
 
-# Install CUDA toolkit.
-ARG CUDA_TOOLKIT_VERSION
-RUN conda install -y -c nvidia cuda-toolkit==${CUDA_TOOLKIT_VERSION}
+# Install system dependencies.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        wget \
+        libxml2-dev \
+        git && \
+    rm -rf /var/lib/apt/lists/*
 
-ARG TORCH_CUDA_VERSION
+# Install/upgrade Python build dependencies.
+RUN pip install --upgrade --no-cache-dir pip wheel packaging "setuptools<70.0.0" ninja
 
-# Build megablocks and grouped-gemm.
+# Build flash-attn.
+ARG FLASH_ATTN_VERSION
+RUN pip wheel --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
+
+# Build megablocks, grouped-gemm, stanford-stk
 ENV TORCH_CUDA_ARCH_LIST="8.0 9.0"
 ENV GROUPED_GEMM_CUTLASS=1
 ARG MEGABLOCKS_VERSION
-RUN pip wheel --no-build-isolation --no-cache-dir \
-    --extra-index-url https://download.pytorch.org/whl/cu${TORCH_CUDA_VERSION} \
-    "${MEGABLOCKS_VERSION}"
-
-# Flash-attn from pre-built wheel (can't get this to work at the moment)
-#RUN wget https://github.com/Dao-AILab/flash-attention/releases/download/v2.6.3/flash_attn-2.6.3+cu123torch2.4cxx11abiTRUE-cp311-cp311-linux_x86_64.whl
+RUN pip wheel --no-build-isolation --no-cache-dir "${MEGABLOCKS_VERSION}"
 
 # Only keep the target wheels and dependencies with CUDA extensions.
 RUN echo "Built wheels:" \
@@ -37,15 +43,38 @@ RUN echo "Built wheels:" \
 # Stable image
 #########################################################################
 
-FROM ${BASE} as stable
+FROM ${BASE_RUNTIME} as stable
 
-ARG TORCH_CUDA_VERSION
+# Install system dependencies.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        wget \
+        libxml2-dev \
+        git && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install MLNX OFED user-space drivers
+# See https://docs.nvidia.com/networking/pages/releaseview.action?pageId=15049785#Howto:DeployRDMAacceleratedDockercontaineroverInfiniBandfabric.-Dockerfile
+ENV MOFED_VER 24.01-0.3.3.1
+ENV OS_VER ubuntu22.04
+ENV PLATFORM x86_64
+RUN wget --quiet https://content.mellanox.com/ofed/MLNX_OFED-${MOFED_VER}/MLNX_OFED_LINUX-${MOFED_VER}-${OS_VER}-${PLATFORM}.tgz && \
+    tar -xvf MLNX_OFED_LINUX-${MOFED_VER}-${OS_VER}-${PLATFORM}.tgz && \
+    MLNX_OFED_LINUX-${MOFED_VER}-${OS_VER}-${PLATFORM}/mlnxofedinstall --basic --user-space-only --without-fw-update -q && \
+    rm -rf MLNX_OFED_LINUX-${MOFED_VER}-${OS_VER}-${PLATFORM} && \
+    rm MLNX_OFED_LINUX-${MOFED_VER}-${OS_VER}-${PLATFORM}.tgz
+
+# Install/upgrade Python build dependencies.
+RUN pip install --upgrade --no-cache-dir pip wheel packaging
 
 # Install torchao.
+ARG TORCH_CUDA_VERSION
 ARG TORCHAO_VERSION
 RUN pip install --no-cache-dir \
     --extra-index-url https://download.pytorch.org/whl/cu${TORCH_CUDA_VERSION} \
-    ${TORCHAO_VERSION}
+    torchao==${TORCHAO_VERSION}
 
 # Copy and install wheels from build image.
 COPY --from=build /app/build /app/build
@@ -68,7 +97,6 @@ WORKDIR /app/olmo-core
 FROM stable as nightly
 
 ARG TORCH_CUDA_VERSION
-
 ARG NIGHTLY_VERSION
 RUN pip install --no-cache-dir --pre \
     --index-url https://download.pytorch.org/whl/nightly/cu${TORCH_CUDA_VERSION} \
