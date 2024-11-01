@@ -9,7 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `SourceMixtureDataset` for composing a training mixture based on ratios of source datasets.
+- Added `NumpyFSLDatasetMixture` for constructing a `NumpyDatasetBase` from a `SourceMixtureDataset`. Note this is only supported for FSL datasets.
+- Added tests for `SourceMixture*` and `NumpyFSLDatasetMixture`.
 - Added `DownstreamEvaluatorCallbackConfig` class for running in-loop downstream eval via [OLMo-in-loop-evals](https://github.com/allenai/OLMo-in-loop-evals).
+
+### Changed
+
+- Moved some types into `olmo_core.data.types` to avoid some circular dependencies.
 
 ### Fixed
 
