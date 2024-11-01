@@ -587,7 +587,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         paths_needed: List[Tuple[PathOrStr, int]] = []
         for idx, path in enumerate(self.paths):
             indices_path = self._get_indices_path(path)
-            if indices_path.is_file() and not self._bust_index_cache:
+            if indices_path.is_file():
                 log.info(f"Reusing document indices for '{path}' at:\n'{indices_path}'")
             elif path not in paths_needed:
                 paths_needed.append((path, idx))
