@@ -264,6 +264,8 @@ class Trainer:
     _thread_pool: Optional[ThreadPoolExecutor] = None
     _bookkeeping_pg: Optional[dist.ProcessGroup] = None
     _checkpoint_loaded: bool = False
+    # NOTE: do not assign a default here or it will become a bound method due to the way
+    # dataclasses work.
     _loss_fn = None
 
     def __post_init__(self):
