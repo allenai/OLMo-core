@@ -22,6 +22,7 @@ from beaker import (
     TaskResources,
     TaskSpec,
 )
+from rich.prompt import Confirm
 
 from ..config import Config, StrEnum
 from ..distributed.utils import OLMO_SHARED_FS_ENV_VAR
@@ -427,10 +428,14 @@ class BeakerLaunchConfig(Config):
         try:
             self._follow_experiment(experiment)
         except KeyboardInterrupt:
-            log.warning(
-                "Caught keyboard interrupt, you can cancel the experiment on the Beaker UI: "
-                f"{self.beaker.experiment.url(experiment)}"
-            )
-            raise
+            log.warning("Caught keyboard interrupt...")
+            if Confirm.ask("Would you like to cancel the experiment?"):
+                self.beaker.experiment.stop(experiment)
+                log.warning(f"Experiment stopped: {self.beaker.experiment.url(experiment)}")
+            else:
+                log.info(
+                    "You can follow the experiment on the Beaker UI: "
+                    f"{self.beaker.experiment.url(experiment)}"
+                )
 
         return experiment
