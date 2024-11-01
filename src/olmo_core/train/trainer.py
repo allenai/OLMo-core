@@ -264,7 +264,7 @@ class Trainer:
     _thread_pool: Optional[ThreadPoolExecutor] = None
     _bookkeeping_pg: Optional[dist.ProcessGroup] = None
     _checkpoint_loaded: bool = False
-    _loss_fn = cross_entropy_loss
+    _loss_fn = None
 
     def __post_init__(self):
         self.save_folder = normalize_path(self.save_folder)
@@ -359,6 +359,8 @@ class Trainer:
         # Set loss function.
         if self.fused_loss:
             self._loss_fn = fused_cross_entropy_loss
+        else:
+            self._loss_fn = cross_entropy_loss
         if self.compile_loss:
             self._loss_fn = torch.compile(self._loss_fn)
 
@@ -899,7 +901,7 @@ class Trainer:
         # shape: (batch_size * (seq_len - 1),)
         labels = labels.view(-1)
 
-        ce_loss, z_loss = self._loss_fn(
+        ce_loss, z_loss = self._loss_fn(  # type: ignore
             logits_for_loss,
             labels,
             ignore_index=self.data_loader.collator.label_ignore_index,
