@@ -32,6 +32,7 @@ def cross_entropy_loss(
 
     :returns: The cross entropy loss and optionally the z-loss.
     """
+    logits = logits.float()
     loss = F.cross_entropy(logits, labels, ignore_index=ignore_index, reduction=reduction)
 
     if not compute_z_loss:
@@ -86,6 +87,8 @@ def fused_cross_entropy_loss(
     """
     if _fused_cross_entropy_loss is None:
         raise RuntimeError("triton is required for fused_cross_entropy_loss")
+
+    logits = logits.float()
 
     loss, z_loss = _fused_cross_entropy_loss(
         logits,

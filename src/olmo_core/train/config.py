@@ -44,6 +44,7 @@ class TrainerConfig(Config):
     metrics_collect_interval: int = 5
     callbacks: Dict[str, Callback] = field(default_factory=dict)
     fused_loss: bool = False
+    compile_loss: bool = False
     z_loss_multiplier: Optional[float] = None
     autocast_precision: Optional[DType] = None
 
