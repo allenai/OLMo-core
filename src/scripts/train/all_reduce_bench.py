@@ -14,11 +14,7 @@ import torch.distributed as dist
 
 from olmo_core.config import Config, StrEnum
 from olmo_core.distributed.utils import get_local_rank, get_world_size
-from olmo_core.launch.beaker import (
-    BeakerEnvVar,
-    BeakerLaunchConfig,
-    OLMoCoreBeakerImage,
-)
+from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.train import prepare_training_environment, teardown_training_environment
 from olmo_core.utils import generate_uuid, prepare_cli_environment
 
@@ -117,13 +113,12 @@ def build_config(script: str, run_name: str, cluster: str, overrides: List[str])
             "conda shell.bash activate base",
             "pip install -e '.[all]'",
             "pip freeze",
-            "ls -lh /var/lib/tcpxo",
+            "ls -lh /var/lib/tcpxo/lib64",
             # Move AWS credentials from env to relevant files
             #  "mkdir -p ~/.aws",
             #  "printenv AWS_CONFIG > ~/.aws/config",
             #  "printenv AWS_CREDENTIALS > ~/.aws/credentials",
         ],
-        env_vars=[BeakerEnvVar(name="NCCL_DEBUG", value="WARN")],
     )
 
     return BenchmarkConfig(launch=launch_config).merge(overrides)
