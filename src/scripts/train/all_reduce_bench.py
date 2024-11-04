@@ -123,7 +123,7 @@ def build_config(script: str, run_name: str, cluster: str, overrides: List[str])
             #  "printenv AWS_CONFIG > ~/.aws/config",
             #  "printenv AWS_CREDENTIALS > ~/.aws/credentials",
         ],
-        env_vars=[BeakerEnvVar(name="NCCL_DEUBG", value="WARN")],
+        env_vars=[BeakerEnvVar(name="NCCL_DEBUG", value="WARN")],
     )
 
     return BenchmarkConfig(launch=launch_config).merge(overrides)
