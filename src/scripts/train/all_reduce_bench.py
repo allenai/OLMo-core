@@ -116,7 +116,7 @@ def build_config(script: str, run_name: str, cluster: str, overrides: List[str])
         ],
     )
 
-    return BenchmarkConfig(launch=launch_config)
+    return BenchmarkConfig(launch=launch_config).merge(overrides)
 
 
 def timed_allreduce(mat, start_event, end_event):
