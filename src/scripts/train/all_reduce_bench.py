@@ -13,7 +13,7 @@ import torch
 import torch.distributed as dist
 
 from olmo_core.config import Config, StrEnum
-from olmo_core.distributed.utils import get_rank, get_world_size
+from olmo_core.distributed.utils import get_local_rank, get_world_size
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.train import prepare_training_environment, teardown_training_environment
 from olmo_core.utils import generate_uuid, prepare_cli_environment
@@ -49,7 +49,7 @@ class SubCmd(StrEnum):
             pass
         elif self == SubCmd.run:
             try:
-                mat = torch.rand(N, M, dtype=torch.float32).cuda(get_rank())
+                mat = torch.rand(N, M, dtype=torch.float32).cuda(get_local_rank())
 
                 start_event = torch.cuda.Event(enable_timing=True)
                 end_event = torch.cuda.Event(enable_timing=True)
@@ -130,7 +130,7 @@ def timed_allreduce(mat, start_event, end_event):
 
     size = M * N * 4  # 4 is 4 bytes in fp32
     # note that this is following the same math as NVIDIA/nccl-tests
-    algbw = torch.tensor([size / duration]).cuda(get_rank())
+    algbw = torch.tensor([size / duration]).cuda(get_local_rank())
 
     # calculate mean across all ranks
     dist.reduce(algbw, dst=0, op=dist.ReduceOp.SUM)
