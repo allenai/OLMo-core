@@ -19,6 +19,7 @@ from beaker import (
     ExperimentSpec,
     Job,
     Priority,
+    RetrySpec,
     TaskResources,
     TaskSpec,
 )
@@ -173,6 +174,11 @@ class BeakerLaunchConfig(Config):
     preemptible: bool = True
     """
     If the job should be preemptible.
+    """
+
+    retries: Optional[int] = None
+    """
+    The number of times to retry the experiment if it fails.
     """
 
     env_vars: List[BeakerEnvVar] = field(default_factory=list)
@@ -360,7 +366,12 @@ class BeakerLaunchConfig(Config):
             for bucket in self.weka_buckets:
                 task_spec = task_spec.with_dataset(bucket.mount, weka=bucket.bucket)
 
-        return ExperimentSpec(description=self.description, budget=self.budget, tasks=[task_spec])
+        return ExperimentSpec(
+            description=self.description,
+            budget=self.budget,
+            tasks=[task_spec],
+            retry=None if not self.retries else RetrySpec(allowed_task_retries=self.retries),
+        )
 
     def _follow_experiment(self, experiment: Experiment):
         # Wait for job to start...
