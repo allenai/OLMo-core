@@ -93,7 +93,7 @@ def build_config(script: str, run_name: str, cluster: str, overrides: List[str])
         name=f"{run_name}-{generate_uuid()[:8]}",
         budget="ai2/oe-training",
         cmd=[script, SubCmd.run, run_name, cluster, *overrides],
-        task_name="train",
+        task_name="benchmark",
         workspace="ai2/OLMo-core",
         clusters=[cluster],
         beaker_image=OLMoCoreBeakerImage.nightly,  # some features require nightly at the moment
@@ -110,9 +110,9 @@ def build_config(script: str, run_name: str, cluster: str, overrides: List[str])
             "pip install -e '.[all]'",
             "pip freeze",
             # Move AWS credentials from env to relevant files
-            "mkdir -p ~/.aws",
-            "printenv AWS_CONFIG > ~/.aws/config",
-            "printenv AWS_CREDENTIALS > ~/.aws/credentials",
+            #  "mkdir -p ~/.aws",
+            #  "printenv AWS_CONFIG > ~/.aws/config",
+            #  "printenv AWS_CREDENTIALS > ~/.aws/credentials",
         ],
     )
 
