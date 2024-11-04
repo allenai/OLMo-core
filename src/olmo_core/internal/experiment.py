@@ -183,7 +183,7 @@ def build_common_components(
             name=VSLCurriculumType.grow_p2, num_cycles=8, balanced=False
         ),
         work_dir=(
-            None
+            f"./dataset-cache"
             if is_url(root_dir)
             else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache"
         ),
@@ -207,7 +207,7 @@ def build_common_components(
                 sequence_length=dataset_config.effective_sequence_length,
                 tokenizer=tokenizer_config,
                 work_dir=(
-                    None
+                    "./dataset-cache"
                     if is_url(root_dir)
                     else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache"
                 ),

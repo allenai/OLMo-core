@@ -89,8 +89,6 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             if multi_node:
                 set_env_var("NCCL_SOCKET_IFNAME", "enp0s12")
 
-    validate_env_vars()
-
     if backend_supports_cuda(backend):
         # Set CUDA device.
         # NOTE: important to do this *before* initializing the process group to avoid
@@ -99,6 +97,8 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
         torch.cuda.set_device(device)
 
     dist.init_process_group(backend, timeout=timeout)
+
+    validate_env_vars()
 
 
 def validate_env_vars():
@@ -111,12 +111,12 @@ def validate_env_vars():
     if OLMO_LOCAL_RANK_ENV_VAR not in os.environ:
         raise OLMoEnvironmentError(f"Missing env var '{OLMO_LOCAL_RANK_ENV_VAR}'")
 
-    if (
-        os.environ.get(OLMO_SHARED_FS_ENV_VAR) != "1"
-        and os.environ.get(OLMO_FS_LOCAL_RANK_ENV_VAR) is None
+    if os.environ.get(OLMO_SHARED_FS_ENV_VAR) != "1" and (
+        os.environ.get(OLMO_FS_LOCAL_RANK_ENV_VAR) is None
+        and os.environ.get(OLMO_LOCAL_RANK_ENV_VAR) is None
     ):
         raise OLMoEnvironmentError(
-            f"Missing env var '{OLMO_FS_LOCAL_RANK_ENV_VAR}' for non-shared filesystem. "
+            f"Missing env var '{OLMO_FS_LOCAL_RANK_ENV_VAR}'/'{OLMO_LOCAL_RANK_ENV_VAR}' for non-shared filesystem. "
             f"If this is a shared filesystem you can set '{OLMO_SHARED_FS_ENV_VAR}=1' instead."
         )
 
