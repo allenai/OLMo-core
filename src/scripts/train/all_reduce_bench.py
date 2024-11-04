@@ -5,6 +5,7 @@ Run an all-reduce benchmark. Run this script without any arguments to see usage 
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from typing import List
@@ -50,8 +51,9 @@ class SubCmd(StrEnum):
         elif self == SubCmd.run:
             try:
                 # Show env vars for debugging.
-                #  for var_name, var_val in os.environ.items():
-                #      log.info(f"Env var {var_name} set to '{var_val}'")
+                for var_name in sorted(os.environ.keys()):
+                    var_val = os.environ[var_name]
+                    log.info(f"Env var {var_name} set to '{var_val}'")
 
                 mat = torch.rand(N, M, dtype=torch.float32).cuda(get_local_rank())
 
