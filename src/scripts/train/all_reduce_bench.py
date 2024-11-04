@@ -114,6 +114,7 @@ def build_config(script: str, run_name: str, cluster: str, overrides: List[str])
             "pip install -e '.[all]'",
             "pip freeze",
             "ls -lh /var/lib/tcpxo/lib64",
+            "export LD_LIBRARY_PATH=/var/lib/tcpxo/lib64:$LD_LIBRARY_PATH",
             # Move AWS credentials from env to relevant files
             #  "mkdir -p ~/.aws",
             #  "printenv AWS_CONFIG > ~/.aws/config",
