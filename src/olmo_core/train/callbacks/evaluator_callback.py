@@ -121,8 +121,12 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
     eval_batch_size: Optional[int] = None
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     log_interval: int = 5
+    enabled: bool = True
 
-    def build(self, trainer: "Trainer") -> Callback:
+    def build(self, trainer: "Trainer") -> Optional[Callback]:
+        if not self.enabled:
+            return None
+
         eval_batch_size = (
             self.eval_batch_size
             if self.eval_batch_size is not None
@@ -227,8 +231,12 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     eval_interval: int = 1000
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     log_interval: int = 5
+    enabled: bool = True
 
-    def build(self, trainer: "Trainer") -> Callback:
+    def build(self, trainer: "Trainer") -> Optional[Callback]:
+        if not self.enabled:
+            return None
+
         from olmo_eval import HFTokenizer
 
         global_eval_batch_size = (
