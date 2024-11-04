@@ -72,11 +72,12 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             set_env_var("NCCL_USE_SNAP", "1")
             set_env_var("NCCL_FASTRAK_USE_LLCM", "1")
             set_env_var("NCCL_FASTRAK_LLCM_DEVICE_DIRECTORY", "/dev/aperture_devices")
-            set_env_var(
-                "LD_LIBRARY_PATH",
-                "/var/lib/tcpxo/lib64:" + os.environ.get("LD_LIBRARY_PATH", ""),
-                override=True,
-            )
+            # NOTE: This path var must be set prior to launching Python
+            #  set_env_var(
+            #      "LD_LIBRARY_PATH",
+            #      "/var/lib/tcpxo/lib64:" + os.environ.get("LD_LIBRARY_PATH", ""),
+            #      override=True,
+            #  )
             set_env_var("NCCL_TUNER_PLUGIN", "libnccl-tuner.so")
             set_env_var(
                 "NCCL_TUNER_CONFIG_PATH", "/var/lib/tcpxo/lib64/a3plus_tuner_config.textproto"
