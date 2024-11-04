@@ -38,10 +38,11 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
 
     # Set host-specific env var defaults.
     if _running_in_beaker():
+        multi_node = int(os.environ.get(OLMO_NUM_NODES_ENV_VAR, "1")) > 1
         # See https://beaker-docs.apps.allenai.org/experiments/distributed-training.html
         if "jupiter" in get_node_hostname():
             set_env_var("NCCL_IB_HCA", "^=mlx5_bond_0")
-            if int(os.environ.get(OLMO_NUM_NODES_ENV_VAR, "1")) > 1:
+            if multi_node:
                 # Only for multi-node
                 set_env_var("NCCL_SOCKET_IFNAME", "ib")
         elif "pluto" in get_node_hostname():
@@ -68,7 +69,6 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
                 "NCCL_FASTRAK_IFNAME",
                 "enp6s0,enp7s0,enp13s0,enp14s0,enp134s0,enp135s0,enp141s0,enp142s0",
             )
-            set_env_var("NCCL_SOCKET_IFNAME", "enp0s12")
             set_env_var("NCCL_USE_SNAP", "1")
             set_env_var("NCCL_FASTRAK_USE_LLCM", "1")
             set_env_var("NCCL_FASTRAK_LLCM_DEVICE_DIRECTORY", "/dev/aperture_devices")
@@ -83,6 +83,8 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
                 "NCCL_SHIMNET_GUEST_CONFIG_CHECKER_CONFIG_FILE",
                 "/var/lib/tcpxo/lib64/a3plus_guest_config.textproto",
             )
+            if multi_node:
+                set_env_var("NCCL_SOCKET_IFNAME", "enp0s12")
 
     validate_env_vars()
 
