@@ -5,7 +5,6 @@ Run an all-reduce benchmark. Run this script without any arguments to see usage 
 from __future__ import annotations
 
 import logging
-import os
 import sys
 from dataclasses import dataclass
 from typing import List
@@ -15,7 +14,11 @@ import torch.distributed as dist
 
 from olmo_core.config import Config, StrEnum
 from olmo_core.distributed.utils import get_local_rank, get_world_size
-from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
+from olmo_core.launch.beaker import (
+    BeakerEnvVar,
+    BeakerLaunchConfig,
+    OLMoCoreBeakerImage,
+)
 from olmo_core.train import prepare_training_environment, teardown_training_environment
 from olmo_core.utils import generate_uuid, prepare_cli_environment
 
@@ -51,8 +54,8 @@ class SubCmd(StrEnum):
         elif self == SubCmd.run:
             try:
                 # Show env vars for debugging.
-                for var_name, var_val in os.environ.items():
-                    log.info(f"Env var {var_name} set to '{var_val}'")
+                #  for var_name, var_val in os.environ.items():
+                #      log.info(f"Env var {var_name} set to '{var_val}'")
 
                 mat = torch.rand(N, M, dtype=torch.float32).cuda(get_local_rank())
 
@@ -120,6 +123,7 @@ def build_config(script: str, run_name: str, cluster: str, overrides: List[str])
             #  "printenv AWS_CONFIG > ~/.aws/config",
             #  "printenv AWS_CREDENTIALS > ~/.aws/credentials",
         ],
+        env_vars=[BeakerEnvVar(name="NCCL_DEUBG", value="WARN")],
     )
 
     return BenchmarkConfig(launch=launch_config).merge(overrides)
