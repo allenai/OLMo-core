@@ -54,7 +54,7 @@ dev = [
     "sphinx-autodoc-typehints==1.23.3",
 ]
 beaker = [
-    "beaker-py",
+    "beaker-py>=1.32.0",
     "GitPython>=3.0,<4.0",
 ]
 wandb = [
