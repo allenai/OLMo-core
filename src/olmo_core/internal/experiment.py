@@ -123,6 +123,8 @@ def build_common_components(
     if "jupiter" in cluster:
         root_dir = "/weka/oe-training-default/ai2-llm"
         weka_buckets.append(BeakerWekaBucket("oe-training-default", "/weka/oe-training-default"))
+    elif "augusta" in cluster:
+        root_dir = "gs://ai2-llm"
 
     beaker_user = (Beaker.from_env().account.whoami().name).upper()
     cmd_to_launch = SubCmd.train
