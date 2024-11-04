@@ -71,6 +71,18 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             set_env_var("NCCL_SOCKET_IFNAME", "enp0s12")
             set_env_var("NCCL_USE_SNAP", "1")
             set_env_var("NCCL_FASTRAK_USE_LLCM", "1")
+            set_env_var("NCCL_FASTRAK_LLCM_DEVICE_DIRECTORY", "/dev/aperture_devices")
+            set_env_var(
+                "LD_LIBRARY_PATH", "/var/lib/tcpxo/lib64:" + os.environ.get("LD_LIBRARY_PATH", "")
+            )
+            set_env_var("NCCL_TUNER_PLUGIN", "libnccl-tuner.so")
+            set_env_var(
+                "NCCL_TUNER_CONFIG_PATH", "/var/lib/tcpxo/lib64/a3plus_tuner_config.textproto"
+            )
+            set_env_var(
+                "NCCL_SHIMNET_GUEST_CONFIG_CHECKER_CONFIG_FILE",
+                "/var/lib/tcpxo/lib64/a3plus_guest_config.textproto",
+            )
 
     validate_env_vars()
 
