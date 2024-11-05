@@ -1,6 +1,6 @@
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Dict
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, Optional
 
 import torch
 
@@ -177,7 +177,7 @@ class CallbackConfig(Callback, Config):
     """
 
     @abstractmethod
-    def build(self, trainer: "Trainer") -> Callback:
+    def build(self, trainer: "Trainer") -> Optional[Callback]:
         """
         Build the actual :class:`Callback`.
         """

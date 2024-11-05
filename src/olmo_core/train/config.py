@@ -117,6 +117,7 @@ class TrainerConfig(Config):
 
         for cb_name, cb_config in callback_configs.items():
             cb = cb_config.build(trainer)
-            trainer.add_callback(cb_name, cb)
+            if cb is not None:
+                trainer.add_callback(cb_name, cb)
 
         return trainer

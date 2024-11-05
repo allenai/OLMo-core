@@ -486,6 +486,7 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     def _get_file_size_and_length(
         self, path: PathOrStr, idx: int, dtype: Optional[NumpyUIntTypes] = None
     ) -> Tuple[int, int]:
+        del idx
         dtype = dtype or self.dtype
         item_size = dtype(0).itemsize
         file_size = get_file_size(path)
