@@ -183,7 +183,7 @@ def build_common_components(
             name=VSLCurriculumType.grow_p2, num_cycles=8, balanced=False
         ),
         work_dir=(
-            f"./dataset-cache"
+            "./dataset-cache"
             if is_url(root_dir)
             else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache"
         ),
