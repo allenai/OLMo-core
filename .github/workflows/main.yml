@@ -180,11 +180,14 @@ jobs:
                   gpuCount: ${{ matrix.task.gpus }}
                 constraints:
                   cluster:
+                    # H100 clusters
                     - ai2/jupiter-cirrascale-2
                     - ai2/pluto-cirrascale
-                    # - ai2/allennlp-cirrascale
-                    # - ai2/allennlp-elanding-a100-40g
+                    - ai2/augusta-google-1
+                    # A100 clusters
                     - ai2/saturn-cirrascale
+                    - ai2/allennlp-cirrascale
+                    # - ai2/allennlp-elanding-a100-40g
                 envVars:
                   - name: CUBLAS_WORKSPACE_CONFIG
                     value: ":16:8"
