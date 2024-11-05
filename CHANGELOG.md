@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added `retries` field to `BeakerLaunchConfig`.
 - Allow running on Augusta cluster with existing train scripts.
+- Added `olmo_core.utils.logging_configured()` function to check if logging has been configured.
 
 ## [v1.6.0](https://github.com/allenai/OLMo-core/releases/tag/v1.6.0) - 2024-11-01
 
