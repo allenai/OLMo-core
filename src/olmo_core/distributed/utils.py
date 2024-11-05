@@ -2,6 +2,7 @@
 Distributed helpers, most of which work in a non-distributed context as well for API unity.
 """
 
+import logging
 import os
 from datetime import timedelta
 from typing import List, Optional, TypeVar
@@ -13,7 +14,7 @@ from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 
 from ..config import StrEnum
 from ..exceptions import OLMoConfigurationError, OLMoEnvironmentError
-from ..utils import get_default_device, move_to_device, set_env_var
+from ..utils import get_default_device, logging_configured, move_to_device, set_env_var
 
 OLMO_SHARED_FS_ENV_VAR = "OLMO_SHARED_FS"
 OLMO_FS_LOCAL_RANK_ENV_VAR = "FS_LOCAL_RANK"
@@ -21,6 +22,9 @@ OLMO_LOCAL_RANK_ENV_VAR = "LOCAL_RANK"
 OLMO_NUM_NODES_ENV_VAR = "NUM_NODES"
 OLMO_LOCAL_WORLD_SIZE_ENV_VAR = "LOCAL_WORLD_SIZE"
 BEAKER_HOSTNAME_ENV_VAR = "BEAKER_NODE_HOSTNAME"
+
+
+log = logging.getLogger(__name__)
 
 
 def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minutes=30)):
@@ -99,6 +103,16 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
     dist.init_process_group(backend, timeout=timeout)
 
     validate_env_vars()
+
+    msg = (
+        f"Global rank {get_rank()} "
+        f"= local rank {get_local_rank()} "
+        f"= file system local rank {get_fs_local_rank()}"
+    )
+    if logging_configured():
+        log.warning(msg)
+    else:
+        print(msg)
 
 
 def validate_env_vars():
