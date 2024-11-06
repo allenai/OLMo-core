@@ -8,12 +8,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
     Any,
+    Callable,
     Dict,
     Generator,
     Literal,
     Optional,
     Tuple,
     TypedDict,
+    TypeVar,
     Union,
     cast,
 )
@@ -45,7 +47,7 @@ from ..nn.functional.cross_entropy_loss import (
     fused_cross_entropy_loss,
 )
 from ..optim import SkipStepOptimizer
-from ..utils import move_to_device
+from ..utils import cuda_sync_debug_mode, move_to_device
 from .callbacks import (
     Callback,
     CheckpointerCallback,
@@ -64,6 +66,8 @@ TRAIN_PPL_METRIC = "train/PPL"
 TRAIN_Z_LOSS_METRIC = "train/Z loss"
 OPTIM_STEP_SKIPPED_METRIC = "optim/step skipped"
 SEQ_LEN_METRIC = "data/sequence length"
+
+T = TypeVar("T")
 
 
 class TrainerStateDict(TypedDict):
@@ -393,10 +397,7 @@ class Trainer:
             and self.global_step > 0
             and self.global_step % self.cancel_check_interval == 0
         ):
-            if self.bookkeeping_device.type == "cpu" and self.bookkeeping_pg is not None:
-                self.thread_pool.submit(self._check_if_canceled)
-            else:
-                self._check_if_canceled()
+            self.check_if_canceled()
 
         if self.is_canceled:
             return True
@@ -522,10 +523,7 @@ class Trainer:
         Asynchronously check if the run is canceled. Use :data:`is_canceled` to see the result.
         This needs to be called by all ranks at the same point in the training loop.
         """
-        if self.bookkeeping_device.type == "cpu" and self.bookkeeping_pg is not None:
-            self.thread_pool.submit(self._check_if_canceled)
-        else:
-            self._check_if_canceled()
+        self._run_bookkeeping_op(self._check_if_canceled)
 
     def fit(self):
         """
@@ -987,21 +985,47 @@ class Trainer:
         log.warning(msg)
         self.cancel_run(msg)
 
+    def _run_bookkeeping_op(
+        self, op: Callable[..., T], *args, cb: Optional[Callable[[T], None]] = None, **kwargs
+    ):
+        if self.bookkeeping_device.type == "cpu" and self.bookkeeping_pg is not None:
+            # Can safely run in the thread pool.
+            future = self.thread_pool.submit(op, *args, **kwargs)
+            if cb is not None:
+
+                def callback(fut: Future[T]):
+                    try:
+                        cb(fut.result())  # type: ignore[misc]
+                    except BaseException as e:
+                        log.exception(e)
+                        self._error = e
+
+                future.add_done_callback(callback)
+        else:
+            result = op(*args, **kwargs)
+            if cb is not None:
+                cb(result)
+
     def _check_if_canceled(self):
         if self._canceled:
             return
 
         canceling_rank = self._canceling_rank if self._canceling_rank is not None else -1
-        canceling_rank = all_reduce_value(
-            canceling_rank, self.bookkeeping_device, op=dist.ReduceOp.MAX, group=self.bookkeeping_pg
-        )
-        if canceling_rank >= 0:
-            cancel_reason = scatter_object(self._cancel_reason, src=canceling_rank)
-            assert cancel_reason is not None
-            self._canceled = True
-            self._canceling_rank = canceling_rank
-            self._cancel_reason = cancel_reason
-            log.warning(f"Run canceled from rank {canceling_rank}. Reason: {cancel_reason}")
+        # NOTE: this is a known host-device sync (potentially) so we don't need the warning
+        with cuda_sync_debug_mode(0):
+            canceling_rank = all_reduce_value(
+                canceling_rank,
+                self.bookkeeping_device,
+                op=dist.ReduceOp.MAX,
+                group=self.bookkeeping_pg,
+            )
+            if canceling_rank >= 0:
+                cancel_reason = scatter_object(self._cancel_reason, src=canceling_rank)
+                assert cancel_reason is not None
+                self._canceled = True
+                self._canceling_rank = canceling_rank
+                self._cancel_reason = cancel_reason
+                log.warning(f"Run canceled from rank {canceling_rank}. Reason: {cancel_reason}")
 
     def _log_metrics(self):
         if not self._metrics:
@@ -1014,37 +1038,14 @@ class Trainer:
         # so CUDA training can continue.
         metrics_to_reduce = move_metrics(self._metrics, self.bookkeeping_device)
         self._metrics.clear()
-
-        if self.bookkeeping_device.type == "cpu" and self.bookkeeping_pg is not None:
-            # If we have a separate CPU backend and process group we can safely reduce
-            # metrics on CPU in a thread.
-            future = self.thread_pool.submit(
-                reduce_metrics,
-                metrics_to_reduce,
-                self._metrics_reduce_type,
-                self.bookkeeping_device,
-                process_group=self.bookkeeping_pg,
-            )
-
-            def callback(fut):
-                try:
-                    self._check_and_pass_on_metrics(fut.result())
-                except BaseException as e:
-                    log.exception(e)
-                    self._error = e
-
-            future.add_done_callback(callback)
-        else:
-            # Otherwise we have to reduce them now in the main thread.
-            # NOTE: if we're training on GPU and didn't have a host device sync above, this will
-            # trigger a host-device sync as we transfer the metrics back to CPU post-reducing.
-            metrics = reduce_metrics(
-                metrics_to_reduce,
-                self._metrics_reduce_type,
-                self.bookkeeping_device,
-                process_group=self.bookkeeping_pg,
-            )
-            self._check_and_pass_on_metrics(metrics)
+        self._run_bookkeeping_op(
+            reduce_metrics,
+            metrics_to_reduce,
+            self._metrics_reduce_type,
+            self.bookkeeping_device,
+            process_group=self.bookkeeping_pg,
+            cb=self._check_and_pass_on_metrics,
+        )
 
     def _check_and_pass_on_metrics(self, metrics: Dict[int, Dict[str, float]]):
         for step in sorted(metrics.keys()):
