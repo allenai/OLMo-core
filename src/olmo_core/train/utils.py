@@ -145,7 +145,7 @@ def move_metrics(
         for name, m in step_metrics.items():
             if step not in target:
                 target[step] = OrderedDict()
-            if metrics_to_move is not None and m.device != device:
+            if metrics_to_move is not None and m.device.type != device.type:
                 target[step][name] = metrics_to_move[idx]
                 idx += 1
             else:
