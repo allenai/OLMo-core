@@ -105,7 +105,7 @@ class SubCmd(StrEnum):
         if self in (SubCmd.launch, SubCmd.dry_run, SubCmd.prep, SubCmd.launch_prep):
             prepare_cli_environment()
         elif self == SubCmd.train:
-            prepare_training_environment(backend="nccl")
+            prepare_training_environment()
         else:
             raise NotADirectoryError(self)
 
