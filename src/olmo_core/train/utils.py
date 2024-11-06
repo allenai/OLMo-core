@@ -128,7 +128,7 @@ def move_metrics(
         get_local_tensor(m)
         for step_metrics in source.values()
         for m in step_metrics.values()
-        if m.device != device
+        if m.device.type != device.type
     ]
     metrics_to_move: Optional[torch.Tensor] = None
     if metrics_to_move_list:
