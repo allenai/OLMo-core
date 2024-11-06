@@ -128,11 +128,13 @@ def move_metrics(
         get_local_tensor(m)
         for step_metrics in source.values()
         for m in step_metrics.values()
+        # NOTE: compare device type since 'torch.device("cuda") != torch.device("cuda:0")'
+        # even when both point to the same physical device.
         if m.device.type != device.type
     ]
     metrics_to_move: Optional[torch.Tensor] = None
     if metrics_to_move_list:
-        # NOTE: this is a known host-device sync so we don't need the warning
+        # NOTE: this is a known host-device sync (potentially) so we don't need the warning
         with cuda_sync_debug_mode(0):
             metrics_to_move = torch.stack(metrics_to_move_list).to(
                 device, non_blocking=non_blocking

@@ -279,7 +279,7 @@ def synchronize_value(
     """
     if dist.is_available() and dist.is_initialized():
         is_tensor = isinstance(value, torch.Tensor)
-        value_tensor = value.to(device) if is_tensor else torch.tensor(value, device=device)  # type: ignore
+        value_tensor = move_to_device(value, device) if is_tensor else move_to_device(torch.tensor(value), device)  # type: ignore
         dist.broadcast(value_tensor, src, group=group)
         return value_tensor if is_tensor else value_tensor.item()  # type: ignore
     else:
@@ -303,7 +303,7 @@ def all_reduce_value(
     """
     if dist.is_available() and dist.is_initialized():
         is_tensor = isinstance(value, torch.Tensor)
-        value_tensor = value.to(device) if is_tensor else torch.tensor(value, device=device)  # type: ignore
+        value_tensor = move_to_device(value, device) if is_tensor else move_to_device(torch.tensor(value), device)  # type: ignore
         dist.all_reduce(value_tensor, op=op, group=group)
         return value_tensor if is_tensor else value_tensor.item()  # type: ignore
     else:
