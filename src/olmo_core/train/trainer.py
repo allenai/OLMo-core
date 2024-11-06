@@ -393,7 +393,10 @@ class Trainer:
             and self.global_step > 0
             and self.global_step % self.cancel_check_interval == 0
         ):
-            self.thread_pool.submit(self._check_if_canceled)
+            if self.bookkeeping_device.type == "cpu" and self.bookkeeping_pg is not None:
+                self.thread_pool.submit(self._check_if_canceled)
+            else:
+                self._check_if_canceled()
 
         if self.is_canceled:
             return True
@@ -519,7 +522,10 @@ class Trainer:
         Asynchronously check if the run is canceled. Use :data:`is_canceled` to see the result.
         This needs to be called by all ranks at the same point in the training loop.
         """
-        self.thread_pool.submit(self._check_if_canceled)
+        if self.bookkeeping_device.type == "cpu" and self.bookkeeping_pg is not None:
+            self.thread_pool.submit(self._check_if_canceled)
+        else:
+            self._check_if_canceled()
 
     def fit(self):
         """
