@@ -258,6 +258,12 @@ class Trainer:
     not affect the learning rate schedule.
     """
 
+    async_bookkeeping: Optional[bool] = None
+    """
+    Do collective bookkeeping operations like reducing metrics asynchronously.
+    This requires a separate CPU-only backend, and will default to ``True`` if one is available.
+    """
+
     _metrics: Dict[int, Dict[str, torch.Tensor]] = field(default_factory=OrderedDict)
     _metrics_reduce_type: Dict[str, Optional[ReduceType]] = field(default_factory=dict)
     _canceled: bool = False
@@ -318,17 +324,18 @@ class Trainer:
 
         # Maybe create separate process group for bookkeeping.
         if self._bookkeeping_pg is None and is_distributed():
-            if backend_supports_cpu():
-                log.info("Creating new process group for bookkeeping")
+            if self.async_bookkeeping is None:
+                self.async_bookkeeping = backend_supports_cpu()
+            if self.async_bookkeeping:
+                if not backend_supports_cpu():
+                    raise OLMoConfigurationError(
+                        "A CPU-only backend is required for async bookkeeping"
+                    )
+                log.info("Creating new process group for async bookkeeping")
                 self._bookkeeping_pg = dist.new_group(
                     ranks=None
                     if self.dp_process_group is None
                     else dist.get_process_group_ranks(self.dp_process_group)
-                )
-            else:
-                log.warning(
-                    "No CPU backend configured, bookkeeping collectives will occur on the default "
-                    "backend and will be blocking. This may result in slower training throughput."
                 )
 
         # Check data loader configuration.
@@ -476,7 +483,7 @@ class Trainer:
         The device used for collective bookkeeping (non-training) operations that can potentially.
         use a different backend.
         """
-        if backend_supports_cpu():
+        if self.async_bookkeeping and backend_supports_cpu():
             return torch.device("cpu")
         else:
             return self.device
@@ -988,7 +995,11 @@ class Trainer:
     def _run_bookkeeping_op(
         self, op: Callable[..., T], *args, cb: Optional[Callable[[T], None]] = None, **kwargs
     ):
-        if self.bookkeeping_device.type == "cpu" and self.bookkeeping_pg is not None:
+        if (
+            self.async_bookkeeping
+            and self.bookkeeping_device.type == "cpu"
+            and self.bookkeeping_pg is not None
+        ):
             # Can safely run in the thread pool.
             future = self.thread_pool.submit(op, *args, **kwargs)
             if cb is not None:
