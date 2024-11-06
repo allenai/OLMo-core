@@ -302,7 +302,7 @@ def train(config: ExperimentConfig):
         init_device="meta",
         device=get_default_device(),
         max_seq_len=config.dataset.sequence_length,
-        dp_mesh=None if get_num_nodes() == 1 else init_hybrid_shard_mesh(),
+        #  dp_mesh=None if get_num_nodes() == 1 else init_hybrid_shard_mesh(),
     )
     optim = config.optim.build(model)
     dataset = config.dataset.build()
