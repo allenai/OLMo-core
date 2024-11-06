@@ -19,7 +19,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     return TransformerConfig.olmo_7B(
         vocab_size=common.tokenizer.padded_vocab_size(),
         compile=False,
-        fused_ops=True,
+        fused_ops=False,
         use_flash=True,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
