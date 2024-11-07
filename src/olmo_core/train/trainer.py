@@ -583,6 +583,11 @@ class Trainer:
         for callback in self.callbacks.values():
             callback.post_train()
 
+        # Wait for any bookkeeping tasks to finish.
+        self.thread_pool.shutdown(wait=True, cancel_futures=False)
+        self._thread_pool = None
+        barrier()
+
         log.info("Training complete")
 
     def state_dict(self) -> TrainerStateDict:
