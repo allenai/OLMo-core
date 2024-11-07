@@ -14,6 +14,7 @@ from typing import (
     Literal,
     Optional,
     Tuple,
+    Type,
     TypedDict,
     TypeVar,
     Union,
@@ -301,15 +302,16 @@ class Trainer:
                 Path(self.save_folder).mkdir(exist_ok=True, parents=True)
 
         # Ensure we have necessary callbacks.
-        self.callbacks.setdefault(
-            "console_logger",
-            ConsoleLoggerCallback(
-                log_interval=1, metrics_log_interval=self.metrics_collect_interval
-            ),
-        )
-        self.callbacks.setdefault("checkpointer", CheckpointerCallback())
-        self.callbacks.setdefault("speed_monitor", SpeedMonitorCallback())
-        if is_distributed():
+        if not self.has_callback(ConsoleLoggerCallback):
+            self.callbacks.setdefault(
+                "console_logger",
+                ConsoleLoggerCallback(metrics_log_interval=self.metrics_collect_interval),
+            )
+        if not self.has_callback(CheckpointerCallback):
+            self.callbacks.setdefault("checkpointer", CheckpointerCallback())
+        if not self.has_callback(SpeedMonitorCallback):
+            self.callbacks.setdefault("speed_monitor", SpeedMonitorCallback())
+        if not self.has_callback(GarbageCollectorCallback):
             self.callbacks.setdefault("garbage_collector", GarbageCollectorCallback())
 
         # Set pointer to self in all callbacks.
@@ -958,6 +960,15 @@ class Trainer:
                 batch, logits, loss_reduction=loss_reduction, compute_z_loss=compute_z_loss
             )
         return logits, ce_loss, z_loss
+
+    def has_callback(self, cb_class: Type[Callback]) -> bool:
+        """
+        Check if the trainer already has a registered instance of the given callback class.
+        """
+        for cb in self.callbacks.values():
+            if isinstance(cb, cb_class):
+                return True
+        return False
 
     def _sort_callbacks(self):
         self.callbacks = OrderedDict(
