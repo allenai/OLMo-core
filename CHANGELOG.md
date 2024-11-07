@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Added option to disable `GarbageCollectorCallback`, not that you'd want to do this usually, but I needed to run an experiment to show how important that callback is.
+
 ## [v1.6.1](https://github.com/allenai/OLMo-core/releases/tag/v1.6.1) - 2024-11-06
 
 ### Added
