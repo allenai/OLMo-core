@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, cast
 
 from beaker import Beaker
+from torch.distributed.device_mesh import DeviceMesh
 
 from olmo_core.config import Config, StrEnum
 from olmo_core.data import (
@@ -64,6 +65,22 @@ class CommonComponents(Config):
     callbacks: Dict[str, Callback]
 
 
+class DPMeshType(StrEnum):
+    full = "full"
+    hybrid = "hybrid"
+
+
+@dataclass
+class DPMeshConfig(Config):
+    name: DPMeshType = DPMeshType.hybrid
+
+    def build(self) -> Optional[DeviceMesh]:
+        if get_num_nodes() == 1 or self.name == DPMeshType.full:
+            return None
+        else:
+            return init_hybrid_shard_mesh()
+
+
 @dataclass
 class ExperimentConfig(Config):
     run_name: str
@@ -73,6 +90,7 @@ class ExperimentConfig(Config):
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
     trainer: TrainerConfig
+    dp_mesh: DPMeshConfig
     init_seed: int = 12536
 
 
@@ -260,6 +278,7 @@ def build_config(
         dataset=common.dataset,
         data_loader=common.data_loader,
         trainer=trainer,
+        dp_mesh=DPMeshConfig(),
     )
 
     if finalize_config is not None:
@@ -302,7 +321,7 @@ def train(config: ExperimentConfig):
         init_device="meta",
         device=get_default_device(),
         max_seq_len=config.dataset.sequence_length,
-        dp_mesh=None if get_num_nodes() == 1 else init_hybrid_shard_mesh(),
+        dp_mesh=config.dp_mesh.build(),
     )
     optim = config.optim.build(model)
     dataset = config.dataset.build()

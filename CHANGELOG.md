@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Allow running on Augusta cluster with existing train scripts.
 - Added `olmo_core.utils.logging_configured()` function to check if logging has been configured.
 
+### Fixed
+
+- Fixed a potential distributed deadlock bug when training without a separate CPU-only bookkeeping backend.
+- Removed some unnecessary host-device syncs in `olmo_core.distributed.utils`.
+- Added `Trainer(Config).async_bookkeeping` field to toggle async bookkeeping.
+
 ## [v1.6.0](https://github.com/allenai/OLMo-core/releases/tag/v1.6.0) - 2024-11-01
 
 ### Added

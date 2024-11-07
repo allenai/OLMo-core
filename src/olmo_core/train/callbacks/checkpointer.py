@@ -75,9 +75,10 @@ class CheckpointerCallback(Callback):
     Save a pretrain checkpoint. Defaults to ``True`` unless the trainer resumes from a checkpoint.
     """
 
-    save_async: bool = False
+    save_async: Optional[bool] = None
     """
-    Save checkpoints asynchronously. Requires a backend that supports CPU.
+    Save checkpoints asynchronously. Requires a separate CPU-only backend.
+    Defaults to ``True`` if there is one.
     """
 
     remove: CheckpointRemovalStrategy = CheckpointRemovalStrategy.ephemeral_only
@@ -145,6 +146,9 @@ class CheckpointerCallback(Callback):
             self.trainer.thread_pool.submit(clear_directory, path)
 
     def pre_train(self):
+        if self.save_async is None:
+            self.save_async = backend_supports_cpu()
+
         # Maybe create a new process group for async checkpointing.
         if is_distributed() and self.save_async and self.checkpointer.process_group is None:
             if not backend_supports_cpu():

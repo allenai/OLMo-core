@@ -47,6 +47,7 @@ class TrainerConfig(Config):
     compile_loss: bool = False
     z_loss_multiplier: Optional[float] = None
     autocast_precision: Optional[DType] = None
+    async_bookkeeping: Optional[bool] = None
 
     def add_callback(self, name: str, callback: Callback):
         """
