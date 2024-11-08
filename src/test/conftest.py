@@ -26,9 +26,15 @@ def unique_name() -> str:
 
 @pytest.fixture
 def s3_checkpoint_dir(bucket_name, unique_name) -> Generator[str, None, None]:
+    from botocore.exceptions import NoCredentialsError
+
     folder = f"s3://{bucket_name}/checkpoints/{unique_name}"
     yield folder
-    clear_directory(folder, force=True)
+
+    try:
+        clear_directory(folder, force=True)
+    except NoCredentialsError:
+        pass
 
 
 @pytest.fixture

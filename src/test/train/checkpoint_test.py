@@ -1,6 +1,7 @@
 import os
 import time
 
+import pytest
 import torch
 import torch.distributed as dist
 
@@ -43,6 +44,13 @@ def test_checkpointer_with_local_dir(tmp_path, tiny_model_factory):
 
 
 def test_checkpointer_with_remote_dir(s3_checkpoint_dir, tiny_model_factory):
+    from botocore.exceptions import NoCredentialsError
+
+    try:
+        dir_is_empty(s3_checkpoint_dir)
+    except NoCredentialsError:
+        pytest.skip("Requires AWS credentials")
+
     run_distributed_test(
         run_checkpointer, func_args=(s3_checkpoint_dir, tiny_model_factory), start_method="spawn"
     )
@@ -80,6 +88,13 @@ def test_async_checkpointer_with_local_dir(tmp_path, tiny_model_factory):
 
 
 def test_async_checkpointer_with_remote_dir(s3_checkpoint_dir, tiny_model_factory):
+    from botocore.exceptions import NoCredentialsError
+
+    try:
+        dir_is_empty(s3_checkpoint_dir)
+    except NoCredentialsError:
+        pytest.skip("Requires AWS credentials")
+
     run_distributed_test(
         run_async_checkpointer,
         func_args=(s3_checkpoint_dir, tiny_model_factory),
