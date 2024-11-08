@@ -8,6 +8,7 @@ from olmo_core.distributed.checkpoint.filesystem import (
     RemoteFileSystemReader,
     RemoteFileSystemWriter,
 )
+from olmo_core.io import dir_is_empty
 
 from ..utils import BACKENDS, get_default_device, run_distributed_test
 
@@ -55,6 +56,13 @@ def test_save_and_load_locally_with_dtensors(backend, tmp_path):
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_save_and_load_remotely_with_dtensors(backend, s3_checkpoint_dir):
+    from botocore.exceptions import NoCredentialsError
+
+    try:
+        dir_is_empty(s3_checkpoint_dir)
+    except NoCredentialsError:
+        pytest.skip("Requires AWS credentials")
+
     run_distributed_test(
         run_save_and_load_with_dtensors,
         backend=backend,
