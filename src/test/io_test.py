@@ -43,7 +43,12 @@ def _run_list_remote_directory(tmp_path, remote_dir):
 
 
 def test_list_remote_directory_s3(tmp_path, s3_checkpoint_dir):
-    _run_list_remote_directory(tmp_path, s3_checkpoint_dir)
+    from botocore.exceptions import NoCredentialsError
+
+    try:
+        _run_list_remote_directory(tmp_path, s3_checkpoint_dir)
+    except NoCredentialsError:
+        pytest.skip("Requires AWS credentials")
 
 
 def test_list_remote_directory_gcs(tmp_path, gcs_checkpoint_dir):
