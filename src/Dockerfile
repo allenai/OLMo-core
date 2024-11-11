@@ -72,6 +72,7 @@ RUN wget --quiet https://content.mellanox.com/ofed/MLNX_OFED-${MOFED_VER}/MLNX_O
 RUN pip install --upgrade --no-cache-dir pip wheel packaging
 
 # Install torchao.
+ARG TORCH_CUDA_VERSION
 ARG TORCHAO_VERSION="0.5.0"
 RUN pip install --no-cache-dir \
     --extra-index-url https://download.pytorch.org/whl/cu${TORCH_CUDA_VERSION} \
@@ -97,6 +98,7 @@ WORKDIR /app/olmo-core
 
 FROM stable as nightly
 
+ARG TORCH_CUDA_VERSION
 ARG TORCH_NIGHTLY_VERSION="2.6.0.dev20241009"
 RUN pip install --no-cache-dir --pre \
     --index-url https://download.pytorch.org/whl/nightly/cu${TORCH_CUDA_VERSION} \
