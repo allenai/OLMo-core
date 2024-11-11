@@ -3,7 +3,7 @@ TORCH_CUDA_VERSION = $(shell echo $(CUDA_VERSION) | tr -d .)
 TORCH_VERSION = "2.5.1"
 # NOTE: when upgrading the nightly version you also need to upgrade the torch version specification
 # in 'pyproject.toml' to include that nightly version.
-TORCH_NIGHTLY_VERSION = "2.6.0.dev20241009+cu$(TORCH_CUDA_VERSION)"
+TORCH_NIGHTLY_VERSION = "2.6.0.dev20241009"
 TORCHAO_VERSION = "0.5.0"
 MEGABLOCKS_VERSION = "megablocks[gg] @ git+https://git@github.com/epwalsh/megablocks.git@epwalsh/deps"
 FLASH_ATTN_VERSION = "2.6.3"
