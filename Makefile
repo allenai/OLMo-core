@@ -1,5 +1,5 @@
 CUDA_VERSION = "12.1"
-TORCH_CUDA_VERSION = $(shell echo $(CUDA_VERSION) | tr -d .)
+TORCH_CUDA_VERSION = "121"
 TORCH_VERSION = "2.5.1"
 # NOTE: when upgrading the nightly version you also need to upgrade the torch version specification
 # in 'pyproject.toml' to include that nightly version.
