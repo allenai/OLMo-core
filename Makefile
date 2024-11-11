@@ -1,12 +1,9 @@
-# NOTE: make sure CUDA versions match across these variables
-CUDA_VERSION = 12.1
+CUDA_VERSION = "12.1"
 TORCH_CUDA_VERSION = $(shell echo $(CUDA_VERSION) | tr -d .)
-BASE_BUILD_IMAGE = pytorch/pytorch:2.5.1-cuda$(CUDA_VERSION)-cudnn9-devel
-BASE_RUNTIME_IMAGE = pytorch/pytorch:2.5.1-cuda$(CUDA_VERSION)-cudnn9-runtime
-
+TORCH_VERSION = "2.5.1"
 # NOTE: when upgrading the nightly version you also need to upgrade the torch version specification
 # in 'pyproject.toml' to include that nightly version.
-NIGHTLY_VERSION = "2.6.0.dev20241009+cu$(TORCH_CUDA_VERSION)"
+TORCH_NIGHTLY_VERSION = "2.6.0.dev20241009"
 TORCHAO_VERSION = "0.5.0"
 MEGABLOCKS_VERSION = "megablocks[gg] @ git+https://git@github.com/epwalsh/megablocks.git@epwalsh/deps"
 FLASH_ATTN_VERSION = "2.6.3"
@@ -51,9 +48,9 @@ build :
 stable-image :
 	docker build -f src/Dockerfile \
 		--build-arg BUILDKIT_INLINE_CACHE=1 \
-		--build-arg BASE_BUILD=$(BASE_BUILD_IMAGE) \
-		--build-arg BASE_RUNTIME=$(BASE_RUNTIME_IMAGE) \
+		--build-arg CUDA_VERSION=$(CUDA_VERSION) \
 		--build-arg TORCH_CUDA_VERSION=$(TORCH_CUDA_VERSION) \
+		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
 		--build-arg FLASH_ATTN_VERSION=$(FLASH_ATTN_VERSION) \
 		--build-arg MEGABLOCKS_VERSION=$(MEGABLOCKS_VERSION) \
 		--build-arg TORCHAO_VERSION=$(TORCHAO_VERSION) \
@@ -66,13 +63,13 @@ stable-image :
 nightly-image :
 	docker build -f src/Dockerfile \
 		--build-arg BUILDKIT_INLINE_CACHE=1 \
-		--build-arg BASE_BUILD=$(BASE_BUILD_IMAGE) \
-		--build-arg BASE_RUNTIME=$(BASE_RUNTIME_IMAGE) \
+		--build-arg CUDA_VERSION=$(CUDA_VERSION) \
 		--build-arg TORCH_CUDA_VERSION=$(TORCH_CUDA_VERSION) \
+		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
 		--build-arg FLASH_ATTN_VERSION=$(FLASH_ATTN_VERSION) \
 		--build-arg MEGABLOCKS_VERSION=$(MEGABLOCKS_VERSION) \
 		--build-arg TORCHAO_VERSION=$(TORCHAO_VERSION) \
-		--build-arg NIGHTLY_VERSION=$(NIGHTLY_VERSION) \
+		--build-arg TORCH_NIGHTLY_VERSION=$(TORCH_NIGHTLY_VERSION) \
 		--target nightly \
 		--progress plain \
 		-t $(IMAGE_BASENAME)-nightly .
