@@ -6,7 +6,6 @@
 .. toctree::
    :maxdepth: 2
    :caption: Submodules
-   :hidden:
 
    metrics
    evaluator
