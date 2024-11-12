@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Added `olmo_core.distributed.checkpoint.get_checkpoint_metadata()` function.
+
 ### Fixed
 
 - Old ephemeral checkpoints won't be removed until after the latest ephemeral checkpoint is saved successfully.
