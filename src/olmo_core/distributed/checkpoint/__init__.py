@@ -35,6 +35,7 @@ import torch.distributed as dist
 import torch.distributed.checkpoint as dist_cp
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
+from torch.distributed.checkpoint.metadata import Metadata
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.io import clear_directory, dir_is_empty, is_url, normalize_path
@@ -49,6 +50,7 @@ __all__ = [
     "async_save_model_and_optim_state",
     "load_model_and_optim_state",
     "unshard_checkpoint",
+    "get_checkpoint_metadata",
 ]
 
 log = logging.getLogger(__name__)
@@ -308,6 +310,17 @@ def unshard_checkpoint(
         gc_cuda()
 
     return model_path, optim_path
+
+
+def get_checkpoint_metadata(dir: PathOrStr) -> Metadata:
+    """
+    Load the metadata from a checkpoint.
+
+    :param dir: The path/URL to the checkpoint.
+    """
+    dir = normalize_path(dir)
+    storage_reader = RemoteFileSystemReader(dir)
+    return storage_reader.read_metadata()
 
 
 def _prepare_env_for_save(

@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from itertools import chain
 from typing import Dict, List, Optional, Tuple
 
-from rich.console import Console
 from rich.progress import Progress
 from rich.table import Table
 
@@ -331,9 +330,6 @@ class SourceMixtureDatasetConfig(Config):
         """
         Render tables enumerating the global and per-source mixture outcomes.
         """
-
-        console = Console()
-
         source_rows = [item.for_table(self.max_tokens) for item in results]
         source_headers = source_rows[0].keys()
 
@@ -344,7 +340,7 @@ class SourceMixtureDatasetConfig(Config):
         for row in source_rows:
             source_table.add_row(*[row[header] for header in source_headers])
 
-        console.print(source_table)
+        log.info(source_table)
 
         total_tokens = sum([item.population for item in results])
         selected_tokens = sum([item.num_selected for item in results])
@@ -361,4 +357,4 @@ class SourceMixtureDatasetConfig(Config):
             global_table.add_column(header)
 
         global_table.add_row(f"{total_tokens:.2e}", f"{selected_tokens:.2e}", observed_global_ratio)
-        console.print(global_table)
+        log.info(global_table)

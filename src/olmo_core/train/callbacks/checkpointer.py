@@ -14,7 +14,7 @@ from olmo_core.distributed.utils import (
     scatter_object,
 )
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.io import clear_directory
+from olmo_core.io import clear_directory, is_url
 from olmo_core.utils import wait_for
 
 from ..checkpoint import Checkpointer
@@ -95,6 +95,7 @@ class CheckpointerCallback(Callback):
     _latest_checkpoint_path: str = ""
     _checkpoints: List[str] = field(default_factory=list)
     _ephemeral_checkpoints: List[str] = field(default_factory=list)
+    _checkpoints_to_remove: List[str] = field(default_factory=list)
 
     def __post_init__(self):
         if self.save_interval < 1:
@@ -114,6 +115,10 @@ class CheckpointerCallback(Callback):
     @property
     def save_folder(self) -> str:
         return self.trainer.save_folder
+
+    @property
+    def checkpoint_pending(self) -> bool:
+        return self._future is not None
 
     def _await_last_checkpoint(self, blocking: bool = True) -> Optional[Future]:
         if (fut := self._future) is not None:
@@ -142,8 +147,20 @@ class CheckpointerCallback(Callback):
         return str(path)
 
     def _remove_checkpoint(self, path: str):
-        if get_fs_local_rank() == 0:
+        log.info(f"Removing old checkpoint at '{path}'...")
+        if is_url(path):
+            if get_rank() == 0:
+                self.trainer.thread_pool.submit(clear_directory, path)
+        elif get_fs_local_rank() == 0:
             self.trainer.thread_pool.submit(clear_directory, path)
+
+    def _schedule_for_removal(self, path: str):
+        self._checkpoints_to_remove.append(path)
+
+    def _remove_old_checkpoints(self):
+        for path in self._checkpoints_to_remove:
+            self._remove_checkpoint(path)
+        self._checkpoints_to_remove.clear()
 
     def pre_train(self):
         if self.save_async is None:
@@ -202,6 +219,9 @@ class CheckpointerCallback(Callback):
 
     def post_train_batch(self):
         self._await_last_checkpoint(blocking=False)
+        if not self.checkpoint_pending:
+            self._remove_old_checkpoints()
+
         if self.step % self.save_interval == 0:
             self._checkpoints.append(self._save_checkpoint())
         elif (
@@ -211,8 +231,7 @@ class CheckpointerCallback(Callback):
             self._ephemeral_checkpoints.append(self._save_checkpoint())
             while len(self._ephemeral_checkpoints) > 1:
                 oldest_path = self._ephemeral_checkpoints.pop(0)
-                log.info(f"Removing old ephemeral checkpoint at '{oldest_path}'...")
-                self._remove_checkpoint(oldest_path)
+                self._schedule_for_removal(oldest_path)
 
     def post_train(self):
         if self.step > self._latest_checkpoint_step:
