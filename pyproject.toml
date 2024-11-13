@@ -35,7 +35,7 @@ dev = [
     "ruff",
     "mypy>=1.0,<1.4",
     "black>=23.1,<24.0",
-    "isort>=5.12,<5.13",
+    "isort>=5.12,<5.14",
     "pytest",
     "pytest-memray",
     "pytest-sphinx",
