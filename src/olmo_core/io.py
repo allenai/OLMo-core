@@ -424,6 +424,15 @@ def _get_gcs_retry():
     )
 
 
+def _get_gcs_conditional_retry():
+    from google.cloud.storage.retry import (
+        ConditionalRetryPolicy,
+        is_generation_specified,
+    )
+
+    return ConditionalRetryPolicy(_get_gcs_retry(), is_generation_specified, ["query_params"])
+
+
 def _gcs_file_size(bucket_name: str, key: str) -> int:
     from google.api_core.exceptions import NotFound
 
@@ -461,7 +470,7 @@ def _gcs_upload(source: Path, bucket_name: str, key: str, save_overwrite: bool =
         raise FileExistsError(
             f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
         )
-    blob.upload_from_filename(source)
+    blob.upload_from_filename(source, retry=_get_gcs_conditional_retry())
 
 
 def _gcs_list_directory(bucket_name: str, prefix: str) -> Generator[str, None, None]:
