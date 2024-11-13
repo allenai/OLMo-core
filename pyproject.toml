@@ -48,7 +48,7 @@ dev = [
     "google-cloud-storage",
     "Sphinx>=6.0,<7.0.2",
     "furo==2024.8.6",
-    "myst-parser>=1.0,<2.1",
+    "myst-parser>=1.0,<4.1",
     "sphinx-copybutton==0.5.2",
     "sphinx-autobuild==2021.3.14",
     "sphinx-autodoc-typehints==1.23.3",
