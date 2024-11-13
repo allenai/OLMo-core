@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from itertools import chain
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 from rich.progress import Progress
 from rich.table import Table
 
@@ -54,12 +55,10 @@ class SourceMixtureConfig(Config):
 
     def validate(self):
         if self.target_ratio:
-            if not 0 <= self.target_ratio <= 1:
-                raise OLMoConfigurationError("target_ratio must be in the range [0, 1]")
-            if not 0 <= self.max_source_fraction <= 1:
-                raise OLMoConfigurationError("max_source_fraction must be in the range [0, 1]")
-            if self.max_source_fraction < self.target_ratio:
-                raise OLMoConfigurationError("max_source_fraction must be >= target_ratio")
+            if not 0 < self.target_ratio <= 1:
+                raise OLMoConfigurationError("target_ratio must be > 0 and <= 1")
+            if not 0 < self.max_source_fraction <= 1:
+                raise OLMoConfigurationError("max_source_fraction must > 0 and <= 1")
 
         if self.max_repetition_ratio < 1:
             raise OLMoConfigurationError("max_repetition_ratio must be >= 1")
@@ -195,8 +194,10 @@ class SourceMixtureDatasetConfig(Config):
         if not self.source_configs:
             raise OLMoConfigurationError("source_configs must not be empty")
 
-        if (total := sum([source.target_ratio for source in self.source_configs])) != 1.0:
-            raise OLMoConfigurationError(f"target_ratios must sum to 1, got {total}")
+        summed_weights = np.sum([source.target_ratio for source in self.source_configs])
+
+        if not np.allclose(summed_weights, 1.0):
+            raise OLMoConfigurationError(f"target_ratios must sum to 1.0, got {summed_weights}")
 
     def build(self) -> SourceMixtureDataset:
         self.validate()
