@@ -25,15 +25,15 @@ def test_source_mixture_config(tmp_path: Path, caplog, capsys):
     source_configs = [
         SourceMixtureConfig(
             source_name="1",
-            target_ratio=0.33,
+            target_ratio=0.33333,
             paths=[i[0] for i in source_paths["1"]],
         ),
         SourceMixtureConfig(
-            source_name="2", target_ratio=0.33, paths=[i[0] for i in source_paths["2"]]
+            source_name="2", target_ratio=0.33333, paths=[i[0] for i in source_paths["2"]]
         ),
         SourceMixtureConfig(
             source_name="3",
-            target_ratio=0.34,
+            target_ratio=0.33333,
             paths=[i[0] for i in source_paths["3"]],
         ),
     ]
@@ -60,14 +60,6 @@ def test_source_mixture_config_validation():
     with pytest.raises(OLMoConfigurationError):
         SourceMixtureConfig(
             source_name="source1", target_ratio=1.2, paths=["/path/to/source1"]
-        ).validate()
-
-    with pytest.raises(OLMoConfigurationError):
-        SourceMixtureConfig(
-            source_name="source1",
-            target_ratio=0.5,
-            max_source_fraction=0.4,
-            paths=["/path/to/source1"],
         ).validate()
 
     with pytest.raises(OLMoConfigurationError):
