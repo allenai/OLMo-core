@@ -339,7 +339,8 @@ class BeakerLaunchConfig(Config):
                 command=["bash", "/olmo-core/entrypoint.sh"],
                 replicas=self.num_nodes if self.num_nodes > 1 else None,
                 leader_selection=self.num_nodes > 1,
-                host_networking=self.num_nodes > 1,
+                host_networking=self.num_nodes > 1
+                or any(["augusta" in cluster for cluster in self.clusters]),
                 propagate_failure=True if self.num_nodes > 1 else None,
                 propagate_preemption=True if self.num_nodes > 1 else None,
                 synchronized_start_timeout="90m" if self.num_nodes > 1 else None,
