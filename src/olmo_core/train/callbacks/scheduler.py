@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
 
+import torch
+
 from olmo_core.optim.scheduler import ConstantScheduler, Scheduler
 
 from .callback import Callback
@@ -23,11 +25,20 @@ class SchedulerCallback(Callback):
                     f"'{initial_lr_field}' not found in optimizer param group"
                 )
 
+            # Ensure 'initial_lr' is set.
             if group.get(self.scheduler.initial_lr_field) is None:
                 group[self.scheduler.initial_lr_field] = group["lr"]
-            group[self.scheduler.lr_field] = self.scheduler.get_lr(
+
+            # Set new LR.
+            new_lr = self.scheduler.get_lr(
                 group[self.scheduler.initial_lr_field], self.step, self.trainer.max_steps
             )
+
+            if isinstance(current_lr := group.get(self.scheduler.lr_field), torch.Tensor):
+                current_lr.fill_(new_lr)
+            else:
+                group[self.scheduler.lr_field] = new_lr
+
             self.trainer.record_metric(
                 f"optim/LR (group {group_idx})", group[self.scheduler.lr_field]
             )

@@ -52,6 +52,8 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
         elif "pluto" in get_node_hostname():
             set_env_var("NCCL_IB_HCA", "^=mlx5_1,mlx5_2")
         elif "augusta" in get_node_hostname():
+            # NOTE: For single-node training we still need all of these settings and we also
+            # need host networking enabled so that the ethernet interface names don't change.
             set_env_var("NCCL_CROSS_NIC", "0")
             set_env_var("NCCL_ALGO", "Ring,Tree")
             set_env_var("NCCL_PROTO", "Simple")
@@ -68,11 +70,6 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             set_env_var("NCCL_FASTRAK_ENABLE_HOTPATH_LOGGING", "0")
             set_env_var("NCCL_FASTRAK_PLUGIN_ACCEPT_TIMEOUT_MS", "600000")
             set_env_var("NCCL_NVLS_ENABLE", "0")
-            set_env_var("NCCL_FASTRAK_CTRL_DEV", "enp0s12")
-            set_env_var(
-                "NCCL_FASTRAK_IFNAME",
-                "enp6s0,enp7s0,enp13s0,enp14s0,enp134s0,enp135s0,enp141s0,enp142s0",
-            )
             set_env_var("NCCL_USE_SNAP", "1")
             set_env_var("NCCL_FASTRAK_USE_LLCM", "1")
             set_env_var("NCCL_FASTRAK_LLCM_DEVICE_DIRECTORY", "/dev/aperture_devices")
@@ -90,8 +87,12 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
                 "NCCL_SHIMNET_GUEST_CONFIG_CHECKER_CONFIG_FILE",
                 "/var/lib/tcpxo/lib64/a3plus_guest_config.textproto",
             )
-            if multi_node:
-                set_env_var("NCCL_SOCKET_IFNAME", "enp0s12")
+            set_env_var("NCCL_FASTRAK_CTRL_DEV", "enp0s12")
+            set_env_var(
+                "NCCL_FASTRAK_IFNAME",
+                "enp6s0,enp7s0,enp13s0,enp14s0,enp134s0,enp135s0,enp141s0,enp142s0",
+            )
+            set_env_var("NCCL_SOCKET_IFNAME", "enp0s12")
 
     if backend_supports_cuda(backend):
         # Set CUDA device.
