@@ -6,7 +6,7 @@ TORCH_VERSION = "2.5.1"
 TORCH_NIGHTLY_VERSION = "2.6.0.dev20241009"
 TORCHAO_VERSION = "0.5.0"
 MEGABLOCKS_VERSION = "megablocks[gg] @ git+https://git@github.com/epwalsh/megablocks.git@epwalsh/deps"
-FLASH_ATTN_WHEEL = https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.0.post2/flash_attn-2.7.0.post2+cu12torch2.5cxx11abiTRUE-cp311-cp311-linux_x86_64.whl
+FLASH_ATTN_WHEEL = https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.0.post2/flash_attn-2.7.0.post2+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
 
 VERSION = $(shell python src/olmo_core/version.py)
 VERSION_SHORT = $(shell python src/olmo_core/version.py short)
