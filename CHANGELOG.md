@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added `olmo_core.distributed.checkpoint.get_checkpoint_metadata()` function.
+- (BETA) Added flag to compile the optimizer step. So far only tested with AdamW. May not work with other optimizers.
 
 ### Fixed
 
