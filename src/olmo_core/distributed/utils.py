@@ -92,6 +92,9 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
                     "enp6s0,enp7s0,enp13s0,enp14s0,enp134s0,enp135s0,enp141s0,enp142s0",
                 )
                 set_env_var("NCCL_SOCKET_IFNAME", "enp0s12")
+            else:
+                set_env_var("NCCL_SOCKET_IFNAME", "=lo")
+                set_env_var("NCCL_IB_DISABLE", "1")
 
     if backend_supports_cuda(backend):
         # Set CUDA device.
