@@ -10,6 +10,7 @@ import torch.nn as nn
 
 from ..config import Config
 from ..exceptions import OLMoConfigurationError
+from ..utils import get_default_device, move_to_device
 
 __all__ = [
     "OptimConfig",
@@ -44,6 +45,15 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
     """
     Use this to pull out groups parameters into a separate param groups with their own options.
     """
+
+    compile: bool = False
+    """
+    Compile the optimizer step.
+    """
+
+    @property
+    def device(self) -> torch.device:
+        return get_default_device()
 
     def build_groups(self, model: nn.Module) -> Union[Iterable[torch.Tensor], List[Dict[str, Any]]]:
         """
@@ -110,11 +120,8 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         kwargs.pop("group_overrides")
         optim = self.optimizer()(self.build_groups(model), **kwargs)
 
+        # Set 'lr' and 'initial_lr' in each group if needed.
         for group in optim.param_groups:
-            # Set 'initial_lr' in each group for schedulers if needed.
-            if "initial_lr" in group:
-                continue
-
             lr: Optional[float] = None
             if "lr" in group:
                 lr = group["lr"]
@@ -122,6 +129,15 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
                 lr = getattr(self, "lr")
 
             if lr is not None:
+                if self.compile:
+                    # 'lr' should be a tensor.
+                    group["lr"] = move_to_device(torch.tensor(lr), self.device)
+                else:
+                    group["lr"] = lr
                 group.setdefault("initial_lr", lr)
+
+        if self.compile:
+            log.info("Compiling optimizer step...")
+            optim.step = torch.compile(optim.step)
 
         return optim
