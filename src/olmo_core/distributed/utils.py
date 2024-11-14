@@ -94,6 +94,7 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
                 )
                 set_env_var("NCCL_SOCKET_IFNAME", "enp0s12")
             else:
+                set_env_var("NCCL_FASTRAK_IFNAME", "=lo")
                 set_env_var("NCCL_SOCKET_IFNAME", "=lo")
                 set_env_var("NCCL_IB_DISABLE", "1")
 
