@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Old ephemeral checkpoints won't be removed until after the latest ephemeral checkpoint is saved successfully.
 - Made GCS uploads more robust.
+- Fixed single-node training on Google Augusta cluster.
 
 ## [v1.6.2](https://github.com/allenai/OLMo-core/releases/tag/v1.6.2) - 2024-11-08
 
