@@ -90,8 +90,8 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
                 "NCCL_SHIMNET_GUEST_CONFIG_CHECKER_CONFIG_FILE",
                 "/var/lib/tcpxo/lib64/a3plus_guest_config.textproto",
             )
-            if multi_node:
-                set_env_var("NCCL_SOCKET_IFNAME", "enp0s12")
+            #  if multi_node:
+            set_env_var("NCCL_SOCKET_IFNAME", "enp0s12")
 
     if backend_supports_cuda(backend):
         # Set CUDA device.
