@@ -118,6 +118,8 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         """
         kwargs = self.as_dict()
         kwargs.pop("group_overrides")
+        kwargs.pop("compile")
+
         optim = self.optimizer()(self.build_groups(model), **kwargs)
 
         # Set 'lr' and 'initial_lr' in each group if needed.
