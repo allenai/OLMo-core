@@ -69,7 +69,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         group_overrides=[
             OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
         ],
-        compile=True,
     )
 
     dataset_config = NumpyDatasetConfig.glob(
