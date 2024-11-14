@@ -32,6 +32,7 @@ def build_optim_config(common: CommonComponents) -> AdamWConfig:
         weight_decay=0.1,
         betas=(0.9, 0.95),
         fused=True,
+        compile=True,
     )
 
 
