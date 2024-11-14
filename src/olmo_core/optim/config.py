@@ -49,6 +49,12 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
     compile: bool = False
     """
     Compile the optimizer step.
+
+    .. warning::
+        Optimizer step compilation is still in beta and may not work with some optimizers.
+        You could also see unexpected behavior and very poor performance when turning this feature
+        on in the middle of a run that was previously trained without compiling the optimizer
+        due to the LR being restored to a float instead of a tensor.
     """
 
     @property
