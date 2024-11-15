@@ -880,6 +880,11 @@ class Trainer:
         Run a forward pass on a micro-batch, returning the logits.
         """
         with self._model_forward_context():
+            # NOTE: Input sizes might be dynamic, e.g. when training with variable sequence lengths
+            # or during an eval loop, so we mark them as dynamic for torch.compile up-front to avoid
+            # recompiling later.
+            # In theory this could harm performance a bit when input sizes are actually static
+            # but so far I haven't noticed any dip in throughput with the models I've tested.
             mark_dynamic(micro_batch["input_ids"], (0, 1))
             if "doc_lens" in micro_batch:
                 mark_dynamic(micro_batch["doc_lens"], (0, 1))
