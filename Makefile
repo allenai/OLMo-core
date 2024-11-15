@@ -6,7 +6,7 @@ TORCH_VERSION = "2.5.1"
 TORCH_NIGHTLY_VERSION = "2.6.0.dev20241009"
 TORCHAO_VERSION = "0.5.0"
 MEGABLOCKS_VERSION = "megablocks[gg] @ git+https://git@github.com/epwalsh/megablocks.git@epwalsh/deps"
-FLASH_ATTN_VERSION = "2.6.3"
+FLASH_ATTN_WHEEL = https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.0.post2/flash_attn-2.7.0.post2+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
 
 VERSION = $(shell python src/olmo_core/version.py)
 VERSION_SHORT = $(shell python src/olmo_core/version.py short)
@@ -51,7 +51,7 @@ stable-image :
 		--build-arg CUDA_VERSION=$(CUDA_VERSION) \
 		--build-arg TORCH_CUDA_VERSION=$(TORCH_CUDA_VERSION) \
 		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
-		--build-arg FLASH_ATTN_VERSION=$(FLASH_ATTN_VERSION) \
+		--build-arg FLASH_ATTN_WHEEL=$(FLASH_ATTN_WHEEL) \
 		--build-arg MEGABLOCKS_VERSION=$(MEGABLOCKS_VERSION) \
 		--build-arg TORCHAO_VERSION=$(TORCHAO_VERSION) \
 		--target stable \
@@ -66,7 +66,7 @@ nightly-image :
 		--build-arg CUDA_VERSION=$(CUDA_VERSION) \
 		--build-arg TORCH_CUDA_VERSION=$(TORCH_CUDA_VERSION) \
 		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
-		--build-arg FLASH_ATTN_VERSION=$(FLASH_ATTN_VERSION) \
+		--build-arg FLASH_ATTN_WHEEL=$(FLASH_ATTN_WHEEL) \
 		--build-arg MEGABLOCKS_VERSION=$(MEGABLOCKS_VERSION) \
 		--build-arg TORCHAO_VERSION=$(TORCHAO_VERSION) \
 		--build-arg TORCH_NIGHTLY_VERSION=$(TORCH_NIGHTLY_VERSION) \
