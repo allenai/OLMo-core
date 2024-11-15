@@ -12,7 +12,7 @@ from datetime import datetime
 from itertools import cycle, islice
 from queue import Queue
 from threading import Thread
-from typing import Any, Callable, Dict, List, Optional, TypeVar, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, TypeVar, Union
 
 import rich
 import torch
@@ -109,6 +109,13 @@ def move_to_device(o: T, device: torch.device, non_blocking: Optional[bool] = No
         return tuple((move_to_device(x, device) for x in o))  # type: ignore[return-value]
     else:
         return o
+
+
+def mark_dynamic(x: torch.Tensor, dim: Union[int, Sequence[int]]):
+    """
+    Mark a tensor as having dynamic sizes for ``torch.compile()``.
+    """
+    torch._dynamo.mark_dynamic(x, dim)
 
 
 def get_default_device() -> torch.device:
