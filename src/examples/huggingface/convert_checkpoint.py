@@ -13,6 +13,7 @@ from transformers import AutoModelForCausalLM
 
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state, save_state_dict
+from olmo_core.nn.rope import RoPEScalingConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.utils import get_default_device, prepare_cli_environment
 
@@ -23,7 +24,7 @@ SAVE_PATH = f"/tmp/checkpoints/{HF_MODEL}"
 
 TOKENIZER_CONFIG = TokenizerConfig.from_hf(HF_MODEL)
 MODEL_CONFIG = TransformerConfig.llama3_1B(
-    TOKENIZER_CONFIG.vocab_size, fused_ops=False, use_flash=False
+    TOKENIZER_CONFIG.vocab_size, fused_ops=False, use_flash=False, rope_scaling=RoPEScalingConfig()
 )
 
 

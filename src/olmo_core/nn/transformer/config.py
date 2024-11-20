@@ -16,7 +16,7 @@ from ..attention import AttentionConfig, AttentionType
 from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
-from ..rope import RoPEConfig, RoPEType
+from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from .block import TransformerBlockConfig, TransformerBlockType
 from .init import InitMethod
 from .model import (
@@ -590,6 +590,7 @@ class TransformerConfig(Config):
         block_name: TransformerBlockType = TransformerBlockType.default,
         dtype: DType = DType.float32,
         compile: bool = False,
+        rope_scaling: Optional[RoPEScalingConfig] = None,
         **kwargs,
     ) -> "TransformerConfig":
         """
@@ -640,7 +641,7 @@ class TransformerConfig(Config):
                 n_heads=n_heads,
                 n_kv_heads=n_kv_heads,
                 bias=False,
-                rope=RoPEConfig(name=rope_type, theta=rope_theta),
+                rope=RoPEConfig(name=rope_type, theta=rope_theta, scaling=rope_scaling),
                 qk_norm=layer_norm if qk_norm else None,
                 use_flash=use_flash,
                 dtype=dtype,
