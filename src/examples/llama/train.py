@@ -1,9 +1,9 @@
 """
-Example of how to train a transformer language model.
+Example of how to train a Llama transformer language model.
 
 Launch this with torchrun:
 
-    torchrun --nproc-per-node=4 src/examples/train.py run_name [OVERRIDES...]
+    torchrun --nproc-per-node=4 src/examples/llama/train.py run_name [OVERRIDES...]
 """
 
 import sys
@@ -97,6 +97,11 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=5,
+            load_key_mapping={
+                # For backwards compatibility when loading older checkpoints.
+                "lm_head.w_out.weight": "w_out.weight",
+                "lm_head.norm.weight": "norm.weight",
+            },
         )
         .with_callback("lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=100)))
         .with_callback(

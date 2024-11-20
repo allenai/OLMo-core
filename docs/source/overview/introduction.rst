@@ -45,4 +45,8 @@ Most users will likely follow a workflow that looks like this:
      launch_config = BeakerLaunchConfig(...)
      launch_config.launch(follow=True)
 
-You can find a complete example of this workflow in the `Train a language model <../examples/train.html>`_ example.
+   Or simply launch their training script manually with ``torchrun``::
+
+     torchrun --nproc-per-node=8 train_script.py ...
+
+You can find a complete example of this workflow in the `Train a Llama model <../examples/llama.html>`_ example.
