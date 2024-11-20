@@ -91,7 +91,7 @@ def validate_conversion(hf_model):
 
     device = get_default_device()
 
-    model = MODEL_CONFIG.build(device=device).eval()
+    model = MODEL_CONFIG.build(device=device, max_seq_len=131072).eval()
     load_model_and_optim_state(SAVE_PATH, model)
 
     hf_model = hf_model.to(device).eval()
