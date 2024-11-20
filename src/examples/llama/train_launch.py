@@ -2,7 +2,7 @@
 An example of how to launch the training script on Beaker.
 Run this with:
 
-    python src/examples/train_launch.py run_name [OVERRIDES...]
+    python src/examples/llama/train_launch.py run_name [OVERRIDES...]
 """
 
 import sys
@@ -16,7 +16,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
     return BeakerLaunchConfig(
         name=f"olmo-core-test-{generate_uuid()[:8]}",
         budget="ai2/oe-training",
-        cmd=["src/examples/train.py", run_name, *overrides],
+        cmd=["src/examples/llama/train.py", run_name, *overrides],
         task_name="train",
         workspace="ai2/OLMo-core",
         description="Testing OLMo-core launch utilities",

@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 from typing import Optional, Union
 
@@ -8,6 +9,7 @@ import torch.nn.functional as F
 from ..config import Config, DType, StrEnum
 from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
+from .functional import l2_normalize
 from .layer_norm import LayerNorm, LayerNormConfig
 from .rope import (
     ComplexRotaryEmbedding,
@@ -16,7 +18,7 @@ from .rope import (
     RotaryEmbedding,
 )
 
-__all__ = ["AttentionType", "AttentionConfig", "Attention", "FusedAttention"]
+__all__ = ["AttentionType", "AttentionConfig", "Attention", "FusedAttention", "NormalizedAttention"]
 
 
 class AttentionType(StrEnum):
@@ -25,10 +27,12 @@ class AttentionType(StrEnum):
 
     - "default" ➡️ :class:`Attention`
     - "fused" ➡️ :class:`FusedAttention`
+    - "normalized" ➡️ :class:`NormalizedAttention`
     """
 
     default = "default"
     fused = "fused"
+    normalized = "normalized"
 
 
 @dataclass
@@ -82,6 +86,13 @@ class AttentionConfig(Config):
         elif self.name == "fused":
             kwargs.pop("use_flash", None)
             return FusedAttention(**kwargs)
+        elif self.name == "normalized":
+            bias = kwargs.pop("bias")
+            if bias:
+                raise OLMoConfigurationError(f"'bias' is invalid for '{self.name}' attention")
+            if kwargs.pop("dropout") > 0.0:
+                raise OLMoConfigurationError(f"'dropout' is invalid for '{self.name}' attention")
+            return NormalizedAttention(**kwargs)
         else:
             raise NotImplementedError(self.name)
 
@@ -172,6 +183,68 @@ class Attention(nn.Module):
             self._flash_attn_func = flash_attn_func
             self._flash_attn_varlen_func = flash_attn_varlen_func
 
+    def sdpa(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        max_doc_len: Optional[int] = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        scale: Optional[float] = None,
+    ) -> torch.Tensor:
+        B, T, *_ = q.shape
+
+        att: torch.Tensor
+        if max_doc_len is not None and cu_doc_lens is not None:
+            if self._flash_attn_varlen_func is None:
+                raise RuntimeError(
+                    "flash-attn (use_flash=True) is required for intra-document masking"
+                )
+            # shape: (batch_size * seq_len, n_heads, head_dim)
+            att = self._flash_attn_varlen_func(
+                q.view(B * T, self.n_heads, self.head_dim),
+                k.view(B * T, self.n_kv_heads, self.head_dim),
+                v.view(B * T, self.n_kv_heads, self.head_dim),
+                cu_doc_lens,
+                cu_doc_lens,
+                max_doc_len,
+                max_doc_len,
+                dropout_p=self.dropout_p,
+                causal=True,
+                softmax_scale=scale,
+            )
+        elif self._flash_attn_func is not None:
+            # shape: (batch_size, seq_len, n_heads, head_dim)
+            att = self._flash_attn_func(
+                q, k, v, dropout_p=self.dropout_p, causal=True, softmax_scale=scale
+            )
+        else:
+            # Fall back to PyTorch's SDPA...
+
+            # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
+            # shape: (batch_size, n_heads, seq_len, head_dim),
+            #        (batch_size, n_kv_heads, seq_len, head_dim),
+            #        (batch_size, n_kv_heads, seq_len, head_dim)
+            q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+
+            # PyTorch's SDPA doesn't support GQA, so we have to do this.
+            if self.n_heads != self.n_kv_heads and self.n_kv_heads > 1:
+                k = k.repeat_interleave(
+                    self.n_heads // self.n_kv_heads, dim=1, output_size=self.n_heads
+                )
+                v = v.repeat_interleave(
+                    self.n_heads // self.n_kv_heads, dim=1, output_size=self.n_heads
+                )
+
+            # shape: (batch_size, n_heads, seq_len, head_dim)
+            att = F.scaled_dot_product_attention(
+                q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
+            )
+            # shape: (batch_size, seq_len, n_heads, head_dim)
+            att = att.transpose(1, 2).contiguous()
+
+        return att
+
     def forward(
         self,
         x: torch.Tensor,
@@ -217,54 +290,120 @@ class Attention(nn.Module):
         if self.rope is not None:
             q, k = self.rope(q, k, head_first=False)
 
-        if max_doc_len is not None and cu_doc_lens is not None:
-            if self._flash_attn_varlen_func is None:
-                raise RuntimeError(
-                    "flash-attn (use_flash=True) is required for intra-document masking"
-                )
-            # shape: (batch_size * seq_len, n_heads, head_dim)
-            att = self._flash_attn_varlen_func(
-                q.view(B * T, self.n_heads, self.head_dim),
-                k.view(B * T, self.n_kv_heads, self.head_dim),
-                v.view(B * T, self.n_kv_heads, self.head_dim),
-                cu_doc_lens,
-                cu_doc_lens,
-                max_doc_len,
-                max_doc_len,
-                dropout_p=self.dropout_p,
-                causal=True,
-            )
-        elif self._flash_attn_func is not None:
-            # shape: (batch_size, seq_len, n_heads, head_dim)
-            att = self._flash_attn_func(q, k, v, dropout_p=self.dropout_p, causal=True)
-        else:
-            # Fall back to PyTorch's SDPA...
-
-            # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
-            # shape: (batch_size, n_heads, seq_len, head_dim),
-            #        (batch_size, n_kv_heads, seq_len, head_dim),
-            #        (batch_size, n_kv_heads, seq_len, head_dim)
-            q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
-
-            # PyTorch's SDPA doesn't support GQA, so we have to do this.
-            if self.n_heads != self.n_kv_heads and self.n_kv_heads > 1:
-                k = k.repeat_interleave(
-                    self.n_heads // self.n_kv_heads, dim=1, output_size=self.n_heads
-                )
-                v = v.repeat_interleave(
-                    self.n_heads // self.n_kv_heads, dim=1, output_size=self.n_heads
-                )
-
-            # shape: (batch_size, n_heads, seq_len, head_dim)
-            att = F.scaled_dot_product_attention(q, k, v, dropout_p=self.dropout_p, is_causal=True)
-            # shape: (batch_size, seq_len, n_heads, head_dim)
-            att = att.transpose(1, 2).contiguous()
+        # shape: (batch_size, seq_len, n_heads, head_dim)
+        att = self.sdpa(q, k, v, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
 
         # shape: (batch_size, seq_len, d_model)
         att = att.view(B, T, -1)
 
         # shape: (batch_size, seq_len, d_model)
         return self.w_out(att)
+
+
+class NormalizedAttention(Attention):
+    """
+    An nGPT attention implementation.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        n_heads: int,
+        n_kv_heads: Optional[int] = None,
+        rope: Optional[RoPEConfig] = None,
+        use_flash: bool = False,
+        dtype: torch.dtype = torch.float32,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ):
+        super().__init__(
+            d_model=d_model,
+            n_heads=n_heads,
+            n_kv_heads=n_kv_heads,
+            rope=rope,
+            use_flash=use_flash,
+            bias=False,
+            dtype=dtype,
+            init_device=init_device,
+            cache=cache,
+        )
+
+        self.sq_init_value = 1.0
+        self.sq_init_scaling = 1.0 / math.sqrt(d_model)
+        self.sq = nn.Parameter(
+            self.sq_init_scaling
+            * torch.ones(self.head_dim * self.n_heads, dtype=dtype, device=init_device)
+        )
+
+        self.sk_init_value = 1.0
+        self.sk_init_scaling = 1.0 / math.sqrt(d_model)
+        self.sk = nn.Parameter(
+            self.sk_init_scaling
+            * torch.ones(self.head_dim * self.n_kv_heads, dtype=dtype, device=init_device)
+        )
+
+        self.sqrt_head_dim = math.sqrt(self.head_dim)
+
+    def reset_parameters(self):
+        nn.init.ones_(self.sq)
+        self.sq.mul_(self.sq_init_scaling)
+        nn.init.ones_(self.sk)
+        self.sk.mul_(self.sk_init_scaling)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        max_doc_len: Optional[int] = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        B, T, _ = x.shape
+
+        # shape: (batch_size, seq_len, n_heads * head_dim),
+        #        (batch_size, seq_len, n_kv_heads * head_dim),
+        #        (batch_size, seq_len, n_kv_heads * head_dim)
+        q, k, v = self.w_q(x), self.w_k(x), self.w_v(x)
+
+        sq = (self.sq * (self.sq_init_value / self.sq_init_scaling)).view(1, 1, -1)
+        q = sq * l2_normalize(q)
+
+        sk = (self.sk * (self.sk_init_value / self.sk_init_scaling)).view(1, 1, -1)
+        k = sk * l2_normalize(k)
+
+        # shape: (batch_size, seq_len, n_heads, head_dim)
+        q = q.view(B, T, self.n_heads, self.head_dim)
+        # shape: (batch_size, seq_len, n_kv_heads, head_dim)
+        k = k.view(B, T, self.n_kv_heads, self.head_dim)
+        # shape: (batch_size, seq_len, n_kv_heads, head_dim)
+        v = v.view(B, T, self.n_kv_heads, self.head_dim)
+
+        if self.rope is not None:
+            q, k = self.rope(q, k, head_first=False)
+
+        # shape: (batch_size, seq_len, n_heads, head_dim)
+        att = self.sdpa(
+            q, k, v, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens, scale=self.sqrt_head_dim
+        )
+
+        # shape: (batch_size, seq_len, d_model)
+        att = att.view(B, T, -1)
+
+        # shape: (batch_size, seq_len, d_model)
+        return self.w_out(att)
+
+    @torch.no_grad()
+    def normalize_matrices(self):
+        """
+        Normalize the weights in all matrices. This should be called after each optimizer step, which
+        the :class:`~olmo_core.train.callbacks.MatrixNormalizerCallback` will handle for you.
+        """
+        self._normalize_matrix(self.w_q.weight)
+        self._normalize_matrix(self.w_k.weight)
+        self._normalize_matrix(self.w_v.weight)
+        self._normalize_matrix(self.w_out.weight, dim=0)
+
+    def _normalize_matrix(self, w: torch.Tensor, dim: int = -1):
+        w.copy_(l2_normalize(w, dim=dim))
 
 
 class FusedAttention(nn.Module):

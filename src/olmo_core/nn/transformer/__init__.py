@@ -5,6 +5,7 @@ Transformer building blocks.
 from .block import (
     MoEReorderedNormTransformerBlock,
     MoETransformerBlock,
+    NormalizedTransformerBlock,
     ReorderedNormTransformerBlock,
     TransformerBlock,
     TransformerBlockBase,
@@ -15,9 +16,11 @@ from .config import (
     TransformerActivationCheckpointingConfig,
     TransformerConfig,
     TransformerDataParallelConfig,
+    TransformerType,
 )
 from .init import InitMethod
 from .model import (
+    NormalizedTransformer,
     Transformer,
     TransformerActivationCheckpointingMode,
     TransformerDataParallelWrappingStrategy,
@@ -25,12 +28,15 @@ from .model import (
 
 __all__ = [
     "TransformerConfig",
+    "TransformerType",
     "Transformer",
+    "NormalizedTransformer",
     "TransformerBlockType",
     "TransformerBlockConfig",
     "TransformerBlockBase",
     "TransformerBlock",
     "ReorderedNormTransformerBlock",
+    "NormalizedTransformerBlock",
     "MoETransformerBlock",
     "MoEReorderedNormTransformerBlock",
     "TransformerDataParallelConfig",

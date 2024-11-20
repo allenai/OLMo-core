@@ -120,6 +120,7 @@ class Checkpointer:
         *,
         load_optimizer_state: bool = True,
         load_trainer_state: bool = True,
+        key_mapping: Optional[Dict[str, str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Load model, optim, and other training state from a local or remote checkpoint directory
@@ -145,6 +146,7 @@ class Checkpointer:
             model,
             optim if load_optimizer_state else None,
             process_group=self.process_group,
+            key_mapping=key_mapping,
         )
 
         return trainer_state

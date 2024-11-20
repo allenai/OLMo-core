@@ -1,3 +1,4 @@
+import math
 from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Optional
@@ -11,6 +12,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from ..attention import AttentionConfig
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig
+from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
 from ..moe import MoEConfig
 
@@ -28,6 +30,11 @@ class TransformerBlockType(StrEnum):
     reordered_norm = "reordered_norm"
     """
     :class:`ReorderedNormTransformerBlock`
+    """
+
+    normalized = "normalized"
+    """
+    :class:`NormalizedTransformerBlock`
     """
 
     moe = "moe"
@@ -51,7 +58,7 @@ class TransformerBlockConfig(Config):
     """
     The attention config.
     """
-    layer_norm: LayerNormConfig
+    layer_norm: Optional[LayerNormConfig] = None
     """
     The layer norm config.
     """
@@ -83,6 +90,8 @@ class TransformerBlockConfig(Config):
         if self.name == TransformerBlockType.default:
             if self.feed_forward is None:
                 raise OLMoConfigurationError("'feed_forward' config is required")
+            if self.layer_norm is None:
+                raise OLMoConfigurationError("'layer_norm' config is required")
             return TransformerBlock(
                 d_model=d_model,
                 block_idx=block_idx,
@@ -96,6 +105,8 @@ class TransformerBlockConfig(Config):
         elif self.name == TransformerBlockType.reordered_norm:
             if self.feed_forward is None:
                 raise OLMoConfigurationError("'feed_forward' config is required")
+            if self.layer_norm is None:
+                raise OLMoConfigurationError("'layer_norm' config is required")
             return ReorderedNormTransformerBlock(
                 d_model=d_model,
                 block_idx=block_idx,
@@ -106,9 +117,22 @@ class TransformerBlockConfig(Config):
                 init_device=init_device,
                 cache=cache,
             )
+        elif self.name == TransformerBlockType.normalized:
+            if self.feed_forward is None:
+                raise OLMoConfigurationError("'feed_forward' config is required")
+            return NormalizedTransformerBlock(
+                d_model=d_model,
+                block_idx=block_idx,
+                attention=self.attention,
+                feed_forward=self.feed_forward,
+                init_device=init_device,
+                cache=cache,
+            )
         elif self.name == TransformerBlockType.moe:
             if self.feed_forward_moe is None:
                 raise OLMoConfigurationError("'feed_forward_moe' config is required for MoE blocks")
+            if self.layer_norm is None:
+                raise OLMoConfigurationError("'layer_norm' config is required")
             return MoETransformerBlock(
                 d_model=d_model,
                 block_idx=block_idx,
@@ -122,6 +146,8 @@ class TransformerBlockConfig(Config):
         elif self.name == TransformerBlockType.moe_reordered_norm:
             if self.feed_forward_moe is None:
                 raise OLMoConfigurationError("'feed_forward_moe' config is required for MoE blocks")
+            if self.layer_norm is None:
+                raise OLMoConfigurationError("'layer_norm' config is required")
             return MoEReorderedNormTransformerBlock(
                 d_model=d_model,
                 block_idx=block_idx,
@@ -225,6 +251,88 @@ class ReorderedNormTransformerBlock(TransformerBlock):
             self.attention_norm(self.attention(x, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens))
         )
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+
+
+class NormalizedTransformerBlock(TransformerBlockBase):
+    """
+    An nGPT block implementation to be used with the :class:`~olmo_core.nn.attention.NormalizedAttention`
+    attention type and :class:`~olmo_core.nn.feed_forward.NormalizedFeedForward` feed-forward type.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        block_idx: int,
+        attention: AttentionConfig,
+        feed_forward: FeedForwardConfig,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.block_idx = block_idx
+        self.attention = attention.build(d_model, init_device=init_device, cache=cache)
+        self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
+
+        self.attn_alpha_init_value = 0.05
+        self.attn_alpha_init_scaling = 1.0 / math.sqrt(d_model)
+        self.attn_alpha = nn.Parameter(
+            self.attn_alpha_init_scaling
+            * torch.ones(d_model, dtype=torch.float32, device=init_device)
+        )
+
+        self.mlp_alpha_init_value = 0.05
+        self.mlp_alpha_init_scaling = 1.0 / math.sqrt(d_model)
+        self.mlp_alpha = nn.Parameter(
+            self.mlp_alpha_init_scaling
+            * torch.ones(d_model, dtype=torch.float32, device=init_device)
+        )
+
+    def reset_parameters(self):
+        nn.init.ones_(self.attn_alpha)
+        self.attn_alpha.mul_(self.attn_alpha_init_scaling)
+        nn.init.ones_(self.mlp_alpha)
+        self.mlp_alpha.mul_(self.mlp_alpha_init_scaling)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        max_doc_len: Optional[int] = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        h = l2_normalize(
+            torch.lerp(
+                x,
+                l2_normalize(self.attention(x, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)),
+                (
+                    self.attn_alpha * (self.attn_alpha_init_value / self.attn_alpha_init_scaling)
+                ).abs(),
+            )
+        )
+
+        return l2_normalize(
+            torch.lerp(
+                h,
+                l2_normalize(self.feed_forward(h)),
+                (self.mlp_alpha * (self.mlp_alpha_init_value / self.mlp_alpha_init_scaling)).abs(),
+            )
+        )
+
+    @torch.no_grad()
+    def normalize_matrices(self):
+        """
+        Normalize the weights in all matrices. This should be called after each optimizer step, which
+        the :class:`~olmo_core.train.callbacks.MatrixNormalizerCallback` will handle for you.
+        """
+        if hasattr(self.attention, "normalize_matrices"):
+            self.attention.normalize_matrices()
+
+        if hasattr(self.feed_forward, "normalize_matrices"):
+            self.feed_forward.normalize_matrices()
+
+    def _normalize_matrix(self, w: torch.Tensor, dim: int = -1):
+        w.copy_(l2_normalize(w, dim=dim))
 
 
 class MoETransformerBlock(TransformerBlockBase):

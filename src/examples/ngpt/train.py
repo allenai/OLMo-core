@@ -1,9 +1,9 @@
 """
-Example of how to train a transformer language model.
+Example of how to train an nGPT language model.
 
 Launch this with torchrun:
 
-    torchrun --nproc-per-node=4 src/examples/train.py run_name [OVERRIDES...]
+    torchrun --nproc-per-node=4 src/examples/ngpt/train.py run_name [OVERRIDES...]
 """
 
 import sys
@@ -20,7 +20,7 @@ from olmo_core.data import (
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import init_hybrid_shard_mesh
 from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
-from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
+from olmo_core.optim import AdamConfig, CosWithWarmup
 from olmo_core.train import (
     Duration,
     TrainerConfig,
@@ -35,6 +35,7 @@ from olmo_core.train.callbacks import (
     GPUMemoryMonitorCallback,
     GradClipperCallback,
     LMEvaluatorCallbackConfig,
+    MatrixNormalizerCallback,
     ProfilerCallback,
     SchedulerCallback,
     SequenceLengthSchedulerCallback,
@@ -46,7 +47,7 @@ from olmo_core.utils import get_default_device, seed_all
 @dataclass
 class ExperimentConfig(Config):
     model: TransformerConfig
-    optim: AdamWConfig
+    optim: AdamConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
     trainer: TrainerConfig
@@ -56,7 +57,7 @@ class ExperimentConfig(Config):
 def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     tokenizer_config = TokenizerConfig.gpt2()
 
-    model_config = TransformerConfig.llama2_271M(
+    model_config = TransformerConfig.ngpt_271M(
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
         compile=True,
         dp_config=TransformerDataParallelConfig(
@@ -64,12 +65,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         ),
     )
 
-    optim_config = AdamWConfig(
-        lr=1e-3,
-        group_overrides=[
-            OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-        ],
-    )
+    optim_config = AdamConfig(lr=1e-3)
 
     dataset_config = NumpyDatasetConfig.glob(
         "/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy",  # can be globs
@@ -98,7 +94,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             metrics_collect_interval=5,
             cancel_check_interval=5,
         )
-        .with_callback("lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=100)))
+        .with_callback("matrix_normalizer", MatrixNormalizerCallback())
+        .with_callback("lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=0)))
         .with_callback(
             "seq_len_scheduler",
             SequenceLengthSchedulerCallback(
