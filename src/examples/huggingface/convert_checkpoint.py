@@ -30,6 +30,8 @@ MODEL_CONFIG = TransformerConfig.llama3_1B(
 def convert_checkpoint() -> AutoModelForCausalLM:
     log.info(f"Loading HF checkpoint '{HF_MODEL}'")
     hf_model = AutoModelForCausalLM.from_pretrained(HF_MODEL)
+    print(hf_model)
+
     n_layers = len(hf_model.model.layers)
     state_dict = hf_model.state_dict()
 
@@ -97,7 +99,7 @@ def validate_conversion(hf_model):
 
     with torch.no_grad():
         logits = model(input_ids=input_ids)
-        hf_logits, *_ = hf_model(input_ids=input_ids)
+        hf_logits, *_ = hf_model(input_ids=input_ids, return_dict=False)
 
     torch.testing.assert_close(hf_logits, logits)
     log.info("Conversion successful")
