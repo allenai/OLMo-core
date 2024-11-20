@@ -22,7 +22,9 @@ HF_MODEL = "meta-llama/Llama-3.2-1B"
 SAVE_PATH = f"/tmp/checkpoints/{HF_MODEL}"
 
 TOKENIZER_CONFIG = TokenizerConfig.from_hf(HF_MODEL)
-MODEL_CONFIG = TransformerConfig.llama3_1B(TOKENIZER_CONFIG.vocab_size)
+MODEL_CONFIG = TransformerConfig.llama3_1B(
+    TOKENIZER_CONFIG.vocab_size, fused_ops=False, use_flash=False
+)
 
 
 def convert_checkpoint() -> AutoModelForCausalLM:
@@ -87,9 +89,9 @@ def validate_conversion(hf_model):
     device = get_default_device()
 
     model = MODEL_CONFIG.build(device=device).eval()
-    hf_model = hf_model.to(device).eval()
-
     load_model_and_optim_state(SAVE_PATH, model)
+
+    hf_model = hf_model.to(device).eval()
 
     input_ids = torch.randint(0, TOKENIZER_CONFIG.vocab_size, (1, 64)).to(device)
 
