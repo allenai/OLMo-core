@@ -53,13 +53,13 @@ def convert_checkpoint() -> AutoModelForCausalLM:
         )
 
         # MLP.
-        new_state_dict[f"blocks.{block}.feed_forward.w_1.weight"] = state_dict.pop(
+        new_state_dict[f"blocks.{block}.feed_forward.w1.weight"] = state_dict.pop(
             f"model.layers.{block}.mlp.gate_proj.weight"
         )
-        new_state_dict[f"blocks.{block}.feed_forward.w_2.weight"] = state_dict.pop(
+        new_state_dict[f"blocks.{block}.feed_forward.w2.weight"] = state_dict.pop(
             f"model.layers.{block}.mlp.down_proj.weight"
         )
-        new_state_dict[f"blocks.{block}.feed_forward.w_3.weight"] = state_dict.pop(
+        new_state_dict[f"blocks.{block}.feed_forward.w3.weight"] = state_dict.pop(
             f"model.layers.{block}.mlp.up_proj.weight"
         )
 
