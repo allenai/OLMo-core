@@ -35,6 +35,7 @@ class TrainerConfig(Config):
     work_dir: Optional[str] = None
     load_path: Optional[str] = None
     load_strategy: LoadStrategy = LoadStrategy.if_available
+    load_key_mapping: Optional[Dict[str, str]] = None
 
     device: Optional[str] = None
     save_overwrite: bool = False

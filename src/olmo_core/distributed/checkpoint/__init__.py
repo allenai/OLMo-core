@@ -156,6 +156,7 @@ def load_model_and_optim_state(
     optim: Optional[torch.optim.Optimizer] = None,
     *,
     process_group: Optional[dist.ProcessGroup] = None,
+    key_mapping: Optional[Dict[str, str]] = None,
 ):
     """
     Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
@@ -189,15 +190,60 @@ def load_model_and_optim_state(
     :param model: The model to load the state into.
     :param optim: The optimizer to load the state into.
     :param process_group: The process group to use for distributed collectives.
+    :param key_mapping: Can be used to load a checkpoint where certain parameter have different names.
+        This dictionary should map current keys to keys in the checkpoint to be loaded.
     """
     dir = normalize_path(dir)
     state_dict = _prepare_state_dict(model, optim, process_group=process_group)
+    reader = RemoteFileSystemReader(dir)
+
+    if key_mapping is not None:
+        metadata = reader.read_metadata()
+        for current_key, original_key in key_mapping.items():
+            if f"model.{original_key}" not in metadata.state_dict_metadata:
+                continue
+
+            log.info(f"Mapping current param '{current_key}' to '{original_key}' in checkpoint")
+            state_dict["model"][original_key] = state_dict["model"].pop(current_key)
+
+            if optim is None:
+                continue
+
+            state_dict["optim"]["state"][original_key] = state_dict["optim"]["state"].pop(
+                current_key
+            )
+            for group in state_dict["optim"]["param_groups"]:
+                if current_key in group["params"]:
+                    idx = group["params"].index(current_key)
+                    group["params"][idx] = original_key
+                    break
+
     dist_cp.load(
         state_dict,
         checkpoint_id=dir,
-        storage_reader=RemoteFileSystemReader(dir),
+        storage_reader=reader,
         process_group=process_group,
     )
+
+    if key_mapping is not None:
+        metadata = reader.read_metadata()
+        for current_key, original_key in key_mapping.items():
+            if f"model.{original_key}" not in metadata.state_dict_metadata:
+                continue
+
+            state_dict["model"][current_key] = state_dict["model"].pop(original_key)
+
+            if optim is None:
+                continue
+
+            state_dict["optim"]["state"][current_key] = state_dict["optim"]["state"].pop(
+                original_key
+            )
+            for group in state_dict["optim"]["param_groups"]:
+                if original_key in group["params"]:
+                    idx = group["params"].index(original_key)
+                    group["params"][idx] = current_key
+                    break
 
     dist_cp_sd.set_model_state_dict(
         model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=True)
@@ -365,3 +411,32 @@ def _prepare_state_dict(
         state_dict["optim"] = dist_cp_sd.get_optimizer_state_dict(model, optim, options=sd_options)
 
     return state_dict
+
+
+def _get_key(state_dict: Dict[str, Any], key: str, pop: bool = False) -> Any:
+    if key in state_dict:
+        if pop:
+            return state_dict.pop(key)
+        else:
+            return state_dict[key]
+
+    if "." not in key:
+        raise KeyError(key)
+
+    root, key = key.split(".", 1)
+    if root not in state_dict:
+        raise KeyError(root)
+
+    return _get_key(state_dict[root], key, pop=pop)
+
+
+def _set_key(state_dict: Dict[str, Any], key: str, value: Any):
+    if "." not in key or all(["." in k for k in state_dict.keys()]):
+        state_dict[key] = value
+        return
+
+    root, key = key.split(".", 1)
+    if root not in state_dict:
+        raise KeyError(root)
+
+    return _set_key(state_dict[root], key, value=value)

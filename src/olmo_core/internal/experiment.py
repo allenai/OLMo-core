@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, cast
 
 from beaker import Beaker
+from rich import print
 from torch.distributed.device_mesh import DeviceMesh
 
 from olmo_core.config import Config, StrEnum
@@ -26,7 +27,7 @@ from olmo_core.launch.beaker import (
     OLMoCoreBeakerImage,
 )
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import AdamWConfig, CosWithWarmup
+from olmo_core.optim import CosWithWarmup, OptimConfig
 from olmo_core.train import (
     TrainerConfig,
     prepare_training_environment,
@@ -87,7 +88,7 @@ class ExperimentConfig(Config):
     run_name: str
     launch: BeakerLaunchConfig
     model: TransformerConfig
-    optim: AdamWConfig
+    optim: OptimConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
     trainer: TrainerConfig
@@ -111,10 +112,17 @@ class SubCmd(StrEnum):
             raise NotADirectoryError(self)
 
     def run(self, config: ExperimentConfig):
+        print(config)
+        print(
+            "\n"
+            f"[b blue]Total parameters:[/]                {config.model.num_params:,d}\n"
+            f"[b blue]Non-embedding parameters:[/]        {config.model.num_non_embedding_params:,d}"
+        )
+
         if self == SubCmd.launch:
             launch(config)
         elif self == SubCmd.dry_run:
-            log.info(config)
+            pass
         elif self == SubCmd.train:
             try:
                 train(config)
@@ -256,7 +264,7 @@ def build_config(
     *,
     global_batch_size: int,
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
-    optim_config_builder: Callable[[CommonComponents], AdamWConfig],
+    optim_config_builder: Callable[[CommonComponents], OptimConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
 ) -> ExperimentConfig:
@@ -269,8 +277,15 @@ def build_config(
         model.float8_config = Float8Config(compile=model.compile, enabled=False)
 
     trainer = trainer_config_builder(common)
+    if trainer.load_key_mapping is None:
+        trainer.load_key_mapping = {
+            # For backwards compatibility when loading older checkpoints.
+            "lm_head.w_out.weight": "w_out.weight",
+            "lm_head.norm.weight": "norm.weight",
+        }
     for name, cb in common.callbacks.items():
-        trainer.with_callback(name, cb)
+        if name not in trainer.callbacks:
+            trainer.add_callback(name, cb)
 
     config = ExperimentConfig(
         run_name=run_name,
@@ -344,7 +359,7 @@ def main(
     *,
     global_batch_size: int,
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
-    optim_config_builder: Callable[[CommonComponents], AdamWConfig],
+    optim_config_builder: Callable[[CommonComponents], OptimConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
 ):

@@ -181,6 +181,12 @@ class Trainer:
     The strategy for loading a checkpoint prior to training.
     """
 
+    load_key_mapping: Optional[Dict[str, str]] = None
+    """
+    Can be used when loading a checkpoint where certain parameters have different names.
+    This dictionary should map current keys to keys in the checkpoint to be loaded.
+    """
+
     metrics_collect_interval: int = 5
     """
     How often (in steps) to collect, reduce, and pass on metrics to the
@@ -674,6 +680,7 @@ class Trainer:
             self.optim,
             load_optimizer_state=load_optimizer_state,
             load_trainer_state=load_trainer_state,
+            key_mapping=self.load_key_mapping,
         )
         if load_trainer_state:
             assert trainer_state is not None

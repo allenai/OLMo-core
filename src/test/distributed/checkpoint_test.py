@@ -360,3 +360,44 @@ def test_load_checkpoint_with_extra_keys(tmp_path):
         backend="gloo",
         func_args=(tmp_path,),
     )
+
+
+def run_load_checkpoint_with_different_keys(dir):
+    class FF1(nn.Module):
+        def __init__(self, dim: int = 16):
+            super().__init__()
+            self.dim = dim
+            self.w1 = nn.Linear(dim, dim, bias=False)
+            self.w2 = nn.Linear(dim, dim, bias=False)
+            self.w3 = nn.Linear(dim, dim, bias=False)
+
+        def forward(self, x):
+            return self.w2(F.silu(self.w1(x)) * self.w3(x))
+
+    class FF2(nn.Module):
+        def __init__(self, dim: int = 16):
+            super().__init__()
+            self.dim = dim
+            self.w1 = nn.Linear(dim, dim, bias=False)
+            self.fc_out = nn.Linear(dim, dim, bias=False)
+            self.w3 = nn.Linear(dim, dim, bias=False)
+
+        def forward(self, x):
+            return self.fc_out(F.silu(self.w1(x)) * self.w3(x))
+
+    ff1 = FF1()
+    optim1 = torch.optim.AdamW(ff1.parameters())
+    ff2 = FF2()
+    optim2 = torch.optim.AdamW(ff2.parameters())
+
+    save_model_and_optim_state(dir, ff1, optim1)
+    load_model_and_optim_state(dir, ff2, optim2, key_mapping={"fc_out.weight": "w2.weight"})
+
+
+def test_load_checkpoint_with_different_keys(tmp_path):
+    run_distributed_test(
+        run_load_checkpoint_with_different_keys,
+        backend="gloo",
+        start_method="spawn",
+        func_args=(tmp_path,),
+    )
