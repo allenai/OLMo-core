@@ -12,13 +12,15 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.utils import get_default_device
 
 from ..buffer_cache import BufferCache
-from ..layer_norm import LayerNorm, LayerNormConfig
+from ..functional import l2_normalize
+from ..lm_head import LMHeadConfig
 from ..utils import selective_checkpointing_context_fn
 from .block import TransformerBlock, TransformerBlockConfig
 from .init import InitMethod
 
 __all__ = [
     "Transformer",
+    "NormalizedTransformer",
     "TransformerDataParallelWrappingStrategy",
     "TransformerActivationCheckpointingMode",
 ]
@@ -34,8 +36,14 @@ class TransformerDataParallelWrappingStrategy(StrEnum):
 
     full = "full"
     """
-    Wrap each block (only applies to FSDP).
+    Wrap each block and the LM head (only applies to FSDP).
     """
+
+    blocks = "blocks"
+    """
+    Like full but the LM head is not wrapped separately (only applies to FSDP).
+    """
+
     fine_grained = "fine_grained"
     """
     Wrap certain modules within each block in addition to wrapping each block (only applies to FSDP).
@@ -79,8 +87,7 @@ class Transformer(nn.Module):
         vocab_size: int,
         n_layers: int,
         block: TransformerBlockConfig,
-        layer_norm: LayerNormConfig,
-        bias: bool = True,
+        lm_head: LMHeadConfig,
         dtype: torch.dtype = torch.float32,
         init_method: InitMethod = InitMethod.normal,
         init_device: str = "cpu",
@@ -102,8 +109,9 @@ class Transformer(nn.Module):
                 for block_idx in range(n_layers)
             ]
         )
-        self.norm = layer_norm.build(d_model, init_device=init_device)
-        self.w_out = nn.Linear(d_model, vocab_size, bias=bias, dtype=dtype, device=init_device)
+        self.lm_head = lm_head.build(
+            d_model=d_model, vocab_size=vocab_size, init_device=init_device
+        )
         self.init_method = InitMethod(init_method)
         self.init_seed = init_seed
         self._cache = cache
@@ -121,7 +129,7 @@ class Transformer(nn.Module):
         *,
         max_seq_len: Optional[int] = None,
         device: Optional[torch.device] = None,
-    ):
+    ) -> torch.Generator:
         """
         Initialize the model weights.
 
@@ -133,7 +141,13 @@ class Transformer(nn.Module):
         generator = torch.Generator(device).manual_seed(self.init_seed)
 
         if self.embeddings is not None:
-            self.init_method.init_embeddings(self.embeddings, generator=generator)
+            self.init_method.init_embeddings(
+                self.embeddings, d_model=self.d_model, generator=generator
+            )
+
+        for module in self.modules():
+            if hasattr(module, "reset_parameters"):
+                module.reset_parameters()
 
         for block in self.blocks:
             # This might fail if it's wrapped.
@@ -141,24 +155,20 @@ class Transformer(nn.Module):
             block = cast(TransformerBlock, block)
             att = block.attention
 
-            # Norms.
-            block_norms: List[LayerNorm] = [block.attention_norm, block.feed_forward_norm]
-            if hasattr(att, "q_norm") and att.q_norm is not None:
-                block_norms.append(att.q_norm)
-            if hasattr(att, "k_norm") and att.k_norm is not None:
-                block_norms.append(att.k_norm)
-            for norm in block_norms:
-                norm.reset_parameters()
-
             # Attention weights.
             self.init_method.init_attention(
-                att, block_idx=block.block_idx, num_blocks=len(self.blocks), generator=generator
+                att,
+                d_model=self.d_model,
+                block_idx=block.block_idx,
+                num_blocks=len(self.blocks),
+                generator=generator,
             )
 
             # Feed-forward weights.
             if hasattr(block, "feed_forward"):
                 self.init_method.init_feed_forward(
                     block.feed_forward,
+                    d_model=self.d_model,
                     block_idx=block.block_idx,
                     num_blocks=len(self.blocks),
                     generator=generator,
@@ -166,6 +176,7 @@ class Transformer(nn.Module):
             else:
                 self.init_method.init_feed_forward_moe(
                     block.feed_forward_moe,
+                    d_model=self.d_model,
                     block_idx=block.block_idx,
                     num_blocks=len(self.blocks),
                     generator=generator,
@@ -175,11 +186,12 @@ class Transformer(nn.Module):
             if max_seq_len is not None and att.rope is not None:
                 att.rope.warmup_cache(max_seq_len, device)
 
-        if self.norm is not None:
-            self.norm.reset_parameters()
+        if self.lm_head is not None:
+            self.init_method.init_final_w_out(
+                self.lm_head.w_out, d_model=self.d_model, generator=generator
+            )
 
-        if self.w_out is not None:
-            self.init_method.init_final_w_out(self.w_out, d_model=self.d_model, generator=generator)
+        return generator
 
     def forward(
         self,
@@ -211,9 +223,7 @@ class Transformer(nn.Module):
         for block in self.blocks:
             h = block(h, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
 
-        h = self.norm(h) if self.norm is not None else h
-        out = self.w_out(h) if self.w_out is not None else h
-        return out
+        return self.lm_head(h) if self.lm_head is not None else h
 
     def apply_activation_checkpointing(
         self,
@@ -301,6 +311,8 @@ class Transformer(nn.Module):
             block = torch.compile(block, fullgraph=False)
             self.blocks.register_module(block_id, block)  # type: ignore
 
+        self.register_module("lm_head", torch.compile(self.lm_head, fullgraph=False))  # type: ignore
+
         log.info("Compiling each transformer block with torch.compile")
 
     def apply_fsdp(
@@ -330,20 +342,14 @@ class Transformer(nn.Module):
         from torch.distributed._composable.fsdp import MixedPrecisionPolicy, fully_shard
 
         mp_policy = MixedPrecisionPolicy(
-            param_dtype=param_dtype or self.w_out.weight.dtype, reduce_dtype=reduce_dtype
+            param_dtype=param_dtype or self.embeddings.weight.dtype, reduce_dtype=reduce_dtype
         )
         fsdp_config = dict(mesh=dp_mesh, mp_policy=mp_policy)
 
-        for block_id, block in enumerate(self.blocks):
-            reshard_after_forward = True
-            if pp_enabled:
-                # For PP, do not reshard after forward to avoid per-microbatch
-                # all-gathers, which can be expensive and non-overlapped
-                reshard_after_forward = False
-            elif wrapping_strategy == TransformerDataParallelWrappingStrategy.full:
-                # As an optimization, do not reshard after forward for the last
-                # transformer block since FSDP would prefetch it immediately
-                reshard_after_forward = int(block_id) < len(self.blocks) - 1
+        for block in self.blocks:
+            # For PP, do not reshard after forward to avoid per-microbatch
+            # all-gathers, which can be expensive and non-overlapped
+            reshard_after_forward = False if pp_enabled else True
 
             if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
                 if hasattr(block, "feed_forward"):
@@ -363,7 +369,9 @@ class Transformer(nn.Module):
 
         if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
             fully_shard(self.embeddings, reshard_after_forward=not pp_enabled, **fsdp_config)
-            fully_shard(self.w_out, reshard_after_forward=False, **fsdp_config)
+
+        if wrapping_strategy != TransformerDataParallelWrappingStrategy.blocks:
+            fully_shard(self.lm_head, reshard_after_forward=False, **fsdp_config)
 
         fully_shard(self, reshard_after_forward=not pp_enabled, **fsdp_config)
 
@@ -427,3 +435,72 @@ class Transformer(nn.Module):
         flop_per_token = 6 * self.num_non_embedding_params + 12 * n * h * q * t
 
         return flop_per_token
+
+
+class NormalizedTransformer(Transformer):
+    """
+    A nGPT transformer implementation, to be used with the :class:`NormalizedTransformerBlock` block
+    type.
+
+    .. warning::
+        When training this model you should use the :class:`~olmo_core.train.callbacks.MatrixNormalizerCallback`
+        to re-normalize the weight matrices after each optimizer step.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        vocab_size: int,
+        n_layers: int,
+        block: TransformerBlockConfig,
+        lm_head: LMHeadConfig,
+        dtype: torch.dtype = torch.float32,
+        init_method: InitMethod = InitMethod.normalized,
+        init_device: str = "cpu",
+        init_seed: int = 0,
+    ):
+        super().__init__(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=n_layers,
+            block=block,
+            lm_head=lm_head,
+            dtype=dtype,
+            init_method=init_method,
+            init_device=init_device,
+            init_seed=init_seed,
+        )
+
+    @torch.no_grad()
+    def init_weights(
+        self,
+        *,
+        max_seq_len: Optional[int] = None,
+        device: Optional[torch.device] = None,
+    ) -> torch.Generator:
+        generator = super().init_weights(max_seq_len=max_seq_len, device=device)
+        self.normalize_matrices()
+        return generator
+
+    @torch.no_grad()
+    def normalize_matrices(self):
+        """
+        Normalize the weights in all matrices. This should be called after each optimizer step, which
+        the :class:`~olmo_core.train.callbacks.MatrixNormalizerCallback` will handle for you.
+        """
+        if self.embeddings is not None:
+            self._normalize_matrix(self.embeddings.weight)
+
+        for block in self.blocks:
+            if hasattr(block, "normalize_matrices"):
+                block.normalize_matrices()
+
+        self.lm_head.normalize_matrices()
+
+    def _normalize_matrix(self, w: torch.Tensor, dim: int = -1):
+        w.copy_(l2_normalize(w, dim=dim))
+
+    def apply_compile(self):
+        super().apply_compile()
+        self.normalize_matrices = torch.compile(self.normalize_matrices)

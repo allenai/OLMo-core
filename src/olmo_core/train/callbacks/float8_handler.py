@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 from olmo_core.float8 import Float8Config, Float8Handler
 
@@ -17,6 +18,8 @@ class Float8HandlerCallback(Callback):
         You need to call :meth:`~olmo_core.float8.Float8Config.convert_to_float8_training()`
         on your model prior to training to replace the linear layers with ``Float8Linear`` layers.
     """
+
+    priority: ClassVar[int] = -1
 
     config: Float8Config = field(default_factory=Float8Config)
 

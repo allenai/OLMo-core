@@ -11,6 +11,7 @@
    feed_forward
    functional
    layer_norm
+   lm_head
    moe
    rope
    transformer

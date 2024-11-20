@@ -17,6 +17,11 @@ class InitMethod(StrEnum):
     with standard deviation 0.02.
     """
 
+    normalized = "normalized"
+    """
+    Follow the nGPT initialization scheme.
+    """
+
     llama = "llama"
     """
     Like :data:`normal`, but "output" layers are initialized with a standard deviation that's
@@ -38,9 +43,13 @@ class InitMethod(StrEnum):
         if m.bias is not None:
             nn.init.zeros_(m.bias)
 
-    def init_embeddings(self, m: nn.Embedding, generator: Optional[torch.Generator] = None):
+    def init_embeddings(
+        self, m: nn.Embedding, *, d_model: int, generator: Optional[torch.Generator] = None
+    ):
         if self in (InitMethod.llama, InitMethod.llama_depth):
             nn.init.normal_(m.weight, generator=generator)
+        elif self == InitMethod.normalized:
+            nn.init.normal_(m.weight, std=d_model**-0.5)
         else:
             nn.init.trunc_normal_(
                 m.weight, mean=0.0, std=0.02, a=-3 * 0.02, b=3 * 0.02, generator=generator
@@ -50,31 +59,37 @@ class InitMethod(StrEnum):
         self, m: nn.Linear, *, d_model: int, generator: Optional[torch.Generator] = None
     ):
         std = 0.02
-        if self in (InitMethod.llama, InitMethod.llama_depth):
-            std = d_model**-0.05
+        if self in (InitMethod.llama, InitMethod.llama_depth, InitMethod.normalized):
+            std = d_model**-0.5
         self._init_linear(m, std=std, generator=generator)
 
     def init_attention(
         self,
         m: Union[Attention, FusedAttention],
         *,
+        d_model: int,
         block_idx: int,
         num_blocks: int,
         generator: Optional[torch.Generator] = None,
     ):
         std = 0.02
-        if self == InitMethod.llama:
-            std = 0.02 / (2 * num_blocks) ** 0.5
-        elif self == InitMethod.llama_depth:
-            std = 0.02 / (2 * (block_idx + 1)) ** 0.5
+        if self == InitMethod.normalized:
+            std = d_model**-0.5
 
         if isinstance(m, Attention):
             for w in (m.w_q, m.w_k, m.w_v):
-                self._init_linear(w, std=0.02, generator=generator)
+                self._init_linear(w, std=std, generator=generator)
         elif isinstance(m, FusedAttention):
-            self._init_linear(m.w_qkv, std=0.02, generator=generator)
+            self._init_linear(m.w_qkv, std=std, generator=generator)
         else:
             raise NotImplementedError(m)
+
+        if self == InitMethod.llama:
+            std = std / (2 * num_blocks) ** 0.5
+        elif self == InitMethod.llama_depth:
+            std = std / (2 * (block_idx + 1)) ** 0.5
+        elif self == InitMethod.normalized:
+            std = std / (2 * num_blocks) ** 0.5
 
         self._init_linear(m.w_out, std=std, generator=generator)
 
@@ -82,28 +97,43 @@ class InitMethod(StrEnum):
         self,
         m: FeedForward,
         *,
+        d_model: int,
         block_idx: int,
         num_blocks: int,
         generator: Optional[torch.Generator] = None,
     ):
         std = 0.02
+        if self == InitMethod.normalized:
+            std = d_model**-0.5
+
+        self._init_linear(m.w1, std=std, generator=generator)
+
+        std = 0.02
         if self == InitMethod.llama:
             std = 0.02 / (2 * num_blocks) ** 0.5
         elif self == InitMethod.llama_depth:
             std = 0.02 / (2 * (block_idx + 1)) ** 0.5
+        elif self == InitMethod.normalized:
+            std = d_model**-0.5
 
-        self._init_linear(m.w1, std=0.02, generator=generator)
-        self._init_linear(m.w2, std=std, generator=generator)
         self._init_linear(m.w3, std=std, generator=generator)
+
+        if self == InitMethod.normalized:
+            std = std / (2 * num_blocks) ** 0.5
+
+        self._init_linear(m.w2, std=std, generator=generator)
 
     def init_feed_forward_moe(
         self,
         m: MoE,
         *,
+        d_model: int,
         block_idx: int,
         num_blocks: int,
         generator: Optional[torch.Generator] = None,
     ):
+        del d_model
+
         std = 0.02
         if self == InitMethod.llama:
             std = 0.02 / (2 * num_blocks) ** 0.5

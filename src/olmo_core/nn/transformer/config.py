@@ -5,7 +5,7 @@ from typing import List, Optional
 import torch
 from torch.distributed import DeviceMesh
 
-from olmo_core.config import Config, DType
+from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
@@ -13,12 +13,14 @@ from olmo_core.float8 import Float8Config
 from olmo_core.utils import get_default_device, has_flash_attn
 
 from ..attention import AttentionConfig, AttentionType
-from ..feed_forward import FeedForwardConfig
+from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
+from ..lm_head import LMHeadConfig, LMHeadType
 from ..rope import RoPEConfig, RoPEType
 from .block import TransformerBlockConfig, TransformerBlockType
 from .init import InitMethod
 from .model import (
+    NormalizedTransformer,
     Transformer,
     TransformerActivationCheckpointingMode,
     TransformerDataParallelWrappingStrategy,
@@ -80,6 +82,22 @@ class TransformerActivationCheckpointingConfig(Config):
             )
 
 
+class TransformerType(StrEnum):
+    """
+    An enumeration of transformer implementations.
+    """
+
+    default = "default"
+    """
+    :class:`Transformer`
+    """
+
+    normalized = "normalized"
+    """
+    :class:`NormalizedTransformer`
+    """
+
+
 @dataclass
 class TransformerConfig(Config):
     """
@@ -97,8 +115,8 @@ class TransformerConfig(Config):
     vocab_size: int
     n_layers: int
     block: TransformerBlockConfig
-    layer_norm: LayerNormConfig
-    bias: bool = True
+    lm_head: LMHeadConfig
+    name: TransformerType = TransformerType.default
     dtype: DType = DType.float32
     init_method: InitMethod = InitMethod.normal
     init_seed: int = 0
@@ -133,18 +151,33 @@ class TransformerConfig(Config):
             f"Building transformer with {self.num_params:,d} total params, "
             f"{self.num_non_embedding_params:,d} non-embedding params"
         )
-        model = Transformer(
-            d_model=self.d_model,
-            vocab_size=self.vocab_size,
-            n_layers=self.n_layers,
-            block=self.block,
-            layer_norm=self.layer_norm,
-            bias=self.bias,
-            dtype=self.dtype.as_pt(),
-            init_method=self.init_method,
-            init_device=init_device,
-            init_seed=self.init_seed,
-        )
+        model: Transformer
+        if self.name == TransformerType.default:
+            model = Transformer(
+                d_model=self.d_model,
+                vocab_size=self.vocab_size,
+                n_layers=self.n_layers,
+                block=self.block,
+                lm_head=self.lm_head,
+                dtype=self.dtype.as_pt(),
+                init_method=self.init_method,
+                init_device=init_device,
+                init_seed=self.init_seed,
+            )
+        elif self.name == TransformerType.normalized:
+            model = NormalizedTransformer(
+                d_model=self.d_model,
+                vocab_size=self.vocab_size,
+                n_layers=self.n_layers,
+                block=self.block,
+                lm_head=self.lm_head,
+                dtype=self.dtype.as_pt(),
+                init_method=self.init_method,
+                init_device=init_device,
+                init_seed=self.init_seed,
+            )
+        else:
+            raise NotImplementedError(self.name)
 
         # Maybe convert linear layers to Float8 linear layers.
         if self.float8_config is not None and self.float8_config.enabled:
@@ -214,6 +247,10 @@ class TransformerConfig(Config):
         n_kv_heads = self.block.attention.n_kv_heads or n_heads
         head_dim = self.d_model // n_heads
 
+        # Block attn and MLP scaling factors.
+        if self.block.name == TransformerBlockType.normalized:
+            block_params += 2 * self.d_model
+
         # Block attention Q projection.
         block_params += self.d_model * self.d_model
         if self.block.attention.bias:
@@ -234,7 +271,16 @@ class TransformerConfig(Config):
             block_params += self.d_model
 
         # Block attention norm.
-        block_params += layer_norm_params(self.block.layer_norm)
+        if self.block.layer_norm is not None:
+            block_params += layer_norm_params(self.block.layer_norm)
+
+        # Block QK scaling factors.
+        if self.block.attention.name == AttentionType.normalized:
+            head_dim = self.d_model // self.block.attention.n_heads
+            block_params += self.block.attention.n_heads * head_dim
+            block_params += (
+                self.block.attention.n_kv_heads or self.block.attention.n_heads
+            ) * head_dim
 
         # Block feed forward.
         if "moe" not in self.block.name:
@@ -242,22 +288,31 @@ class TransformerConfig(Config):
             block_params += 3 * self.d_model * self.block.feed_forward.hidden_size
             if self.block.feed_forward.bias:
                 block_params += 2 * self.block.feed_forward.hidden_size + self.d_model
+            # w1 + w3 scaling factors
+            if self.block.feed_forward.name == FeedForwardType.normalized:
+                block_params += 2 * self.block.feed_forward.hidden_size
         else:
             assert self.block.feed_forward_moe is not None
             block_params += self.block.feed_forward_moe.num_params(self.d_model)
 
         # Block feed forward norm.
-        block_params += layer_norm_params(self.block.layer_norm)
+        if self.block.layer_norm is not None:
+            block_params += layer_norm_params(self.block.layer_norm)
 
         # All block params.
         num_params += self.n_layers * block_params
 
         # Final layer norm.
-        num_params += layer_norm_params(self.layer_norm)
+        if self.lm_head.layer_norm is not None:
+            num_params += layer_norm_params(self.lm_head.layer_norm)
 
         # Final FF out.
         num_params += self.d_model * self.vocab_size
-        if self.bias:
+        if self.lm_head.bias:
+            num_params += self.vocab_size
+
+        # Final scaling factor.
+        if self.name == TransformerType.normalized:
             num_params += self.vocab_size
 
         return num_params
@@ -328,6 +383,32 @@ class TransformerConfig(Config):
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
+    def ngpt_271M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 271M nGPT model config.
+        """
+        return cls.ngpt_like(
+            d_model=1024,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 16),
+            n_heads=kwargs.pop("n_heads", 16),
+            **kwargs,
+        )
+
+    @classmethod
+    def ngpt_1B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 1B nGPT model config.
+        """
+        return cls.ngpt_like(
+            d_model=2048,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 18),
+            n_heads=kwargs.pop("n_heads", 16),
             **kwargs,
         )
 
@@ -557,9 +638,72 @@ class TransformerConfig(Config):
             vocab_size=vocab_size,
             n_layers=n_layers,
             block=block,
-            layer_norm=layer_norm,
-            bias=False,
+            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
             dtype=dtype,
             compile=compile,
+            **kwargs,
+        )
+
+    @classmethod
+    def ngpt_like(
+        cls,
+        *,
+        d_model: int,
+        vocab_size: int,
+        n_layers: int,
+        n_heads: int,
+        n_kv_heads: Optional[int] = None,
+        rope_theta: int = 500_000,
+        hidden_size_multiple_of: int = 256,
+        hidden_size_multiplier: Optional[float] = None,
+        use_flash: Optional[bool] = None,
+        dtype: DType = DType.float32,
+        compile: bool = False,
+        **kwargs,
+    ) -> "TransformerConfig":
+        """
+        Create an nGPT-like model configuration.
+        """
+        if use_flash is None:
+            use_flash = False if compile else has_flash_attn()
+
+        # Resolve hidden size of FFN in blocks.
+        hidden_size = int(8 * d_model / 3)
+        if hidden_size_multiplier is not None:
+            hidden_size = int(hidden_size_multiplier * hidden_size)
+        hidden_size = hidden_size_multiple_of * (
+            (hidden_size + hidden_size_multiple_of - 1) // hidden_size_multiple_of
+        )
+
+        # Configure blocks.
+        block = TransformerBlockConfig(
+            name=TransformerBlockType.normalized,
+            attention=AttentionConfig(
+                name=AttentionType.normalized,
+                n_heads=n_heads,
+                n_kv_heads=n_kv_heads,
+                bias=False,
+                rope=RoPEConfig(name=RoPEType.default, theta=rope_theta),
+                use_flash=use_flash,
+                dtype=dtype,
+            ),
+            feed_forward=FeedForwardConfig(
+                name=FeedForwardType.normalized, hidden_size=hidden_size, bias=False, dtype=dtype
+            ),
+            layer_norm=None,
+        )
+
+        return cls(
+            name=TransformerType.normalized,
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=n_layers,
+            block=block,
+            lm_head=LMHeadConfig(
+                name=LMHeadType.normalized, layer_norm=None, bias=False, dtype=dtype
+            ),
+            dtype=dtype,
+            compile=compile,
+            init_method=InitMethod.normalized,
             **kwargs,
         )
