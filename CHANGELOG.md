@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Added `key_mapping` argument to `olmo_core.distributed.checkpoint.load_model_and_optim_state()`
+  for loading checkpoints with different key names.
+- Added `load_key_mapping` field to the trainer, same idea as the new `key_mapping` argument above.
+- Added an implementation of nGPT called `NormalizedTransformer`.
+
+### Changed
+
+- The `w_out` and `norm` top-level children of the `Transformer` model are now wrapped together in an `lm_head` module. Training scripts will have backwards compatibility with older checkpoints due to the `load_key_mapping` explained above.
+
 ### Fixed
 
 - (Optimization) Mark model input sizes as dynamic for `torch.compile()` to avoid recompile during evals or variable-sequence / batch size training. This doesn't seem to hurt throughput.
