@@ -2,6 +2,7 @@ import pytest
 
 from olmo_core.io import (
     deserialize_from_tensor,
+    file_exists,
     list_directory,
     serialize_to_tensor,
     upload,
@@ -28,11 +29,14 @@ def _run_list_remote_directory(tmp_path, remote_dir):
     (tmp_path / "dir1").mkdir()
     (tmp_path / "dir1" / "file2").touch()
 
+    assert not file_exists(f"{remote_dir}/dir1/file2")
+
     for path in tmp_path.glob("**/*"):
         if not path.is_file():
             continue
         rel_path = path.relative_to(tmp_path)
         upload(path, f"{remote_dir}/{rel_path}")
+        assert file_exists(f"{remote_dir}/{rel_path}")
 
     # Should only list immediate children (files and dirs), but not files in subdirs.
     # The paths returned should be full paths.
