@@ -11,7 +11,6 @@ import logging
 import torch
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM
-from transformers.models.llama.modeling_llama import apply_rotary_pos_emb, repeat_kv
 
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state, save_state_dict
@@ -99,6 +98,8 @@ def convert_checkpoint() -> AutoModelForCausalLM:
 
 
 def validate_conversion(hf_model):
+    from transformers.models.llama.modeling_llama import apply_rotary_pos_emb, repeat_kv
+
     log.info("Loading converted checkpoint for validation...")
 
     device = get_default_device()
