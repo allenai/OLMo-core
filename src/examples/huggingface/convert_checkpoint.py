@@ -7,12 +7,14 @@ HuggingFace.
 """
 
 import logging
+from pathlib import Path
 
 import torch
 from transformers import AutoModelForCausalLM
 
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state, save_state_dict
+from olmo_core.io import clear_directory, dir_is_empty
 from olmo_core.nn.rope import RoPEScalingConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.utils import get_default_device, prepare_cli_environment
@@ -21,6 +23,7 @@ log = logging.getLogger(__name__)
 
 HF_MODEL = "meta-llama/Llama-3.2-1B"
 SAVE_PATH = f"/tmp/checkpoints/{HF_MODEL}"
+SAVE_OVERWRITE = False
 
 TOKENIZER_CONFIG = TokenizerConfig.from_hf(HF_MODEL)
 MODEL_CONFIG = TransformerConfig.llama3_1B(
@@ -32,6 +35,14 @@ def convert_checkpoint() -> AutoModelForCausalLM:
     log.info(f"Loading HF checkpoint '{HF_MODEL}'")
     hf_model = AutoModelForCausalLM.from_pretrained(HF_MODEL)
     print(hf_model)
+
+    if not dir_is_empty(SAVE_PATH):
+        if SAVE_OVERWRITE:
+            log.warning(f"Clearing existing checkpoint at '{SAVE_PATH}'")
+            clear_directory(SAVE_PATH)
+        else:
+            log.warning(f"Using existing checkpoint at '{SAVE_PATH}'")
+            return hf_model
 
     n_layers = len(hf_model.model.layers)
     state_dict = hf_model.state_dict()
