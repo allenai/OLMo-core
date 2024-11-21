@@ -97,13 +97,22 @@ def validate_conversion(hf_model):
     hf_model = hf_model.to(device).eval()
 
     input_ids = torch.randint(0, TOKENIZER_CONFIG.vocab_size, (1, 64)).to(device)
+    cache_position = torch.arange(input_ids.shape[1], device=input_ids.device)
+    position_ids = cache_position.unsqueeze(0)
 
     # Check models layer-by-layer.
     with torch.no_grad():
         # Token embeddings.
+        log.info("Checking token embeddings...")
         h = model.embeddings(input_ids)
         hf_h = hf_model.model.embed_tokens(input_ids)
         torch.testing.assert_close(h, hf_h)
+
+        for idx, (block, hf_block) in enumerate(zip(model.blocks, hf_model.model.layers)):
+            log.info(f"Checking block {idx}...")
+            h = block(h)
+            hf_h = hf_block(hf_h, position_ids=position_ids)
+            torch.testing.assert_close(h, hf_h)
 
         #  logits = model(input_ids=input_ids)
         #  hf_logits, *_ = hf_model(input_ids=input_ids, return_dict=False)
