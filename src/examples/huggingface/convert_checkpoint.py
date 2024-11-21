@@ -109,7 +109,7 @@ def validate_conversion(hf_model):
 
     hf_model = hf_model.to(device).eval()
 
-    B, T, D = 1, 64, 2048
+    B, T, D = 1, 120, 2048
     n_heads, n_kv_heads = 32, 8
     head_dim = D // n_heads
 
