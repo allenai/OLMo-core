@@ -7,10 +7,11 @@ HuggingFace.
 """
 
 import logging
-from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 from transformers import AutoModelForCausalLM
+from transformers.models.llama.modeling_llama import apply_rotary_pos_emb, repeat_kv
 
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state, save_state_dict
@@ -107,7 +108,11 @@ def validate_conversion(hf_model):
 
     hf_model = hf_model.to(device).eval()
 
-    input_ids = torch.randint(0, TOKENIZER_CONFIG.vocab_size, (1, 64)).to(device)
+    B, T, D = 1, 64, 2048
+    n_heads, n_kv_heads = 32, 8
+    head_dim = D // n_heads
+
+    input_ids = torch.randint(0, TOKENIZER_CONFIG.vocab_size, (B, T)).to(device)
     cache_position = torch.arange(input_ids.shape[1], device=input_ids.device)
     position_ids = cache_position.unsqueeze(0)
 
@@ -123,40 +128,147 @@ def validate_conversion(hf_model):
 
         for idx, (block, hf_block) in enumerate(zip(model.blocks, hf_model.model.layers)):
             log.info(f"Checking block {idx}...")
+
             r = h
+
             hf_r = hf_h
 
             log.info(f"Checking block {idx} input/attention norm...")
+
+            # OLMo-core
             h = block.attention_norm(h)
+
+            # HuggingFace
             hf_h = hf_block.input_layernorm(hf_h)
+
             torch.testing.assert_close(h, hf_h)
 
-            log.info(f"Checking block {idx} attention...")
-            h = block.attention(h)
-            hf_h, *_ = hf_block.self_attn(
-                hf_h, position_ids=position_ids, position_embeddings=position_embeddings
+            log.info(f"Checking block {idx} attention projections...")
+
+            # OLMo-core
+            q, k, v = block.attention.w_q(h), block.attention.w_k(h), block.attention.w_v(h)
+
+            # HuggingFace
+            hf_q, hf_k, hf_v = (
+                hf_block.self_attn.q_proj(hf_h),
+                hf_block.self_attn.k_proj(hf_h),
+                hf_block.self_attn.v_proj(hf_h),
             )
+
+            torch.testing.assert_close(q, hf_q)
+            torch.testing.assert_close(k, hf_k)
+            torch.testing.assert_close(v, hf_v)
+
+            log.info(f"Checking block {idx} rotary embeddings...")
+
+            # OLMo-core
+            q, k, v = (
+                q.view(B, T, n_heads, head_dim),
+                k.view(B, T, n_kv_heads, head_dim),
+                v.view(B, T, n_kv_heads, head_dim),
+            )
+            q, k = block.attention.rope(q, k, head_first=False)
+            q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+
+            # HuggingFace
+            hf_q, hf_k, hf_v = (
+                hf_q.view(B, T, n_heads, head_dim).transpose(1, 2),
+                hf_k.view(B, T, n_kv_heads, head_dim).transpose(1, 2),
+                hf_v.view(B, T, n_kv_heads, head_dim).transpose(1, 2),
+            )
+            cos, sin = position_embeddings
+            hf_q, hf_k = apply_rotary_pos_emb(hf_q, hf_k, cos, sin)
+
+            torch.testing.assert_close(q, hf_q)
+            torch.testing.assert_close(k, hf_k)
+
+            log.info(f"Checking block {idx} SDPA...")
+
+            # OLMo-core
+            k = k.repeat_interleave(n_heads // n_kv_heads, dim=1, output_size=n_heads)
+            v = v.repeat_interleave(n_heads // n_kv_heads, dim=1, output_size=n_heads)
+
+            # HuggingFace
+            hf_k = repeat_kv(hf_k, n_heads // n_kv_heads)
+            hf_v = repeat_kv(hf_v, n_heads // n_kv_heads)
+
+            torch.testing.assert_close(k, hf_k)
+            torch.testing.assert_close(v, hf_v)
+
+            # OLMo-core
+            attn = (
+                F.scaled_dot_product_attention(q, k, v, is_causal=True)
+                .transpose(1, 2)
+                .contiguous()
+                .view(B, T, -1)
+            )
+
+            # HuggingFace
+            hf_attn = (
+                F.scaled_dot_product_attention(hf_q, hf_k, hf_v, is_causal=True)
+                .transpose(1, 2)
+                .contiguous()
+                .view(B, T, -1)
+            )
+
+            torch.testing.assert_close(attn, hf_attn)
+
+            log.info(f"Checking block {idx} attention projection...")
+
+            # OLMo-core
+            h = block.attention.w_out(attn)
+
+            # HuggingFace
+            hf_h = hf_block.attention.o_proj(attn)
+
             torch.testing.assert_close(h, hf_h)
 
+            #  h = block.attention(h)
+            #  hf_h, *_ = hf_block.self_attn(
+            #      hf_h, position_ids=position_ids, position_embeddings=position_embeddings
+            #  )
+            #  torch.testing.assert_close(h, hf_h)
+
+            # OLMo-core
             h = r + h
+
+            # HuggingFace
             hf_h = hf_r + hf_h
 
+            # OLMo-core
             r = h
+
+            # HuggingFace
             hf_r = hf_h
 
             log.info(f"Checking block {idx} MLP norm...")
+
+            # OLMo-core
             h = block.feed_forward_norm(h)
+
+            # HuggingFace
             hf_h = hf_block.post_attention_layernorm(hf_h)
+
             torch.testing.assert_close(h, hf_h)
 
             log.info(f"Checking block {idx} MLP...")
+
+            # OLMo-core
             h = block.feed_forward(h)
+
+            # HuggingFace
             hf_h = hf_block.mlp(hf_h)
+
             torch.testing.assert_close(h, hf_h)
 
             log.info(f"Checking block {idx} output...")
+
+            # OLMo-core
             h = r + h
+
+            # HuggingFace
             hf_h = hf_r + hf_h
+
             torch.testing.assert_close(h, hf_h)
 
         logits = model.lm_head(h)
