@@ -113,9 +113,41 @@ def validate_conversion(hf_model):
         for idx, (block, hf_block) in enumerate(zip(model.blocks, hf_model.model.layers)):
             log.info(f"Checking block {idx}...")
             h = block(h)
-            hf_h, *_ = hf_block(
+
+            r = h
+            hf_r = hf_h
+
+            log.info(f"Checking block {idx} input/attention norm...")
+            h = block.attention_norm(h)
+            hf_h = hf_block.input_layernorm(hf_h)
+            torch.testing.assert_close(h, hf_h)
+
+            log.info(f"Checking block {idx} attention...")
+            h = block.attention(h)
+            hf_h = hf_block.self_attn(
                 hf_h, position_ids=position_ids, position_embeddings=position_embeddings
             )
+            torch.testing.assert_close(h, hf_h)
+
+            h = r + h
+            hf_h = hf_r + hf_h
+
+            r = h
+            hf_r = hf_h
+
+            log.info(f"Checking block {idx} MLP norm...")
+            h = block.feed_forward_norm(h)
+            hf_h = hf_block.post_attention_layernorm(hf_h)
+            torch.testing.assert_close(h, hf_h)
+
+            log.info(f"Checking block {idx} MLP...")
+            h = block.feed_forward(h)
+            hf_h = hf_block.mlp(hf_h)
+            torch.testing.assert_close(h, hf_h)
+
+            log.info(f"Checking block {idx} output...")
+            h = r + h
+            hf_h = hf_r + hf_h
             torch.testing.assert_close(h, hf_h)
 
         logits = model.lm_head(h)
