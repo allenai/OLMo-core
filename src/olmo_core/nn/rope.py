@@ -93,12 +93,10 @@ class RoPEConfig(Config):
 
         See :class:`RotaryEmbedding` for a description of the parameters.
         """
-        kwargs: Dict[str, Any] = dict(
-            head_shape=head_shape,
-            theta=self.theta,
-            full_precision=self.full_precision,
-            cache=cache,
-        )
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
+        kwargs.pop("name")
+        kwargs["head_shape"] = head_shape
+        kwargs["cache"] = cache
 
         if self.name == "default":
             return RotaryEmbedding(**kwargs)
