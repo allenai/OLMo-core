@@ -1,8 +1,8 @@
 """
-Example script showing how you could convert model weights on HuggingFace for a Llama model
+Example script showing how you could convert model weights on HuggingFace for a Llama-3.2 model
 into a format that can be loaded by OLMo-core for fine-tuning.
 
-Note that this script is architecture-dependent, meaning it will only work for Llama models on
+Note that this script is architecture-dependent, meaning it may only work for Llama-3.2 models on
 HuggingFace.
 """
 

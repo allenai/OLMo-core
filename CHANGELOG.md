@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for loading checkpoints with different key names.
 - Added `load_key_mapping` field to the trainer, same idea as the new `key_mapping` argument above.
 - Added an implementation of nGPT called `NormalizedTransformer`.
+- Added an example showing how to convert a HuggingFace Llama 3.2 checkpoint into the right format for OLMo-core.
+- Added an API for scaling RoPE embeddings.
 
 ### Changed
 

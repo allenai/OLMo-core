@@ -1,19 +1,17 @@
-``Train a Llama model``
-=======================
+Train a Llama model
+===================
 
-The following snippet is the code from ``src/examples/llama/train.py``.
-It's a script meant to be launched via ``torchrun``.
+The following snippets can be found in `src/examples/llama/ <https://github.com/allenai/OLMo-core/tree/main/src/examples/llama>`_.
+The ``train.py`` script is meant to be launched via ``torchrun``.
 You can also use the :mod:`olmo_core.launch` API to quickly launch this script on Beaker.
-See below for an example of that.
+See the ``train_launch.py`` snippet for an example of that.
 
-``src/examples/llama/train.py``
--------------------------------
+.. tab:: ``train.py``
 
-.. literalinclude:: ../../../src/examples/llama/train.py
-   :language: py
+   .. literalinclude:: ../../../src/examples/llama/train.py
+      :language: py
 
-``src/examples/llama/train_launch.py``
---------------------------------------
+.. tab:: ``train_launch.py``
 
-.. literalinclude:: ../../../src/examples/llama/train_launch.py
-   :language: py
+   .. literalinclude:: ../../../src/examples/llama/train_launch.py
+      :language: py
