@@ -112,8 +112,6 @@ def validate_conversion(hf_model):
 
         for idx, (block, hf_block) in enumerate(zip(model.blocks, hf_model.model.layers)):
             log.info(f"Checking block {idx}...")
-            h = block(h)
-
             r = h
             hf_r = hf_h
 
