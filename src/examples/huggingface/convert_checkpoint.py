@@ -144,7 +144,7 @@ def validate_conversion(hf_model):
 
             torch.testing.assert_close(h, hf_h)
 
-            log.info(f"Checking block {idx} attention projections...")
+            log.info(f"Checking block {idx} attention QKV projections...")
 
             # OLMo-core
             q, k, v = block.attention.w_q(h), block.attention.w_k(h), block.attention.w_v(h)
@@ -214,13 +214,13 @@ def validate_conversion(hf_model):
 
             torch.testing.assert_close(attn, hf_attn)
 
-            log.info(f"Checking block {idx} attention projection...")
+            log.info(f"Checking block {idx} attention output projection...")
 
             # OLMo-core
             h = block.attention.w_out(attn)
 
             # HuggingFace
-            hf_h = hf_block.attention.o_proj(attn)
+            hf_h = hf_block.self_attn.o_proj(attn)
 
             torch.testing.assert_close(h, hf_h)
 
