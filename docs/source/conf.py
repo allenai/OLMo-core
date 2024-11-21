@@ -41,6 +41,7 @@ extensions = [
     "sphinx.ext.viewcode",
     "sphinx_copybutton",
     "sphinx_autodoc_typehints",
+    "sphinx_inline_tabs",
 ]
 
 # Tell myst-parser to assign header anchors for h1-h3.

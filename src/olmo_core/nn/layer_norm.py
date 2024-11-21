@@ -120,6 +120,14 @@ class LayerNorm(nn.Module):
             self.register_parameter("bias", None)
             self.register_parameter("weight", None)
 
+    def extra_repr(self):
+        if self.weight is not None and self.bias is not None:
+            return f"{tuple(self.weight.shape)}, bias=True, eps={self.eps}"
+        elif self.weight is not None:
+            return f"{tuple(self.weight.shape)}, eps={self.eps}"
+        else:
+            return f"eps={self.eps}"
+
     def reset_parameters(self):
         if self.weight is not None:
             torch.nn.init.ones_(self.weight)

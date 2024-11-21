@@ -16,7 +16,7 @@ from ..attention import AttentionConfig, AttentionType
 from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
-from ..rope import RoPEConfig, RoPEType
+from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from .block import TransformerBlockConfig, TransformerBlockType
 from .init import InitMethod
 from .model import (
@@ -500,6 +500,22 @@ class TransformerConfig(Config):
         )
 
     @classmethod
+    def llama3_1B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 1B Llama3-like model config.
+        """
+        return cls.llama_like(
+            d_model=2048,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 16),
+            n_heads=kwargs.pop("n_heads", 32),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            hidden_size_multiplier=1.5,
+            **kwargs,
+        )
+
+    @classmethod
     def llama3_8B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         An 8B Llama3-like model config.
@@ -574,6 +590,7 @@ class TransformerConfig(Config):
         block_name: TransformerBlockType = TransformerBlockType.default,
         dtype: DType = DType.float32,
         compile: bool = False,
+        rope_scaling: Optional[RoPEScalingConfig] = None,
         **kwargs,
     ) -> "TransformerConfig":
         """
@@ -624,7 +641,7 @@ class TransformerConfig(Config):
                 n_heads=n_heads,
                 n_kv_heads=n_kv_heads,
                 bias=False,
-                rope=RoPEConfig(name=rope_type, theta=rope_theta),
+                rope=RoPEConfig(name=rope_type, theta=rope_theta, scaling=rope_scaling),
                 qk_norm=layer_norm if qk_norm else None,
                 use_flash=use_flash,
                 dtype=dtype,

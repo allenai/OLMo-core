@@ -1,6 +1,7 @@
+import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -11,6 +12,7 @@ from .buffer_cache import BufferCache
 __all__ = [
     "RoPEType",
     "RoPEConfig",
+    "RoPEScalingConfig",
     "RotaryEmbeddingBase",
     "RotaryEmbedding",
     "FusedRotaryEmbedding",
@@ -33,6 +35,37 @@ class RoPEType(StrEnum):
 
 
 @dataclass
+class RoPEScalingConfig(Config):
+    """
+    Defines how to scale RoPE to longer sequence lengths.
+    """
+
+    factor: float = 32.0
+    low_freq_factor: float = 1.0
+    high_freq_factor: float = 4.0
+    old_context_len: int = 8192
+
+    def scale_inv_freq(
+        self,
+        inv_freq: torch.Tensor,
+    ) -> torch.Tensor:
+        low_freq_wavelen = self.old_context_len / self.low_freq_factor
+        high_freq_wavelen = self.old_context_len / self.high_freq_factor
+
+        wavelen = 2 * math.pi / inv_freq
+        # wavelen < high_freq_wavelen: do nothing
+        # wavelen > low_freq_wavelen: divide by factor
+        inv_freq = torch.where(wavelen > low_freq_wavelen, inv_freq / self.factor, inv_freq)
+        # otherwise: interpolate between the two, using a smooth factor
+        smooth_factor = (self.old_context_len / wavelen - self.low_freq_factor) / (
+            self.high_freq_factor - self.low_freq_factor
+        )
+        smoothed_inv_freq = (1 - smooth_factor) * inv_freq / self.factor + smooth_factor * inv_freq
+        is_medium_freq = ~(wavelen < high_freq_wavelen) * ~(wavelen > low_freq_wavelen)
+        return torch.where(is_medium_freq, smoothed_inv_freq, inv_freq)
+
+
+@dataclass
 class RoPEConfig(Config):
     """
     A config for conveniently building any one of the different RoPE classes.
@@ -48,6 +81,7 @@ class RoPEConfig(Config):
     """
     theta: int = 500_000
     full_precision: bool = True
+    scaling: Optional[RoPEScalingConfig] = None
 
     def build(
         self,
@@ -59,12 +93,10 @@ class RoPEConfig(Config):
 
         See :class:`RotaryEmbedding` for a description of the parameters.
         """
-        kwargs: Dict[str, Any] = dict(
-            head_shape=head_shape,
-            theta=self.theta,
-            full_precision=self.full_precision,
-            cache=cache,
-        )
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
+        kwargs.pop("name")
+        kwargs["head_shape"] = head_shape
+        kwargs["cache"] = cache
 
         if self.name == "default":
             return RotaryEmbedding(**kwargs)
@@ -88,11 +120,13 @@ class RotaryEmbeddingBase(nn.Module):
         theta: int = 500_000,
         full_precision: bool = True,
         cache: Optional[BufferCache] = None,
+        scaling: Optional[RoPEScalingConfig] = None,
     ):
         super().__init__()
         self.dim = head_shape
         self.theta = theta
         self.full_precision = full_precision
+        self.scaling = scaling
         self._cache = cache or BufferCache()
 
     @abstractmethod
@@ -141,12 +175,16 @@ class RotaryEmbedding(RotaryEmbeddingBase):
                 self.theta
                 ** (torch.arange(0, self.dim, 2, device=device, dtype=torch.float) / self.dim)
             )
+            if self.scaling is not None:
+                inv_freq = self.scaling.scale_inv_freq(inv_freq)
             seq = torch.arange(seq_len, device=device, dtype=torch.float)
             freqs = torch.einsum("i , j -> i j", seq, inv_freq)
             positions = torch.cat((freqs, freqs), dim=-1)
             pos_sin, pos_cos = positions.sin(), positions.cos()
+
         self._cache["rope_pos_sin"] = pos_sin
         self._cache["rope_pos_cos"] = pos_cos
+
         return pos_sin, pos_cos
 
     def _rotate_half(self, x: torch.Tensor) -> torch.Tensor:
@@ -231,11 +269,16 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
         theta: int = 500_000,
         full_precision: bool = True,
         cache: Optional[BufferCache] = None,
+        scaling: Optional[RoPEScalingConfig] = None,
     ):
         from flash_attn.layers.rotary import apply_rotary_emb_qkv_  # type: ignore
 
         super().__init__(
-            head_shape=head_shape, theta=theta, full_precision=full_precision, cache=cache
+            head_shape=head_shape,
+            theta=theta,
+            full_precision=full_precision,
+            cache=cache,
+            scaling=scaling,
         )
         self._apply_rotary_emb_qkv_ = apply_rotary_emb_qkv_
 
@@ -264,6 +307,8 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
                 self.theta
                 ** (torch.arange(0, self.dim, 2, device=device, dtype=torch.float) / self.dim)
             )
+            if self.scaling is not None:
+                inv_freq = self.scaling.scale_inv_freq(inv_freq)
             seq = torch.arange(seq_len, device=device, dtype=torch.float)
             freqs = torch.einsum("i , j -> i j", seq, inv_freq)
             pos_sin, pos_cos = freqs.sin(), freqs.cos()
@@ -303,6 +348,21 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
     :param theta: The theta base value to use.
     :param full_precision: Always apply RoPE in full precision regardless of the input data type.
     """
+
+    def __init__(
+        self,
+        *,
+        head_shape: int,
+        theta: int = 500_000,
+        full_precision: bool = True,
+        cache: Optional[BufferCache] = None,
+    ):
+        super().__init__(
+            head_shape=head_shape,
+            theta=theta,
+            full_precision=full_precision,
+            cache=cache,
+        )
 
     def warmup_cache(self, max_seq_len: int, device: torch.device):
         self._get_rotary_embedding(max_seq_len, device)

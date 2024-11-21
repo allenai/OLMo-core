@@ -35,6 +35,7 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
    :maxdepth: 2
    :caption: Examples
 
+   examples/huggingface.rst
    examples/llama.rst
    examples/ngpt.rst
 

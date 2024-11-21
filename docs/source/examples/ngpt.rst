@@ -1,11 +1,10 @@
-``Train an nGPT model``
-=======================
+Train an nGPT model
+===================
 
-The following snippet is the code from ``src/examples/ngpt/train.py``.
+The following snippet can be found in `src/examples/ngpt/ <https://github.com/allenai/OLMo-core/tree/main/src/examples/ngpt>`_.
 It's a script meant to be launched via ``torchrun``.
 
-``src/examples/ngpt/train.py``
-------------------------------
+.. tab:: ``train.py``
 
-.. literalinclude:: ../../../src/examples/ngpt/train.py
-   :language: py
+   .. literalinclude:: ../../../src/examples/ngpt/train.py
+      :language: py
