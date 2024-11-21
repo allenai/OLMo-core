@@ -111,8 +111,12 @@ def validate_conversion(hf_model):
         for idx, (block, hf_block) in enumerate(zip(model.blocks, hf_model.model.layers)):
             log.info(f"Checking block {idx}...")
             h = block(h)
-            hf_h = hf_block(hf_h, position_ids=position_ids)
+            hf_h, *_ = hf_block(hf_h, position_ids=position_ids, return_dict=False)
             torch.testing.assert_close(h, hf_h)
+
+        logits = model.lm_head(h)
+        hf_logits = hf_model.lm_head(hf_model.model.norm(hf_h))
+        torch.testing.assert_close(hf_logits, logits)
 
         #  logits = model(input_ids=input_ids)
         #  hf_logits, *_ = hf_model(input_ids=input_ids, return_dict=False)
