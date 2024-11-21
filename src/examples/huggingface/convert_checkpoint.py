@@ -108,10 +108,14 @@ def validate_conversion(hf_model):
         hf_h = hf_model.model.embed_tokens(input_ids)
         torch.testing.assert_close(h, hf_h)
 
+        position_embeddings = hf_model.model.rotary_emb(h, position_ids)
+
         for idx, (block, hf_block) in enumerate(zip(model.blocks, hf_model.model.layers)):
             log.info(f"Checking block {idx}...")
             h = block(h)
-            hf_h, *_ = hf_block(hf_h, position_ids=position_ids, return_dict=False)
+            hf_h, *_ = hf_block(
+                hf_h, position_ids=position_ids, position_embeddings=position_embeddings
+            )
             torch.testing.assert_close(h, hf_h)
 
         logits = model.lm_head(h)
