@@ -122,7 +122,7 @@ def validate_conversion(hf_model):
 
             log.info(f"Checking block {idx} attention...")
             h = block.attention(h)
-            hf_h = hf_block.self_attn(
+            hf_h, *_ = hf_block.self_attn(
                 hf_h, position_ids=position_ids, position_embeddings=position_embeddings
             )
             torch.testing.assert_close(h, hf_h)
