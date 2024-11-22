@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..config import Config, DType, StrEnum
+from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
 from .functional import l2_normalize
 
@@ -105,6 +106,7 @@ class FeedForward(nn.Module):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
 
+@beta_feature
 class NormalizedFeedForward(FeedForward):
     """
     An nGPT feed-forward implementation.

@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 
 from ..config import Config, DType, StrEnum
+from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
 from .functional import l2_normalize
 from .layer_norm import LayerNormConfig
@@ -106,6 +107,7 @@ class LMHead(nn.Module):
         return self.w_out(h)
 
 
+@beta_feature
 class NormalizedLMHead(LMHead):
     """
     An nGPT LM head implementation.

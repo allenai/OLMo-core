@@ -437,6 +437,7 @@ class Transformer(nn.Module):
         return flop_per_token
 
 
+@beta_feature
 class NormalizedTransformer(Transformer):
     """
     A nGPT transformer implementation, to be used with the :class:`NormalizedTransformerBlock` block

@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..config import Config, DType, StrEnum
+from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
 from .functional import l2_normalize
@@ -333,6 +334,7 @@ class Attention(nn.Module):
         return self.w_out(att)
 
 
+@beta_feature
 class NormalizedAttention(Attention):
     """
     An nGPT attention implementation.

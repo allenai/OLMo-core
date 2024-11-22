@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 
 from olmo_core.config import Config, StrEnum
+from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 
 from ..attention import AttentionConfig
@@ -206,6 +207,7 @@ class ReorderedNormTransformerBlock(TransformerBlock):
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
 
+@beta_feature
 class NormalizedTransformerBlock(TransformerBlockBase):
     """
     An nGPT block implementation to be used with the :class:`~olmo_core.nn.attention.NormalizedAttention`
