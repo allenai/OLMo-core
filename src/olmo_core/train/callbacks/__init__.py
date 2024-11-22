@@ -1,3 +1,7 @@
+"""
+Trainer :class:`Callback` implementations.
+"""
+
 from .callback import Callback, CallbackConfig
 from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy
 from .comet import CometCallback, CometNotificationSetting
@@ -44,3 +48,8 @@ __all__ = [
     "SpeedMonitorCallback",
     "WandBCallback",
 ]
+
+__doc__ += "\n"
+for name in __all__[2:]:
+    if name.endswith("Callback"):
+        __doc__ += f"- :class:`{name}`\n"

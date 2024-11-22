@@ -89,12 +89,12 @@ class TransformerType(StrEnum):
 
     default = "default"
     """
-    :class:`Transformer`
+    ➡️ :class:`Transformer`
     """
 
     normalized = "normalized"
     """
-    :class:`NormalizedTransformer`
+    ➡️ :class:`NormalizedTransformer` (nGPT)
     """
 
 
@@ -103,6 +103,7 @@ class TransformerConfig(Config):
     """
     A config for easily building transformer models.
 
+    :param name: The name of the implementation.
     :param compile: Whether to compile the model with ``torch.compile``.
     :param dp_config: Data parallel configuration.
     :param ac_config: Activation checkpointing configuration.

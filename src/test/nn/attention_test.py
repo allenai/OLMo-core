@@ -3,7 +3,12 @@ from typing import Any, Dict, Optional
 import pytest
 import torch
 
-from olmo_core.nn.attention import Attention, FusedAttention
+from olmo_core.nn.attention import (
+    Attention,
+    AttentionConfig,
+    AttentionType,
+    FusedAttention,
+)
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 
@@ -185,3 +190,23 @@ def test_attention_with_intra_document_masking():
     torch.testing.assert_close(y1_fused, y2_fused)
     torch.testing.assert_close(y1, y1_fused)
     torch.testing.assert_close(y2, y2_fused)
+
+
+@pytest.mark.parametrize(
+    "attn_config",
+    [
+        AttentionConfig(name=AttentionType.default, n_heads=8, n_kv_heads=1, bias=True),
+        AttentionConfig(name=AttentionType.default, n_heads=8, n_kv_heads=1, bias=False),
+        AttentionConfig(
+            name=AttentionType.default, n_heads=8, bias=False, qk_norm=LayerNormConfig()
+        ),
+    ],
+)
+def test_attention_buidler_config(attn_config: AttentionConfig):
+    d_model = 64
+
+    attn = attn_config.build(d_model)
+
+    # Make sure the estimated number of params matches the actual number of params.
+    n_params = sum(p.numel() for p in attn.parameters())
+    assert attn_config.num_params(d_model) == n_params

@@ -1,7 +1,3 @@
-"""
-Transformer building blocks.
-"""
-
 from .block import (
     MoEReorderedNormTransformerBlock,
     MoETransformerBlock,
@@ -27,8 +23,8 @@ from .model import (
 )
 
 __all__ = [
-    "TransformerConfig",
     "TransformerType",
+    "TransformerConfig",
     "Transformer",
     "NormalizedTransformer",
     "TransformerBlockType",

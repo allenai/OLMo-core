@@ -25,27 +25,27 @@ class TransformerBlockType(StrEnum):
 
     default = "default"
     """
-    :class:`TransformerBlock`
+    ➡️ :class:`TransformerBlock`
     """
 
     reordered_norm = "reordered_norm"
     """
-    :class:`ReorderedNormTransformerBlock`
+    ➡️ :class:`ReorderedNormTransformerBlock`
     """
 
     normalized = "normalized"
     """
-    :class:`NormalizedTransformerBlock`
+    ➡️ :class:`NormalizedTransformerBlock`
     """
 
     moe = "moe"
     """
-    :class:`MoETransformerBlock`
+    ➡️ :class:`MoETransformerBlock`
     """
 
     moe_reordered_norm = "moe"
     """
-    :class:`MoEReorderedNormTransformerBlock`
+    ➡️ :class:`MoEReorderedNormTransformerBlock`
     """
 
 

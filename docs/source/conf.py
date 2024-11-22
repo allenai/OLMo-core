@@ -129,12 +129,22 @@ logging.getLogger("sphinx.sphinx_autodoc_typehints").addFilter(ShutupSphinxAutod
 
 
 def autodoc_skip_member(app, what, name, obj, skip, options):
-    """
-    Skip documenting these Pydantic-specific attributes.
-    """
-    del app, what, obj, skip, options
-    exclude = name in {"model_config", "model_fields", "model_computed_fields"}
-    return True if exclude else None
+    import inspect
+
+    del app, name, options
+
+    module = inspect.getmodule(obj)
+    module_name = None if module is None else module.__name__
+    if (
+        what == "class"
+        and module_name is not None
+        and module_name.startswith("olmo_core.train.callbacks")
+        and module_name != "olmo_core.train.callbacks.callback"
+    ):
+        if inspect.isfunction(obj) or inspect.ismethod(obj):
+            return True
+
+    return skip
 
 
 def setup(app):

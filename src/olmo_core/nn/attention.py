@@ -25,15 +25,20 @@ __all__ = ["AttentionType", "AttentionConfig", "Attention", "FusedAttention", "N
 class AttentionType(StrEnum):
     """
     An enumeration of the different attention implementations.
-
-    - "default" ➡️ :class:`Attention`
-    - "fused" ➡️ :class:`FusedAttention`
-    - "normalized" ➡️ :class:`NormalizedAttention`
     """
 
     default = "default"
+    """
+    ➡️ :class:`Attention`
+    """
     fused = "fused"
+    """
+    ➡️ :class:`FusedAttention`
+    """
     normalized = "normalized"
+    """
+    ➡️ :class:`NormalizedAttention`
+    """
 
 
 @dataclass
@@ -41,13 +46,12 @@ class AttentionConfig(Config):
     """
     A configuration class for easily building any of the different attention modules.
 
-    See :class:`Attention` for a description of the parameters.
+    See the individual :class:`Attention` subclasses for a description of the configuration options.
     """
 
     name: AttentionType = AttentionType.default
     """
-    - "default" ➡️ :class:`Attention`
-    - "fused" ➡️ :class:`FusedAttention`
+    The name of the implementation.
     """
     n_heads: int = 16
     n_kv_heads: Optional[int] = None
@@ -60,6 +64,11 @@ class AttentionConfig(Config):
     dtype: DType = DType.float32
 
     def num_params(self, d_model: int) -> int:
+        """
+        The number of params that the attention implementation will have once built.
+
+        :param d_model: The model dimensionality.
+        """
         n_heads = self.n_heads
         n_kv_heads = self.n_kv_heads or n_heads
         head_dim = d_model // n_heads
@@ -104,7 +113,8 @@ class AttentionConfig(Config):
         """
         Build the corresponding attention module.
 
-        See :class:`Attention` for a description of the parameters.
+        :param d_model: The model dimensionality.
+        :param init_device: The device initialize the parameters on, e.g. "cpu", "meta".
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")

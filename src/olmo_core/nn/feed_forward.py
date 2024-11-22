@@ -11,7 +11,7 @@ from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
 from .functional import l2_normalize
 
-__all__ = ["FeedForwardConfig", "FeedForwardType", "FeedForward", "NormalizedFeedForward"]
+__all__ = ["FeedForwardType", "FeedForwardConfig", "FeedForward", "NormalizedFeedForward"]
 
 
 class FeedForwardType(StrEnum):
@@ -21,12 +21,12 @@ class FeedForwardType(StrEnum):
 
     default = "default"
     """
-    :class:`FeedForward`.
+    ➡️ :class:`FeedForward`
     """
 
     normalized = "normalized"
     """
-    :class:`NormalizedFeedForward`.
+    ➡️ :class:`NormalizedFeedForward`
     """
 
 
@@ -34,16 +34,22 @@ class FeedForwardType(StrEnum):
 class FeedForwardConfig(Config):
     """
     A config for building :class:`FeedForward` modules.
-
-    See :class:`FeedForward` for parameter descriptions.
     """
 
     hidden_size: int
     name: FeedForwardType = FeedForwardType.default
+    """
+    The name of the implementation.
+    """
     bias: Optional[bool] = None
     dtype: DType = DType.float32
 
     def num_params(self, d_model: int) -> int:
+        """
+        The number of params that the module will have once built.
+
+        :param d_model: The model dimensionality.
+        """
         bias = self.bias if self.bias is not None else self.name != FeedForwardType.normalized
 
         params = 0
@@ -58,7 +64,13 @@ class FeedForwardConfig(Config):
 
         return params
 
-    def build(self, d_model: int, init_device: str = "cpu") -> "FeedForward":
+    def build(self, d_model: int, *, init_device: str = "cpu") -> "FeedForward":
+        """
+        Build the corresponding feed-forward module.
+
+        :param d_model: The model dimensionality.
+        :param init_device: The device initialize the parameters on, e.g. "cpu", "meta".
+        """
         kwargs = self.as_dict(exclude_none=True)
         kwargs.pop("name")
         kwargs.update(d_model=d_model, init_device=init_device, dtype=kwargs.pop("dtype").as_pt())

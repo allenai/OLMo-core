@@ -24,15 +24,20 @@ __all__ = [
 class RoPEType(StrEnum):
     """
     An enumeration of the different RoPE implementations.
-
-    - "default" ➡️ :class:`RotaryEmbedding`
-    - "fused" ➡️ :class:`FusedRotaryEmbedding`
-    - "complex" ➡️ :class:`ComplexRotaryEmbedding`
     """
 
     default = "default"
+    """
+    ➡️ :class:`RotaryEmbedding`
+    """
     fused = "fused"
+    """
+    ➡️ :class:`FusedRotaryEmbedding`
+    """
     complex = "complex"
+    """
+    ➡️ :class:`ComplexRotaryEmbedding`
+    """
 
 
 @dataclass
@@ -69,16 +74,15 @@ class RoPEScalingConfig(Config):
 @dataclass
 class RoPEConfig(Config):
     """
-    A config for conveniently building any one of the different RoPE classes.
+    A config for conveniently building any of the different RoPE classes.
 
-    See :class:`RotaryEmbedding` for a description of the parameters.
+    See the individual :class:`RotaryEmbedding` subclasses for a description of the
+    configuration options.
     """
 
     name: RoPEType = RoPEType.default
     """
-    - "default" ➡️ :class:`RotaryEmbedding`
-    - "fused" ➡️ :class:`FusedRotaryEmbedding`
-    - "complex" ➡️ :class:`ComplexRotaryEmbedding`
+    The name of the implementation.
     """
     theta: int = 500_000
     full_precision: bool = True
@@ -86,17 +90,17 @@ class RoPEConfig(Config):
 
     def build(
         self,
-        head_shape: int,
+        head_size: int,
         cache: Optional[BufferCache] = None,
     ) -> "RotaryEmbeddingBase":
         """
         Construct the corresponding RoPE class.
 
-        See :class:`RotaryEmbedding` for a description of the parameters.
+        :param head_size: The size of the attention heads.
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
-        kwargs.update(head_shape=head_shape, cache=cache)
+        kwargs.update(head_size=head_size, cache=cache)
 
         try:
             if self.name == "default":
@@ -121,14 +125,14 @@ class RotaryEmbeddingBase(nn.Module):
     def __init__(
         self,
         *,
-        head_shape: int,
+        head_size: int,
         theta: int = 500_000,
         full_precision: bool = True,
         cache: Optional[BufferCache] = None,
         scaling: Optional[RoPEScalingConfig] = None,
     ):
         super().__init__()
-        self.dim = head_shape
+        self.dim = head_size
         self.theta = theta
         self.full_precision = full_precision
         self.scaling = scaling
@@ -150,9 +154,10 @@ class RotaryEmbedding(RotaryEmbeddingBase):
         - :class:`ComplexRotaryEmbedding`
         - :class:`FusedRotaryEmbedding`
 
-    :param head_shape: The dimensionality of the attention heads.
+    :param head_size: The size of the attention heads.
     :param theta: The theta base value to use.
     :param full_precision: Always apply RoPE in full precision regardless of the input data type.
+    :param scaling: The scaling config.
     """
 
     def warmup_cache(self, max_seq_len: int, device: torch.device):
@@ -209,11 +214,11 @@ class RotaryEmbedding(RotaryEmbeddingBase):
         """
         Apply RoPE to query (``q``) and key (``k``) matrices.
 
-        :param q: The query matrix of shape ``(batch_size, num_heads, seq_len, head_shape)``
-            if ``head_first`` (the default) otherwise ``(batch_size, seq_len, num_heads, head_shape)``.
-        :param k: The key matrix of shape ``(batch_size, num_kv_heads, seq_len, head_shape)``
+        :param q: The query matrix of shape ``(batch_size, num_heads, seq_len, head_size)``
+            if ``head_first`` (the default) otherwise ``(batch_size, seq_len, num_heads, head_size)``.
+        :param k: The key matrix of shape ``(batch_size, num_kv_heads, seq_len, head_size)``
             if ``head_first`` (the default) otherwise
-            ``(batch_size, seq_len, num_kv_heads, head_shape)``.
+            ``(batch_size, seq_len, num_kv_heads, head_size)``.
         :param head_first: If the head dim comes before the sequence dim.
 
         :returns: The query and key matrices after RoPE has been applied.
@@ -231,7 +236,7 @@ class RotaryEmbedding(RotaryEmbeddingBase):
             q_, k_ = q, k
 
         with torch.autocast(q.device.type, enabled=False):
-            # shape: (T, head_shape), (T, head_shape)
+            # shape: (T, head_size), (T, head_size)
             pos_sin, pos_cos = self._get_rotary_embedding(k_len, q_.device)
             pos_sin, pos_cos = pos_sin.type_as(q_), pos_cos.type_as(q_)
             if head_first:
@@ -262,15 +267,16 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
     .. warning::
         This requires `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ to be installed.
 
-    :param head_shape: The dimensionality of the attention heads.
+    :param head_size: The size of the attention heads.
     :param theta: The theta base value to use.
     :param full_precision: Always apply RoPE in full precision regardless of the input data type.
+    :param scaling: The scaling config.
     """
 
     def __init__(
         self,
         *,
-        head_shape: int,
+        head_size: int,
         theta: int = 500_000,
         full_precision: bool = True,
         cache: Optional[BufferCache] = None,
@@ -279,7 +285,7 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
         from flash_attn.layers.rotary import apply_rotary_emb_qkv_  # type: ignore
 
         super().__init__(
-            head_shape=head_shape,
+            head_size=head_size,
             theta=theta,
             full_precision=full_precision,
             cache=cache,
@@ -330,7 +336,7 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
             is not in full precision.
 
         :param qkv: The query, key, and value matrix of shape
-            ``(batch_size, seq_len, 3, n_heads, head_shape)``.
+            ``(batch_size, seq_len, 3, n_heads, head_size)``.
         """
         if self.full_precision:
             qkv_ = qkv.float()
@@ -349,7 +355,7 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
     """
     An implementation of `RoPE <https://arxiv.org/abs/2104.09864>`_ as a rotation in complex space.
 
-    :param head_shape: The dimensionality of the attention heads.
+    :param head_size: The dimensionality of the attention heads.
     :param theta: The theta base value to use.
     :param full_precision: Always apply RoPE in full precision regardless of the input data type.
     """
@@ -357,13 +363,13 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
     def __init__(
         self,
         *,
-        head_shape: int,
+        head_size: int,
         theta: int = 500_000,
         full_precision: bool = True,
         cache: Optional[BufferCache] = None,
     ):
         super().__init__(
-            head_shape=head_shape,
+            head_size=head_size,
             theta=theta,
             full_precision=full_precision,
             cache=cache,
@@ -406,11 +412,11 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
         """
         Apply RoPE to query (``q``) and key (``k``) matrices.
 
-        :param q: The query matrix of shape ``(batch_size, num_heads, seq_len, head_shape)``
-            if ``head_first`` (the default) otherwise ``(batch_size, seq_len, num_heads, head_shape)``.
-        :param k: The key matrix of shape ``(batch_size, num_kv_heads, seq_len, head_shape)``
+        :param q: The query matrix of shape ``(batch_size, num_heads, seq_len, head_size)``
+            if ``head_first`` (the default) otherwise ``(batch_size, seq_len, num_heads, head_size)``.
+        :param k: The key matrix of shape ``(batch_size, num_kv_heads, seq_len, head_size)``
             if ``head_first`` (the default) otherwise
-            ``(batch_size, seq_len, num_kv_heads, head_shape)``.
+            ``(batch_size, seq_len, num_kv_heads, head_size)``.
         :param head_first: If the head dim comes before the sequence dim.
 
         :returns: The query and key matrices after RoPE has been applied.

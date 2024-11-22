@@ -11,37 +11,45 @@ from ..exceptions import OLMoConfigurationError
 from .functional import l2_normalize
 from .layer_norm import LayerNormConfig
 
-__all__ = ["LMHeadConfig", "LMHeadType", "LMHead", "NormalizedLMHead"]
+__all__ = ["LMHeadType", "LMHeadConfig", "LMHead", "NormalizedLMHead"]
 
 
 class LMHeadType(StrEnum):
     """
-    An enumeration of LM head types.
+    An enumeration of the different LM head types.
     """
 
     default = "default"
     """
-    :class:`LMHead`
+    ➡️ :class:`LMHead`
     """
 
     normalized = "normalized"
     """
-    :class:`NormalizedLMHead`
+    ➡️ :class:`NormalizedLMHead`
     """
 
 
 @dataclass
 class LMHeadConfig(Config):
     """
-    A configuration class for building an :class:`LMHead`.
+    A configuration class for building any of the :class:`LMHead` implementations.
+
+    See the :class:`LMHead` subclasses to learn which fields are valid for each implementation.
     """
 
     name: LMHeadType = LMHeadType.default
+    """
+    The name of the implementation.
+    """
     layer_norm: Optional[LayerNormConfig] = None
     bias: Optional[bool] = None
     dtype: DType = DType.float32
 
     def num_params(self, d_model: int, vocab_size: int) -> int:
+        """
+        The number of parameters in the module once built.
+        """
         bias = self.bias if self.bias is not None else self.name != LMHeadType.normalized
 
         params = 0
@@ -59,6 +67,12 @@ class LMHeadConfig(Config):
         return params
 
     def build(self, *, d_model: int, vocab_size: int, init_device: str = "cpu") -> "LMHead":
+        """
+        Construct the corresponding LM head implementation.
+
+        :param d_model: The model dimensionality.
+        :param init_device: The device initialize the parameters on, e.g. "cpu", "meta".
+        """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
         kwargs.update(
@@ -83,7 +97,7 @@ class LMHeadConfig(Config):
 
 class LMHead(nn.Module):
     """
-    The default LM head implementation.
+    The default language modeling head implementation.
     """
 
     def __init__(
@@ -103,6 +117,9 @@ class LMHead(nn.Module):
         self.w_out = nn.Linear(d_model, vocab_size, bias=bias, dtype=dtype, device=init_device)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Apply the LM head to the hidden state ``x``, returning the logits.
+        """
         h = self.norm(x) if self.norm is not None else x
         return self.w_out(h)
 
@@ -136,6 +153,9 @@ class NormalizedLMHead(LMHead):
         )
 
     def reset_parameters(self):
+        """
+        Reset the scaling parameter.
+        """
         nn.init.ones_(self.sz)
         self.sz.mul_(self.sz_init_scaling)
 

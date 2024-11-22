@@ -8,8 +8,9 @@ Features
 - Supports any type of parallel strategy.
 - Async metric logging, with support for custom metrics, even those that need to be reduced across
   ranks.
-- Flexible callback system for extending/modifying the training loop behavior.
-- A powerful set of built-in callbacks.
+- Flexible :class:`~olmo_core.train.callbacks.Callback` system for extending/modifying the training
+  loop behavior.
+- A powerful set of built-in callbacks (:mod:`olmo_core.train.callbacks`).
 
 Overview
 --------

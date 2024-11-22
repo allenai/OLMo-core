@@ -15,16 +15,24 @@ __all__ = ["LayerNormType", "LayerNormConfig", "LayerNorm", "RMSNorm", "FusedRMS
 class LayerNormType(StrEnum):
     """
     An enumeration of the different layer norm implementations.
-
-    - "default" ➡️ :class:`LayerNorm`
-    - "rms" ➡️ :class:`RMSNorm`
-    - "fused_rms" ➡️ :class:`FusedRMSNorm`
     """
 
     default = "default"
+    """
+    ➡️ :class:`LayerNorm`
+    """
     rms = "rms"
+    """
+    ➡️ :class:`RMSNorm`
+    """
     fused_rms = "fused_rms"
+    """
+    ➡️ :class:`FusedRMSNorm`
+    """
     l2_norm = "l2_norm"
+    """
+    ➡️ :class:`L2Norm`
+    """
 
 
 @dataclass
@@ -32,14 +40,12 @@ class LayerNormConfig(Config):
     """
     A config for conveniently building any one of the different layer norm classes.
 
-    See :class:`LayerNorm` for a description of the parameters.
+    See the :class:`LayerNorm` subclasses to learn which fields are valid for each implementation.
     """
 
     name: LayerNormType = LayerNormType.default
     """
-    - "default" ➡️ :class:`LayerNorm`
-    - "rms" ➡️ :class:`RMSNorm`
-    - "fused_rms" ➡️ :class:`FusedRMSNorm`
+    The name of the implementation.
     """
     eps: Optional[float] = None
     elementwise_affine: Optional[bool] = None
@@ -48,6 +54,11 @@ class LayerNormConfig(Config):
     dtype: Optional[DType] = None
 
     def num_params(self, size: int) -> int:
+        """
+        The number of parameters in the module once built.
+
+        :param size: The size of the input along the dimension to be normalized.
+        """
         elementwise_affine = (
             self.elementwise_affine
             if self.elementwise_affine is not None
@@ -65,7 +76,8 @@ class LayerNormConfig(Config):
         """
         Construct the corresponding LayerNorm class.
 
-        See :class:`LayerNorm` for a description of the parameters.
+        :param size: The size of the input along the dimension to be normalized.
+        :param init_device: The device initialize the parameters on, e.g. "cpu", "meta".
         """
         kwargs = self.as_dict(exclude_none=True)
         kwargs.pop("name")
@@ -93,11 +105,7 @@ class LayerNorm(nn.Module):
     """
     Layer normalization.
 
-    .. seealso::
-        - :class:`RMSNorm`
-        - :class:`FusedRMSNorm`
-
-    :param size: The hidden size / dimensionality of the input.
+    :param size: The size of the input along the dimension to be normalized.
     :param eps: The epsilon used for numerical stability.
     :param elementwise_affine: Whether to include an element-wise affine transform.
     :param bias: Whether the element-wise affine should include an element-wise bias.
@@ -178,16 +186,12 @@ class LayerNorm(nn.Module):
 
 class RMSNorm(LayerNorm):
     """
-    RMS norm, a simplified layer norm implementation.
-
-    .. seealso::
-        - :class:`LayerNorm`
-        - :class:`FusedRMSNorm`
+    RMSNorm, a simplified layer norm implementation.
     """
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Apply RMS norm.
+        Apply RMSNorm.
 
         :param x: The input.
         """
@@ -270,6 +274,8 @@ class L2Norm(LayerNorm):
     """
     A variant of layer norm that just normalizes the last dimension of the input by its L2 norm,
     as done in nGPT.
+
+    :param size: The size of the input along the dimension to be normalized.
     """
 
     def __init__(

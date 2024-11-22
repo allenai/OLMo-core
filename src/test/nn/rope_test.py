@@ -13,7 +13,7 @@ from ..utils import DEVICES, requires_flash_attn, requires_gpu
 @pytest.mark.parametrize("device", DEVICES)
 def test_rope_head_first_vs_seq_first(device):
     B, T, d_model, n_heads = 2, 12, 16, 4
-    rope = RotaryEmbedding(head_shape=d_model // n_heads)
+    rope = RotaryEmbedding(head_size=d_model // n_heads)
 
     with torch.no_grad():
         q = torch.rand(B, n_heads, T, d_model // n_heads, device=device)
@@ -39,7 +39,7 @@ def test_rope_head_first_vs_seq_first(device):
 )
 def test_rope_with_past_key_values(device, head_first):
     B, T, d_model, n_heads = 2, 12, 16, 4
-    rope = RotaryEmbedding(head_shape=d_model // n_heads)
+    rope = RotaryEmbedding(head_size=d_model // n_heads)
 
     with torch.no_grad():
         q = torch.rand(B, n_heads, T, d_model // n_heads, device=device)
@@ -68,8 +68,8 @@ def test_rope_with_past_key_values(device, head_first):
 )
 def test_fused_rope(dtype):
     B, T, d_model, n_heads = 2, 12, 32, 4
-    fused_rope = FusedRotaryEmbedding(head_shape=d_model // n_heads)
-    rope = RotaryEmbedding(head_shape=d_model // n_heads)
+    fused_rope = FusedRotaryEmbedding(head_size=d_model // n_heads)
+    rope = RotaryEmbedding(head_size=d_model // n_heads)
 
     with torch.no_grad(), torch.autocast("cuda", dtype=dtype, enabled=dtype != torch.float32):
         qkv = torch.rand(B, T, 3, n_heads, d_model // n_heads, device="cuda", dtype=dtype)
@@ -84,7 +84,7 @@ def test_fused_rope(dtype):
 @pytest.mark.parametrize("device", DEVICES)
 def test_complex_rope_head_first_vs_seq_first(device):
     B, T, d_model, n_heads = 2, 12, 16, 4
-    rope = ComplexRotaryEmbedding(head_shape=d_model // n_heads)
+    rope = ComplexRotaryEmbedding(head_size=d_model // n_heads)
 
     with torch.no_grad():
         q = torch.rand(B, n_heads, T, d_model // n_heads, device=device)
@@ -110,7 +110,7 @@ def test_complex_rope_head_first_vs_seq_first(device):
 )
 def test_complex_rope_with_past_key_values(device, head_first):
     B, T, d_model, n_heads = 2, 12, 16, 4
-    rope = ComplexRotaryEmbedding(head_shape=d_model // n_heads)
+    rope = ComplexRotaryEmbedding(head_size=d_model // n_heads)
 
     with torch.no_grad():
         q = torch.rand(B, n_heads, T, d_model // n_heads, device=device)
