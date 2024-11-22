@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..config import Config, DType, StrEnum
+from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
 from .functional import l2_normalize
@@ -50,13 +51,48 @@ class AttentionConfig(Config):
     """
     n_heads: int = 16
     n_kv_heads: Optional[int] = None
-    bias: bool = True
+    bias: Optional[bool] = None
     rope: Optional[RoPEConfig] = None
     clip_qkv: Optional[float] = None
     qk_norm: Optional[LayerNormConfig] = None
-    dropout: float = 0.0
+    dropout: Optional[float] = None
     use_flash: Optional[bool] = None
     dtype: DType = DType.float32
+
+    def num_params(self, d_model: int) -> int:
+        n_heads = self.n_heads
+        n_kv_heads = self.n_kv_heads or n_heads
+        head_dim = d_model // n_heads
+        bias = self.bias if self.bias is not None else self.name != AttentionType.normalized
+
+        params = 0
+
+        # Block attention Q projection.
+        params += d_model * d_model
+        if bias:
+            params += d_model
+
+        # Block attention KV projections.
+        params += 2 * d_model * n_kv_heads * head_dim
+        if bias:
+            params += 2 * n_kv_heads * head_dim
+
+        # Block attention QK norm.
+        if self.qk_norm is not None:
+            params += 2 * self.qk_norm.num_params(d_model)
+
+        # Block attention out.
+        params += d_model * d_model
+        if bias:
+            params += d_model
+
+        # Block QK scaling factors.
+        if self.name == AttentionType.normalized:
+            head_dim = d_model // n_heads
+            params += n_heads * head_dim
+            params += n_kv_heads * head_dim
+
+        return params
 
     def build(
         self,
@@ -72,29 +108,27 @@ class AttentionConfig(Config):
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
-        kwargs["dtype"] = kwargs["dtype"].as_pt()
         kwargs.update(
-            dict(
-                d_model=d_model,
-                init_device=init_device,
-                cache=cache,
-            )
+            dtype=kwargs.pop("dtype").as_pt(),
+            d_model=d_model,
+            init_device=init_device,
+            cache=cache,
         )
 
-        if self.name == "default":
-            return Attention(**kwargs)
-        elif self.name == "fused":
-            kwargs.pop("use_flash", None)
-            return FusedAttention(**kwargs)
-        elif self.name == "normalized":
-            bias = kwargs.pop("bias")
-            if bias:
-                raise OLMoConfigurationError(f"'bias' is invalid for '{self.name}' attention")
-            if kwargs.pop("dropout") > 0.0:
-                raise OLMoConfigurationError(f"'dropout' is invalid for '{self.name}' attention")
-            return NormalizedAttention(**kwargs)
-        else:
-            raise NotImplementedError(self.name)
+        try:
+            if self.name == "default":
+                return Attention(**kwargs)
+            elif self.name == "fused":
+                kwargs.pop("use_flash", None)
+                return FusedAttention(**kwargs)
+            elif self.name == "normalized":
+                return NormalizedAttention(**kwargs)
+            else:
+                raise NotImplementedError(self.name)
+        except TypeError as e:
+            raise OLMoConfigurationError(
+                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+            ) from e
 
 
 class Attention(nn.Module):
@@ -300,6 +334,7 @@ class Attention(nn.Module):
         return self.w_out(att)
 
 
+@beta_feature
 class NormalizedAttention(Attention):
     """
     An nGPT attention implementation.
@@ -312,6 +347,7 @@ class NormalizedAttention(Attention):
         n_heads: int,
         n_kv_heads: Optional[int] = None,
         rope: Optional[RoPEConfig] = None,
+        qk_norm: Optional[LayerNormConfig] = None,
         use_flash: bool = False,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
@@ -322,6 +358,7 @@ class NormalizedAttention(Attention):
             n_heads=n_heads,
             n_kv_heads=n_kv_heads,
             rope=rope,
+            qk_norm=qk_norm,
             use_flash=use_flash,
             bias=False,
             dtype=dtype,
@@ -364,11 +401,15 @@ class NormalizedAttention(Attention):
         #        (batch_size, seq_len, n_kv_heads * head_dim)
         q, k, v = self.w_q(x), self.w_k(x), self.w_v(x)
 
+        if self.q_norm is not None and self.k_norm is not None:
+            q = self.q_norm(q)
+            k = self.k_norm(k)
+
         sq = (self.sq * (self.sq_init_value / self.sq_init_scaling)).view(1, 1, -1)
-        q = sq * l2_normalize(q)
+        q = sq * q
 
         sk = (self.sk * (self.sk_init_value / self.sk_init_scaling)).view(1, 1, -1)
-        k = sk * l2_normalize(k)
+        k = sk * k
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         q = q.view(B, T, self.n_heads, self.head_dim)

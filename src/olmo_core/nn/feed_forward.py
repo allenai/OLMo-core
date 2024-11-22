@@ -1,11 +1,13 @@
 import math
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from ..config import Config, DType, StrEnum
+from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
 from .functional import l2_normalize
 
@@ -38,27 +40,40 @@ class FeedForwardConfig(Config):
 
     hidden_size: int
     name: FeedForwardType = FeedForwardType.default
-    bias: bool = True
+    bias: Optional[bool] = None
     dtype: DType = DType.float32
 
+    def num_params(self, d_model: int) -> int:
+        bias = self.bias if self.bias is not None else self.name != FeedForwardType.normalized
+
+        params = 0
+
+        params += 3 * d_model * self.hidden_size
+        if bias:
+            params += 2 * self.hidden_size + d_model
+
+        # w1 + w3 scaling factors
+        if self.name == FeedForwardType.normalized:
+            params += 2 * self.hidden_size
+
+        return params
+
     def build(self, d_model: int, init_device: str = "cpu") -> "FeedForward":
-        if self.name == FeedForwardType.default:
-            return FeedForward(
-                d_model=d_model,
-                hidden_size=self.hidden_size,
-                bias=self.bias,
-                dtype=self.dtype.as_pt(),
-                init_device=init_device,
-            )
-        else:
-            if self.bias:
-                raise OLMoConfigurationError(f"'bias' is invalid for '{self.name}' feed-forward")
-            return NormalizedFeedForward(
-                d_model=d_model,
-                hidden_size=self.hidden_size,
-                dtype=self.dtype.as_pt(),
-                init_device=init_device,
-            )
+        kwargs = self.as_dict(exclude_none=True)
+        kwargs.pop("name")
+        kwargs.update(d_model=d_model, init_device=init_device, dtype=kwargs.pop("dtype").as_pt())
+
+        try:
+            if self.name == FeedForwardType.default:
+                return FeedForward(**kwargs)
+            elif self.name == FeedForwardType.normalized:
+                return NormalizedFeedForward(**kwargs)
+            else:
+                raise NotImplementedError(self.name)
+        except TypeError as e:
+            raise OLMoConfigurationError(
+                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+            ) from e
 
 
 class FeedForward(nn.Module):
@@ -91,6 +106,7 @@ class FeedForward(nn.Module):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
 
+@beta_feature
 class NormalizedFeedForward(FeedForward):
     """
     An nGPT feed-forward implementation.

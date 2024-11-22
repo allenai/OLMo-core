@@ -228,14 +228,6 @@ class TransformerConfig(Config):
         The total number of parameters that a model from this config would have.
         """
 
-        def layer_norm_params(layer_norm: LayerNormConfig) -> int:
-            ln_params = 0
-            if layer_norm.elementwise_affine:
-                ln_params += self.d_model
-                if layer_norm.bias:
-                    ln_params += self.d_model
-            return ln_params
-
         num_params = 0
 
         # Embedding params.
@@ -243,77 +235,32 @@ class TransformerConfig(Config):
 
         block_params = 0
 
-        n_heads = self.block.attention.n_heads
-        n_kv_heads = self.block.attention.n_kv_heads or n_heads
-        head_dim = self.d_model // n_heads
-
         # Block attn and MLP scaling factors.
         if self.block.name == TransformerBlockType.normalized:
             block_params += 2 * self.d_model
 
-        # Block attention Q projection.
-        block_params += self.d_model * self.d_model
-        if self.block.attention.bias:
-            block_params += self.d_model
-
-        # Block attention KV projections.
-        block_params += 2 * self.d_model * n_kv_heads * head_dim
-        if self.block.attention.bias:
-            block_params += 2 * n_kv_heads * head_dim
-
-        # Block attention QK norm.
-        if self.block.attention.qk_norm is not None:
-            block_params += 2 * layer_norm_params(self.block.attention.qk_norm)
-
-        # Block attention out.
-        block_params += self.d_model * self.d_model
-        if self.block.attention.bias:
-            block_params += self.d_model
+        # Block attention params.
+        block_params += self.block.attention.num_params(self.d_model)
 
         # Block attention norm.
         if self.block.layer_norm is not None:
-            block_params += layer_norm_params(self.block.layer_norm)
-
-        # Block QK scaling factors.
-        if self.block.attention.name == AttentionType.normalized:
-            head_dim = self.d_model // self.block.attention.n_heads
-            block_params += self.block.attention.n_heads * head_dim
-            block_params += (
-                self.block.attention.n_kv_heads or self.block.attention.n_heads
-            ) * head_dim
+            block_params += self.block.layer_norm.num_params(self.d_model)
 
         # Block feed forward.
-        if "moe" not in self.block.name:
-            assert self.block.feed_forward is not None
-            block_params += 3 * self.d_model * self.block.feed_forward.hidden_size
-            if self.block.feed_forward.bias:
-                block_params += 2 * self.block.feed_forward.hidden_size + self.d_model
-            # w1 + w3 scaling factors
-            if self.block.feed_forward.name == FeedForwardType.normalized:
-                block_params += 2 * self.block.feed_forward.hidden_size
-        else:
-            assert self.block.feed_forward_moe is not None
+        if self.block.feed_forward is not None:
+            block_params += self.block.feed_forward.num_params(self.d_model)
+        elif self.block.feed_forward_moe is not None:
             block_params += self.block.feed_forward_moe.num_params(self.d_model)
 
         # Block feed forward norm.
         if self.block.layer_norm is not None:
-            block_params += layer_norm_params(self.block.layer_norm)
+            block_params += self.block.layer_norm.num_params(self.d_model)
 
         # All block params.
         num_params += self.n_layers * block_params
 
-        # Final layer norm.
-        if self.lm_head.layer_norm is not None:
-            num_params += layer_norm_params(self.lm_head.layer_norm)
-
-        # Final FF out.
-        num_params += self.d_model * self.vocab_size
-        if self.lm_head.bias:
-            num_params += self.vocab_size
-
-        # Final scaling factor.
-        if self.name == TransformerType.normalized:
-            num_params += self.vocab_size
+        # LM head.
+        num_params += self.lm_head.num_params(self.d_model, self.vocab_size)
 
         return num_params
 
@@ -670,6 +617,7 @@ class TransformerConfig(Config):
         n_layers: int,
         n_heads: int,
         n_kv_heads: Optional[int] = None,
+        qk_norm: bool = True,
         rope_theta: int = 500_000,
         hidden_size_multiple_of: int = 256,
         hidden_size_multiplier: Optional[float] = None,
@@ -699,15 +647,14 @@ class TransformerConfig(Config):
                 name=AttentionType.normalized,
                 n_heads=n_heads,
                 n_kv_heads=n_kv_heads,
-                bias=False,
+                qk_norm=None if not qk_norm else LayerNormConfig(name=LayerNormType.l2_norm),
                 rope=RoPEConfig(name=RoPEType.default, theta=rope_theta),
                 use_flash=use_flash,
                 dtype=dtype,
             ),
             feed_forward=FeedForwardConfig(
-                name=FeedForwardType.normalized, hidden_size=hidden_size, bias=False, dtype=dtype
+                name=FeedForwardType.normalized, hidden_size=hidden_size, dtype=dtype
             ),
-            layer_norm=None,
         )
 
         return cls(
@@ -716,9 +663,7 @@ class TransformerConfig(Config):
             vocab_size=vocab_size,
             n_layers=n_layers,
             block=block,
-            lm_head=LMHeadConfig(
-                name=LMHeadType.normalized, layer_norm=None, bias=False, dtype=dtype
-            ),
+            lm_head=LMHeadConfig(name=LMHeadType.normalized, dtype=dtype),
             dtype=dtype,
             compile=compile,
             init_method=InitMethod.normalized,

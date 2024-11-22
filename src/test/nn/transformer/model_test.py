@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 import torch
 import torch.nn as nn
@@ -6,6 +8,8 @@ from olmo_core.nn.layer_norm import LayerNorm
 from olmo_core.nn.transformer import TransformerConfig
 
 from ...utils import GPU_MARKS
+
+log = logging.getLogger(__name__)
 
 
 @pytest.mark.parametrize(
@@ -17,6 +21,7 @@ from ...utils import GPU_MARKS
 )
 def test_small_llama2_config_builder(init_device, device):
     config = TransformerConfig.llama2_271M(vocab_size=50257)
+    log.info(config)
     model = config.build(init_device=init_device, device=torch.device(device))
 
     # Make sure num params estimate is correct.
@@ -60,3 +65,19 @@ def test_small_ngpt_config_builder(init_device, device):
     # Make sure block_idx is set correctly.
     assert model.blocks[0].block_idx == 0
     assert model.blocks[-1].block_idx == len(model.blocks) - 1
+
+    # Make sure all weights are normalized in the embedding dimension.
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear):
+            assert module.bias is None
+            w = module.weight
+            if w.shape[1] == config.d_model and "attention.w_out" not in name:
+                pass
+            elif w.shape[0] == config.d_model:
+                w = w.transpose(0, 1)
+            else:
+                continue
+
+            log.info(f"Checking norm for '{name}'")
+            norm = torch.linalg.vector_norm(w, dim=1)
+            torch.testing.assert_close(norm, torch.ones_like(norm))

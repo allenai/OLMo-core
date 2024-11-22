@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 
 from ..config import Config, DType, StrEnum
+from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
 from .functional import l2_normalize
 from .layer_norm import LayerNormConfig
@@ -37,32 +38,47 @@ class LMHeadConfig(Config):
 
     name: LMHeadType = LMHeadType.default
     layer_norm: Optional[LayerNormConfig] = None
-    bias: bool = True
+    bias: Optional[bool] = None
     dtype: DType = DType.float32
 
+    def num_params(self, d_model: int, vocab_size: int) -> int:
+        bias = self.bias if self.bias is not None else self.name != LMHeadType.normalized
+
+        params = 0
+        if self.layer_norm is not None:
+            params += self.layer_norm.num_params(d_model)
+
+        params += d_model * vocab_size
+        if bias:
+            params += vocab_size
+
+        # Final scaling factor.
+        if self.name == LMHeadType.normalized:
+            params += vocab_size
+
+        return params
+
     def build(self, *, d_model: int, vocab_size: int, init_device: str = "cpu") -> "LMHead":
-        if self.name == LMHeadType.default:
-            return LMHead(
-                d_model=d_model,
-                vocab_size=vocab_size,
-                layer_norm=self.layer_norm,
-                dtype=self.dtype.as_pt(),
-                bias=self.bias,
-                init_device=init_device,
-            )
-        elif self.name == LMHeadType.normalized:
-            if self.bias:
-                raise OLMoConfigurationError(f"'bias' is invalid for '{self.name}' LM head")
-            if self.layer_norm is not None:
-                raise OLMoConfigurationError(f"'layer_norm' is invalid for '{self.name}' LM head")
-            return NormalizedLMHead(
-                d_model=d_model,
-                vocab_size=vocab_size,
-                dtype=self.dtype.as_pt(),
-                init_device=init_device,
-            )
-        else:
-            raise NotImplementedError(self.name)
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
+        kwargs.pop("name")
+        kwargs.update(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            init_device=init_device,
+            dtype=kwargs.pop("dtype").as_pt(),
+        )
+
+        try:
+            if self.name == LMHeadType.default:
+                return LMHead(**kwargs)
+            elif self.name == LMHeadType.normalized:
+                return NormalizedLMHead(**kwargs)
+            else:
+                raise NotImplementedError(self.name)
+        except TypeError as e:
+            raise OLMoConfigurationError(
+                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+            ) from e
 
 
 class LMHead(nn.Module):
@@ -75,7 +91,7 @@ class LMHead(nn.Module):
         *,
         d_model: int,
         vocab_size: int,
-        layer_norm: Optional[LayerNormConfig],
+        layer_norm: Optional[LayerNormConfig] = None,
         dtype: torch.dtype = torch.float32,
         bias: bool = True,
         init_device: str = "cpu",
@@ -91,6 +107,7 @@ class LMHead(nn.Module):
         return self.w_out(h)
 
 
+@beta_feature
 class NormalizedLMHead(LMHead):
     """
     An nGPT LM head implementation.

@@ -1,7 +1,14 @@
 import pytest
 import torch
 
-from olmo_core.nn.layer_norm import FusedRMSNorm, RMSNorm
+from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.layer_norm import (
+    FusedRMSNorm,
+    L2Norm,
+    LayerNormConfig,
+    LayerNormType,
+    RMSNorm,
+)
 
 from ..utils import requires_flash_attn, requires_gpu
 
@@ -21,3 +28,11 @@ def test_fused_rms_norm(bias, dtype):
     y1 = norm(x)
     y2 = norm_fused(x)
     torch.testing.assert_close(y1, y2)
+
+
+def test_layer_norm_builder_config():
+    norm = LayerNormConfig(name=LayerNormType.l2_norm).build(size=1024)
+    assert isinstance(norm, L2Norm)
+
+    with pytest.raises(OLMoConfigurationError):
+        LayerNormConfig(name=LayerNormType.l2_norm, elementwise_affine=True).build(size=1024)

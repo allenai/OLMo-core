@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 
 from ..config import Config, StrEnum
+from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
 
 __all__ = [
@@ -95,17 +96,21 @@ class RoPEConfig(Config):
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
-        kwargs["head_shape"] = head_shape
-        kwargs["cache"] = cache
+        kwargs.update(head_shape=head_shape, cache=cache)
 
-        if self.name == "default":
-            return RotaryEmbedding(**kwargs)
-        elif self.name == "fused":
-            return FusedRotaryEmbedding(**kwargs)
-        elif self.name == "complex":
-            return ComplexRotaryEmbedding(**kwargs)
-        else:
-            raise NotImplementedError(self.name)
+        try:
+            if self.name == "default":
+                return RotaryEmbedding(**kwargs)
+            elif self.name == "fused":
+                return FusedRotaryEmbedding(**kwargs)
+            elif self.name == "complex":
+                return ComplexRotaryEmbedding(**kwargs)
+            else:
+                raise NotImplementedError(self.name)
+        except TypeError as e:
+            raise OLMoConfigurationError(
+                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+            ) from e
 
 
 class RotaryEmbeddingBase(nn.Module):

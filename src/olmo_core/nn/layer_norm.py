@@ -1,12 +1,15 @@
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from ..config import Config, DType, StrEnum
+from ..exceptions import OLMoConfigurationError
+from .functional import l2_normalize
 
-__all__ = ["LayerNormType", "LayerNormConfig", "LayerNorm", "RMSNorm", "FusedRMSNorm"]
+__all__ = ["LayerNormType", "LayerNormConfig", "LayerNorm", "RMSNorm", "FusedRMSNorm", "L2Norm"]
 
 
 class LayerNormType(StrEnum):
@@ -21,6 +24,7 @@ class LayerNormType(StrEnum):
     default = "default"
     rms = "rms"
     fused_rms = "fused_rms"
+    l2_norm = "l2_norm"
 
 
 @dataclass
@@ -37,11 +41,25 @@ class LayerNormConfig(Config):
     - "rms" ➡️ :class:`RMSNorm`
     - "fused_rms" ➡️ :class:`FusedRMSNorm`
     """
-    eps: float = 1e-5
-    elementwise_affine: bool = True
-    bias: bool = True
-    full_precision: bool = True
-    dtype: DType = DType.float32
+    eps: Optional[float] = None
+    elementwise_affine: Optional[bool] = None
+    bias: Optional[bool] = None
+    full_precision: Optional[bool] = None
+    dtype: Optional[DType] = None
+
+    def num_params(self, size: int) -> int:
+        elementwise_affine = (
+            self.elementwise_affine
+            if self.elementwise_affine is not None
+            else self.name != LayerNormType.l2_norm
+        )
+        bias = self.bias if self.bias is not None else self.name != LayerNormType.l2_norm
+        ln_params = 0
+        if elementwise_affine:
+            ln_params += size
+            if bias:
+                ln_params += size
+        return ln_params
 
     def build(self, size: int, init_device: str = "cpu") -> "LayerNorm":
         """
@@ -51,23 +69,24 @@ class LayerNormConfig(Config):
         """
         kwargs = self.as_dict(exclude_none=True)
         kwargs.pop("name")
-        dtype = kwargs["dtype"].as_pt()
-        kwargs.update(
-            dict(
-                size=size,
-                init_device=init_device,
-                dtype=dtype,
-            )
-        )
+        if (dtype := kwargs.pop("dtype", None)) is not None:
+            kwargs.update(dtype=dtype.as_pt())
 
-        if self.name == LayerNormType.default:
-            return LayerNorm(**kwargs)
-        elif self.name == LayerNormType.rms:
-            return RMSNorm(**kwargs)
-        elif self.name == LayerNormType.fused_rms:
-            return FusedRMSNorm(**kwargs)
-        else:
-            raise NotImplementedError(self.name)
+        try:
+            if self.name == LayerNormType.default:
+                return LayerNorm(size=size, init_device=init_device, **kwargs)
+            elif self.name == LayerNormType.rms:
+                return RMSNorm(size=size, init_device=init_device, **kwargs)
+            elif self.name == LayerNormType.fused_rms:
+                return FusedRMSNorm(size=size, init_device=init_device, **kwargs)
+            elif self.name == LayerNormType.l2_norm:
+                return L2Norm(size=size, **kwargs)
+            else:
+                raise NotImplementedError(self.name)
+        except TypeError as e:
+            raise OLMoConfigurationError(
+                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+            ) from e
 
 
 class LayerNorm(nn.Module):
@@ -245,3 +264,20 @@ class FusedRMSNorm(RMSNorm):
             None if self.bias is None else self.bias.type_as(x),
             eps=self.eps,
         ).to(og_dtype)
+
+
+class L2Norm(LayerNorm):
+    """
+    A variant of layer norm that just normalizes the last dimension of the input by its L2 norm,
+    as done in nGPT.
+    """
+
+    def __init__(
+        self,
+        *,
+        size: int,
+    ):
+        super().__init__(size=size, elementwise_affine=False, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return l2_normalize(x)

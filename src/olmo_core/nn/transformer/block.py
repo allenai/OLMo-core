@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 
 from olmo_core.config import Config, StrEnum
+from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 
 from ..attention import AttentionConfig
@@ -74,7 +75,7 @@ class TransformerBlockConfig(Config):
     """
     The block type.
     """
-    dropout: float = 0.0
+    dropout: Optional[float] = None
     """
     Dropout probability.
     """
@@ -87,79 +88,32 @@ class TransformerBlockConfig(Config):
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ) -> "TransformerBlockBase":
-        if self.name == TransformerBlockType.default:
-            if self.feed_forward is None:
-                raise OLMoConfigurationError("'feed_forward' config is required")
-            if self.layer_norm is None:
-                raise OLMoConfigurationError("'layer_norm' config is required")
-            return TransformerBlock(
-                d_model=d_model,
-                block_idx=block_idx,
-                attention=self.attention,
-                feed_forward=self.feed_forward,
-                layer_norm=self.layer_norm,
-                dropout=self.dropout,
-                init_device=init_device,
-                cache=cache,
-            )
-        elif self.name == TransformerBlockType.reordered_norm:
-            if self.feed_forward is None:
-                raise OLMoConfigurationError("'feed_forward' config is required")
-            if self.layer_norm is None:
-                raise OLMoConfigurationError("'layer_norm' config is required")
-            return ReorderedNormTransformerBlock(
-                d_model=d_model,
-                block_idx=block_idx,
-                attention=self.attention,
-                feed_forward=self.feed_forward,
-                layer_norm=self.layer_norm,
-                dropout=self.dropout,
-                init_device=init_device,
-                cache=cache,
-            )
-        elif self.name == TransformerBlockType.normalized:
-            if self.feed_forward is None:
-                raise OLMoConfigurationError("'feed_forward' config is required")
-            return NormalizedTransformerBlock(
-                d_model=d_model,
-                block_idx=block_idx,
-                attention=self.attention,
-                feed_forward=self.feed_forward,
-                init_device=init_device,
-                cache=cache,
-            )
-        elif self.name == TransformerBlockType.moe:
-            if self.feed_forward_moe is None:
-                raise OLMoConfigurationError("'feed_forward_moe' config is required for MoE blocks")
-            if self.layer_norm is None:
-                raise OLMoConfigurationError("'layer_norm' config is required")
-            return MoETransformerBlock(
-                d_model=d_model,
-                block_idx=block_idx,
-                attention=self.attention,
-                feed_forward_moe=self.feed_forward_moe,
-                layer_norm=self.layer_norm,
-                dropout=self.dropout,
-                init_device=init_device,
-                cache=cache,
-            )
-        elif self.name == TransformerBlockType.moe_reordered_norm:
-            if self.feed_forward_moe is None:
-                raise OLMoConfigurationError("'feed_forward_moe' config is required for MoE blocks")
-            if self.layer_norm is None:
-                raise OLMoConfigurationError("'layer_norm' config is required")
-            return MoEReorderedNormTransformerBlock(
-                d_model=d_model,
-                block_idx=block_idx,
-                attention=self.attention,
-                feed_forward_moe=self.feed_forward_moe,
-                layer_norm=self.layer_norm,
-                dropout=self.dropout,
-                init_device=init_device,
-                cache=cache,
-            )
-        else:
-            raise NotImplementedError(self.name)
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
+        kwargs.pop("name")
+        kwargs.update(
+            d_model=d_model,
+            block_idx=block_idx,
+            init_device=init_device,
+            cache=cache,
+        )
+
+        try:
+            if self.name == TransformerBlockType.default:
+                return TransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.reordered_norm:
+                return ReorderedNormTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.normalized:
+                return NormalizedTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.moe:
+                return MoETransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.moe_reordered_norm:
+                return MoEReorderedNormTransformerBlock(**kwargs)
+            else:
+                raise NotImplementedError(self.name)
+        except TypeError as e:
+            raise OLMoConfigurationError(
+                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+            ) from e
 
 
 class TransformerBlockBase(nn.Module):
@@ -253,6 +207,7 @@ class ReorderedNormTransformerBlock(TransformerBlock):
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
 
+@beta_feature
 class NormalizedTransformerBlock(TransformerBlockBase):
     """
     An nGPT block implementation to be used with the :class:`~olmo_core.nn.attention.NormalizedAttention`
