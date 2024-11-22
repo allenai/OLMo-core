@@ -701,7 +701,6 @@ class TransformerConfig(Config):
                 n_heads=n_heads,
                 n_kv_heads=n_kv_heads,
                 qk_norm=None if not qk_norm else LayerNormConfig(name=LayerNormType.l2_norm),
-                bias=False,
                 rope=RoPEConfig(name=RoPEType.default, theta=rope_theta),
                 use_flash=use_flash,
                 dtype=dtype,
@@ -709,7 +708,6 @@ class TransformerConfig(Config):
             feed_forward=FeedForwardConfig(
                 name=FeedForwardType.normalized, hidden_size=hidden_size, bias=False, dtype=dtype
             ),
-            layer_norm=None,
         )
 
         return cls(
@@ -718,9 +716,7 @@ class TransformerConfig(Config):
             vocab_size=vocab_size,
             n_layers=n_layers,
             block=block,
-            lm_head=LMHeadConfig(
-                name=LMHeadType.normalized, layer_norm=None, bias=False, dtype=dtype
-            ),
+            lm_head=LMHeadConfig(name=LMHeadType.normalized, dtype=dtype),
             dtype=dtype,
             compile=compile,
             init_method=InitMethod.normalized,
