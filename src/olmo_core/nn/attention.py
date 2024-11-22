@@ -58,6 +58,41 @@ class AttentionConfig(Config):
     use_flash: Optional[bool] = None
     dtype: DType = DType.float32
 
+    def num_params(self, d_model: int) -> int:
+        n_heads = self.n_heads
+        n_kv_heads = self.n_kv_heads or n_heads
+        head_dim = d_model // n_heads
+        bias = self.bias if self.bias is not None else self.name != AttentionType.normalized
+
+        params = 0
+
+        # Block attention Q projection.
+        params += d_model * d_model
+        if bias:
+            params += d_model
+
+        # Block attention KV projections.
+        params += 2 * d_model * n_kv_heads * head_dim
+        if bias:
+            params += 2 * n_kv_heads * head_dim
+
+        # Block attention QK norm.
+        if self.qk_norm is not None:
+            params += 2 * self.qk_norm.num_params(d_model)
+
+        # Block attention out.
+        params += d_model * d_model
+        if bias:
+            params += d_model
+
+        # Block QK scaling factors.
+        if self.name == AttentionType.normalized:
+            head_dim = d_model // n_heads
+            params += n_heads * head_dim
+            params += n_kv_heads * head_dim
+
+        return params
+
     def build(
         self,
         d_model: int,
@@ -90,7 +125,9 @@ class AttentionConfig(Config):
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
-            raise OLMoConfigurationError(f"invalid options for '{self.name}', {e}") from e
+            raise OLMoConfigurationError(
+                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+            ) from e
 
 
 class Attention(nn.Module):

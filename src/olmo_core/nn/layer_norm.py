@@ -47,6 +47,20 @@ class LayerNormConfig(Config):
     full_precision: Optional[bool] = None
     dtype: Optional[DType] = None
 
+    def num_params(self, size: int) -> int:
+        elementwise_affine = (
+            self.elementwise_affine
+            if self.elementwise_affine is not None
+            else self.name != LayerNormType.l2_norm
+        )
+        bias = self.bias if self.bias is not None else self.name != LayerNormType.l2_norm
+        ln_params = 0
+        if elementwise_affine:
+            ln_params += size
+            if bias:
+                ln_params += size
+        return ln_params
+
     def build(self, size: int, init_device: str = "cpu") -> "LayerNorm":
         """
         Construct the corresponding LayerNorm class.
@@ -70,7 +84,9 @@ class LayerNormConfig(Config):
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
-            raise OLMoConfigurationError(f"invalid options for '{self.name}', {e}") from e
+            raise OLMoConfigurationError(
+                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+            ) from e
 
 
 class LayerNorm(nn.Module):

@@ -110,7 +110,9 @@ class TransformerBlockConfig(Config):
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
-            raise OLMoConfigurationError(f"invalid options for '{self.name}', {e}") from e
+            raise OLMoConfigurationError(
+                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+            ) from e
 
 
 class TransformerBlockBase(nn.Module):

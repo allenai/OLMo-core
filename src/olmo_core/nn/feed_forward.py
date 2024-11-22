@@ -42,6 +42,21 @@ class FeedForwardConfig(Config):
     bias: Optional[bool] = None
     dtype: DType = DType.float32
 
+    def num_params(self, d_model: int) -> int:
+        bias = self.bias if self.bias is not None else self.name != FeedForwardType.normalized
+
+        params = 0
+
+        params += 3 * d_model * self.hidden_size
+        if bias:
+            params += 2 * self.hidden_size + d_model
+
+        # w1 + w3 scaling factors
+        if self.name == FeedForwardType.normalized:
+            params += 2 * self.hidden_size
+
+        return params
+
     def build(self, d_model: int, init_device: str = "cpu") -> "FeedForward":
         kwargs = self.as_dict(exclude_none=True)
         kwargs.pop("name")
@@ -55,7 +70,9 @@ class FeedForwardConfig(Config):
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
-            raise OLMoConfigurationError(f"invalid options for '{self.name}', {e}") from e
+            raise OLMoConfigurationError(
+                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+            ) from e
 
 
 class FeedForward(nn.Module):

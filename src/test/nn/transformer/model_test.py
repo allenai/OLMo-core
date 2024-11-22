@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 import torch
 import torch.nn as nn
@@ -6,6 +8,8 @@ from olmo_core.nn.layer_norm import LayerNorm
 from olmo_core.nn.transformer import TransformerConfig
 
 from ...utils import GPU_MARKS
+
+log = logging.getLogger(__name__)
 
 
 @pytest.mark.parametrize(
@@ -17,6 +21,7 @@ from ...utils import GPU_MARKS
 )
 def test_small_llama2_config_builder(init_device, device):
     config = TransformerConfig.llama2_271M(vocab_size=50257)
+    log.info(config)
     model = config.build(init_device=init_device, device=torch.device(device))
 
     # Make sure num params estimate is correct.
