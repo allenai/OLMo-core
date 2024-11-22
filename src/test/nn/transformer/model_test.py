@@ -101,7 +101,7 @@ def run_ngpt_with_fsdp2():
         dp_config=TransformerDataParallelConfig(name=DataParallelType.fsdp),
     )
     model = config.build(init_device="meta", max_seq_len=1024)
-    optim = torch.optim.Adam(model.params())
+    optim = torch.optim.Adam(model.parameters())
 
     # Take an optimizer step.
     model(input_ids=torch.randint(0, 50257, (2, 128))).sum().backward()
