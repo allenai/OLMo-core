@@ -1,18 +1,20 @@
+from dataclasses import dataclass
+from typing import Any, ClassVar, Dict
+
 from olmo_core.config import DType
-from olmo_core.data import TokenizerConfig
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.model_ladder import ModelLadder, ModelSize
 from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
 from olmo_core.optim import AdamWConfig, OptimConfig, OptimGroupOverride
 
-from .ladder import ModelLadder, ModelSize
 
-
+@dataclass
 class BaselineModelLadder(ModelLadder):
     """
     Baseline OLMo model ladder using the current recommended architecture.
     """
 
-    MBZ_SIZES = {
+    MBZ_SIZES: ClassVar[Dict[ModelSize, int]] = {
         # TODO: may need to tune these
         # ===============================
         ModelSize.size_190M: 32 * 4096,
@@ -26,16 +28,14 @@ class BaselineModelLadder(ModelLadder):
         ModelSize.size_13B: 1 * 4096,
     }
 
-    MODEL_OVERRIDES = {
+    MODEL_OVERRIDES: ClassVar[Dict[ModelSize, Dict[str, Any]]] = {
         ModelSize.size_1B: dict(n_layers=16),  # need to scale down our actual 1B model
     }
 
-    def get_model_config(
-        self, size: ModelSize, sequence_length: int, tokenizer: TokenizerConfig
-    ) -> TransformerConfig:
-        del sequence_length
+    def get_model_config(self, *, size: ModelSize) -> TransformerConfig:
         return getattr(TransformerConfig, f"olmo_{size}")(
-            vocab_size=tokenizer.padded_vocab_size(),
+            vocab_size=self.tokenizer.padded_vocab_size(),
+            init_seed=self.init_seed,
             compile=True,
             dp_config=TransformerDataParallelConfig(
                 name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
@@ -43,14 +43,11 @@ class BaselineModelLadder(ModelLadder):
             **self.MODEL_OVERRIDES.get(size, {}),
         )
 
-    def get_optim_config(self, size: ModelSize, sequence_length: int) -> OptimConfig:
+    def get_optim_config(self, *, size: ModelSize) -> OptimConfig:
         # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838
-        assert sequence_length in {2048, 4096}
-        model_size = self.get_model_config(
-            size, sequence_length, self.get_tokenizer_config()
-        ).num_non_embedding_params
-        lr = 0.0047 * (model_size / 108000000) ** (-1 / 3)
-        if sequence_length == 4096:
+        assert self.sequence_length in {2048, 4096}
+        lr = 0.0047 * (size.num_params / 108000000) ** (-1 / 3)
+        if self.sequence_length == 4096:
             lr /= 4
 
         return AdamWConfig(
@@ -63,6 +60,6 @@ class BaselineModelLadder(ModelLadder):
             fused=True,
         )
 
-    def get_rank_microbatch_size(self, size: ModelSize, sequence_length: int, gpu_type: str) -> int:
-        del sequence_length, gpu_type  # assuming we're running on 80GB GPUs
+    def get_rank_microbatch_size(self, *, size: ModelSize, gpu_type: str) -> int:
+        assert "h100" in gpu_type.lower()
         return self.MBZ_SIZES[size]

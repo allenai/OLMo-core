@@ -345,7 +345,7 @@ def train(config: ExperimentConfig):
     data_loader = config.data_loader.build(dataset)
     trainer = config.trainer.build(model, optim, data_loader)
 
-    # Record the config to W&B and each checkpoint dir.
+    # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
     cast(CometCallback, trainer.callbacks["comet"]).config = config_dict
     cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
