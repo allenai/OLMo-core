@@ -67,3 +67,35 @@ def test_json_safe_dump():
         "x_tuple": [0, 1],
         "x_set": ["a"],
     }
+
+
+def test_non_strict_merge():
+    @dataclass
+    class Bar(Config):
+        x: int
+        y: int
+
+    @dataclass
+    class Foo(Config):
+        bar: Bar
+        z: str
+
+    foo = Foo(bar=Bar(x=1, y=2), z="a").merge(["--z=b", "--bar.x=0", "--baz.booz=0"], strict=False)
+    assert foo.z == "b"
+    assert foo.bar.x == 0
+
+
+def test_merge_with_prefix():
+    @dataclass
+    class Bar(Config):
+        x: int
+        y: int
+
+    @dataclass
+    class Foo(Config):
+        bar: Bar
+        z: str
+
+    foo = Foo(bar=Bar(x=1, y=2), z="a").merge(["--foo.z=b", "--foo.bar.x=0"], prefix="foo")
+    assert foo.z == "b"
+    assert foo.bar.x == 0

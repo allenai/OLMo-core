@@ -4,9 +4,8 @@ Configuration classes for defining model ladder scaling ablations.
 
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional, cast
+from typing import Optional
 
-import torch
 from torch.distributed.device_mesh import DeviceMesh
 
 from olmo_core.config import Config, StrEnum
@@ -17,21 +16,12 @@ from olmo_core.data import (
     NumpyDatasetType,
     TokenizerConfig,
 )
-from olmo_core.distributed.utils import (
-    get_num_nodes,
-    get_world_size,
-    init_hybrid_shard_mesh,
-)
+from olmo_core.distributed.utils import get_num_nodes, init_hybrid_shard_mesh
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.io import is_url
+from olmo_core.io import join_path
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimConfig
-from olmo_core.train import (
-    Duration,
-    TrainerConfig,
-    prepare_training_environment,
-    teardown_training_environment,
-)
+from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
@@ -44,9 +34,8 @@ from olmo_core.train.callbacks import (
     SchedulerCallback,
     WandBCallback,
 )
-from olmo_core.utils import get_default_device, seed_all
 
-__all__ = ["ModelSize", "ModelLadder"]
+__all__ = ["ModelSize", "ModelLadder", "LadderRunConfig"]
 
 
 class ModelSize(StrEnum):
@@ -101,6 +90,34 @@ class ModelSize(StrEnum):
 
 
 @dataclass
+class LadderRunConfig(Config):
+    """
+    Defines components required for a single run of a particular model size.
+    """
+
+    model: TransformerConfig
+    """
+    The model config.
+    """
+    optim: OptimConfig
+    """
+    The optimizer config.
+    """
+    dataset: NumpyDatasetConfig
+    """
+    The dataset config.
+    """
+    data_loader: NumpyDataLoaderConfig
+    """
+    The data loader config.
+    """
+    trainer: TrainerConfig
+    """
+    The trainer config.
+    """
+
+
+@dataclass
 class ModelLadder(Config, metaclass=ABCMeta):
     """
     Base class for defining model ladder experiments.
@@ -124,9 +141,19 @@ class ModelLadder(Config, metaclass=ABCMeta):
     The name of the W&B/Comet project to save run data to.
     """
 
-    root_dir: str
+    mix_base_dir: str
     """
-    The root directory. Defines where to find the data mix paths and where to save checkpoints to.
+    The base directory of the training data.
+    """
+
+    work_dir: str
+    """
+    The local working directory used for dataset caching.
+    """
+
+    save_folder: str
+    """
+    The local or remote folder to save checkpoints to.
     """
 
     sequence_length: int = 2048
@@ -154,23 +181,8 @@ class ModelLadder(Config, metaclass=ABCMeta):
     The seed to use for shuffling the data.
     """
 
-    @property
-    def work_dir(self) -> str:
-        """
-        The working directory used for dataset caching.
-        """
-        return (
-            "./dataset-cache"
-            if is_url(self.root_dir)
-            else f"{self.root_dir}/checkpoints/{self._get_beaker_username() or 'OLMo-core'}/dataset-cache"
-        )
-
     def get_save_folder(self, size: ModelSize) -> str:
-        """
-        The local or remote folder to save checkpoints to.
-        Should be unique for the ladder config and model size.
-        """
-        return f"{self.root_dir}/checkpoints/{self._get_beaker_username() or 'OLMo-core'}/{self.name}-{size}"
+        return str(join_path(self.save_folder, f"checkpoints/{self.name}-{size}"))
 
     @abstractmethod
     def get_model_config(self, *, size: ModelSize) -> TransformerConfig:
@@ -194,12 +206,12 @@ class ModelLadder(Config, metaclass=ABCMeta):
         """
         Get the train dataset config.
 
-        :param sequence_length: The sequence length to be used.
+        :param kwargs: Extra kwargs to pass to the dataset config constructor.
         """
         return NumpyDatasetConfig.from_data_mix(
             self.data_mix,
             tokenizer=self.tokenizer,
-            mix_base_root=self.root_dir,
+            mix_base_dir=self.mix_base_dir,
             sequence_length=self.sequence_length,
             work_dir=self.work_dir,
         )
@@ -308,7 +320,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
                     eval_dataset=NumpyDatasetConfig.from_data_mix(
                         DataMix.v3_small_ppl_validation,
                         name=NumpyDatasetType.padded_fsl,
-                        mix_base_dir=self.root_dir,
+                        mix_base_dir=self.mix_base_dir,
                         sequence_length=self.sequence_length,
                         tokenizer=self.tokenizer,
                         work_dir=self.work_dir,
@@ -354,61 +366,6 @@ class ModelLadder(Config, metaclass=ABCMeta):
             )
         )
 
-    def train(self, size: ModelSize):
-        """
-        Run the ladder at the given size.
-
-        .. note::
-            This will call :func:`~olmo_core.train.prepare_training_environment()`, so there's no
-            need to call that before.
-        """
-        prepare_training_environment()
-
-        gpu_type = torch.cuda.get_device_name()
-        dp_world_size = get_world_size()
-
-        try:
-            seed_all(self.init_seed)
-
-            # Get configs.
-            model_config = self.get_model_config(size=size)
-            optim_config = self.get_optim_config(size=size)
-            dataset_config = self.get_dataset_config()
-            data_loader_config = self.get_data_loader_config(size=size, dp_world_size=dp_world_size)
-            trainer_config = self.get_trainer_config(size=size, gpu_type=gpu_type)
-
-            # Build components.
-            model = model_config.build(
-                init_device="meta",
-                device=get_default_device(),
-                max_seq_len=self.sequence_length,
-                dp_mesh=self.get_dp_mesh(size=size),
-            )
-            optim = optim_config.build(model)
-            dataset = dataset_config.build()
-            data_loader = data_loader_config.build(dataset)
-            trainer = trainer_config.build(model, optim, data_loader)
-
-            # Record the config to W&B/Comet and each checkpoint dir.
-            config_dict = self.as_config_dict()
-            config_dict.update(
-                dict(
-                    model=model_config,
-                    optim=optim_config,
-                    dataset=dataset_config,
-                    data_loader=data_loader_config,
-                    trainer=trainer_config,
-                )
-            )
-            cast(CometCallback, trainer.callbacks["comet"]).config = config_dict
-            cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
-            cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
-
-            # Train.
-            trainer.fit()
-        finally:
-            teardown_training_environment()
-
     def validate(self):
         """
         Validate the ladder configuration.
@@ -442,14 +399,3 @@ class ModelLadder(Config, metaclass=ABCMeta):
                     f"Batch size of {bz_tokens:,d} tokens for model size {size} "
                     f"must be divisible by the sequence length ({self.sequence_length})"
                 )
-
-    def _get_beaker_username(self) -> Optional[str]:
-        try:
-            from beaker import Beaker, BeakerError
-        except ImportError:
-            return None
-
-        try:
-            return Beaker.from_env().account.whoami().name
-        except BeakerError:
-            return None

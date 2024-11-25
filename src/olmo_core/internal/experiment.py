@@ -3,7 +3,6 @@ import sys
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, cast
 
-from beaker import Beaker
 from rich import print
 from torch.distributed.device_mesh import DeviceMesh
 
@@ -52,6 +51,8 @@ from olmo_core.utils import (
     prepare_cli_environment,
     seed_all,
 )
+
+from .common import get_beaker_username
 
 log = logging.getLogger(__name__)
 
@@ -109,7 +110,7 @@ class SubCmd(StrEnum):
         elif self == SubCmd.train:
             prepare_training_environment()
         else:
-            raise NotADirectoryError(self)
+            raise NotImplementedError(self)
 
     def run(self, config: ExperimentConfig):
         print(config)
@@ -133,7 +134,7 @@ class SubCmd(StrEnum):
         elif self == SubCmd.launch_prep:
             launch_prep(config)
         else:
-            raise NotADirectoryError(self)
+            raise NotImplementedError(self)
 
 
 def build_common_components(
@@ -153,7 +154,7 @@ def build_common_components(
     elif "augusta" in cluster:
         root_dir = "gs://ai2-llm"
 
-    beaker_user = (Beaker.from_env().account.whoami().name).upper()
+    beaker_user = get_beaker_username()
     cmd_to_launch = SubCmd.train
     if cmd == SubCmd.launch_prep:
         cmd_to_launch = SubCmd.prep
