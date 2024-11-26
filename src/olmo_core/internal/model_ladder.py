@@ -18,7 +18,7 @@ from olmo_core.train import (
 from olmo_core.train.callbacks import CometCallback, ConfigSaverCallback, WandBCallback
 from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
 
-from .common import build_launch_config, get_root_dir
+from .common import build_launch_config, get_gpu_type, get_root_dir
 
 
 @dataclass
@@ -102,7 +102,7 @@ def build_config(
     ).merge(overrides, strict=False)
 
     dp_world_size = launch.num_nodes * launch.num_gpus
-    gpu_type = "h100"  # TODO: get actual device name
+    gpu_type = get_gpu_type(cluster)
 
     model = ladder.get_model_config(size=size)
     optim = ladder.get_optim_config(size=size)

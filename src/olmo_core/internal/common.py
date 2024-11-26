@@ -1,3 +1,4 @@
+import logging
 from typing import List, Optional
 
 from beaker import Beaker
@@ -11,14 +12,25 @@ from olmo_core.launch.beaker import (
 )
 from olmo_core.utils import generate_uuid
 
+log = logging.getLogger(__name__)
+_BEAKER_CLIENT: Optional[Beaker] = None
 _BEAKER_USERNAME: Optional[str] = None
+
+
+def get_beaker_client() -> Beaker:
+    global _BEAKER_CLIENT
+
+    if _BEAKER_CLIENT is None:
+        _BEAKER_CLIENT = Beaker.from_env()
+
+    return _BEAKER_CLIENT
 
 
 def get_beaker_username() -> str:
     global _BEAKER_USERNAME
 
     if _BEAKER_USERNAME is None:
-        _BEAKER_USERNAME = Beaker.from_env().account.whoami().name
+        _BEAKER_USERNAME = get_beaker_client().account.whoami().name
 
     return _BEAKER_USERNAME
 
@@ -93,3 +105,21 @@ def build_launch_config(
             "printenv AWS_CREDENTIALS > ~/.aws/credentials",
         ],
     )
+
+
+CLUSTER_TO_GPU_TYPE = {
+    "ai2/jupiter-cirrascale-2": "NVIDIA H100 80GB HBM3",
+    "ai2/pluto-cirrascale": "NVIDIA H100",
+    "ai2/augusta-google-1": "NVIDIA H100",
+}
+
+
+def get_gpu_type(cluster: str) -> str:
+    if cluster in CLUSTER_TO_GPU_TYPE:
+        return CLUSTER_TO_GPU_TYPE[cluster]
+    else:
+        log.warning(f"Missing cluster '{cluster}' in CLUSTER_TO_GPU_TYPE mapping")
+        beaker = get_beaker_client()
+        nodes = beaker.cluster.nodes(cluster)
+        assert nodes and nodes[0].limits.gpu_type
+        return nodes[0].limits.gpu_type
