@@ -1,4 +1,4 @@
-from olmo_core.ladder import ModelSize
+from olmo_core.model_ladder import ModelSize
 
 
 def test_model_size_num_params():
