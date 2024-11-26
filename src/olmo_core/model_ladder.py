@@ -153,6 +153,11 @@ class ModelLadder(Config, metaclass=ABCMeta):
     The seed to use for shuffling the data.
     """
 
+    max_dp_world_size: int = 64
+    """
+    The maximum data parallel world size that you intent to run with. This is used to set the batch size.
+    """
+
     def get_save_folder(self, size: ModelSize) -> str:
         return str(join_path(self.save_folder, f"checkpoints/{self.name}-{size}"))
 
@@ -188,17 +193,14 @@ class ModelLadder(Config, metaclass=ABCMeta):
             work_dir=self.work_dir,
         )
 
-    def get_data_loader_config(
-        self, *, size: ModelSize, dp_world_size: int
-    ) -> NumpyDataLoaderConfig:
+    def get_data_loader_config(self, *, size: ModelSize) -> NumpyDataLoaderConfig:
         """
         Get the data loader config.
 
         :param size: The target model size.
-        :param dp_world_size: The data parallel world size for training.
         """
         return NumpyDataLoaderConfig(
-            global_batch_size=self.get_global_batch_size(size=size, dp_world_size=dp_world_size),
+            global_batch_size=self.get_global_batch_size(size=size),
             seed=self.data_seed,
             num_workers=4,
         )
@@ -214,12 +216,11 @@ class ModelLadder(Config, metaclass=ABCMeta):
         """
         raise NotImplementedError
 
-    def get_global_batch_size(self, *, size: ModelSize, dp_world_size: int = 64) -> int:
+    def get_global_batch_size(self, *, size: ModelSize) -> int:
         """
         Get the global batch size in tokens for a given model size.
 
         :param size: The target model size.
-        :param dp_world_size: The data parallel world size for training.
         """
         # Calculate batch size according to https://api.semanticscholar.org/CorpusID:270764838,
         # which assumes a sequence length of 2048. So adjust from there accordingly.
@@ -228,9 +229,9 @@ class ModelLadder(Config, metaclass=ABCMeta):
 
         global_batch_size = 160 * (size.num_params / 108000000) ** (2 / 3)
         global_batch_size /= seq_len_divisor
-        global_batch_size /= dp_world_size
+        global_batch_size /= self.max_dp_world_size
         global_batch_size = round(global_batch_size)
-        global_batch_size *= dp_world_size
+        global_batch_size *= self.max_dp_world_size
 
         return self.sequence_length * global_batch_size
 

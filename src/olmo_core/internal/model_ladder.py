@@ -6,6 +6,7 @@ from rich import print
 
 from olmo_core.config import Config, StrEnum
 from olmo_core.data import NumpyDataLoaderConfig, NumpyDatasetConfig
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.model_ladder import ModelLadder, ModelSize
 from olmo_core.nn.transformer import TransformerConfig
@@ -102,12 +103,17 @@ def build_config(
     ).merge(overrides, strict=False)
 
     dp_world_size = launch.num_nodes * launch.num_gpus
+    if dp_world_size > ladder.max_dp_world_size:
+        raise OLMoConfigurationError(
+            f"max_dp_world_size ({ladder.max_dp_world_size}) must be at least as big as current dp "
+            f"world size ({dp_world_size})"
+        )
     gpu_type = get_gpu_type(cluster)
 
     model = ladder.get_model_config(size=size)
     optim = ladder.get_optim_config(size=size)
     dataset = ladder.get_dataset_config()
-    data_loader = ladder.get_data_loader_config(size=size, dp_world_size=dp_world_size)
+    data_loader = ladder.get_data_loader_config(size=size)
     trainer = ladder.get_trainer_config(size=size, gpu_type=gpu_type)
 
     return LadderRunConfig(
