@@ -3,9 +3,9 @@ from typing import Any, ClassVar, Dict
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.internal.common import get_beaker_username
+from olmo_core.internal.common import get_beaker_username, get_work_dir
 from olmo_core.internal.model_ladder import main
-from olmo_core.io import is_url, join_path
+from olmo_core.io import join_path
 from olmo_core.model_ladder import ModelLadder, ModelSize
 from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
 from olmo_core.optim import AdamWConfig, OptimConfig, OptimGroupOverride
@@ -69,17 +69,12 @@ class BaselineModelLadder(ModelLadder):
 
 
 def build_ladder(root_dir: str) -> BaselineModelLadder:
-    work_dir = (
-        "./dataset-cache"
-        if is_url(root_dir)
-        else str(join_path(root_dir, f"checkpoints/{get_beaker_username().lower()}/dataset-cache"))
-    )
     save_folder = str(join_path(root_dir, f"checkpoints/{get_beaker_username().lower()}"))
     return BaselineModelLadder(
         name="OLMo2",
         project="OLMo2-model-ladder",
         mix_base_dir=root_dir,
-        work_dir=work_dir,
+        work_dir=get_work_dir(root_dir),
         save_folder=save_folder,
     )
 

@@ -35,7 +35,7 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 
-__all__ = ["ModelSize", "ModelLadder", "LadderRunConfig"]
+__all__ = ["ModelSize", "ModelLadder"]
 
 
 class ModelSize(StrEnum):
@@ -87,34 +87,6 @@ class ModelSize(StrEnum):
             return value * int(1e9)
         else:
             raise NotImplementedError(self)
-
-
-@dataclass
-class LadderRunConfig(Config):
-    """
-    Defines components required for a single run of a particular model size.
-    """
-
-    model: TransformerConfig
-    """
-    The model config.
-    """
-    optim: OptimConfig
-    """
-    The optimizer config.
-    """
-    dataset: NumpyDatasetConfig
-    """
-    The dataset config.
-    """
-    data_loader: NumpyDataLoaderConfig
-    """
-    The data loader config.
-    """
-    trainer: TrainerConfig
-    """
-    The trainer config.
-    """
 
 
 @dataclass

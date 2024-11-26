@@ -18,13 +18,7 @@ from olmo_core.data import (
 )
 from olmo_core.distributed.utils import get_num_nodes, init_hybrid_shard_mesh
 from olmo_core.float8 import Float8Config
-from olmo_core.io import is_url
-from olmo_core.launch.beaker import (
-    BeakerEnvSecret,
-    BeakerLaunchConfig,
-    BeakerWekaBucket,
-    OLMoCoreBeakerImage,
-)
+from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimConfig
 from olmo_core.train import (
@@ -45,14 +39,9 @@ from olmo_core.train.callbacks import (
     SchedulerCallback,
     WandBCallback,
 )
-from olmo_core.utils import (
-    generate_uuid,
-    get_default_device,
-    prepare_cli_environment,
-    seed_all,
-)
+from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
 
-from .common import get_beaker_username
+from .common import build_launch_config, get_beaker_username, get_root_dir, get_work_dir
 
 log = logging.getLogger(__name__)
 
@@ -146,56 +135,20 @@ def build_common_components(
     *,
     global_batch_size: int,
 ) -> CommonComponents:
-    root_dir: str = "weka://oe-training-default/ai2-llm"
-    weka_buckets: List[BeakerWekaBucket] = []
-    if "jupiter" in cluster:
-        root_dir = "/weka/oe-training-default/ai2-llm"
-        weka_buckets.append(BeakerWekaBucket("oe-training-default", "/weka/oe-training-default"))
-    elif "augusta" in cluster:
-        root_dir = "gs://ai2-llm"
+    root_dir = get_root_dir(cluster)
 
-    beaker_user = get_beaker_username()
     cmd_to_launch = SubCmd.train
     if cmd == SubCmd.launch_prep:
         cmd_to_launch = SubCmd.prep
 
-    launch_config = BeakerLaunchConfig(
-        name=f"{run_name}-{cmd_to_launch}-{generate_uuid()[:8]}",
-        budget="ai2/oe-training",
+    launch_config = build_launch_config(
+        name=f"{run_name}-{cmd_to_launch}",
+        root_dir=root_dir,
         cmd=[script, cmd_to_launch, run_name, cluster, *overrides],
-        task_name="train",
-        workspace="ai2/OLMo-core",
-        clusters=[cluster],
-        weka_buckets=weka_buckets,
-        beaker_image=OLMoCoreBeakerImage.nightly,  # some features require nightly at the moment
-        num_nodes=1,
-        num_gpus=8,
-        shared_filesystem=not is_url(root_dir),
-        allow_dirty=False,
-        env_secrets=[
-            BeakerEnvSecret(name="BEAKER_TOKEN", secret=f"{beaker_user}_BEAKER_TOKEN"),
-            BeakerEnvSecret(name="WANDB_API_KEY", secret=f"{beaker_user}_WANDB_API_KEY"),
-            BeakerEnvSecret(name="COMET_API_KEY", secret=f"{beaker_user}_COMET_API_KEY"),
-            BeakerEnvSecret(name="AWS_CONFIG", secret=f"{beaker_user}_AWS_CONFIG"),
-            BeakerEnvSecret(name="AWS_CREDENTIALS", secret=f"{beaker_user}_AWS_CREDENTIALS"),
-            BeakerEnvSecret(name="R2_ENDPOINT_URL", secret="R2_ENDPOINT_URL"),
-            BeakerEnvSecret(name="WEKA_ENDPOINT_URL", secret="WEKA_ENDPOINT_URL"),
-        ],
-        setup_steps=[
-            # Clone repo.
-            'git clone "$REPO_URL" .',
-            'git checkout "$GIT_REF"',
-            "git submodule update --init --recursive",
-            # Setup python environment.
-            "conda shell.bash activate base",
-            "pip install -e '.[all]'",
-            "pip freeze",
-            # Move AWS credentials from env to relevant files
-            "mkdir -p ~/.aws",
-            "printenv AWS_CONFIG > ~/.aws/config",
-            "printenv AWS_CREDENTIALS > ~/.aws/credentials",
-        ],
+        cluster=cluster,
     )
+
+    beaker_user = get_beaker_username()
 
     tokenizer_config = TokenizerConfig.dolma2()
 
@@ -210,11 +163,7 @@ def build_common_components(
         vsl_curriculum=VSLCurriculumConfig(
             name=VSLCurriculumType.grow_p2, num_cycles=8, balanced=False
         ),
-        work_dir=(
-            "./dataset-cache"
-            if is_url(root_dir)
-            else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache"
-        ),
+        work_dir=get_work_dir(root_dir),
     )
 
     data_loader_config = NumpyDataLoaderConfig(
@@ -235,11 +184,7 @@ def build_common_components(
                 mix_base_dir=root_dir,
                 sequence_length=dataset_config.effective_sequence_length,
                 tokenizer=tokenizer_config,
-                work_dir=(
-                    "./dataset-cache"
-                    if is_url(root_dir)
-                    else f"{root_dir}/checkpoints/{beaker_user.lower()}/dataset-cache"
-                ),
+                work_dir=get_work_dir(root_dir),
             ),
             eval_interval=1000,
         ),

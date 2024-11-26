@@ -2,18 +2,11 @@ import sys
 from dataclasses import dataclass
 from typing import Callable, List, cast
 
-from beaker import Beaker
 from rich import print
 
 from olmo_core.config import Config, StrEnum
 from olmo_core.data import NumpyDataLoaderConfig, NumpyDatasetConfig
-from olmo_core.io import is_url
-from olmo_core.launch.beaker import (
-    BeakerEnvSecret,
-    BeakerLaunchConfig,
-    BeakerWekaBucket,
-    OLMoCoreBeakerImage,
-)
+from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.model_ladder import ModelLadder, ModelSize
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import OptimConfig
@@ -23,12 +16,9 @@ from olmo_core.train import (
     teardown_training_environment,
 )
 from olmo_core.train.callbacks import CometCallback, ConfigSaverCallback, WandBCallback
-from olmo_core.utils import (
-    generate_uuid,
-    get_default_device,
-    prepare_cli_environment,
-    seed_all,
-)
+from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
+
+from .common import build_launch_config, get_root_dir
 
 
 @dataclass
@@ -93,15 +83,6 @@ class SubCmd(StrEnum):
             raise NotImplementedError(self)
 
 
-def get_root_dir(cluster: str) -> str:
-    root_dir: str = "weka://oe-training-default/ai2-llm"
-    if "jupiter" in cluster:
-        root_dir = "/weka/oe-training-default/ai2-llm"
-    elif "augusta" in cluster:
-        root_dir = "gs://ai2-llm"
-    return root_dir
-
-
 def build_config(
     ladder: ModelLadder,
     script: str,
@@ -113,52 +94,15 @@ def build_config(
     del cmd
 
     root_dir = get_root_dir(cluster)
-    weka_buckets: List[BeakerWekaBucket] = []
-    if root_dir.startswith("/weka/"):
-        weka_buckets.append(BeakerWekaBucket("oe-training-default", "/weka/oe-training-default"))
-
-    beaker_user = (Beaker.from_env().account.whoami().name).upper()
-
-    launch = BeakerLaunchConfig(
-        name=f"{ladder.name}-{size}-{generate_uuid()[:8]}",
-        budget="ai2/oe-training",
+    launch = build_launch_config(
+        name=f"{ladder.name}-{size}",
+        root_dir=root_dir,
         cmd=[script, SubCmd.train, size, cluster, *overrides],
-        task_name="train",
-        workspace="ai2/OLMo-core",
-        clusters=[cluster],
-        weka_buckets=weka_buckets,
-        beaker_image=OLMoCoreBeakerImage.nightly,  # some features require nightly at the moment
-        num_nodes=1,
-        num_gpus=8,
-        shared_filesystem=not is_url(root_dir),
-        allow_dirty=False,
-        env_secrets=[
-            BeakerEnvSecret(name="BEAKER_TOKEN", secret=f"{beaker_user}_BEAKER_TOKEN"),
-            BeakerEnvSecret(name="WANDB_API_KEY", secret=f"{beaker_user}_WANDB_API_KEY"),
-            BeakerEnvSecret(name="COMET_API_KEY", secret=f"{beaker_user}_COMET_API_KEY"),
-            BeakerEnvSecret(name="AWS_CONFIG", secret=f"{beaker_user}_AWS_CONFIG"),
-            BeakerEnvSecret(name="AWS_CREDENTIALS", secret=f"{beaker_user}_AWS_CREDENTIALS"),
-            BeakerEnvSecret(name="R2_ENDPOINT_URL", secret="R2_ENDPOINT_URL"),
-            BeakerEnvSecret(name="WEKA_ENDPOINT_URL", secret="WEKA_ENDPOINT_URL"),
-        ],
-        setup_steps=[
-            # Clone repo.
-            'git clone "$REPO_URL" .',
-            'git checkout "$GIT_REF"',
-            "git submodule update --init --recursive",
-            # Setup python environment.
-            "conda shell.bash activate base",
-            "pip install -e '.[all]'",
-            "pip freeze",
-            # Move AWS credentials from env to relevant files
-            "mkdir -p ~/.aws",
-            "printenv AWS_CONFIG > ~/.aws/config",
-            "printenv AWS_CREDENTIALS > ~/.aws/credentials",
-        ],
+        cluster=cluster,
     ).merge(overrides, strict=False)
 
     dp_world_size = launch.num_nodes * launch.num_gpus
-    gpu_type = "h100"
+    gpu_type = "h100"  # TODO: get actual device name
 
     model = ladder.get_model_config(size=size)
     optim = ladder.get_optim_config(size=size)
