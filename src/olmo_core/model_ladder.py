@@ -263,6 +263,8 @@ class ModelLadder(Config, metaclass=ABCMeta):
         :param size: The target model size.
         :param gpu_type: The type of GPU as given by ``torch.cuda.get_device_name()``.
         """
+        from olmo_eval import list_tasks
+
         rank_mbz = self.get_rank_microbatch_size(size=size, gpu_type=gpu_type)
         if rank_mbz % self.sequence_length != 0:
             raise OLMoConfigurationError(
@@ -303,7 +305,9 @@ class ModelLadder(Config, metaclass=ABCMeta):
             .with_callback(
                 "downstream_evaluator",
                 DownstreamEvaluatorCallbackConfig(
-                    tasks=["hellaswag"],  # TODO: which other tasks?
+                    tasks=[
+                        task for task in list_tasks() if "_mc" not in task and "_var" not in task
+                    ],
                     tokenizer=self.tokenizer,
                     eval_interval=250,
                 ),
