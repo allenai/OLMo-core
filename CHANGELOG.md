@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added an implementation of nGPT called `NormalizedTransformer`.
 - Added an example showing how to convert a HuggingFace Llama 3.2 checkpoint into the right format for OLMo-core.
 - Added an API for scaling RoPE embeddings.
+- Added a `ModelLadder` API.
 
 ### Changed
 
