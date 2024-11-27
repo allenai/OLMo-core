@@ -21,7 +21,8 @@ from olmo_core.utils import get_default_device, prepare_cli_environment
 log = logging.getLogger(__name__)
 
 HF_MODEL = "meta-llama/Llama-3.2-1B"
-#  HF_MODEL = "meta-llama/Llama-3.2-8B"
+# HF_MODEL = "meta-llama/Llama-3.2-8B"
+# HF_MODEL = "allenai/OLMo-2-1124-7B"
 # HF_MODEL = "allenai/OLMo-2-1124-7B-Instruct"
 # HF_MODEL = "allenai/OLMo-2-1124-13B-Instruct"
 
@@ -37,14 +38,14 @@ if HF_MODEL == "meta-llama/Llama-3.2-1B":
         use_flash=False,
         rope_scaling=RoPEScalingConfig(),
     )
-elif HF_MODEL == "allenai/OLMo-2-1124-7B-Instruct":
+elif HF_MODEL.startswith("allenai/OLMo-2-1124-7B"):
     MODEL_CONFIG = TransformerConfig.olmo2_7B(
         TOKENIZER_CONFIG.vocab_size,
         fused_ops=False,
         use_flash=False,
     )
-elif HF_MODEL == "allenai/OLMo-2-1124-13B-Instruct":
-    MODEL_CONFIG = TransformerConfig.olmo2_7B(
+elif HF_MODEL.startswith("allenai/OLMo-2-1124-13B"):
+    MODEL_CONFIG = TransformerConfig.olmo2_13B(
         TOKENIZER_CONFIG.vocab_size,
         fused_ops=False,
         use_flash=False,
@@ -101,15 +102,21 @@ def convert_checkpoint() -> AutoModelForCausalLM:
             f"model.layers.{block}.mlp.up_proj.weight"
         )
 
-        # Attention layer norm.
-        new_state_dict[f"blocks.{block}.attention_norm.weight"] = state_dict.pop(
-            f"model.layers.{block}.input_layernorm.weight"
-        )
-
-        # MLP layer norm.
-        new_state_dict[f"blocks.{block}.feed_forward_norm.weight"] = state_dict.pop(
-            f"model.layers.{block}.post_attention_layernorm.weight"
-        )
+        # Layer norms.
+        if "Llama" in HF_MODEL:
+            new_state_dict[f"blocks.{block}.feed_forward_norm.weight"] = state_dict.pop(
+                f"model.layers.{block}.post_attention_layernorm.weight"
+            )
+            new_state_dict[f"blocks.{block}.attention_norm.weight"] = state_dict.pop(
+                f"model.layers.{block}.input_layernorm.weight"
+            )
+        else:
+            new_state_dict[f"blocks.{block}.feed_forward_norm.weight"] = state_dict.pop(
+                f"model.layers.{block}.post_attention_layernorm.weight"
+            )
+            new_state_dict[f"blocks.{block}.feed_forward_norm.weight"] = state_dict.pop(
+                f"model.layers.{block}.post_feed_forward_norm.weight"
+            )
 
     assert len(state_dict) == 0
 
