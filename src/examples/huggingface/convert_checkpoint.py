@@ -20,11 +20,11 @@ from olmo_core.utils import get_default_device, prepare_cli_environment
 
 log = logging.getLogger(__name__)
 
-HF_MODEL = "meta-llama/Llama-3.2-1B"
-# HF_MODEL = "meta-llama/Llama-3.2-8B"
-# HF_MODEL = "allenai/OLMo-2-1124-7B"
+HF_MODEL = "allenai/OLMo-2-1124-7B"
 # HF_MODEL = "allenai/OLMo-2-1124-7B-Instruct"
 # HF_MODEL = "allenai/OLMo-2-1124-13B-Instruct"
+# HF_MODEL = "meta-llama/Llama-3.2-1B"
+# HF_MODEL = "meta-llama/Llama-3.2-8B"
 
 SAVE_PATH = f"/tmp/checkpoints/{HF_MODEL}"
 SAVE_OVERWRITE = False
@@ -116,6 +116,12 @@ def convert_checkpoint() -> AutoModelForCausalLM:
             )
             new_state_dict[f"blocks.{block}.feed_forward_norm.weight"] = state_dict.pop(
                 f"model.layers.{block}.post_feedforward_layernorm.weight"
+            )
+            new_state_dict[f"blocks.{block}.attention.q_norm.weight"] = state_dict.pop(
+                f"model.layers.{block}.self_attn.q_norm.weight"
+            )
+            new_state_dict[f"blocks.{block}.attention.k_norm.weight"] = state_dict.pop(
+                f"model.layers.{block}.self_attn.k_norm.weight"
             )
 
     assert len(state_dict) == 0
