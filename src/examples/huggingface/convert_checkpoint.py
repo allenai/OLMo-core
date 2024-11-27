@@ -1,8 +1,8 @@
 """
-Example script showing how you could convert model weights on HuggingFace for a Llama-3.2 model
-into a format that can be loaded by OLMo-core for fine-tuning.
+Example script showing how you could convert model weights on HuggingFace for an OLMo2 or Llama-3.*
+model into a format that can be loaded by OLMo-core for fine-tuning.
 
-Note that this script is architecture-dependent, meaning it may only work for Llama-3.2 models on
+Note that this script is architecture-dependent, meaning it may only work for OLMo2/Llama models on
 HuggingFace.
 """
 
@@ -21,13 +21,36 @@ from olmo_core.utils import get_default_device, prepare_cli_environment
 log = logging.getLogger(__name__)
 
 HF_MODEL = "meta-llama/Llama-3.2-1B"
+#  HF_MODEL = "meta-llama/Llama-3.2-8B"
+# HF_MODEL = "allenai/OLMo-2-1124-7B-Instruct"
+# HF_MODEL = "allenai/OLMo-2-1124-13B-Instruct"
+
 SAVE_PATH = f"/tmp/checkpoints/{HF_MODEL}"
 SAVE_OVERWRITE = False
 
 TOKENIZER_CONFIG = TokenizerConfig.from_hf(HF_MODEL)
-MODEL_CONFIG = TransformerConfig.llama3_1B(
-    TOKENIZER_CONFIG.vocab_size, fused_ops=False, use_flash=False, rope_scaling=RoPEScalingConfig()
-)
+MODEL_CONFIG: TransformerConfig
+if HF_MODEL == "meta-llama/Llama-3.2-1B":
+    MODEL_CONFIG = TransformerConfig.llama3_1B(
+        TOKENIZER_CONFIG.vocab_size,
+        fused_ops=False,
+        use_flash=False,
+        rope_scaling=RoPEScalingConfig(),
+    )
+elif HF_MODEL == "allenai/OLMo-2-1124-7B-Instruct":
+    MODEL_CONFIG = TransformerConfig.olmo2_7B(
+        TOKENIZER_CONFIG.vocab_size,
+        fused_ops=False,
+        use_flash=False,
+    )
+elif HF_MODEL == "allenai/OLMo-2-1124-13B-Instruct":
+    MODEL_CONFIG = TransformerConfig.olmo2_7B(
+        TOKENIZER_CONFIG.vocab_size,
+        fused_ops=False,
+        use_flash=False,
+    )
+else:
+    raise NotImplementedError(HF_MODEL)
 
 
 def convert_checkpoint() -> AutoModelForCausalLM:
