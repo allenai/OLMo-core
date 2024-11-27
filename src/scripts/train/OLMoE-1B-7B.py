@@ -24,7 +24,7 @@ from olmo_core.train.callbacks import (
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    model_config = TransformerConfig.olmo_1B(
+    model_config = TransformerConfig.olmo2_1B(
         vocab_size=common.tokenizer.padded_vocab_size(),
         n_layers=16,
         n_heads=16,

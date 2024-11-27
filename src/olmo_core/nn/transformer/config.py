@@ -293,7 +293,7 @@ class TransformerConfig(Config):
         return flop_per_token
 
     @classmethod
-    def olmo_190M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+    def olmo2_190M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=768,
             hidden_size_multiplier=1.5,
@@ -304,10 +304,11 @@ class TransformerConfig(Config):
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             layer_norm_eps=1e-6,
+            **kwargs,
         )
 
     @classmethod
-    def olmo_370M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+    def olmo2_370M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=1024,
             hidden_size_multiplier=1.4,
@@ -318,10 +319,11 @@ class TransformerConfig(Config):
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             layer_norm_eps=1e-6,
+            **kwargs,
         )
 
     @classmethod
-    def olmo_600M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+    def olmo2_600M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=1344,
             hidden_size_multiplier=1.5,
@@ -332,10 +334,11 @@ class TransformerConfig(Config):
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             layer_norm_eps=1e-6,
+            **kwargs,
         )
 
     @classmethod
-    def olmo_760M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+    def olmo2_760M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=1536,
             hidden_size_multiplier=1.5,
@@ -346,10 +349,11 @@ class TransformerConfig(Config):
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             layer_norm_eps=1e-6,
+            **kwargs,
         )
 
     @classmethod
-    def olmo_1B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+    def olmo2_1B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 1B OLMo model config.
         """
@@ -363,7 +367,7 @@ class TransformerConfig(Config):
         )
 
     @classmethod
-    def olmo_3B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+    def olmo2_3B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=3328,
             hidden_size_multiplier=1.4,
@@ -374,10 +378,11 @@ class TransformerConfig(Config):
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             layer_norm_eps=1e-6,
+            **kwargs,
         )
 
     @classmethod
-    def olmo_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+    def olmo2_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 7B OLMo model config.
         """
@@ -391,7 +396,7 @@ class TransformerConfig(Config):
         )
 
     @classmethod
-    def olmo_13B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+    def olmo2_13B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 13B OLMo model config.
         """
