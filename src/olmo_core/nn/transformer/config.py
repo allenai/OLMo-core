@@ -414,8 +414,11 @@ class TransformerConfig(Config):
         """
         A 26B OLMo model config.
         """
-        return cls.llama2_26B(
-            vocab_size,
+        return cls.llama_like(
+            vocab_size=vocab_size,
+            d_model=6656,
+            n_layers=kwargs.pop("n_layers", 48),
+            n_heads=kwargs.pop("n_heads", 52),
             block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
