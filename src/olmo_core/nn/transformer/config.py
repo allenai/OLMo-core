@@ -410,6 +410,20 @@ class TransformerConfig(Config):
         )
 
     @classmethod
+    def olmo2_26B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 26B OLMo model config.
+        """
+        return cls.llama2_26B(
+            vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
     def ngpt_271M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 271M nGPT model config.
