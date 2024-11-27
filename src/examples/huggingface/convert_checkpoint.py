@@ -131,18 +131,22 @@ def validate_conversion(hf_model):
 
     device = get_default_device()
 
-    model = MODEL_CONFIG.build(device=device, max_seq_len=131072).eval()
-    load_model_and_optim_state(SAVE_PATH, model)
-
-    hf_model = hf_model.to(device).eval()
-
     B, T = 1, 120
     input_ids = torch.randint(0, TOKENIZER_CONFIG.vocab_size, (B, T)).to(device)
 
+    hf_model = hf_model.to(device).eval()
+    with torch.no_grad():
+        hf_logits, *_ = hf_model(input_ids=input_ids, return_dict=False)
+
+    del hf_model
+
+    model = MODEL_CONFIG.build(device=device, max_seq_len=131072).eval()
+    load_model_and_optim_state(SAVE_PATH, model)
+
     with torch.no_grad():
         logits = model(input_ids=input_ids)
-        hf_logits, *_ = hf_model(input_ids=input_ids, return_dict=False)
-        torch.testing.assert_close(hf_logits, logits)
+
+    torch.testing.assert_close(hf_logits, logits)
 
     log.info("Conversion successful")
 
