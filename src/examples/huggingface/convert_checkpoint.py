@@ -133,8 +133,6 @@ def convert_checkpoint() -> AutoModelForCausalLM:
 
 
 def validate_conversion(hf_model):
-    log.info("Loading converted checkpoint for validation...")
-
     device = get_default_device()
 
     B, T = 1, 120
@@ -147,6 +145,8 @@ def validate_conversion(hf_model):
     del hf_model
 
     model = MODEL_CONFIG.build(device=device, max_seq_len=131072).eval()
+
+    log.info("Loading converted checkpoint for validation...")
     load_model_and_optim_state(SAVE_PATH, model)
 
     with torch.no_grad():
