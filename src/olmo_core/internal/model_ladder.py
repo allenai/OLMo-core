@@ -117,19 +117,7 @@ def build_config(
     optim = ladder.get_optim_config(size=size)
     dataset = ladder.get_dataset_config()
     data_loader = ladder.get_data_loader_config(size=size)
-    trainer = ladder.get_trainer_config(size=size, gpu_type=gpu_type)
-
-    # Make sure rank micro-batch size makes sense.
-    rank_mbz_instances = trainer.rank_microbatch_size // ladder.sequence_length
-    global_bz_instances = data_loader.global_batch_size // ladder.sequence_length
-    if rank_mbz_instances * dp_world_size > global_bz_instances:
-        new_rank_mbz_instances = global_bz_instances // dp_world_size
-        new_rank_mbz = new_rank_mbz_instances * ladder.sequence_length
-        trainer.rank_microbatch_size = new_rank_mbz
-        log.warning(
-            f"Adjusting rank micro-batch size from {trainer.rank_microbatch_size:,d} tokens ({rank_mbz_instances:,d} instances) "
-            f"down to {new_rank_mbz:,d} tokens ({new_rank_mbz_instances:,d} instances)"
-        )
+    trainer = ladder.get_trainer_config(size=size, gpu_type=gpu_type, dp_world_size=dp_world_size)
 
     return LadderRunConfig(
         launch=launch,

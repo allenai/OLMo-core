@@ -2,6 +2,8 @@
 Configuration classes for defining model ladder scaling ablations.
 """
 
+import logging
+import math
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, field
 from typing import Optional
@@ -36,6 +38,8 @@ from olmo_core.train.callbacks import (
 )
 
 __all__ = ["ModelSize", "ModelLadder"]
+
+log = logging.getLogger(__name__)
 
 
 class ModelSize(StrEnum):
@@ -208,7 +212,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
     @abstractmethod
     def get_rank_microbatch_size(self, *, size: ModelSize, gpu_type: str) -> int:
         """
-        Returns the micro-batch size in tokens per device that should be used for the given
+        Returns the maximum micro-batch size in tokens per device that should be used for the given
         model size.
 
         :param size: The target model size.
@@ -257,14 +261,22 @@ class ModelLadder(Config, metaclass=ABCMeta):
         *,
         size: ModelSize,
         gpu_type: str,
+        dp_world_size: int,
     ) -> TrainerConfig:
         """
         Build the trainer config.
 
         :param size: The target model size.
         :param gpu_type: The type of GPU as given by ``torch.cuda.get_device_name()``.
+        :param dp_world_size: The data parallel world size.
         """
         from olmo_eval import list_tasks
+
+        if dp_world_size > self.max_dp_world_size:
+            raise OLMoConfigurationError(
+                f"max_dp_world_size ({self.max_dp_world_size}) must be at least as big as current dp "
+                f"world size ({dp_world_size})"
+            )
 
         rank_mbz = self.get_rank_microbatch_size(size=size, gpu_type=gpu_type)
         if rank_mbz % self.sequence_length != 0:
@@ -272,6 +284,41 @@ class ModelLadder(Config, metaclass=ABCMeta):
                 f"rank micro-batch size ({rank_mbz:,d} tokens) must be divisible "
                 f"by the sequence length ({self.sequence_length:,d})"
             )
+
+        rank_mbz_instances = rank_mbz // self.sequence_length
+
+        global_bz = self.get_global_batch_size(size=size)
+        if global_bz % self.sequence_length != 0:
+            raise OLMoConfigurationError(
+                f"global batch size ({rank_mbz:,d} tokens) must be divisible "
+                f"by the sequence length ({self.sequence_length:,d})"
+            )
+
+        global_bz_instances = self.get_global_batch_size(size=size) // self.sequence_length
+
+        if global_bz_instances % (rank_mbz_instances * dp_world_size) != 0:
+            new_rank_mbz_instances = global_bz_instances // dp_world_size
+            if new_rank_mbz_instances > rank_mbz_instances:
+                for divisor in range(2, new_rank_mbz_instances + 1):
+                    if (
+                        new_rank_mbz_instances % divisor == 0
+                        and new_rank_mbz_instances // divisor < rank_mbz_instances
+                    ):
+                        new_rank_mbz_instances //= divisor
+                        break
+                else:
+                    raise RuntimeError("shouldn't get here")
+
+            assert new_rank_mbz_instances <= rank_mbz_instances
+            assert global_bz_instances % (new_rank_mbz_instances * dp_world_size) == 0
+
+            new_rank_mbz = new_rank_mbz_instances * self.sequence_length
+            log.warning(
+                f"Adjusting rank micro-batch size from {rank_mbz:,d} tokens ({rank_mbz_instances:,d} instances) "
+                f"down to {new_rank_mbz:,d} tokens ({new_rank_mbz_instances:,d} instances) to be compatible "
+                "with data parallel world size"
+            )
+            rank_mbz = new_rank_mbz
 
         return (
             TrainerConfig(
