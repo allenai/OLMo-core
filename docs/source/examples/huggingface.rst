@@ -7,7 +7,7 @@ One way to do this would be to manually apply a data parallel wrapper (like DDP 
 
 Instead we recommend converting your HuggingFace checkpoint into a format that can be loaded into an equivalent OLMo-core :class:`~olmo_core.nn.transformer.Transformer` model, when possible, using the functions provided by :mod:`olmo_core.distributed.checkpoint`.
 
-Below is an example that shows how to convert a Llama-3.2 checkpoint on HuggingFace into the right format for OLMo-core.
+Below is an example that shows how to convert an OLMo2 or Llama-3 checkpoint on HuggingFace into the right format for OLMo-core.
 It would be straight forward to adapt this script to convert in the other direction as well.
 
 .. seealso::
