@@ -20,8 +20,8 @@ class BaselineModelLadder(ModelLadder):
     MBZ_SIZES: ClassVar[Dict[ModelSize, int]] = {
         # TODO: may need to tune these
         # ===============================
-        ModelSize.size_190M: 32 * 4096,
-        ModelSize.size_370M: 32 * 4096,
+        ModelSize.size_190M: 16 * 4096,
+        ModelSize.size_370M: 16 * 4096,
         ModelSize.size_600M: 16 * 4096,
         ModelSize.size_760M: 16 * 4096,
         # ===============================
@@ -69,7 +69,7 @@ class BaselineModelLadder(ModelLadder):
 
 
 def build_ladder(root_dir: str) -> BaselineModelLadder:
-    save_folder = str(join_path(root_dir, f"checkpoints/{get_beaker_username().lower()}"))
+    save_folder = str(join_path(root_dir, f"checkpoints/{get_beaker_username().lower()}/ladder"))
     return BaselineModelLadder(
         name="OLMo2",
         project="OLMo2-model-ladder",

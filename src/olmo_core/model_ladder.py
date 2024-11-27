@@ -300,7 +300,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
                         tokenizer=self.tokenizer,
                         work_dir=self.work_dir,
                     ),
-                    eval_interval=1000,
+                    eval_interval=500,
                 ),
             )
             .with_callback(
@@ -310,7 +310,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
                         task for task in list_tasks() if "_mc" not in task and "_var" not in task
                     ],
                     tokenizer=self.tokenizer,
-                    eval_interval=250,
+                    eval_interval=500,
                 ),
             )
             .with_callback(
