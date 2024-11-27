@@ -125,6 +125,7 @@ def build_config(
     if rank_mbz_instances * dp_world_size > global_bz_instances:
         new_rank_mbz_instances = global_bz_instances // dp_world_size
         new_rank_mbz = new_rank_mbz_instances * ladder.sequence_length
+        trainer.rank_microbatch_size = new_rank_mbz
         log.warning(
             f"Adjusting rank micro-batch size from {trainer.rank_microbatch_size:,d} tokens ({rank_mbz_instances:,d} instances) "
             f"down to {new_rank_mbz:,d} tokens ({new_rank_mbz_instances:,d} instances)"
