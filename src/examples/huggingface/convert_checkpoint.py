@@ -111,11 +111,11 @@ def convert_checkpoint() -> AutoModelForCausalLM:
                 f"model.layers.{block}.input_layernorm.weight"
             )
         else:
-            new_state_dict[f"blocks.{block}.feed_forward_norm.weight"] = state_dict.pop(
+            new_state_dict[f"blocks.{block}.attention_norm.weight"] = state_dict.pop(
                 f"model.layers.{block}.post_attention_layernorm.weight"
             )
             new_state_dict[f"blocks.{block}.feed_forward_norm.weight"] = state_dict.pop(
-                f"model.layers.{block}.post_feed_forward_norm.weight"
+                f"model.layers.{block}.post_feedforward_layernorm.weight"
             )
 
     assert len(state_dict) == 0
