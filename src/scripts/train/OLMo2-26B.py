@@ -6,6 +6,7 @@ import logging
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingConfig,
@@ -30,13 +31,14 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.full
         ),
+        float8_config=Float8Config(compile=True),
     )
 
 
 def build_optim_config(common: CommonComponents) -> AdamWConfig:
     del common
     return AdamWConfig(
-        lr=3e-4,
+        lr=6e-4,
         weight_decay=0.1,
         betas=(0.9, 0.95),
         group_overrides=[
@@ -50,7 +52,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=common.save_folder,
-            rank_microbatch_size=1 * 4096,
+            rank_microbatch_size=4 * 4096,
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
