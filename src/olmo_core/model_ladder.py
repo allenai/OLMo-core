@@ -9,21 +9,22 @@ from typing import Optional
 
 from torch.distributed.device_mesh import DeviceMesh
 
-from olmo_core.config import Config, StrEnum
-from olmo_core.data import (
+from .config import Config, StrEnum
+from .data import (
     DataMix,
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
     NumpyDatasetType,
     TokenizerConfig,
 )
-from olmo_core.distributed.utils import get_num_nodes, init_hybrid_shard_mesh
-from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.io import join_path
-from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import CosWithWarmup, OptimConfig
-from olmo_core.train import Duration, TrainerConfig
-from olmo_core.train.callbacks import (
+from .distributed.utils import get_num_nodes, init_hybrid_shard_mesh
+from .doc_utils import beta_feature
+from .exceptions import OLMoConfigurationError
+from .io import join_path
+from .nn.transformer import TransformerConfig
+from .optim import CosWithWarmup, OptimConfig
+from .train import Duration, TrainerConfig
+from .train.callbacks import (
     CheckpointerCallback,
     CometCallback,
     ConfigSaverCallback,
@@ -92,6 +93,7 @@ class ModelSize(StrEnum):
             raise NotImplementedError(self)
 
 
+@beta_feature
 @dataclass
 class ModelLadder(Config, metaclass=ABCMeta):
     """

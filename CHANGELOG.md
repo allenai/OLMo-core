@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [v1.7.0](https://github.com/allenai/OLMo-core/releases/tag/v1.7.0) - 2024-11-27
+
 ### Added
 
 - Added `key_mapping` argument to `olmo_core.distributed.checkpoint.load_model_and_optim_state()`
