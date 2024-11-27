@@ -52,6 +52,7 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
    float8
    io
    launch
+   model_ladder
    nn/index
    optim
    train/index

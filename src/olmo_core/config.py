@@ -158,14 +158,32 @@ class Config:
         """
         pass
 
-    def merge(self, dotlist: List[str]) -> Self:
+    def merge(self, dotlist: List[str], prefix: Optional[str] = None, strict: bool = True) -> Self:
         """
         Merge self with fields from a "dotlist", creating a new object.
 
         :param dotlist: A list of field attributes with dot notation, e.g. ``foo.bar=1``.
+        :param prefix: Only use override items in the dotlist that start with a given prefix name,
+            and strip that prefix (including the subsequent ".") before applying the overrides.
+        :param strict: Parse the dotlist strictly.
         """
         try:
-            merge_fields = om.from_dotlist(_clean_opts(dotlist))
+            dotlist = _clean_opts(dotlist)
+            if prefix is not None:
+                dotlist = [o.lstrip(f"{prefix}.") for o in dotlist if o.startswith(f"{prefix}.")]
+            if not strict:
+                field_names = set(f.name for f in fields(self))
+                dotlist = [
+                    o
+                    for o in dotlist
+                    if any(
+                        [
+                            o.startswith(f"{name}=") or o.startswith(f"{name}.")
+                            for name in field_names
+                        ]
+                    )
+                ]
+            merge_fields = om.from_dotlist(dotlist)
             merged = om.merge(self, merge_fields)
             out = cast(Self, om.to_object(merged))
             out.apply(lambda c: c.validate())
