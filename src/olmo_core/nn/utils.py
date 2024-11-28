@@ -14,6 +14,10 @@ def _get_custom_checkpoint_policy(meta: Dict[str, int]):
         torch.ops.aten._scaled_dot_product_efficient_attention.default,  # type: ignore
         torch.ops.aten._scaled_dot_product_flash_attention.default,  # type: ignore
         torch.ops._c10d_functional.reduce_scatter_tensor.default,  # type: ignore
+        # for low precision training, it's useful to always save
+        # the result of max(abs(tensor))
+        torch.ops.aten.abs.default,  # type: ignore
+        torch.ops.aten.max.default,  # type: ignore
     }
 
     def _custom_policy(ctx, func, *args, **kwargs):
