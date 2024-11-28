@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 
 from .config import Config, StrEnum
+from .exceptions import OLMoConfigurationError
 
 __all__ = ["Float8Handler", "Float8ScalingType", "Float8Config"]
 
@@ -187,12 +188,28 @@ class Float8Config(Config):
 
         from torchao.float8 import convert_to_float8_training  # type: ignore
 
+        ignored_modules_found = set()
+
+        def module_filter_fn(m: nn.Module, fqn: str) -> bool:
+            del m
+            nonlocal ignored_modules_found
+            if modules_to_ignore is not None and fqn in modules_to_ignore:
+                ignored_modules_found.add(fqn)
+                return False
+            return True
+
         # Mutates the model in place, replacing instances of nn.Linear with Float8Linear.
         convert_to_float8_training(
             model,
             config=self.float8_linear_config,
-            module_filter_fn=lambda _, fqn: fqn not in (modules_to_ignore or set()),
+            module_filter_fn=module_filter_fn,
         )
+
+        if modules_to_ignore is not None and modules_to_ignore != ignored_modules_found:
+            raise OLMoConfigurationError(
+                f"invalid module name(s) in 'modules_to_ignore': {list(modules_to_ignore - ignored_modules_found)}"
+            )
+
         log.info("Swapped to Float8Linear layers")
 
     def build(self) -> Float8Handler:
