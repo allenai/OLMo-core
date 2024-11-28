@@ -132,6 +132,7 @@ class TransformerConfig(Config):
         init_device: str = "cpu",
         device: Optional[torch.device] = None,
         dp_mesh: Optional[DeviceMesh] = None,
+        tp_mesh: Optional[DeviceMesh] = None,
         max_seq_len: Optional[int] = None,
     ) -> Transformer:
         """
@@ -144,6 +145,7 @@ class TransformerConfig(Config):
         :param dp_mesh: Data parallel device mesh. This can be used to configure hybrid sharding
             with FSDP. See :func:`~olmo_core.distributed.utils.init_hybrid_shard_mesh()` for
             easily creating such a mesh.
+        :param tp_mesh: Tensor parallel device mesh to configure tensor parallelism.
         :param max_seq_len: The maximum sequence length expected.
         """
         device = device or get_default_device()
@@ -184,9 +186,20 @@ class TransformerConfig(Config):
         if self.float8_config is not None and self.float8_config.enabled:
             if self.float8_config.compile is None and self.compile:
                 self.float8_config.compile = True
-            self.float8_config.convert_to_float8_training(model, modules_to_ignore={"w_out"})
+            self.float8_config.convert_to_float8_training(
+                model, modules_to_ignore={"lm_head.w_out"}
+            )
 
         log.info("%s", model)
+
+        # Maybe apply tensor parallelism.
+        if tp_mesh is not None:
+            model.apply_tp(
+                tp_mesh,
+                float8_enabled=self.float8_config is not None and self.float8_config.enabled,
+                async_tp=self.compile,
+                loss_parallel=False,  # TODO (epwalsh): figure this out
+            )
 
         # Maybe apply activation checkpointing.
         if self.ac_config is not None:

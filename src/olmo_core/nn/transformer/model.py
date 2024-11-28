@@ -225,6 +225,62 @@ class Transformer(nn.Module):
 
         return self.lm_head(h) if self.lm_head is not None else h
 
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        loss_parallel: bool = False,
+        float8_enabled: bool = False,
+        async_tp: bool = False,
+    ):
+        """
+        Apply tensor parallelism to the model.
+
+        .. warning::
+            Usually this does not need to be called directly, as :meth:`TransformerConfig.build()`
+            will call it for you.
+
+        :param loss_parallel: Set to ``True`` if parallelizing the loss function as well.
+        :param float8_enabled: Set this to ``True`` if training with float8 linear layers.
+        :param async_tp: Use experimental async tensor parallelism
+            (currently only effective when using ``torch.compile``).
+        """
+        from torch.distributed._tensor import Replicate, Shard
+        from torch.distributed.tensor.parallel import (
+            RowwiseParallel,
+            parallelize_module,
+        )
+
+        parallelize_module(
+            module=self,
+            device_mesh=tp_mesh,
+            parallelize_plan={
+                "embeddings": RowwiseParallel(
+                    input_layouts=Replicate(),
+                    output_layouts=Shard(1),
+                ),
+            },
+        )
+
+        self.lm_head.apply_tp(tp_mesh, loss_parallel=loss_parallel)
+
+        # Apply tensor + sequence parallelism to every transformer block
+        # NOTE: At the cost of model code change, we can accelerate Sequence Parallel
+        #       by folding (and unfolding) the batch dimension and the sequence dimension.
+        #       Examples can be found at https://github.com/pytorch/torchtitan/pull/437
+        for block in self.blocks:
+            block.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+
+        if async_tp:
+            from torch.distributed._symmetric_memory import enable_symm_mem_for_group
+
+            torch._inductor.config._micro_pipeline_tp = True  # type: ignore
+            enable_symm_mem_for_group(tp_mesh.get_group().group_name)
+
+        log.info(
+            f"Applied {'Float8 ' if float8_enabled else ''}{'Async ' if async_tp else ''}"
+            "tensor parallelism to the model"
+        )
+
     def apply_activation_checkpointing(
         self,
         mode: TransformerActivationCheckpointingMode,
@@ -501,6 +557,19 @@ class NormalizedTransformer(Transformer):
 
     def _normalize_matrix(self, w: torch.Tensor, dim: int = -1):
         w.copy_(l2_normalize(w, dim=dim))
+
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        loss_parallel: bool = False,
+        float8_enabled: bool = False,
+        async_tp: bool = False,
+    ):
+        del tp_mesh, loss_parallel, float8_enabled, async_tp
+
+        raise NotImplementedError(
+            "TP is not implemented yet for the normalized transformer variant"
+        )
 
     def apply_compile(self):
         super().apply_compile()
