@@ -1,12 +1,12 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
-from torch.distributed._tensor import Replicate, Shard
+from torch.distributed._tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import SequenceParallel, parallelize_module
 
 from olmo_core.config import Config, StrEnum
@@ -191,6 +191,10 @@ class TransformerBlock(TransformerBlockBase):
         )
         return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
+    @property
+    def tp_input_layouts(self) -> Union[Placement, Tuple[Placement, ...]]:
+        return Shard(1)
+
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         _, _, prepare_module_input = get_tp_wrappers(float8_enabled=float8_enabled)
 
@@ -235,6 +239,36 @@ class ReorderedNormTransformerBlock(TransformerBlock):
             self.attention_norm(self.attention(x, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens))
         )
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+
+    @property
+    def tp_input_layouts(self) -> Union[Placement, Tuple[Placement, ...]]:
+        return Replicate()
+
+    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
+        _, _, prepare_module_input = get_tp_wrappers(float8_enabled=float8_enabled)
+
+        plan = {
+            "attention": prepare_module_input(
+                input_layouts=(Replicate(),),
+                desired_input_layouts=(Replicate(),),
+            ),
+            "attention_norm": SequenceParallel(),
+            "feed_forward": prepare_module_input(
+                input_layouts=(Replicate(),),
+                desired_input_layouts=(Replicate(),),
+            ),
+            "feed_forward_norm": SequenceParallel(),
+        }
+        if isinstance(self.dropout, nn.Dropout):
+            plan["dropout"] = SequenceParallel()
+        parallelize_module(
+            module=self,
+            device_mesh=tp_mesh,
+            parallelize_plan=plan,
+        )
+
+        self.attention.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+        self.feed_forward.apply_tp(tp_mesh, float8_enabled=float8_enabled)
 
 
 @beta_feature

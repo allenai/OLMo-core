@@ -244,7 +244,7 @@ class Transformer(nn.Module):
         :param async_tp: Use experimental async tensor parallelism
             (currently only effective when using ``torch.compile``).
         """
-        from torch.distributed._tensor import Replicate, Shard
+        from torch.distributed._tensor import Replicate
         from torch.distributed.tensor.parallel import (
             RowwiseParallel,
             parallelize_module,
@@ -256,7 +256,7 @@ class Transformer(nn.Module):
             parallelize_plan={
                 "embeddings": RowwiseParallel(
                     input_layouts=Replicate(),
-                    output_layouts=Shard(1),
+                    output_layouts=self.blocks[0].tp_input_layouts,
                 ),
             },
         )
