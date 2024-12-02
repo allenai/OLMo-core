@@ -16,7 +16,11 @@ from olmo_core.data import (
     VSLCurriculumConfig,
     VSLCurriculumType,
 )
-from olmo_core.distributed.utils import get_num_nodes, init_hybrid_shard_mesh
+from olmo_core.distributed.utils import (
+    get_local_rank,
+    get_num_nodes,
+    init_hybrid_shard_mesh,
+)
 from olmo_core.float8 import Float8Config
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import TransformerConfig
@@ -102,12 +106,13 @@ class SubCmd(StrEnum):
             raise NotImplementedError(self)
 
     def run(self, config: ExperimentConfig):
-        print(config)
-        print(
-            "\n"
-            f"[b blue]Total parameters:[/]                {config.model.num_params:,d}\n"
-            f"[b blue]Non-embedding parameters:[/]        {config.model.num_non_embedding_params:,d}"
-        )
+        if get_local_rank() == 0:
+            print(config)
+            print(
+                "\n"
+                f"[b blue]Total parameters:[/]                {config.model.num_params:,d}\n"
+                f"[b blue]Non-embedding parameters:[/]        {config.model.num_non_embedding_params:,d}"
+            )
 
         if self == SubCmd.launch:
             launch(config)
