@@ -7,10 +7,11 @@ import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed._tensor import Replicate, Shard
-from torch.distributed.tensor.parallel import SequenceParallel, parallelize_module
+from torch.distributed.tensor.parallel import parallelize_module
 from torch.distributed.tensor.placement_types import Placement
 
 from olmo_core.config import Config, StrEnum
+from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 
@@ -219,8 +220,8 @@ class TransformerBlock(TransformerBlockBase):
             parallelize_plan=plan,
         )
 
-        self.attention.apply_tp(tp_mesh, float8_enabled=float8_enabled)
-        self.feed_forward.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+        self.attention.apply_tp(tp_mesh, output_layouts=Shard(1), float8_enabled=float8_enabled)
+        self.feed_forward.apply_tp(tp_mesh, output_layouts=Shard(1), float8_enabled=float8_enabled)
 
 
 class ReorderedNormTransformerBlock(TransformerBlock):
@@ -253,12 +254,14 @@ class ReorderedNormTransformerBlock(TransformerBlock):
                 input_layouts=(Replicate(),),
                 desired_input_layouts=(Replicate(),),
             ),
-            "attention_norm": SequenceParallel(),
+            "attention_norm": SequenceParallel(output_layouts=Replicate(), use_local_output=True),
             "feed_forward": prepare_module_input(
                 input_layouts=(Replicate(),),
                 desired_input_layouts=(Replicate(),),
             ),
-            "feed_forward_norm": SequenceParallel(),
+            "feed_forward_norm": SequenceParallel(
+                output_layouts=Replicate(), use_local_output=True
+            ),
         }
         if isinstance(self.dropout, nn.Dropout):
             plan["dropout"] = SequenceParallel()
@@ -268,8 +271,8 @@ class ReorderedNormTransformerBlock(TransformerBlock):
             parallelize_plan=plan,
         )
 
-        self.attention.apply_tp(tp_mesh, float8_enabled=float8_enabled)
-        self.feed_forward.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+        self.attention.apply_tp(tp_mesh, output_layouts=Shard(1), float8_enabled=float8_enabled)
+        self.feed_forward.apply_tp(tp_mesh, output_layouts=Shard(1), float8_enabled=float8_enabled)
 
 
 @beta_feature

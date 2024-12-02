@@ -6,8 +6,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
-from torch.distributed._tensor import Shard
 from torch.distributed.tensor.parallel import parallelize_module
+from torch.distributed.tensor.placement_types import Placement
 
 from ..config import Config, DType, StrEnum
 from ..doc_utils import beta_feature
@@ -121,7 +121,13 @@ class FeedForward(nn.Module):
         """
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        output_layouts: Optional[Placement] = None,
+        use_local_output: bool = True,
+        float8_enabled: bool = False,
+    ):
         rowwise_parallel, colwise_parallel, _ = get_tp_wrappers(float8_enabled=float8_enabled)
 
         parallelize_module(
@@ -129,7 +135,9 @@ class FeedForward(nn.Module):
             device_mesh=tp_mesh,
             parallelize_plan={
                 "w1": colwise_parallel(),
-                "w2": rowwise_parallel(output_layouts=Shard(1)),
+                "w2": rowwise_parallel(
+                    output_layouts=output_layouts, use_local_output=use_local_output
+                ),
                 "w3": colwise_parallel(),
             },
         )
@@ -177,8 +185,14 @@ class NormalizedFeedForward(FeedForward):
         sw3 = self.sw3 * (self.sw_init_value / self.sw_init_scaling)
         return self.w2(F.silu(sw1 * self.w1(x)) * (sw3 * self.w3(x)))
 
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
-        del tp_mesh, float8_enabled
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        output_layouts: Optional[Placement] = None,
+        use_local_output: bool = True,
+        float8_enabled: bool = False,
+    ):
+        del tp_mesh, output_layouts, use_local_output, float8_enabled
 
         raise NotImplementedError(
             "TP is not implemented yet for the normalized feed-forward variant"
