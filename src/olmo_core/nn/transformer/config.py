@@ -218,9 +218,10 @@ class TransformerConfig(Config):
             model.apply_tp(
                 tp_mesh,
                 float8_enabled=self.float8_config is not None and self.float8_config.enabled,
-                async_tp=self.compile,
-                loss_parallel=False,  # TODO (epwalsh): figure this out
+                loss_parallel=False,  # TODO (epwalsh): figure out if this will work w/ z-loss
             )
+            if self.tp_config is not None:
+                self.tp_config.maybe_enable_async_tp(tp_mesh)
 
         # Maybe apply activation checkpointing.
         if self.ac_config is not None:

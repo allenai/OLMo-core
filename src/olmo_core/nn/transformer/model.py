@@ -230,7 +230,6 @@ class Transformer(nn.Module):
         tp_mesh: DeviceMesh,
         loss_parallel: bool = False,
         float8_enabled: bool = False,
-        async_tp: bool = False,
     ):
         """
         Apply tensor parallelism to the model.
@@ -241,8 +240,6 @@ class Transformer(nn.Module):
 
         :param loss_parallel: Set to ``True`` if parallelizing the loss function as well.
         :param float8_enabled: Set this to ``True`` if training with float8 linear layers.
-        :param async_tp: Use experimental async tensor parallelism
-            (currently only effective when using ``torch.compile``).
         """
         from torch.distributed._tensor import Replicate
         from torch.distributed.tensor.parallel import (
@@ -277,16 +274,7 @@ class Transformer(nn.Module):
         for block in self.blocks:
             block.apply_tp(tp_mesh, float8_enabled=float8_enabled)
 
-        if async_tp:
-            from torch.distributed._symmetric_memory import enable_symm_mem_for_group
-
-            torch._inductor.config._micro_pipeline_tp = True  # type: ignore
-            enable_symm_mem_for_group(tp_mesh.get_group().group_name)
-
-        log.info(
-            f"Applied {'Float8 ' if float8_enabled else ''}{'Async ' if async_tp else ''}"
-            "tensor parallelism to the model"
-        )
+        log.info(f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model")
 
     def apply_activation_checkpointing(
         self,

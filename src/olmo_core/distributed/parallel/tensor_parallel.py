@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Optional
 
+import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed._tensor import Shard, distribute_module
@@ -21,6 +22,18 @@ class TensorParallelConfig(Config):
     """
     The TP degree.
     """
+
+    enable_async: bool = False
+    """
+    Enable experimental async tensor parallelism.
+    """
+
+    def maybe_enable_async_tp(self, tp_mesh: DeviceMesh):
+        if self.enable_async:
+            from torch.distributed._symmetric_memory import enable_symm_mem_for_group
+
+            torch._inductor.config._micro_pipeline_tp = True  # type: ignore
+            enable_symm_mem_for_group(tp_mesh.get_group().group_name)
 
 
 class SequenceParallel(_SequenceParallel):
