@@ -71,6 +71,8 @@ def build_device_mesh(
         return dp.build_device_mesh(device_type=device_type)
     else:
         assert dp is not None
+        assert tp is not None
+
         if get_world_size() % tp.degree != 0:
             raise OLMoConfigurationError(
                 f"World size {get_world_size()} must be divisible by TP degree ({tp.degree})"
