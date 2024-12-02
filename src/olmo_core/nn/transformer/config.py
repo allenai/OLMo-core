@@ -6,7 +6,11 @@ import torch
 from torch.distributed import DeviceMesh
 
 from olmo_core.config import Config, DType, StrEnum
-from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
+from olmo_core.distributed.parallel import (
+    DataParallelConfig,
+    DataParallelType,
+    TensorParallelConfig,
+)
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
@@ -106,6 +110,7 @@ class TransformerConfig(Config):
     :param name: The name of the implementation.
     :param compile: Whether to compile the model with ``torch.compile``.
     :param dp_config: Data parallel configuration.
+    :param tp_config: Tensor parallel configuration.
     :param ac_config: Activation checkpointing configuration.
     :param float8_config: Float8 training configuration.
 
@@ -123,6 +128,7 @@ class TransformerConfig(Config):
     init_seed: int = 0
     compile: bool = False
     dp_config: Optional[TransformerDataParallelConfig] = None
+    tp_config: Optional[TensorParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
     float8_config: Optional[Float8Config] = None
 
@@ -139,13 +145,23 @@ class TransformerConfig(Config):
         Build the model corresponding to this config, potentially applying activation checkpointing,
         compilation, FSDP or DDP, etc, and eventually calling :meth:`Transformer.init_weights()`.
 
+        .. note::
+            You can use :func:`~olmo_core.distributed.parallel.build_device_mesh()`
+            to create a device mesh suitable for the configured parallel strategies
+            along with :func:`~olmo_core.distributed.parallel.get_dp_mesh()` and
+            :func:`~olmo_core.distributed.parallel.get_tp_mesh()` to get the corresponding
+            data- and tensor-parallel sub-meshes, respectively.
+
         :param init_device: The device to put the parameters on during initialization. In a
             distributed setting it usually makes sense to set this to "meta".
         :param device: The device to put the model on after initialization.
-        :param dp_mesh: Data parallel device mesh. This can be used to configure hybrid sharding
-            with FSDP. See :func:`~olmo_core.distributed.utils.init_hybrid_shard_mesh()` for
-            easily creating such a mesh.
+        :param dp_mesh: Optional data parallel device mesh.
+            See note above about how to create a suitable device mesh.
+            If not provided and using the HSDP data parallel strategy, this might be
+            created automatically with
+            :func:`~olmo_core.distributed.parallel.DataParallelConfig.build_device_mesh()`.
         :param tp_mesh: Tensor parallel device mesh to configure tensor parallelism.
+            See note above about how to create a suitable device mesh.
         :param max_seq_len: The maximum sequence length expected.
         """
         device = device or get_default_device()
@@ -193,6 +209,11 @@ class TransformerConfig(Config):
         log.info("%s", model)
 
         # Maybe apply tensor parallelism.
+        if self.tp_config is not None and tp_mesh is None:
+            raise RuntimeError(
+                "'tp_mesh' must be provided to use tensor parallelism. "
+                "Please use 'olmo_core.distributed.parallel.build_device_mesh()' to create it."
+            )
         if tp_mesh is not None:
             model.apply_tp(
                 tp_mesh,
@@ -215,7 +236,10 @@ class TransformerConfig(Config):
 
         # Maybe wrap for data parallel.
         if self.dp_config is not None:
-            if self.dp_config.name == DataParallelType.fsdp:
+            if self.dp_config.name in (DataParallelType.fsdp, DataParallelType.hsdp):
+                if self.dp_config.name == DataParallelType.hsdp and dp_mesh is None:
+                    dp_mesh = self.dp_config.build_device_mesh(device_type=device.type)
+
                 model.apply_fsdp(
                     dp_mesh=dp_mesh,
                     param_dtype=self.dp_config.param_dtype.as_pt()

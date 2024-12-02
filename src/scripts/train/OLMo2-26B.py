@@ -7,12 +7,7 @@ import logging
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
-from olmo_core.internal.experiment import (
-    CommonComponents,
-    DPMeshType,
-    ExperimentConfig,
-    main,
-)
+from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
@@ -95,15 +90,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     )
 
 
-def finalize_config(config: ExperimentConfig):
-    config.dp_mesh.name = DPMeshType.full
-
-
 if __name__ == "__main__":
     main(
         global_batch_size=2048 * 4096,
         model_config_builder=build_model_config,
         optim_config_builder=build_optim_config,
         trainer_config_builder=build_trainer_config,
-        finalize_config=finalize_config,
     )

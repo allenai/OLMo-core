@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from functools import partial
 from typing import Optional
 
@@ -6,6 +7,20 @@ from torch.distributed import DeviceMesh
 from torch.distributed._tensor import Shard, distribute_module
 from torch.distributed.tensor.parallel import SequenceParallel as _SequenceParallel
 from torch.distributed.tensor.placement_types import Placement
+
+from olmo_core.config import Config
+
+
+@dataclass
+class TensorParallelConfig(Config):
+    """
+    Configuration class for tensor parallelism (TP).
+    """
+
+    degree: int
+    """
+    The TP degree.
+    """
 
 
 class SequenceParallel(_SequenceParallel):

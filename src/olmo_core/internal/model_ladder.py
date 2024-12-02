@@ -7,6 +7,13 @@ from rich import print
 
 from olmo_core.config import Config, StrEnum
 from olmo_core.data import NumpyDataLoaderConfig, NumpyDatasetConfig
+from olmo_core.distributed.parallel import (
+    build_device_mesh,
+    get_dp_mesh,
+    get_dp_process_group,
+    get_tp_mesh,
+)
+from olmo_core.distributed.utils import get_local_rank
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.model_ladder import ModelLadder, ModelSize
 from olmo_core.nn.transformer import TransformerConfig
@@ -48,8 +55,9 @@ class SubCmd(StrEnum):
         else:
             raise NotImplementedError(self)
 
-    def run(self, size: ModelSize, config: LadderRunConfig):
-        print(config)
+    def run(self, config: LadderRunConfig):
+        if get_local_rank() == 0:
+            print(config)
 
         if self == SubCmd.launch:
             config.launch.launch(follow=True)
@@ -60,17 +68,29 @@ class SubCmd(StrEnum):
                 # Set RNG states on all devices.
                 seed_all(config.ladder.init_seed)
 
+                device = get_default_device()
+
+                # Build mesh, if needed.
+                world_mesh = build_device_mesh(
+                    dp=config.model.dp_config, tp=config.model.tp_config, device_type=device.type
+                )
+
                 # Build components.
                 model = config.model.build(
                     init_device="meta",
-                    device=get_default_device(),
+                    device=device,
                     max_seq_len=config.dataset.sequence_length,
-                    dp_mesh=config.ladder.get_dp_mesh(size=size),
+                    dp_mesh=get_dp_mesh(world_mesh),
+                    tp_mesh=get_tp_mesh(world_mesh),
                 )
                 optim = config.optim.build(model)
                 dataset = config.dataset.build()
-                data_loader = config.data_loader.build(dataset)
-                trainer = config.trainer.build(model, optim, data_loader)
+                data_loader = config.data_loader.build(
+                    dataset, dp_process_group=get_dp_process_group(world_mesh)
+                )
+                trainer = config.trainer.build(
+                    model, optim, data_loader, dp_process_group=get_dp_process_group(world_mesh)
+                )
 
                 # Record the config to W&B/Comet and each checkpoint dir.
                 config_dict = config.as_config_dict()
@@ -163,4 +183,4 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} 1B ai2/pluto-cirrascale --launch.num_n
     config.ladder.validate()
 
     # Run the cmd.
-    cmd.run(size, config)
+    cmd.run(config)
