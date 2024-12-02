@@ -275,16 +275,16 @@ class Attention(nn.Module):
         else:
             # Fall back to PyTorch's SDPA...
 
+            # PyTorch's SDPA doesn't support GQA, so we have to do this.
+            # shape: (batch_size, n_heads, seq_len, head_dim)
+            k = repeat_kv(k, self.n_rep)
+            v = repeat_kv(v, self.n_rep)
+
             # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
             # shape: (batch_size, n_heads, seq_len, head_dim),
             #        (batch_size, n_kv_heads, seq_len, head_dim),
             #        (batch_size, n_kv_heads, seq_len, head_dim)
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
-
-            # PyTorch's SDPA doesn't support GQA, so we have to do this.
-            # shape: (batch_size, n_heads, seq_len, head_dim)
-            k = repeat_kv(k, self.n_rep)
-            v = repeat_kv(v, self.n_rep)
 
             # shape: (batch_size, n_heads, seq_len, head_dim)
             att = F.scaled_dot_product_attention(
