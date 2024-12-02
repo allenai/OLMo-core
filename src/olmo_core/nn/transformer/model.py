@@ -438,10 +438,7 @@ class Transformer(nn.Module):
 
         fully_shard(self, reshard_after_forward=not pp_enabled, **fsdp_config)
 
-        if dp_mesh is None:
-            log.info("Applied FSDP2 to the model")
-        else:
-            log.info("Applied FSDP2 with hybrid sharding to the model")
+        log.info("Applied FSDP2 to the model")
 
     def apply_ddp(
         self,
