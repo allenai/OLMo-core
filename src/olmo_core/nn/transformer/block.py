@@ -6,8 +6,9 @@ from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
-from torch.distributed._tensor import Placement, Replicate, Shard
+from torch.distributed._tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import SequenceParallel, parallelize_module
+from torch.distributed.tensor.placement_types import Placement
 
 from olmo_core.config import Config, StrEnum
 from olmo_core.doc_utils import beta_feature

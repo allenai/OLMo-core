@@ -7,9 +7,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed._tensor import Shard
-from torch.distributed.tensor.parallel import SequenceParallel, parallelize_module
+from torch.distributed.tensor.parallel import parallelize_module
 
 from ..config import Config, DType, StrEnum
+from ..distributed.parallel.tensor_parallel import SequenceParallel
 from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
@@ -360,9 +361,9 @@ class Attention(nn.Module):
             "w_out": rowwise_parallel(output_layouts=Shard(1)),
         }
         if self.q_norm is not None:
-            plan["q_norm"] = SequenceParallel()
+            plan["q_norm"] = SequenceParallel(output_layouts=Shard(-1))
         if self.k_norm is not None:
-            plan["k_norm"] = SequenceParallel()
+            plan["k_norm"] = SequenceParallel(output_layouts=Shard(-1))
         parallelize_module(
             module=self,
             device_mesh=tp_mesh,
