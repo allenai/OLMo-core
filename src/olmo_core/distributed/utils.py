@@ -181,6 +181,16 @@ def get_rank(group: Optional[dist.ProcessGroup] = None) -> int:
         return 0
 
 
+def get_global_rank(group_rank: int, group: Optional[dist.ProcessGroup] = None) -> int:
+    """
+    Translate a rank within a group into it's global rank.
+    """
+    if group is None or not is_distributed():
+        return group_rank
+    else:
+        return dist.get_global_rank(group, group_rank)
+
+
 def get_local_rank() -> int:
     """
     Get the local rank within the current node.
