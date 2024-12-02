@@ -246,6 +246,7 @@ class Transformer(nn.Module):
         """
         from torch.distributed._tensor import Replicate
         from torch.distributed.tensor.parallel import (
+            PrepareModuleInput,
             RowwiseParallel,
             parallelize_module,
         )
@@ -257,6 +258,12 @@ class Transformer(nn.Module):
                 "embeddings": RowwiseParallel(
                     input_layouts=Replicate(),
                     output_layouts=self.blocks[0].tp_input_layouts,
+                ),
+                "lm_head": PrepareModuleInput(
+                    input_layouts=self.blocks[
+                        0
+                    ].tp_input_layouts,  # block output layouts are same as block input layouts
+                    desired_input_layouts=self.lm_head.tp_input_layouts,
                 ),
             },
         )

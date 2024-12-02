@@ -149,7 +149,7 @@ def run_tensor_parallel_transformer(architecture: str):
     )
 
     model = config.build(device=device, max_seq_len=512, tp_mesh=mesh["tp"])
-    input_ids = torch.arange(0, 128).unsqueeze(0).to(torch.device("cuda"))
+    input_ids = torch.arange(0, 128).unsqueeze(0).to(device)
     logits = model(input_ids=input_ids)
     loss = logits.sum()
     loss.backward()
