@@ -17,7 +17,13 @@ from olmo_core.data import (
     NumpyDatasetType,
     TokenizerConfig,
 )
-from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.distributed.parallel import (
+    DataParallelType,
+    build_device_mesh,
+    get_dp_mesh,
+    get_dp_process_group,
+    get_tp_mesh,
+)
 from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
@@ -177,15 +183,29 @@ def main(run_name: str, overrides: List[str]):
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
+    device = get_default_device()
+
+    # Build the world mesh, if needed.
+    world_mesh = build_device_mesh(
+        dp=config.model.dp_config, tp=config.model.tp_config, device_type=device.type
+    )
+
     # Build components.
     model = config.model.build(
         init_device="meta",
-        device=get_default_device(),
+        device=device,
+        max_seq_len=config.dataset.sequence_length,
+        dp_mesh=get_dp_mesh(world_mesh),
+        tp_mesh=get_tp_mesh(world_mesh),
     )
     optim = config.optim.build(model)
     dataset = config.dataset.build()
-    data_loader = config.data_loader.build(dataset)
-    trainer = config.trainer.build(model, optim, data_loader)
+    data_loader = config.data_loader.build(
+        dataset, dp_process_group=get_dp_process_group(world_mesh)
+    )
+    trainer = config.trainer.build(
+        model, optim, data_loader, dp_process_group=get_dp_process_group(world_mesh)
+    )
 
     # Save config to W&B and each checkpoint dir.
     config_dict = config.as_config_dict()
