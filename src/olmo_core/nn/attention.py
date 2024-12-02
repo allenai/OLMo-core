@@ -355,8 +355,14 @@ class Attention(nn.Module):
         rowwise_parallel, colwise_parallel, _ = get_tp_wrappers(float8_enabled=float8_enabled)
 
         plan = {
-            "w_q": colwise_parallel(output_layouts=None if self.q_norm is None else Shard(1)),
-            "w_k": colwise_parallel(output_layouts=None if self.k_norm is None else Shard(1)),
+            "w_q": colwise_parallel(
+                output_layouts=None if self.q_norm is None else Shard(1),
+                use_local_output=self.q_norm is None,
+            ),
+            "w_k": colwise_parallel(
+                output_layouts=None if self.k_norm is None else Shard(1),
+                use_local_output=self.k_norm is None,
+            ),
             "w_v": colwise_parallel(),
             "w_out": rowwise_parallel(output_layouts=Shard(1)),
         }
