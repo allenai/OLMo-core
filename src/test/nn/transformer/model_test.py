@@ -3,13 +3,15 @@ import logging
 import pytest
 import torch
 import torch.nn as nn
-from torch.distributed._tensor import DTensor
+from torch.distributed._tensor import DTensor, init_device_mesh
 
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.distributed.utils import get_world_size
 from olmo_core.nn.layer_norm import LayerNorm
 from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
+from olmo_core.utils import get_default_device
 
-from ...distributed.utils import requires_multi_gpu, run_distributed_test
+from ...distributed.utils import BACKENDS, requires_multi_gpu, run_distributed_test
 from ...utils import GPU_MARKS
 
 log = logging.getLogger(__name__)
@@ -117,3 +119,48 @@ def run_ngpt_with_fsdp2():
 @requires_multi_gpu
 def test_ngpt_with_fsdp2():
     run_distributed_test(run_ngpt_with_fsdp2, backend="nccl", start_method="spawn")
+
+
+def run_tensor_parallel_transformer(architecture: str):
+    device = get_default_device()
+
+    config: TransformerConfig
+    if architecture == "olmo2":
+        config = TransformerConfig.olmo2_190M(
+            vocab_size=16_000,
+            n_layers=2,
+            fused_ops=False,
+            use_flash=False,
+        )
+    elif architecture == "llama":
+        config = TransformerConfig.llama2_271M(
+            vocab_size=16_000,
+            n_layers=2,
+            fused_ops=False,
+            use_flash=False,
+        )
+    else:
+        raise NotImplementedError(architecture)
+
+    mesh = init_device_mesh(
+        device.type,
+        (get_world_size(),),
+        mesh_dim_names=("tp",),
+    )
+
+    model = config.build(device=device, max_seq_len=512, tp_mesh=mesh["tp"])
+    input_ids = torch.arange(0, 128).unsqueeze(0).to(torch.device("cuda"))
+    logits = model(input_ids=input_ids)
+    loss = logits.sum()
+    loss.backward()
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("architecture", ["olmo2", "llama"])
+def test_tensor_parallel_transformer(backend: str, architecture: str):
+    run_distributed_test(
+        run_tensor_parallel_transformer,
+        backend=backend,
+        start_method="spawn",
+        func_args=(architecture,),
+    )
