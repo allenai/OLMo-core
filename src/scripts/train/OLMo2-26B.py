@@ -22,18 +22,19 @@ log = logging.getLogger(__name__)
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
+    compile = False
     return TransformerConfig.olmo2_26B(
         vocab_size=common.tokenizer.padded_vocab_size(),
-        compile=False,
+        compile=compile,
         fused_ops=False,
-        use_flash=True,
+        use_flash=not compile,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.full
         ),
-        float8_config=Float8Config(compile=True),
+        float8_config=Float8Config(compile=compile, enabled=False),
     )
 
 
