@@ -6,6 +6,7 @@ from beaker import Beaker
 from olmo_core.io import is_url
 from olmo_core.launch.beaker import (
     BeakerEnvSecret,
+    BeakerEnvVar,
     BeakerLaunchConfig,
     BeakerWekaBucket,
     OLMoCoreBeakerImage,
@@ -61,6 +62,7 @@ def build_launch_config(
     task_name: str = "train",
     workspace: str = "ai2/OLMo-core",
     budget: str = "ai2/oe-training",
+    nccl_debug: bool = False,
 ) -> BeakerLaunchConfig:
     weka_buckets: List[BeakerWekaBucket] = []
     if root_dir.startswith("/weka/"):
@@ -81,6 +83,7 @@ def build_launch_config(
         num_gpus=8,
         shared_filesystem=not is_url(root_dir),
         allow_dirty=False,
+        env_vars=[BeakerEnvVar(name="NCCL_DEBUG", value="INFO" if nccl_debug else "WARN")],
         env_secrets=[
             BeakerEnvSecret(name="BEAKER_TOKEN", secret=f"{beaker_user}_BEAKER_TOKEN"),
             BeakerEnvSecret(name="WANDB_API_KEY", secret=f"{beaker_user}_WANDB_API_KEY"),
@@ -98,6 +101,8 @@ def build_launch_config(
             # Setup python environment.
             "conda shell.bash activate base",
             "pip install -e '.[all]'",
+            # Quickly try a new version of PyTorch like this
+            #  "pip install --upgrade --pre torch==2.6.0.dev20241112+cu121 --index-url https://download.pytorch.org/whl/nightly/cu121",
             "pip freeze",
             # Move AWS credentials from env to relevant files
             "mkdir -p ~/.aws",

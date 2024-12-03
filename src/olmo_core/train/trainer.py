@@ -35,6 +35,7 @@ from ..distributed.utils import (
     backend_supports_cpu,
     barrier,
     get_fs_local_rank,
+    get_global_rank,
     get_local_tensor,
     get_rank,
     get_world_size,
@@ -340,11 +341,7 @@ class Trainer:
                         "A CPU-only backend is required for async bookkeeping"
                     )
                 log.info("Creating new process group for async bookkeeping")
-                self._bookkeeping_pg = dist.new_group(
-                    ranks=None
-                    if self.dp_process_group is None
-                    else dist.get_process_group_ranks(self.dp_process_group)
-                )
+                self._bookkeeping_pg = dist.new_group()
 
         # Check data loader configuration.
         if self.data_loader.dp_world_size != get_world_size(self.dp_process_group):
@@ -499,8 +496,7 @@ class Trainer:
     @property
     def bookkeeping_pg(self) -> Optional[dist.ProcessGroup]:
         """
-        The process group used for bookkeeping collectives. This should include the same ranks
-        as the :data:`dp_process_group`.
+        The process group used for bookkeeping collectives.
 
         Since bookkeeping collectives might be done in a separate thread, we need a separate process
         group to avoid potential race conditions.
@@ -1063,7 +1059,11 @@ class Trainer:
                 group=self.bookkeeping_pg,
             )
             if canceling_rank >= 0:
-                cancel_reason = scatter_object(self._cancel_reason, src=canceling_rank)
+                cancel_reason = scatter_object(
+                    self._cancel_reason,
+                    src=get_global_rank(canceling_rank, group=self.bookkeeping_pg),
+                    group=self.bookkeeping_pg,
+                )
                 assert cancel_reason is not None
                 self._canceled = True
                 self._canceling_rank = canceling_rank

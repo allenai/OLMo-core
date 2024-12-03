@@ -6,7 +6,14 @@ import torch
 from torch.distributed import DeviceMesh
 
 from olmo_core.config import Config, DType, StrEnum
-from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
+from olmo_core.distributed.parallel import (
+    DataParallelConfig,
+    DataParallelType,
+    TensorParallelConfig,
+    build_device_mesh,
+    get_dp_mesh,
+    get_tp_mesh,
+)
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
@@ -106,6 +113,7 @@ class TransformerConfig(Config):
     :param name: The name of the implementation.
     :param compile: Whether to compile the model with ``torch.compile``.
     :param dp_config: Data parallel configuration.
+    :param tp_config: Tensor parallel configuration.
     :param ac_config: Activation checkpointing configuration.
     :param float8_config: Float8 training configuration.
 
@@ -123,6 +131,7 @@ class TransformerConfig(Config):
     init_seed: int = 0
     compile: bool = False
     dp_config: Optional[TransformerDataParallelConfig] = None
+    tp_config: Optional[TensorParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
     float8_config: Optional[Float8Config] = None
 
@@ -131,19 +140,26 @@ class TransformerConfig(Config):
         *,
         init_device: str = "cpu",
         device: Optional[torch.device] = None,
+        mesh: Optional[DeviceMesh] = None,
         dp_mesh: Optional[DeviceMesh] = None,
+        tp_mesh: Optional[DeviceMesh] = None,
         max_seq_len: Optional[int] = None,
     ) -> Transformer:
         """
         Build the model corresponding to this config, potentially applying activation checkpointing,
         compilation, FSDP or DDP, etc, and eventually calling :meth:`Transformer.init_weights()`.
 
+        .. note::
+            You can use :meth:`build_mesh()` to create the ``mesh`` suitable for the configured
+            parallel strategies.
+
         :param init_device: The device to put the parameters on during initialization. In a
             distributed setting it usually makes sense to set this to "meta".
         :param device: The device to put the model on after initialization.
-        :param dp_mesh: Data parallel device mesh. This can be used to configure hybrid sharding
-            with FSDP. See :func:`~olmo_core.distributed.utils.init_hybrid_shard_mesh()` for
-            easily creating such a mesh.
+        :param mesh: The device mesh created from :meth:`build_mesh`. Alternatively you can provide
+            `the `dp_mesh`` and ``tp_mesh`` sub-meshes separately.
+        :param dp_mesh: Optional data parallel device mesh.
+        :param tp_mesh: Tensor parallel device mesh to configure tensor parallelism.
         :param max_seq_len: The maximum sequence length expected.
         """
         device = device or get_default_device()
@@ -184,9 +200,29 @@ class TransformerConfig(Config):
         if self.float8_config is not None and self.float8_config.enabled:
             if self.float8_config.compile is None and self.compile:
                 self.float8_config.compile = True
-            self.float8_config.convert_to_float8_training(model, modules_to_ignore={"w_out"})
+            self.float8_config.convert_to_float8_training(
+                model, modules_to_ignore={"lm_head.w_out"}
+            )
 
         log.info("%s", model)
+
+        # Maybe apply tensor parallelism.
+        if self.tp_config is not None and mesh is None and tp_mesh is None:
+            raise RuntimeError(
+                "'tp_mesh' must be provided to use tensor parallelism. "
+                "Please use 'olmo_core.distributed.parallel.build_device_mesh()' to create it."
+            )
+        elif tp_mesh is None and mesh is not None:
+            tp_mesh = get_tp_mesh(mesh)
+
+        if tp_mesh is not None:
+            model.apply_tp(
+                tp_mesh,
+                float8_enabled=self.float8_config is not None and self.float8_config.enabled,
+                loss_parallel=False,  # TODO (epwalsh): figure out if this will work w/ z-loss
+            )
+            if self.tp_config is not None:
+                self.tp_config.maybe_enable_async_tp(tp_mesh)
 
         # Maybe apply activation checkpointing.
         if self.ac_config is not None:
@@ -201,8 +237,14 @@ class TransformerConfig(Config):
             model.apply_compile()
 
         # Maybe wrap for data parallel.
+        if dp_mesh is None and mesh is not None:
+            dp_mesh = get_dp_mesh(mesh)
+
         if self.dp_config is not None:
-            if self.dp_config.name == DataParallelType.fsdp:
+            if self.dp_config.name in (DataParallelType.fsdp, DataParallelType.hsdp):
+                if self.dp_config.name == DataParallelType.hsdp and dp_mesh is None:
+                    dp_mesh = self.dp_config.build_device_mesh(device_type=device.type)
+
                 model.apply_fsdp(
                     dp_mesh=dp_mesh,
                     param_dtype=self.dp_config.param_dtype.as_pt()
@@ -222,6 +264,14 @@ class TransformerConfig(Config):
         model.init_weights(max_seq_len=max_seq_len, device=device)
 
         return model
+
+    def build_mesh(self, device: Optional[torch.device] = None) -> Optional[DeviceMesh]:
+        """
+        Create a ``DeviceMesh`` suitable for the configured parallelism strategies.
+        The result should be passed as the ``mesh`` argument to :meth:`build()`.
+        """
+        device = device or get_default_device()
+        return build_device_mesh(dp=self.dp_config, tp=self.tp_config, device_type=device.type)
 
     @property
     def num_params(self) -> int:
@@ -405,6 +455,24 @@ class TransformerConfig(Config):
             block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
+    def olmo2_26B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 26B OLMo model config.
+        """
+        return cls.llama_like(
+            vocab_size=vocab_size,
+            d_model=7168,
+            n_layers=kwargs.pop("n_layers", 40),
+            n_heads=kwargs.pop("n_heads", 56),
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            hidden_size_multiple_of=kwargs.pop("hidden_size_multiple_of", 1024),
             layer_norm_eps=1e-6,
             **kwargs,
         )

@@ -5,9 +5,6 @@ Configuration classes for defining model ladder scaling ablations.
 import logging
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional
-
-from torch.distributed.device_mesh import DeviceMesh
 
 from .config import Config, StrEnum
 from .data import (
@@ -17,7 +14,6 @@ from .data import (
     NumpyDatasetType,
     TokenizerConfig,
 )
-from .distributed.utils import get_num_nodes, init_hybrid_shard_mesh
 from .doc_utils import beta_feature
 from .exceptions import OLMoConfigurationError
 from .io import join_path
@@ -247,15 +243,6 @@ class ModelLadder(Config, metaclass=ABCMeta):
         :param size: The target model size.
         """
         return Duration.tokens(2 * 20 * size.num_params)
-
-    def get_dp_mesh(self, *, size: ModelSize) -> Optional[DeviceMesh]:
-        """
-        Get the data parallel device mesh. Could be a 2D mesh for HSDP, or just none or FSDP/DDP.
-        """
-        if get_num_nodes() == 1 or size.num_params < 1e9:
-            return None
-        else:
-            return init_hybrid_shard_mesh()
 
     def get_trainer_config(
         self,

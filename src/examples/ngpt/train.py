@@ -18,7 +18,6 @@ from olmo_core.data import (
     TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.distributed.utils import init_hybrid_shard_mesh
 from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
 from olmo_core.optim import AdamConfig, CosWithWarmup
 from olmo_core.train import (
@@ -174,7 +173,6 @@ def main(run_name: str, overrides: List[str]):
     model = config.model.build(
         init_device="meta",
         device=get_default_device(),
-        dp_mesh=init_hybrid_shard_mesh(num_replicas=2),
     )
     optim = config.optim.build(model)
     dataset = config.dataset.build()

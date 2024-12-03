@@ -18,7 +18,6 @@ from olmo_core.data import (
     TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.distributed.utils import init_hybrid_shard_mesh
 from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
@@ -59,6 +58,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     model_config = TransformerConfig.llama2_271M(
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
         compile=True,
+        fused_ops=False,
+        use_flash=False,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
@@ -178,16 +179,22 @@ def main(run_name: str, overrides: List[str]):
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
+    device = get_default_device()
+
+    # Build the world mesh, if needed.
+    world_mesh = config.model.build_mesh(device=device)
+
     # Build components.
     model = config.model.build(
         init_device="meta",
-        device=get_default_device(),
-        dp_mesh=init_hybrid_shard_mesh(num_replicas=2),
+        device=device,
+        max_seq_len=config.dataset.sequence_length,
+        mesh=world_mesh,
     )
     optim = config.optim.build(model)
     dataset = config.dataset.build()
-    data_loader = config.data_loader.build(dataset)
-    trainer = config.trainer.build(model, optim, data_loader)
+    data_loader = config.data_loader.build(dataset, mesh=world_mesh)
+    trainer = config.trainer.build(model, optim, data_loader, mesh=world_mesh)
 
     # Save config to W&B and each checkpoint dir.
     config_dict = config.as_config_dict()

@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, cast
 
 from rich import print
-from torch.distributed.device_mesh import DeviceMesh
 
 from olmo_core.config import Config, StrEnum
 from olmo_core.data import (
@@ -16,7 +15,7 @@ from olmo_core.data import (
     VSLCurriculumConfig,
     VSLCurriculumType,
 )
-from olmo_core.distributed.utils import get_num_nodes, init_hybrid_shard_mesh
+from olmo_core.distributed.utils import get_local_rank
 from olmo_core.float8 import Float8Config
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import TransformerConfig
@@ -57,22 +56,6 @@ class CommonComponents(Config):
     callbacks: Dict[str, Callback]
 
 
-class DPMeshType(StrEnum):
-    full = "full"
-    hybrid = "hybrid"
-
-
-@dataclass
-class DPMeshConfig(Config):
-    name: DPMeshType = DPMeshType.hybrid
-
-    def build(self) -> Optional[DeviceMesh]:
-        if get_num_nodes() == 1 or self.name == DPMeshType.full:
-            return None
-        else:
-            return init_hybrid_shard_mesh()
-
-
 @dataclass
 class ExperimentConfig(Config):
     run_name: str
@@ -82,7 +65,6 @@ class ExperimentConfig(Config):
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
     trainer: TrainerConfig
-    dp_mesh: DPMeshConfig
     init_seed: int = 12536
 
 
@@ -102,12 +84,13 @@ class SubCmd(StrEnum):
             raise NotImplementedError(self)
 
     def run(self, config: ExperimentConfig):
-        print(config)
-        print(
-            "\n"
-            f"[b blue]Total parameters:[/]                {config.model.num_params:,d}\n"
-            f"[b blue]Non-embedding parameters:[/]        {config.model.num_non_embedding_params:,d}"
-        )
+        if get_local_rank() == 0:
+            print(config)
+            print(
+                "\n"
+                f"[b blue]Total parameters:[/]                {config.model.num_params:,d}\n"
+                f"[b blue]Non-embedding parameters:[/]        {config.model.num_non_embedding_params:,d}"
+            )
 
         if self == SubCmd.launch:
             launch(config)
@@ -241,7 +224,6 @@ def build_config(
         dataset=common.dataset,
         data_loader=common.data_loader,
         trainer=trainer,
-        dp_mesh=DPMeshConfig(),
     )
 
     if finalize_config is not None:
@@ -279,17 +261,22 @@ def train(config: ExperimentConfig):
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
+    device = get_default_device()
+
+    # Build mesh, if needed.
+    world_mesh = config.model.build_mesh(device=device)
+
     # Build components.
     model = config.model.build(
         init_device="meta",
-        device=get_default_device(),
+        device=device,
         max_seq_len=config.dataset.sequence_length,
-        dp_mesh=config.dp_mesh.build(),
+        mesh=world_mesh,
     )
     optim = config.optim.build(model)
     dataset = config.dataset.build()
-    data_loader = config.data_loader.build(dataset)
-    trainer = config.trainer.build(model, optim, data_loader)
+    data_loader = config.data_loader.build(dataset, mesh=world_mesh)
+    trainer = config.trainer.build(model, optim, data_loader, mesh=world_mesh)
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()

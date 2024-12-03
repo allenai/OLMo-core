@@ -3,13 +3,19 @@ import logging
 import pytest
 import torch
 import torch.nn as nn
-from torch.distributed._tensor import DTensor
+from torch.distributed._tensor import DTensor, init_device_mesh
 
+from olmo_core.distributed.checkpoint import (
+    load_model_and_optim_state,
+    save_model_and_optim_state,
+)
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.distributed.utils import get_world_size
 from olmo_core.nn.layer_norm import LayerNorm
 from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
+from olmo_core.utils import get_default_device
 
-from ...distributed.utils import requires_multi_gpu, run_distributed_test
+from ...distributed.utils import BACKENDS, requires_multi_gpu, run_distributed_test
 from ...utils import GPU_MARKS
 
 log = logging.getLogger(__name__)
@@ -117,3 +123,79 @@ def run_ngpt_with_fsdp2():
 @requires_multi_gpu
 def test_ngpt_with_fsdp2():
     run_distributed_test(run_ngpt_with_fsdp2, backend="nccl", start_method="spawn")
+
+
+def get_transformer_config(architecture: str) -> TransformerConfig:
+    config: TransformerConfig
+    if architecture == "olmo2":
+        config = TransformerConfig.olmo2_190M(
+            vocab_size=16_000,
+            n_layers=2,
+            fused_ops=False,
+            use_flash=False,
+        )
+    elif architecture == "llama":
+        config = TransformerConfig.llama2_271M(
+            vocab_size=16_000,
+            n_layers=2,
+            fused_ops=False,
+            use_flash=False,
+        )
+    else:
+        raise NotImplementedError(architecture)
+
+    return config
+
+
+def get_transformer_inputs() -> torch.Tensor:
+    return torch.arange(0, 128).unsqueeze(0)
+
+
+def run_tensor_parallel_transformer(checkpoint_dir, outputs_path, architecture: str):
+    device = get_default_device()
+    config = get_transformer_config(architecture)
+    input_ids = get_transformer_inputs().to(device)
+
+    mesh = init_device_mesh(
+        device.type,
+        (get_world_size(),),
+        mesh_dim_names=("tp",),
+    )
+
+    model = config.build(device=device, max_seq_len=512, tp_mesh=mesh["tp"])
+    load_model_and_optim_state(checkpoint_dir, model)
+
+    logits = model(input_ids=input_ids)
+
+    loss = logits.sum()
+    loss.backward()
+
+    og_logits = torch.load(outputs_path, map_location=device)
+    torch.testing.assert_close(og_logits, logits)
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("architecture", ["olmo2", "llama"])
+def test_tensor_parallel_transformer(backend: str, architecture: str, tmp_path):
+    device = torch.device("cuda") if "nccl" in backend else torch.device("cpu")
+    config = get_transformer_config(architecture)
+    model = config.build(device=device, max_seq_len=512)
+    input_ids = get_transformer_inputs().to(device)
+    logits = model(input_ids=input_ids)
+
+    outputs_path = tmp_path / "logits.pt"
+    torch.save(logits, outputs_path)
+
+    checkpoint_dir = tmp_path / "checkpoint"
+    save_model_and_optim_state(checkpoint_dir, model)
+
+    run_distributed_test(
+        run_tensor_parallel_transformer,
+        backend=backend,
+        start_method="spawn",
+        func_args=(
+            checkpoint_dir,
+            outputs_path,
+            architecture,
+        ),
+    )

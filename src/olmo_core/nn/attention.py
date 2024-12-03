@@ -5,8 +5,13 @@ from typing import Optional, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.distributed import DeviceMesh
+from torch.distributed._tensor import Shard
+from torch.distributed.tensor.parallel import parallelize_module
+from torch.distributed.tensor.placement_types import Placement
 
 from ..config import Config, DType, StrEnum
+from ..distributed.parallel.tensor_parallel import SequenceParallel
 from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
@@ -18,6 +23,7 @@ from .rope import (
     RoPEConfig,
     RotaryEmbedding,
 )
+from .utils import get_tp_wrappers
 
 __all__ = ["AttentionType", "AttentionConfig", "Attention", "FusedAttention", "NormalizedAttention"]
 
@@ -187,6 +193,7 @@ class Attention(nn.Module):
 
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads or n_heads
+        self.n_rep = self.n_heads // self.n_kv_heads
         self.head_dim = d_model // n_heads
         self.w_q = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
         self.w_k = nn.Linear(
@@ -238,6 +245,9 @@ class Attention(nn.Module):
     ) -> torch.Tensor:
         B, T, *_ = q.shape
 
+        # NOTE: use -1 instead of `n_heads` / `n_kv_heads` to infer actual local size when
+        # using tensor parallelism.
+
         att: torch.Tensor
         if max_doc_len is not None and cu_doc_lens is not None:
             if self._flash_attn_varlen_func is None:
@@ -246,9 +256,9 @@ class Attention(nn.Module):
                 )
             # shape: (batch_size * seq_len, n_heads, head_dim)
             att = self._flash_attn_varlen_func(
-                q.view(B * T, self.n_heads, self.head_dim),
-                k.view(B * T, self.n_kv_heads, self.head_dim),
-                v.view(B * T, self.n_kv_heads, self.head_dim),
+                q.view(B * T, -1, self.head_dim),
+                k.view(B * T, -1, self.head_dim),
+                v.view(B * T, -1, self.head_dim),
                 cu_doc_lens,
                 cu_doc_lens,
                 max_doc_len,
@@ -265,20 +275,16 @@ class Attention(nn.Module):
         else:
             # Fall back to PyTorch's SDPA...
 
+            # PyTorch's SDPA doesn't support GQA, so we have to do this.
+            # shape: (batch_size, n_heads, seq_len, head_dim)
+            k = repeat_kv(k, self.n_rep)
+            v = repeat_kv(v, self.n_rep)
+
             # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
             # shape: (batch_size, n_heads, seq_len, head_dim),
             #        (batch_size, n_kv_heads, seq_len, head_dim),
             #        (batch_size, n_kv_heads, seq_len, head_dim)
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
-
-            # PyTorch's SDPA doesn't support GQA, so we have to do this.
-            if self.n_heads != self.n_kv_heads and self.n_kv_heads > 1:
-                k = k.repeat_interleave(
-                    self.n_heads // self.n_kv_heads, dim=1, output_size=self.n_heads
-                )
-                v = v.repeat_interleave(
-                    self.n_heads // self.n_kv_heads, dim=1, output_size=self.n_heads
-                )
 
             # shape: (batch_size, n_heads, seq_len, head_dim)
             att = F.scaled_dot_product_attention(
@@ -320,16 +326,19 @@ class Attention(nn.Module):
             k.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
             v.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
 
-        if self.q_norm is not None and self.k_norm is not None:
+        if self.q_norm is not None:
             q = self.q_norm(q)
+        if self.k_norm is not None:
             k = self.k_norm(k)
 
+        # NOTE: use -1 instead of `n_heads` / `n_kv_heads` to infer actual local size when
+        # using tensor parallelism.
         # shape: (batch_size, seq_len, n_heads, head_dim)
-        q = q.view(B, T, self.n_heads, self.head_dim)
+        q = q.view(B, T, -1, self.head_dim)
         # shape: (batch_size, seq_len, n_kv_heads, head_dim)
-        k = k.view(B, T, self.n_kv_heads, self.head_dim)
+        k = k.view(B, T, -1, self.head_dim)
         # shape: (batch_size, seq_len, n_kv_heads, head_dim)
-        v = v.view(B, T, self.n_kv_heads, self.head_dim)
+        v = v.view(B, T, -1, self.head_dim)
 
         if self.rope is not None:
             q, k = self.rope(q, k, head_first=False)
@@ -342,6 +351,39 @@ class Attention(nn.Module):
 
         # shape: (batch_size, seq_len, d_model)
         return self.w_out(att)
+
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        output_layouts: Optional[Placement] = None,
+        use_local_output: bool = True,
+        float8_enabled: bool = False,
+    ):
+        rowwise_parallel, colwise_parallel, _ = get_tp_wrappers(float8_enabled=float8_enabled)
+
+        plan = {
+            "w_q": colwise_parallel(
+                output_layouts=None if self.q_norm is None else Shard(1),
+                use_local_output=self.q_norm is None,
+            ),
+            "w_k": colwise_parallel(
+                output_layouts=None if self.k_norm is None else Shard(1),
+                use_local_output=self.k_norm is None,
+            ),
+            "w_v": colwise_parallel(),
+            "w_out": rowwise_parallel(
+                output_layouts=output_layouts, use_local_output=use_local_output
+            ),
+        }
+        if self.q_norm is not None:
+            plan["q_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(-1))
+        if self.k_norm is not None:
+            plan["k_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(-1))
+        parallelize_module(
+            module=self,
+            device_mesh=tp_mesh,
+            parallelize_plan=plan,
+        )
 
 
 @beta_feature
@@ -441,6 +483,17 @@ class NormalizedAttention(Attention):
 
         # shape: (batch_size, seq_len, d_model)
         return self.w_out(att)
+
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        output_layouts: Optional[Placement] = None,
+        use_local_output: bool = True,
+        float8_enabled: bool = False,
+    ):
+        del tp_mesh, output_layouts, use_local_output, float8_enabled
+
+        raise NotImplementedError("TP is not implemented yet for the normalized attention variant")
 
     @torch.no_grad()
     def normalize_matrices(self):
@@ -566,3 +619,26 @@ class FusedAttention(nn.Module):
 
         # shape: (batch_size, seq_len, d_model)
         return self.w_out(att)
+
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        output_layouts: Optional[Placement] = None,
+        use_local_output: bool = True,
+        float8_enabled: bool = False,
+    ):
+        del tp_mesh, output_layouts, use_local_output, float8_enabled
+
+        raise NotImplementedError("TP is not implemented yet for the fused attention variant")
+
+
+def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
+    """torch.repeat_interleave(x, dim=2, repeats=n_rep)"""
+    bs, slen, n_kv_heads, head_dim = x.shape
+    if n_rep == 1:
+        return x
+    return (
+        torch.unsqueeze(x, dim=3)
+        .expand(bs, slen, n_kv_heads, n_rep, head_dim)
+        .reshape(bs, slen, n_kv_heads * n_rep, head_dim)
+    )

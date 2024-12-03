@@ -225,6 +225,57 @@ class Transformer(nn.Module):
 
         return self.lm_head(h) if self.lm_head is not None else h
 
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        loss_parallel: bool = False,
+        float8_enabled: bool = False,
+    ):
+        """
+        Apply tensor parallelism to the model.
+
+        .. warning::
+            Usually this does not need to be called directly, as :meth:`TransformerConfig.build()`
+            will call it for you.
+
+        :param loss_parallel: Set to ``True`` if parallelizing the loss function as well.
+        :param float8_enabled: Set this to ``True`` if training with float8 linear layers.
+        """
+        from torch.distributed._tensor import Replicate
+        from torch.distributed.tensor.parallel import (
+            PrepareModuleInput,
+            RowwiseParallel,
+            parallelize_module,
+        )
+
+        parallelize_module(
+            module=self,
+            device_mesh=tp_mesh,
+            parallelize_plan={
+                "embeddings": RowwiseParallel(
+                    input_layouts=Replicate(),
+                    output_layouts=self.blocks[0].tp_input_layouts,
+                ),
+                "lm_head": PrepareModuleInput(
+                    input_layouts=self.blocks[
+                        0
+                    ].tp_input_layouts,  # block output layouts are same as block input layouts
+                    desired_input_layouts=self.lm_head.tp_input_layouts,
+                ),
+            },
+        )
+
+        self.lm_head.apply_tp(tp_mesh, loss_parallel=loss_parallel)
+
+        # Apply tensor + sequence parallelism to every transformer block
+        # NOTE: At the cost of model code change, we can accelerate Sequence Parallel
+        #       by folding (and unfolding) the batch dimension and the sequence dimension.
+        #       Examples can be found at https://github.com/pytorch/torchtitan/pull/437
+        for block in self.blocks:
+            block.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+
+        log.info(f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model")
+
     def apply_activation_checkpointing(
         self,
         mode: TransformerActivationCheckpointingMode,
@@ -375,10 +426,7 @@ class Transformer(nn.Module):
 
         fully_shard(self, reshard_after_forward=not pp_enabled, **fsdp_config)
 
-        if dp_mesh is None:
-            log.info("Applied FSDP2 to the model")
-        else:
-            log.info("Applied FSDP2 with hybrid sharding to the model")
+        log.info("Applied FSDP2 to the model")
 
     def apply_ddp(
         self,
@@ -501,6 +549,19 @@ class NormalizedTransformer(Transformer):
 
     def _normalize_matrix(self, w: torch.Tensor, dim: int = -1):
         w.copy_(l2_normalize(w, dim=dim))
+
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        loss_parallel: bool = False,
+        float8_enabled: bool = False,
+        async_tp: bool = False,
+    ):
+        del tp_mesh, loss_parallel, float8_enabled, async_tp
+
+        raise NotImplementedError(
+            "TP is not implemented yet for the normalized transformer variant"
+        )
 
     def apply_compile(self):
         super().apply_compile()

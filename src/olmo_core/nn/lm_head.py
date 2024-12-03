@@ -1,9 +1,18 @@
 import math
 from dataclasses import dataclass
-from typing import Optional
+from typing import Dict, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
+from torch.distributed import DeviceMesh
+from torch.distributed._tensor import Replicate, Shard
+from torch.distributed.tensor.parallel import (
+    ColwiseParallel,
+    ParallelStyle,
+    SequenceParallel,
+    parallelize_module,
+)
+from torch.distributed.tensor.placement_types import Placement
 
 from ..config import Config, DType, StrEnum
 from ..doc_utils import beta_feature
@@ -123,6 +132,26 @@ class LMHead(nn.Module):
         h = self.norm(x) if self.norm is not None else x
         return self.w_out(h)
 
+    @property
+    def tp_input_layouts(self) -> Union[Placement, Tuple[Placement, ...]]:
+        return Shard(1) if self.norm is not None else Replicate()
+
+    def apply_tp(self, tp_mesh: DeviceMesh, loss_parallel: bool = False):
+        tp_plan: Dict[str, ParallelStyle] = {
+            "w_out": ColwiseParallel(
+                input_layouts=Shard(1),
+                output_layouts=Shard(-1) if loss_parallel else Replicate(),
+                use_local_output=not loss_parallel,
+            ),
+        }
+        if self.norm is not None:
+            tp_plan["norm"] = SequenceParallel()
+        parallelize_module(
+            module=self,
+            device_mesh=tp_mesh,
+            parallelize_plan=tp_plan,
+        )
+
 
 @beta_feature
 class NormalizedLMHead(LMHead):
@@ -162,6 +191,11 @@ class NormalizedLMHead(LMHead):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         sz = self.sz * (self.sz_init_value / self.sz_init_scaling)
         return sz * self.w_out(x)
+
+    def apply_tp(self, tp_mesh: DeviceMesh, loss_parallel: bool = False):
+        del tp_mesh, loss_parallel
+
+        raise NotImplementedError("TP is not implemented yet for the normalized LM head variant")
 
     @torch.no_grad()
     def normalize_matrices(self):

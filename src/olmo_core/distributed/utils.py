@@ -10,11 +10,10 @@ from typing import List, Optional, TypeVar
 import torch
 import torch.distributed as dist
 from torch.distributed._tensor import DTensor
-from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
+from torch.distributed.device_mesh import DeviceMesh
 
-from ..config import StrEnum
-from ..exceptions import OLMoConfigurationError, OLMoEnvironmentError
-from ..utils import get_default_device, logging_configured, move_to_device, set_env_var
+from ..exceptions import OLMoEnvironmentError
+from ..utils import logging_configured, move_to_device, set_env_var
 
 OLMO_SHARED_FS_ENV_VAR = "OLMO_SHARED_FS"
 OLMO_FS_LOCAL_RANK_ENV_VAR = "FS_LOCAL_RANK"
@@ -180,6 +179,16 @@ def get_rank(group: Optional[dist.ProcessGroup] = None) -> int:
         return dist.get_rank(group)
     else:
         return 0
+
+
+def get_global_rank(group_rank: int, group: Optional[dist.ProcessGroup] = None) -> int:
+    """
+    Translate a rank within a group into it's global rank.
+    """
+    if group is None or not is_distributed():
+        return group_rank
+    else:
+        return dist.get_global_rank(group, group_rank)
 
 
 def get_local_rank() -> int:
@@ -397,36 +406,6 @@ def backend_supports_cpu(backend: Optional[str] = None) -> bool:
         return True
     else:
         return False
-
-
-class HybridShardMeshDimName(StrEnum):
-    replicas = "replicas"
-    shards = "shards"
-
-
-def init_hybrid_shard_mesh(
-    num_replicas: Optional[int] = None, device_type: Optional[str] = None
-) -> DeviceMesh:
-    """
-    Initialize a device mesh for FSDP hybrid sharding.
-
-    :param num_replicas: The number of model replicas. Defaults to the number of nodes in the main
-        process group.
-    :param device_type: The device type for the mesh.
-    """
-    num_replicas = num_replicas or get_num_nodes()
-    device_type = device_type or get_default_device().type
-
-    if get_world_size() % num_replicas != 0:
-        raise OLMoConfigurationError(
-            "hybrid mesh requires world size to be divisible by 'num_replicas'"
-        )
-
-    return init_device_mesh(
-        device_type,
-        (num_replicas, get_world_size() // num_replicas),
-        mesh_dim_names=(HybridShardMeshDimName.replicas, HybridShardMeshDimName.shards),
-    )
 
 
 def get_reduce_divide_factor(world_size: int) -> float:
