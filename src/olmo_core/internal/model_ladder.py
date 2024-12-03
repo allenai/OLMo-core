@@ -7,7 +7,6 @@ from rich import print
 
 from olmo_core.config import Config, StrEnum
 from olmo_core.data import NumpyDataLoaderConfig, NumpyDatasetConfig
-from olmo_core.distributed.parallel import get_dp_process_group
 from olmo_core.distributed.utils import get_local_rank
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.model_ladder import ModelLadder, ModelSize
@@ -77,12 +76,8 @@ class SubCmd(StrEnum):
                 )
                 optim = config.optim.build(model)
                 dataset = config.dataset.build()
-                data_loader = config.data_loader.build(
-                    dataset, dp_process_group=get_dp_process_group(world_mesh)
-                )
-                trainer = config.trainer.build(
-                    model, optim, data_loader, dp_process_group=get_dp_process_group(world_mesh)
-                )
+                data_loader = config.data_loader.build(dataset, mesh=world_mesh)
+                trainer = config.trainer.build(model, optim, data_loader, mesh=world_mesh)
 
                 # Record the config to W&B/Comet and each checkpoint dir.
                 config_dict = config.as_config_dict()

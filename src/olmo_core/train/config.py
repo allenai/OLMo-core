@@ -7,10 +7,12 @@ from typing import Dict, Optional
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+from torch.distributed import DeviceMesh
 from torch.optim import Optimizer
 
 from ..config import Config, DType
 from ..data import DataLoaderBase
+from ..distributed.parallel import get_dp_process_group
 from ..exceptions import OLMoConfigurationError
 from ..io import is_url
 from ..utils import get_default_device
@@ -73,6 +75,8 @@ class TrainerConfig(Config):
         model: nn.Module,
         optim: Optimizer,
         data_loader: DataLoaderBase,
+        *,
+        mesh: Optional[DeviceMesh] = None,
         dp_process_group: Optional[dist.ProcessGroup] = None,
         checkpointer_pg: Optional[dist.ProcessGroup] = None,
     ) -> Trainer:
@@ -82,8 +86,16 @@ class TrainerConfig(Config):
         :param model: The model to train.
         :param optim: The optimizer to use.
         :param data_loader: The data loader to train on.
+        :param mesh: An optional ``DeviceMesh`` that defines the data parallel dimensions. Ideally
+            you should create this mesh using :func:`~olmo_core.distributed.parallel.build_device_mesh()`
+            or equivalently :meth:`olmo_core.nn.transformer.TransformerConfig.build_mesh()`.
+            Alternatively you can pass the ``dp_process_group`` instead.
+        :param dp_process_group: The data parallel process group.
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
+
+        if dp_process_group is None and mesh is not None:
+            dp_process_group = get_dp_process_group(mesh)
 
         checkpointer = Checkpointer(
             save_overwrite=kwargs["save_overwrite"],

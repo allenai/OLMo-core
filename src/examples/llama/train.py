@@ -193,12 +193,8 @@ def main(run_name: str, overrides: List[str]):
     )
     optim = config.optim.build(model)
     dataset = config.dataset.build()
-    data_loader = config.data_loader.build(
-        dataset, dp_process_group=get_dp_process_group(world_mesh)
-    )
-    trainer = config.trainer.build(
-        model, optim, data_loader, dp_process_group=get_dp_process_group(world_mesh)
-    )
+    data_loader = config.data_loader.build(dataset, mesh=world_mesh)
+    trainer = config.trainer.build(model, optim, data_loader, mesh=world_mesh)
 
     # Save config to W&B and each checkpoint dir.
     config_dict = config.as_config_dict()
