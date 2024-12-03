@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from functools import partial
 from typing import Optional
@@ -10,6 +11,8 @@ from torch.distributed.tensor.parallel import SequenceParallel as _SequenceParal
 from torch.distributed.tensor.placement_types import Placement
 
 from olmo_core.config import Config
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -30,6 +33,8 @@ class TensorParallelConfig(Config):
 
     def maybe_enable_async_tp(self, tp_mesh: DeviceMesh):
         if self.enable_async:
+            log.info("Enabling async tensor parallel")
+
             from torch.distributed._symmetric_memory import enable_symm_mem_for_group
 
             torch._inductor.config._micro_pipeline_tp = True  # type: ignore
