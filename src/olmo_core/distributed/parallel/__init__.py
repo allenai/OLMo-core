@@ -138,7 +138,10 @@ def get_dp_process_group(device_mesh: Optional[DeviceMesh] = None) -> Optional[P
     if dp_mesh is None:
         return None
     else:
-        return dp_mesh.get_group()
+        if len(dp_mesh.shape) > 1:
+            return dp_mesh._flatten(mesh_dim_name=MeshDimName.dp).get_group()
+        else:
+            return dp_mesh.get_group()
 
 
 def get_tp_mesh(device_mesh: Optional[DeviceMesh] = None) -> Optional[DeviceMesh]:
