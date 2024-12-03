@@ -4,6 +4,7 @@ from typing import Any, ClassVar, Dict, Optional
 
 import torch
 
+from olmo_core.distributed.utils import get_world_size
 from olmo_core.nn.transformer import Transformer
 
 from .callback import Callback
@@ -33,6 +34,7 @@ class SpeedMonitorCallback(Callback):
     _batch_load_time: float = 0.0
     _step_tokens: int = 0
     _step_seq_len: int = 0
+    _parallel_degree: int = 1
 
     def _get_num_flops_per_token(self, seq_len: int) -> Optional[int]:
         if self.num_flops_per_token is not None:
@@ -44,6 +46,11 @@ class SpeedMonitorCallback(Callback):
 
     def pre_train(self):
         self._first_step = True
+
+        if self.trainer.dp_process_group is not None:
+            self._parallel_degree = get_world_size() // get_world_size(
+                self.trainer.dp_process_group
+            )
 
         if self.device_peak_flops is None and self.trainer.device.type == "cuda":
             device_name = torch.cuda.get_device_name(self.trainer.device)
@@ -73,7 +80,7 @@ class SpeedMonitorCallback(Callback):
             # unusually long.
             return
 
-        self._step_tokens = batch["input_ids"].numel()
+        self._step_tokens = batch["input_ids"].numel() // self._parallel_degree
         self._step_seq_len = batch["input_ids"].shape[1]
         self._total_steps += 1
         self._total_tokens += self._step_tokens
