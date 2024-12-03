@@ -10,6 +10,9 @@ from olmo_core.distributed.parallel import (
     DataParallelConfig,
     DataParallelType,
     TensorParallelConfig,
+    build_device_mesh,
+    get_dp_mesh,
+    get_tp_mesh,
 )
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
@@ -137,6 +140,7 @@ class TransformerConfig(Config):
         *,
         init_device: str = "cpu",
         device: Optional[torch.device] = None,
+        mesh: Optional[DeviceMesh] = None,
         dp_mesh: Optional[DeviceMesh] = None,
         tp_mesh: Optional[DeviceMesh] = None,
         max_seq_len: Optional[int] = None,
@@ -146,22 +150,16 @@ class TransformerConfig(Config):
         compilation, FSDP or DDP, etc, and eventually calling :meth:`Transformer.init_weights()`.
 
         .. note::
-            You can use :func:`~olmo_core.distributed.parallel.build_device_mesh()`
-            to create a device mesh suitable for the configured parallel strategies
-            along with :func:`~olmo_core.distributed.parallel.get_dp_mesh()` and
-            :func:`~olmo_core.distributed.parallel.get_tp_mesh()` to get the corresponding
-            data- and tensor-parallel sub-meshes, respectively.
+            You can use :meth:`build_mesh()` to create the ``mesh`` suitable for the configured
+            parallel strategies.
 
         :param init_device: The device to put the parameters on during initialization. In a
             distributed setting it usually makes sense to set this to "meta".
         :param device: The device to put the model on after initialization.
+        :param mesh: The device mesh created from :meth:`build_mesh`. Alternatively you can provide
+            `the `dp_mesh`` and ``tp_mesh`` sub-meshes separately.
         :param dp_mesh: Optional data parallel device mesh.
-            See note above about how to create a suitable device mesh.
-            If not provided and using the HSDP data parallel strategy, this might be
-            created automatically with
-            :func:`~olmo_core.distributed.parallel.DataParallelConfig.build_device_mesh()`.
         :param tp_mesh: Tensor parallel device mesh to configure tensor parallelism.
-            See note above about how to create a suitable device mesh.
         :param max_seq_len: The maximum sequence length expected.
         """
         device = device or get_default_device()
@@ -209,11 +207,14 @@ class TransformerConfig(Config):
         log.info("%s", model)
 
         # Maybe apply tensor parallelism.
-        if self.tp_config is not None and tp_mesh is None:
+        if self.tp_config is not None and mesh is None and tp_mesh is None:
             raise RuntimeError(
                 "'tp_mesh' must be provided to use tensor parallelism. "
                 "Please use 'olmo_core.distributed.parallel.build_device_mesh()' to create it."
             )
+        elif tp_mesh is None and mesh is not None:
+            tp_mesh = get_tp_mesh(mesh)
+
         if tp_mesh is not None:
             model.apply_tp(
                 tp_mesh,
@@ -236,6 +237,9 @@ class TransformerConfig(Config):
             model.apply_compile()
 
         # Maybe wrap for data parallel.
+        if dp_mesh is None and mesh is not None:
+            dp_mesh = get_dp_mesh(mesh)
+
         if self.dp_config is not None:
             if self.dp_config.name in (DataParallelType.fsdp, DataParallelType.hsdp):
                 if self.dp_config.name == DataParallelType.hsdp and dp_mesh is None:
@@ -260,6 +264,14 @@ class TransformerConfig(Config):
         model.init_weights(max_seq_len=max_seq_len, device=device)
 
         return model
+
+    def build_mesh(self, device: Optional[torch.device] = None) -> Optional[DeviceMesh]:
+        """
+        Create a ``DeviceMesh`` suitable for the configured parallelism strategies.
+        The result should be passed as the ``mesh`` argument to :meth:`build()`.
+        """
+        device = device or get_default_device()
+        return build_device_mesh(dp=self.dp_config, tp=self.tp_config, device_type=device.type)
 
     @property
     def num_params(self) -> int:
