@@ -7,15 +7,15 @@ concurrency:
 on:
   workflow_dispatch:
   # TODO: disabled for now because it takes too long in CI
-  # pull_request:
-  #   branches:
-  #     - main
-  #   paths:
-  #     - 'Makefile'
-  #     - 'pyproject.toml'
-  #     - 'src/olmo_core/version.py'
-  #     - 'src/Dockerfile'
-  #     - '.github/workflows/docker.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'Makefile'
+      - 'pyproject.toml'
+      - 'src/olmo_core/version.py'
+      - 'src/Dockerfile'
+      - '.github/workflows/docker.yml'
   # push:
   #   branches:
   #     - main
@@ -51,7 +51,7 @@ jobs:
           make nightly-image
 
       - name: Authenticate with GHCR
-        if: startsWith(github.ref, 'refs/tags/')
+        # if: startsWith(github.ref, 'refs/tags/')
         run: |
           echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
@@ -63,12 +63,12 @@ jobs:
           workspace: ${{ env.BEAKER_WORKSPACE }}
 
       - name: Push stable image to GHCR
-        if: startsWith(github.ref, 'refs/tags/')
+        # if: startsWith(github.ref, 'refs/tags/')
         run: |
           make ghcr-image-stable
 
       - name: Push nightly image to GHCR
-        if: startsWith(github.ref, 'refs/tags/')
+        # if: startsWith(github.ref, 'refs/tags/')
         run: |
           make ghcr-image-nightly
 
