@@ -18,6 +18,7 @@ from olmo_core.train import (
     teardown_training_environment,
 )
 from olmo_core.train.callbacks import CometCallback, ConfigSaverCallback, WandBCallback
+from olmo_core.train.train_module import TransformerTrainModuleConfig
 from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
 
 from .common import build_launch_config, get_gpu_type, get_root_dir
@@ -33,6 +34,7 @@ class LadderRunConfig(Config):
     optim: OptimConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
+    train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
 
 
@@ -75,9 +77,10 @@ class SubCmd(StrEnum):
                     mesh=world_mesh,
                 )
                 optim = config.optim.build(model)
+                train_module = config.train_module.build(model, optim)
                 dataset = config.dataset.build()
                 data_loader = config.data_loader.build(dataset, mesh=world_mesh)
-                trainer = config.trainer.build(model, optim, data_loader, mesh=world_mesh)
+                trainer = config.trainer.build(train_module, data_loader, mesh=world_mesh)
 
                 # Record the config to W&B/Comet and each checkpoint dir.
                 config_dict = config.as_config_dict()
@@ -118,6 +121,9 @@ def build_config(
     optim = ladder.get_optim_config(size=size)
     dataset = ladder.get_dataset_config()
     data_loader = ladder.get_data_loader_config(size=size)
+    train_module = ladder.get_train_module_config(
+        size=size, gpu_type=gpu_type, dp_world_size=dp_world_size
+    )
     trainer = ladder.get_trainer_config(size=size, gpu_type=gpu_type, dp_world_size=dp_world_size)
 
     return LadderRunConfig(
@@ -127,6 +133,7 @@ def build_config(
         optim=optim,
         dataset=dataset,
         data_loader=data_loader,
+        train_module=train_module,
         trainer=trainer,
     ).merge(overrides)
 

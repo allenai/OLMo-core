@@ -8,6 +8,7 @@ import torch.distributed as dist
 from olmo_core.distributed.utils import barrier, get_rank
 from olmo_core.io import dir_is_empty, file_exists, is_url, normalize_path
 from olmo_core.train.checkpoint import Checkpointer
+from olmo_core.train.train_module import BasicTrainModule
 
 from ..distributed.utils import run_distributed_test
 
@@ -21,9 +22,10 @@ def run_checkpointer(base_dir, model_factory):
     checkpointer = Checkpointer()
     model = model_factory()
     optim = torch.optim.AdamW(model.parameters())
+    train_module = BasicTrainModule(model, optim, 128)
 
     # Save checkpoint.
-    checkpointer.save(dir, model, optim, {"rank": get_rank()})
+    checkpointer.save(dir, train_module, {"rank": get_rank()})
     barrier()
 
     assert file_exists((f"{dir}/train/rank0.pt"))
@@ -34,13 +36,15 @@ def run_checkpointer(base_dir, model_factory):
     assert checkpointer.latest_checkpoint(base_dir) == dir
 
     # Load checkpoint.
-    train_state = checkpointer.load(dir, model, optim)
+    train_state = checkpointer.load(dir, train_module)
     assert train_state is not None
     assert train_state["rank"] == get_rank()
 
 
 def test_checkpointer_with_local_dir(tmp_path, tiny_model_factory):
-    run_distributed_test(run_checkpointer, func_args=(tmp_path, tiny_model_factory))
+    run_distributed_test(
+        run_checkpointer, func_args=(tmp_path, tiny_model_factory), start_method="spawn"
+    )
 
 
 def test_checkpointer_with_remote_dir(s3_checkpoint_dir, tiny_model_factory):
@@ -65,9 +69,10 @@ def run_async_checkpointer(dir, model_factory):
     checkpointer = Checkpointer(process_group=dist.new_group())
     model = model_factory()
     optim = torch.optim.AdamW(model.parameters())
+    train_module = BasicTrainModule(model, optim, 128)
 
     # Save checkpoint.
-    future = checkpointer.save_async(dir, model, optim, {"rank": get_rank()})
+    future = checkpointer.save_async(dir, train_module, {"rank": get_rank()})
     future.result()
     time.sleep(0.1)  # allow done callback to run.
     barrier()
@@ -78,13 +83,15 @@ def run_async_checkpointer(dir, model_factory):
     assert checkpointer.dir_is_checkpoint(dir)
 
     # Load checkpoint.
-    train_state = checkpointer.load(dir, model, optim)
+    train_state = checkpointer.load(dir, train_module)
     assert train_state is not None
     assert train_state["rank"] == get_rank()
 
 
 def test_async_checkpointer_with_local_dir(tmp_path, tiny_model_factory):
-    run_distributed_test(run_async_checkpointer, func_args=(tmp_path, tiny_model_factory))
+    run_distributed_test(
+        run_async_checkpointer, func_args=(tmp_path, tiny_model_factory), start_method="spawn"
+    )
 
 
 def test_async_checkpointer_with_remote_dir(s3_checkpoint_dir, tiny_model_factory):

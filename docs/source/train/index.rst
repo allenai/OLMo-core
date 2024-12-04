@@ -10,3 +10,4 @@
 
    callbacks
    checkpoint
+   train_module

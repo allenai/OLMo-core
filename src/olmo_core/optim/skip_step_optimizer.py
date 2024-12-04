@@ -20,10 +20,9 @@ class SkipStepOptimizer(Optimizer):
         :data:`latest_grad_norm` to the current loss and grad norm, respectively, *before* calling
         :meth:`step()`.
 
-        The :class:`~olmo_core.train.Trainer` will automatically set the :data:`latest_loss` whenever
-        its optimizer is a subclass of :class:`SkipStepOptimizer`, and the
-        :class:`~olmo_core.train.callbacks.GradClipperCallback` will automatically set the
-        :data:`latest_grad_norm`.
+        The :class:`~olmo_core.train.train_module.TransformerTrainModule` will automatically set
+        the :data:`latest_loss` and :data:`latest_grad_norm` whenever its optimizer is a subclass of
+        :class:`SkipStepOptimizer`.
 
     .. tip::
         When implementing a :class:`SkipStepOptimizer` you should be careful to avoid host-device

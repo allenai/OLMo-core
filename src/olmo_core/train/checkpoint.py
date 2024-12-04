@@ -10,16 +10,14 @@ from typing import Any, ClassVar, Dict, Generator, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
-import torch.nn as nn
 from cached_path import cached_path
-from torch.optim import Optimizer
 
 from ..aliases import PathOrStr
 from ..config import Config
 from ..distributed.checkpoint import (
-    async_save_model_and_optim_state,
-    load_model_and_optim_state,
-    save_model_and_optim_state,
+    async_save_state_dict,
+    load_state_dict,
+    save_state_dict,
 )
 from ..distributed.utils import barrier, get_fs_local_rank, get_rank, is_distributed
 from ..exceptions import OLMoConfigurationError
@@ -34,6 +32,7 @@ from ..io import (
 )
 from ..utils import wait_for
 from ..version import VERSION
+from .train_module import TrainModule
 
 
 @dataclass
@@ -53,7 +52,7 @@ class Checkpointer:
     save_overwrite: bool = False
     process_group: Optional[dist.ProcessGroup] = None
 
-    def save(self, dir: PathOrStr, model: nn.Module, optim: Optimizer, train_state: Dict[str, Any]):
+    def save(self, dir: PathOrStr, train_module: TrainModule, train_state: Dict[str, Any]):
         """
         Save model, optim, and other training state to a local or remote directory.
         """
@@ -63,13 +62,10 @@ class Checkpointer:
             self._save_train_state(dir, wd, train_state)
 
             # Save model and optim state.
-            model_and_optim_dir = (
-                f"{dir}/model_and_optim" if is_url(dir) else wd / "model_and_optim"
-            )
-            save_model_and_optim_state(
-                model_and_optim_dir,
-                model,
-                optim,
+            train_module_dir = f"{dir}/model_and_optim" if is_url(dir) else wd / "model_and_optim"
+            save_state_dict(
+                train_module_dir,
+                train_module.state_dict(),
                 process_group=self.process_group,
                 save_overwrite=self.save_overwrite,
             )
@@ -77,7 +73,7 @@ class Checkpointer:
         self._save_metadata(dir, CheckpointMetadata())
 
     def save_async(
-        self, dir: PathOrStr, model: nn.Module, optim: Optimizer, train_state: Dict[str, Any]
+        self, dir: PathOrStr, train_module: TrainModule, train_state: Dict[str, Any]
     ) -> Future[None]:
         """
         An async version of :meth:`save()`.
@@ -94,11 +90,10 @@ class Checkpointer:
             self._save_train_state(dir, wd, train_state)
 
         # Save model and optim state.
-        model_and_optim_dir = f"{dir}/model_and_optim"
-        future = async_save_model_and_optim_state(
-            model_and_optim_dir,
-            model,
-            optim,
+        train_module_dir = f"{dir}/model_and_optim"
+        future = async_save_state_dict(
+            train_module_dir,
+            train_module.state_dict(),
             process_group=self.process_group,
             save_overwrite=self.save_overwrite,
         )
@@ -115,12 +110,9 @@ class Checkpointer:
     def load(
         self,
         dir: PathOrStr,
-        model: nn.Module,
-        optim: Optimizer,
+        train_module: TrainModule,
         *,
-        load_optimizer_state: bool = True,
         load_trainer_state: bool = True,
-        key_mapping: Optional[Dict[str, str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Load model, optim, and other training state from a local or remote checkpoint directory
@@ -140,13 +132,13 @@ class Checkpointer:
                 # This can happen when we're restoring a checkpoint with a different world size.
                 trainer_state = torch.load(cached_path(f"{dir}/train/rank0.pt", quiet=True))
 
-        # Load model and optimizer state.
-        load_model_and_optim_state(
-            f"{dir}/model_and_optim",
-            model,
-            optim if load_optimizer_state else None,
+        # Load train module state.
+        train_module_dir = f"{dir}/model_and_optim"
+        state_dict = train_module.state_dict()
+        load_state_dict(
+            train_module_dir,
+            state_dict,
             process_group=self.process_group,
-            key_mapping=key_mapping,
         )
 
         return trainer_state

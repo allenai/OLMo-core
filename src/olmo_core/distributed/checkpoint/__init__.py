@@ -46,6 +46,8 @@ from .filesystem import RemoteFileSystemReader, RemoteFileSystemWriter
 
 __all__ = [
     "save_state_dict",
+    "async_save_state_dict",
+    "load_state_dict",
     "save_model_and_optim_state",
     "async_save_model_and_optim_state",
     "load_model_and_optim_state",
@@ -78,6 +80,26 @@ def save_state_dict(
     """
     dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
     dist_cp.state_dict_saver.save(
+        state_dict,
+        storage_writer=RemoteFileSystemWriter(dir),
+        process_group=process_group,
+    )
+
+
+@torch.no_grad()
+def async_save_state_dict(
+    dir: PathOrStr,
+    state_dict: Dict[str, Any],
+    process_group: Optional[dist.ProcessGroup] = None,
+    save_overwrite: bool = False,
+) -> Future[None]:
+    """
+    An async version of :func:`save_state_dict()`.
+
+    This code first de-stages the state dict on the CPU, then writes it in a separate thread.
+    """
+    dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
+    return dist_cp.state_dict_saver.async_save(
         state_dict,
         storage_writer=RemoteFileSystemWriter(dir),
         process_group=process_group,

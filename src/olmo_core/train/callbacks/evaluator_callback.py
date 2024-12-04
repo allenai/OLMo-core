@@ -11,14 +11,11 @@ from olmo_core.distributed.utils import get_rank, get_world_size, is_distributed
 from olmo_core.eval import Evaluator
 from olmo_core.eval.lm_evaluator import LMEvaluator
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.utils import (
-    cuda_sync_debug_mode,
-    format_float,
-    get_default_device,
-    move_to_device,
-)
+from olmo_core.nn.functional.cross_entropy_loss import cross_entropy_loss
+from olmo_core.utils import cuda_sync_debug_mode, format_float, get_default_device
 
-from ..common import Duration
+from ..common import Duration, get_inputs_for_loss
+from ..train_module import TransformerTrainModule
 from .callback import Callback, CallbackConfig
 
 if TYPE_CHECKING:
@@ -60,8 +57,9 @@ class EvaluatorCallback(Callback):
             return
 
         # Put model in eval train mode.
-        self.trainer.optim.zero_grad(set_to_none=True)
-        self.trainer.model.eval()
+        # TODO: make sure grads will be zeroed at this point
+        #  self.trainer.optim.zero_grad(set_to_none=True)
+        #  self.trainer.model.eval()
         dp_world_size = get_world_size(self.trainer.dp_process_group)
 
         for evaluator in self.evaluators:
@@ -72,10 +70,25 @@ class EvaluatorCallback(Callback):
             for batch in evaluator:
                 eval_step += 1
                 eval_tokens += batch["input_ids"].numel() * dp_world_size
-                batch = move_to_device(batch, self.trainer.device)
-                logits, ce_loss, _ = self.trainer.eval_batch(
-                    batch, loss_reduction="none", compute_z_loss=False
-                )
+
+                with torch.no_grad():
+                    # Run forward pass, get logits.
+                    logits = self.trainer.train_module.eval_batch(batch)
+                    logits_for_loss, labels_for_loss = get_inputs_for_loss(
+                        batch,
+                        logits,
+                        label_ignore_index=self.trainer.data_loader.collator.label_ignore_index,
+                    )
+
+                    # Get CE loss.
+                    ce_loss, _ = cross_entropy_loss(
+                        logits_for_loss,
+                        labels_for_loss,
+                        ignore_index=self.trainer.data_loader.collator.label_ignore_index,
+                        reduction="none",
+                    )
+                    # Reshape (batch_size * (seq_len - 1),) -> (batch_size, seq_len - 1)
+                    ce_loss = ce_loss.view(batch["input_ids"].shape[0], -1)
 
                 # NOTE: might have host-device syncs here but that's okay.
                 with cuda_sync_debug_mode(0):
@@ -86,7 +99,6 @@ class EvaluatorCallback(Callback):
 
                 if self.trainer.is_canceled:
                     self._log_progress(evaluator, eval_step)
-                    self.trainer.model.train()
                     return
                 elif self.eval_duration.due(step=eval_step, tokens=eval_tokens, epoch=1):
                     self._log_progress(evaluator, eval_step)
@@ -104,9 +116,6 @@ class EvaluatorCallback(Callback):
                     self.trainer.record_metric(f"eval/{evaluator.name}/{name}", value)
             log.info("Eval metrics:\n" + "\n".join(metrics))
 
-        # Restore model to train mode.
-        self.trainer.model.train()
-
     def _log_progress(self, evaluator: Evaluator, eval_step: int):
         if evaluator.total_batches is not None:
             log.info(f"[eval={evaluator.name},step={eval_step}/{evaluator.total_batches}]")
@@ -117,8 +126,8 @@ class EvaluatorCallback(Callback):
 @dataclass
 class LMEvaluatorCallbackConfig(CallbackConfig):
     eval_dataset: NumpyDatasetConfig
-    eval_interval: int = 1000
     eval_batch_size: Optional[int] = None
+    eval_interval: int = 1000
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     log_interval: int = 5
     enabled: bool = True
@@ -127,11 +136,18 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
         if not self.enabled:
             return None
 
-        eval_batch_size = (
-            self.eval_batch_size
-            if self.eval_batch_size is not None
-            else trainer.rank_microbatch_size * get_world_size(trainer.dp_process_group)
-        )
+        eval_batch_size: int
+        if self.eval_batch_size is not None:
+            eval_batch_size = self.eval_batch_size
+        elif isinstance(trainer.train_module, TransformerTrainModule):
+            eval_batch_size = trainer.train_module.rank_microbatch_size * get_world_size(
+                trainer.dp_process_group
+            )
+        else:
+            raise OLMoConfigurationError(
+                "Could not determine eval batch size automatically. Please set it explicity."
+            )
+
         dataset = self.eval_dataset.build()
         if not isinstance(dataset, NumpyPaddedFSLDataset):
             raise OLMoConfigurationError(
@@ -239,15 +255,22 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
 
         from olmo_eval import HFTokenizer
 
-        global_eval_batch_size = (
-            self.eval_batch_size
-            if self.eval_batch_size is not None
-            else trainer.rank_microbatch_size * get_world_size(trainer.dp_process_group)
-        )
-        rank_eval_batch_size = global_eval_batch_size // get_world_size(trainer.dp_process_group)
+        eval_batch_size: int
+        if self.eval_batch_size is not None:
+            eval_batch_size = self.eval_batch_size
+        elif isinstance(trainer.train_module, TransformerTrainModule):
+            eval_batch_size = trainer.train_module.rank_microbatch_size * get_world_size(
+                trainer.dp_process_group
+            )
+        else:
+            raise OLMoConfigurationError(
+                "Could not determine eval batch size automatically. Please set it explicity."
+            )
+
+        rank_eval_batch_size = eval_batch_size // get_world_size(trainer.dp_process_group)
         if rank_eval_batch_size == 0:
             raise OLMoConfigurationError(
-                f"'eval_batch_size' of {global_eval_batch_size:,d} tokens is too small for the given world size"
+                f"'eval_batch_size' of {eval_batch_size:,d} tokens is too small for the given world size"
             )
 
         if self.tokenizer.identifier is None:

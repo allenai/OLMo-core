@@ -9,8 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `TrainModule` abstraction with `TransformerTrainModule` implementation, which encapsulates both a model and optimizer.
 - Added support for tensor parallelism. See the `TransformerConfig` class for usage.
 - Added `namespace` argument to `Trainer.record_metric()`.
+
+### Changed
+
+- The `Trainer` now takes a `TrainModule` instead of a model and optimizer, and several configuration options have been moved to `TransformerTrainModule`, including `rank_microbatch_size`, `fused_loss`, `compile_loss`, `z_loss_multiplier`, and `autocast_precision`.
+
+### Removed
+
+- Removed the following callbacks: `MoEHandlerCallback`, `SchedulerCallback`, `MatrixNormalizerCallback`, `GradClipperCallback`, and `Float8HandlerCallback`.
+  The functionality from all of those callbacks has been moved to the `TransformerTrainModule` class.
+- Removed the callback methods `.pre_eval_batch()` and `.post_eval_batch()`.
 
 ## [v1.7.0](https://github.com/allenai/OLMo-core/releases/tag/v1.7.0) - 2024-11-27
 

@@ -6,9 +6,10 @@ from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
-from olmo_core.optim import AdamWConfig, OptimGroupOverride
+from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
+from olmo_core.train.train_module import TransformerTrainModuleConfig
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -34,16 +35,24 @@ def build_optim_config(common: CommonComponents) -> AdamWConfig:
     )
 
 
+def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
+    del common
+    return TransformerTrainModuleConfig(
+        rank_microbatch_size=8 * 4096,
+        z_loss_multiplier=1e-5,
+        compile_loss=True,
+        max_grad_norm=1.0,
+        scheduler=CosWithWarmup(warmup_steps=2000),
+    )
+
+
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=common.save_folder,
-            rank_microbatch_size=8 * 4096,
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
-            z_loss_multiplier=1e-5,
-            compile_loss=True,
         )
         .with_callback(
             "checkpointer",
@@ -81,5 +90,6 @@ if __name__ == "__main__":
         global_batch_size=1024 * 4096,
         model_config_builder=build_model_config,
         optim_config_builder=build_optim_config,
+        train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
     )

@@ -32,13 +32,11 @@ from olmo_core.train.callbacks import (
     ConfigSaverCallback,
     DownstreamEvaluatorCallbackConfig,
     GPUMemoryMonitorCallback,
-    GradClipperCallback,
     LMEvaluatorCallbackConfig,
     ProfilerCallback,
-    SchedulerCallback,
-    SequenceLengthSchedulerCallback,
     WandBCallback,
 )
+from olmo_core.train.train_module import TransformerTrainModuleConfig
 from olmo_core.utils import get_default_device, seed_all
 
 
@@ -48,6 +46,7 @@ class ExperimentConfig(Config):
     optim: AdamWConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
+    train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
     init_seed: int = 12536
 
@@ -77,10 +76,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         name=NumpyDatasetType.fsl,
         sequence_length=1024,
         max_target_sequence_length=8192,
-        #  name=NumpyDatasetType.vsl,
-        #  max_sequence_length=2048,
-        #  min_sequence_length=256,
-        #  vsl_curriculum=VSLCurriculumConfig(name=VSLCurriculumType.grow_p2, num_cycles=4),
         tokenizer=tokenizer_config,
         work_dir="/tmp/dataset-cache",
     )
@@ -91,10 +86,16 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         num_workers=4,
     )
 
+    train_module_config = TransformerTrainModuleConfig(
+        rank_microbatch_size=16 * 1024,
+        compile_loss=True,
+        max_grad_norm=1.0,
+        scheduler=CosWithWarmup(warmup_steps=100),
+    )
+
     trainer_config = (
         TrainerConfig(
             save_folder=f"/tmp/{run_name}",
-            rank_microbatch_size=16 * 1024,
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=5,
@@ -104,15 +105,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
                 "lm_head.norm.weight": "norm.weight",
             },
         )
-        .with_callback("lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=100)))
-        .with_callback(
-            "seq_len_scheduler",
-            SequenceLengthSchedulerCallback(
-                min_sequence_length=128, warmup_steps=100, enabled=False
-            ),
-        )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
-        .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0))
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
@@ -169,6 +162,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         optim=optim_config,
         dataset=dataset_config,
         data_loader=data_loader_config,
+        train_module=train_module_config,
         trainer=trainer_config,
     ).merge(overrides)
 
@@ -192,9 +186,10 @@ def main(run_name: str, overrides: List[str]):
         mesh=world_mesh,
     )
     optim = config.optim.build(model)
+    train_module = config.train_module.build(model, optim)
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(dataset, mesh=world_mesh)
-    trainer = config.trainer.build(model, optim, data_loader, mesh=world_mesh)
+    trainer = config.trainer.build(train_module, data_loader, mesh=world_mesh)
 
     # Save config to W&B and each checkpoint dir.
     config_dict = config.as_config_dict()

@@ -513,10 +513,6 @@ class NormalizedTransformer(Transformer):
     """
     A nGPT transformer implementation, to be used with the :class:`NormalizedTransformerBlock` block
     type.
-
-    .. warning::
-        When training this model you should use the :class:`~olmo_core.train.callbacks.MatrixNormalizerCallback`
-        to re-normalize the weight matrices after each optimizer step.
     """
 
     def __init__(
@@ -561,7 +557,7 @@ class NormalizedTransformer(Transformer):
     def normalize_matrices(self):
         """
         Normalize the weights in all matrices. This should be called after each optimizer step, which
-        the :class:`~olmo_core.train.callbacks.MatrixNormalizerCallback` will handle for you.
+        the :class:`~olmo_core.train.train_module.TransformerTrainModule` will handle for you.
         """
         if self.embeddings is not None:
             self._normalize_matrix(self.embeddings.weight)

@@ -19,7 +19,7 @@ from olmo_core.distributed.utils import get_local_rank
 from olmo_core.float8 import Float8Config
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import CosWithWarmup, OptimConfig
+from olmo_core.optim import OptimConfig
 from olmo_core.train import (
     TrainerConfig,
     prepare_training_environment,
@@ -29,15 +29,13 @@ from olmo_core.train.callbacks import (
     Callback,
     CometCallback,
     ConfigSaverCallback,
-    Float8HandlerCallback,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
-    GradClipperCallback,
     LMEvaluatorCallbackConfig,
     ProfilerCallback,
-    SchedulerCallback,
     WandBCallback,
 )
+from olmo_core.train.train_module import TransformerTrainModuleConfig
 from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
 
 from .common import build_launch_config, get_beaker_username, get_root_dir, get_work_dir
@@ -64,6 +62,7 @@ class ExperimentConfig(Config):
     optim: OptimConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
+    train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
     init_seed: int = 12536
 
@@ -154,9 +153,7 @@ def build_common_components(
     )
 
     callbacks: Dict[str, Callback] = {
-        "lr_scheduler": SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=2000)),
         "gpu_monitor": GPUMemoryMonitorCallback(),
-        "grad_clipper": GradClipperCallback(max_grad_norm=1.0),
         "config_saver": ConfigSaverCallback(),
         "profiler": ProfilerCallback(enabled=False),
         "garbage_collector": GarbageCollectorCallback(),
@@ -194,6 +191,7 @@ def build_config(
     global_batch_size: int,
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
     optim_config_builder: Callable[[CommonComponents], OptimConfig],
+    train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
 ) -> ExperimentConfig:
@@ -206,12 +204,6 @@ def build_config(
         model.float8_config = Float8Config(compile=model.compile, enabled=False)
 
     trainer = trainer_config_builder(common)
-    if trainer.load_key_mapping is None:
-        trainer.load_key_mapping = {
-            # For backwards compatibility when loading older checkpoints.
-            "lm_head.w_out.weight": "w_out.weight",
-            "lm_head.norm.weight": "norm.weight",
-        }
     for name, cb in common.callbacks.items():
         if name not in trainer.callbacks:
             trainer.add_callback(name, cb)
@@ -223,6 +215,7 @@ def build_config(
         optim=optim_config_builder(common),
         dataset=common.dataset,
         data_loader=common.data_loader,
+        train_module=train_module_config_builder(common),
         trainer=trainer,
     )
 
@@ -230,11 +223,6 @@ def build_config(
         finalize_config(config)
 
     config = config.merge(overrides)
-
-    if config.model.float8_config is not None and config.model.float8_config.enabled:
-        config.trainer.add_callback(
-            "float8_handler", Float8HandlerCallback(config=config.model.float8_config)
-        )
 
     return config
 
@@ -274,9 +262,10 @@ def train(config: ExperimentConfig):
         mesh=world_mesh,
     )
     optim = config.optim.build(model)
+    train_module = config.train_module.build(model, optim)
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(dataset, mesh=world_mesh)
-    trainer = config.trainer.build(model, optim, data_loader, mesh=world_mesh)
+    trainer = config.trainer.build(train_module, data_loader, mesh=world_mesh)
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
@@ -293,6 +282,7 @@ def main(
     global_batch_size: int,
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
     optim_config_builder: Callable[[CommonComponents], OptimConfig],
+    train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
 ):
@@ -331,6 +321,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         global_batch_size=global_batch_size,
         model_config_builder=model_config_builder,
         optim_config_builder=optim_config_builder,
+        train_module_config_builder=train_module_config_builder,
         trainer_config_builder=trainer_config_builder,
         finalize_config=finalize_config,
     )

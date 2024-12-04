@@ -202,7 +202,7 @@ class NormalizedFeedForward(FeedForward):
     def normalize_matrices(self):
         """
         Normalize the weights in all matrices. This should be called after each optimizer step, which
-        the :class:`~olmo_core.train.callbacks.MatrixNormalizerCallback` will handle for you.
+        the :class:`~olmo_core.train.train_module.TransformerTrainModule` will handle for you.
         """
         self._normalize_matrix(self.w1.weight)
         self._normalize_matrix(self.w2.weight, dim=0)

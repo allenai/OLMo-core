@@ -1,6 +1,10 @@
 from dataclasses import dataclass
+from typing import Any, Dict, Tuple
+
+import torch
 
 from ..config import StrEnum
+from ..data.utils import get_labels
 
 
 class DurationUnit(StrEnum):
@@ -114,3 +118,19 @@ class ReduceType(StrEnum):
     For metrics that are computed as L2 norms on each rank, this will correctly reduce the norm
     across the process group to produce the global L2 norm.
     """
+
+
+def get_inputs_for_loss(
+    batch: Dict[str, Any], logits: torch.Tensor, label_ignore_index: int = -100
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    # shape: (batch_size, seq_len - 1, vocab_size)
+    logits_for_loss = logits[..., :-1, :].contiguous()
+    # shape: (batch_size * (seq_len - 1), vocab_size)
+    logits_for_loss = logits_for_loss.view(-1, logits_for_loss.size(-1))
+
+    # shape: (batch_size, seq_len - 1)
+    labels = batch.get("labels", get_labels(batch, label_ignore_index=label_ignore_index))
+    # shape: (batch_size * (seq_len - 1),)
+    labels = labels.view(-1)
+
+    return logits, labels

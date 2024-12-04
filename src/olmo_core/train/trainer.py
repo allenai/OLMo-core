@@ -1,4 +1,3 @@
-import contextlib
 import logging
 import math
 import signal
@@ -11,7 +10,6 @@ from typing import (
     Callable,
     Dict,
     Generator,
-    Literal,
     Optional,
     Tuple,
     Type,
@@ -23,13 +21,9 @@ from typing import (
 
 import torch
 import torch.distributed as dist
-import torch.nn as nn
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.optim import Optimizer
 
 from ..aliases import PathOrStr
 from ..data import DataLoaderBase
-from ..data.utils import get_labels, split_batch
 from ..distributed.utils import (
     all_reduce_value,
     backend_supports_cpu,
@@ -44,12 +38,7 @@ from ..distributed.utils import (
 )
 from ..exceptions import OLMoConfigurationError
 from ..io import copy_file, file_exists, is_url, join_path, normalize_path
-from ..nn.functional.cross_entropy_loss import (
-    cross_entropy_loss,
-    fused_cross_entropy_loss,
-)
-from ..optim import SkipStepOptimizer
-from ..utils import cuda_sync_debug_mode, mark_dynamic, move_to_device
+from ..utils import cuda_sync_debug_mode
 from .callbacks import (
     Callback,
     CheckpointerCallback,
@@ -59,15 +48,13 @@ from .callbacks import (
 )
 from .checkpoint import Checkpointer
 from .common import Duration, DurationUnit, LoadStrategy, ReduceType
+from .train_module import TrainModule
 from .utils import EnvRngStates, move_metrics, reduce_metrics
 
 log = logging.getLogger(__name__)
 
 TRAIN_CE_LOSS_METRIC = "train/CE loss"
 TRAIN_PPL_METRIC = "train/PPL"
-TRAIN_Z_LOSS_METRIC = "train/Z loss"
-OPTIM_STEP_SKIPPED_METRIC = "optim/step skipped"
-SEQ_LEN_METRIC = "data/sequence length"
 
 T = TypeVar("T")
 
@@ -79,6 +66,7 @@ class TrainerStateDict(TypedDict):
     epoch: int
     world_size: int
     rng: Dict[str, Any]
+    callbacks: Dict[str, Dict[str, Any]]
 
 
 @dataclass
@@ -101,14 +89,9 @@ class Trainer:
         the :data:`save_folder` if it's a local directory.
     """
 
-    model: nn.Module
+    train_module: TrainModule
     """
-    The model to fit.
-    """
-
-    optim: Optimizer
-    """
-    The optimizer to use.
+    The train module to fit.
     """
 
     data_loader: DataLoaderBase
@@ -157,15 +140,6 @@ class Trainer:
         or :meth:`steps <Duration.steps>`, but not epochs.
     """
 
-    rank_microbatch_size: int
-    """
-    Microbatch size *in tokens* per rank, i.e. the number of tokens to process at a time from each rank.
-
-    This must evently divide into :data:`global_batch_size` by a factor of the data parallel world size.
-    If this is less than :data:`global_batch_size` divided by the data parallel world size then
-    gradient accumulation is used.
-    """
-
     save_overwrite: bool = False
     """
     Whether to overwrite existing files/checkpoints in the :data:`save_folder`.
@@ -180,12 +154,6 @@ class Trainer:
     load_strategy: LoadStrategy = LoadStrategy.if_available
     """
     The strategy for loading a checkpoint prior to training.
-    """
-
-    load_key_mapping: Optional[Dict[str, str]] = None
-    """
-    Can be used when loading a checkpoint where certain parameters have different names.
-    This dictionary should map current keys to keys in the checkpoint to be loaded.
     """
 
     metrics_collect_interval: int = 5
@@ -205,28 +173,6 @@ class Trainer:
     .. tip::
         Increasing this can improve throughput since logging metrics always requires a host-device
         sync.
-    """
-
-    fused_loss: bool = False
-    """
-    Use the fused cross-entropy loss function (:func:`~olmo_core.nn.functional.fused_cross_entropy_loss`)
-    instead the PyTorch built-in. This can help reduce GPU memory usage. Relative performance will
-    depend on the input sizes.
-    """
-
-    compile_loss: bool = False
-    """
-    Compile the loss function.
-    """
-
-    z_loss_multiplier: Optional[float] = None
-    """
-    Use Z-loss with this multiplier.
-    """
-
-    autocast_precision: Optional[torch.dtype] = None
-    """
-    Enable AMP with this data type.
     """
 
     dp_process_group: Optional[dist.ProcessGroup] = None
@@ -282,9 +228,6 @@ class Trainer:
     _thread_pool: Optional[ThreadPoolExecutor] = None
     _bookkeeping_pg: Optional[dist.ProcessGroup] = None
     _checkpoint_loaded: bool = False
-    # NOTE: do not assign a default here or it will become a bound method due to the way
-    # dataclasses work.
-    _loss_fn = None
 
     def __post_init__(self):
         self.save_folder = normalize_path(self.save_folder)
@@ -360,27 +303,10 @@ class Trainer:
                 f"got {self.data_loader.fs_local_rank}, expected {get_fs_local_rank()}."
             )
 
-        # Make sure global batch size is divisible by microbatch size times world size
-        if (
-            self.global_batch_size
-            % (self.rank_microbatch_size * (ws := get_world_size(self.dp_process_group)))
-            != 0
-        ):
-            raise OLMoConfigurationError(
-                f"global batch size ({self.global_batch_size}) must be divisible by "
-                f"micro-batch size ({self.rank_microbatch_size}) x DP world size ({ws})"
-            )
-
         for callback in self.callbacks.values():
             callback.post_attach()
 
-        # Set loss function.
-        if self.fused_loss:
-            self._loss_fn = fused_cross_entropy_loss
-        else:
-            self._loss_fn = cross_entropy_loss
-        if self.compile_loss:
-            self._loss_fn = torch.compile(self._loss_fn)
+        self.train_module._attach_trainer(self)
 
     @property
     def global_batch_size(self) -> int:
@@ -555,8 +481,6 @@ class Trainer:
 
         log.info(f"Training for {self.max_steps:,d} steps")
 
-        self.model.train()
-
         for callback in self.callbacks.values():
             callback.pre_train()
 
@@ -603,6 +527,7 @@ class Trainer:
             "epoch": self.epoch,
             "world_size": get_world_size(),  # global world size here on purpose
             "rng": EnvRngStates.current_state().as_dict(),
+            "callbacks": {k: cb.state_dict() for k, cb in self.callbacks.items()},
         }
 
     def load_state_dict(self, state_dict: TrainerStateDict):
@@ -633,6 +558,10 @@ class Trainer:
         self.global_train_tokens_seen = state_dict["global_train_tokens_seen"]
         self.epoch = state_dict["epoch"]
 
+        for cb_name, cb_state in state_dict.get("callbacks", {}).items():
+            if (cb := self.callbacks.get(cb_name)) is not None:
+                cb.load_state_dict(cb_state)
+
         log.info(f"Will resume training from step {self.global_step}, epoch {self.epoch}")
 
         if state_dict["world_size"] == get_world_size():  # global world size here on purpose
@@ -647,9 +576,7 @@ class Trainer:
                 "were saved with a different world size."
             )
 
-    def load_checkpoint(
-        self, dir: PathOrStr, *, load_optimizer_state: bool = True, load_trainer_state: bool = True
-    ):
+    def load_checkpoint(self, dir: PathOrStr, *, load_trainer_state: bool = True):
         """
         Load a checkpoint.
 
@@ -657,7 +584,6 @@ class Trainer:
             :meth:`fit()` may call this method automatically depending on the :data:`load_strategy`.
 
         :param dir: The path/URL to a checkpoint or a folder of checkpoints.
-        :param load_optimizer_state: Load optimizer state.
         :param load_trainer_state: Load trainer state.
         """
         dir = normalize_path(dir)
@@ -672,11 +598,8 @@ class Trainer:
         log.info(f"Loading checkpoint from '{dir}'...")
         trainer_state = self.checkpointer.load(
             dir,
-            self.model,
-            self.optim,
-            load_optimizer_state=load_optimizer_state,
+            self.train_module,
             load_trainer_state=load_trainer_state,
-            key_mapping=self.load_key_mapping,
         )
         if load_trainer_state:
             assert trainer_state is not None
@@ -688,9 +611,7 @@ class Trainer:
         self._checkpoint_loaded = True
         log.info("Checkpoint successfully loaded")
 
-    def maybe_load_checkpoint(
-        self, dir: PathOrStr, *, load_optimizer_state: bool = True, load_trainer_state: bool = True
-    ) -> bool:
+    def maybe_load_checkpoint(self, dir: PathOrStr, *, load_trainer_state: bool = True) -> bool:
         """
         Like :meth:`load_checkpoint()` but is a no-op if there is no checkpoint in the ``dir`` provided.
 
@@ -706,7 +627,6 @@ class Trainer:
         if should_load:
             self.load_checkpoint(
                 dir,
-                load_optimizer_state=load_optimizer_state,
                 load_trainer_state=load_trainer_state,
             )
         else:
@@ -722,9 +642,7 @@ class Trainer:
         dirname = self.checkpointer.checkpoint_dirname(self.global_step)
         path = join_path(self.save_folder, dirname)
         log.info(f"Saving checkpoint for step {self.global_step} to '{path}'...")
-        self.checkpointer.save(
-            path, self.model, self.optim, cast(Dict[str, Any], self.state_dict())
-        )
+        self.checkpointer.save(path, self.train_module, cast(Dict[str, Any], self.state_dict()))
         for callback in self.callbacks.values():
             callback.post_checkpoint_saved(path)
         log.info("Checkpoint saved")
@@ -743,7 +661,7 @@ class Trainer:
 
         log.info(f"Saving checkpoint for step {step} to '{path}' asynchronously...")
         fut = self.checkpointer.save_async(
-            path, self.model, self.optim, cast(Dict[str, Any], self.state_dict())
+            path, self.train_module, cast(Dict[str, Any], self.state_dict())
         )
 
         def callback(future: Future):
@@ -770,6 +688,9 @@ class Trainer:
             Metrics added with a ``reduce_type`` are reduced across the data parallel process group,
             which is not necessarily the default process group.
 
+        .. seealso::
+            Use :meth:`record_ce_loss()` to record the cross-entropy loss, specifically.
+
         :param name: The name of the metric.
         :param value: The value of the metric.
         :param reduce_type: Specifies how to reduce the metric across the distributed process group.
@@ -787,13 +708,17 @@ class Trainer:
         self._metrics[self.global_step][name] = value
         self._metrics_reduce_type[name] = reduce_type
 
-    def get_metric(self, name: str) -> Optional[torch.Tensor]:
+    def record_ce_loss(
+        self, value: Union[float, torch.Tensor], reduce_type: Optional[ReduceType] = None
+    ):
+        """
+        Record the cross-entropy loss metric specifically.
+        """
+        return self.record_metric(TRAIN_CE_LOSS_METRIC, value, reduce_type=reduce_type)
+
+    def get_metric(self, name: str, namespace: Optional[str] = None) -> Optional[torch.Tensor]:
         """
         Get the value of a metric recorded during the current step.
-
-        .. seealso::
-            - :meth:`get_loss()`
-            - :meth:`get_zloss()`
 
         .. warning::
             Metrics will only be available from the time they're recorded until the end of the
@@ -807,39 +732,9 @@ class Trainer:
         """
         if self.global_step not in self._metrics:
             return None
+        if namespace is not None:
+            name = f"{namespace.rstrip('/')}/{name.lstrip('/')}"
         return self._metrics[self.global_step].get(name)
-
-    def get_loss(self) -> Optional[torch.Tensor]:
-        """
-        Get the value of the cross-entropy loss for the current step.
-
-        .. important::
-            If you're trying to access the loss from a callback, it may only be accessible
-            within the following callback methods:
-
-            - :meth:`~olmo_core.train.callbacks.Callback.pre_optim_step()`
-            - :meth:`~olmo_core.train.callbacks.Callback.post_train_batch()`
-            - :meth:`~olmo_core.train.callbacks.Callback.post_step()`
-
-        :returns: The loss scalar tensor, typically on GPU.
-        """
-        return self.get_metric(TRAIN_CE_LOSS_METRIC)
-
-    def get_zloss(self) -> Optional[torch.Tensor]:
-        """
-        Get the value of the Z-loss for the current step.
-
-        .. important::
-            If you're trying to access the Z-loss from a callback, it may only be accessible
-            within the following callback methods:
-
-            - :meth:`~olmo_core.train.callbacks.Callback.pre_optim_step()`
-            - :meth:`~olmo_core.train.callbacks.Callback.post_train_batch()`
-            - :meth:`~olmo_core.train.callbacks.Callback.post_step()`
-
-        :returns: The Z-loss scalar tensor, typically on GPU.
-        """
-        return self.get_metric(TRAIN_Z_LOSS_METRIC)
 
     def write_file(
         self, name: str, contents: Union[str, bytes], dir: Optional[PathOrStr] = None
@@ -884,106 +779,6 @@ class Trainer:
         self.callbacks[name] = callback
         self._sort_callbacks()
         callback.post_attach()
-
-    def model_forward(self, micro_batch: Dict[str, Any]) -> torch.Tensor:
-        """
-        Run a forward pass on a micro-batch, returning the logits.
-        """
-        with self._model_forward_context():
-            # NOTE: Input sizes might be dynamic, e.g. when training with variable sequence lengths
-            # or during an eval loop, so we mark them as dynamic for torch.compile up-front to avoid
-            # recompiling later.
-            # In theory this could harm performance a bit when input sizes are actually static
-            # but so far I haven't noticed any dip in throughput with the models I've tested.
-            mark_dynamic(micro_batch["input_ids"], (0, 1))
-            if "doc_lens" in micro_batch:
-                mark_dynamic(micro_batch["doc_lens"], (0, 1))
-
-            # shape: (batch_size, seq_len, vocab_size)
-            logits = self.model(
-                input_ids=micro_batch["input_ids"],
-                #  attention_mask=micro_batch.get("attention_mask"),
-                #  attention_bias=micro_batch.get("attention_bias"),
-                doc_lens=micro_batch.get("doc_lens"),
-                max_doc_lens=micro_batch.get("max_doc_lens"),
-            )
-        return logits
-
-    def get_losses(
-        self,
-        micro_batch: Dict[str, Any],
-        logits: torch.Tensor,
-        loss_reduction: Literal["mean", "sum", "none"] = "mean",
-        compute_z_loss: Optional[bool] = None,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """
-        Compute the cross-entropy loss and optionally the Z-loss from a micro-batch and the
-        corresponding logits returned from :meth:`model_forward()`.
-
-        :param micro_batch: The micro-batch to evaluate.
-        :param logits: The logits from the forward pass.
-        :param loss_reduction: The (local) reduction to apply to the loss(es).
-        :param compute_z_loss: Whether or not to compute and return the Z-loss.
-
-        :returns: The cross entropy and optional Z-loss, respectively.
-        """
-        if compute_z_loss is None:
-            compute_z_loss = self.z_loss_multiplier is not None
-
-        # shape: (batch_size, seq_len - 1, vocab_size)
-        logits_for_loss = logits[..., :-1, :].contiguous()
-        # shape: (batch_size * (seq_len - 1), vocab_size)
-        logits_for_loss = logits_for_loss.view(-1, logits_for_loss.size(-1))
-
-        # shape: (batch_size, seq_len - 1)
-        labels = micro_batch.get("labels", self._get_labels(micro_batch))
-        # shape: (batch_size * (seq_len - 1),)
-        labels = labels.view(-1)
-
-        ce_loss, z_loss = self._loss_fn(  # type: ignore
-            logits_for_loss,
-            labels,
-            ignore_index=self.data_loader.collator.label_ignore_index,
-            reduction=loss_reduction,
-            compute_z_loss=compute_z_loss,
-            z_loss_multiplier=self.z_loss_multiplier or 1e-4,
-        )
-
-        if loss_reduction == "none":
-            # Reshape (batch_size * (seq_len - 1),) -> (batch_size, seq_len - 1)
-            ce_loss = ce_loss.view(micro_batch["input_ids"].shape[0], -1)
-            if z_loss is not None:
-                z_loss = z_loss.view(micro_batch["input_ids"].shape[0], -1)
-
-        return ce_loss, z_loss
-
-    def eval_batch(
-        self,
-        batch: Dict[str, Any],
-        loss_reduction: Literal["mean", "sum", "none"] = "mean",
-        compute_z_loss: Optional[bool] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-        """
-        Get the loss for an eval batch.
-
-        .. important::
-            You are responsible for ensuring the model is in ``.eval()`` mode before calling this.
-
-        :param batch: The batch to evaluate.
-        :param loss_reduction: The (local) reduction to apply to the loss(es).
-        :param compute_z_loss: Whether or not to compute and return the Z-loss.
-
-        :returns: The logits, cross-entropy loss, and Z-loss, respectively.
-        """
-        batch = move_to_device(batch, self.device)
-        for callback in self.callbacks.values():
-            callback.pre_eval_batch(batch)
-        with torch.no_grad():
-            logits = self.model_forward(batch)
-            ce_loss, z_loss = self.get_losses(
-                batch, logits, loss_reduction=loss_reduction, compute_z_loss=compute_z_loss
-            )
-        return logits, ce_loss, z_loss
 
     def has_callback(self, cb_class: Type[Callback]) -> bool:
         """
@@ -1108,136 +903,6 @@ class Trainer:
             for callback in self.callbacks.values():
                 callback.log_metrics(step, metrics[step])
 
-    def _get_labels(self, batch: Dict[str, Any]) -> torch.Tensor:
-        return get_labels(batch, label_ignore_index=self.data_loader.collator.label_ignore_index)
-
-    @contextlib.contextmanager
-    def _model_forward_context(self) -> Generator[None, None, None]:
-        with contextlib.ExitStack() as stack:
-            if self.autocast_precision is not None:
-                stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
-            yield
-
-    def _model_forward(
-        self,
-        batch: Dict[str, Any],
-        loss_reduction: Literal["mean", "sum", "none"] = "mean",
-        compute_z_loss: bool = False,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
-        # NOTE: keep this method for backwards compatibility.
-        logits = self.model_forward(batch)
-        ce_loss, z_loss = self.get_losses(
-            batch, logits, loss_reduction=loss_reduction, compute_z_loss=compute_z_loss
-        )
-        return ce_loss, z_loss, logits
-
-    @contextlib.contextmanager
-    def _train_microbatch_context(
-        self, micro_batch_idx: int, num_micro_batches: int
-    ) -> Generator[None, None, None]:
-        with contextlib.ExitStack() as stack:
-            if isinstance(self.model, DDP) and micro_batch_idx != num_micro_batches - 1:
-                # For DDP, only sync gradients on the final micro batch.
-                stack.enter_context(self.model.no_sync())
-            yield
-
-    def _train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
-        # Record how many instances are going to be skipped (masked out).
-        if (instance_mask := batch.get("instance_mask")) is not None and not dry_run:
-            self.record_metric("train/masked instances", (~instance_mask).sum(), ReduceType.sum)
-
-        # Zero-gradients.
-        self.optim.zero_grad(set_to_none=True)
-
-        # Move tensors to the right device.
-        batch = move_to_device(batch, self.device)
-
-        # Generate labels, calculate how many tokens are going to be use in the loss.
-        if "labels" not in batch:
-            batch["labels"] = self._get_labels(batch)
-        batch_num_tokens_for_loss = (
-            batch["labels"] != self.data_loader.collator.label_ignore_index
-        ).sum()
-
-        # Split into micro-batches.
-        if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
-            raise RuntimeError(
-                f"Microbatch size ({self.rank_microbatch_size}) is too small relative to sequence length ({seq_len})"
-            )
-        micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
-        num_micro_batches = len(micro_batches)
-
-        ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
-        z_batch_loss = (
-            None
-            if self.z_loss_multiplier is None
-            else move_to_device(torch.tensor(0.0), self.device)
-        )
-
-        # Train one micro-batch at a time.
-        for micro_batch_idx, micro_batch in enumerate(micro_batches):
-            with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
-                # Run forward pass.
-                logits = self.model_forward(micro_batch)
-
-                # NOTE: we use the "sum" loss reduction and then divide by 'batch_num_tokens_for_loss'
-                # (the total number of tokens used in the loss across the whole batch, not just the micro batch)
-                # to avoid biasing the loss in the case where micro-batches might not be the same size.
-                ce_loss, z_loss = self.get_losses(micro_batch, logits, loss_reduction="sum")
-                ce_loss.div_(batch_num_tokens_for_loss)
-                if z_loss is not None:
-                    z_loss.div_(batch_num_tokens_for_loss)
-
-                # Get loss to optimize for.
-                loss: torch.Tensor
-                if z_loss is not None:
-                    loss = ce_loss + z_loss
-                else:
-                    loss = ce_loss
-
-                # Update overall CE batch loss.
-                ce_batch_loss += get_local_tensor(ce_loss.detach())
-
-                # Update overall Z batch loss.
-                if z_loss is not None:
-                    assert z_batch_loss is not None
-                    z_batch_loss += get_local_tensor(z_loss.detach())
-
-                # Run through callbacks.
-                for callback in self.callbacks.values():
-                    callback.pre_backward(batch=batch, micro_batch=micro_batch, loss=loss)
-
-                # Run backward pass.
-                loss.backward()
-
-        # In case this helps with memory utilization.
-        del batch
-
-        if dry_run:
-            # Zero-gradients again.
-            self.optim.zero_grad(set_to_none=True)
-            return
-
-        self.record_metric(TRAIN_CE_LOSS_METRIC, ce_batch_loss, ReduceType.mean)
-        if z_batch_loss is not None:
-            self.record_metric(TRAIN_Z_LOSS_METRIC, z_batch_loss, ReduceType.mean)
-
-        if isinstance(self.optim, SkipStepOptimizer):
-            self.optim.latest_loss = ce_batch_loss
-
-        # Run through callbacks.
-        for callback in self.callbacks.values():
-            callback.pre_optim_step()
-
-        # Optimizer step.
-        self.optim.step()
-        if isinstance(self.optim, SkipStepOptimizer):
-            self.record_metric(OPTIM_STEP_SKIPPED_METRIC, self.optim.step_skipped)
-
-        # Run through callbacks.
-        for callback in self.callbacks.values():
-            callback.post_train_batch()
-
     def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:
         data_iterator = iter(self.data_loader)
 
@@ -1274,7 +939,7 @@ class Trainer:
 
         log.info("Starting forward/backward dry-run batch...")
         self._validate_batch(batch)
-        self._train_batch(batch, dry_run=True)
+        self.train_module.train_batch(batch, dry_run=True)
         log.info("Dry-run complete")
 
     def _fit_epoch(self):
@@ -1285,18 +950,31 @@ class Trainer:
         for callback in self.callbacks.values():
             callback.pre_epoch()
 
+        self.train_module.zero_grads()
+
         first_batch = True
         for batch in self._iter_batches():
             # Bookkeeping.
             self.global_step += 1
             self.global_train_tokens_seen += self._validate_batch(batch)
 
-            self.record_metric(SEQ_LEN_METRIC, float(batch["input_ids"].shape[1]))
+            self.record_metric(
+                "sequence length", float(batch["input_ids"].shape[1]), namespace="data"
+            )
 
             for callback in self.callbacks.values():
                 callback.pre_step(batch)
 
-            self._train_batch(batch)
+            self.train_module.train_batch(batch)
+
+            for callback in self.callbacks.values():
+                callback.pre_optim_step()
+
+            self.train_module.optim_step()
+            self.train_module.zero_grads()
+
+            for callback in self.callbacks.values():
+                callback.post_train_batch()
 
             for callback in self.callbacks.values():
                 callback.post_step()

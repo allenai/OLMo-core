@@ -5,8 +5,8 @@ from typing import Any, ClassVar, Dict, Optional
 import torch
 
 from olmo_core.distributed.utils import get_world_size
-from olmo_core.nn.transformer import Transformer
 
+from ..train_module import TransformerTrainModule
 from .callback import Callback
 
 
@@ -39,8 +39,8 @@ class SpeedMonitorCallback(Callback):
     def _get_num_flops_per_token(self, seq_len: int) -> Optional[int]:
         if self.num_flops_per_token is not None:
             return self.num_flops_per_token
-        elif isinstance(self.trainer.model, Transformer):
-            return self.trainer.model.num_flops_per_token(seq_len)
+        elif isinstance(self.trainer.train_module, TransformerTrainModule):
+            return self.trainer.train_module.model.num_flops_per_token(seq_len)
         else:
             return None
 
@@ -52,9 +52,13 @@ class SpeedMonitorCallback(Callback):
                 self.trainer.dp_process_group
             )
 
-        if self.device_peak_flops is None and self.trainer.device.type == "cuda":
+        if (
+            self.device_peak_flops is None
+            and self.trainer.device.type == "cuda"
+            and isinstance(self.trainer.train_module, TransformerTrainModule)
+        ):
             device_name = torch.cuda.get_device_name(self.trainer.device)
-            if self.trainer.autocast_precision == torch.bfloat16:
+            if self.trainer.train_module.autocast_precision == torch.bfloat16:
                 if "A100" in device_name:
                     self.device_peak_flops = int(312e12)
                 elif "H100" in device_name:

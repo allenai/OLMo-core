@@ -19,16 +19,18 @@ Most users will likely follow a workflow that looks like this:
      model_config = TransformerConfig.llama2_7B(...)
      optim_config = AdamWConfig(lr=1e-3, ...)
      data_config = NumpyDatasetConfig(...)
+     train_module_config = TransformerTrainModuleConfig(...)
      trainer_config = TrainerConfig(...)
 
 2. Build the corresponding components within a ``main()`` function at runtime and then call :meth:`Trainer.fit() <olmo_core.train.Trainer.fit>`.
    For example::
 
-     def main(model_config, optim_config, data_config, trainer_config):
+     def main(model_config, optim_config, train_module_config, data_config, trainer_config):
          model = model_config.build()
          optim = optim_config.build()
+         train_module = train_module_config.build(model, optim)
          dataset = data_config.build()
-         trainer = trainer_config.build(model, optim, dataset)
+         trainer = trainer_config.build(train_module, dataset)
 
          trainer.fit()
 

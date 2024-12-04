@@ -36,12 +36,6 @@ class Float8Handler:
     """
     Enables Float8 training with linear layers.
 
-    .. seealso::
-        See :class:`~olmo_core.train.callbacks.Float8HandlerCallback` for enabling Float8 training
-        with the :class:`~olmo_core.train.Trainer`.
-        Note that even with the callback you will need to call :meth:`convert_to_float8_training()`
-        on your model manually.
-
     :param config: The handler config.
     """
 
