@@ -757,7 +757,11 @@ class Trainer:
         return path, fut
 
     def record_metric(
-        self, name: str, value: Union[float, torch.Tensor], reduce_type: Optional[ReduceType] = None
+        self,
+        name: str,
+        value: Union[float, torch.Tensor],
+        reduce_type: Optional[ReduceType] = None,
+        namespace: Optional[str] = None,
     ):
         """
         Record a new metric for the current step.
@@ -770,7 +774,10 @@ class Trainer:
         :param value: The value of the metric.
         :param reduce_type: Specifies how to reduce the metric across the distributed process group.
             ``None`` means no reduction.
+        :param namespace: A namespace to record the metric under, i.g. "train" or "optim".
         """
+        if namespace is not None:
+            name = f"{namespace.rstrip('/')}/{name.lstrip('/')}"
         if not isinstance(value, torch.Tensor):
             value = torch.tensor(value)
         else:
