@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed the following callbacks: `MoEHandlerCallback`, `SchedulerCallback`, `MatrixNormalizerCallback`, `GradClipperCallback`, and `Float8HandlerCallback`.
   The functionality from all of those callbacks has been moved to the `TransformerTrainModule` class.
 - Removed the callback methods `.pre_eval_batch()` and `.post_eval_batch()`.
+- Removed `load_key_mapping` field to the `Trainer`.
 
 ## [v1.7.0](https://github.com/allenai/OLMo-core/releases/tag/v1.7.0) - 2024-11-27
 

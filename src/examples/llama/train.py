@@ -99,11 +99,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=5,
-            load_key_mapping={
-                # For backwards compatibility when loading older checkpoints.
-                "lm_head.w_out.weight": "w_out.weight",
-                "lm_head.norm.weight": "norm.weight",
-            },
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback(
