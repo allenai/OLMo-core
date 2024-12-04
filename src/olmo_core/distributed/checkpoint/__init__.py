@@ -85,6 +85,29 @@ def save_state_dict(
 
 
 @torch.no_grad()
+def load_state_dict(
+    dir: PathOrStr,
+    state_dict: Dict[str, Any],
+    process_group: Optional[dist.ProcessGroup] = None,
+):
+    """
+    Load an arbitrary state dict in-place from a checkpoint saved with :func:`save_state_dict()`.
+
+    :param dir: Path/URL to the checkpoint saved via :func:`save_state_dict()`.
+    :param state_dict: The state dict to load the state into.
+    :param process_group: The process group to use for distributed collectives.
+    """
+    dir = normalize_path(dir)
+    reader = RemoteFileSystemReader(dir)
+    dist_cp.load(
+        state_dict,
+        checkpoint_id=dir,
+        storage_reader=reader,
+        process_group=process_group,
+    )
+
+
+@torch.no_grad()
 def save_model_and_optim_state(
     dir: PathOrStr,
     model: nn.Module,
