@@ -181,6 +181,11 @@ class Trainer:
     Where to load a checkpoint from prior to training.
     """
 
+    load_anneal_path: Optional[PathOrStr] = None
+    """
+    Where to load a checkpoint from prior to beginning annealing.
+    """
+
     load_strategy: LoadStrategy = LoadStrategy.if_available
     """
     The strategy for loading a checkpoint prior to training.
@@ -538,6 +543,9 @@ class Trainer:
             if self.load_resume_path is not None:
                 log.info(f"Loading checkpoint from '{self.load_resume_path}'...")
                 self.load_checkpoint(self.load_resume_path)
+            if self.load_anneal_path is not None:
+                log.info(f"Loading anneal checkpoint from '{self.load_anneal_path}'...")
+                self.load_checkpoint(self.load_anneal_path, load_trainer_state=False)
 
         # Maybe load a checkpoint.
         if not self.checkpoint_loaded:
@@ -672,7 +680,6 @@ class Trainer:
 
         self._checkpoint_loaded = True
         log.info("Checkpoint successfully loaded")
-
 
     def load_pretrained_checkpoint(
         self, dir: PathOrStr, *, load_optimizer_state: bool = True, load_trainer_state: bool = True
