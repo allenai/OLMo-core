@@ -40,7 +40,7 @@ class SpeedMonitorCallback(Callback):
         if self.num_flops_per_token is not None:
             return self.num_flops_per_token
         elif isinstance(self.trainer.train_module, TransformerTrainModule):
-            return self.trainer.train_module.model.num_flops_per_token(seq_len)
+            return self.trainer.train_module.num_flops_per_token(seq_len)
         else:
             return None
 

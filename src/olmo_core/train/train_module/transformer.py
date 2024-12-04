@@ -353,6 +353,9 @@ class TransformerTrainModule(TrainModule):
             )
         return logits
 
+    def num_flops_per_token(self, seq_len: int) -> int:
+        return self.model.num_flops_per_token(seq_len)
+
     @contextlib.contextmanager
     def _train_microbatch_context(
         self, micro_batch_idx: int, num_micro_batches: int
