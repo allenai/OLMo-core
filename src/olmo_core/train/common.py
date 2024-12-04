@@ -133,4 +133,4 @@ def get_inputs_for_loss(
     # shape: (batch_size * (seq_len - 1),)
     labels = labels.view(-1)
 
-    return logits, labels
+    return logits_for_loss, labels
