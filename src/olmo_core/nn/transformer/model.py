@@ -9,6 +9,7 @@ from torch.distributed import DeviceMesh
 from olmo_core.config import StrEnum
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.doc_utils import beta_feature
+from olmo_core.float8 import Float8Config, Float8Handler
 from olmo_core.utils import get_default_device
 
 from ..buffer_cache import BufferCache
@@ -92,6 +93,7 @@ class Transformer(nn.Module):
         init_method: InitMethod = InitMethod.normal,
         init_device: str = "cpu",
         init_seed: int = 0,
+        float8_config: Optional[Float8Config] = None,
     ):
         super().__init__()
         cache = BufferCache()
@@ -115,6 +117,13 @@ class Transformer(nn.Module):
         self.init_method = InitMethod(init_method)
         self.init_seed = init_seed
         self._cache = cache
+
+        self._float8_handler: Optional[Float8Handler] = None
+        if float8_config is not None:
+            self._float8_handler = float8_config.build()
+            self._float8_handler.convert_to_float8_training(
+                self, modules_to_ignore={"lm_head.w_out"}
+            )
 
     @property
     def device(self) -> torch.device:
@@ -484,6 +493,20 @@ class Transformer(nn.Module):
 
         return flop_per_token
 
+    def sync_float8_amax_and_scale_history(self):
+        """
+        When training with Float8 enabled, this should called right before the optimizer step.
+        """
+        if self._float8_handler is not None:
+            self._float8_handler.sync_float8_amax_and_scale_history(self)
+
+    def precompute_float8_dynamic_scale_for_fsdp(self):
+        """
+        When training with Float8 enabled, this should be called after the optimizer step.
+        """
+        if self._float8_handler is not None:
+            self._float8_handler.precompute_float8_dynamic_scale_for_fsdp(self)
+
 
 @beta_feature
 class NormalizedTransformer(Transformer):
@@ -508,6 +531,7 @@ class NormalizedTransformer(Transformer):
         init_method: InitMethod = InitMethod.normalized,
         init_device: str = "cpu",
         init_seed: int = 0,
+        float8_config: Optional[Float8Config] = None,
     ):
         super().__init__(
             d_model=d_model,
@@ -519,6 +543,7 @@ class NormalizedTransformer(Transformer):
             init_method=init_method,
             init_device=init_device,
             init_seed=init_seed,
+            float8_config=float8_config,
         )
 
     @torch.no_grad()

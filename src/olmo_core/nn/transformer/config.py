@@ -164,6 +164,10 @@ class TransformerConfig(Config):
         """
         device = device or get_default_device()
 
+        if self.float8_config is not None and self.float8_config.enabled:
+            if self.float8_config.compile is None and self.compile:
+                self.float8_config.compile = True
+
         log.info(
             f"Building transformer with {self.num_params:,d} total params, "
             f"{self.num_non_embedding_params:,d} non-embedding params"
@@ -180,6 +184,7 @@ class TransformerConfig(Config):
                 init_method=self.init_method,
                 init_device=init_device,
                 init_seed=self.init_seed,
+                float8_config=self.float8_config,
             )
         elif self.name == TransformerType.normalized:
             model = NormalizedTransformer(
@@ -192,17 +197,10 @@ class TransformerConfig(Config):
                 init_method=self.init_method,
                 init_device=init_device,
                 init_seed=self.init_seed,
+                float8_config=self.float8_config,
             )
         else:
             raise NotImplementedError(self.name)
-
-        # Maybe convert linear layers to Float8 linear layers.
-        if self.float8_config is not None and self.float8_config.enabled:
-            if self.float8_config.compile is None and self.compile:
-                self.float8_config.compile = True
-            self.float8_config.convert_to_float8_training(
-                model, modules_to_ignore={"lm_head.w_out"}
-            )
 
         log.info("%s", model)
 
