@@ -6,6 +6,7 @@
   <a href="https://github.com/allenai/OLMo-core/tree/main/src/examples">Examples</a> ||
   <a href="https://olmo-core.readthedocs.io/en/latest/">Docs</a> ||
   <a href="https://pypi.org/project/ai2-olmo-core/">PyPI</a> ||
+  <a href="https://github.com/orgs/allenai/packages?repo_name=OLMo-core">Docker Images</a> ||
   <a href="https://beaker.org/ws/ai2/OLMo-core/images">Beaker Images</a> ||
   <a href="https://github.com/allenai/OLMo-core/blob/main/LICENSE">License</a> ||
   <a href="https://github.com/allenai/OLMo-core/blob/main/CHANGELOG.md">Changelog</a>
@@ -23,6 +24,13 @@ There are a number of optional dependencies that must be installed to use certai
 - [flash-attn](https://github.com/Dao-AILab/flash-attention) for flash attention and certain other fused operations.
 - [torchao](https://github.com/pytorch/ao) for float8 training.
 - [megablocks](https://github.com/databricks/megablocks) for mixture-of-experts (MoE) models.
+
+The published [Docker images](https://github.com/orgs/allenai/packages?repo_name=OLMo-core) contain all core and optional dependencies, and are regularly tested on our in-house H100 clusters.
+But there are several things to keep in mind if you intend to use these images:
+- They do not come with the OLMo-core package installed, only its dependencies, to accommodate for regular code changes. Therefore the `*-nightly` tags indicate that they come with PyTorch nightly, not some nightly version of OLMo-core.
+- They may not work on your own cluster if you have different hardware or driver/CUDA versions.
+
+If the published images do not work for your use-case for any of the above reasons, you could adapt our [Dockerfile](https://github.com/allenai/OLMo-core/blob/main/src/Dockerfile) to build your own images.
 
 ## API stability
 

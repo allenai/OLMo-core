@@ -75,11 +75,29 @@ nightly-image :
 		-t $(IMAGE_BASENAME)-nightly .
 	echo "Built image '$(IMAGE_BASENAME)-nightly', size: $$(docker inspect -f '{{ .Size }}' $(IMAGE_BASENAME)-nightly | numfmt --to=si)"
 
+.PHONY : ghcr-image-stable
+ghcr-image-stable : stable-image
+	docker tag $(IMAGE_BASENAME) ghcr.io/allenai/$(IMAGE_BASENAME)
+	docker push ghcr.io/allenai/$(IMAGE_BASENAME)
+	docker tag $(IMAGE_BASENAME) ghcr.io/allenai/$(IMAGE_BASENAME)-v$(VERSION_SHORT)
+	docker push ghcr.io/allenai/$(IMAGE_BASENAME)-v$(VERSION_SHORT)
+	docker tag $(IMAGE_BASENAME) ghcr.io/allenai/$(IMAGE_BASENAME)-v$(VERSION)
+	docker push ghcr.io/allenai/$(IMAGE_BASENAME)-v$(VERSION)
+
 .PHONY : beaker-image-stable
 beaker-image-stable : stable-image
 	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME) $(IMAGE_BASENAME) $(BEAKER_WORKSPACE)
 	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME) $(IMAGE_BASENAME)-v$(VERSION_SHORT) $(BEAKER_WORKSPACE)
 	./src/scripts/beaker/create_beaker_image.sh $(IMAGE_BASENAME) $(IMAGE_BASENAME)-v$(VERSION) $(BEAKER_WORKSPACE)
+
+.PHONY : ghcr-image-nightly
+ghcr-image-nightly : nightly-image
+	docker tag $(IMAGE_BASENAME)-nightly ghcr.io/allenai/$(IMAGE_BASENAME)-nightly
+	docker push ghcr.io/allenai/$(IMAGE_BASENAME)-nightly
+	docker tag $(IMAGE_BASENAME)-nightly ghcr.io/allenai/$(IMAGE_BASENAME)-v$(VERSION_SHORT)-nightly
+	docker push ghcr.io/allenai/$(IMAGE_BASENAME)-v$(VERSION_SHORT)-nightly
+	docker tag $(IMAGE_BASENAME)-nightly ghcr.io/allenai/$(IMAGE_BASENAME)-v$(VERSION)-nightly
+	docker push ghcr.io/allenai/$(IMAGE_BASENAME)-v$(VERSION)-nightly
 
 .PHONY : beaker-image-nightly
 beaker-image-nightly : nightly-image
