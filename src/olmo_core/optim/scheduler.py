@@ -86,17 +86,20 @@ class LinearScheduler(Scheduler):
 @dataclass
 class InvSqrtScheduler(Scheduler):
     """
-    Inverse square root learning rate schedule.
+    Inverse square root learning rate (LR) schedule.
     
-    Rather than including warmup (to avoid dividing by 0 at step 0), the schedule
-    allows skipping the first `step_offset` steps of the schedule.
+    To enable having a customizable LR warmup (or no warmup), this schedule removes
+    the LR warmup that is part of traditional formulations of the inverse square
+    root scheduler. Instead, it supports skipping the beginning of the inverse square
+    root using `step_offset`.
     """
 
     alpha_f: float = 0.1
-    step_offset: int = 0
+    step_offset: int = 1
     """
     Step provided is increased by the given offset for inverse square root calculations.
-    Largers offsets give less steep LR decay.
+    Largers offsets give less steep LR decay, since `get_lr` is normalized to
+    give the initial learning rate at step 0.
     """
 
     def get_lr(
