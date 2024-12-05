@@ -49,8 +49,8 @@ def test_small_llama2_builder_config(init_device, device):
             assert (module.weight == 1).all()
 
     # Make sure block_idx is set correctly.
-    assert model.blocks[0].block_idx == 0
-    assert model.blocks[-1].block_idx == len(model.blocks) - 1
+    assert model.blocks["0"].block_idx == 0
+    assert model.blocks[str(len(model.blocks) - 1)].block_idx == len(model.blocks) - 1
 
 
 def check_ngpt_matrices(model: nn.Module, d_model: int):
@@ -93,8 +93,8 @@ def test_small_ngpt_builder_config(init_device, device):
     assert model.num_params == num_actual_params
 
     # Make sure block_idx is set correctly.
-    assert model.blocks[0].block_idx == 0
-    assert model.blocks[-1].block_idx == len(model.blocks) - 1
+    assert model.blocks["0"].block_idx == 0
+    assert model.blocks[str(len(model.blocks) - 1)].block_idx == len(model.blocks) - 1
 
     # Make sure all weights are normalized in the embedding dimension.
     check_ngpt_matrices(model, config.d_model)

@@ -96,24 +96,27 @@ class Transformer(nn.Module):
         float8_config: Optional[Float8Config] = None,
     ):
         super().__init__()
+
         cache = BufferCache()
+
         self.d_model = d_model
         self.vocab_size = vocab_size
+        self.n_layers = n_layers
+        self.n_attn_heads = block.attention.n_heads
+
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
-        self.blocks = nn.ModuleList(
-            [
-                block.build(
-                    d_model=d_model,
-                    block_idx=block_idx,
-                    init_device=init_device,
-                    cache=cache,
-                )
-                for block_idx in range(n_layers)
-            ]
-        )
+        self.blocks = nn.ModuleDict()
+        for block_idx in range(n_layers):
+            self.blocks[str(block_idx)] = block.build(
+                d_model=d_model,
+                block_idx=block_idx,
+                init_device=init_device,
+                cache=cache,
+            )
         self.lm_head = lm_head.build(
             d_model=d_model, vocab_size=vocab_size, init_device=init_device
         )
+
         self.init_method = InitMethod(init_method)
         self.init_seed = init_seed
         self._cache = cache
@@ -158,7 +161,7 @@ class Transformer(nn.Module):
             if hasattr(module, "reset_parameters"):
                 module.reset_parameters()
 
-        for block in self.blocks:
+        for block in self.blocks.values():
             # This might fail if it's wrapped.
             #  assert isinstance(block, TransformerBlock)
             block = cast(TransformerBlock, block)
@@ -169,7 +172,7 @@ class Transformer(nn.Module):
                 att,
                 d_model=self.d_model,
                 block_idx=block.block_idx,
-                num_blocks=len(self.blocks),
+                num_blocks=self.n_layers,
                 generator=generator,
             )
 
@@ -179,7 +182,7 @@ class Transformer(nn.Module):
                     block.feed_forward,
                     d_model=self.d_model,
                     block_idx=block.block_idx,
-                    num_blocks=len(self.blocks),
+                    num_blocks=self.n_layers,
                     generator=generator,
                 )
             else:
@@ -187,7 +190,7 @@ class Transformer(nn.Module):
                     block.feed_forward_moe,
                     d_model=self.d_model,
                     block_idx=block.block_idx,
-                    num_blocks=len(self.blocks),
+                    num_blocks=self.n_layers,
                     generator=generator,
                 )
 
@@ -229,7 +232,7 @@ class Transformer(nn.Module):
         # passthrough for non-existent layers, allows easy pipeline parallel configuration
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
-        for block in self.blocks:
+        for block in self.blocks.values():
             h = block(h, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
 
         return self.lm_head(h) if self.lm_head is not None else h
@@ -263,11 +266,11 @@ class Transformer(nn.Module):
             parallelize_plan={
                 "embeddings": RowwiseParallel(
                     input_layouts=Replicate(),
-                    output_layouts=self.blocks[0].tp_input_layouts,
+                    output_layouts=self.blocks["0"].tp_input_layouts,
                 ),
                 "lm_head": PrepareModuleInput(
                     input_layouts=self.blocks[
-                        0
+                        "0"
                     ].tp_input_layouts,  # block output layouts are same as block input layouts
                     desired_input_layouts=self.lm_head.tp_input_layouts,
                 ),
@@ -280,7 +283,7 @@ class Transformer(nn.Module):
         # NOTE: At the cost of model code change, we can accelerate Sequence Parallel
         #       by folding (and unfolding) the batch dimension and the sequence dimension.
         #       Examples can be found at https://github.com/pytorch/torchtitan/pull/437
-        for block in self.blocks:
+        for block in self.blocks.values():
             block.apply_tp(tp_mesh, float8_enabled=float8_enabled)
 
         log.info(f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model")
@@ -337,7 +340,7 @@ class Transformer(nn.Module):
                 parent.register_module(name.split(".")[-1], module)
                 log.info(f"Wrapped '{name}' for activation checkpointing")
         else:
-            for block_idx, block in enumerate(self.blocks):
+            for block_idx, block in enumerate(self.blocks.values()):
                 if mode == TransformerActivationCheckpointingMode.selected_blocks:
                     assert block_interval is not None
                     if block_idx % block_interval == 0:
@@ -406,7 +409,7 @@ class Transformer(nn.Module):
         )
         fsdp_config = dict(mesh=dp_mesh, mp_policy=mp_policy)
 
-        for block in self.blocks:
+        for block in self.blocks.values():
             # For PP, do not reshard after forward to avoid per-microbatch
             # all-gathers, which can be expensive and non-overlapped
             reshard_after_forward = False if pp_enabled else True
@@ -477,9 +480,9 @@ class Transformer(nn.Module):
         Get the approximate number of flops per token.
         """
         n, h, q, t = (
-            len(self.blocks),
-            self.blocks[0].attention.n_heads,
-            self.d_model // self.blocks[0].attention.n_heads,
+            self.n_layers,
+            self.n_attn_heads,
+            self.d_model // self.n_attn_heads,
             seq_len,
         )
 
@@ -562,7 +565,7 @@ class NormalizedTransformer(Transformer):
         if self.embeddings is not None:
             self._normalize_matrix(self.embeddings.weight)
 
-        for block in self.blocks:
+        for block in self.blocks.values():
             if hasattr(block, "normalize_matrices"):
                 block.normalize_matrices()
 

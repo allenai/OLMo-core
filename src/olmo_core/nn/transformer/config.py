@@ -44,11 +44,22 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class TransformerDataParallelConfig(DataParallelConfig):
+    """
+    Transformer-specific data parallel config.
+    """
+
     wrapping_strategy: TransformerDataParallelWrappingStrategy = (
         TransformerDataParallelWrappingStrategy.full
     )
     """
     Wrapping strategy.
+    """
+
+
+@dataclass
+class TransformerTensorParallelConfig(TensorParallelConfig):
+    """
+    Transformer-specific tensor parallel config.
     """
 
 
@@ -131,7 +142,7 @@ class TransformerConfig(Config):
     init_seed: int = 0
     compile: bool = False
     dp_config: Optional[TransformerDataParallelConfig] = None
-    tp_config: Optional[TensorParallelConfig] = None
+    tp_config: Optional[TransformerTensorParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
     float8_config: Optional[Float8Config] = None
 

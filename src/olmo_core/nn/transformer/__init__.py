@@ -12,6 +12,7 @@ from .config import (
     TransformerActivationCheckpointingConfig,
     TransformerConfig,
     TransformerDataParallelConfig,
+    TransformerTensorParallelConfig,
     TransformerType,
 )
 from .init import InitMethod
@@ -37,6 +38,7 @@ __all__ = [
     "MoEReorderedNormTransformerBlock",
     "TransformerDataParallelConfig",
     "TransformerDataParallelWrappingStrategy",
+    "TransformerTensorParallelConfig",
     "TransformerActivationCheckpointingConfig",
     "TransformerActivationCheckpointingMode",
     "InitMethod",
