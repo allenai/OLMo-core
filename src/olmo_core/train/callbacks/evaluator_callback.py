@@ -80,25 +80,27 @@ class EvaluatorCallback(Callback):
                 with torch.no_grad():
                     # Run forward pass, get logits.
                     logits = self.trainer.train_module.eval_batch(batch)
-                    logits_for_loss, labels_for_loss = get_inputs_for_loss(
-                        batch,
-                        logits,
-                        label_ignore_index=self.trainer.data_loader.collator.label_ignore_index,
-                    )
 
-                    # Get CE loss.
-                    ce_loss, _ = cross_entropy_loss(
-                        logits_for_loss,
-                        labels_for_loss,
-                        ignore_index=self.trainer.data_loader.collator.label_ignore_index,
-                        reduction="none",
-                    )
-                    # Reshape (batch_size * (seq_len - 1),) -> (batch_size, seq_len - 1)
-                    ce_loss = ce_loss.view(batch["input_ids"].shape[0], -1)
+                    if logits is not None:
+                        logits_for_loss, labels_for_loss = get_inputs_for_loss(
+                            batch,
+                            logits,
+                            label_ignore_index=self.trainer.data_loader.collator.label_ignore_index,
+                        )
 
-                # NOTE: might have host-device syncs here but that's okay.
-                with cuda_sync_debug_mode(0):
-                    evaluator.update_metrics(batch, ce_loss, logits)
+                        # Get CE loss.
+                        ce_loss, _ = cross_entropy_loss(
+                            logits_for_loss,
+                            labels_for_loss,
+                            ignore_index=self.trainer.data_loader.collator.label_ignore_index,
+                            reduction="none",
+                        )
+                        # Reshape (batch_size * (seq_len - 1),) -> (batch_size, seq_len - 1)
+                        ce_loss = ce_loss.view(batch["input_ids"].shape[0], -1)
+
+                        # NOTE: might have host-device syncs here but that's okay.
+                        with cuda_sync_debug_mode(0):
+                            evaluator.update_metrics(batch, ce_loss, logits)
 
                 if eval_step % self.trainer.cancel_check_interval == 0:
                     self.trainer.check_if_canceled()

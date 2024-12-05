@@ -72,9 +72,12 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def eval_batch(self, batch: Dict[str, Any]) -> torch.Tensor:
+    def eval_batch(self, batch: Dict[str, Any]) -> Optional[torch.Tensor]:
         """
         Run a forward pass on a eval batch, returning the logits.
+
+        .. note::
+            The logits may be none when using pipeline parallelism for certain ranks.
         """
         raise NotImplementedError
 
@@ -246,7 +249,7 @@ class BasicTrainModule(TrainModule):
         # Record loss metrics.
         self.record_ce_loss(ce_batch_loss, ReduceType.mean)
 
-    def eval_batch(self, batch: Dict[str, Any]) -> torch.Tensor:
+    def eval_batch(self, batch: Dict[str, Any]) -> Optional[torch.Tensor]:
         self.model.eval()
         batch = move_to_device(batch, self.trainer.device)
         with torch.no_grad():

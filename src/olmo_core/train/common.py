@@ -120,17 +120,23 @@ class ReduceType(StrEnum):
     """
 
 
-def get_inputs_for_loss(
-    batch: Dict[str, Any], logits: torch.Tensor, label_ignore_index: int = -100
+def reshape_inputs_for_loss(
+    logits: torch.Tensor, labels: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     # shape: (batch_size, seq_len - 1, vocab_size)
     logits_for_loss = logits[..., :-1, :].contiguous()
     # shape: (batch_size * (seq_len - 1), vocab_size)
     logits_for_loss = logits_for_loss.view(-1, logits_for_loss.size(-1))
 
-    # shape: (batch_size, seq_len - 1)
-    labels = batch.get("labels", get_labels(batch, label_ignore_index=label_ignore_index))
-    # shape: (batch_size * (seq_len - 1),)
-    labels = labels.view(-1)
+    # shape: (batch_size, seq_len - 1) -> (batch_size * (seq_len - 1),)
+    labels_for_loss = labels.view(-1)
 
-    return logits_for_loss, labels
+    return logits_for_loss, labels_for_loss
+
+
+def get_inputs_for_loss(
+    batch: Dict[str, Any], logits: torch.Tensor, label_ignore_index: int = -100
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    return reshape_inputs_for_loss(
+        logits, batch.get("labels", get_labels(batch, label_ignore_index=label_ignore_index))
+    )
