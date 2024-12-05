@@ -76,7 +76,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 entity="ai2-llm",
                 project="OLMo-core-1B",
                 group="inv-sqrt-test",
-                enabled=False,
+                enabled=True,
                 cancel_check_interval=10,
             ),
         )
