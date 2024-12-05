@@ -42,7 +42,7 @@ class ConstantScheduler(Scheduler):
     ) -> Union[float, torch.Tensor]:
         del step, max_steps
         return initial_lr
-    
+
 
 @dataclass
 class LinearWarmupDecoratorScheduler(Scheduler):
@@ -54,7 +54,9 @@ class LinearWarmupDecoratorScheduler(Scheduler):
     warmup_steps: int = 2000
     warmup_min_lr: float = 0.0
 
-    def get_lr(self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int) -> Union[float, torch.Tensor]:
+    def get_lr(
+        self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
+    ) -> Union[float, torch.Tensor]:
         if step <= self.warmup_steps:
             lr_at_intercept = self.inner.get_lr(initial_lr, 1, max_steps - self.warmup_steps)
             return self.warmup_min_lr + (lr_at_intercept - self.warmup_min_lr) * (step / self.warmup_steps)
@@ -87,7 +89,7 @@ class LinearScheduler(Scheduler):
 class InvSqrtScheduler(Scheduler):
     """
     Inverse square root learning rate (LR) schedule.
-    
+
     To enable having a customizable LR warmup (or no warmup), this schedule removes
     the LR warmup that is part of traditional formulations of the inverse square
     root scheduler. Instead, it supports skipping the beginning of the inverse square
