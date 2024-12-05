@@ -1,6 +1,7 @@
 import os
 import tempfile
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -55,13 +56,14 @@ class TrainerConfig(Config):
 
     def with_callback(self, name: str, callback: Callback) -> "TrainerConfig":
         """
-        Add another callback, returning the trainer config.
+        Return a new trainer config with an additional callback.
 
         :param name: A name to assign the callback. Must be unique.
         :param callback: The callback to add.
         """
-        self.add_callback(name, callback)
-        return self
+        out = replace(self, callbacks=deepcopy(self.callbacks))
+        out.add_callback(name, callback)
+        return out
 
     def build(
         self,
