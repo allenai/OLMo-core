@@ -1,9 +1,14 @@
+import logging
 from abc import ABCMeta, abstractmethod
-from dataclasses import dataclass
-from math import cos, pi
-from typing import Optional, Union
+from dataclasses import dataclass, field
+from math import cos, pi, sqrt
+from typing import List, Optional, Union
 
 import torch
+
+from ..exceptions import OLMoConfigurationError
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -37,6 +42,117 @@ class ConstantScheduler(Scheduler):
     ) -> Union[float, torch.Tensor]:
         del step, max_steps
         return initial_lr
+    
+
+@dataclass
+class LinearWarmupDecoratorScheduler(Scheduler):
+    """
+    A scheduler that can wrap other schedulers to add a linear warmup phase.
+    """
+
+    inner: Scheduler = field(default_factory=ConstantScheduler)
+    warmup_steps: int = 2000
+    warmup_min_lr: float = 0.0
+
+    def get_lr(self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int) -> Union[float, torch.Tensor]:
+        if step <= self.warmup_steps:
+            lr_at_intercept = self.inner.get_lr(initial_lr, 1, max_steps - self.warmup_steps)
+            return self.warmup_min_lr + (lr_at_intercept - self.warmup_min_lr) * (step / self.warmup_steps)
+        else:
+            return self.inner.get_lr(initial_lr, step - self.warmup_steps, max_steps - self.warmup_steps)
+
+
+@dataclass
+class LinearScheduler(Scheduler):
+    """
+    Linear learning rate schedule.
+    """
+
+    alpha_f: float = 0.1
+    t_max: Optional[int] = None
+
+    def get_lr(
+        self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
+    ) -> Union[float, torch.Tensor]:
+        max_steps = max_steps if self.t_max is None else self.t_max
+        eta_min = initial_lr * self.alpha_f
+
+        if step >= max_steps:
+            return eta_min
+        else:
+            return initial_lr - (initial_lr - eta_min) * (step / max_steps)
+
+
+@dataclass
+class InvSqrtScheduler(Scheduler):
+    """
+    Inverse square root learning rate schedule.
+    
+    Rather than including warmup (to avoid dividing by 0 at step 0), the schedule
+    allows skipping the first `step_offset` steps of the schedule.
+    """
+
+    alpha_f: float = 0.1
+    step_offset: int = 0
+    """
+    Step provided is increased by the given offset for inverse square root calculations.
+    Largers offsets give less steep LR decay.
+    """
+
+    def get_lr(
+        self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
+    ) -> Union[float, torch.Tensor]:
+        del max_steps
+
+        eta_min = initial_lr * self.alpha_f
+        return eta_min + (initial_lr - eta_min) * sqrt(self.step_offset / (step + self.step_offset))
+
+
+@dataclass
+class SequentialScheduler(Scheduler):
+    """
+    A scheduler that calls a sequence of schedulers sequentially during the optimization process.
+    """
+
+    schedulers: List[Scheduler] = field(default_factory=lambda: [ConstantScheduler()])
+    schedulers_max_steps: List[int] = field(default_factory=list)
+    """
+    A list of the steps for which each scheduler runs. The last scheduler is assumed to run until the
+    end of training, so any value provided for it is ignored.
+    """
+
+    def __post_init__(self):
+        if len(self.schedulers_max_steps) == len(self.schedulers):
+            log.info(
+                "Max steps are set for the last scheduler in sequential scheduling. "
+                "The last scheduler is assumed to run until the end of training, so this value is ignored."
+            )
+            self.schedulers_max_steps.pop()
+
+        if len(self.schedulers_max_steps) + 1 != len(self.schedulers):
+            raise OLMoConfigurationError(
+                f"Max steps must be set for all schedulers except the last when using {SequentialScheduler.__name__}"
+            )
+
+    def get_lr(
+        self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
+    ) -> Union[float, torch.Tensor]:
+        assert 0 <= step <= max_steps
+
+        # Call schedulers sequentially until the step is within the max steps
+        # of the scheduler or the last scheduler is reached
+        for scheduler, scheduler_max_steps in zip(self.schedulers[:-1], self.schedulers_max_steps, strict=True):
+            if step <= scheduler_max_steps:
+                return scheduler.get_lr(initial_lr, step, min(max_steps, scheduler_max_steps))
+
+            # The next scheduler's initial LR should be the final LR of the current schedule
+            initial_lr = scheduler.get_lr(initial_lr, scheduler_max_steps, scheduler_max_steps)
+
+            step -= scheduler_max_steps
+            max_steps -= scheduler_max_steps
+
+        assert max_steps > 0
+        return self.schedulers[-1].get_lr(initial_lr, step, max_steps)
 
 
 @dataclass
