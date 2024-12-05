@@ -59,9 +59,13 @@ class LinearWarmupDecoratorScheduler(Scheduler):
     ) -> Union[float, torch.Tensor]:
         if step <= self.warmup_steps:
             lr_at_intercept = self.inner.get_lr(initial_lr, 1, max_steps - self.warmup_steps)
-            return self.warmup_min_lr + (lr_at_intercept - self.warmup_min_lr) * (step / self.warmup_steps)
+            return self.warmup_min_lr + (lr_at_intercept - self.warmup_min_lr) * (
+                step / self.warmup_steps
+            )
         else:
-            return self.inner.get_lr(initial_lr, step - self.warmup_steps, max_steps - self.warmup_steps)
+            return self.inner.get_lr(
+                initial_lr, step - self.warmup_steps, max_steps - self.warmup_steps
+            )
 
 
 @dataclass
@@ -146,7 +150,9 @@ class SequentialScheduler(Scheduler):
 
         # Call schedulers sequentially until the step is within the max steps
         # of the scheduler or the last scheduler is reached
-        for scheduler, scheduler_max_steps in zip(self.schedulers[:-1], self.schedulers_max_steps, strict=True):
+        for scheduler, scheduler_max_steps in zip(
+            self.schedulers[:-1], self.schedulers_max_steps, strict=True
+        ):
             if step <= scheduler_max_steps:
                 return scheduler.get_lr(initial_lr, step, min(max_steps, scheduler_max_steps))
 

@@ -6,8 +6,8 @@ from .scheduler import (
     ConstantScheduler,
     CosWithWarmup,
     InvSqrtScheduler,
-    LinearWarmupDecoratorScheduler,
     LinearScheduler,
+    LinearWarmupDecoratorScheduler,
     Scheduler,
     SequentialScheduler,
 )
