@@ -150,12 +150,8 @@ class TransformerTrainModule(TrainModule):
                 break
 
         self._batch_num_tokens_for_loss: Optional[torch.Tensor] = None
-        self._ce_batch_loss = move_to_device(torch.tensor(0.0), self.trainer.device)
-        self._z_batch_loss = (
-            None
-            if self.z_loss_multiplier is None
-            else move_to_device(torch.tensor(0.0), self.trainer.device)
-        )
+        self._ce_batch_loss: Optional[torch.Tensor] = None
+        self._z_batch_loss: Optional[torch.Tensor] = None
 
     def loss_fn(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         batch_num_tokens_for_loss = self._batch_num_tokens_for_loss
