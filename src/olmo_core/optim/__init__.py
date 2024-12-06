@@ -4,10 +4,10 @@ from .config import OptimConfig, OptimGroupOverride
 from .lion import Lion, LionConfig, SkipStepLion, SkipStepLionConfig
 from .scheduler import (
     ConstantScheduler,
+    ConstantWithWarmup,
     CosWithWarmup,
-    InvSqrtScheduler,
-    LinearWarmupDecoratorScheduler,
-    LinearScheduler,
+    InvSqrtWithWarmup,
+    LinearWithWarmup,
     Scheduler,
     SequentialScheduler,
 )
@@ -24,10 +24,10 @@ __all__ = [
     "SkipStepLionConfig",
     "SkipStepLion",
     "Scheduler",
-    "CosWithWarmup",
     "ConstantScheduler",
-    "InvSqrtScheduler",
-    "LinearScheduler",
-    "LinearWarmupDecoratorScheduler",
+    "ConstantWithWarmup",
+    "CosWithWarmup",
+    "InvSqrtWithWarmup",
+    "LinearWithWarmup",
     "SequentialScheduler",
 ]
