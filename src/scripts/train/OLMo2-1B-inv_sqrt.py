@@ -8,13 +8,17 @@ from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
 from olmo_core.optim.scheduler import (
-    InvSqrtScheduler,
-    LinearScheduler,
-    LinearWarmupDecoratorScheduler,
+    InvSqrtWithWarmup,
+    LinearWithWarmup,
     SequentialScheduler,
 )
 from olmo_core.train import TrainerConfig
-from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, SchedulerCallback, WandBCallback
+from olmo_core.train.callbacks import (
+    CheckpointerCallback,
+    CometCallback,
+    SchedulerCallback,
+    WandBCallback,
+)
 from olmo_core.train.common import Duration
 
 
@@ -34,7 +38,9 @@ def build_optim_config(common: CommonComponents) -> AdamWConfig:
         lr=4e-4,
         weight_decay=0.1,
         betas=(0.9, 0.95),
-        group_overrides=[OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))],
+        group_overrides=[
+            OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+        ],
         fused=True,
     )
 
@@ -85,14 +91,11 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             SchedulerCallback(
                 scheduler=SequentialScheduler(
                     schedulers=[
-                        LinearWarmupDecoratorScheduler(
+                        InvSqrtWithWarmup(
+                            alpha_f=0.5,
                             warmup_steps=100,
-                            inner=InvSqrtScheduler(
-                                alpha_f=0.5,
-                                step_offset=100,
-                            ),
                         ),
-                        LinearScheduler(alpha_f=0, t_max=200),
+                        LinearWithWarmup(warmup_steps=0, alpha_f=0, t_max=200),
                     ],
                     schedulers_max_steps=[250],
                 )
