@@ -47,7 +47,7 @@ class ConstantScheduler(Scheduler):
 @dataclass
 class ConstantWithWarmup(Scheduler):
     """
-    Constant learning rate schedule, basically a no-op.
+    Constant learning rate schedule with a warmup.
     """
 
     warmup_steps: int = 2000
@@ -66,7 +66,7 @@ class ConstantWithWarmup(Scheduler):
 @dataclass
 class LinearWithWarmup(Scheduler):
     """
-    Linear learning rate schedule.
+    Linear learning rate schedule with a warmup.
     """
 
     alpha_f: float = 0.1
@@ -92,7 +92,7 @@ class LinearWithWarmup(Scheduler):
 @dataclass
 class InvSqrtWithWarmup(Scheduler):
     """
-    Inverse square root learning rate (LR) schedule.
+    Inverse square root learning rate (LR) schedule with a warmup.
     """
 
     alpha_f: float = 0.1
