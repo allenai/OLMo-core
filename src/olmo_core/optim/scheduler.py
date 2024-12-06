@@ -32,25 +32,11 @@ class Scheduler(metaclass=ABCMeta):
 
 
 @dataclass
-class ConstantScheduler(Scheduler):
+class ConstantWithWarmup(Scheduler):
     """
     Constant learning rate schedule, basically a no-op.
     """
 
-    def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
-    ) -> Union[float, torch.Tensor]:
-        del step, max_steps
-        return initial_lr
-
-
-@dataclass
-class LinearWarmupDecoratorScheduler(Scheduler):
-    """
-    A scheduler that can wrap other schedulers to add a linear warmup phase.
-    """
-
-    inner: Scheduler = field(default_factory=ConstantScheduler)
     warmup_steps: int = 2000
     warmup_min_lr: float = 0.0
 
@@ -58,72 +44,68 @@ class LinearWarmupDecoratorScheduler(Scheduler):
         self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
     ) -> Union[float, torch.Tensor]:
         if step <= self.warmup_steps:
-            lr_at_intercept = self.inner.get_lr(initial_lr, 1, max_steps - self.warmup_steps)
-            return self.warmup_min_lr + (lr_at_intercept - self.warmup_min_lr) * (
-                step / self.warmup_steps
-            )
-        else:
-            return self.inner.get_lr(
-                initial_lr, step - self.warmup_steps, max_steps - self.warmup_steps
-            )
+            return _linear_warmup(initial_lr, step, self.warmup_steps, self.warmup_min_lr)
+
+        del step, max_steps
+        return initial_lr
 
 
 @dataclass
-class LinearScheduler(Scheduler):
+class LinearWithWarmup(Scheduler):
     """
     Linear learning rate schedule.
     """
 
     alpha_f: float = 0.1
     t_max: Optional[int] = None
+    warmup_steps: int = 2000
+    warmup_min_lr: float = 0.0
 
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
     ) -> Union[float, torch.Tensor]:
         max_steps = max_steps if self.t_max is None else self.t_max
         eta_min = initial_lr * self.alpha_f
-
-        if step >= max_steps:
+        if step < self.warmup_steps:
+            return _linear_warmup(initial_lr, step, self.warmup_steps, self.warmup_min_lr)
+        elif step >= max_steps:
             return eta_min
         else:
+            step = step - self.warmup_steps
+            max_steps = max_steps - self.warmup_steps
             return initial_lr - (initial_lr - eta_min) * (step / max_steps)
 
 
 @dataclass
-class InvSqrtScheduler(Scheduler):
+class InvSqrtWithWarmup(Scheduler):
     """
     Inverse square root learning rate (LR) schedule.
-
-    To enable having a customizable LR warmup (or no warmup), this schedule removes
-    the LR warmup that is part of traditional formulations of the inverse square
-    root scheduler. Instead, it supports skipping the beginning of the inverse square
-    root using `step_offset`.
     """
 
     alpha_f: float = 0.1
-    step_offset: int = 1
-    """
-    Step provided is increased by the given offset for inverse square root calculations.
-    Largers offsets give less steep LR decay, since `get_lr` is normalized to
-    give the initial learning rate at step 0.
-    """
+    warmup_steps: int = 2000
+    warmup_min_lr: float = 0.0
 
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
     ) -> Union[float, torch.Tensor]:
+        if step < self.warmup_steps:
+            return _linear_warmup(initial_lr, step, self.warmup_steps, self.warmup_min_lr)
         del max_steps
 
         eta_min = initial_lr * self.alpha_f
-        return eta_min + (initial_lr - eta_min) * sqrt(self.step_offset / (step + self.step_offset))
+        return eta_min + (initial_lr - eta_min) * sqrt(self.warmup_steps / step)
 
 
 @dataclass
 class SequentialScheduler(Scheduler):
     """
-    A scheduler that calls a sequence of schedulers sequentially during the optimization process.
+    A scheduler that calls a sequence of schedulers sequentially during the optimization
+    process. The initial LR of a scheduler in the sequence is set to the final LR of the
+    previous scheduler.
     """
 
-    schedulers: List[Scheduler] = field(default_factory=lambda: [ConstantScheduler()])
+    schedulers: List[Scheduler] = field(default_factory=lambda: [ConstantWithWarmup()])
     schedulers_max_steps: List[int] = field(default_factory=list)
     """
     A list of the steps for which each scheduler runs. The last scheduler is assumed to run until the

@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added support for tensor parallelism. See the `TransformerConfig` class for usage.
-- Added new LR schedulers: `LinearScheduler`, `InvSqrtScheduler`, `LinearWarmupDecoratorScheduler`, `SequentialScheduler`.
+- Added new LR schedulers: `LinearWithWarmup`, `InvSqrtWithWarmup`, `ConstantWithWarmup`, `SequentialScheduler`.
 
 ## [v1.7.0](https://github.com/allenai/OLMo-core/releases/tag/v1.7.0) - 2024-11-27
 
