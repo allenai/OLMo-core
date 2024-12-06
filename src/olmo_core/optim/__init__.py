@@ -3,6 +3,7 @@ from .adamw import AdamWConfig
 from .config import OptimConfig, OptimGroupOverride
 from .lion import Lion, LionConfig, SkipStepLion, SkipStepLionConfig
 from .scheduler import (
+    ConstantScheduler,
     ConstantWithWarmup,
     CosWithWarmup,
     InvSqrtWithWarmup,
@@ -23,6 +24,7 @@ __all__ = [
     "SkipStepLionConfig",
     "SkipStepLion",
     "Scheduler",
+    "ConstantScheduler",
     "ConstantWithWarmup",
     "CosWithWarmup",
     "InvSqrtWithWarmup",

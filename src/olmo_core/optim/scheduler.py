@@ -32,6 +32,19 @@ class Scheduler(metaclass=ABCMeta):
 
 
 @dataclass
+class ConstantScheduler(Scheduler):
+    """
+    Constant learning rate schedule, basically a no-op.
+    """
+
+    def get_lr(
+        self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
+    ) -> Union[float, torch.Tensor]:
+        del step, max_steps
+        return initial_lr
+
+
+@dataclass
 class ConstantWithWarmup(Scheduler):
     """
     Constant learning rate schedule, basically a no-op.
