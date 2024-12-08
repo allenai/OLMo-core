@@ -15,7 +15,7 @@ from olmo_core.nn.transformer import (
     TransformerDataParallelConfig,
 )
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
-from olmo_core.train import TrainerConfig
+from olmo_core.train import TrainerConfig, Duration, DurationUnit
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 
 log = logging.getLogger(__name__)
@@ -62,6 +62,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             z_loss_multiplier=1e-5,
             fused_loss=True,
             compile_loss=False,
+            max_duration=Duration(int(5e12), DurationUnit.tokens)
         )
         .with_callback(
             "checkpointer",
