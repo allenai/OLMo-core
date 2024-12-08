@@ -58,7 +58,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             rank_microbatch_size=4 * 4096,
             save_overwrite=True,
             metrics_collect_interval=10,
-            cancel_check_interval=1,
+            cancel_check_interval=10,
             z_loss_multiplier=1e-5,
             compile_loss=True,
         )
