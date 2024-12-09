@@ -147,6 +147,15 @@ class TransformerBlockBase(nn.Module):
         """
         raise NotImplementedError
 
+    @abstractmethod
+    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def tp_input_layouts(self) -> Union[Placement, Tuple[Placement, ...]]:
+        raise NotImplementedError
+
 
 class TransformerBlock(TransformerBlockBase):
     """
@@ -349,6 +358,9 @@ class NormalizedTransformerBlock(TransformerBlockBase):
             "TP is not implemented yet for the normalized transformer block variant"
         )
 
+    def tp_input_layouts(self) -> Union[Placement, Tuple[Placement, ...]]:
+        raise NotImplementedError
+
     @torch.no_grad()
     def normalize_matrices(self):
         """
@@ -356,10 +368,10 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         the :class:`~olmo_core.train.train_module.TransformerTrainModule` will handle for you.
         """
         if hasattr(self.attention, "normalize_matrices"):
-            self.attention.normalize_matrices()
+            self.attention.normalize_matrices()  # type: ignore
 
         if hasattr(self.feed_forward, "normalize_matrices"):
-            self.feed_forward.normalize_matrices()
+            self.feed_forward.normalize_matrices()  # type: ignore
 
     def _normalize_matrix(self, w: torch.Tensor, dim: int = -1):
         w.copy_(l2_normalize(w, dim=dim))
@@ -413,6 +425,9 @@ class MoETransformerBlock(TransformerBlockBase):
 
         raise NotImplementedError("TP is not implemented yet for the MoE transformer block variant")
 
+    def tp_input_layouts(self) -> Union[Placement, Tuple[Placement, ...]]:
+        raise NotImplementedError
+
 
 class MoEReorderedNormTransformerBlock(MoETransformerBlock):
     """
@@ -438,3 +453,6 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
         raise NotImplementedError(
             "TP is not implemented yet for the MoE reordered norm transformer block variant"
         )
+
+    def tp_input_layouts(self) -> Union[Placement, Tuple[Placement, ...]]:
+        raise NotImplementedError

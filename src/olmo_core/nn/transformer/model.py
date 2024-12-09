@@ -16,7 +16,12 @@ from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..lm_head import LMHeadConfig
 from ..utils import selective_checkpointing_context_fn
-from .block import TransformerBlock, TransformerBlockConfig
+from .block import (
+    MoETransformerBlock,
+    TransformerBlock,
+    TransformerBlockBase,
+    TransformerBlockConfig,
+)
 from .init import InitMethod
 
 __all__ = [
@@ -159,7 +164,7 @@ class Transformer(nn.Module):
 
         for module in self.modules():
             if hasattr(module, "reset_parameters"):
-                module.reset_parameters()
+                module.reset_parameters()  # type: ignore
 
         for block in self.blocks.values():
             # This might fail if it's wrapped.
@@ -187,7 +192,7 @@ class Transformer(nn.Module):
                 )
             else:
                 self.init_method.init_feed_forward_moe(
-                    block.feed_forward_moe,
+                    cast(MoETransformerBlock, block).feed_forward_moe,
                     d_model=self.d_model,
                     block_idx=block.block_idx,
                     num_blocks=self.n_layers,
@@ -260,18 +265,20 @@ class Transformer(nn.Module):
             parallelize_module,
         )
 
+        emb_output_layout = cast(TransformerBlockBase, self.blocks["0"]).tp_input_layouts
         parallelize_module(
             module=self,
             device_mesh=tp_mesh,
             parallelize_plan={
                 "embeddings": RowwiseParallel(
                     input_layouts=Replicate(),
-                    output_layouts=self.blocks["0"].tp_input_layouts,
+                    output_layouts=emb_output_layout[0]
+                    if isinstance(emb_output_layout, tuple)
+                    else emb_output_layout,
                 ),
                 "lm_head": PrepareModuleInput(
-                    input_layouts=self.blocks[
-                        "0"
-                    ].tp_input_layouts,  # block output layouts are same as block input layouts
+                    # block output layouts are same as block input layouts
+                    input_layouts=cast(TransformerBlockBase, self.blocks["0"]).tp_input_layouts,
                     desired_input_layouts=self.lm_head.tp_input_layouts,
                 ),
             },
@@ -279,12 +286,12 @@ class Transformer(nn.Module):
 
         self.lm_head.apply_tp(tp_mesh, loss_parallel=loss_parallel)
 
-        # Apply tensor + sequence parallelism to every transformer block
+        # Apply tensor + sequence parallelism to every transformer block.
         # NOTE: At the cost of model code change, we can accelerate Sequence Parallel
         #       by folding (and unfolding) the batch dimension and the sequence dimension.
         #       Examples can be found at https://github.com/pytorch/torchtitan/pull/437
         for block in self.blocks.values():
-            block.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+            cast(TransformerBlockBase, block).apply_tp(tp_mesh, float8_enabled=float8_enabled)
 
         log.info(f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model")
 
@@ -374,7 +381,8 @@ class Transformer(nn.Module):
             block = torch.compile(block, fullgraph=False)
             self.blocks.register_module(block_id, block)  # type: ignore
 
-        self.register_module("lm_head", torch.compile(self.lm_head, fullgraph=False))  # type: ignore
+        if self.lm_head is not None:
+            self.register_module("lm_head", torch.compile(self.lm_head, fullgraph=False))  # type: ignore
 
         log.info("Compiling each transformer block with torch.compile")
 
@@ -417,23 +425,29 @@ class Transformer(nn.Module):
             if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
                 if hasattr(block, "feed_forward"):
                     fully_shard(
-                        block.feed_forward,
+                        block.feed_forward,  # type: ignore
                         reshard_after_forward=reshard_after_forward,
                         **fsdp_config,
                     )
                 else:
                     fully_shard(
-                        block.feed_forward_moe,
+                        block.feed_forward_moe,  # type: ignore
                         reshard_after_forward=reshard_after_forward,
                         **fsdp_config,
                     )
 
             fully_shard(block, reshard_after_forward=reshard_after_forward, **fsdp_config)
 
-        if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
+        if (
+            wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained
+            and self.embeddings is not None
+        ):
             fully_shard(self.embeddings, reshard_after_forward=not pp_enabled, **fsdp_config)
 
-        if wrapping_strategy != TransformerDataParallelWrappingStrategy.blocks:
+        if (
+            wrapping_strategy != TransformerDataParallelWrappingStrategy.blocks
+            and self.lm_head is not None
+        ):
             fully_shard(self.lm_head, reshard_after_forward=False, **fsdp_config)
 
         fully_shard(self, reshard_after_forward=not pp_enabled, **fsdp_config)
@@ -567,9 +581,10 @@ class NormalizedTransformer(Transformer):
 
         for block in self.blocks.values():
             if hasattr(block, "normalize_matrices"):
-                block.normalize_matrices()
+                block.normalize_matrices()  # type: ignore
 
-        self.lm_head.normalize_matrices()
+        if self.lm_head is not None:
+            self.lm_head.normalize_matrices()  # type: ignore
 
     def _normalize_matrix(self, w: torch.Tensor, dim: int = -1):
         w.copy_(l2_normalize(w, dim=dim))
