@@ -12,8 +12,8 @@ FLASH_ATTN_WHEEL = https://github.com/Dao-AILab/flash-attention/releases/downloa
 
 VERSION = $(shell python src/olmo_core/version.py)
 VERSION_SHORT = $(shell python src/olmo_core/version.py short)
-STABLE_IMAGE = olmo-core-tch$(TORCH_VERSION_SHORT)cu$(TORCH_CUDA_VERSION)
-NIGHTLY_IMAGE = olmo-core-tch$(TORCH_NIGHTLY_VERSION_SHORT)cu$(TORCH_CUDA_VERSION)
+STABLE_IMAGE = tch$(TORCH_VERSION_SHORT)cu$(TORCH_CUDA_VERSION)
+NIGHTLY_IMAGE = tch$(TORCH_NIGHTLY_VERSION_SHORT)cu$(TORCH_CUDA_VERSION)
 BEAKER_WORKSPACE = ai2/OLMo-core
 BEAKER_USER = $(shell beaker account whoami --format=json | jq -r '.[0].name')
 
@@ -59,8 +59,8 @@ stable-image :
 		--build-arg TORCHAO_VERSION=$(TORCHAO_VERSION) \
 		--target stable \
 		--progress plain \
-		-t $(STABLE_IMAGE) .
-	echo "Built image '$(STABLE_IMAGE)', size: $$(docker inspect -f '{{ .Size }}' $(STABLE_IMAGE) | numfmt --to=si)"
+		-t olmo-core:$(STABLE_IMAGE) .
+	echo "Built image 'olmo-core:$(STABLE_IMAGE)', size: $$(docker inspect -f '{{ .Size }}' olmo-core:$(STABLE_IMAGE) | numfmt --to=si)"
 
 .PHONY : nightly-image
 nightly-image :
@@ -75,38 +75,38 @@ nightly-image :
 		--build-arg TORCH_NIGHTLY_VERSION=$(TORCH_NIGHTLY_VERSION) \
 		--target nightly \
 		--progress plain \
-		-t $(NIGHTLY_IMAGE) .
-	echo "Built image '$(NIGHTLY_IMAGE)', size: $$(docker inspect -f '{{ .Size }}' $(NIGHTLY_IMAGE) | numfmt --to=si)"
+		-t olmo-core:$(NIGHTLY_IMAGE) .
+	echo "Built image 'olmo-core:$(NIGHTLY_IMAGE)', size: $$(docker inspect -f '{{ .Size }}' olmo-core:$(NIGHTLY_IMAGE) | numfmt --to=si)"
 
 .PHONY : ghcr-image-stable
 ghcr-image-stable : stable-image
-	docker tag $(STABLE_IMAGE) ghcr.io/allenai/$(STABLE_IMAGE)
-	docker push ghcr.io/allenai/$(STABLE_IMAGE)
-	docker tag $(STABLE_IMAGE) ghcr.io/allenai/$(STABLE_IMAGE)-v$(VERSION_SHORT)
-	docker push ghcr.io/allenai/$(STABLE_IMAGE)-v$(VERSION_SHORT)
-	docker tag $(STABLE_IMAGE) ghcr.io/allenai/$(STABLE_IMAGE)-v$(VERSION)
-	docker push ghcr.io/allenai/$(STABLE_IMAGE)-v$(VERSION)
+	docker tag olmo-core:$(STABLE_IMAGE) ghcr.io/allenai/olmo-core:$(STABLE_IMAGE)
+	docker push ghcr.io/allenai/olmo-core:$(STABLE_IMAGE)
+	docker tag olmo-core:$(STABLE_IMAGE) ghcr.io/allenai/olmo-core:$(STABLE_IMAGE)-v$(VERSION_SHORT)
+	docker push ghcr.io/allenai/olmo-core:$(STABLE_IMAGE)-v$(VERSION_SHORT)
+	docker tag olmo-core:$(STABLE_IMAGE) ghcr.io/allenai/olmo-core:$(STABLE_IMAGE)-v$(VERSION)
+	docker push ghcr.io/allenai/olmo-core:$(STABLE_IMAGE)-v$(VERSION)
 
 .PHONY : beaker-image-stable
 beaker-image-stable : stable-image
-	./src/scripts/beaker/create_beaker_image.sh $(STABLE_IMAGE) $(STABLE_IMAGE) $(BEAKER_WORKSPACE)
-	./src/scripts/beaker/create_beaker_image.sh $(STABLE_IMAGE) $(STABLE_IMAGE)-v$(VERSION_SHORT) $(BEAKER_WORKSPACE)
-	./src/scripts/beaker/create_beaker_image.sh $(STABLE_IMAGE) $(STABLE_IMAGE)-v$(VERSION) $(BEAKER_WORKSPACE)
+	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(STABLE_IMAGE) olmo-core-$(STABLE_IMAGE) $(BEAKER_WORKSPACE)
+	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(STABLE_IMAGE) olmo-core-$(STABLE_IMAGE)-v$(VERSION_SHORT) $(BEAKER_WORKSPACE)
+	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(STABLE_IMAGE) olmo-core-$(STABLE_IMAGE)-v$(VERSION) $(BEAKER_WORKSPACE)
 
 .PHONY : ghcr-image-nightly
 ghcr-image-nightly : nightly-image
-	docker tag $(NIGHTLY_IMAGE) ghcr.io/allenai/$(NIGHTLY_IMAGE)
-	docker push ghcr.io/allenai/$(NIGHTLY_IMAGE)
-	docker tag $(NIGHTLY_IMAGE) ghcr.io/allenai/$(NIGHTLY_IMAGE)-v$(VERSION_SHORT)
-	docker push ghcr.io/allenai/$(NIGHTLY_IMAGE)-v$(VERSION_SHORT)
-	docker tag $(NIGHTLY_IMAGE) ghcr.io/allenai/$(NIGHTLY_IMAGE)-v$(VERSION)
-	docker push ghcr.io/allenai/$(NIGHTLY_IMAGE)-v$(VERSION)
+	docker tag olmo-core:$(NIGHTLY_IMAGE) ghcr.io/allenai/olmo-core:$(NIGHTLY_IMAGE)
+	docker push ghcr.io/allenai/olmo-core:$(NIGHTLY_IMAGE)
+	docker tag olmo-core:$(NIGHTLY_IMAGE) ghcr.io/allenai/olmo-core:$(NIGHTLY_IMAGE)-v$(VERSION_SHORT)
+	docker push ghcr.io/allenai/olmo-core:$(NIGHTLY_IMAGE)-v$(VERSION_SHORT)
+	docker tag olmo-core:$(NIGHTLY_IMAGE) ghcr.io/allenai/olmo-core:$(NIGHTLY_IMAGE)-v$(VERSION)
+	docker push ghcr.io/allenai/olmo-core:$(NIGHTLY_IMAGE)-v$(VERSION)
 
 .PHONY : beaker-image-nightly
 beaker-image-nightly : nightly-image
-	./src/scripts/beaker/create_beaker_image.sh $(NIGHTLY_IMAGE) $(NIGHTLY_IMAGE) $(BEAKER_WORKSPACE)
-	./src/scripts/beaker/create_beaker_image.sh $(NIGHTLY_IMAGE) $(NIGHTLY_IMAGE)-v$(VERSION_SHORT) $(BEAKER_WORKSPACE)
-	./src/scripts/beaker/create_beaker_image.sh $(NIGHTLY_IMAGE) $(NIGHTLY_IMAGE)-v$(VERSION) $(BEAKER_WORKSPACE)
+	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(NIGHTLY_IMAGE) olmo-core-$(NIGHTLY_IMAGE) $(BEAKER_WORKSPACE)
+	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(NIGHTLY_IMAGE) olmo-core-$(NIGHTLY_IMAGE)-v$(VERSION_SHORT) $(BEAKER_WORKSPACE)
+	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(NIGHTLY_IMAGE) olmo-core-$(NIGHTLY_IMAGE)-v$(VERSION) $(BEAKER_WORKSPACE)
 
 .PHONY : get-beaker-workspace
 get-beaker-workspace :
