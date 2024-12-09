@@ -465,7 +465,7 @@ class TransformerConfig(Config):
         A 26B OLMo model config.
         """
         # DEBUG: This is now like Qwen 2.5 32B
-        d_model = 5120
+        d_model = 5120 + 128
         return cls.llama_like(
             vocab_size=vocab_size,
             d_model=d_model,
