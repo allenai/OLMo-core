@@ -62,7 +62,7 @@ class OLMoCoreBeakerImage(StrEnum):
     Built with the latest compatible stable version of PyTorch.
     """
 
-    nightly = "olmo-core-tch260dev20241205cu124"
+    nightly = "olmo-core-tch260dev20241209cu124"
     """
     Built with the latest compatible nightly version of PyTorch.
     """
