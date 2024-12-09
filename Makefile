@@ -4,7 +4,7 @@ TORCH_VERSION = "2.5.1"
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
 # NOTE: when upgrading the nightly version you also need to upgrade the torch version specification
 # in 'pyproject.toml' to include that nightly version.
-TORCH_NIGHTLY_VERSION = "2.6.0.dev20241205"
+TORCH_NIGHTLY_VERSION = "2.6.0.dev20241209"
 TORCH_NIGHTLY_VERSION_SHORT = $(shell echo $(TORCH_NIGHTLY_VERSION) | tr -d .)
 TORCHAO_VERSION = "0.6.1"
 MEGABLOCKS_VERSION = "megablocks[gg] @ git+https://git@github.com/epwalsh/megablocks.git@epwalsh/deps"
