@@ -90,6 +90,7 @@ RUN pip install --no-cache-dir '.[all]' && \
     pip uninstall -y ai2-olmo-core && \
     rm -rf *
 
+LABEL org.opencontainers.image.source https://github.com/allenai/OLMo-core
 WORKDIR /app/olmo-core
 
 #########################################################################
