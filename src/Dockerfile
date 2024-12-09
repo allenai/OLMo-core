@@ -1,6 +1,6 @@
 # NOTE: make sure CUDA_VERSION and TORCH_CUDA_VERSION always match, except for punctuation
-ARG CUDA_VERSION="12.1"
-ARG TORCH_CUDA_VERSION="121"
+ARG CUDA_VERSION="12.4"
+ARG TORCH_CUDA_VERSION="124"
 ARG TORCH_VERSION="2.5.1"
 
 #########################################################################
@@ -31,7 +31,7 @@ ARG MEGABLOCKS_VERSION="megablocks[gg] @ git+https://git@github.com/epwalsh/mega
 RUN pip wheel --no-build-isolation --no-cache-dir "${MEGABLOCKS_VERSION}"
 
 # Build flash-attn.
-ARG FLASH_ATTN_WHEEL=https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.0.post2/flash_attn-2.7.0.post2+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
+ARG FLASH_ATTN_WHEEL=https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.2.post1/flash_attn-2.7.2.post1+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
 RUN wget ${FLASH_ATTN_WHEEL}
 
 # Only keep the target wheels and dependencies with CUDA extensions.
@@ -73,7 +73,7 @@ RUN pip install --upgrade --no-cache-dir pip wheel packaging
 
 # Install torchao.
 ARG TORCH_CUDA_VERSION
-ARG TORCHAO_VERSION="0.5.0"
+ARG TORCHAO_VERSION="0.6.1"
 RUN pip install --no-cache-dir \
     --extra-index-url https://download.pytorch.org/whl/cu${TORCH_CUDA_VERSION} \
     torchao==${TORCHAO_VERSION}
@@ -99,7 +99,7 @@ WORKDIR /app/olmo-core
 FROM stable as nightly
 
 ARG TORCH_CUDA_VERSION
-ARG TORCH_NIGHTLY_VERSION="2.6.0.dev20241009"
+ARG TORCH_NIGHTLY_VERSION="2.6.0.dev20241209"
 RUN pip install --no-cache-dir --pre \
     --index-url https://download.pytorch.org/whl/nightly/cu${TORCH_CUDA_VERSION} \
     torch==${TORCH_NIGHTLY_VERSION}+cu${TORCH_CUDA_VERSION}
