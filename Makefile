@@ -86,6 +86,8 @@ ghcr-image-stable : stable-image
 	docker push ghcr.io/allenai/olmo-core:$(STABLE_IMAGE)-v$(VERSION_SHORT)
 	docker tag olmo-core:$(STABLE_IMAGE) ghcr.io/allenai/olmo-core:$(STABLE_IMAGE)-v$(VERSION)
 	docker push ghcr.io/allenai/olmo-core:$(STABLE_IMAGE)-v$(VERSION)
+	docker tag olmo-core:$(STABLE_IMAGE) ghcr.io/allenai/olmo-core:latest
+	docker push ghcr.io/allenai/olmo-core:latest
 
 .PHONY : beaker-image-stable
 beaker-image-stable : stable-image
