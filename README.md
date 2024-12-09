@@ -27,7 +27,7 @@ There are a number of optional dependencies that must be installed to use certai
 
 The published [Docker images](https://github.com/orgs/allenai/packages?repo_name=OLMo-core) contain all core and optional dependencies, and are regularly tested on our in-house H100 clusters.
 But there are several things to keep in mind if you intend to use these images:
-- They do not come with the OLMo-core package installed, only its dependencies, to accommodate for regular code changes. Therefore the `*-nightly` tags indicate that they come with PyTorch nightly, not some nightly version of OLMo-core.
+- They do not come with the OLMo-core package installed, only its dependencies, to accommodate for regular code changes.
 - They may not work on your own cluster if you have different hardware or driver/CUDA versions.
 
 If the published images do not work for your use-case for any of the above reasons, you could adapt our [Dockerfile](https://github.com/allenai/OLMo-core/blob/main/src/Dockerfile) to build your own images.

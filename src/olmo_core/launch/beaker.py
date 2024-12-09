@@ -57,12 +57,12 @@ class OLMoCoreBeakerImage(StrEnum):
     includes *versioned* images that are published with each release of the OLMo-core package.
     """
 
-    stable = "olmo-core"
+    stable = "olmo-core-tch251cu124"
     """
     Built with the latest compatible stable version of PyTorch.
     """
 
-    nightly = "olmo-core-nightly"
+    nightly = "olmo-core-tch260dev20241209cu124"
     """
     Built with the latest compatible nightly version of PyTorch.
     """

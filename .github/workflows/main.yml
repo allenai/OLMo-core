@@ -109,7 +109,7 @@ jobs:
       matrix:
         task:
           - name: Test (GPU)
-            image: olmo-core
+            image: olmo-core-tch251cu124
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
@@ -118,14 +118,14 @@ jobs:
                 src/test/
 
           - name: Test checkpoint (GPU)
-            image: olmo-core
+            image: olmo-core-tch251cu124
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/distributed/checkpoint*
 
           - name: Test MoE (GPU)
-            image: olmo-core
+            image: olmo-core-tch251cu124
             gpus: 1
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
