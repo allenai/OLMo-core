@@ -16,11 +16,11 @@ on:
   #     - 'src/olmo_core/version.py'
   #     - 'src/Dockerfile'
   #     - '.github/workflows/docker.yml'
-  # push:
-  #   branches:
-  #     - main
-  #   tags:
-  #     - 'v*.*.*'
+  push:
+    # branches:
+    #   - main
+    tags:
+      - 'v*.*.*'
 
 jobs:
   beaker:
@@ -40,6 +40,7 @@ jobs:
       - name: Set env vars
         run: |
           echo "BEAKER_WORKSPACE=$(make get-beaker-workspace)" >> $GITHUB_ENV
+          rm -rf /opt/hostedtoolcache  # clear up some disk space
 
       - name: Build stable image
         run: |
@@ -49,20 +50,34 @@ jobs:
         run: |
           make nightly-image
 
-      - uses: allenai/setup-beaker@v2
+      - name: Authenticate with GHCR
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Authenticate with Beaker
+        uses: allenai/setup-beaker@v2
         if: env.BEAKER_TOKEN != ''
         with:
           token: ${{ env.BEAKER_TOKEN }}
           workspace: ${{ env.BEAKER_WORKSPACE }}
 
-      - name: Push stable image
+      - name: Push stable image to GHCR
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          make ghcr-image-stable
+
+      - name: Push nightly image to GHCR
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          make ghcr-image-nightly
+
+      - name: Push stable image to Beaker
         if: env.BEAKER_TOKEN != '' && startsWith(github.ref, 'refs/tags/')
         run: |
-          rm -rf /opt/hostedtoolcache  # clear up some disk space
           make beaker-image-stable
 
-      - name: Push nightly image
+      - name: Push nightly image to Beaker
         if: env.BEAKER_TOKEN != '' && startsWith(github.ref, 'refs/tags/')
         run: |
-          rm -rf /opt/hostedtoolcache  # clear up some disk space
           make beaker-image-nightly
