@@ -1,17 +1,19 @@
 CUDA_VERSION = "12.4"
 TORCH_CUDA_VERSION = $(shell echo $(CUDA_VERSION) | tr -d .)
 TORCH_VERSION = "2.5.1"
+TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
 # NOTE: when upgrading the nightly version you also need to upgrade the torch version specification
 # in 'pyproject.toml' to include that nightly version.
 TORCH_NIGHTLY_VERSION = "2.6.0.dev20241205"
+TORCH_NIGHTLY_VERSION_SHORT = $(shell echo $(TORCH_NIGHTLY_VERSION) | tr -d .)
 TORCHAO_VERSION = "0.6.1"
 MEGABLOCKS_VERSION = "megablocks[gg] @ git+https://git@github.com/epwalsh/megablocks.git@epwalsh/deps"
 FLASH_ATTN_WHEEL = https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.2.post1/flash_attn-2.7.2.post1+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
 
 VERSION = $(shell python src/olmo_core/version.py)
 VERSION_SHORT = $(shell python src/olmo_core/version.py short)
-STABLE_IMAGE = olmo-core-tch$(TORCH_VERSION)cu$(TORCH_CUDA_VERSION)
-NIGHTLY_IMAGE = olmo-core-tch$(TORCH_NIGHTLY_VERSION)cu$(TORCH_CUDA_VERSION)
+STABLE_IMAGE = olmo-core-tch$(TORCH_VERSION_SHORT)cu$(TORCH_CUDA_VERSION)
+NIGHTLY_IMAGE = olmo-core-tch$(TORCH_NIGHTLY_VERSION_SHORT)cu$(TORCH_CUDA_VERSION)
 BEAKER_WORKSPACE = ai2/OLMo-core
 BEAKER_USER = $(shell beaker account whoami --format=json | jq -r '.[0].name')
 
