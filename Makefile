@@ -4,7 +4,7 @@ TORCH_VERSION = "2.5.1"
 # NOTE: when upgrading the nightly version you also need to upgrade the torch version specification
 # in 'pyproject.toml' to include that nightly version.
 TORCH_NIGHTLY_VERSION = "2.6.0.dev20241205"
-TORCHAO_VERSION = "0.7.0"
+TORCHAO_VERSION = "0.6.1"
 MEGABLOCKS_VERSION = "megablocks[gg] @ git+https://git@github.com/epwalsh/megablocks.git@epwalsh/deps"
 FLASH_ATTN_WHEEL = https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.2.post1/flash_attn-2.7.2.post1+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
 
