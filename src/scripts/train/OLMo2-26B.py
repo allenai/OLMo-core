@@ -16,7 +16,8 @@ from olmo_core.nn.transformer import (
 )
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
 from olmo_core.train import TrainerConfig, Duration, DurationUnit
-from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
+from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback, \
+    DownstreamEvaluatorCallbackConfig
 
 log = logging.getLogger(__name__)
 
@@ -90,6 +91,18 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 project="OLMo-core-26B",
                 enabled=False,
                 cancel_check_interval=10,
+            ),
+        ).with_callback(
+            "downstream_evaluator",
+            DownstreamEvaluatorCallbackConfig(
+                tasks=[
+                    "mmlu_stem_mc_5shot",
+                    "mmlu_humanities_mc_5shot",
+                    "mmlu_social_sciences_mc_5shot",
+                    "mmlu_other_mc_5shot"
+                ],
+                tokenizer=common.tokenizer,
+                eval_interval=1000,
             ),
         )
     )
