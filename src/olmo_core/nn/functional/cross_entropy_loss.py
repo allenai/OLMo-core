@@ -57,7 +57,7 @@ try:
     #_fused_cross_entropy_loss = triton_ce_loss.cross_entropy_loss
 
     import flash_attn.ops.triton.cross_entropy as flash_attn_ce  # type: ignore
-    _fused_cross_entropy_loss = flash_attn_ce
+    _fused_cross_entropy_loss = flash_attn_ce.cross_entropy_loss
 except ModuleNotFoundError:
     pass
 
