@@ -56,7 +56,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     project_name = "OLMo-core-32B"
     return (
         TrainerConfig(
-            save_folder=common.save_folder,
+            save_folder="gs://ai2-llm/checkpoints/OLMo-medium/peteish32",
             rank_microbatch_size=4 * 4096,
             save_overwrite=True,
             metrics_collect_interval=10,
