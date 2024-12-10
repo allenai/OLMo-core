@@ -215,9 +215,12 @@ class DownstreamEvaluator(Evaluator):
         self.metric.update(batch, logits)
 
     def compute_metrics(self) -> Dict[str, torch.Tensor]:
-        value = self.metric.compute()
-        label = f"{self.label} ({self.metric_type_to_label[self.task.metric_type]})"
-        return {label: value}
+        suffix_to_value = self.metric.compute()
+        outputs = {}
+        for suffix, value in suffix_to_value.items():
+            key = f"{self.label} ({suffix})"
+            outputs[key] = value.item()
+        return outputs
 
     def reset_metrics(self) -> None:
         self.metric.reset()
