@@ -53,11 +53,11 @@ def cross_entropy_loss(
 _fused_cross_entropy_loss: Optional[Callable] = None
 
 try:
-    # import olmo_core.triton.cross_entropy_loss as triton_ce_loss
-    #_fused_cross_entropy_loss = triton_ce_loss.cross_entropy_loss
+    import olmo_core.triton.cross_entropy_loss as triton_ce_loss
 
-    import flash_attn.ops.triton.cross_entropy as flash_attn_ce  # type: ignore
-    _fused_cross_entropy_loss = flash_attn_ce
+    #  import flash_attn.ops.triton.cross_entropy as flash_attn_ce  # type: ignore
+
+    _fused_cross_entropy_loss = triton_ce_loss.cross_entropy_loss
 except ModuleNotFoundError:
     pass
 
