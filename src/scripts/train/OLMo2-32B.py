@@ -53,10 +53,10 @@ def build_optim_config(common: CommonComponents) -> AdamWConfig:
 
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
-    project_name = "OLMo-core-32B"
+    project_name = "peteish32"
     return (
         TrainerConfig(
-            save_folder="gs://ai2-llm/checkpoints/OLMo-medium/peteish32",
+            save_folder=f"gs://ai2-llm/checkpoints/{project_name}/",
             rank_microbatch_size=4 * 4096,
             save_overwrite=True,
             metrics_collect_interval=10,
