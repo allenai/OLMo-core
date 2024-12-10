@@ -64,7 +64,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             z_loss_multiplier=1e-5,
             fused_loss=True,
             compile_loss=False,
-            max_duration=Duration(int(6e12), DurationUnit.tokens)
+            max_duration=Duration(int(6.5e12), DurationUnit.tokens)
         )
         .with_callback(
             "checkpointer",
