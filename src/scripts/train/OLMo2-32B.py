@@ -63,6 +63,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             cancel_check_interval=10,
             z_loss_multiplier=1e-5,
             compile_loss=True,
+            fused_loss=True,
             max_duration=Duration(int(6.5e12), DurationUnit.tokens)
         )
         .with_callback(
