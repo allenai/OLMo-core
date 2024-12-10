@@ -8,13 +8,7 @@ from .block import (
     TransformerBlockConfig,
     TransformerBlockType,
 )
-from .config import (
-    TransformerActivationCheckpointingConfig,
-    TransformerConfig,
-    TransformerDataParallelConfig,
-    TransformerTensorParallelConfig,
-    TransformerType,
-)
+from .config import TransformerConfig, TransformerType
 from .init import InitMethod
 from .model import (
     NormalizedTransformer,
@@ -36,10 +30,7 @@ __all__ = [
     "NormalizedTransformerBlock",
     "MoETransformerBlock",
     "MoEReorderedNormTransformerBlock",
-    "TransformerDataParallelConfig",
     "TransformerDataParallelWrappingStrategy",
-    "TransformerTensorParallelConfig",
-    "TransformerActivationCheckpointingConfig",
     "TransformerActivationCheckpointingMode",
     "InitMethod",
 ]

@@ -11,7 +11,6 @@ from olmo_core.distributed.utils import get_local_rank
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.model_ladder import ModelLadder, ModelSize
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import OptimConfig
 from olmo_core.train import (
     TrainerConfig,
     prepare_training_environment,
@@ -19,7 +18,7 @@ from olmo_core.train import (
 )
 from olmo_core.train.callbacks import CometCallback, ConfigSaverCallback, WandBCallback
 from olmo_core.train.train_module import TransformerTrainModuleConfig
-from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
+from olmo_core.utils import prepare_cli_environment, seed_all
 
 from .common import build_launch_config, get_gpu_type, get_root_dir
 
@@ -31,7 +30,6 @@ class LadderRunConfig(Config):
     launch: BeakerLaunchConfig
     ladder: ModelLadder
     model: TransformerConfig
-    optim: OptimConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
@@ -64,23 +62,16 @@ class SubCmd(StrEnum):
                 # Set RNG states on all devices.
                 seed_all(config.ladder.init_seed)
 
-                device = get_default_device()
-
-                # Build mesh, if needed.
-                world_mesh = config.model.build_mesh(device=device)
-
                 # Build components.
-                model = config.model.build(
-                    init_device="meta",
-                    device=device,
-                    max_seq_len=config.dataset.sequence_length,
-                    mesh=world_mesh,
+                model = config.model.build(init_device="meta")
+                train_module = config.train_module.build(
+                    model, max_seq_len=config.dataset.sequence_length
                 )
-                optim = config.optim.build(model)
-                train_module = config.train_module.build(model, optim)
                 dataset = config.dataset.build()
-                data_loader = config.data_loader.build(dataset, mesh=world_mesh)
-                trainer = config.trainer.build(train_module, data_loader, mesh=world_mesh)
+                data_loader = config.data_loader.build(
+                    dataset, dp_process_group=train_module.dp_process_group
+                )
+                trainer = config.trainer.build(train_module, data_loader)
 
                 # Record the config to W&B/Comet and each checkpoint dir.
                 config_dict = config.as_config_dict()
@@ -118,7 +109,6 @@ def build_config(
     gpu_type = get_gpu_type(cluster)
 
     model = ladder.get_model_config(size=size)
-    optim = ladder.get_optim_config(size=size)
     dataset = ladder.get_dataset_config()
     data_loader = ladder.get_data_loader_config(size=size)
     train_module = ladder.get_train_module_config(
@@ -130,7 +120,6 @@ def build_config(
         launch=launch,
         ladder=ladder,
         model=model,
-        optim=optim,
         dataset=dataset,
         data_loader=data_loader,
         train_module=train_module,

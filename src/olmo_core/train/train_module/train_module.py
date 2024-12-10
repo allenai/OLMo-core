@@ -2,6 +2,7 @@ from abc import ABCMeta, abstractmethod
 from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
 import torch
+import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
 from torch.distributed.checkpoint.stateful import Stateful
@@ -44,6 +45,14 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         if self._trainer is None:
             raise RuntimeError("trainer has not yet been assigned the train module")
         return self._trainer
+
+    @property
+    def dp_process_group(self) -> Optional[dist.ProcessGroup]:
+        """
+        Should return the data parallel process group if it's anything other than the default
+        process group.
+        """
+        return None
 
     def on_attach(self):
         """

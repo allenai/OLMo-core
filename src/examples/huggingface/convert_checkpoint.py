@@ -144,7 +144,9 @@ def validate_conversion(hf_model):
 
     del hf_model
 
-    model = MODEL_CONFIG.build(device=device, max_seq_len=131072).eval()
+    model = MODEL_CONFIG.build()
+    model.init_weights(device=device, max_seq_len=131072)
+    model.eval()
 
     log.info("Loading converted checkpoint for validation...")
     load_model_and_optim_state(SAVE_PATH, model)

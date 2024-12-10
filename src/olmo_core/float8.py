@@ -206,8 +206,6 @@ class Float8Config(Config):
                 f"invalid module name(s) in 'modules_to_ignore': {list(modules_to_ignore - ignored_modules_found)}"
             )
 
-        log.info("Swapped to Float8Linear layers")
-
     def build(self) -> Float8Handler:
         """
         Build the Float8 handler.

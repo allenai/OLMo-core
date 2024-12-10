@@ -18,7 +18,7 @@ from olmo_core.data import (
     TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamConfig, CosWithWarmup
 from olmo_core.train import (
     Duration,
@@ -36,14 +36,16 @@ from olmo_core.train.callbacks import (
     ProfilerCallback,
     WandBCallback,
 )
-from olmo_core.train.train_module import TransformerTrainModuleConfig
-from olmo_core.utils import get_default_device, seed_all
+from olmo_core.train.train_module import (
+    TransformerDataParallelConfig,
+    TransformerTrainModuleConfig,
+)
+from olmo_core.utils import seed_all
 
 
 @dataclass
 class ExperimentConfig(Config):
     model: TransformerConfig
-    optim: AdamConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
@@ -56,13 +58,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     model_config = TransformerConfig.ngpt_271M(
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
-        compile=True,
-        dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
-        ),
     )
-
-    optim_config = AdamConfig(lr=1e-3)
 
     dataset_config = NumpyDatasetConfig.glob(
         "/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy",  # can be globs
@@ -81,6 +77,11 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=16 * 1024,
+        optim=AdamConfig(lr=1e-3),
+        compile_model=True,
+        dp_config=TransformerDataParallelConfig(
+            name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
+        ),
         compile_loss=True,
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=0),
@@ -147,7 +148,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     return ExperimentConfig(
         model=model_config,
-        optim=optim_config,
         dataset=dataset_config,
         data_loader=data_loader_config,
         train_module=train_module_config,
@@ -162,14 +162,10 @@ def main(run_name: str, overrides: List[str]):
     seed_all(config.init_seed)
 
     # Build components.
-    model = config.model.build(
-        init_device="meta",
-        device=get_default_device(),
-    )
-    optim = config.optim.build(model)
-    train_module = config.train_module.build(model, optim)
+    model = config.model.build(init_device="meta")
+    train_module = config.train_module.build(model)
     dataset = config.dataset.build()
-    data_loader = config.data_loader.build(dataset)
+    data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
     trainer = config.trainer.build(train_module, data_loader)
 
     # Save config to W&B and each checkpoint dir.

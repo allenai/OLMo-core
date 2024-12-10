@@ -7,8 +7,12 @@ from olmo_core.internal.common import get_beaker_username, get_work_dir
 from olmo_core.internal.model_ladder import main
 from olmo_core.io import join_path
 from olmo_core.model_ladder import ModelLadder, ModelSize
-from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, OptimConfig, OptimGroupOverride
+from olmo_core.train.train_module import (
+    TransformerDataParallelConfig,
+    TransformerTrainModuleConfig,
+)
 
 
 @dataclass
@@ -39,10 +43,6 @@ class BaselineModelLadder(ModelLadder):
         return getattr(TransformerConfig, f"olmo2_{size}")(
             vocab_size=self.tokenizer.padded_vocab_size(),
             init_seed=self.init_seed,
-            compile=True,
-            dp_config=TransformerDataParallelConfig(
-                name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
-            ),
             **self.MODEL_OVERRIDES.get(size, {}),
         )
 
@@ -62,6 +62,18 @@ class BaselineModelLadder(ModelLadder):
             ],
             fused=True,
         )
+
+    def get_train_module_config(
+        self, *, size: ModelSize, gpu_type: str, dp_world_size: int
+    ) -> TransformerTrainModuleConfig:
+        config = super().get_train_module_config(
+            size=size, gpu_type=gpu_type, dp_world_size=dp_world_size
+        )
+        config.compile_model = True
+        config.dp_config = TransformerDataParallelConfig(
+            name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
+        )
+        return config
 
     def get_rank_microbatch_size(self, *, size: ModelSize, gpu_type: str) -> int:
         assert "h100" in gpu_type.lower()

@@ -1,23 +1,8 @@
 import logging
 from dataclasses import dataclass
-from typing import List, Optional
-
-import torch
-from torch.distributed import DeviceMesh
+from typing import Optional
 
 from olmo_core.config import Config, DType, StrEnum
-from olmo_core.distributed.parallel import (
-    DataParallelConfig,
-    DataParallelType,
-    TensorParallelConfig,
-    build_device_mesh,
-    get_dp_mesh,
-    get_tp_mesh,
-)
-from olmo_core.doc_utils import beta_feature
-from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.float8 import Float8Config
-from olmo_core.utils import get_default_device, has_flash_attn
 
 from ..attention import AttentionConfig, AttentionType
 from ..feed_forward import FeedForwardConfig, FeedForwardType
@@ -26,78 +11,9 @@ from ..lm_head import LMHeadConfig, LMHeadType
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from .block import TransformerBlockConfig, TransformerBlockType
 from .init import InitMethod
-from .model import (
-    NormalizedTransformer,
-    Transformer,
-    TransformerActivationCheckpointingMode,
-    TransformerDataParallelWrappingStrategy,
-)
-
-__all__ = [
-    "TransformerDataParallelConfig",
-    "TransformerActivationCheckpointingConfig",
-]
-
+from .model import NormalizedTransformer, Transformer
 
 log = logging.getLogger(__name__)
-
-
-@dataclass
-class TransformerDataParallelConfig(DataParallelConfig):
-    """
-    Transformer-specific data parallel config.
-    """
-
-    wrapping_strategy: TransformerDataParallelWrappingStrategy = (
-        TransformerDataParallelWrappingStrategy.full
-    )
-    """
-    Wrapping strategy.
-    """
-
-
-@dataclass
-class TransformerTensorParallelConfig(TensorParallelConfig):
-    """
-    Transformer-specific tensor parallel config.
-    """
-
-
-@beta_feature
-@dataclass
-class TransformerActivationCheckpointingConfig(Config):
-    """
-    Defines the activation checkpointing strategy for a transformer model.
-    """
-
-    mode: TransformerActivationCheckpointingMode = TransformerActivationCheckpointingMode.full
-
-    block_interval: Optional[int] = None
-    """
-    Required when :data:`mode` is "selected_blocks". Determines which blocks are wrapped.
-    """
-
-    modules: Optional[List[str]] = None
-    """
-    Required when :data:`mode` is "selected_modules". A list of modules names to wrap for
-    activation checkpointing. Globs are supported.
-    """
-
-    def __post_init__(self):
-        if (
-            self.mode == TransformerActivationCheckpointingMode.selected_blocks
-            and self.block_interval is None
-        ):
-            raise OLMoConfigurationError(
-                "'block_interval' is required for 'selected_blocks' activation checkpointing"
-            )
-        elif (
-            self.mode == TransformerActivationCheckpointingMode.selected_modules
-            and self.modules is None
-        ):
-            raise OLMoConfigurationError(
-                "'modules' is required for 'selected_modules' activation checkpointing"
-            )
 
 
 class TransformerType(StrEnum):
@@ -122,11 +38,6 @@ class TransformerConfig(Config):
     A config for easily building transformer models.
 
     :param name: The name of the implementation.
-    :param compile: Whether to compile the model with ``torch.compile``.
-    :param dp_config: Data parallel configuration.
-    :param tp_config: Tensor parallel configuration.
-    :param ac_config: Activation checkpointing configuration.
-    :param float8_config: Float8 training configuration.
 
     See :class:`Transformer` for a description of the other parameters.
     """
@@ -140,45 +51,18 @@ class TransformerConfig(Config):
     dtype: DType = DType.float32
     init_method: InitMethod = InitMethod.normal
     init_seed: int = 0
-    compile: bool = False
-    dp_config: Optional[TransformerDataParallelConfig] = None
-    tp_config: Optional[TransformerTensorParallelConfig] = None
-    ac_config: Optional[TransformerActivationCheckpointingConfig] = None
-    float8_config: Optional[Float8Config] = None
 
     def build(
         self,
         *,
         init_device: str = "cpu",
-        device: Optional[torch.device] = None,
-        mesh: Optional[DeviceMesh] = None,
-        dp_mesh: Optional[DeviceMesh] = None,
-        tp_mesh: Optional[DeviceMesh] = None,
-        max_seq_len: Optional[int] = None,
     ) -> Transformer:
         """
-        Build the model corresponding to this config, potentially applying activation checkpointing,
-        compilation, FSDP or DDP, etc, and eventually calling :meth:`Transformer.init_weights()`.
-
-        .. note::
-            You can use :meth:`build_mesh()` to create the ``mesh`` suitable for the configured
-            parallel strategies.
+        Build the model corresponding to this config.
 
         :param init_device: The device to put the parameters on during initialization. In a
             distributed setting it usually makes sense to set this to "meta".
-        :param device: The device to put the model on after initialization.
-        :param mesh: The device mesh created from :meth:`build_mesh`. Alternatively you can provide
-            `the `dp_mesh`` and ``tp_mesh`` sub-meshes separately.
-        :param dp_mesh: Optional data parallel device mesh.
-        :param tp_mesh: Tensor parallel device mesh to configure tensor parallelism.
-        :param max_seq_len: The maximum sequence length expected.
         """
-        device = device or get_default_device()
-
-        if self.float8_config is not None and self.float8_config.enabled:
-            if self.float8_config.compile is None and self.compile:
-                self.float8_config.compile = True
-
         log.info(
             f"Building transformer with {self.num_params:,d} total params, "
             f"{self.num_non_embedding_params:,d} non-embedding params"
@@ -195,7 +79,6 @@ class TransformerConfig(Config):
                 init_method=self.init_method,
                 init_device=init_device,
                 init_seed=self.init_seed,
-                float8_config=self.float8_config,
             )
         elif self.name == TransformerType.normalized:
             model = NormalizedTransformer(
@@ -208,79 +91,13 @@ class TransformerConfig(Config):
                 init_method=self.init_method,
                 init_device=init_device,
                 init_seed=self.init_seed,
-                float8_config=self.float8_config,
             )
         else:
             raise NotImplementedError(self.name)
 
         log.info("%s", model)
 
-        # Maybe apply tensor parallelism.
-        if self.tp_config is not None and mesh is None and tp_mesh is None:
-            raise RuntimeError(
-                "'tp_mesh' must be provided to use tensor parallelism. "
-                "Please use 'olmo_core.distributed.parallel.build_device_mesh()' to create it."
-            )
-        elif tp_mesh is None and mesh is not None:
-            tp_mesh = get_tp_mesh(mesh)
-
-        if tp_mesh is not None:
-            model.apply_tp(
-                tp_mesh,
-                float8_enabled=self.float8_config is not None and self.float8_config.enabled,
-                loss_parallel=False,  # TODO (epwalsh): figure out if this will work w/ z-loss
-            )
-            if self.tp_config is not None:
-                self.tp_config.maybe_enable_async_tp(tp_mesh)
-
-        # Maybe apply activation checkpointing.
-        if self.ac_config is not None:
-            model.apply_activation_checkpointing(
-                self.ac_config.mode,
-                block_interval=self.ac_config.block_interval,
-                modules=self.ac_config.modules,
-            )
-
-        # Maybe compile.
-        if self.compile:
-            model.apply_compile()
-
-        # Maybe wrap for data parallel.
-        if dp_mesh is None and mesh is not None:
-            dp_mesh = get_dp_mesh(mesh)
-
-        if self.dp_config is not None:
-            if self.dp_config.name in (DataParallelType.fsdp, DataParallelType.hsdp):
-                if self.dp_config.name == DataParallelType.hsdp and dp_mesh is None:
-                    dp_mesh = self.dp_config.build_device_mesh(device_type=device.type)
-
-                model.apply_fsdp(
-                    dp_mesh=dp_mesh,
-                    param_dtype=self.dp_config.param_dtype.as_pt()
-                    if self.dp_config.param_dtype is not None
-                    else None,
-                    reduce_dtype=self.dp_config.reduce_dtype.as_pt(),
-                    wrapping_strategy=self.dp_config.wrapping_strategy,
-                )
-            elif self.dp_config.name == DataParallelType.ddp:
-                model.apply_ddp(dp_mesh=dp_mesh, compile_enabled=self.compile)
-            else:
-                raise NotImplementedError(self.dp_config.name)
-
-        # Materialize and init parameters.
-        if device != torch.device(init_device):
-            model.to_empty(device=device)
-        model.init_weights(max_seq_len=max_seq_len, device=device)
-
         return model
-
-    def build_mesh(self, device: Optional[torch.device] = None) -> Optional[DeviceMesh]:
-        """
-        Create a ``DeviceMesh`` suitable for the configured parallelism strategies.
-        The result should be passed as the ``mesh`` argument to :meth:`build()`.
-        """
-        device = device or get_default_device()
-        return build_device_mesh(dp=self.dp_config, tp=self.tp_config, device_type=device.type)
 
     @property
     def num_params(self) -> int:
@@ -685,11 +502,10 @@ class TransformerConfig(Config):
         rope_type: Optional[RoPEType] = None,
         hidden_size_multiple_of: int = 256,
         hidden_size_multiplier: Optional[float] = None,
-        fused_ops: Optional[bool] = None,
-        use_flash: Optional[bool] = None,
+        fused_ops: bool = False,
+        use_flash: bool = False,
         block_name: TransformerBlockType = TransformerBlockType.default,
         dtype: DType = DType.float32,
-        compile: bool = False,
         rope_scaling: Optional[RoPEScalingConfig] = None,
         **kwargs,
     ) -> "TransformerConfig":
@@ -698,17 +514,10 @@ class TransformerConfig(Config):
 
         :param hidden_size_multiple_of: Ensure the FFN hidden size is a multiple of this value.
         :param hidden_size_multiplier: Custom multiplier for the FFN hidden size.
-        :param fused_ops: Use fused operations where possible. Defaults to ``True`` if flash-attn is
-            installed and ``compile=False``, otherwise ``False``.
-        :param use_flash: Use flash-attn. Defaults to ``True`` if flash-attn is
-            installed and ``compile=False``, otherwise ``False``.
+        :param fused_ops: Use fused operations where possible.
+        :param use_flash: Use flash-attn.
         :param dtype: The default data type to use for all parameters.
         """
-        if fused_ops is None:
-            fused_ops = False if compile else has_flash_attn()
-        if use_flash is None:
-            use_flash = False if compile else has_flash_attn()
-
         # Resolve hidden size of FFN in blocks.
         hidden_size = int(8 * d_model / 3)
         if hidden_size_multiplier is not None:
@@ -757,7 +566,6 @@ class TransformerConfig(Config):
             block=block,
             lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
             dtype=dtype,
-            compile=compile,
             **kwargs,
         )
 
@@ -774,17 +582,13 @@ class TransformerConfig(Config):
         rope_theta: int = 500_000,
         hidden_size_multiple_of: int = 256,
         hidden_size_multiplier: Optional[float] = None,
-        use_flash: Optional[bool] = None,
+        use_flash: bool = False,
         dtype: DType = DType.float32,
-        compile: bool = False,
         **kwargs,
     ) -> "TransformerConfig":
         """
         Create an nGPT-like model configuration.
         """
-        if use_flash is None:
-            use_flash = False if compile else has_flash_attn()
-
         # Resolve hidden size of FFN in blocks.
         hidden_size = int(8 * d_model / 3)
         if hidden_size_multiplier is not None:
@@ -818,7 +622,6 @@ class TransformerConfig(Config):
             block=block,
             lm_head=LMHeadConfig(name=LMHeadType.normalized, dtype=dtype),
             dtype=dtype,
-            compile=compile,
             init_method=InitMethod.normalized,
             **kwargs,
         )

@@ -16,10 +16,8 @@ from olmo_core.data import (
     VSLCurriculumType,
 )
 from olmo_core.distributed.utils import get_local_rank
-from olmo_core.float8 import Float8Config
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import OptimConfig
 from olmo_core.train import (
     TrainerConfig,
     prepare_training_environment,
@@ -36,7 +34,7 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.train_module import TransformerTrainModuleConfig
-from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
+from olmo_core.utils import prepare_cli_environment, seed_all
 
 from .common import build_launch_config, get_beaker_username, get_root_dir, get_work_dir
 
@@ -59,7 +57,6 @@ class ExperimentConfig(Config):
     run_name: str
     launch: BeakerLaunchConfig
     model: TransformerConfig
-    optim: OptimConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
@@ -190,7 +187,6 @@ def build_config(
     *,
     global_batch_size: int,
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
-    optim_config_builder: Callable[[CommonComponents], OptimConfig],
     train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
@@ -200,8 +196,6 @@ def build_config(
     )
 
     model = model_config_builder(common)
-    if model.float8_config is None:
-        model.float8_config = Float8Config(compile=model.compile, enabled=False)
 
     trainer = trainer_config_builder(common)
     for name, cb in common.callbacks.items():
@@ -212,7 +206,6 @@ def build_config(
         run_name=run_name,
         launch=common.launch,
         model=model,
-        optim=optim_config_builder(common),
         dataset=common.dataset,
         data_loader=common.data_loader,
         train_module=train_module_config_builder(common),
@@ -249,23 +242,12 @@ def train(config: ExperimentConfig):
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
-    device = get_default_device()
-
-    # Build mesh, if needed.
-    world_mesh = config.model.build_mesh(device=device)
-
     # Build components.
-    model = config.model.build(
-        init_device="meta",
-        device=device,
-        max_seq_len=config.dataset.sequence_length,
-        mesh=world_mesh,
-    )
-    optim = config.optim.build(model)
-    train_module = config.train_module.build(model, optim)
+    model = config.model.build(init_device="meta")
+    train_module = config.train_module.build(model, max_seq_len=config.dataset.sequence_length)
     dataset = config.dataset.build()
-    data_loader = config.data_loader.build(dataset, mesh=world_mesh)
-    trainer = config.trainer.build(train_module, data_loader, mesh=world_mesh)
+    data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
+    trainer = config.trainer.build(train_module, data_loader)
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
@@ -281,7 +263,6 @@ def main(
     *,
     global_batch_size: int,
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
-    optim_config_builder: Callable[[CommonComponents], OptimConfig],
     train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
@@ -320,7 +301,6 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         overrides,
         global_batch_size=global_batch_size,
         model_config_builder=model_config_builder,
-        optim_config_builder=optim_config_builder,
         train_module_config_builder=train_module_config_builder,
         trainer_config_builder=trainer_config_builder,
         finalize_config=finalize_config,

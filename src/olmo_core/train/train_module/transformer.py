@@ -1,9 +1,11 @@
 import contextlib
+import logging
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Dict, Generator, List, Optional, Union, cast
+from typing import Any, Dict, Generator, List, Optional, cast
 
 import torch
+import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -12,21 +14,108 @@ from torch.optim import Optimizer
 
 from olmo_core.config import Config, DType
 from olmo_core.data.utils import get_labels, split_batch
-from olmo_core.distributed.parallel import PipelineSchedule
+from olmo_core.distributed.parallel import (
+    DataParallelConfig,
+    DataParallelType,
+    PipelineParallelConfig,
+    PipelineSchedule,
+    TensorParallelConfig,
+    build_device_mesh,
+    get_dp_mesh,
+    get_dp_process_group,
+    get_tp_mesh,
+)
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
+from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.float8 import Float8Config, Float8Handler
 from olmo_core.nn.functional.cross_entropy_loss import (
     cross_entropy_loss,
     fused_cross_entropy_loss,
 )
 from olmo_core.nn.moe import MoEHandler
-from olmo_core.nn.transformer import NormalizedTransformer, Transformer
-from olmo_core.optim import SkipStepOptimizer
+from olmo_core.nn.transformer import (
+    NormalizedTransformer,
+    Transformer,
+    TransformerActivationCheckpointingMode,
+    TransformerDataParallelWrappingStrategy,
+)
+from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
-from olmo_core.utils import gc_cuda, mark_dynamic, move_to_device
+from olmo_core.utils import gc_cuda, get_default_device, mark_dynamic, move_to_device
 
 from ..common import ReduceType, reshape_inputs_for_loss
 from .train_module import TrainModule
+
+log = logging.getLogger(__name__)
+
+
+@dataclass
+class TransformerDataParallelConfig(DataParallelConfig):
+    """
+    Transformer-specific data parallel config.
+    """
+
+    wrapping_strategy: TransformerDataParallelWrappingStrategy = (
+        TransformerDataParallelWrappingStrategy.full
+    )
+    """
+    The wrapping strategy.
+    """
+
+
+@dataclass
+class TransformerTensorParallelConfig(TensorParallelConfig):
+    """
+    Transformer-specific tensor parallel config.
+    """
+
+
+@dataclass
+class TransformerPipelineParallelConfig(PipelineParallelConfig):
+    """
+    Transformer-specific pipeline parallel config.
+    """
+
+
+@beta_feature
+@dataclass
+class TransformerActivationCheckpointingConfig(Config):
+    """
+    Defines the activation checkpointing strategy for a transformer model.
+    """
+
+    mode: TransformerActivationCheckpointingMode = TransformerActivationCheckpointingMode.full
+    """
+    The activation checkpointing mode.
+    """
+
+    block_interval: Optional[int] = None
+    """
+    Required when :data:`mode` is "selected_blocks". Determines which blocks are wrapped.
+    """
+
+    modules: Optional[List[str]] = None
+    """
+    Required when :data:`mode` is "selected_modules". A list of modules names to wrap for
+    activation checkpointing. Globs are supported.
+    """
+
+    def __post_init__(self):
+        if (
+            self.mode == TransformerActivationCheckpointingMode.selected_blocks
+            and self.block_interval is None
+        ):
+            raise OLMoConfigurationError(
+                "'block_interval' is required for 'selected_blocks' activation checkpointing"
+            )
+        elif (
+            self.mode == TransformerActivationCheckpointingMode.selected_modules
+            and self.modules is None
+        ):
+            raise OLMoConfigurationError(
+                "'modules' is required for 'selected_modules' activation checkpointing"
+            )
 
 
 @dataclass
@@ -39,33 +128,52 @@ class TransformerTrainModuleConfig(Config):
     """
 
     rank_microbatch_size: int
-    fused_loss: bool = False
-    compile_loss: bool = False
-    z_loss_multiplier: Optional[float] = None
-    autocast_precision: Optional[DType] = None
+
+    # Optimizer settings.
+
+    optim: OptimConfig
     max_grad_norm: Optional[float] = None
     scheduler: Optional[Scheduler] = None
 
+    # Model settings.
+
+    compile_model: bool = False
+    float8_config: Optional[Float8Config] = None
+    dp_config: Optional[TransformerDataParallelConfig] = None
+    tp_config: Optional[TransformerTensorParallelConfig] = None
+    pp_config: Optional[TransformerPipelineParallelConfig] = None
+    ac_config: Optional[TransformerActivationCheckpointingConfig] = None
+
+    # Loss function settings.
+
+    fused_loss: bool = False
+    compile_loss: bool = False
+    z_loss_multiplier: Optional[float] = None
+
+    # Other train settings.
+
+    autocast_precision: Optional[DType] = None
+
     def build(
         self,
-        model: Union[Transformer, List[Transformer]],
-        optim: Union[Optimizer, List[Optimizer]],
-        *,
-        pp_schedule: Optional[PipelineSchedule] = None,
+        model: Transformer,
+        max_seq_len: Optional[int] = None,
+        device: Optional[torch.device] = None,
     ) -> "TransformerTrainModule":
         """
         Build the corresponding :class:`TransformerTrainModule`.
 
         :param model: The :class:`~olmo_core.nn.transformer.Transformer` model to train.
-        :param optim: The corresponding optimizer.
+        :param max_seq_len: The maximum sequence length expected.
+        :param device: The device to train on.
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         autocast_precision: Optional[DType] = kwargs.pop("autocast_precision", None)
         return TransformerTrainModule(
             model=model,
-            optim=optim,
-            pp_schedule=pp_schedule,
             autocast_precision=None if autocast_precision is None else autocast_precision.as_pt(),
+            max_seq_len=max_seq_len,
+            device=device,
             **kwargs,
         )
 
@@ -80,13 +188,19 @@ class TransformerTrainModule(TrainModule):
         :class:`TransformerTrainModule` instances.
 
     :param model: The :class:`~olmo_core.nn.transformer.Transformer` model to train.
-    :param optim: The corresponding optimizer.
+    :param optim: The corresponding optimizer config.
     :param rank_microbatch_size: The microbatch size *in tokens* per rank,
         i.e. the number of tokens to process at a time from each rank.
 
         .. note:: This must evenly divide into the global batch size by a factor of the data
             parallel world size. If this is less than the global batch divided by the data
             parallel world size then gradient accumulation is used.
+    :param compile_model: Whether to compile to the model.
+    :param float8_config: Float8 configuration for the model.
+    :param dp_config: Data parallel configuration for the model.
+    :param tp_config: Tensor parallel configuration for the model.
+    :param pp_config: Pipeline parallel configuration for the model.
+    :param ac_config: Activation checkpointing configuration for the model.
     :param fused_loss: Use the fused cross-entropy loss function (:func:`~olmo_core.nn.functional.fused_cross_entropy_loss`)
         instead the PyTorch built-in. This can help reduce GPU memory usage. Relative performance will
         depend on the input sizes.
@@ -98,27 +212,130 @@ class TransformerTrainModule(TrainModule):
     :param autocast_precision: Enable AMP with this data type.
     :param max_grad_norm: Clip gradient norms to this value.
     :param scheduler: Optional learning rate scheduler for the optimizer.
+    :param max_seq_len: The maximum sequence length expected.
+    :param device: The device to train on.
     """
 
     def __init__(
         self,
-        model: Union[Transformer, List[Transformer]],
-        optim: Union[Optimizer, List[Optimizer]],
+        model: Transformer,
+        optim: OptimConfig,
         rank_microbatch_size: int,
+        compile_model: bool = False,
+        float8_config: Optional[Float8Config] = None,
+        dp_config: Optional[TransformerDataParallelConfig] = None,
+        tp_config: Optional[TransformerTensorParallelConfig] = None,
+        pp_config: Optional[TransformerPipelineParallelConfig] = None,
+        ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
         fused_loss: bool = False,
         compile_loss: bool = False,
         z_loss_multiplier: Optional[float] = None,
         autocast_precision: Optional[torch.dtype] = None,
         max_grad_norm: Optional[float] = None,
         scheduler: Optional[Scheduler] = None,
-        pp_schedule: Optional[PipelineSchedule] = None,
+        max_seq_len: Optional[int] = None,
+        device: Optional[torch.device] = None,
     ):
         super().__init__()
-        self.model_parts = model if isinstance(model, list) else [model]
-        self.optimizers = optim if isinstance(optim, list) else [optim]
+        self.device = device or get_default_device()
+        self.world_mesh = build_device_mesh(
+            dp=dp_config, tp=tp_config, pp=pp_config, device_type=self.device.type
+        )
+
+        self.base_loss_fn = fused_cross_entropy_loss if fused_loss else cross_entropy_loss
+        if compile_loss:
+            self.base_loss_fn = torch.compile(self.base_loss_fn)
+
+        self.float8_handler: Optional[Float8Handler] = None
+        float8_enabled = False
+        if float8_config is not None:
+            float8_enabled = float8_config.enabled
+            float8_config.compile = compile_model
+            self.float8_handler = float8_config.build()
+
+        # TODO: build pp schedule
+        self.model_parts: List[Transformer] = []
+        self.pp_schedule: Optional[PipelineSchedule] = None
+        if pp_config is not None:
+            #  self.pp_schedule = PipelineSchedule(..., pp_mesh=..., loss_fn=self.loss_fn)
+            raise NotImplementedError
+        else:
+            self.model_parts = [model]
+
+        # Maybe convert linear layers to FP8 linear.
+        if self.float8_handler is not None:
+            for model in self.model_parts:
+                self.float8_handler.convert_to_float8_training(
+                    model, modules_to_ignore={"lm_head.w_out"}
+                )
+            log.info("Swapped linear layers to Float8 linear layers")
+
+        # Maybe apply tensor parallelism.
+        if tp_config is not None:
+            tp_mesh = get_tp_mesh(self.world_mesh)
+            assert tp_mesh is not None
+            for model in self.model_parts:
+                model.apply_tp(
+                    tp_mesh,
+                    float8_enabled=float8_enabled,
+                    loss_parallel=False,  # TODO (epwalsh): figure out if this will work w/ z-loss
+                )
+            tp_config.maybe_enable_async_tp(tp_mesh)
+            log.info(
+                f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model"
+            )
+
+        # Maybe apply activation checkpointing.
+        if ac_config is not None:
+            for model in self.model_parts:
+                model.apply_activation_checkpointing(
+                    ac_config.mode,
+                    block_interval=ac_config.block_interval,
+                    modules=ac_config.modules,
+                )
+            log.info(f"Applied '{ac_config.mode}' activation checkpointing to the model")
+
+        # Maybe compile.
+        if compile_model:
+            for model in self.model_parts:
+                model.apply_compile()
+            log.info("Applied torch.compile() to the model")
+
+        # Maybe shard/replicate according to data parallel config.
+        if dp_config is not None:
+            dp_mesh = get_dp_mesh(self.world_mesh)
+            if dp_config.name in (DataParallelType.fsdp, DataParallelType.hsdp):
+                for model in self.model_parts:
+                    model.apply_fsdp(
+                        dp_mesh=dp_mesh,
+                        param_dtype=dp_config.param_dtype.as_pt()
+                        if dp_config.param_dtype is not None
+                        else None,
+                        reduce_dtype=dp_config.reduce_dtype.as_pt(),
+                        wrapping_strategy=dp_config.wrapping_strategy,
+                        pp_enabled=self.pp_schedule is not None,
+                    )
+                log.info("Applied FSDP to the model")
+            elif dp_config.name == DataParallelType.ddp:
+                for model in self.model_parts:
+                    model.apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model)
+                log.info("Applied DDP to the model")
+            else:
+                raise NotImplementedError(dp_config.name)
+
+        # Materialize and init parameters.
+        for model in self.model_parts:
+            log.info("Initializing model weights...")
+            model.init_weights(max_seq_len=max_seq_len, device=self.device)
+
+        # Build optimizer(s).
+        log.info("Building optimizer(s)...")
+        self.optimizers: List[Optimizer] = [optim.build(model) for model in self.model_parts]
+
+        # Validate.
         if len(self.model_parts) != len(self.optimizers):
             raise OLMoConfigurationError("There must be one optimizer per model part")
-        if len(self.model_parts) > 1 and pp_schedule is None:
+        if len(self.model_parts) > 1 and self.pp_schedule is None:
             raise OLMoConfigurationError("Expected a single model without a pipeline schedule")
         if len(self.model_parts) > 1 and isinstance(self.model_parts[0], FSDP):
             raise OLMoConfigurationError(
@@ -130,19 +347,12 @@ class TransformerTrainModule(TrainModule):
         self.autocast_precision = autocast_precision
         self.max_grad_norm = max_grad_norm
         self.scheduler = scheduler
-        self.pp_schedule = pp_schedule
-
-        self.base_loss_fn = fused_cross_entropy_loss if fused_loss else cross_entropy_loss
-        if compile_loss:
-            self.base_loss_fn = torch.compile(self.base_loss_fn)
-        if self.pp_schedule is not None:
-            self.pp_schedule.loss_fn = self.loss_fn
 
         self.moe_handler: Optional[MoEHandler] = None
         for model in self.model_parts:
             if MoEHandler.has_moe(model):
                 self.moe_handler = MoEHandler(model=model)
-                if pp_schedule is not None:
+                if self.pp_schedule is not None:
                     # TODO (epwalsh): need to figure out how to handle the internal MoE losses correctly.
                     raise NotImplementedError(
                         "Pipeline parallelism with MoE's is currently not supported"
@@ -152,6 +362,10 @@ class TransformerTrainModule(TrainModule):
         self._batch_num_tokens_for_loss: Optional[torch.Tensor] = None
         self._ce_batch_loss: Optional[torch.Tensor] = None
         self._z_batch_loss: Optional[torch.Tensor] = None
+
+    @property
+    def dp_process_group(self) -> Optional[dist.ProcessGroup]:
+        return get_dp_process_group(self.world_mesh)
 
     def loss_fn(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         batch_num_tokens_for_loss = self._batch_num_tokens_for_loss
@@ -182,13 +396,13 @@ class TransformerTrainModule(TrainModule):
 
         # Update overall CE batch loss.
         if self._ce_batch_loss is None:
-            self._ce_batch_loss = move_to_device(torch.tensor(0.0), self.trainer.device)
+            self._ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
         self._ce_batch_loss += get_local_tensor(ce_loss.detach())
 
         # Update overall Z batch loss.
         if z_loss is not None:
             if self._z_batch_loss is None:
-                self._z_batch_loss = move_to_device(torch.tensor(0.0), self.trainer.device)
+                self._z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
             self._z_batch_loss += get_local_tensor(z_loss.detach())
 
         return loss
@@ -260,7 +474,7 @@ class TransformerTrainModule(TrainModule):
             model.train()
 
         # Move tensors to the right device.
-        batch = move_to_device(batch, self.trainer.device)
+        batch = move_to_device(batch, self.device)
 
         # Generate labels.
         if "labels" not in batch:
@@ -328,7 +542,7 @@ class TransformerTrainModule(TrainModule):
         self.clear_loss_buffers()
 
     def eval_batch(self, batch: Dict[str, Any]) -> Optional[torch.Tensor]:
-        batch = move_to_device(batch, self.trainer.device)
+        batch = move_to_device(batch, self.device)
 
         for model in self.model_parts:
             model.eval()
@@ -363,8 +577,9 @@ class TransformerTrainModule(TrainModule):
                     optim.latest_grad_norm = grad_norm
 
         # Sync Float8 AMAXs (argmax of abs(max)) and scales.
-        for model in self.model_parts:
-            model.sync_float8_amax_and_scale_history()
+        if self.float8_handler is not None:
+            for model in self.model_parts:
+                self.float8_handler.sync_float8_amax_and_scale_history(model)
 
         # Maybe adjust learning rate.
         if self.scheduler is not None:
@@ -412,8 +627,9 @@ class TransformerTrainModule(TrainModule):
 
         # Calculate Float8 dynamic AMAX/scale for all parameters.
         # For FSDP2 this issues a single all-reduce for all parameters at once.
-        for model in self.model_parts:
-            model.precompute_float8_dynamic_scale_for_fsdp()
+        if self.float8_handler is not None:
+            for model in self.model_parts:
+                self.float8_handler.precompute_float8_dynamic_scale_for_fsdp(model)
 
     def zero_grads(self):
         for optim in self.optimizers:
@@ -475,7 +691,5 @@ class TransformerTrainModule(TrainModule):
     def _model_forward_context(self) -> Generator[None, None, None]:
         with contextlib.ExitStack() as stack:
             if self.autocast_precision is not None:
-                stack.enter_context(
-                    torch.autocast(self.trainer.device.type, dtype=self.autocast_precision)
-                )
+                stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
             yield

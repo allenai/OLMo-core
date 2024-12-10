@@ -274,6 +274,9 @@ class Trainer:
         # synchronization/communication calls.
         self._sort_callbacks()
 
+        if self.dp_process_group is None:
+            self.dp_process_group = self.train_module.dp_process_group
+
         # Maybe create separate process group for bookkeeping.
         if self._bookkeeping_pg is None and is_distributed():
             if self.async_bookkeeping is None:
