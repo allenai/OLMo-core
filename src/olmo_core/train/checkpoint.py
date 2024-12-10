@@ -133,12 +133,14 @@ class Checkpointer:
         if load_trainer_state:
             try:
                 trainer_state = torch.load(
-                    cached_path(f"{dir}/train/rank{get_rank()}.pt", quiet=True)
+                    cached_path(f"{dir}/train/rank{get_rank()}.pt", quiet=True), weights_only=False
                 )
             except FileNotFoundError:
                 # Fall back to rank 0 train state.
                 # This can happen when we're restoring a checkpoint with a different world size.
-                trainer_state = torch.load(cached_path(f"{dir}/train/rank0.pt", quiet=True))
+                trainer_state = torch.load(
+                    cached_path(f"{dir}/train/rank0.pt", quiet=True), weights_only=False
+                )
 
         # Load model and optimizer state.
         load_model_and_optim_state(
