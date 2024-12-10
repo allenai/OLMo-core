@@ -15,15 +15,16 @@ from olmo_core.nn.transformer import (
     TransformerDataParallelConfig,
 )
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
-from olmo_core.train import TrainerConfig
-from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
+from olmo_core.train import TrainerConfig, Duration, DurationUnit
+from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback, \
+    DownstreamEvaluatorCallbackConfig
 
 log = logging.getLogger(__name__)
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     compile = True
-    return TransformerConfig.olmo2_26B(
+    return TransformerConfig.olmo2_32B(
         vocab_size=common.tokenizer.padded_vocab_size(),
         compile=compile,
         fused_ops=False,
@@ -52,20 +53,23 @@ def build_optim_config(common: CommonComponents) -> AdamWConfig:
 
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
+    project_name = "peteish32"
     return (
         TrainerConfig(
-            save_folder=common.save_folder,
+            save_folder=f"gs://ai2-llm/checkpoints/{project_name}/",
             rank_microbatch_size=4 * 4096,
             save_overwrite=True,
             metrics_collect_interval=10,
-            cancel_check_interval=1,
+            cancel_check_interval=10,
             z_loss_multiplier=1e-5,
-            compile_loss=True,
+            fused_loss=True,
+            compile_loss=False,
+            max_duration=Duration(int(6.5e12), DurationUnit.tokens)
         )
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=10_000,
+                save_interval=1000,
                 ephemeral_save_interval=250,
                 save_async=True,
             ),
@@ -75,7 +79,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             CometCallback(
                 name=common.run_name,
                 workspace="ai2",
-                project="OLMo-core-26B",
+                project=project_name,
                 enabled=True,
                 cancel_check_interval=10,
             ),
@@ -85,9 +89,56 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=common.run_name,
                 entity="ai2-llm",
-                project="OLMo-core-26B",
+                project=project_name,
                 enabled=False,
                 cancel_check_interval=10,
+            ),
+        ).with_callback(
+            "downstream_evaluator",
+            DownstreamEvaluatorCallbackConfig(
+                tasks=[
+                    # MMLU for backwards compatibility
+                    "mmlu_stem_mc_5shot",
+                    "mmlu_humanities_mc_5shot",
+                    "mmlu_social_sciences_mc_5shot",
+                    "mmlu_other_mc_5shot",
+
+                    # MMLU test
+                    "mmlu_stem_mc_5shot_test",
+                    "mmlu_humanities_mc_5shot_test",
+                    "mmlu_social_sciences_mc_5shot_test",
+                    "mmlu_other_mc_5shot_test",
+
+                    # Core 12 tasks for backwards compatibility
+                    "arc_challenge",
+                    "arc_easy",
+                    "basic_arithmetic",
+                    "boolq",
+                    "commonsense_qa",
+                    "copa",
+                    "hellaswag",
+                    "openbook_qa",
+                    "piqa",
+                    "sciq",
+                    "social_iqa",
+                    "winogrande",
+
+                    # Core 12 tasks 5-shot
+                    "arc_challenge_rc_5shot",
+                    "arc_easy_rc_5shot",
+                    #"basic_arithmetic_rc_5shot",  # doesn't exist
+                    #"boolq_rc_5shot",  # we don't like it
+                    "csqa_rc_5shot",
+                    #"copa_rc_5shot",  # doesn't exist
+                    "hellaswag_rc_5shot",
+                    "openbookqa_rc_5shot",
+                    "piqa_rc_5shot",
+                    #"sciq_rc_5shot",  # doesn't exist
+                    "socialiqa_rc_5shot",
+                    "winogrande_rc_5shot"
+                ],
+                tokenizer=common.tokenizer,
+                eval_interval=1000,
             ),
         )
     )
