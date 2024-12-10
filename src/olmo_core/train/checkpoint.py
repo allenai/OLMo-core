@@ -125,8 +125,7 @@ class Checkpointer:
         if load_trainer_state:
             try:
                 trainer_state = torch.load(
-                    cached_path(f"{dir}/train/rank{get_rank()}.pt", quiet=True),
-                    weights_only=False,
+                    cached_path(f"{dir}/train/rank{get_rank()}.pt", quiet=True), weights_only=False
                 )
             except FileNotFoundError:
                 # Fall back to rank 0 train state.
