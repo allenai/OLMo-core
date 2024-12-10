@@ -460,12 +460,11 @@ class TransformerConfig(Config):
         )
 
     @classmethod
-    def olmo2_26B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+    def olmo2_32B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
-        A 26B OLMo model config.
+        A 32B OLMo model config.
         """
-        # DEBUG: This is now like Qwen 2.5 32B
-        d_model = 5120 + 128
+        d_model = 5120
         return cls.llama_like(
             vocab_size=vocab_size,
             d_model=d_model,
