@@ -33,7 +33,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.full
+            mode=TransformerActivationCheckpointingMode.selected_blocks,
+            block_interval=2
         ),
         float8_config=Float8Config(compile=compile, enabled=False),
     )
