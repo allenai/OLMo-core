@@ -142,6 +142,7 @@ class Checkpointer:
             state_dict,
             process_group=self.process_group,
         )
+        train_module.load_state_dict(state_dict)
 
         return trainer_state
 
