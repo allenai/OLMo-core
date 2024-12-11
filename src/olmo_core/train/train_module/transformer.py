@@ -457,14 +457,16 @@ class TransformerTrainModule(TrainModule):
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         for model, optim in zip(self.model_parts, self.optimizers):
             dist_cp_sd.set_model_state_dict(
-                model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=False)
+                model,
+                state_dict["model"],
+                options=dist_cp_sd.StateDictOptions(strict=self.pp_schedule is None),
             )
             gc_cuda()
             dist_cp_sd.set_optimizer_state_dict(
                 model,
                 optim,
                 state_dict["optim"],
-                options=dist_cp_sd.StateDictOptions(strict=False),
+                options=dist_cp_sd.StateDictOptions(strict=self.pp_schedule is None),
             )
             gc_cuda()
 
