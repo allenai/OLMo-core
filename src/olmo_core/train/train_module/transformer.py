@@ -237,6 +237,11 @@ class TransformerTrainModule(TrainModule):
         device: Optional[torch.device] = None,
     ):
         super().__init__()
+
+        # Validate some options.
+        if fused_loss and compile_loss:
+            raise OLMoConfigurationError("'fused_loss' is not compatible with 'compile_loss'")
+
         self.device = device or get_default_device()
         self.world_mesh = build_device_mesh(
             dp=dp_config, tp=tp_config, pp=pp_config, device_type=self.device.type
@@ -331,16 +336,6 @@ class TransformerTrainModule(TrainModule):
         # Build optimizer(s).
         log.info("Building optimizer(s)...")
         self.optimizers: List[Optimizer] = [optim.build(model) for model in self.model_parts]
-
-        # Validate.
-        if len(self.model_parts) != len(self.optimizers):
-            raise OLMoConfigurationError("There must be one optimizer per model part")
-        if len(self.model_parts) > 1 and self.pp_schedule is None:
-            raise OLMoConfigurationError("Expected a single model without a pipeline schedule")
-        if len(self.model_parts) > 1 and isinstance(self.model_parts[0], FSDP):
-            raise OLMoConfigurationError(
-                "FSDP(1) is not supported with pipeline parallelism, please use FSDP2"
-            )
 
         self.rank_microbatch_size = rank_microbatch_size
         self.z_loss_multiplier = z_loss_multiplier
