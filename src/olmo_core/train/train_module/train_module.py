@@ -41,6 +41,9 @@ class TrainModule(Stateful, metaclass=ABCMeta):
     def trainer(self) -> "Trainer":
         """
         The :class:`~olmo_core.train.Trainer` being used.
+
+        .. warning::
+            This property can only be accessed after the trainer has been attached.
         """
         if self._trainer is None:
             raise RuntimeError("trainer has not yet been assigned the train module")

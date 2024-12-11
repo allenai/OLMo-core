@@ -135,13 +135,22 @@ def autodoc_skip_member(app, what, name, obj, skip, options):
 
     module = inspect.getmodule(obj)
     module_name = None if module is None else module.__name__
-    if (
-        what == "class"
-        and module_name is not None
-        and module_name.startswith("olmo_core.train.callbacks")
-        and module_name != "olmo_core.train.callbacks.callback"
-    ):
-        if inspect.isfunction(obj) or inspect.ismethod(obj):
+
+    if what == "class" and module_name is not None:
+        # Skip documenting callback subclass methods.
+        if (
+            module_name.startswith("olmo_core.train.callbacks.")
+            and module_name != "olmo_core.train.callbacks.callback"
+            and (inspect.isfunction(obj) or inspect.ismethod(obj))
+        ):
+            return True
+
+        # Skip documenting train module subclass methods.
+        if (
+            module_name.startswith("olmo_core.train.train_module.")
+            and module_name != "olmo_core.train.train_module.train_module"
+            and (inspect.isfunction(obj) or inspect.ismethod(obj) or isinstance(obj, property))
+        ):
             return True
 
     return skip
