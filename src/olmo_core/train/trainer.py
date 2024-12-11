@@ -800,8 +800,10 @@ class Trainer:
         self.callbacks = OrderedDict(
             (
                 (k, cb)
-                for k, cb in sorted(
-                    self.callbacks.items(), key=lambda x: (x[1].priority, x[0]), reverse=True
+                for _, (k, cb) in sorted(
+                    enumerate(self.callbacks.items()),
+                    key=lambda x: (x[1][1].priority, x[0]),
+                    reverse=True,
                 )
             )
         )
