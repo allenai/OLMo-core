@@ -1,14 +1,17 @@
 import contextlib
+import copy
 import logging
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Dict, Generator, List, Optional, cast
+from typing import Any, Dict, Generator, List, Optional, Tuple, cast
 
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
+from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.pipelining import PipelineStage
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 
@@ -23,6 +26,7 @@ from olmo_core.distributed.parallel import (
     build_device_mesh,
     get_dp_mesh,
     get_dp_process_group,
+    get_pp_mesh,
     get_tp_mesh,
 )
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
@@ -76,6 +80,111 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
     """
     Transformer-specific pipeline parallel config.
     """
+
+    split_points: Optional[List[int]] = None
+    """
+    A list of unique, increasing block indices that define how to split the model into stages.
+
+    For example, ``split_points = [0, 2]`` with a 4-layer model means the model will be split into
+    3 stages, with the first containing just the embedding, the second containing blocks 0 and 1,
+    and the third containing blocks 2 and 3 and the language modeling head.
+
+    If not specified the split points are determined automatically based on the schedule type.
+    """
+
+    def get_split_points(self, n_layers: int) -> List[int]:
+        if self.split_points is not None:
+            return self.split_points
+
+        # Multi-stage schedules support more than 2 stages per rank, but this is the default if
+        # no pipeline split is specified.
+        num_stages_per_rank = 1 if self.schedule.is_single_stage else 2
+        total_stages = self.degree * num_stages_per_rank
+        num_layers = n_layers
+        if total_stages > num_layers:
+            raise OLMoConfigurationError("Total stages cannot be greater than the number of layers")
+
+        base_interval = num_layers // total_stages
+        extra_layers = num_layers % total_stages
+
+        splits: List[int] = []
+        current_layer = 0
+        for i in range(total_stages - 1):
+            if i == 0:
+                current_layer += base_interval
+            else:
+                # Middle stages get an extra layer if there are any remaining
+                if extra_layers > 0:
+                    current_layer += base_interval + 1
+                    extra_layers -= 1
+                else:
+                    current_layer += base_interval
+            splits.append(current_layer)
+        log.info(f"Auto generated pipeline split points will be {splits}")
+        return splits
+
+    def split_model(
+        self, model: Transformer, *, pp_mesh: DeviceMesh, device: torch.device
+    ) -> Tuple[List[PipelineStage], List[Transformer]]:
+        split_points = self.get_split_points(model.n_layers)
+        pp_rank = pp_mesh.get_local_rank()
+
+        def build_stage(
+            stage_idx: int,
+            start_layer: Optional[int],
+            stop_layer: Optional[int],
+            is_first: bool = False,
+            is_last: bool = False,
+        ) -> Tuple[PipelineStage, Transformer]:
+            model_chunk = copy.deepcopy(model)
+            if not is_first:
+                model_chunk.embeddings = None  # type: ignore
+
+            drop_layers = start_layer is not None
+            for block_idx in range(model.n_layers):
+                # we keep layers in a contiguous region between start (inclusive) and stop (exclusive)
+                if block_idx == start_layer:
+                    drop_layers = False
+                if block_idx == stop_layer:
+                    drop_layers = True
+                if drop_layers:
+                    del model_chunk.blocks[str(block_idx)]
+
+            if not is_last:
+                model_chunk.lm_head = None  # type: ignore
+
+            stage = PipelineStage(
+                model_chunk,
+                stage_idx,
+                num_stages,
+                device,
+                group=pp_mesh.get_group("pp"),
+            )
+            return stage, model_chunk
+
+        num_stages = len(split_points) + 1
+        stage_idx = pp_rank
+
+        stages = []
+        models = []
+        for stage_idx in self.stage_ids_this_rank(pp_rank, num_stages, style="loop"):
+            start_layer = split_points[stage_idx - 1] if stage_idx > 0 else None
+            stop_layer = split_points[stage_idx] if stage_idx < num_stages - 1 else None
+            stage, model_chunk = build_stage(
+                stage_idx,
+                start_layer,
+                stop_layer,
+                is_first=stage_idx == 0,
+                is_last=stage_idx == num_stages - 1,
+            )
+            log.info(
+                f"PP rank {pp_rank} is building {stage_idx} with start_layer "
+                f"{start_layer}, stop_layer {stop_layer}: {model_chunk}"
+            )
+            stages.append(stage)
+            models.append(model_chunk)
+
+        return stages, models
 
 
 @beta_feature
@@ -258,12 +367,19 @@ class TransformerTrainModule(TrainModule):
             float8_config.compile = compile_model
             self.float8_handler = float8_config.build()
 
-        # TODO: build pp schedule
+        self._pp_config = pp_config
+        # We'll initialize this lazily when the trainer is attached, since we need to know
+        # the global batch size in order to determine the number of pipeline micro-batches.
+        self._pp_schedule: Optional[PipelineSchedule] = None
+        self._pp_stages: Optional[List[PipelineStage]] = None
+
         self.model_parts: List[Transformer] = []
-        self.pp_schedule: Optional[PipelineSchedule] = None
         if pp_config is not None:
-            #  self.pp_schedule = PipelineSchedule(..., pp_mesh=..., loss_fn=self.loss_fn)
-            raise NotImplementedError
+            pp_mesh = get_pp_mesh(self.world_mesh)
+            assert pp_mesh is not None
+            stages, model_parts = pp_config.split_model(model, pp_mesh=pp_mesh, device=self.device)
+            self._pp_stages = stages
+            self.model_parts = model_parts
         else:
             self.model_parts = [model]
 
@@ -318,7 +434,7 @@ class TransformerTrainModule(TrainModule):
                         else None,
                         reduce_dtype=dp_config.reduce_dtype.as_pt(),
                         wrapping_strategy=dp_config.wrapping_strategy,
-                        pp_enabled=self.pp_schedule is not None,
+                        pp_enabled=pp_config is not None,
                     )
                 log.info("Applied FSDP to the model")
             elif dp_config.name == DataParallelType.ddp:
@@ -347,7 +463,7 @@ class TransformerTrainModule(TrainModule):
         for model in self.model_parts:
             if MoEHandler.has_moe(model):
                 self.moe_handler = MoEHandler(model=model)
-                if self.pp_schedule is not None:
+                if pp_config is not None:
                     # TODO (epwalsh): need to figure out how to handle the internal MoE losses correctly.
                     raise NotImplementedError(
                         "Pipeline parallelism with MoE's is currently not supported"
@@ -361,6 +477,15 @@ class TransformerTrainModule(TrainModule):
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
         return get_dp_process_group(self.world_mesh)
+
+    @property
+    def pp_enabled(self) -> bool:
+        return self._pp_config is not None
+
+    @property
+    def pp_schedule(self) -> Optional[PipelineSchedule]:
+        self.trainer  # make sure trainer has been attached before trying to access this
+        return self._pp_schedule
 
     def loss_fn(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         batch_num_tokens_for_loss = self._batch_num_tokens_for_loss
@@ -418,14 +543,31 @@ class TransformerTrainModule(TrainModule):
 
     def on_attach(self):
         # Validate batch size.
-        if (
-            self.trainer.global_batch_size
-            % (self.rank_microbatch_size * (ws := get_world_size(self.trainer.dp_process_group)))
-            != 0
-        ):
+        dp_ws = get_world_size(self.trainer.dp_process_group)
+        if self.trainer.global_batch_size % (self.rank_microbatch_size * dp_ws) != 0:
             raise OLMoConfigurationError(
                 f"global batch size ({self.trainer.global_batch_size:,d}) must be divisible by "
-                f"micro-batch size ({self.rank_microbatch_size:,d}) x DP world size ({ws})"
+                f"micro-batch size ({self.rank_microbatch_size:,d}) x DP world size ({dp_ws})"
+            )
+
+        # Maybe initialize pipeline schedule.
+        if self._pp_config is not None:
+            assert self._pp_schedule is None  # make sure we don't initialize this twice
+            assert self._pp_stages is not None
+            pp_mesh = get_pp_mesh(self.world_mesh)
+            assert pp_mesh is not None
+
+            # Determine the number of micro-batches.
+            rank_batch_size = self.trainer.global_batch_size // dp_ws
+            num_micro_batches = rank_batch_size // self.rank_microbatch_size
+
+            self._pp_schedule = PipelineSchedule(
+                model_parts=self.model_parts,  # type: ignore[arg-type]
+                stages=self._pp_stages,
+                pp_mesh=pp_mesh,
+                loss_fn=self.loss_fn,
+                schedule_name=self._pp_config.schedule,
+                n_microbatches=num_micro_batches,
             )
 
     def state_dict(self) -> Dict[str, Any]:
@@ -454,14 +596,14 @@ class TransformerTrainModule(TrainModule):
             dist_cp_sd.set_model_state_dict(
                 model,
                 state_dict["model"],
-                options=dist_cp_sd.StateDictOptions(strict=self.pp_schedule is None),
+                options=dist_cp_sd.StateDictOptions(strict=not self.pp_enabled),
             )
             gc_cuda()
             dist_cp_sd.set_optimizer_state_dict(
                 model,
                 optim,
                 state_dict["optim"],
-                options=dist_cp_sd.StateDictOptions(strict=self.pp_schedule is None),
+                options=dist_cp_sd.StateDictOptions(strict=not self.pp_enabled),
             )
             gc_cuda()
 
@@ -484,7 +626,7 @@ class TransformerTrainModule(TrainModule):
             batch["labels"] != self.trainer.data_loader.collator.label_ignore_index
         ).sum()
 
-        if self.pp_schedule is None:
+        if not self.pp_enabled:
             # Split into micro-batches.
             if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
                 raise RuntimeError(

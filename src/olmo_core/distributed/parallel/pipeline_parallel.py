@@ -7,9 +7,41 @@ import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed._tensor import DTensor
-from torch.distributed.pipelining.schedules import _PipelineSchedule
+from torch.distributed.pipelining import PipelineStage
+from torch.distributed.pipelining.schedules import (
+    PipelineScheduleMulti,
+    PipelineScheduleSingle,
+    _PipelineSchedule,
+    get_schedule_class,
+)
 
-from olmo_core.config import Config
+from olmo_core.config import Config, StrEnum
+from olmo_core.exceptions import OLMoConfigurationError
+
+
+class PipelineScheduleType(StrEnum):
+    """
+    An enumeration of the different pipeline schedules available.
+    """
+
+    # See torch.distributed.pipelining.schedules.get_schedule_class for a list of available.
+
+    single_1F1B = "1F1B"
+    interleaved_1F1B = "Interleaved1F1B"
+    gpipe = "GPipe"
+    looped_bfs = "LoopedBFS"
+    interleaved_zero_bubble = "InterleavedZeroBubble"
+
+    @property
+    def is_single_stage(self) -> bool:
+        try:
+            return issubclass(get_schedule_class(self), PipelineScheduleSingle)
+        except ValueError as e:
+            raise OLMoConfigurationError(f"Invalid pipeline schedule '{self}'") from e
+
+    @property
+    def is_multi_stage(self) -> bool:
+        return not self.is_single_stage
 
 
 @dataclass
@@ -23,47 +55,89 @@ class PipelineParallelConfig(Config):
     The PP degree.
     """
 
+    schedule: PipelineScheduleType
+    """
+    The name of the schedule.
+    """
+
+    def stage_ids_this_rank(
+        self, pp_rank: int, num_stages: int, style: str = "loop"
+    ) -> Tuple[int, ...]:
+        """
+        Compute the stage ids for the stages that will run on this pp rank for either a looped or
+        V style schedule.
+        """
+        if num_stages % self.degree != 0:
+            raise OLMoConfigurationError(
+                f"num_stages {num_stages} must be evenly divisible by pipeline size {self.degree}"
+            )
+
+        stages_per_rank = num_stages // self.degree
+        if style == "loop":
+            return tuple(pp_rank + s * self.degree for s in range(stages_per_rank))
+        elif style == "v":
+            assert (
+                stages_per_rank == 2
+            ), f"v schedules assume 2 stages per rank, got {stages_per_rank}"
+            stage_v_pairs = list(
+                zip(range(self.degree), range(num_stages - 1, self.degree - 1, -1))
+            )
+            return stage_v_pairs[pp_rank]
+        else:
+            raise NotImplementedError(style)
+
 
 class PipelineSchedule:
+    """
+    A thin wrapper around PyTorch pipeline schedule classes.
+
+    :param n_microbatches: How many microbatches to split the global training batch into.
+        If global training batch size must be evenly divisible by this.
+        If not specified, the default will be the number of pipeline stages.
+    """
+
     def __init__(
         self,
         *,
         model_parts: List[nn.Module],
+        stages: List[PipelineStage],
         pp_mesh: DeviceMesh,
-        loss_fn: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
+        loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+        schedule_name: PipelineScheduleType,
+        n_microbatches: Optional[int] = None,
     ):
         self.model_parts = model_parts
+        self.stages = stages
         self.pp_mesh = pp_mesh
-        self._loss_fn: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None
-        self._base_schedule: Optional[_PipelineSchedule] = None
+        self.loss_fn = loss_fn
 
-        if loss_fn is not None:
-            self.loss_fn = loss_fn
+        try:
+            schedule_class = get_schedule_class(schedule_name)
+        except ValueError as e:
+            raise OLMoConfigurationError(f"Invalid pipeline schedule name '{schedule_name}'") from e
 
-    def _lazy_init(self):
-        if self._base_schedule is None:
-            self._base_schedule = self.build_base_schedule()
+        if n_microbatches is None:
+            n_microbatches = pp_mesh.size()
 
-    @property
-    def loss_fn(self) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
-        if self._loss_fn is None:
-            raise RuntimeError("pipeline schedule's loss function has not been set yet!")
-        return self._loss_fn
+        schedule: _PipelineSchedule
+        if issubclass(schedule_class, PipelineScheduleSingle):
+            if len(model_parts) > 1:
+                raise OLMoConfigurationError(
+                    f"Expected a single stage for '{schedule_name}' pipeline schedule"
+                )
+            schedule = schedule_class(
+                stages[0], n_microbatches=n_microbatches, loss_fn=self.loss_fn
+            )
+        elif issubclass(schedule_class, PipelineScheduleMulti):
+            schedule = schedule_class(
+                stages,  # type: ignore[arg-type]
+                n_microbatches=n_microbatches,
+                loss_fn=self.loss_fn,
+            )
+        else:
+            raise NotImplementedError(schedule_class)
 
-    @loss_fn.setter
-    def loss_fn(self, loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]):
-        self._loss_fn = loss_fn
-        self._base_schedule = None
-        self._lazy_init()
-
-    @property
-    def base_schedule(self) -> _PipelineSchedule:
-        if self._base_schedule is None:
-            raise RuntimeError("pipeline base schedule has not been built yet!")
-        return self._base_schedule
-
-    def build_base_schedule(self) -> _PipelineSchedule:
-        raise NotImplementedError
+        self.base_schedule = schedule
 
     def step(
         self,

@@ -9,7 +9,11 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device
 
 from .data_parallel import DataParallelConfig, DataParallelType, DPMeshDimName
-from .pipeline_parallel import PipelineParallelConfig, PipelineSchedule
+from .pipeline_parallel import (
+    PipelineParallelConfig,
+    PipelineSchedule,
+    PipelineScheduleType,
+)
 from .tensor_parallel import TensorParallelConfig
 
 __all__ = [
@@ -24,6 +28,7 @@ __all__ = [
     "DPMeshDimName",
     "TensorParallelConfig",
     "PipelineParallelConfig",
+    "PipelineScheduleType",
     "PipelineSchedule",
 ]
 
