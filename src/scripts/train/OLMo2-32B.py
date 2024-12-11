@@ -120,7 +120,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                     "basic_arithmetic",
                     "boolq",
                     "commonsense_qa",
-                    "copa",
+                    #"copa",   # bug when you have too many nodes
                     "hellaswag",
                     "openbook_qa",
                     "piqa",
