@@ -482,6 +482,8 @@ class Trainer:
             elif self.load_strategy == LoadStrategy.if_available:
                 self.maybe_load_checkpoint(load_path)
 
+        barrier()
+
         log.info("Callback order:")
         for i, callback_name in enumerate(self.callbacks.keys()):
             log.info(f"  - Callback {i+1}: {callback_name}")
