@@ -1,7 +1,7 @@
 import logging
 from concurrent.futures import Future
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import ClassVar, List, Optional, Tuple
 
 import torch.distributed as dist
 
@@ -56,6 +56,8 @@ class CheckpointerCallback(Callback):
         This callback gets added automatically if you don't explicitly configure it.
         If you want to override this callback you should subclass it.
     """
+
+    priority: ClassVar[int] = 1
 
     save_interval: int = 250
     """
