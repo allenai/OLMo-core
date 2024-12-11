@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import ClassVar, Optional
 
 import torch
 
@@ -15,6 +15,7 @@ class GPUMemoryMonitorCallback(Callback):
     Adds metrics for GPU memory statistics.
     """
 
+    priority: ClassVar[int] = -1
     device_id: Optional[int] = None
     _num_alloc_retries: int = 0
 

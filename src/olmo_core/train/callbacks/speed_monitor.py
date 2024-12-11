@@ -20,7 +20,7 @@ class SpeedMonitorCallback(Callback):
         If you want to override this callback you should subclass it.
     """
 
-    priority: ClassVar[int] = -1
+    priority: ClassVar[int] = -2
 
     num_flops_per_token: Optional[int] = None
     device_peak_flops: Optional[int] = None
