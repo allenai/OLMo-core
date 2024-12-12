@@ -9,6 +9,7 @@ from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelC
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
+from olmo_core.train.callbacks.evaluator_callback import DownstreamEvaluatorCallbackConfig
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -53,16 +54,16 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_async=True,
             ),
         )
-        .with_callback(
-            "comet",
-            CometCallback(
-                name=common.run_name,
-                workspace="ai2",
-                project="OLMo-core-1B",
-                enabled=True,
-                cancel_check_interval=10,
-            ),
-        )
+        # .with_callback(
+        #     "comet",
+        #     CometCallback(
+        #         name=common.run_name,
+        #         workspace="ai2",
+        #         project="OLMo-core-1B",
+        #         enabled=True,
+        #         cancel_check_interval=10,
+        #     ),
+        # )
         .with_callback(
             "wandb",
             WandBCallback(
@@ -72,6 +73,14 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 enabled=False,
                 cancel_check_interval=10,
             ),
+        )
+        .with_callback(
+            "downstream",
+            DownstreamEvaluatorCallbackConfig(
+                tasks=["arc_challenge_val_rc_5shot"],
+                tokenizer=common.tokenizer,
+                eval_batch_size=16,
+            )
         )
     )
 
