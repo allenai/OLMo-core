@@ -38,6 +38,10 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                f"blocks.{i}"
                for i in range(64)
                if i % 4 != 0
+           ] + [
+               f"blocks.{i}.feed_forward"
+               for i in range(64)
+               if i % 4 == 0
            ]
         ),
         # ac_config=TransformerActivationCheckpointingConfig(mode=TransformerActivationCheckpointingMode.full),
