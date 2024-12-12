@@ -359,6 +359,7 @@ class TransformerTrainModule(TrainModule):
         self.world_mesh = build_device_mesh(
             dp=dp_config, tp=tp_config, pp=pp_config, device_type=self.device.type
         )
+        log.info(f"Data parallel world size = {get_world_size(self.dp_process_group):,d}")
 
         self.base_loss_fn = fused_cross_entropy_loss if fused_loss else cross_entropy_loss
         if compile_loss:
