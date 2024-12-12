@@ -39,7 +39,9 @@ class GPUMemoryMonitorCallback(Callback):
         torch.cuda.reset_peak_memory_stats()
         torch.cuda.empty_cache()
         log.info(
-            f"GPU capacity: {self.device_name} with {self._to_gib(self.device_capacity):.2f}GiB memory"
+            f"GPU capacity: {self.device_name} with {self._to_gib(self.device_capacity):.2f}GiB memory, "
+            f"{self._to_gib(torch.cuda.memory_allocated())}GiB currently allocated, "
+            f"{self._to_gib(torch.cuda.memory_reserved())}GiB currently reserved."
         )
 
     def post_step(self):
