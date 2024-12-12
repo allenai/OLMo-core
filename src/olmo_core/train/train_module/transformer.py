@@ -178,8 +178,8 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
                 is_last=stage_idx == num_stages - 1,
             )
             log.info(
-                f"PP rank {pp_rank} is building {stage_idx} with start_layer "
-                f"{start_layer}, stop_layer {stop_layer}: {model_chunk}"
+                f"PP rank {pp_rank} is building stage {stage_idx} with start layer "
+                f"{start_layer}, stop layer {stop_layer}: {model_chunk}"
             )
             stages.append(stage)
             models.append(model_chunk)
@@ -455,7 +455,9 @@ class TransformerTrainModule(TrainModule):
 
         # Build optimizer(s).
         log.info("Building optimizer(s)...")
-        self.optimizers: List[Optimizer] = [optim.build(model) for model in self.model_parts]
+        self.optimizers: List[Optimizer] = [
+            optim.build(model, strict=pp_config is None) for model in self.model_parts
+        ]
 
         self.rank_microbatch_size = rank_microbatch_size
         self.z_loss_multiplier = z_loss_multiplier

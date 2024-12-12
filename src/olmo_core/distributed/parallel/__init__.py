@@ -136,7 +136,7 @@ def build_device_mesh(
 
     log.info(f"Building {len(dims)}-D device mesh with dimensions:")
     for i, (name, dim) in enumerate(zip(names, dims)):
-        log.info(f" dimension {i}, size={dim}, name={name}")
+        log.info(f" > dimension {i}, size={dim}, name={name}")
 
     mesh = init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))
     # Ensure data parallel process group is created here.

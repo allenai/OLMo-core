@@ -61,9 +61,15 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
     def device(self) -> torch.device:
         return get_default_device()
 
-    def build_groups(self, model: nn.Module) -> Union[Iterable[torch.Tensor], List[Dict[str, Any]]]:
+    def build_groups(
+        self, model: nn.Module, strict: bool = True
+    ) -> Union[Iterable[torch.Tensor], List[Dict[str, Any]]]:
         """
         Build parameters groups.
+
+        :param model: The model to optimize.
+        :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
+            match any parameter.
         """
         if self.group_overrides is None:
             log.info(f"Building {self.optimizer().__name__} optimizer with 1 param group...")
@@ -86,9 +92,11 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
                         matches += 1
 
                 if matches == 0:
-                    raise OLMoConfigurationError(
-                        f"optim group {g_idx} override pattern '{pattern}' does not match any parameters"
-                    )
+                    msg = f"optim group {g_idx} override pattern '{pattern}' does not match any parameters"
+                    if strict:
+                        raise OLMoConfigurationError(msg)
+                    else:
+                        log.warning(msg)
 
         # Put any left-over params into a default group.
         if all_params:
@@ -118,15 +126,18 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         """
         raise NotImplementedError
 
-    def build(self, model: nn.Module) -> Opt:
+    def build(self, model: nn.Module, strict: bool = True) -> Opt:
         """
         Build the optimizer.
+
+        :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
+            match any parameter.
         """
         kwargs = self.as_dict()
         kwargs.pop("group_overrides")
         kwargs.pop("compile")
 
-        optim = self.optimizer()(self.build_groups(model), **kwargs)
+        optim = self.optimizer()(self.build_groups(model, strict=strict), **kwargs)
 
         # Set 'lr' and 'initial_lr' in each group if needed.
         for group in optim.param_groups:
