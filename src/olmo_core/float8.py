@@ -61,19 +61,23 @@ class Float8Handler:
         )
         self._sync_float8_amax_and_scale_history = None
 
+    @property
+    def enabled(self) -> bool:
+        return self.config.enabled
+
     def convert_to_float8_training(
         self, model: nn.Module, modules_to_ignore: Optional[Set[str]] = None
     ):
         """
         This just calls out to :meth:`Float8Config.convert_to_float8_training()`.
         """
-        if not self.config.enabled:
+        if not self.enabled:
             return
 
         self.config.convert_to_float8_training(model, modules_to_ignore=modules_to_ignore)
 
     def precompute_float8_dynamic_scale_for_fsdp(self, model: Union[nn.Module, List[nn.Module]]):
-        if not self.config.enabled:
+        if not self.enabled:
             return
 
         if not self.precompute_scale:
@@ -88,7 +92,7 @@ class Float8Handler:
             precompute_float8_dynamic_scale_for_fsdp(m)
 
     def sync_float8_amax_and_scale_history(self, model: Union[nn.Module, List[nn.Module]]):
-        if not self.config.enabled:
+        if not self.enabled:
             return
 
         if not self.delayed_scaling:

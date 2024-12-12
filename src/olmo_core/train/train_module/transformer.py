@@ -388,7 +388,7 @@ class TransformerTrainModule(TrainModule):
             self.model_parts = [model]
 
         # Maybe convert linear layers to FP8 linear.
-        if self.float8_handler is not None:
+        if self.float8_handler is not None and self.float8_handler.enabled:
             for model in self.model_parts:
                 self.float8_handler.convert_to_float8_training(
                     model, modules_to_ignore={"lm_head.w_out"}
