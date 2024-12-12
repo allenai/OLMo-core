@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for tensor parallelism. See the `TransformerConfig` class for usage.
 - Added new LR schedulers: `LinearWithWarmup`, `InvSqrtWithWarmup`, `ConstantWithWarmup`, `SequentialScheduler`.
 
+### Fixed
+
+- Added missing `weights_only=False` argument to fix loading train checkpoints with newer versions of PyTorch.
+
 ## [v1.7.0](https://github.com/allenai/OLMo-core/releases/tag/v1.7.0) - 2024-11-27
 
 ### Added
