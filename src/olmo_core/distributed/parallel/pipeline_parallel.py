@@ -145,15 +145,14 @@ class PipelineSchedule:
         target: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[Any, Optional[torch.Tensor]]:
-        is_last_stage = self.pp_mesh.get_local_rank() == self.pp_mesh.size() - 1
-        if self.pp_mesh.get_local_rank() == 0:
+        if self.pp_mesh.get_local_rank() == 0:  # first stage
             self.base_schedule.step(*args, **kwargs)
             return None, None
-        elif is_last_stage:
+        elif self.pp_mesh.get_local_rank() == self.pp_mesh.size() - 1:  # last stage
             losses: List[torch.Tensor] = []
             output = self.base_schedule.step(target=target, losses=losses)
             return output, torch.stack(losses)
-        else:
+        else:  # intermediate stage
             self.base_schedule.step()
             return None, None
 
