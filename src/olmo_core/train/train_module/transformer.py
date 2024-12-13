@@ -568,7 +568,7 @@ class TransformerTrainModule(TrainModule):
 
     def state_dict(self) -> Dict[str, Any]:
         sd_options = dist_cp_sd.StateDictOptions(full_state_dict=False, cpu_offload=True)
-        return {
+        state_dict = {
             "model": {
                 k: v
                 for sd in map(
@@ -586,8 +586,17 @@ class TransformerTrainModule(TrainModule):
                 for k, v in sd.items()
             },
         }
+        group_fields = "\n - ".join(
+            [f"{k}: {v}" for k, v in state_dict["optim"] if k.startswith("param_group")]
+        )
+        log.info(f"Generated optim state dict with param group fields:\n - {group_fields}")
+        return state_dict
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        group_fields = "\n - ".join(
+            [f"{k}: {v}" for k, v in state_dict["optim"] if k.startswith("param_group")]
+        )
+        log.info(f"Loading optim state dict with param group fields:\n - {group_fields}")
         for model, optim in zip(self.model_parts, self.optimizers):
             dist_cp_sd.set_model_state_dict(
                 model,
