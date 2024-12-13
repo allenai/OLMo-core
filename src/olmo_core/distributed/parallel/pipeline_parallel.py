@@ -139,20 +139,28 @@ class PipelineSchedule:
 
         self.base_schedule = schedule
 
+    @property
+    def is_first_stage(self) -> bool:
+        return self.pp_mesh.get_local_rank() == 0
+
+    @property
+    def is_last_stage(self) -> bool:
+        return self.pp_mesh.get_local_rank() == self.pp_mesh.size() - 1
+
     def step(
         self,
         *args,
         target: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[Any, Optional[torch.Tensor]]:
-        if self.pp_mesh.get_local_rank() == 0:  # first stage
+        if self.is_first_stage:
             self.base_schedule.step(*args, **kwargs)
             return None, None
-        elif self.pp_mesh.get_local_rank() == self.pp_mesh.size() - 1:  # last stage
+        elif self.is_last_stage:
             losses: List[torch.Tensor] = []
             output = self.base_schedule.step(target=target, losses=losses)
             return output, torch.stack(losses)
-        else:  # intermediate stage
+        else:
             self.base_schedule.step()
             return None, None
 
