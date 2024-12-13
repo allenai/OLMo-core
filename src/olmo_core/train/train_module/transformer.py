@@ -727,9 +727,14 @@ class TransformerTrainModule(TrainModule):
                     if (lr_field := self.scheduler.lr_field) not in group and (
                         initial_lr_field := self.scheduler.initial_lr_field
                     ) not in group:
+                        group_fields_list = "\n - ".join(
+                            [f"{k}: {v}" for k, v in group.items() if k != "params"]
+                        )
                         raise RuntimeError(
                             f"learning rate field '{lr_field}' and initial learning rate field "
-                            f"'{initial_lr_field}' not found in optimizer param group {group_idx}"
+                            f"'{initial_lr_field}' not found in optimizer param group {group_idx} "
+                            f"with {len(group['params'])} parameter(s):\n"
+                            f" - {group_fields_list}"
                         )
 
                     # Ensure 'initial_lr' is set.
