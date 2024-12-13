@@ -148,9 +148,12 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
         if self.eval_batch_size is not None:
             eval_batch_size = self.eval_batch_size
         elif isinstance(trainer.train_module, TransformerTrainModule):
-            eval_batch_size = trainer.train_module.rank_microbatch_size * get_world_size(
-                trainer.dp_process_group
-            )
+            if trainer.train_module.pp_enabled:
+                eval_batch_size = trainer.global_batch_size
+            else:
+                eval_batch_size = trainer.train_module.rank_microbatch_size * get_world_size(
+                    trainer.dp_process_group
+                )
         else:
             raise OLMoConfigurationError(
                 "Could not determine eval batch size automatically. Please set it explicity."
@@ -267,9 +270,12 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
         if self.eval_batch_size is not None:
             eval_batch_size = self.eval_batch_size
         elif isinstance(trainer.train_module, TransformerTrainModule):
-            eval_batch_size = trainer.train_module.rank_microbatch_size * get_world_size(
-                trainer.dp_process_group
-            )
+            if trainer.train_module.pp_enabled:
+                eval_batch_size = trainer.global_batch_size
+            else:
+                eval_batch_size = trainer.train_module.rank_microbatch_size * get_world_size(
+                    trainer.dp_process_group
+                )
         else:
             raise OLMoConfigurationError(
                 "Could not determine eval batch size automatically. Please set it explicity."
