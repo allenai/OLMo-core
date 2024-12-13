@@ -564,6 +564,16 @@ class TransformerTrainModule(TrainModule):
 
         return loss
 
+    def eval_loss_fn(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        logits_for_loss, labels_for_loss = reshape_inputs_for_loss(logits, labels)
+        ce_loss, _ = self.base_loss_fn(
+            logits_for_loss,
+            labels_for_loss,
+            ignore_index=self.trainer.data_loader.collator.label_ignore_index,
+            reduction="none",
+        )
+        return ce_loss.view(logits.shape[0], -1)
+
     def on_attach(self):
         # Validate batch size.
         dp_ws = get_world_size(self.trainer.dp_process_group)
@@ -597,6 +607,7 @@ class TransformerTrainModule(TrainModule):
                 stages=self._pp_stages,
                 pp_mesh=pp_mesh,
                 schedule_name=self._pp_config.schedule,
+                loss_fn=self.eval_loss_fn,
                 n_microbatches=num_micro_batches,
             )
 
@@ -657,9 +668,9 @@ class TransformerTrainModule(TrainModule):
             for micro_batch_idx, micro_batch in enumerate(micro_batches):
                 with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
                     # Run forward pass.
-                    logits = self.model_forward(micro_batch)
-                    assert logits is not None
-                    loss = self.loss_fn(logits, micro_batch["labels"])
+                    logits, loss = self.model_forward(micro_batch, labels=micro_batch["labels"])
+                    del logits
+                    assert loss is not None
 
                     # Maybe add MoE losses.
                     if self.moe_handler is not None:
@@ -673,7 +684,8 @@ class TransformerTrainModule(TrainModule):
                     loss.backward()
         else:
             # Run pipeline schedule.
-            self.model_forward(batch, labels=batch["labels"])
+            logits, loss = self.model_forward(batch, labels=batch["labels"])
+            del logits, loss
 
             # Broadcast loss from final pipeline stage to other stages.
             self._broadcast_pipeline_losses()
@@ -702,18 +714,20 @@ class TransformerTrainModule(TrainModule):
         # Lastly, clear internal loss buffers.
         self._clear_loss_buffers()
 
-    def eval_batch(self, batch: Dict[str, Any]) -> Optional[torch.Tensor]:
+    def eval_batch(
+        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         batch = move_to_device(batch, self.device)
 
         for model in self.model_parts:
             model.eval()
 
         with torch.no_grad():
-            logits = self.model_forward(batch, training=False)
+            logits, loss = self.model_forward(batch, labels=labels, training=False)
 
         self._clear_loss_buffers()
 
-        return logits
+        return logits, loss
 
     def optim_step(self):
         # Maybe clip gradients.
@@ -803,9 +817,9 @@ class TransformerTrainModule(TrainModule):
 
     def model_forward(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None, training: bool = True
-    ) -> Optional[torch.Tensor]:
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
-        Run a forward pass on a micro-batch, returning the logits.
+        Run a forward pass on a micro-batch, returning the logits and potentially the loss.
         """
         with self._model_forward_context():
             # NOTE: Input sizes might be dynamic, e.g. when training with variable sequence lengths
@@ -819,13 +833,18 @@ class TransformerTrainModule(TrainModule):
 
             if not self.pp_enabled:
                 # shape: (batch_size, seq_len, vocab_size)
-                return self.model_parts[0](
+                logits = self.model_parts[0](
                     input_ids=batch["input_ids"],
                     #  attention_mask=micro_batch.get("attention_mask"),
                     #  attention_bias=micro_batch.get("attention_bias"),
                     doc_lens=batch.get("doc_lens"),
                     max_doc_lens=batch.get("max_doc_lens"),
                 )
+                loss: Optional[torch.Tensor] = None
+                if labels is not None:
+                    loss_fn = self.loss_fn if training else self.eval_loss_fn
+                    loss = loss_fn(logits, labels)
+                return logits, loss
             else:
                 schedule = self.train_pp_schedule if training else self.eval_pp_schedule
                 assert schedule is not None
@@ -838,8 +857,7 @@ class TransformerTrainModule(TrainModule):
                     doc_lens=batch.get("doc_lens"),
                     max_doc_lens=batch.get("max_doc_lens"),
                 )
-                del losses  # probably don't need this since we already track the loss in 'self.loss_fn'
-                return logits
+                return logits, losses
 
     def num_flops_per_token(self, seq_len: int) -> int:
         return self.model_parts[0].num_flops_per_token(seq_len)

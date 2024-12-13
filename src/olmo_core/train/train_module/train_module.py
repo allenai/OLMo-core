@@ -1,5 +1,5 @@
 from abc import ABCMeta, abstractmethod
-from typing import TYPE_CHECKING, Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -98,12 +98,16 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def eval_batch(self, batch: Dict[str, Any]) -> Optional[torch.Tensor]:
+    def eval_batch(
+        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
-        Run a forward pass on a eval batch, returning the logits.
+        Run a forward pass on a eval batch, returning the logits and optionally the unreduced
+        cross-entropy loss if ``labels`` are provided.
 
         .. note::
-            The logits may be none when using pipeline parallelism for certain ranks.
+            The logits and labels will be none when using pipeline parallelism for all but the rank
+            with the last stage.
         """
         raise NotImplementedError
 

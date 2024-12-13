@@ -7,11 +7,11 @@ import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
 
 from olmo_core.data import NumpyDatasetConfig, NumpyPaddedFSLDataset, TokenizerConfig
+from olmo_core.data.utils import get_labels
 from olmo_core.distributed.utils import get_rank, get_world_size, is_distributed
 from olmo_core.eval import Evaluator
 from olmo_core.eval.lm_evaluator import LMEvaluator
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.nn.functional.cross_entropy_loss import cross_entropy_loss
 from olmo_core.utils import (
     cuda_sync_debug_mode,
     format_float,
@@ -19,7 +19,7 @@ from olmo_core.utils import (
     move_to_device,
 )
 
-from ..common import Duration, get_inputs_for_loss
+from ..common import Duration
 from ..train_module import TransformerTrainModule
 from .callback import Callback, CallbackConfig
 
@@ -79,24 +79,14 @@ class EvaluatorCallback(Callback):
                 batch = move_to_device(batch, self.trainer.device)
                 with torch.no_grad():
                     # Run forward pass, get logits.
-                    logits = self.trainer.train_module.eval_batch(batch)
+                    labels = get_labels(
+                        batch,
+                        label_ignore_index=self.trainer.data_loader.collator.label_ignore_index,
+                    )
+                    logits, ce_loss = self.trainer.train_module.eval_batch(batch, labels=labels)
 
                     if logits is not None:
-                        logits_for_loss, labels_for_loss = get_inputs_for_loss(
-                            batch,
-                            logits,
-                            label_ignore_index=self.trainer.data_loader.collator.label_ignore_index,
-                        )
-
-                        # Get CE loss.
-                        ce_loss, _ = cross_entropy_loss(
-                            logits_for_loss,
-                            labels_for_loss,
-                            ignore_index=self.trainer.data_loader.collator.label_ignore_index,
-                            reduction="none",
-                        )
-                        # Reshape (batch_size * (seq_len - 1),) -> (batch_size, seq_len - 1)
-                        ce_loss = ce_loss.view(batch["input_ids"].shape[0], -1)
+                        assert ce_loss is not None
 
                         # NOTE: might have host-device syncs here but that's okay.
                         with cuda_sync_debug_mode(0):
