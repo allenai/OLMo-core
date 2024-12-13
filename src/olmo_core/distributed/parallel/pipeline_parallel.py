@@ -102,8 +102,8 @@ class PipelineSchedule:
         model_parts: List[nn.Module],
         stages: List[PipelineStage],
         pp_mesh: DeviceMesh,
-        loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
         schedule_name: PipelineScheduleType,
+        loss_fn: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
         n_microbatches: Optional[int] = None,
     ):
         self.model_parts = model_parts
@@ -157,9 +157,9 @@ class PipelineSchedule:
             self.base_schedule.step(*args, **kwargs)
             return None, None
         elif self.is_last_stage:
-            losses: List[torch.Tensor] = []
+            losses: Optional[List[torch.Tensor]] = [] if self.loss_fn is not None else None
             output = self.base_schedule.step(target=target, losses=losses)
-            return output, torch.stack(losses)
+            return output, None if losses is None else torch.stack(losses)
         else:
             self.base_schedule.step()
             return None, None

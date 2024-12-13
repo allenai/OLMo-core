@@ -394,7 +394,8 @@ class TransformerTrainModule(TrainModule):
         self._pp_config = pp_config
         # We'll initialize this lazily when the trainer is attached, since we need to know
         # the global batch size in order to determine the number of pipeline micro-batches.
-        self._pp_schedule: Optional[PipelineSchedule] = None
+        self._train_pp_schedule: Optional[PipelineSchedule] = None
+        self._eval_pp_schedule: Optional[PipelineSchedule] = None
         self._pp_stages: Optional[List[PipelineStage]] = None
 
         self.model_parts: List[Transformer] = []
@@ -515,9 +516,14 @@ class TransformerTrainModule(TrainModule):
         return self._pp_config is not None
 
     @property
-    def pp_schedule(self) -> Optional[PipelineSchedule]:
+    def train_pp_schedule(self) -> Optional[PipelineSchedule]:
         self.trainer  # make sure trainer has been attached before trying to access this
-        return self._pp_schedule
+        return self._train_pp_schedule
+
+    @property
+    def eval_pp_schedule(self) -> Optional[PipelineSchedule]:
+        self.trainer  # make sure trainer has been attached before trying to access this
+        return self._eval_pp_schedule
 
     def loss_fn(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         assert self._batch_num_tokens_for_loss is not None
@@ -569,7 +575,7 @@ class TransformerTrainModule(TrainModule):
 
         # Maybe initialize pipeline schedule.
         if self._pp_config is not None:
-            assert self._pp_schedule is None  # make sure we don't initialize this twice
+            assert self._train_pp_schedule is None  # make sure we don't initialize this twice
             assert self._pp_stages is not None
             pp_mesh = get_pp_mesh(self.world_mesh)
             assert pp_mesh is not None
@@ -578,11 +584,18 @@ class TransformerTrainModule(TrainModule):
             rank_batch_size = self.trainer.global_batch_size // dp_ws
             num_micro_batches = rank_batch_size // self.rank_microbatch_size
 
-            self._pp_schedule = PipelineSchedule(
+            self._train_pp_schedule = PipelineSchedule(
                 model_parts=self.model_parts,  # type: ignore[arg-type]
                 stages=self._pp_stages,
                 pp_mesh=pp_mesh,
+                schedule_name=self._pp_config.schedule,
                 loss_fn=self.loss_fn,
+                n_microbatches=num_micro_batches,
+            )
+            self._eval_pp_schedule = PipelineSchedule(
+                model_parts=self.model_parts,  # type: ignore[arg-type]
+                stages=self._pp_stages,
+                pp_mesh=pp_mesh,
                 schedule_name=self._pp_config.schedule,
                 n_microbatches=num_micro_batches,
             )
@@ -700,7 +713,7 @@ class TransformerTrainModule(TrainModule):
             model.eval()
 
         with torch.no_grad():
-            logits = self.model_forward(batch)
+            logits = self.model_forward(batch, training=False)
 
         self._clear_loss_buffers()
 
@@ -710,7 +723,7 @@ class TransformerTrainModule(TrainModule):
         # Maybe clip gradients.
         if self.max_grad_norm is not None:
             grad_norm: torch.Tensor
-            if self.pp_schedule is None:
+            if self.train_pp_schedule is None:
                 assert len(self.model_parts) == 1
                 model = self.model_parts[0]
                 if isinstance(model, FSDP):
@@ -718,7 +731,7 @@ class TransformerTrainModule(TrainModule):
                 else:
                     grad_norm = nn.utils.clip_grad_norm_(model.parameters(), self.max_grad_norm)
             else:
-                grad_norm = self.pp_schedule.clip_grad_norm_(self.max_grad_norm, foreach=True)
+                grad_norm = self.train_pp_schedule.clip_grad_norm_(self.max_grad_norm, foreach=True)
 
             # NOTE: grad norm is already reduced over ranks, so we set `reduce_type` to `None`.
             self.trainer.record_metric(
@@ -793,7 +806,7 @@ class TransformerTrainModule(TrainModule):
             optim.zero_grad(set_to_none=True)
 
     def model_forward(
-        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
+        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None, training: bool = True
     ) -> Optional[torch.Tensor]:
         """
         Run a forward pass on a micro-batch, returning the logits.
@@ -808,7 +821,7 @@ class TransformerTrainModule(TrainModule):
             if "doc_lens" in batch:
                 mark_dynamic(batch["doc_lens"], (0, 1))
 
-            if self.pp_schedule is None:
+            if self.pp_enabled:
                 # shape: (batch_size, seq_len, vocab_size)
                 return self.model_parts[0](
                     input_ids=batch["input_ids"],
@@ -818,8 +831,10 @@ class TransformerTrainModule(TrainModule):
                     max_doc_lens=batch.get("max_doc_lens"),
                 )
             else:
+                schedule = self.train_pp_schedule if training else self.eval_pp_schedule
+                assert schedule is not None
                 # shape: (batch_size, seq_len, vocab_size), (num_micro_batches,)
-                logits, losses = self.pp_schedule.step(
+                logits, losses = schedule.step(
                     input_ids=batch["input_ids"],
                     #  attention_mask=micro_batch.get("attention_mask"),
                     #  attention_bias=micro_batch.get("attention_bias"),
@@ -852,12 +867,12 @@ class TransformerTrainModule(TrainModule):
             yield
 
     def _broadcast_pipeline_losses(self):
-        assert self.pp_schedule is not None
-        pp_mesh = self.pp_schedule.pp_mesh
+        assert self.train_pp_schedule is not None
+        pp_mesh = self.train_pp_schedule.pp_mesh
         pp_group = pp_mesh.get_group()
 
         loss: torch.Tensor
-        if self.pp_schedule.is_last_stage:
+        if self.train_pp_schedule.is_last_stage:
             assert self._ce_batch_loss is not None
             if self.z_loss_multiplier is None:
                 loss = self._ce_batch_loss
@@ -873,7 +888,7 @@ class TransformerTrainModule(TrainModule):
         src_rank = get_global_rank(pp_mesh.size() - 1, pp_group)
         dist.broadcast(loss, src_rank, group=pp_group)
 
-        if not self.pp_schedule.is_last_stage:
+        if not self.train_pp_schedule.is_last_stage:
             if self.z_loss_multiplier is None:
                 self._ce_batch_loss = loss
             else:
