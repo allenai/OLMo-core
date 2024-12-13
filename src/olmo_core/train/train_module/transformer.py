@@ -496,7 +496,7 @@ class TransformerTrainModule(TrainModule):
         for model in self.model_parts:
             if MoEHandler.has_moe(model):
                 self.moe_handler = MoEHandler(model=model)
-                if self.pp_enabled is not None:
+                if self.pp_enabled:
                     # TODO (epwalsh): need to figure out how to handle the internal MoE losses correctly.
                     raise NotImplementedError(
                         "Pipeline parallelism with MoE's is currently not supported"
@@ -614,18 +614,14 @@ class TransformerTrainModule(TrainModule):
             dist_cp_sd.set_model_state_dict(
                 model,
                 state_dict["model"],
-                options=dist_cp_sd.StateDictOptions(
-                    strict=not self.pp_enabled, flatten_optimizer_state_dict=True
-                ),
+                options=self.state_dict_load_opts,
             )
             gc_cuda()
             dist_cp_sd.set_optimizer_state_dict(
                 model,
                 optim,
                 state_dict["optim"],
-                options=dist_cp_sd.StateDictOptions(
-                    strict=not self.pp_enabled, flatten_optimizer_state_dict=True
-                ),
+                options=self.state_dict_load_opts,
             )
             gc_cuda()
 
