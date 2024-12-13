@@ -729,7 +729,8 @@ class TransformerTrainModule(TrainModule):
                     ) not in group:
                         raise RuntimeError(
                             f"learning rate field '{lr_field}' and initial learning rate field "
-                            f"'{initial_lr_field}' not found in optimizer param group"
+                            f"'{initial_lr_field}' not found in optimizer param group {group_idx}:\n"
+                            f"{group}"
                         )
 
                     # Ensure 'initial_lr' is set.
