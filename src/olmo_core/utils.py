@@ -316,6 +316,7 @@ def setup_logging(
 
     logging.captureWarnings(True)
     logging.getLogger("urllib3").setLevel(logging.ERROR)
+    logging.getLogger("google").setLevel(logging.WARNING)
 
     _LOGGING_CONFIGURED = True
 
