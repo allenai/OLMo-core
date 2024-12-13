@@ -137,6 +137,7 @@ def save_model_and_optim_state(
     *,
     process_group: Optional[dist.ProcessGroup] = None,
     save_overwrite: bool = False,
+    flatten_optimizer_state: bool = False,
 ) -> None:
     """
     Save model and optimizer state dictionaries. The model state can be a sharded model, in which
@@ -159,11 +160,19 @@ def save_model_and_optim_state(
     :param optim: The optimizer to save state from.
     :param process_group: The process group to use for distributed collectives.
     :param save_overwrite: Overwrite existing files.
+    :param flatten_optimizer_state: Flatten the optimizer state before saving. This should match
+        the setting used when loading the state dict and is needed in a distributed setting when
+        the params in some param groups may differ between ranks, such as with pipeline parallelism.
 
     :raises FileExistsError: If the checkpoint dir exists and is non-empty unless ``save_overwrite=True``.
     """
     dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
-    state_dict = _prepare_state_dict(model, optim=optim, process_group=process_group)
+    state_dict = _prepare_state_dict(
+        model,
+        optim=optim,
+        process_group=process_group,
+        flatten_optimizer_state=flatten_optimizer_state,
+    )
     dist_cp.state_dict_saver.save(
         state_dict,
         storage_writer=RemoteFileSystemWriter(dir),
@@ -179,6 +188,7 @@ def async_save_model_and_optim_state(
     *,
     process_group: Optional[dist.ProcessGroup] = None,
     save_overwrite: bool = False,
+    flatten_optimizer_state: bool = False,
 ) -> Future[None]:
     """
     An async version of :func:`save_model_and_optim_state()`.
@@ -186,7 +196,12 @@ def async_save_model_and_optim_state(
     This code first de-stages the state dict on the CPU, then writes it in a separate thread.
     """
     dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
-    state_dict = _prepare_state_dict(model, optim=optim, process_group=process_group)
+    state_dict = _prepare_state_dict(
+        model,
+        optim=optim,
+        process_group=process_group,
+        flatten_optimizer_state=flatten_optimizer_state,
+    )
     return dist_cp.state_dict_saver.async_save(
         state_dict,
         storage_writer=RemoteFileSystemWriter(dir),
@@ -202,6 +217,8 @@ def load_model_and_optim_state(
     *,
     process_group: Optional[dist.ProcessGroup] = None,
     key_mapping: Optional[Dict[str, str]] = None,
+    strict: bool = True,
+    flatten_optimizer_state: bool = False,
 ):
     """
     Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
@@ -237,6 +254,10 @@ def load_model_and_optim_state(
     :param process_group: The process group to use for distributed collectives.
     :param key_mapping: Can be used to load a checkpoint where certain parameter have different names.
         This dictionary should map current keys to keys in the checkpoint to be loaded.
+    :param strict: Load keys strictly.
+    :param flatten_optimizer_state: Flatten the optimizer state when loading. This should match
+        the setting used when saving the state dict and is needed in a distributed setting when
+        the params in some param groups may differ between ranks, such as with pipeline parallelism.
     """
     dir = normalize_path(dir)
     state_dict = _prepare_state_dict(model, optim, process_group=process_group)
@@ -291,13 +312,13 @@ def load_model_and_optim_state(
                     break
 
     dist_cp_sd.set_model_state_dict(
-        model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=True)
+        model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=strict)
     )
     gc_cuda()
 
     if optim is not None:
         dist_cp_sd.set_optimizer_state_dict(
-            model, optim, state_dict["optim"], options=dist_cp_sd.StateDictOptions(strict=True)
+            model, optim, state_dict["optim"], options=dist_cp_sd.StateDictOptions(strict=strict)
         )
         gc_cuda()
 
@@ -445,9 +466,14 @@ def _prepare_state_dict(
     model: nn.Module,
     optim: Optional[torch.optim.Optimizer] = None,
     process_group: Optional[dist.ProcessGroup] = None,
+    flatten_optimizer_state: bool = False,
 ) -> Dict[str, Any]:
     del process_group  # I feel like these torch functions should take a process group argument.
-    sd_options = dist_cp_sd.StateDictOptions(full_state_dict=False, cpu_offload=True)
+    sd_options = dist_cp_sd.StateDictOptions(
+        full_state_dict=False,
+        cpu_offload=True,
+        flatten_optimizer_state_dict=flatten_optimizer_state,
+    )
 
     state_dict: Dict[str, Any] = {
         "model": dist_cp_sd.get_model_state_dict(model, options=sd_options)

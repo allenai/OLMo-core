@@ -80,10 +80,9 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
             all_params[n] = p
 
         # Build groups.
-        param_groups: List[Dict[str, Any]] = [
-            {"params": [], **go.opts} for go in self.group_overrides
-        ]
-        for g_idx, (g, go) in enumerate(zip(param_groups, self.group_overrides)):
+        param_groups: List[Dict[str, Any]] = []
+        for g_idx, go in enumerate(self.group_overrides):
+            g = {"params": [], **go.opts}
             for pattern in go.params:
                 matches = 0
                 for name in list(all_params.keys()):
@@ -97,6 +96,9 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
                         raise OLMoConfigurationError(msg)
                     else:
                         log.warning(msg)
+
+            if len(g["params"]) > 0:
+                param_groups.append(g)
 
         # Put any left-over params into a default group.
         if all_params:
