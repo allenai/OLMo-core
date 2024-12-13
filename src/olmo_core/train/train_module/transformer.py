@@ -263,6 +263,11 @@ class TransformerTrainModuleConfig(Config):
     compile_loss: bool = False
     z_loss_multiplier: Optional[float] = None
 
+    # Checkpoint settings.
+
+    state_dict_save_opts: Optional[Dict[str, Any]] = None
+    state_dict_load_opts: Optional[Dict[str, Any]] = None
+
     # Other train settings.
 
     autocast_precision: Optional[DType] = None
@@ -281,10 +286,14 @@ class TransformerTrainModuleConfig(Config):
         :param device: The device to train on.
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
-        autocast_precision: Optional[DType] = kwargs.pop("autocast_precision", None)
+        if (autocast_precision := kwargs.pop("autocast_precision", None)) is not None:
+            kwargs["autocast_precision"] = cast(DType, autocast_precision).as_pt()
+        if (state_dict_save_opts := kwargs.pop("state_dict_save_opts", None)) is not None:
+            kwargs["state_dict_save_opts"] = dist_cp_sd.StateDictOptions(**state_dict_save_opts)
+        if (state_dict_load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
+            kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
         return TransformerTrainModule(
             model=model,
-            autocast_precision=None if autocast_precision is None else autocast_precision.as_pt(),
             max_seq_len=max_seq_len,
             device=device,
             **kwargs,
@@ -331,6 +340,10 @@ class TransformerTrainModule(TrainModule):
     :param scheduler: Optional learning rate scheduler for the optimizer.
     :param max_seq_len: The maximum sequence length expected.
     :param device: The device to train on.
+    :param state_dict_save_opts: Can be used to override the state dict options used
+        when saving a checkpoint.
+    :param state_dict_load_opts: Can be used to override the state dict options used
+        when loading a checkpoint.
     """
 
     def __init__(
@@ -352,6 +365,8 @@ class TransformerTrainModule(TrainModule):
         scheduler: Optional[Scheduler] = None,
         max_seq_len: Optional[int] = None,
         device: Optional[torch.device] = None,
+        state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
+        state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
     ):
         super().__init__()
 
@@ -443,7 +458,7 @@ class TransformerTrainModule(TrainModule):
                         else None,
                         reduce_dtype=dp_config.reduce_dtype.as_pt(),
                         wrapping_strategy=dp_config.wrapping_strategy,
-                        pp_enabled=pp_config is not None,
+                        pp_enabled=self.pp_enabled,
                     )
                 log.info("Applied FSDP to the model")
             elif dp_config.name == DataParallelType.ddp:
@@ -461,7 +476,7 @@ class TransformerTrainModule(TrainModule):
         # Build optimizer(s).
         log.info("Building optimizer(s)...")
         self.optimizers: List[Optimizer] = [
-            optim.build(model, strict=pp_config is None) for model in self.model_parts
+            optim.build(model, strict=not self.pp_enabled) for model in self.model_parts
         ]
 
         self.rank_microbatch_size = rank_microbatch_size
@@ -469,12 +484,18 @@ class TransformerTrainModule(TrainModule):
         self.autocast_precision = autocast_precision
         self.max_grad_norm = max_grad_norm
         self.scheduler = scheduler
+        self.state_dict_save_opts = state_dict_save_opts or dist_cp_sd.StateDictOptions(
+            flatten_optimizer_state_dict=True, cpu_offload=True
+        )
+        self.state_dict_load_opts = state_dict_load_opts or dist_cp_sd.StateDictOptions(
+            flatten_optimizer_state_dict=True, strict=not self.pp_enabled
+        )
 
         self.moe_handler: Optional[MoEHandler] = None
         for model in self.model_parts:
             if MoEHandler.has_moe(model):
                 self.moe_handler = MoEHandler(model=model)
-                if pp_config is not None:
+                if self.pp_enabled is not None:
                     # TODO (epwalsh): need to figure out how to handle the internal MoE losses correctly.
                     raise NotImplementedError(
                         "Pipeline parallelism with MoE's is currently not supported"
@@ -567,38 +588,15 @@ class TransformerTrainModule(TrainModule):
             )
 
     def state_dict(self) -> Dict[str, Any]:
-        sd_options = dist_cp_sd.StateDictOptions(
-            full_state_dict=False, cpu_offload=True, flatten_optimizer_state_dict=True
-        )
-        state_dict = {
-            "model": {
-                k: v
-                for sd in map(
-                    partial(dist_cp_sd.get_model_state_dict, options=sd_options), self.model_parts
-                )
-                for k, v in sd.items()
-            },
-            "optim": {
-                k: v
-                for sd in map(
-                    partial(dist_cp_sd.get_optimizer_state_dict, options=sd_options),
-                    self.model_parts,
-                    self.optimizers,
-                )
-                for k, v in sd.items()
-            },
-        }
-        #  group_fields = "\n - ".join(
-        #      [f"{k}: {v}" for k, v in state_dict["optim"].items() if k.startswith("param_group")]
-        #  )
-        #  log.info(f"Generated optim state dict with param group fields:\n - {group_fields}")
-        return state_dict
+        return self._get_state_dict(self.state_dict_save_opts)
+
+    def state_dict_to_load(self) -> Dict[str, Any]:
+        return self._get_state_dict(self.state_dict_load_opts)
+
+    def state_dict_to_save(self) -> Dict[str, Any]:
+        return self._get_state_dict(self.state_dict_save_opts)
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-        #  group_fields = "\n - ".join(
-        #      [f"{k}: {v}" for k, v in state_dict["optim"].items() if k.startswith("param_group")]
-        #  )
-        #  log.info(f"Loading optim state dict with param group fields:\n - {group_fields}")
         for model, optim in zip(self.model_parts, self.optimizers):
             dist_cp_sd.set_model_state_dict(
                 model,
@@ -888,3 +886,23 @@ class TransformerTrainModule(TrainModule):
         self._z_batch_loss = None
         if self.moe_handler is not None:
             self.moe_handler.clear_loss_buffers()
+
+    def _get_state_dict(self, sd_options: dist_cp_sd.StateDictOptions) -> Dict[str, Any]:
+        return {
+            "model": {
+                k: v
+                for sd in map(
+                    partial(dist_cp_sd.get_model_state_dict, options=sd_options), self.model_parts
+                )
+                for k, v in sd.items()
+            },
+            "optim": {
+                k: v
+                for sd in map(
+                    partial(dist_cp_sd.get_optimizer_state_dict, options=sd_options),
+                    self.model_parts,
+                    self.optimizers,
+                )
+                for k, v in sd.items()
+            },
+        }

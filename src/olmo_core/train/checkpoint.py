@@ -65,7 +65,7 @@ class Checkpointer:
             train_module_dir = f"{dir}/model_and_optim" if is_url(dir) else wd / "model_and_optim"
             save_state_dict(
                 train_module_dir,
-                train_module.state_dict(),
+                train_module.state_dict_to_save(),
                 process_group=self.process_group,
                 save_overwrite=self.save_overwrite,
             )
@@ -93,7 +93,7 @@ class Checkpointer:
         train_module_dir = f"{dir}/model_and_optim"
         future = async_save_state_dict(
             train_module_dir,
-            train_module.state_dict(),
+            train_module.state_dict_to_save(),
             process_group=self.process_group,
             save_overwrite=self.save_overwrite,
         )
@@ -136,7 +136,7 @@ class Checkpointer:
 
         # Load train module state.
         train_module_dir = f"{dir}/model_and_optim"
-        state_dict = train_module.state_dict()
+        state_dict = train_module.state_dict_to_load()
         load_state_dict(
             train_module_dir,
             state_dict,

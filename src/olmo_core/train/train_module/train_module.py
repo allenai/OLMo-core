@@ -65,9 +65,23 @@ class TrainModule(Stateful, metaclass=ABCMeta):
     @abstractmethod
     def state_dict(self) -> Dict[str, Any]:
         """
-        Get the state dict to save.
+        Get the state dict to save or load.
         """
         raise NotImplementedError
+
+    def state_dict_to_save(self) -> Dict[str, Any]:
+        """
+        Can be overridden if the state dict to save should be different from the state dict to load.
+        By default just returns :func:`state_dict()`.
+        """
+        return self.state_dict()
+
+    def state_dict_to_load(self) -> Dict[str, Any]:
+        """
+        Can be overridden if the state dict to load should be different from the state dict to save.
+        By default just returns :func:`state_dict()`.
+        """
+        return self.state_dict()
 
     @abstractmethod
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
