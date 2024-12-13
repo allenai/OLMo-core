@@ -499,8 +499,7 @@ class TransformerTrainModule(TrainModule):
         return self._pp_schedule
 
     def loss_fn(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        batch_num_tokens_for_loss = self._batch_num_tokens_for_loss
-        assert batch_num_tokens_for_loss is not None
+        assert self._batch_num_tokens_for_loss is not None
 
         logits_for_loss, labels_for_loss = reshape_inputs_for_loss(logits, labels)
 
@@ -516,9 +515,9 @@ class TransformerTrainModule(TrainModule):
             z_loss_multiplier=self.z_loss_multiplier or 1e-4,
         )
 
-        ce_loss.div_(batch_num_tokens_for_loss)
+        ce_loss.div_(self._batch_num_tokens_for_loss)
         if z_loss is not None:
-            z_loss.div_(batch_num_tokens_for_loss)
+            z_loss.div_(self._batch_num_tokens_for_loss)
 
         # Get loss to optimize for.
         loss = ce_loss
@@ -537,49 +536,6 @@ class TransformerTrainModule(TrainModule):
             self._z_batch_loss += get_local_tensor(z_loss.detach())
 
         return loss
-
-    def get_ce_batch_loss(self) -> torch.Tensor:
-        assert self._ce_batch_loss is not None
-        return self._ce_batch_loss
-
-    def get_z_batch_loss(self) -> Optional[torch.Tensor]:
-        return self._z_batch_loss
-
-    def _broadcast_pipeline_losses(self):
-        assert self.pp_schedule is not None
-        pp_mesh = self.pp_schedule.pp_mesh
-        pp_group = pp_mesh.get_group()
-
-        loss: torch.Tensor
-        if self.pp_schedule.is_last_stage:
-            assert self._ce_batch_loss is not None
-            if self.z_loss_multiplier is None:
-                loss = self._ce_batch_loss
-            else:
-                assert self._z_batch_loss is not None
-                loss = torch.stack([self._ce_batch_loss, self._z_batch_loss])
-        else:
-            if self.z_loss_multiplier is None:
-                loss = move_to_device(torch.tensor(0.0), self.device)
-            else:
-                loss = move_to_device(torch.tensor([0.0, 0.0]), self.device)
-
-        src_rank = get_global_rank(pp_mesh.size() - 1, pp_group)
-        dist.broadcast(loss, src_rank, group=pp_group)
-
-        if not self.pp_schedule.is_last_stage:
-            if self.z_loss_multiplier is None:
-                self._ce_batch_loss = loss
-            else:
-                self._ce_batch_loss = loss[0]
-                self._z_batch_loss = loss[1]
-
-    def clear_loss_buffers(self):
-        self._batch_num_tokens_for_loss = None
-        self._ce_batch_loss = None
-        self._z_batch_loss = None
-        if self.moe_handler is not None:
-            self.moe_handler.clear_loss_buffers()
 
     def on_attach(self):
         # Validate batch size.
@@ -703,13 +659,14 @@ class TransformerTrainModule(TrainModule):
         del batch  # In case this helps with memory utilization.
 
         if dry_run:
-            self.clear_loss_buffers()
+            self._clear_loss_buffers()
             return
 
         # Record loss metrics.
-        self.record_ce_loss(self.get_ce_batch_loss(), ReduceType.mean)
-        if (z_batch_loss := self.get_z_batch_loss()) is not None:
-            self.record_metric("Z loss", z_batch_loss, ReduceType.mean, namespace="train")
+        assert self._ce_batch_loss is not None
+        self.record_ce_loss(self._ce_batch_loss, ReduceType.mean)
+        if self._z_batch_loss is not None:
+            self.record_metric("Z loss", self._z_batch_loss, ReduceType.mean, namespace="train")
         if self.moe_handler is not None:
             if (moe_lb_loss := self.moe_handler.get_lb_loss()) is not None:
                 self.record_metric("load balancing loss", moe_lb_loss, namespace="train")
@@ -718,10 +675,10 @@ class TransformerTrainModule(TrainModule):
 
         for optim in self.optimizers:
             if isinstance(optim, SkipStepOptimizer):
-                optim.latest_loss = self.get_ce_batch_loss()
+                optim.latest_loss = self._ce_batch_loss
 
         # Lastly, clear internal loss buffers.
-        self.clear_loss_buffers()
+        self._clear_loss_buffers()
 
     def eval_batch(self, batch: Dict[str, Any]) -> Optional[torch.Tensor]:
         batch = move_to_device(batch, self.device)
@@ -732,7 +689,7 @@ class TransformerTrainModule(TrainModule):
         with torch.no_grad():
             logits = self.model_forward(batch)
 
-        self.clear_loss_buffers()
+        self._clear_loss_buffers()
 
         return logits
 
@@ -875,3 +832,39 @@ class TransformerTrainModule(TrainModule):
             if self.autocast_precision is not None:
                 stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
             yield
+
+    def _broadcast_pipeline_losses(self):
+        assert self.pp_schedule is not None
+        pp_mesh = self.pp_schedule.pp_mesh
+        pp_group = pp_mesh.get_group()
+
+        loss: torch.Tensor
+        if self.pp_schedule.is_last_stage:
+            assert self._ce_batch_loss is not None
+            if self.z_loss_multiplier is None:
+                loss = self._ce_batch_loss
+            else:
+                assert self._z_batch_loss is not None
+                loss = torch.stack([self._ce_batch_loss, self._z_batch_loss])
+        else:
+            if self.z_loss_multiplier is None:
+                loss = move_to_device(torch.tensor(0.0), self.device)
+            else:
+                loss = move_to_device(torch.tensor([0.0, 0.0]), self.device)
+
+        src_rank = get_global_rank(pp_mesh.size() - 1, pp_group)
+        dist.broadcast(loss, src_rank, group=pp_group)
+
+        if not self.pp_schedule.is_last_stage:
+            if self.z_loss_multiplier is None:
+                self._ce_batch_loss = loss
+            else:
+                self._ce_batch_loss = loss[0]
+                self._z_batch_loss = loss[1]
+
+    def _clear_loss_buffers(self):
+        self._batch_num_tokens_for_loss = None
+        self._ce_batch_loss = None
+        self._z_batch_loss = None
+        if self.moe_handler is not None:
+            self.moe_handler.clear_loss_buffers()
