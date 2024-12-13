@@ -821,7 +821,7 @@ class TransformerTrainModule(TrainModule):
             if "doc_lens" in batch:
                 mark_dynamic(batch["doc_lens"], (0, 1))
 
-            if self.pp_enabled:
+            if not self.pp_enabled:
                 # shape: (batch_size, seq_len, vocab_size)
                 return self.model_parts[0](
                     input_ids=batch["input_ids"],
