@@ -102,20 +102,6 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         if all_params:
             param_groups.append({"params": list(all_params.values())})
 
-        log.info(
-            f"Building {self.optimizer().__name__} optimizer with {len(param_groups)} param groups..."
-        )
-        for g_idx, group in enumerate(param_groups):
-            group_fields_list = "\n - ".join(
-                [f"{k}: {v}" for k, v in param_groups[g_idx].items() if k != "params"]
-            )
-            if group_fields_list:
-                log.info(
-                    f"Group {g_idx}, {len(group['params'])} parameter(s) with overrides:\n - {group_fields_list}"
-                )
-            else:
-                log.info(f"Group {g_idx}, {len(group['params'])} parameter(s)")
-
         return param_groups
 
     @classmethod
@@ -154,6 +140,20 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
                 else:
                     group["lr"] = lr
                 group.setdefault("initial_lr", lr)
+
+        log.info(
+            f"Building {self.optimizer().__name__} optimizer with {len(optim.param_groups)} param groups..."
+        )
+        for g_idx, group in enumerate(optim.param_groups):
+            group_fields_list = "\n - ".join(
+                [f"{k}: {v}" for k, v in optim.param_groups[g_idx].items() if k != "params"]
+            )
+            if group_fields_list:
+                log.info(
+                    f"Group {g_idx}, {len(group['params'])} parameter(s):\n - {group_fields_list}"
+                )
+            else:
+                log.info(f"Group {g_idx}, {len(group['params'])} parameter(s)")
 
         if self.compile:
             log.info("Compiling optimizer step...")
