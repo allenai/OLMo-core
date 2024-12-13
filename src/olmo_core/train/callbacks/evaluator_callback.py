@@ -78,7 +78,7 @@ class EvaluatorCallback(Callback):
 
                 batch = move_to_device(batch, self.trainer.device)
                 with torch.no_grad():
-                    # Run forward pass, get logits.
+                    # Run forward pass, get logits and un-reduced CE loss.
                     labels = get_labels(
                         batch,
                         label_ignore_index=self.trainer.data_loader.collator.label_ignore_index,

@@ -607,8 +607,9 @@ class TransformerTrainModule(TrainModule):
                 stages=self._pp_stages,
                 pp_mesh=pp_mesh,
                 schedule_name=self._pp_config.schedule,
-                loss_fn=self.eval_loss_fn,
                 n_microbatches=num_micro_batches,
+                # NOTE: can't pass this here or the schedule will attempt backward pass
+                #  loss_fn=self.eval_loss_fn,
             )
 
     def state_dict(self) -> Dict[str, Any]:
@@ -685,7 +686,7 @@ class TransformerTrainModule(TrainModule):
         else:
             # Run pipeline schedule.
             logits, loss = self.model_forward(batch, labels=batch["labels"])
-            del logits, loss
+            del logits, loss  # pipeline schedule has already handled backward pass
 
             # Broadcast loss from final pipeline stage to other stages.
             self._broadcast_pipeline_losses()
@@ -849,7 +850,7 @@ class TransformerTrainModule(TrainModule):
                 schedule = self.train_pp_schedule if training else self.eval_pp_schedule
                 assert schedule is not None
                 # shape: (batch_size, seq_len, vocab_size), (num_micro_batches,)
-                logits, losses = schedule.step(
+                logits, loss = schedule.step(
                     input_ids=batch["input_ids"],
                     #  attention_mask=micro_batch.get("attention_mask"),
                     #  attention_bias=micro_batch.get("attention_bias"),
@@ -857,7 +858,9 @@ class TransformerTrainModule(TrainModule):
                     doc_lens=batch.get("doc_lens"),
                     max_doc_lens=batch.get("max_doc_lens"),
                 )
-                return logits, losses
+                if not training and logits is not None and labels is not None and loss is None:
+                    loss = self.eval_loss_fn(logits, labels)
+                return logits, loss
 
     def num_flops_per_token(self, seq_len: int) -> int:
         return self.model_parts[0].num_flops_per_token(seq_len)
