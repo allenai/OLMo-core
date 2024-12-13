@@ -567,7 +567,9 @@ class TransformerTrainModule(TrainModule):
             )
 
     def state_dict(self) -> Dict[str, Any]:
-        sd_options = dist_cp_sd.StateDictOptions(full_state_dict=False, cpu_offload=True)
+        sd_options = dist_cp_sd.StateDictOptions(
+            full_state_dict=False, cpu_offload=True, flatten_optimizer_state_dict=self.pp_enabled
+        )
         state_dict = {
             "model": {
                 k: v
@@ -601,14 +603,18 @@ class TransformerTrainModule(TrainModule):
             dist_cp_sd.set_model_state_dict(
                 model,
                 state_dict["model"],
-                options=dist_cp_sd.StateDictOptions(strict=not self.pp_enabled),
+                options=dist_cp_sd.StateDictOptions(
+                    strict=not self.pp_enabled, flatten_optimizer_state_dict=self.pp_enabled
+                ),
             )
             gc_cuda()
             dist_cp_sd.set_optimizer_state_dict(
                 model,
                 optim,
                 state_dict["optim"],
-                options=dist_cp_sd.StateDictOptions(strict=not self.pp_enabled),
+                options=dist_cp_sd.StateDictOptions(
+                    strict=not self.pp_enabled, flatten_optimizer_state_dict=self.pp_enabled
+                ),
             )
             gc_cuda()
 
