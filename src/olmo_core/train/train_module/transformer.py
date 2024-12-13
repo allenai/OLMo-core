@@ -867,7 +867,7 @@ class TransformerTrainModule(TrainModule):
             else:
                 schedule = self.train_pp_schedule if training else self.eval_pp_schedule
                 assert schedule is not None
-                # shape: (batch_size, seq_len, vocab_size), (num_micro_batches,)
+                # shape: (batch_size, seq_len, vocab_size), (1,)
                 logits, loss = schedule.step(
                     input_ids=batch["input_ids"],
                     #  attention_mask=micro_batch.get("attention_mask"),
@@ -941,10 +941,10 @@ class TransformerTrainModule(TrainModule):
         assert self.eval_pp_schedule is not None
         pp_mesh = self.eval_pp_schedule.pp_mesh
         pp_group = pp_mesh.get_group()
-
         src_rank = get_global_rank(pp_mesh.size() - 1, pp_group)
+        B, S = input_ids.shape
+
         if logits is None:
-            B, S = input_ids.shape
             logits = move_to_device(
                 torch.zeros((B, S, self.model_parts[0].vocab_size), dtype=self.logits_dtype),
                 self.device,
@@ -953,9 +953,7 @@ class TransformerTrainModule(TrainModule):
 
         if labels is not None:
             if loss is None:
-                loss = move_to_device(
-                    torch.zeros(input_ids.shape, dtype=torch.float32), self.device
-                )
+                loss = move_to_device(torch.zeros((B, S - 1), dtype=torch.float32), self.device)
             dist.broadcast(loss, src_rank, group=pp_group)
 
         return logits, loss
