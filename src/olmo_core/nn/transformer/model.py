@@ -125,6 +125,11 @@ class Transformer(nn.Module):
         self.init_seed = init_seed
         self._cache = cache
 
+        # Cache the value of these properties up-front in case the parameters are removed
+        # later, like for pipeline parallelism.
+        self.num_params
+        self.num_non_embedding_params
+
     @property
     def device(self) -> torch.device:
         for p in self.parameters():
