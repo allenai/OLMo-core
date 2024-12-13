@@ -82,12 +82,12 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         # Build groups.
         param_groups: List[Dict[str, Any]] = []
         for g_idx, go in enumerate(self.group_overrides):
-            g = {"params": [], **go.opts}
+            group: Dict[str, Any] = {"params": [], **go.opts}
             for pattern in go.params:
                 matches = 0
                 for name in list(all_params.keys()):
                     if fnmatch(name, pattern):
-                        g["params"].append(all_params.pop(name))
+                        group["params"].append(all_params.pop(name))
                         matches += 1
 
                 if matches == 0:
@@ -97,8 +97,8 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
                     else:
                         log.warning(msg)
 
-            if len(g["params"]) > 0:
-                param_groups.append(g)
+            if len(group["params"]) > 0:
+                param_groups.append(group)
 
         # Put any left-over params into a default group.
         if all_params:

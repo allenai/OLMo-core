@@ -260,7 +260,9 @@ def load_model_and_optim_state(
         the params in some param groups may differ between ranks, such as with pipeline parallelism.
     """
     dir = normalize_path(dir)
-    state_dict = _prepare_state_dict(model, optim, process_group=process_group)
+    state_dict = _prepare_state_dict(
+        model, optim, process_group=process_group, flatten_optimizer_state=flatten_optimizer_state
+    )
     reader = RemoteFileSystemReader(dir)
 
     if key_mapping is not None:
@@ -318,7 +320,12 @@ def load_model_and_optim_state(
 
     if optim is not None:
         dist_cp_sd.set_optimizer_state_dict(
-            model, optim, state_dict["optim"], options=dist_cp_sd.StateDictOptions(strict=strict)
+            model,
+            optim,
+            state_dict["optim"],
+            options=dist_cp_sd.StateDictOptions(
+                strict=strict, flatten_optimizer_state_dict=flatten_optimizer_state
+            ),
         )
         gc_cuda()
 
