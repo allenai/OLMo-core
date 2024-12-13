@@ -587,14 +587,14 @@ class TransformerTrainModule(TrainModule):
             },
         }
         group_fields = "\n - ".join(
-            [f"{k}: {v}" for k, v in state_dict["optim"] if k.startswith("param_group")]
+            [f"{k}: {v}" for k, v in state_dict["optim"].items() if k.startswith("param_group")]
         )
         log.info(f"Generated optim state dict with param group fields:\n - {group_fields}")
         return state_dict
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         group_fields = "\n - ".join(
-            [f"{k}: {v}" for k, v in state_dict["optim"] if k.startswith("param_group")]
+            [f"{k}: {v}" for k, v in state_dict["optim"].items() if k.startswith("param_group")]
         )
         log.info(f"Loading optim state dict with param group fields:\n - {group_fields}")
         for model, optim in zip(self.model_parts, self.optimizers):
