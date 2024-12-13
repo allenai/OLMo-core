@@ -100,14 +100,10 @@ class TrainModule(Stateful, metaclass=ABCMeta):
     @abstractmethod
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
-    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Run a forward pass on a eval batch, returning the logits and optionally the unreduced
         cross-entropy loss if ``labels`` are provided.
-
-        .. note::
-            The logits and labels will be none when using pipeline parallelism for all but the rank
-            with the last stage.
         """
         raise NotImplementedError
 
@@ -279,12 +275,22 @@ class BasicTrainModule(TrainModule):
         # Record loss metrics.
         self.record_ce_loss(ce_batch_loss, ReduceType.mean)
 
-    def eval_batch(self, batch: Dict[str, Any]) -> Optional[torch.Tensor]:
+    def eval_batch(
+        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         self.model.eval()
         batch = move_to_device(batch, self.trainer.device)
         with torch.no_grad():
             logits = self.model_forward(batch)
-        return logits
+        loss: Optional[torch.Tensor] = None
+        if labels is not None:
+            loss, _ = self.loss_fn(
+                logits,
+                labels,
+                ignore_index=self.trainer.data_loader.collator.label_ignore_index,
+                reduction="none",
+            )
+        return logits, loss
 
     def optim_step(self):
         # Maybe clip gradients.

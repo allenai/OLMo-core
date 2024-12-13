@@ -448,6 +448,7 @@ class TransformerTrainModule(TrainModule):
             log.info("Applied torch.compile() to the model")
 
         # Maybe shard/replicate according to data parallel config.
+        self._dp_config = dp_config
         if dp_config is not None:
             dp_mesh = get_dp_mesh(self.world_mesh)
             if dp_config.name in (DataParallelType.fsdp, DataParallelType.hsdp):
@@ -510,6 +511,17 @@ class TransformerTrainModule(TrainModule):
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
         return get_dp_process_group(self.world_mesh)
+
+    @property
+    def logits_dtype(self) -> torch.dtype:
+        if self.autocast_precision is not None:
+            return self.autocast_precision
+        elif self._dp_config is not None and self._dp_config.param_dtype is not None:
+            return self._dp_config.param_dtype.as_pt()
+        else:
+            for param in self.model_parts[0].parameters():
+                return param.dtype
+        raise RuntimeError("Should not get here")
 
     @property
     def pp_enabled(self) -> bool:
@@ -689,7 +701,7 @@ class TransformerTrainModule(TrainModule):
             del logits, loss  # pipeline schedule has already handled backward pass
 
             # Broadcast loss from final pipeline stage to other stages.
-            self._broadcast_pipeline_losses()
+            self._broadcast_pipeline_train_losses()
 
         del batch  # In case this helps with memory utilization.
 
@@ -717,7 +729,7 @@ class TransformerTrainModule(TrainModule):
 
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
-    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         batch = move_to_device(batch, self.device)
 
         for model in self.model_parts:
@@ -728,6 +740,12 @@ class TransformerTrainModule(TrainModule):
 
         self._clear_loss_buffers()
 
+        if self.pp_enabled:
+            logits, loss = self._broadcast_pipeline_eval_outputs(
+                input_ids=batch["input_ids"], logits=logits, loss=loss, labels=labels
+            )
+
+        assert logits is not None
         return logits, loss
 
     def optim_step(self):
@@ -883,7 +901,7 @@ class TransformerTrainModule(TrainModule):
                 stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
             yield
 
-    def _broadcast_pipeline_losses(self):
+    def _broadcast_pipeline_train_losses(self):
         assert self.train_pp_schedule is not None
         pp_mesh = self.train_pp_schedule.pp_mesh
         pp_group = pp_mesh.get_group()
@@ -911,6 +929,36 @@ class TransformerTrainModule(TrainModule):
             else:
                 self._ce_batch_loss = loss[0]
                 self._z_batch_loss = loss[1]
+
+    def _broadcast_pipeline_eval_outputs(
+        self,
+        *,
+        input_ids: torch.Tensor,
+        logits: Optional[torch.Tensor],
+        loss: Optional[torch.Tensor],
+        labels: Optional[torch.Tensor],
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        assert self.eval_pp_schedule is not None
+        pp_mesh = self.eval_pp_schedule.pp_mesh
+        pp_group = pp_mesh.get_group()
+
+        src_rank = get_global_rank(pp_mesh.size() - 1, pp_group)
+        if logits is None:
+            B, S = input_ids.shape
+            logits = move_to_device(
+                torch.zeros((B, S, self.model_parts[0].vocab_size), dtype=self.logits_dtype),
+                self.device,
+            )
+        dist.broadcast(logits, src_rank, group=pp_group)
+
+        if labels is not None:
+            if loss is None:
+                loss = move_to_device(
+                    torch.zeros(input_ids.shape, dtype=torch.float32), self.device
+                )
+            dist.broadcast(loss, src_rank, group=pp_group)
+
+        return logits, loss
 
     def _clear_loss_buffers(self):
         self._batch_num_tokens_for_loss = None
