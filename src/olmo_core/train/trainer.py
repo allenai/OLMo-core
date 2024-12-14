@@ -693,10 +693,6 @@ class Trainer:
         """
         Record a new metric for the current step.
 
-        .. important::
-            Metrics added with a ``reduce_type`` are reduced across the data parallel process group,
-            which is not necessarily the default process group.
-
         .. seealso::
             Use :meth:`record_ce_loss()` to record the cross-entropy loss, specifically.
 

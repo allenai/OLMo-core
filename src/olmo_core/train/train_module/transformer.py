@@ -29,11 +29,7 @@ from olmo_core.distributed.parallel import (
     get_pp_mesh,
     get_tp_mesh,
 )
-from olmo_core.distributed.utils import (
-    get_global_rank,
-    get_local_tensor,
-    get_world_size,
-)
+from olmo_core.distributed.utils import get_local_tensor, get_world_size
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
@@ -480,6 +476,10 @@ class TransformerTrainModule(TrainModule):
         self.optimizers: List[Optimizer] = [
             optim.build(model, strict=not self.pp_enabled) for model in self.model_parts
         ]
+        if self.pp_enabled and isinstance(self.optimizers[0], SkipStepOptimizer):
+            raise NotImplementedError(
+                "Pipeline parallelism with a SkipStepOptimizer is currently not supported"
+            )
 
         self.rank_microbatch_size = rank_microbatch_size
         self.z_loss_multiplier = z_loss_multiplier
@@ -700,9 +700,6 @@ class TransformerTrainModule(TrainModule):
             logits, loss = self.model_forward(batch, labels=batch["labels"])
             del logits, loss  # pipeline schedule has already handled backward pass
 
-            # Broadcast loss from final pipeline stage to other stages.
-            self._broadcast_pipeline_train_losses()
-
         del batch  # In case this helps with memory utilization.
 
         if dry_run:
@@ -710,10 +707,25 @@ class TransformerTrainModule(TrainModule):
             return
 
         # Record loss metrics.
-        assert self._ce_batch_loss is not None
-        self.record_ce_loss(self._ce_batch_loss, ReduceType.mean)
-        if self._z_batch_loss is not None:
-            self.record_metric("Z loss", self._z_batch_loss, ReduceType.mean, namespace="train")
+        # NOTE: losses could be none for pipeline parallelism if rank doesn't have the final stage.
+        if self._ce_batch_loss is None:
+            self.record_ce_loss(0.0, ReduceType.sum)
+        else:
+            self.record_ce_loss(
+                self._ce_batch_loss / get_world_size(self.dp_process_group), ReduceType.sum
+            )
+
+        if self.z_loss_multiplier is not None:
+            if self._z_batch_loss is None:
+                self.record_metric("Z loss", 0.0, ReduceType.sum, namespace="train")
+            else:
+                self.record_metric(
+                    "Z loss",
+                    self._z_batch_loss / get_world_size(self.dp_process_group),
+                    ReduceType.sum,
+                    namespace="train",
+                )
+
         if self.moe_handler is not None:
             if (moe_lb_loss := self.moe_handler.get_lb_loss()) is not None:
                 self.record_metric("load balancing loss", moe_lb_loss, namespace="train")
@@ -722,6 +734,7 @@ class TransformerTrainModule(TrainModule):
 
         for optim in self.optimizers:
             if isinstance(optim, SkipStepOptimizer):
+                assert self._ce_batch_loss is not None
                 optim.latest_loss = self._ce_batch_loss
 
         # Lastly, clear internal loss buffers.
@@ -894,35 +907,6 @@ class TransformerTrainModule(TrainModule):
             if self.autocast_precision is not None:
                 stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
             yield
-
-    def _broadcast_pipeline_train_losses(self):
-        assert self.train_pp_schedule is not None
-        pp_mesh = self.train_pp_schedule.pp_mesh
-        pp_group = pp_mesh.get_group()
-
-        loss: torch.Tensor
-        if self.train_pp_schedule.is_last_stage:
-            assert self._ce_batch_loss is not None
-            if self.z_loss_multiplier is None:
-                loss = self._ce_batch_loss
-            else:
-                assert self._z_batch_loss is not None
-                loss = torch.stack([self._ce_batch_loss, self._z_batch_loss])
-        else:
-            if self.z_loss_multiplier is None:
-                loss = move_to_device(torch.tensor(0.0), self.device)
-            else:
-                loss = move_to_device(torch.tensor([0.0, 0.0]), self.device)
-
-        src_rank = get_global_rank(pp_mesh.size() - 1, pp_group)
-        dist.broadcast(loss, src_rank, group=pp_group)
-
-        if not self.train_pp_schedule.is_last_stage:
-            if self.z_loss_multiplier is None:
-                self._ce_batch_loss = loss
-            else:
-                self._ce_batch_loss = loss[0]
-                self._z_batch_loss = loss[1]
 
     def _clear_loss_buffers(self):
         self._batch_num_tokens_for_loss = None

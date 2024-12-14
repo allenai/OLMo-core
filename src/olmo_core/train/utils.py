@@ -21,7 +21,7 @@ from ..distributed.utils import (
     get_world_size,
     is_distributed,
 )
-from ..utils import cuda_sync_debug_mode
+from ..utils import cuda_sync_debug_mode, move_to_device
 from .common import ReduceType
 
 log = logging.getLogger(__name__)
@@ -122,8 +122,6 @@ def move_metrics(
     source: Dict[int, Dict[str, torch.Tensor]],
     device: torch.device,
 ) -> Dict[int, Dict[str, torch.Tensor]]:
-    non_blocking = device.type != "cpu"
-
     # Collate all metrics together, then transfer to device all at once.
     metrics_to_move_list = [
         get_local_tensor(m)
@@ -137,9 +135,7 @@ def move_metrics(
     if metrics_to_move_list:
         # NOTE: this is a known host-device sync (potentially) so we don't need the warning
         with cuda_sync_debug_mode(0):
-            metrics_to_move = torch.stack(metrics_to_move_list).to(
-                device, non_blocking=non_blocking
-            )
+            metrics_to_move = move_to_device(torch.stack(metrics_to_move_list), device)
 
     # Collect output with moved tensors.
     target: Dict[int, Dict[str, torch.Tensor]] = OrderedDict()
