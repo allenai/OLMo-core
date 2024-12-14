@@ -102,8 +102,8 @@ def build_launch_config(
             "conda shell.bash activate base",
             "pip install -e '.[all]'",
             # install ai2-olmo-eval from source git repo
-            "pip uninstall ai2-olmo-eval",
-            "pip install git+https://github.com/allenai/OLMo-in-loop-evals.git@moreeval",
+            "pip uninstall -y ai2-olmo-eval",
+            "pip install -y git+https://github.com/allenai/OLMo-in-loop-evals.git@moreeval",
             # Quickly try a new version of PyTorch like this
             #  "pip install --upgrade --pre torch==2.6.0.dev20241112+cu121 --index-url https://download.pytorch.org/whl/nightly/cu121",
             "pip freeze",
