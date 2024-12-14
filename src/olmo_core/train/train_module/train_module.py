@@ -100,10 +100,13 @@ class TrainModule(Stateful, metaclass=ABCMeta):
     @abstractmethod
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         Run a forward pass on a eval batch, returning the logits and optionally the unreduced
         cross-entropy loss if ``labels`` are provided.
+
+        .. important::
+            The logits may be none on some ranks in certain settings, like pipeline parallelism.
         """
         raise NotImplementedError
 
@@ -277,7 +280,7 @@ class BasicTrainModule(TrainModule):
 
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         self.model.eval()
         batch = move_to_device(batch, self.trainer.device)
         with torch.no_grad():

@@ -729,7 +729,7 @@ class TransformerTrainModule(TrainModule):
 
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         batch = move_to_device(batch, self.device)
 
         for model in self.model_parts:
@@ -740,12 +740,6 @@ class TransformerTrainModule(TrainModule):
 
         self._clear_loss_buffers()
 
-        if self.pp_enabled:
-            logits, loss = self._broadcast_pipeline_eval_outputs(
-                input_ids=batch["input_ids"], logits=logits, loss=loss, labels=labels
-            )
-
-        assert logits is not None
         return logits, loss
 
     def optim_step(self):
@@ -929,34 +923,6 @@ class TransformerTrainModule(TrainModule):
             else:
                 self._ce_batch_loss = loss[0]
                 self._z_batch_loss = loss[1]
-
-    def _broadcast_pipeline_eval_outputs(
-        self,
-        *,
-        input_ids: torch.Tensor,
-        logits: Optional[torch.Tensor],
-        loss: Optional[torch.Tensor],
-        labels: Optional[torch.Tensor],
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        assert self.eval_pp_schedule is not None
-        pp_mesh = self.eval_pp_schedule.pp_mesh
-        pp_group = pp_mesh.get_group()
-        src_rank = get_global_rank(pp_mesh.size() - 1, pp_group)
-        B, S = input_ids.shape
-
-        if logits is None:
-            logits = move_to_device(
-                torch.zeros((B, S, self.model_parts[0].vocab_size), dtype=self.logits_dtype),
-                self.device,
-            )
-        dist.broadcast(logits, src_rank, group=pp_group)
-
-        if labels is not None:
-            if loss is None:
-                loss = move_to_device(torch.zeros((B, S - 1), dtype=torch.float32), self.device)
-            dist.broadcast(loss, src_rank, group=pp_group)
-
-        return logits, loss
 
     def _clear_loss_buffers(self):
         self._batch_num_tokens_for_loss = None

@@ -84,11 +84,12 @@ class EvaluatorCallback(Callback):
                         label_ignore_index=self.trainer.data_loader.collator.label_ignore_index,
                     )
                     logits, ce_loss = self.trainer.train_module.eval_batch(batch, labels=labels)
-                    assert ce_loss is not None
+                    if logits is not None:
+                        assert ce_loss is not None
 
-                    # NOTE: might have host-device syncs here but that's okay.
-                    with cuda_sync_debug_mode(0):
-                        evaluator.update_metrics(batch, ce_loss, logits)
+                        # NOTE: might have host-device syncs here but that's okay.
+                        with cuda_sync_debug_mode(0):
+                            evaluator.update_metrics(batch, ce_loss, logits)
 
                 if eval_step % self.trainer.cancel_check_interval == 0:
                     self.trainer.check_if_canceled()
@@ -219,9 +220,7 @@ class DownstreamEvaluator(Evaluator):
             sampler=sampler,
         )
 
-        super().__init__(
-            name=name, batches=data_loader, device=device, dp_process_group=dp_process_group
-        )
+        super().__init__(name=name, batches=data_loader, device=device)
 
     def update_metrics(
         self, batch: Dict[str, Any], ce_loss: torch.Tensor, logits: torch.Tensor

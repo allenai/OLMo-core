@@ -32,14 +32,9 @@ class LMEvaluator(Evaluator):
         batches: Iterable[Dict[str, Any]],
         labels: Sequence[str],
         device: Optional[torch.device] = None,
-        dp_process_group: Optional[dist.ProcessGroup] = None,
     ):
-        super().__init__(
-            name=name, batches=batches, device=device, dp_process_group=dp_process_group
-        )
-        self.metrics = {
-            label: MeanMetric(device=device, process_group=dp_process_group) for label in labels
-        }
+        super().__init__(name=name, batches=batches, device=device)
+        self.metrics = {label: MeanMetric(device=device) for label in labels}
 
     @classmethod
     def from_numpy_dataset(
@@ -90,7 +85,6 @@ class LMEvaluator(Evaluator):
             batches=data_loader,
             labels=list(labels),
             device=device,
-            dp_process_group=dp_process_group,
         )
 
     def update_metrics(

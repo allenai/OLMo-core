@@ -2,7 +2,6 @@ from abc import ABCMeta, abstractmethod
 from typing import Any, Dict, Iterable, Iterator, Optional
 
 import torch
-import torch.distributed as dist
 
 from ..data import DataLoaderBase
 
@@ -19,7 +18,6 @@ class Evaluator(metaclass=ABCMeta):
     :param batches: Generates batches for the evaluator. These should at least include the
         "input_ids" field, but can contain any other arbitrary fields as well.
     :param device: The device to compute/reduce metrics on.
-    :param dp_process_group: The data parallel process group to reduce metrics over.
     """
 
     def __init__(
@@ -28,12 +26,10 @@ class Evaluator(metaclass=ABCMeta):
         name: str,
         batches: Iterable[Dict[str, Any]],
         device: Optional[torch.device] = None,
-        dp_process_group: Optional[dist.ProcessGroup] = None,
     ):
         self.name = name
         self.batches = batches
         self.device = device
-        self.dp_process_group = dp_process_group
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         """
