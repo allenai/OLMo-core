@@ -54,16 +54,16 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_async=True,
             ),
         )
-        # .with_callback(
-        #     "comet",
-        #     CometCallback(
-        #         name=common.run_name,
-        #         workspace="ai2",
-        #         project="OLMo-core-1B",
-        #         enabled=True,
-        #         cancel_check_interval=10,
-        #     ),
-        # )
+        .with_callback(
+            "comet",
+            CometCallback(
+                name=common.run_name,
+                workspace="ai2",
+                project="OLMo-core-1B",
+                enabled=True,
+                cancel_check_interval=10,
+            ),
+        )
         .with_callback(
             "wandb",
             WandBCallback(
