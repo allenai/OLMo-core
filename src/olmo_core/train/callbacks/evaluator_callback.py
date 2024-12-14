@@ -190,15 +190,14 @@ class DownstreamEvaluator(Evaluator):
                 rank=get_rank(dp_process_group),
             )
 
-        rank_batch_size_instances = max(0, rank_batch_size // self.task.max_sequence_length)
         log.info(
-            f"Using per-rank batch size of {rank_batch_size_instances} instances "
+            f"Using per-rank batch size of {rank_batch_size} instances "
             f"for downstream eval task '{task}' with max sequence length {self.task.max_sequence_length:,d} tokens"
         )
 
         data_loader = DataLoader(
             self.task,  # type: ignore
-            batch_size=rank_batch_size_instances,
+            batch_size=rank_batch_size,
             collate_fn=self.task.collate_fn,
             num_workers=0,
             sampler=sampler,
@@ -248,6 +247,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
             else trainer.rank_microbatch_size * get_world_size(trainer.dp_process_group)
         )
         rank_eval_batch_size = global_eval_batch_size // get_world_size(trainer.dp_process_group)
+        print(f"global_eval_batch_size: {global_eval_batch_size}, rank_eval_batch_size: {rank_eval_batch_size}")
         if rank_eval_batch_size == 0:
             raise OLMoConfigurationError(
                 f"'eval_batch_size' of {global_eval_batch_size:,d} tokens is too small for the given world size"
