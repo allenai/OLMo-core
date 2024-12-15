@@ -246,7 +246,6 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
             else trainer.rank_microbatch_size * get_world_size(trainer.dp_process_group)
         )
         rank_eval_batch_size = global_eval_batch_size // get_world_size(trainer.dp_process_group)
-        print(f"global_eval_batch_size: {global_eval_batch_size}, rank_eval_batch_size: {rank_eval_batch_size}")
         if rank_eval_batch_size == 0:
             raise OLMoConfigurationError(
                 f"'eval_batch_size' of {global_eval_batch_size:,d} tokens is too small for the given world size"
