@@ -99,7 +99,6 @@ class EvaluatorCallback(Callback):
             metrics = []
             with cuda_sync_debug_mode(0):
                 for name, value in evaluator.compute_metrics().items():
-                    value = value.item()
                     metrics.append(f"    {name}={format_float(value)}")
                     self.trainer.record_metric(f"eval/{evaluator.name}/{name}", value)
             log.info("Eval metrics:\n" + "\n".join(metrics))
