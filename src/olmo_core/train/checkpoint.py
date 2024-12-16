@@ -162,7 +162,7 @@ class Checkpointer:
             log.info(f"Pre-downloading checkpoint from '{dir}' to '{target}'...")
             if get_fs_local_rank() == 0:
                 copy_dir(dir, target, save_overwrite=self.save_overwrite)
-            barrier()
+            barrier(self.process_group)
             return self.load(
                 target,
                 model,
