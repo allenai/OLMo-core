@@ -25,6 +25,7 @@ from ..distributed.utils import barrier, get_fs_local_rank, get_rank, is_distrib
 from ..exceptions import OLMoConfigurationError
 from ..io import (
     clear_directory,
+    copy_dir,
     dir_is_empty,
     file_exists,
     is_url,
@@ -34,6 +35,24 @@ from ..io import (
 )
 from ..utils import wait_for
 from ..version import VERSION
+
+
+@dataclass
+class CheckpointerConfig(Config):
+    """
+    A configuration class for building :class:`Checkpointer` instances.
+    """
+
+    work_dir: Optional[str] = None
+    save_overwrite: Optional[bool] = None
+    pre_download_checkpoint: bool = False
+
+    def build(self, process_group: Optional[dist.ProcessGroup] = None, **kwargs) -> "Checkpointer":
+        kwargs = {**self.as_dict(exclude_none=True, recurse=False), **kwargs}
+        work_dir = kwargs.pop("work_dir", None)
+        if work_dir is None:
+            raise OLMoConfigurationError("'work_dir' must be provided to build a Checkpointer")
+        return Checkpointer(work_dir=Path(work_dir), process_group=process_group, **kwargs)
 
 
 @dataclass
@@ -50,8 +69,15 @@ class Checkpointer:
     METADATA_FNAME: ClassVar[str] = ".metadata.json"
     CHECKPOINT_DIR: ClassVar[str] = "step{step}"
 
+    work_dir: Path
     save_overwrite: bool = False
+    pre_download_checkpoint: bool = False
     process_group: Optional[dist.ProcessGroup] = None
+
+    def __post_init__(self):
+        self.work_dir = Path(self.work_dir)
+        if get_fs_local_rank() == 0:
+            self.work_dir.mkdir(exist_ok=True, parents=True)
 
     def save(self, dir: PathOrStr, model: nn.Module, optim: Optimizer, train_state: Dict[str, Any]):
         """
@@ -127,6 +153,20 @@ class Checkpointer:
         created via :meth:`save()` or :meth:`save_async()`.
         """
         dir = normalize_path(dir)
+
+        if is_url(dir) and self.pre_download_checkpoint:
+            target = self.work_dir / "load" / os.path.basename(dir)
+            if get_fs_local_rank() == 0:
+                copy_dir(dir, target, save_overwrite=self.save_overwrite)
+            barrier()
+            return self.load(
+                target,
+                model,
+                optim,
+                load_optimizer_state=load_optimizer_state,
+                load_trainer_state=load_trainer_state,
+                key_mapping=key_mapping,
+            )
 
         # Maybe load trainer state.
         trainer_state: Optional[Dict[str, Any]] = None
@@ -301,7 +341,7 @@ class Checkpointer:
         # Prepare temporary directory.
         tmp_dir: Path
         if is_url(dir):
-            tmp_dir = Path(tempfile.mkdtemp())
+            tmp_dir = Path(tempfile.mkdtemp(dir=str(self.work_dir)))
         else:
             tmp_dir = Path(dir).with_name(Path(dir).name + "-tmp")
             if get_fs_local_rank() == 0:
