@@ -29,17 +29,23 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         compile=compile,
         fused_ops=False,
         use_flash=not compile,
+        #dp_config=TransformerDataParallelConfig(
+        #    name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
+        #),
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
+            name=DataParallelType.hsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
+            num_replicas=common.launch.num_nodes,
         ),
-        ac_config=TransformerActivationCheckpointingConfig(
-           mode=TransformerActivationCheckpointingMode.selected_modules,
-           modules=[
-               f"blocks.{i}.feed_forward"
-               for i in range(64)
-           ]
-        ),
-        # ac_config=TransformerActivationCheckpointingConfig(mode=TransformerActivationCheckpointingMode.full),
+        ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
+        #ac_config=TransformerActivationCheckpointingConfig(
+        #   mode=TransformerActivationCheckpointingMode.selected_modules,
+        #   modules=[
+        #       f"blocks.{i}.feed_forward"
+        #       for i in range(64)
+        #   ]
+        #),
         float8_config=Float8Config(compile=compile, enabled=False),
     )
 
@@ -62,7 +68,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/{project_name}/",
-            rank_microbatch_size=2 * 4096,
+            rank_microbatch_size=1 * 4096,
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=10,
