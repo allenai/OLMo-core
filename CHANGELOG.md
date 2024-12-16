@@ -14,6 +14,8 @@ This major release introduces a few breaking changes. As such, we've provided an
 - Added `TrainModule` abstraction with `TransformerTrainModule` implementation, which encapsulates both a model and optimizer.
 - Added support for tensor parallelism. See the `TransformerTrainModule` class for usage.
 - Added `namespace` argument to `Trainer.record_metric()`.
+- Added `io.copy_dir()` function.
+- Added new LR schedulers: `LinearWithWarmup`, `InvSqrtWithWarmup`, `ConstantWithWarmup`, `SequentialScheduler`.
 
 ### Changed
 
