@@ -68,7 +68,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/{project_name}/",
-            rank_microbatch_size=2 * 4096,
+            rank_microbatch_size=1 * 4096,
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=10,
