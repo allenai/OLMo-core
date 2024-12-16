@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import tempfile
@@ -35,6 +36,8 @@ from ..io import (
 )
 from ..utils import wait_for
 from ..version import VERSION
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -156,6 +159,7 @@ class Checkpointer:
 
         if is_url(dir) and self.pre_download:
             target = self.work_dir / "load" / os.path.basename(dir)
+            log.info(f"Pre-downloading checkpoint from '{dir}' to '{target}'...")
             if get_fs_local_rank() == 0:
                 copy_dir(dir, target, save_overwrite=self.save_overwrite)
             barrier()
