@@ -41,7 +41,9 @@ def run_checkpointer(base_dir, work_dir, model_factory):
 
 def test_checkpointer_with_local_dir(tmp_path, tiny_model_factory):
     run_distributed_test(
-        run_checkpointer, func_args=(tmp_path, tmp_path / "work_dir", tiny_model_factory)
+        run_checkpointer,
+        func_args=(tmp_path / "checkpoint", tmp_path / "work_dir", tiny_model_factory),
+        start_method="spawn",
     )
 
 
@@ -89,7 +91,9 @@ def run_async_checkpointer(dir, work_dir, model_factory):
 
 def test_async_checkpointer_with_local_dir(tmp_path, tiny_model_factory):
     run_distributed_test(
-        run_async_checkpointer, func_args=(tmp_path, tmp_path / "work_dir", tiny_model_factory)
+        run_async_checkpointer,
+        func_args=(tmp_path / "checkpoint", tmp_path / "work_dir", tiny_model_factory),
+        start_method="spawn",
     )
 
 
