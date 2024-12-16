@@ -45,7 +45,7 @@ class CheckpointerConfig(Config):
 
     work_dir: Optional[str] = None
     save_overwrite: Optional[bool] = None
-    pre_download_checkpoint: bool = False
+    pre_download: bool = False
 
     def build(self, process_group: Optional[dist.ProcessGroup] = None, **kwargs) -> "Checkpointer":
         kwargs = {**self.as_dict(exclude_none=True, recurse=False), **kwargs}
@@ -71,7 +71,7 @@ class Checkpointer:
 
     work_dir: Path
     save_overwrite: bool = False
-    pre_download_checkpoint: bool = False
+    pre_download: bool = False
     process_group: Optional[dist.ProcessGroup] = None
 
     def __post_init__(self):
@@ -154,7 +154,7 @@ class Checkpointer:
         """
         dir = normalize_path(dir)
 
-        if is_url(dir) and self.pre_download_checkpoint:
+        if is_url(dir) and self.pre_download:
             target = self.work_dir / "load" / os.path.basename(dir)
             if get_fs_local_rank() == 0:
                 copy_dir(dir, target, save_overwrite=self.save_overwrite)
