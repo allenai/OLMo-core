@@ -17,7 +17,7 @@ from ..exceptions import OLMoConfigurationError
 from ..io import is_url
 from ..utils import get_default_device
 from .callbacks import Callback, CallbackConfig
-from .checkpoint import Checkpointer
+from .checkpoint import CheckpointerConfig
 from .common import Duration, LoadStrategy
 from .trainer import Trainer
 
@@ -38,6 +38,7 @@ class TrainerConfig(Config):
     load_path: Optional[str] = None
     load_strategy: LoadStrategy = LoadStrategy.if_available
     load_key_mapping: Optional[Dict[str, str]] = None
+    checkpointer: CheckpointerConfig = field(default_factory=CheckpointerConfig)
 
     device: Optional[str] = None
     save_overwrite: bool = False
@@ -97,18 +98,25 @@ class TrainerConfig(Config):
         if dp_process_group is None and mesh is not None:
             dp_process_group = get_dp_process_group(mesh)
 
-        checkpointer = Checkpointer(
-            save_overwrite=kwargs["save_overwrite"],
-            process_group=checkpointer_pg,
-        )
         device = kwargs.pop("device", None)
+
         autocast_precision: Optional[DType] = kwargs.pop("autocast_precision", None)
+
         work_dir = kwargs.pop("work_dir", None)
         if work_dir is None:
             if not is_url(self.save_folder):
                 work_dir = self.save_folder
             else:
                 work_dir = os.path.join(tempfile.gettempdir(), os.path.basename(self.save_folder))
+
+        checkpointer_kwargs = {}
+        if self.checkpointer.save_overwrite is None:
+            checkpointer_kwargs["save_overwrite"] = self.save_overwrite
+        if self.checkpointer.work_dir is None:
+            checkpointer_kwargs["work_dir"] = work_dir
+        checkpointer = kwargs.pop("checkpointer").build(
+            process_group=checkpointer_pg, **checkpointer_kwargs
+        )
 
         all_callbacks = kwargs.pop("callbacks")
         callbacks = {k: cb for k, cb in all_callbacks.items() if not isinstance(cb, CallbackConfig)}

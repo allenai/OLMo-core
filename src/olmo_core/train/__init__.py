@@ -49,6 +49,7 @@ import torch.multiprocessing as mp
 from ..distributed.utils import init_distributed, is_distributed
 from ..io import add_cached_path_clients
 from ..utils import LogFilterType, prepare_cli_environment, seed_all
+from .checkpoint import Checkpointer, CheckpointerConfig
 from .common import Duration, DurationUnit, LoadStrategy, ReduceType
 from .config import TrainerConfig
 from .trainer import Trainer
@@ -58,6 +59,8 @@ __all__ = [
     "teardown_training_environment",
     "TrainerConfig",
     "Trainer",
+    "CheckpointerConfig",
+    "Checkpointer",
     "LoadStrategy",
     "Duration",
     "DurationUnit",
