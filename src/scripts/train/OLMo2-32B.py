@@ -36,7 +36,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            num_replicas=128, #common.launch.num_nodes,
+            num_replicas=4, #128, #common.launch.num_nodes,
         ),
         ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
         #ac_config=TransformerActivationCheckpointingConfig(
@@ -81,8 +81,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
-                ephemeral_save_interval=250,
-                save_async=True,
+                ephemeral_save_interval=10,
+                save_async=False,
             ),
         )
         .with_callback(
