@@ -311,6 +311,7 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
         with ThreadPoolExecutor(max_workers=self.thread_count) as executor:
             read_item_content_futures = []
             for read_item in plan.items:
+                log.info("Read Item: %s", str(read_item))
                 read_item_content_futures.append(
                     executor.submit(self._get_content_for_read, read_item)
                 )
