@@ -100,8 +100,8 @@ def build_launch_config(
             "git submodule update --init --recursive",
             # Setup python environment.
             "conda shell.bash activate base",
+            "pip install ai2-olmo-eval @ git+https://git@github.com/allenai/OLMo-in-loop-evals.git@epwalsh/debug",
             "pip install -e '.[all]'",
-            "pip install git+https://git@github.com/allenai/OLMo-in-loop-evals.git@epwalsh/debug",
             # Quickly try a new version of PyTorch like this
             #  "pip install --upgrade --pre torch==2.6.0.dev20241112+cu121 --index-url https://download.pytorch.org/whl/nightly/cu121",
             "pip freeze",
