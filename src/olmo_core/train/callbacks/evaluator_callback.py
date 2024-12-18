@@ -130,7 +130,7 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
         eval_batch_size = (
             self.eval_batch_size
             if self.eval_batch_size is not None
-            else trainer.rank_microbatch_size * get_world_size(trainer.dp_process_group)
+            else 2 * trainer.rank_microbatch_size * get_world_size(trainer.dp_process_group)
         )
         dataset = self.eval_dataset.build()
         if not isinstance(dataset, NumpyPaddedFSLDataset):
@@ -184,7 +184,7 @@ class DownstreamEvaluator(Evaluator):
         if is_distributed():
             sampler = DistributedSampler(
                 self.task,  # type: ignore
-                drop_last=True,
+                drop_last=False,
                 shuffle=False,
                 num_replicas=get_world_size(dp_process_group),
                 rank=get_rank(dp_process_group),
