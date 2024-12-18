@@ -1,6 +1,7 @@
 import logging
 from concurrent.futures import Future
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import List, Optional, Tuple
 
 import torch.distributed as dist
@@ -174,7 +175,7 @@ class CheckpointerCallback(Callback):
             log.info(
                 "Creating new process group for checkpointing (needed for async checkpointing)"
             )
-            self.checkpointer.process_group = dist.new_group()
+            self.checkpointer.process_group = dist.new_group(timeout=timedelta(minutes=30))
 
         # Maybe save a pre-train checkpoint.
         if self.step == 0 and (

@@ -5,6 +5,8 @@ import pickle
 import re
 import shutil
 import time
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Generator, Optional, Tuple, Type, Union
@@ -176,13 +178,62 @@ def copy_file(source: PathOrStr, target: PathOrStr, save_overwrite: bool = False
     :raises FileNotFoundError: If the ``source`` file doesn't exist.
     :raises FileExistsError: If the ``target`` already exists and ``save_overwrite=False``.
     """
+    source = normalize_path(source)
+    target = normalize_path(target)
     local_source = cached_path(source, quiet=True)
     if is_url(target):
-        upload(local_source, str(target), save_overwrite=save_overwrite)
+        upload(local_source, target, save_overwrite=save_overwrite)
     else:
-        if not save_overwrite and file_exists(target):
-            raise FileExistsError(target)
-        shutil.copyfile(source, target, follow_symlinks=True)
+        target = Path(target)
+        if file_exists(target):
+            if not save_overwrite:
+                raise FileExistsError(target)
+            else:
+                target.unlink(missing_ok=True)
+        else:
+            target.parent.mkdir(exist_ok=True, parents=True)
+        try:
+            os.link(local_source, target, follow_symlinks=True)
+        except OSError:
+            # Can't hard link across devices, so copy instead.
+            shutil.copyfile(local_source, target, follow_symlinks=True)
+
+
+def copy_dir(
+    source: PathOrStr,
+    target: PathOrStr,
+    save_overwrite: bool = False,
+    num_threads: Optional[int] = None,
+):
+    """
+    Copy a directory from ``source`` to ``target``.
+
+    :param source: The path/URL to the source file.
+    :param target: The path/URL to the target location.
+    :param save_overwrite: Overwrite any existing files.
+    :param num_threads: The number of threads to use.
+
+    :raises FileNotFoundError: If the ``source`` dir doesn't exist.
+    :raises FileExistsError: If any source files already exist in the ``target`` and ``save_overwrite=False``.
+    """
+    source = normalize_path(source)
+    target = normalize_path(target)
+
+    if num_threads is None:
+        from .utils import get_default_thread_count
+
+        num_threads = get_default_thread_count()
+
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        futures = []
+        for source_path in list_directory(source, recurse=True, include_dirs=False):
+            assert source_path.startswith(source)
+            relative_source_path = source_path.replace(source, "", 1).lstrip("/")
+            target_path = join_path(target, relative_source_path)
+            futures.append(
+                executor.submit(copy_file, source_path, target_path, save_overwrite=save_overwrite)
+            )
+        deque(as_completed(futures), maxlen=0)
 
 
 def dir_is_empty(dir: PathOrStr) -> bool:
@@ -276,25 +327,55 @@ def clear_directory(dir: PathOrStr, force: bool = False):
         shutil.rmtree(dir, ignore_errors=True)
 
 
-def list_directory(dir: PathOrStr) -> Generator[str, None, None]:
+def list_directory(
+    dir: PathOrStr, recurse: bool = False, include_files: bool = True, include_dirs: bool = True
+) -> Generator[str, None, None]:
     """
-    List the immediate contents of a local or remote directory.
+    List the contents of a local or remote directory.
+    If ``recurse=False``, only the immediate children of the directory are returned, otherwise
+    every sub-folder is recursed into.
 
     :param dir: Path/URL to the directory.
+    :param recurse: Whether to recurse into sub-folders.
+    :param include_files: Include regular files in the results.
+    :param include_dirs: Include directories in the results.
+
+    :returns: A generator over paths in the directory. If the ``dir`` is a URL, the results will be
+        full URLs. If the ``dir`` is a local path, the results will be of the form ``join_path(dir, p)``.
+
+    :raises FileNotFoundError: If the ``source`` file doesn't exist.
     """
     dir = normalize_path(dir)
 
     if not is_url(dir):
         for p in Path(dir).iterdir():
-            yield str(p)
+            if (p.is_file() and include_files) or (p.is_dir() and include_dirs):
+                yield str(p)
+            if recurse and p.is_dir():
+                yield from list_directory(
+                    p, recurse=True, include_files=include_files, include_dirs=include_dirs
+                )
     else:
         from urllib.parse import urlparse
 
         parsed = urlparse(dir)
         if parsed.scheme == "gs":
-            yield from _gcs_list_directory(parsed.netloc, parsed.path.strip("/"))
+            yield from _gcs_list_directory(
+                parsed.netloc,
+                parsed.path.strip("/"),
+                recurse=recurse,
+                include_files=include_files,
+                include_dirs=include_dirs,
+            )
         elif parsed.scheme in ("s3", "r2", "weka"):
-            yield from _s3_list_directory(parsed.scheme, parsed.netloc, parsed.path.strip("/"))
+            yield from _s3_list_directory(
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path.strip("/"),
+                recurse=recurse,
+                include_files=include_files,
+                include_dirs=include_dirs,
+            )
         else:
             raise NotImplementedError(
                 f"list_directory size not implemented for '{parsed.scheme}' URLs"
@@ -535,7 +616,13 @@ def _gcs_clear_directory(bucket_name: str, prefix: str):
         return
 
 
-def _gcs_list_directory(bucket_name: str, prefix: str) -> Generator[str, None, None]:
+def _gcs_list_directory(
+    bucket_name: str,
+    prefix: str,
+    recurse: bool = False,
+    include_files: bool = True,
+    include_dirs: bool = True,
+) -> Generator[str, None, None]:
     from google.api_core.exceptions import NotFound
 
     storage_client = _get_gcs_client()
@@ -559,11 +646,21 @@ def _gcs_list_directory(bucket_name: str, prefix: str) -> Generator[str, None, N
         except NotFound:
             raise FileNotFoundError(f"gs://{bucket_name}/{prefix}")
 
-        for blob in blobs:
-            yield f"gs://{bucket_name}/{blob.name}"
+        if include_files:
+            for blob in blobs:
+                yield f"gs://{bucket_name}/{blob.name}"
 
         for folder in blobs.prefixes:
-            yield f"gs://{bucket_name}/{folder.strip('/')}"
+            if include_dirs:
+                yield f"gs://{bucket_name}/{folder.strip('/')}"
+            if recurse:
+                yield from _gcs_list_directory(
+                    bucket_name,
+                    folder,
+                    recurse=True,
+                    include_files=include_files,
+                    include_dirs=include_dirs,
+                )
 
 
 ###################
@@ -721,16 +818,34 @@ def _s3_clear_directory(scheme: str, bucket_name: str, prefix: str):
         return
 
 
-def _s3_list_directory(scheme: str, bucket_name: str, prefix: str) -> Generator[str, None, None]:
+def _s3_list_directory(
+    scheme: str,
+    bucket_name: str,
+    prefix: str,
+    recurse: bool = False,
+    include_files: bool = True,
+    include_dirs: bool = True,
+) -> Generator[str, None, None]:
     client = _get_s3_client(scheme)
     paginator = client.get_paginator("list_objects_v2")
     if not prefix.endswith("/"):
         prefix = prefix + "/"
     for page in paginator.paginate(Bucket=bucket_name, Prefix=prefix, MaxKeys=50, Delimiter="/"):
-        for file_item in page.get("Contents", []):
-            yield f"{scheme}://{bucket_name}/{file_item['Key']}"
+        if include_files:
+            for file_item in page.get("Contents", []):
+                yield f"{scheme}://{bucket_name}/{file_item['Key']}"
         for dir_item in page.get("CommonPrefixes", []):
-            yield f"{scheme}://{bucket_name}/{dir_item['Prefix'].strip('/')}"
+            if include_dirs:
+                yield f"{scheme}://{bucket_name}/{dir_item['Prefix'].strip('/')}"
+            if recurse:
+                yield from _s3_list_directory(
+                    scheme,
+                    bucket_name,
+                    dir_item["Prefix"],
+                    recurse=True,
+                    include_files=include_files,
+                    include_dirs=include_dirs,
+                )
 
 
 #############################################

@@ -9,4 +9,3 @@
    :caption: Submodules
 
    callbacks
-   checkpoint
