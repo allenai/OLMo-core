@@ -22,7 +22,7 @@ def get_beaker_client() -> Beaker:
     global _BEAKER_CLIENT
 
     if _BEAKER_CLIENT is None:
-        _BEAKER_CLIENT = Beaker.from_env()
+        _BEAKER_CLIENT = Beaker.from_env(check_for_upgrades=False)
 
     return _BEAKER_CLIENT
 
