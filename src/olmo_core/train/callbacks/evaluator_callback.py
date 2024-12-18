@@ -266,6 +266,7 @@ class DownstreamEvaluator(Evaluator):
         self.metric.update(batch, logits)
 
     def compute_metrics(self) -> Dict[str, torch.Tensor]:
+        print("computing metrics...")
         value = self.metric.compute()
         label = f"{self.label} ({self.metric_type_to_label[self.task.metric_type]})"
         return {label: value}
