@@ -71,10 +71,10 @@ def build_optim_config(common: CommonComponents) -> AdamWConfig:
 
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
-    project_name = "peteish32-hsdp-test"
+    project_name = "shanea-testing"
     return (
         TrainerConfig(
-            save_folder=f"gs://ai2-llm/checkpoints/{project_name}/",
+            save_folder=f"gs://ai2-llm/checkpoints/shanea/{project_name}/",
             load_path="gs://ai2-llm/checkpoints/peteish32/step55000",
             checkpointer=CheckpointerConfig(pre_download=False),
             rank_microbatch_size=1 * 4096,
