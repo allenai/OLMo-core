@@ -774,6 +774,12 @@ class TransformerTrainModule(TrainModule):
         with torch.no_grad():
             logits, loss = self.model_forward(batch, labels=labels, training=False)
 
+        if self.pp_enabled:
+            assert self.eval_pp_schedule is not None
+            if self.eval_pp_schedule.is_last_stage:
+                assert logits is not None
+                assert loss is not None
+
         self._clear_loss_buffers()
 
         return logits, loss
@@ -906,6 +912,8 @@ class TransformerTrainModule(TrainModule):
                     doc_lens=batch.get("doc_lens"),
                     max_doc_lens=batch.get("max_doc_lens"),
                 )
+                if schedule.is_last_stage:
+                    assert logits is not None
                 if not training and logits is not None and labels is not None and loss is None:
                     loss = self.eval_loss_fn(logits, labels)
                 return logits, loss
