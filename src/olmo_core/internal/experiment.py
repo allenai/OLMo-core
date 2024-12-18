@@ -27,6 +27,7 @@ from olmo_core.train.callbacks import (
     Callback,
     CometCallback,
     ConfigSaverCallback,
+    DownstreamEvaluatorCallbackConfig,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
     LMEvaluatorCallbackConfig,
@@ -163,6 +164,11 @@ def build_common_components(
                 tokenizer=tokenizer_config,
                 work_dir=get_work_dir(root_dir),
             ),
+            eval_interval=1000,
+        ),
+        "downstream_evaluator": DownstreamEvaluatorCallbackConfig(
+            tasks=["hellaswag"],
+            tokenizer=tokenizer_config,
             eval_interval=1000,
         ),
     }
