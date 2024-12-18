@@ -220,7 +220,7 @@ class DownstreamEvaluator(Evaluator):
         if is_distributed():
             sampler = DistributedSampler(
                 self.task,  # type: ignore
-                drop_last=True,
+                drop_last=False,
                 shuffle=False,
                 num_replicas=get_world_size(dp_process_group),
                 rank=get_rank(dp_process_group),
@@ -252,6 +252,7 @@ class DownstreamEvaluator(Evaluator):
             self.task,  # type: ignore
             batch_size=rank_batch_size_instances,
             collate_fn=self.task.collate_fn,
+            drop_last=True,
             num_workers=0,
             sampler=sampler,
         )
