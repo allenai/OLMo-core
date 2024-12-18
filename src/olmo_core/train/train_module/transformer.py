@@ -778,7 +778,8 @@ class TransformerTrainModule(TrainModule):
             assert self.eval_pp_schedule is not None
             if self.eval_pp_schedule.is_last_stage:
                 assert logits is not None
-                assert loss is not None
+                if labels is not None:
+                    assert loss is not None
 
         self._clear_loss_buffers()
 

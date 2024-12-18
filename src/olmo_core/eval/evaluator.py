@@ -54,7 +54,7 @@ class Evaluator(metaclass=ABCMeta):
 
     @abstractmethod
     def update_metrics(
-        self, batch: Dict[str, Any], ce_loss: torch.Tensor, logits: torch.Tensor
+        self, batch: Dict[str, Any], ce_loss: Optional[torch.Tensor], logits: Optional[torch.Tensor]
     ) -> None:
         """
         Update metrics with from the ``batch`` just processed and the corresponding ``logits``.

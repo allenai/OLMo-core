@@ -88,9 +88,11 @@ class LMEvaluator(Evaluator):
         )
 
     def update_metrics(
-        self, batch: Dict[str, Any], ce_loss: torch.Tensor, logits: torch.Tensor
+        self, batch: Dict[str, Any], ce_loss: Optional[torch.Tensor], logits: Optional[torch.Tensor]
     ) -> None:
-        del logits
+        if logits is None or ce_loss is None:
+            return
+
         for idx, (metadata, tokens_loss) in enumerate(zip(batch["metadata"], ce_loss)):
             metric = self.metrics[metadata["label"]]
             if "label_mask" in batch:
