@@ -77,6 +77,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=16 * 1024,
+        max_sequence_length=dataset_config.effective_sequence_length,
         optim=AdamWConfig(
             lr=1e-3,
             group_overrides=[
@@ -168,7 +169,7 @@ def main(run_name: str, overrides: List[str]):
 
     # Build components.
     model = config.model.build(init_device="meta")
-    train_module = config.train_module.build(model, max_seq_len=config.dataset.sequence_length)
+    train_module = config.train_module.build(model)
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
     trainer = config.trainer.build(train_module, data_loader)

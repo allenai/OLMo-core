@@ -1,4 +1,9 @@
-from .train_module import BasicTrainModule, TrainModule
+from .train_module import (
+    BasicTrainModule,
+    EvalBatchSizeUnit,
+    EvalBatchSpec,
+    TrainModule,
+)
 from .transformer import (
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
@@ -12,6 +17,8 @@ from .transformer import (
 
 __all__ = [
     "TrainModule",
+    "EvalBatchSpec",
+    "EvalBatchSizeUnit",
     "BasicTrainModule",
     "TransformerTrainModule",
     "TransformerTrainModuleConfig",

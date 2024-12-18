@@ -25,9 +25,9 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
-    del common
     return TransformerTrainModuleConfig(
         rank_microbatch_size=1 * 4096,
+        max_sequence_length=common.dataset.effective_sequence_length,
         optim=AdamWConfig(
             lr=3e-4,
             weight_decay=0.1,

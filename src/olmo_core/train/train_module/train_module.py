@@ -1,4 +1,5 @@
 from abc import ABCMeta, abstractmethod
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
 
 import torch
@@ -8,6 +9,7 @@ import torch.nn as nn
 from torch.distributed.checkpoint.stateful import Stateful
 from torch.optim import Optimizer
 
+from olmo_core.config import StrEnum
 from olmo_core.data.utils import get_labels, split_batch
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
@@ -18,6 +20,41 @@ from ..common import ReduceType, get_inputs_for_loss
 
 if TYPE_CHECKING:
     from ..trainer import Trainer
+
+
+class EvalBatchSizeUnit(StrEnum):
+    """
+    The different units for defining the size for eval batches.
+    """
+
+    tokens = "tokens"
+    """
+    Specify in tokens.
+    """
+    instances = "instances"
+    """
+    Specify in instances.
+    """
+
+
+@dataclass
+class EvalBatchSpec:
+    """
+    Defines how eval batches should be sized.
+    """
+
+    rank_batch_size: int
+    """
+    The size of eval batches per rank.
+    """
+    batch_size_unit: EvalBatchSizeUnit = EvalBatchSizeUnit.tokens
+    """
+    The unit for the :data:`rank_batch_size`.
+    """
+    max_sequence_length: Optional[int] = None
+    """
+    The maximum allowed sequence length.
+    """
 
 
 class TrainModule(Stateful, metaclass=ABCMeta):
@@ -56,6 +93,16 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         process group.
         """
         return None
+
+    @property
+    @abstractmethod
+    def eval_batch_spec(self) -> EvalBatchSpec:
+        """
+        Should return the desired specification for evaluation batches.
+        This is used for in-loop evaluation, for example, to determine how to build eval
+        batches in a way that will work for the particular :class:`TrainModule`.
+        """
+        raise NotImplementedError
 
     def on_attach(self):
         """
@@ -182,6 +229,10 @@ class BasicTrainModule(TrainModule):
         self.rank_microbatch_size = rank_microbatch_size
         self.max_grad_norm = max_grad_norm
         self.loss_fn = cross_entropy_loss
+
+    @property
+    def eval_batch_spec(self) -> EvalBatchSpec:
+        return EvalBatchSpec(rank_batch_size=self.rank_microbatch_size)
 
     def on_attach(self):
         # Validate batch size.

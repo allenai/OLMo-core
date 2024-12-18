@@ -64,9 +64,7 @@ class SubCmd(StrEnum):
 
                 # Build components.
                 model = config.model.build(init_device="meta")
-                train_module = config.train_module.build(
-                    model, max_seq_len=config.dataset.sequence_length
-                )
+                train_module = config.train_module.build(model)
                 dataset = config.dataset.build()
                 data_loader = config.data_loader.build(
                     dataset, dp_process_group=train_module.dp_process_group

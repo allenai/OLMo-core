@@ -49,7 +49,7 @@ from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, mark_dynamic, move_to_device
 
 from ..common import ReduceType, reshape_inputs_for_loss
-from .train_module import TrainModule
+from .train_module import EvalBatchSizeUnit, EvalBatchSpec, TrainModule
 
 log = logging.getLogger(__name__)
 
@@ -237,6 +237,7 @@ class TransformerTrainModuleConfig(Config):
     """
 
     rank_microbatch_size: int
+    max_sequence_length: int
 
     # Optimizer settings.
 
@@ -271,14 +272,12 @@ class TransformerTrainModuleConfig(Config):
     def build(
         self,
         model: Transformer,
-        max_seq_len: Optional[int] = None,
         device: Optional[torch.device] = None,
     ) -> "TransformerTrainModule":
         """
         Build the corresponding :class:`TransformerTrainModule`.
 
         :param model: The :class:`~olmo_core.nn.transformer.Transformer` model to train.
-        :param max_seq_len: The maximum sequence length expected.
         :param device: The device to train on.
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
@@ -290,7 +289,6 @@ class TransformerTrainModuleConfig(Config):
             kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
         return TransformerTrainModule(
             model=model,
-            max_seq_len=max_seq_len,
             device=device,
             **kwargs,
         )
@@ -313,6 +311,7 @@ class TransformerTrainModule(TrainModule):
         .. note:: This must evenly divide into the global batch size by a factor of the data
             parallel world size. If this is less than the global batch divided by the data
             parallel world size then gradient accumulation is used.
+    :param max_sequence_length: The maximum expected sequence length during training and evaluation.
     :param compile_model: Whether to compile to the model.
     :param float8_config: Float8 configuration for the model.
     :param dp_config: Data parallel configuration for the model.
@@ -334,7 +333,6 @@ class TransformerTrainModule(TrainModule):
     :param autocast_precision: Enable AMP with this data type.
     :param max_grad_norm: Clip gradient norms to this value.
     :param scheduler: Optional learning rate scheduler for the optimizer.
-    :param max_seq_len: The maximum sequence length expected.
     :param device: The device to train on.
     :param state_dict_save_opts: Can be used to override the state dict options used
         when saving a checkpoint.
@@ -347,6 +345,7 @@ class TransformerTrainModule(TrainModule):
         model: Transformer,
         optim: OptimConfig,
         rank_microbatch_size: int,
+        max_sequence_length: int,
         compile_model: bool = False,
         float8_config: Optional[Float8Config] = None,
         dp_config: Optional[TransformerDataParallelConfig] = None,
@@ -359,7 +358,6 @@ class TransformerTrainModule(TrainModule):
         autocast_precision: Optional[torch.dtype] = None,
         max_grad_norm: Optional[float] = None,
         scheduler: Optional[Scheduler] = None,
-        max_seq_len: Optional[int] = None,
         device: Optional[torch.device] = None,
         state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
@@ -369,6 +367,11 @@ class TransformerTrainModule(TrainModule):
         # Validate some options.
         if fused_loss and compile_loss:
             raise OLMoConfigurationError("'fused_loss' is not compatible with 'compile_loss'")
+        if rank_microbatch_size % max_sequence_length != 0:
+            raise OLMoConfigurationError(
+                f"'rank_microbatch_size' ({rank_microbatch_size:,d} tokens) must be divisible by "
+                f"'max_sequence_length' ({max_sequence_length:,d} tokens)"
+            )
 
         self.device = device or get_default_device()
         self.world_mesh = build_device_mesh(
@@ -469,7 +472,7 @@ class TransformerTrainModule(TrainModule):
         # Materialize and init parameters.
         for model in self.model_parts:
             log.info("Initializing model weights...")
-            model.init_weights(max_seq_len=max_seq_len, device=self.device)
+            model.init_weights(max_seq_len=max_sequence_length, device=self.device)
 
         # Build optimizer(s).
         log.info("Building optimizer(s)...")
@@ -482,6 +485,7 @@ class TransformerTrainModule(TrainModule):
             )
 
         self.rank_microbatch_size = rank_microbatch_size
+        self.max_sequence_length = max_sequence_length
         self.z_loss_multiplier = z_loss_multiplier
         self.autocast_precision = autocast_precision
         self.max_grad_norm = max_grad_norm
@@ -511,6 +515,24 @@ class TransformerTrainModule(TrainModule):
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
         return get_dp_process_group(self.world_mesh)
+
+    @property
+    def eval_batch_spec(self) -> EvalBatchSpec:
+        if not self.pp_enabled:
+            return EvalBatchSpec(
+                self.rank_microbatch_size, max_sequence_length=self.max_sequence_length
+            )
+        else:
+            # Determine the number of micro-batches.
+            rank_batch_size = self.trainer.global_batch_size // get_world_size(
+                self.trainer.dp_process_group
+            )
+            rank_batch_size_instances = rank_batch_size // self.max_sequence_length
+            return EvalBatchSpec(
+                rank_batch_size=rank_batch_size_instances,
+                batch_size_unit=EvalBatchSizeUnit.instances,
+                max_sequence_length=self.max_sequence_length,
+            )
 
     @property
     def logits_dtype(self) -> torch.dtype:
