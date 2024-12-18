@@ -75,7 +75,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/shanea/{project_name}/",
-            load_path="gs://ai2-llm/checkpoints/peteish32/step55000",
+            load_path="gs://ai2-llm/checkpoints/shanea/shanea-testing/step55005",
             checkpointer=CheckpointerConfig(pre_download=True),
             rank_microbatch_size=2 * 4096,
             save_overwrite=True,
