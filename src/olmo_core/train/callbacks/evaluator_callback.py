@@ -191,14 +191,16 @@ class DownstreamEvaluator(Evaluator):
                 rank=get_rank(dp_process_group),
             )
 
+        rank_batch_size_instances = max(0, rank_batch_size // self.task.max_sequence_length)
+
         log.info(
-            f"Using per-rank batch size of {rank_batch_size} instances "
+            f"Using per-rank batch size of {rank_batch_size_instances} instances "
             f"for downstream eval task '{task}' with max sequence length {self.task.max_sequence_length:,d} tokens"
         )
 
         data_loader = DataLoader(
             self.task,  # type: ignore
-            batch_size=rank_batch_size,
+            batch_size=rank_batch_size_instances,
             collate_fn=self.task.collate_fn,
             num_workers=0,
             sampler=sampler,
@@ -230,7 +232,7 @@ class DownstreamEvaluator(Evaluator):
 class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     tasks: List[str]
     tokenizer: TokenizerConfig
-    eval_batch_size: Optional[int] = None
+    eval_batch_size: Optional[int] = None  # NOTE: this counts in number of tokens
     eval_interval: int = 1000
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     log_interval: int = 5

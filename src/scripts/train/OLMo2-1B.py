@@ -112,7 +112,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                     "mmlu_other_val_mc_5shot",
                 ],
                 tokenizer=common.tokenizer,
-                eval_batch_size=16,
+                eval_batch_size=16 * 4096,
                 eval_interval=1,
             )
         )
