@@ -198,10 +198,21 @@ class DownstreamEvaluator(Evaluator):
         device: Optional[torch.device] = None,
         dp_process_group: Optional[dist.ProcessGroup] = None,
     ):
-        from olmo_eval import ICLMetric, build_task
+        from olmo_eval import ICLMetric, ICLMultiChoiceTaskDataset, build_task
+
+        task_dataset: ICLMultiChoiceTaskDataset
+        if batch_spec.fixed_sequence_length:
+            assert batch_spec.max_sequence_length is not None
+            task_dataset = build_task(
+                task, tokenizer, model_ctx_len=batch_spec.max_sequence_length, fixed_ctx_len=True
+            )
+        elif batch_spec.max_sequence_length is not None:
+            task_dataset = build_task(task, tokenizer, model_ctx_len=batch_spec.max_sequence_length)
+        else:
+            task_dataset = build_task(task, tokenizer)
 
         self.label = task
-        self.task = build_task(task, tokenizer)
+        self.task = task_dataset
         self.metric = ICLMetric(metric_type=self.task.metric_type).to(
             device or get_default_device()
         )

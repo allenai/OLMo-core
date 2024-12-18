@@ -532,6 +532,7 @@ class TransformerTrainModule(TrainModule):
                 rank_batch_size=rank_batch_size_instances,
                 batch_size_unit=EvalBatchSizeUnit.instances,
                 max_sequence_length=self.max_sequence_length,
+                fixed_sequence_length=True,
             )
 
     @property

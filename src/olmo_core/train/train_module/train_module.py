@@ -55,6 +55,17 @@ class EvalBatchSpec:
     """
     The maximum allowed sequence length.
     """
+    fixed_sequence_length: bool = False
+    """
+    If all batches should have a fixed sequence length at :data:`max_sequence_length` tokens.
+    If this is ``True`` then ``max_sequence_length`` must be specified.
+    """
+
+    def __post_init__(self):
+        if self.fixed_sequence_length and self.max_sequence_length is None:
+            raise OLMoConfigurationError(
+                "'max_sequence_length' must be specified when 'fixed_sequence_length=True'"
+            )
 
 
 class TrainModule(Stateful, metaclass=ABCMeta):
