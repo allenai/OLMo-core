@@ -101,7 +101,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 workspace="ai2",
                 project=project_name,
                 enabled=True,
-                cancel_check_interval=10,
+                cancel_check_interval=2,
             ),
         )
         .with_callback(
@@ -111,7 +111,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 entity="ai2-llm",
                 project=project_name,
                 enabled=False,
-                cancel_check_interval=10,
+                cancel_check_interval=2,
             ),
         )
         .with_callback(
