@@ -15,9 +15,14 @@ from olmo_core.nn.transformer import (
     TransformerDataParallelConfig,
 )
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
-from olmo_core.train import TrainerConfig, Duration, DurationUnit
-from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback, \
-    DownstreamEvaluatorCallbackConfig
+from olmo_core.train import Duration, DurationUnit, TrainerConfig
+from olmo_core.train.callbacks import (
+    CheckpointerCallback,
+    CometCallback,
+    DownstreamEvaluatorCallbackConfig,
+    WandBCallback,
+)
+from olmo_core.train.checkpoint import CheckpointerConfig
 
 log = logging.getLogger(__name__)
 
@@ -32,20 +37,22 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
-        #dp_config=TransformerDataParallelConfig(
+        # dp_config=TransformerDataParallelConfig(
         #    name=DataParallelType.hsdp,
         #    param_dtype=DType.bfloat16,
         #    reduce_dtype=DType.float32,
         #    num_replicas=128, #common.launch.num_nodes,
-        #),
-        #ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
+        # ),
         ac_config=TransformerActivationCheckpointingConfig(
-           mode=TransformerActivationCheckpointingMode.selected_modules,
-           modules=[
-               f"blocks.{i}.feed_forward"
-               for i in range(64)
-           ]
+            TransformerActivationCheckpointingMode.full
         ),
+        # ac_config=TransformerActivationCheckpointingConfig(
+        #    mode=TransformerActivationCheckpointingMode.selected_modules,
+        #    modules=[
+        #        f"blocks.{i}.feed_forward"
+        #        for i in range(64)
+        #    ]
+        # ),
         float8_config=Float8Config(compile=compile, enabled=False),
     )
 
@@ -64,18 +71,20 @@ def build_optim_config(common: CommonComponents) -> AdamWConfig:
 
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
-    project_name = "peteish32"
+    project_name = "peteish32-hsdp-test"
     return (
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/{project_name}/",
-            rank_microbatch_size=2 * 4096,
+            load_path="gs://ai2-llm/checkpoints/peteish32/step55000",
+            checkpointer=CheckpointerConfig(pre_download=True),
+            rank_microbatch_size=1 * 4096,
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=10,
             z_loss_multiplier=1e-5,
             compile_loss=False,
             fused_loss=True,
-            max_duration=Duration(int(6.5e12), DurationUnit.tokens)
+            max_duration=Duration(int(6.5e12), DurationUnit.tokens),
         )
         .with_callback(
             "checkpointer",
@@ -104,7 +113,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 enabled=False,
                 cancel_check_interval=10,
             ),
-        ).with_callback(
+        )
+        .with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
                 tasks=[
@@ -113,13 +123,11 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                     "mmlu_humanities_mc_5shot",
                     "mmlu_social_sciences_mc_5shot",
                     "mmlu_other_mc_5shot",
-
                     # MMLU test
                     "mmlu_stem_mc_5shot_test",
                     "mmlu_humanities_mc_5shot_test",
                     "mmlu_social_sciences_mc_5shot_test",
                     "mmlu_other_mc_5shot_test",
-
                     # Core 12 tasks for backwards compatibility
                     "arc_challenge",
                     "arc_easy",
@@ -133,20 +141,19 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                     "sciq",
                     "social_iqa",
                     "winogrande",
-
                     # Core 12 tasks 5-shot
                     "arc_challenge_rc_5shot",
                     "arc_easy_rc_5shot",
-                    #"basic_arithmetic_rc_5shot",  # doesn't exist
-                    #"boolq_rc_5shot",  # we don't like it
+                    # "basic_arithmetic_rc_5shot",  # doesn't exist
+                    # "boolq_rc_5shot",  # we don't like it
                     "csqa_rc_5shot",
-                    #"copa_rc_5shot",  # doesn't exist
+                    # "copa_rc_5shot",  # doesn't exist
                     "hellaswag_rc_5shot",
                     "openbookqa_rc_5shot",
                     "piqa_rc_5shot",
-                    #"sciq_rc_5shot",  # doesn't exist
+                    # "sciq_rc_5shot",  # doesn't exist
                     "socialiqa_rc_5shot",
-                    "winogrande_rc_5shot"
+                    "winogrande_rc_5shot",
                 ],
                 tokenizer=common.tokenizer,
                 eval_interval=1000,
