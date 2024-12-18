@@ -43,16 +43,16 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         #    reduce_dtype=DType.float32,
         #    num_replicas=128, #common.launch.num_nodes,
         # ),
-        ac_config=TransformerActivationCheckpointingConfig(
-            TransformerActivationCheckpointingMode.full
-        ),
         # ac_config=TransformerActivationCheckpointingConfig(
-        #    mode=TransformerActivationCheckpointingMode.selected_modules,
-        #    modules=[
-        #        f"blocks.{i}.feed_forward"
-        #        for i in range(64)
-        #    ]
+        #     TransformerActivationCheckpointingMode.full
         # ),
+        ac_config=TransformerActivationCheckpointingConfig(
+           mode=TransformerActivationCheckpointingMode.selected_modules,
+           modules=[
+               f"blocks.{i}.feed_forward"
+               for i in range(64)
+           ]
+        ),
         float8_config=Float8Config(compile=compile, enabled=False),
     )
 
@@ -77,10 +77,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_folder=f"gs://ai2-llm/checkpoints/shanea/{project_name}/",
             load_path="gs://ai2-llm/checkpoints/peteish32/step55000",
             checkpointer=CheckpointerConfig(pre_download=False),
-            rank_microbatch_size=1 * 4096,
+            rank_microbatch_size=2 * 4096,
             save_overwrite=True,
-            metrics_collect_interval=10,
-            cancel_check_interval=10,
+            metrics_collect_interval=2,
+            cancel_check_interval=2,
             z_loss_multiplier=1e-5,
             compile_loss=False,
             fused_loss=True,
