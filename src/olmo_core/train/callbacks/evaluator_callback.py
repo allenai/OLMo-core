@@ -99,7 +99,6 @@ class EvaluatorCallback(Callback):
             metrics = []
             with cuda_sync_debug_mode(0):
                 for name, value in evaluator.compute_metrics().items():
-                    value = value.item()
                     metrics.append(f"    {name}={format_float(value)}")
                     self.trainer.record_metric(f"eval/{evaluator.name}/{name}", value)
             log.info("Eval metrics:\n" + "\n".join(metrics))
@@ -161,6 +160,8 @@ class DownstreamEvaluator(Evaluator):
         "pmi_dc": "PMI-DC accuracy",
         "ce_loss": "CE loss",
         "bpb": "BPB",
+        "soft": "soft loss",
+        "soft_log": "log soft loss",
     }
 
     def __init__(
@@ -184,13 +185,14 @@ class DownstreamEvaluator(Evaluator):
         if is_distributed():
             sampler = DistributedSampler(
                 self.task,  # type: ignore
-                drop_last=True,
+                drop_last=False,
                 shuffle=False,
                 num_replicas=get_world_size(dp_process_group),
                 rank=get_rank(dp_process_group),
             )
 
         rank_batch_size_instances = max(0, rank_batch_size // self.task.max_sequence_length)
+
         log.info(
             f"Using per-rank batch size of {rank_batch_size_instances} instances "
             f"for downstream eval task '{task}' with max sequence length {self.task.max_sequence_length:,d} tokens"
@@ -215,9 +217,12 @@ class DownstreamEvaluator(Evaluator):
         self.metric.update(batch, logits)
 
     def compute_metrics(self) -> Dict[str, torch.Tensor]:
-        value = self.metric.compute()
-        label = f"{self.label} ({self.metric_type_to_label[self.task.metric_type]})"
-        return {label: value}
+        metric_type_to_value = self.metric.compute()
+        outputs = {}
+        for metric_type, value in metric_type_to_value.items():
+            key = f"{self.label} ({self.metric_type_to_label[metric_type]})"
+            outputs[key] = value.item()
+        return outputs
 
     def reset_metrics(self) -> None:
         self.metric.reset()
@@ -227,7 +232,7 @@ class DownstreamEvaluator(Evaluator):
 class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     tasks: List[str]
     tokenizer: TokenizerConfig
-    eval_batch_size: Optional[int] = None
+    eval_batch_size: Optional[int] = None  # NOTE: this counts in number of tokens
     eval_interval: int = 1000
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     log_interval: int = 5
