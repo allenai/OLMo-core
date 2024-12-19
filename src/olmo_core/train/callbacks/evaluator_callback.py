@@ -106,8 +106,7 @@ class EvaluatorCallback(Callback):
             metrics = []
             with cuda_sync_debug_mode(0):
                 for name, value in evaluator.compute_metrics().items():
-                    value = value.item()
-                    metrics.append(f"    {name}={format_float(value)}")
+                    metrics.append(f"    {name}={format_float(value.item())}")
                     self.trainer.record_metric(f"eval/{evaluator.name}/{name}", value)
             log.info("Eval metrics:\n" + "\n".join(metrics))
 
@@ -270,7 +269,7 @@ class DownstreamEvaluator(Evaluator):
         outputs = {}
         for metric_type, value in metric_type_to_value.items():
             key = f"{self.label} ({self.metric_type_to_label[metric_type]})"
-            outputs[key] = value.item()
+            outputs[key] = value
         return outputs
 
     def reset_metrics(self) -> None:
