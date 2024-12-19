@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for tensor parallelism. See the `TransformerConfig` class for usage.
 - Added `io.copy_dir()` function.
 - Added new LR schedulers: `LinearWithWarmup`, `InvSqrtWithWarmup`, `ConstantWithWarmup`, `SequentialScheduler`.
+- Added option to pre-download checkpoint files from remote storage before trying to load a checkpoint.
+
+### Changed
+
+- Changed storage of shared shard state in sharded checkpoints from smallest shard to lowest rank (normally 0).
 
 ### Fixed
 
