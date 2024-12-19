@@ -164,6 +164,7 @@ def load_model_and_optim_state(
     key_mapping: Optional[Dict[str, str]] = None,
     pre_download: bool = False,
     work_dir: Optional[PathOrStr] = None,
+    thread_count: Optional[int] = None,
 ):
     """
     Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
@@ -201,10 +202,13 @@ def load_model_and_optim_state(
         This dictionary should map current keys to keys in the checkpoint to be loaded.
     :param pre_download: Download and cache relevant remote checkpoint files before trying to read from them.
     :param work_dir: A working directory for caching files/directories.
+    :param thread_count: Set the number of threads used for certain operations.
     """
     dir = normalize_path(dir)
     state_dict = _prepare_state_dict(model, optim, process_group=process_group)
-    reader = RemoteFileSystemReader(dir, pre_download=pre_download, work_dir=work_dir)
+    reader = RemoteFileSystemReader(
+        dir, thread_count=thread_count, pre_download=pre_download, work_dir=work_dir
+    )
 
     if key_mapping is not None:
         metadata = reader.read_metadata()
