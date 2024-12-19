@@ -157,21 +157,6 @@ class Checkpointer:
         """
         dir = normalize_path(dir)
 
-        if is_url(dir) and self.pre_download:
-            target = self.work_dir / "load" / os.path.basename(dir)
-            log.info(f"Pre-downloading checkpoint from '{dir}' to '{target}'...")
-            if get_fs_local_rank() == 0:
-                copy_dir(dir, target, save_overwrite=self.save_overwrite)
-            barrier(self.process_group)
-            return self.load(
-                target,
-                model,
-                optim,
-                load_optimizer_state=load_optimizer_state,
-                load_trainer_state=load_trainer_state,
-                key_mapping=key_mapping,
-            )
-
         # Maybe load trainer state.
         trainer_state: Optional[Dict[str, Any]] = None
         if load_trainer_state:
@@ -193,6 +178,7 @@ class Checkpointer:
             optim if load_optimizer_state else None,
             process_group=self.process_group,
             key_mapping=key_mapping,
+            pre_download=is_url(dir) and self.pre_download,
         )
 
         return trainer_state

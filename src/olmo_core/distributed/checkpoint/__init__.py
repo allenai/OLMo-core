@@ -35,6 +35,7 @@ import torch.distributed as dist
 import torch.distributed.checkpoint as dist_cp
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
+from torch.distributed.checkpoint.default_planner import DefaultSavePlanner
 from torch.distributed.checkpoint.metadata import Metadata
 
 from olmo_core.aliases import PathOrStr
@@ -119,10 +120,12 @@ def save_model_and_optim_state(
     """
     dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
     state_dict = _prepare_state_dict(model, optim=optim, process_group=process_group)
+    planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
     dist_cp.state_dict_saver.save(
         state_dict,
         storage_writer=RemoteFileSystemWriter(dir),
         process_group=process_group,
+        planner=planner,
     )
 
 
@@ -142,10 +145,12 @@ def async_save_model_and_optim_state(
     """
     dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
     state_dict = _prepare_state_dict(model, optim=optim, process_group=process_group)
+    planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
     return dist_cp.state_dict_saver.async_save(
         state_dict,
         storage_writer=RemoteFileSystemWriter(dir),
         process_group=process_group,
+        planner=planner,
     )
 
 
@@ -157,6 +162,7 @@ def load_model_and_optim_state(
     *,
     process_group: Optional[dist.ProcessGroup] = None,
     key_mapping: Optional[Dict[str, str]] = None,
+    pre_download: bool = False,
 ):
     """
     Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
@@ -195,7 +201,7 @@ def load_model_and_optim_state(
     """
     dir = normalize_path(dir)
     state_dict = _prepare_state_dict(model, optim, process_group=process_group)
-    reader = RemoteFileSystemReader(dir)
+    reader = RemoteFileSystemReader(dir, pre_download=pre_download)
 
     if key_mapping is not None:
         metadata = reader.read_metadata()
@@ -264,6 +270,7 @@ def unshard_checkpoint(
     optim: Optional[bool] = None,
     save_overwrite: bool = False,
     use_safetensors: bool = False,
+    pre_download: bool = False,
 ) -> Tuple[Path, Optional[Path]]:
     """
     Convert a checkpoint saved via :func:`save_model_and_optim_state()` into unsharded
@@ -331,7 +338,7 @@ def unshard_checkpoint(
     model_sd: Dict[str, Any] = {}
     _load_state_dict(
         model_sd,
-        storage_reader=RemoteFileSystemReader(dir),
+        storage_reader=RemoteFileSystemReader(dir, pre_download=pre_download),
         planner=_EmptyStateDictLoadPlanner(keys=["model"]),
         no_dist=True,
     )
@@ -345,7 +352,7 @@ def unshard_checkpoint(
         optim_sd: Dict[str, Any] = {}
         _load_state_dict(
             optim_sd,
-            storage_reader=RemoteFileSystemReader(dir),
+            storage_reader=RemoteFileSystemReader(dir, pre_download=pre_download),
             planner=_EmptyStateDictLoadPlanner(keys=["optim"]),
             no_dist=True,
         )
