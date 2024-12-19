@@ -26,7 +26,6 @@ from ..distributed.utils import barrier, get_fs_local_rank, get_rank, is_distrib
 from ..exceptions import OLMoConfigurationError
 from ..io import (
     clear_directory,
-    copy_dir,
     dir_is_empty,
     file_exists,
     is_url,
