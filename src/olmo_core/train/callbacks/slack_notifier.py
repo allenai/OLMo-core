@@ -83,7 +83,10 @@ class SlackNotifierCallback(Callback):
             SlackNotificationSetting.all,
             SlackNotificationSetting.end_only,
         ):
-            self._post_message("completed successfully")
+            if self.trainer.is_canceled:
+                self._post_message("canceled")
+            else:
+                self._post_message("completed successfully")
 
     def on_error(self, exc: BaseException):
         if not self.enabled or get_rank() != 0:
