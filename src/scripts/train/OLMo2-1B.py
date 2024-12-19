@@ -77,7 +77,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             ),
         )
         .with_callback(
-            "downstream",
+            "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
                 tasks=[
                     "arc_challenge_val_rc_5shot",
@@ -114,8 +114,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                     "mmlu_other_val_mc_5shot",
                 ],
                 tokenizer=common.tokenizer,
-                eval_batch_size=16 * 4096,
-                eval_interval=1,
+                eval_batch_size=1024 * 4096,
+                eval_interval=1000,
             ),
         )
     )
