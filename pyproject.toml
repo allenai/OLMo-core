@@ -15,7 +15,7 @@ license = { file = "LICENSE" }
 dependencies = [
     "numpy<2.0",
     "torch>=2.5.1",
-    "cached-path",
+    "cached-path@git+https://github.com/allenai/cached_path@shanea/cache-gs-client",
     "requests",
     "packaging",
     "rich",
