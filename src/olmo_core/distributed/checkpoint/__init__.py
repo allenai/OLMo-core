@@ -163,6 +163,7 @@ def load_model_and_optim_state(
     process_group: Optional[dist.ProcessGroup] = None,
     key_mapping: Optional[Dict[str, str]] = None,
     pre_download: bool = False,
+    work_dir: Optional[PathOrStr] = None,
 ):
     """
     Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
@@ -198,10 +199,12 @@ def load_model_and_optim_state(
     :param process_group: The process group to use for distributed collectives.
     :param key_mapping: Can be used to load a checkpoint where certain parameter have different names.
         This dictionary should map current keys to keys in the checkpoint to be loaded.
+    :param pre_download: Download and cache relevant remote checkpoint files before trying to read from them.
+    :param work_dir: A working directory for caching files/directories.
     """
     dir = normalize_path(dir)
     state_dict = _prepare_state_dict(model, optim, process_group=process_group)
-    reader = RemoteFileSystemReader(dir, pre_download=pre_download)
+    reader = RemoteFileSystemReader(dir, pre_download=pre_download, work_dir=work_dir)
 
     if key_mapping is not None:
         metadata = reader.read_metadata()
@@ -271,6 +274,7 @@ def unshard_checkpoint(
     save_overwrite: bool = False,
     use_safetensors: bool = False,
     pre_download: bool = False,
+    work_dir: Optional[PathOrStr] = None,
 ) -> Tuple[Path, Optional[Path]]:
     """
     Convert a checkpoint saved via :func:`save_model_and_optim_state()` into unsharded
@@ -293,6 +297,8 @@ def unshard_checkpoint(
     :param save_overwrite: Overwrite any existing files in ``target_dir``.
     :param use_safetensors: Save the unsharded files with :func:`safetensors.torch.save_file()` instead
         of :func:`torch.save()`.
+    :param pre_download: Download and cache relevant remote checkpoint files before trying to read from them.
+    :param work_dir: A working directory for caching files/directories.
 
     :return: The path to the unsharded model checkpoint and the path to the unsharded
         optimizer checkpoint if ``optim=True``.
@@ -338,7 +344,7 @@ def unshard_checkpoint(
     model_sd: Dict[str, Any] = {}
     _load_state_dict(
         model_sd,
-        storage_reader=RemoteFileSystemReader(dir, pre_download=pre_download),
+        storage_reader=RemoteFileSystemReader(dir, pre_download=pre_download, work_dir=work_dir),
         planner=_EmptyStateDictLoadPlanner(keys=["model"]),
         no_dist=True,
     )
@@ -352,7 +358,9 @@ def unshard_checkpoint(
         optim_sd: Dict[str, Any] = {}
         _load_state_dict(
             optim_sd,
-            storage_reader=RemoteFileSystemReader(dir, pre_download=pre_download),
+            storage_reader=RemoteFileSystemReader(
+                dir, pre_download=pre_download, work_dir=work_dir
+            ),
             planner=_EmptyStateDictLoadPlanner(keys=["optim"]),
             no_dist=True,
         )

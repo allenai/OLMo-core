@@ -178,6 +178,7 @@ class Checkpointer:
             process_group=self.process_group,
             key_mapping=key_mapping,
             pre_download=is_url(dir) and self.pre_download,
+            work_dir=self.work_dir,
         )
 
         return trainer_state
