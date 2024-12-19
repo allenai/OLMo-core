@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added support for tensor parallelism. See the `TransformerConfig` class for usage.
+- Added more downstream tasks from the model ladder.
 - Added `io.copy_dir()` function.
 - Added new LR schedulers: `LinearWithWarmup`, `InvSqrtWithWarmup`, `ConstantWithWarmup`, `SequentialScheduler`.
 - Added option to pre-download checkpoint files from remote storage before trying to load a checkpoint.
