@@ -12,13 +12,13 @@ from olmo_core.train.checkpoint import Checkpointer
 from ..distributed.utils import run_distributed_test
 
 
-def run_checkpointer(base_dir, model_factory):
+def run_checkpointer(base_dir, work_dir, model_factory):
     dir = f"{normalize_path(base_dir)}/{Checkpointer.checkpoint_dirname(10)}"
 
     if not is_url(dir):
         os.environ["OLMO_SHARED_FS"] = "1"
 
-    checkpointer = Checkpointer()
+    checkpointer = Checkpointer(work_dir=work_dir)
     model = model_factory()
     optim = torch.optim.AdamW(model.parameters())
 
@@ -40,10 +40,14 @@ def run_checkpointer(base_dir, model_factory):
 
 
 def test_checkpointer_with_local_dir(tmp_path, tiny_model_factory):
-    run_distributed_test(run_checkpointer, func_args=(tmp_path, tiny_model_factory))
+    run_distributed_test(
+        run_checkpointer,
+        func_args=(tmp_path / "checkpoint", tmp_path / "work_dir", tiny_model_factory),
+        start_method="spawn",
+    )
 
 
-def test_checkpointer_with_remote_dir(s3_checkpoint_dir, tiny_model_factory):
+def test_checkpointer_with_remote_dir(s3_checkpoint_dir, tmp_path, tiny_model_factory):
     from botocore.exceptions import NoCredentialsError
 
     try:
@@ -52,17 +56,19 @@ def test_checkpointer_with_remote_dir(s3_checkpoint_dir, tiny_model_factory):
         pytest.skip("Requires AWS credentials")
 
     run_distributed_test(
-        run_checkpointer, func_args=(s3_checkpoint_dir, tiny_model_factory), start_method="spawn"
+        run_checkpointer,
+        func_args=(s3_checkpoint_dir, tmp_path / "work_dir", tiny_model_factory),
+        start_method="spawn",
     )
 
 
-def run_async_checkpointer(dir, model_factory):
+def run_async_checkpointer(dir, work_dir, model_factory):
     dir = normalize_path(dir)
 
     if not is_url(dir):
         os.environ["OLMO_SHARED_FS"] = "1"
 
-    checkpointer = Checkpointer(process_group=dist.new_group())
+    checkpointer = Checkpointer(work_dir=work_dir, process_group=dist.new_group())
     model = model_factory()
     optim = torch.optim.AdamW(model.parameters())
 
@@ -84,10 +90,14 @@ def run_async_checkpointer(dir, model_factory):
 
 
 def test_async_checkpointer_with_local_dir(tmp_path, tiny_model_factory):
-    run_distributed_test(run_async_checkpointer, func_args=(tmp_path, tiny_model_factory))
+    run_distributed_test(
+        run_async_checkpointer,
+        func_args=(tmp_path / "checkpoint", tmp_path / "work_dir", tiny_model_factory),
+        start_method="spawn",
+    )
 
 
-def test_async_checkpointer_with_remote_dir(s3_checkpoint_dir, tiny_model_factory):
+def test_async_checkpointer_with_remote_dir(s3_checkpoint_dir, tmp_path, tiny_model_factory):
     from botocore.exceptions import NoCredentialsError
 
     try:
@@ -97,6 +107,6 @@ def test_async_checkpointer_with_remote_dir(s3_checkpoint_dir, tiny_model_factor
 
     run_distributed_test(
         run_async_checkpointer,
-        func_args=(s3_checkpoint_dir, tiny_model_factory),
+        func_args=(s3_checkpoint_dir, tmp_path / "work_dir", tiny_model_factory),
         start_method="spawn",
     )
