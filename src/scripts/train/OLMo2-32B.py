@@ -30,15 +30,15 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         compile=compile,
         fused_ops=False,
         use_flash=not compile,
-        # dp_config=TransformerDataParallelConfig(
-        #     name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
-        # ),
         dp_config=TransformerDataParallelConfig(
-           name=DataParallelType.hsdp,
-           param_dtype=DType.bfloat16,
-           reduce_dtype=DType.float32,
-           num_replicas=64 // 2, #common.launch.num_nodes // 2,
+            name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
+        # dp_config=TransformerDataParallelConfig(
+        #    name=DataParallelType.hsdp,
+        #    param_dtype=DType.bfloat16,
+        #    reduce_dtype=DType.float32,
+        #    num_replicas=64 // 2, #common.launch.num_nodes // 2,
+        # ),
         #ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
         ac_config=TransformerActivationCheckpointingConfig(
            mode=TransformerActivationCheckpointingMode.selected_modules,
