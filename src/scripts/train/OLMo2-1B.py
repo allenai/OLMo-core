@@ -116,7 +116,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 tokenizer=common.tokenizer,
                 eval_batch_size=16 * 4096,
                 eval_interval=1,
-            )
+            ),
         )
     )
 
