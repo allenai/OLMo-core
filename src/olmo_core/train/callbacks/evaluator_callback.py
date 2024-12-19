@@ -184,8 +184,8 @@ class DownstreamEvaluator(Evaluator):
         "pmi_dc": "PMI-DC accuracy",
         "ce_loss": "CE loss",
         "bpb": "BPB",
-        "soft": "soft score",
-        "soft_log": "log soft score",
+        "soft": "soft loss",
+        "soft_log": "log soft loss",
     }
 
     def __init__(
@@ -266,11 +266,12 @@ class DownstreamEvaluator(Evaluator):
         self.metric.update(batch, logits)
 
     def compute_metrics(self) -> Dict[str, torch.Tensor]:
-        metrics: Dict[str, torch.Tensor] = {}
-        for name, value in self.metric.compute().items():
-            label = f"{self.label} ({self.metric_type_to_label[name]})"
-            metrics[label] = value
-        return metrics
+        metric_type_to_value = self.metric.compute()
+        outputs = {}
+        for metric_type, value in metric_type_to_value.items():
+            key = f"{self.label} ({self.metric_type_to_label[metric_type]})"
+            outputs[key] = value.item()
+        return outputs
 
     def reset_metrics(self) -> None:
         self.metric.reset()
