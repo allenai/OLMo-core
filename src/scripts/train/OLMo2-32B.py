@@ -18,6 +18,7 @@ from olmo_core.optim import AdamWConfig, OptimGroupOverride
 from olmo_core.train import TrainerConfig, Duration, DurationUnit
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback, \
     DownstreamEvaluatorCallbackConfig
+from olmo_core.train.checkpoint import CheckpointerConfig
 
 log = logging.getLogger(__name__)
 
@@ -29,15 +30,15 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         compile=compile,
         fused_ops=False,
         use_flash=not compile,
+        # dp_config=TransformerDataParallelConfig(
+        #     name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
+        # ),
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
+           name=DataParallelType.hsdp,
+           param_dtype=DType.bfloat16,
+           reduce_dtype=DType.float32,
+           num_replicas=64 // 2, #common.launch.num_nodes // 2,
         ),
-        #dp_config=TransformerDataParallelConfig(
-        #    name=DataParallelType.hsdp,
-        #    param_dtype=DType.bfloat16,
-        #    reduce_dtype=DType.float32,
-        #    num_replicas=128, #common.launch.num_nodes,
-        #),
         #ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
         ac_config=TransformerActivationCheckpointingConfig(
            mode=TransformerActivationCheckpointingMode.selected_modules,
@@ -69,6 +70,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/{project_name}/",
             rank_microbatch_size=2 * 4096,
+            checkpointer=CheckpointerConfig(pre_download=True),
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=10,
