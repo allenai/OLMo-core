@@ -104,8 +104,14 @@ class SlackNotifierCallback(Callback):
         if webhook_url is None:
             raise OLMoEnvironmentError(f"missing env var '{SLACK_WEBHOOK_URL_ENV_VAR}'")
 
+        progress = (
+            f"**Progress:**\n"
+            f"- step: {self.step:,d}\n"
+            f"- epoch: {self.trainer.epoch}\n"
+            f"- tokens: {self.trainer.global_train_tokens_seen:,d}"
+        )
         if self.name is not None:
-            msg = f"Run `{self.name}` {msg}"
+            msg = f"Run `{self.name}` {msg}\n{progress}"
         else:
-            msg = f"Run {msg}"
+            msg = f"Run {msg}\n{progress}"
         requests.post(webhook_url, json={"text": msg})
