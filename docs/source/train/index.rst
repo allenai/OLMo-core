@@ -9,5 +9,4 @@
    :caption: Submodules
 
    callbacks
-   checkpoint
    train_module

@@ -35,6 +35,7 @@ import torch.distributed as dist
 import torch.distributed.checkpoint as dist_cp
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
+from torch.distributed.checkpoint.default_planner import DefaultSavePlanner
 from torch.distributed.checkpoint.metadata import Metadata
 
 from olmo_core.aliases import PathOrStr
@@ -62,6 +63,7 @@ log = logging.getLogger(__name__)
 def save_state_dict(
     dir: PathOrStr,
     state_dict: Dict[str, Any],
+    *,
     process_group: Optional[dist.ProcessGroup] = None,
     save_overwrite: bool = False,
 ):
@@ -79,10 +81,12 @@ def save_state_dict(
     :param save_overwrite: Overwrite existing files.
     """
     dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
+    planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
     dist_cp.state_dict_saver.save(
         state_dict,
         storage_writer=RemoteFileSystemWriter(dir),
         process_group=process_group,
+        planner=planner,
     )
 
 
@@ -90,6 +94,7 @@ def save_state_dict(
 def async_save_state_dict(
     dir: PathOrStr,
     state_dict: Dict[str, Any],
+    *,
     process_group: Optional[dist.ProcessGroup] = None,
     save_overwrite: bool = False,
 ) -> Future[None]:
@@ -99,10 +104,12 @@ def async_save_state_dict(
     This code first de-stages the state dict on the CPU, then writes it in a separate thread.
     """
     dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
+    planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
     return dist_cp.state_dict_saver.async_save(
         state_dict,
         storage_writer=RemoteFileSystemWriter(dir),
         process_group=process_group,
+        planner=planner,
     )
 
 
@@ -110,7 +117,10 @@ def async_save_state_dict(
 def load_state_dict(
     dir: PathOrStr,
     state_dict: Dict[str, Any],
+    *,
     process_group: Optional[dist.ProcessGroup] = None,
+    pre_download: bool = False,
+    work_dir: Optional[PathOrStr] = None,
 ):
     """
     Load an arbitrary state dict in-place from a checkpoint saved with :func:`save_state_dict()`.
@@ -120,7 +130,7 @@ def load_state_dict(
     :param process_group: The process group to use for distributed collectives.
     """
     dir = normalize_path(dir)
-    reader = RemoteFileSystemReader(dir)
+    reader = RemoteFileSystemReader(dir, pre_download=pre_download, work_dir=work_dir)
     dist_cp.load(
         state_dict,
         checkpoint_id=dir,
@@ -173,10 +183,12 @@ def save_model_and_optim_state(
         process_group=process_group,
         flatten_optimizer_state=flatten_optimizer_state,
     )
+    planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
     dist_cp.state_dict_saver.save(
         state_dict,
         storage_writer=RemoteFileSystemWriter(dir),
         process_group=process_group,
+        planner=planner,
     )
 
 
@@ -202,10 +214,12 @@ def async_save_model_and_optim_state(
         process_group=process_group,
         flatten_optimizer_state=flatten_optimizer_state,
     )
+    planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
     return dist_cp.state_dict_saver.async_save(
         state_dict,
         storage_writer=RemoteFileSystemWriter(dir),
         process_group=process_group,
+        planner=planner,
     )
 
 
@@ -217,6 +231,8 @@ def load_model_and_optim_state(
     *,
     process_group: Optional[dist.ProcessGroup] = None,
     key_mapping: Optional[Dict[str, str]] = None,
+    pre_download: bool = False,
+    work_dir: Optional[PathOrStr] = None,
     strict: bool = True,
     flatten_optimizer_state: bool = False,
 ):
@@ -254,6 +270,8 @@ def load_model_and_optim_state(
     :param process_group: The process group to use for distributed collectives.
     :param key_mapping: Can be used to load a checkpoint where certain parameter have different names.
         This dictionary should map current keys to keys in the checkpoint to be loaded.
+    :param pre_download: Download and cache relevant remote checkpoint files before trying to read from them.
+    :param work_dir: A working directory for caching files/directories.
     :param strict: Load keys strictly.
     :param flatten_optimizer_state: Flatten the optimizer state when loading. This should match
         the setting used when saving the state dict and is needed in a distributed setting when
@@ -263,7 +281,7 @@ def load_model_and_optim_state(
     state_dict = _prepare_state_dict(
         model, optim, process_group=process_group, flatten_optimizer_state=flatten_optimizer_state
     )
-    reader = RemoteFileSystemReader(dir)
+    reader = RemoteFileSystemReader(dir, pre_download=pre_download, work_dir=work_dir)
 
     if key_mapping is not None:
         metadata = reader.read_metadata()
@@ -337,6 +355,8 @@ def unshard_checkpoint(
     optim: Optional[bool] = None,
     save_overwrite: bool = False,
     use_safetensors: bool = False,
+    pre_download: bool = False,
+    work_dir: Optional[PathOrStr] = None,
 ) -> Tuple[Path, Optional[Path]]:
     """
     Convert a checkpoint saved via :func:`save_model_and_optim_state()` into unsharded
@@ -359,6 +379,8 @@ def unshard_checkpoint(
     :param save_overwrite: Overwrite any existing files in ``target_dir``.
     :param use_safetensors: Save the unsharded files with :func:`safetensors.torch.save_file()` instead
         of :func:`torch.save()`.
+    :param pre_download: Download and cache relevant remote checkpoint files before trying to read from them.
+    :param work_dir: A working directory for caching files/directories.
 
     :return: The path to the unsharded model checkpoint and the path to the unsharded
         optimizer checkpoint if ``optim=True``.
@@ -404,7 +426,7 @@ def unshard_checkpoint(
     model_sd: Dict[str, Any] = {}
     _load_state_dict(
         model_sd,
-        storage_reader=RemoteFileSystemReader(dir),
+        storage_reader=RemoteFileSystemReader(dir, pre_download=pre_download, work_dir=work_dir),
         planner=_EmptyStateDictLoadPlanner(keys=["model"]),
         no_dist=True,
     )
@@ -418,7 +440,9 @@ def unshard_checkpoint(
         optim_sd: Dict[str, Any] = {}
         _load_state_dict(
             optim_sd,
-            storage_reader=RemoteFileSystemReader(dir),
+            storage_reader=RemoteFileSystemReader(
+                dir, pre_download=pre_download, work_dir=work_dir
+            ),
             planner=_EmptyStateDictLoadPlanner(keys=["optim"]),
             no_dist=True,
         )
