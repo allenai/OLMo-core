@@ -105,7 +105,7 @@ class SlackNotifierCallback(Callback):
             raise OLMoEnvironmentError(f"missing env var '{SLACK_WEBHOOK_URL_ENV_VAR}'")
 
         progress = (
-            f"**Progress:**\n"
+            f"*Progress:*\n"
             f"- step: {self.step:,d}\n"
             f"- epoch: {self.trainer.epoch}\n"
             f"- tokens: {self.trainer.global_train_tokens_seen:,d}"
