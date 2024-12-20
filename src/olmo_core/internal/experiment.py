@@ -32,6 +32,7 @@ from olmo_core.train.callbacks import (
     GPUMemoryMonitorCallback,
     LMEvaluatorCallbackConfig,
     ProfilerCallback,
+    SlackNotifierCallback,
     WandBCallback,
 )
 from olmo_core.train.train_module import TransformerTrainModuleConfig
@@ -171,6 +172,7 @@ def build_common_components(
             tokenizer=tokenizer_config,
             eval_interval=1000,
         ),
+        "slack_notifier": SlackNotifierCallback(name=run_name, enabled=False),
     }
 
     return CommonComponents(

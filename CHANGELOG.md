@@ -18,6 +18,7 @@ This major release introduces a few breaking changes. As such, we've provided an
 - Added `io.copy_dir()` function.
 - Added new LR schedulers: `LinearWithWarmup`, `InvSqrtWithWarmup`, `ConstantWithWarmup`, `SequentialScheduler`.
 - Added option to pre-download checkpoint files from remote storage before trying to load a checkpoint.
+- Added a callback for sending Slack notifications.
 
 ### Changed
 

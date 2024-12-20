@@ -16,6 +16,7 @@ from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
 from .profiler import ProfilerCallback
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
+from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
 from .wandb import WandBCallback
 
@@ -34,6 +35,8 @@ __all__ = [
     "GarbageCollectorCallback",
     "GPUMemoryMonitorCallback",
     "ProfilerCallback",
+    "SlackNotifierCallback",
+    "SlackNotificationSetting",
     "SequenceLengthSchedulerCallback",
     "SpeedMonitorCallback",
     "WandBCallback",
