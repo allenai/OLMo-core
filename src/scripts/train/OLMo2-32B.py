@@ -34,20 +34,20 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         compile=compile,
         fused_ops=False,
         use_flash=not compile,
-        # dp_config=TransformerDataParallelConfig(
-        #     name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
-        # ),
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.hsdp,
-            param_dtype=DType.bfloat16,
-            reduce_dtype=DType.float32,
-            num_replicas=64 // 2,  # common.launch.num_nodes // 2,
+            name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
-        ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
-        # ac_config=TransformerActivationCheckpointingConfig(
-        #     mode=TransformerActivationCheckpointingMode.selected_modules,
-        #     modules=[f"blocks.{i}.feed_forward" for i in range(64)],
+        # dp_config=TransformerDataParallelConfig(
+        #     name=DataParallelType.hsdp,
+        #     param_dtype=DType.bfloat16,
+        #     reduce_dtype=DType.float32,
+        #     num_replicas=64 // 2,  # common.launch.num_nodes // 2,
         # ),
+        # ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.selected_modules,
+            modules=[f"blocks.{i}.feed_forward" for i in range(64)],
+        ),
         float8_config=Float8Config(compile=compile, enabled=False),
     )
 
@@ -70,7 +70,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/{project_name}/",
-            rank_microbatch_size=1 * 4096,
+            rank_microbatch_size=2 * 4096,
             checkpointer=CheckpointerConfig(pre_download=True, thread_count=1),
             save_overwrite=True,
             metrics_collect_interval=10,
