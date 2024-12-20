@@ -21,6 +21,7 @@ from .moe_handler import MoEHandlerCallback
 from .profiler import ProfilerCallback
 from .scheduler import SchedulerCallback
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
+from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
 from .wandb import WandBCallback
 
@@ -43,6 +44,8 @@ __all__ = [
     "GradClipperCallback",
     "MatrixNormalizerCallback",
     "ProfilerCallback",
+    "SlackNotifierCallback",
+    "SlackNotificationSetting",
     "SchedulerCallback",
     "SequenceLengthSchedulerCallback",
     "SpeedMonitorCallback",
