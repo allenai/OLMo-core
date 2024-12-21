@@ -40,7 +40,7 @@ class GPUMemoryMonitorCallback(Callback):
         torch.cuda.empty_cache()
         log.info(
             f"GPU capacity: {self.device_name} with {self._to_gib(self.device_capacity):.2f}GiB memory "
-            f"of which {self._to_gib(torch.cuda.memory_allocated()):.2f}GiB is currently allocated and"
+            f"of which {self._to_gib(torch.cuda.memory_allocated()):.2f}GiB is currently allocated and "
             f"{self._to_gib(torch.cuda.memory_reserved()):.2f}GiB is currently reserved."
         )
 
