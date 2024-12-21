@@ -43,12 +43,11 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         #     reduce_dtype=DType.float32,
         #     num_replicas=64 // 16,  # common.launch.num_nodes // 2,
         # ),
-        ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.selected_ops),
         # ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
-        # ac_config=TransformerActivationCheckpointingConfig(
-        #     mode=TransformerActivationCheckpointingMode.selected_modules,
-        #     modules=[f"blocks.{i}.feed_forward" for i in range(64)],
-        # ),
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.selected_modules,
+            modules=[f"blocks.{i}.feed_forward" for i in range(64)],
+        ),
         float8_config=Float8Config(compile=compile, enabled=False),
     )
 
