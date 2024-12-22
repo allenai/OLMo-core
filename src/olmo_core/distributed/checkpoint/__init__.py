@@ -63,6 +63,7 @@ def save_state_dict(
     state_dict: Dict[str, Any],
     process_group: Optional[dist.ProcessGroup] = None,
     save_overwrite: bool = False,
+    thread_count: Optional[int] = None,
 ):
     """
     Save an arbitrary state dictionary to a distributed format that can loaded again with
@@ -80,7 +81,7 @@ def save_state_dict(
     dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
     dist_cp.state_dict_saver.save(
         state_dict,
-        storage_writer=RemoteFileSystemWriter(dir),
+        storage_writer=RemoteFileSystemWriter(dir, thread_count=thread_count),
         process_group=process_group,
     )
 
@@ -93,6 +94,7 @@ def save_model_and_optim_state(
     *,
     process_group: Optional[dist.ProcessGroup] = None,
     save_overwrite: bool = False,
+    thread_count: Optional[int] = None,
 ) -> None:
     """
     Save model and optimizer state dictionaries. The model state can be a sharded model, in which
@@ -123,7 +125,7 @@ def save_model_and_optim_state(
     planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
     dist_cp.state_dict_saver.save(
         state_dict,
-        storage_writer=RemoteFileSystemWriter(dir),
+        storage_writer=RemoteFileSystemWriter(dir, thread_count=thread_count),
         process_group=process_group,
         planner=planner,
     )
@@ -137,6 +139,7 @@ def async_save_model_and_optim_state(
     *,
     process_group: Optional[dist.ProcessGroup] = None,
     save_overwrite: bool = False,
+    thread_count: Optional[int] = None,
 ) -> Future[None]:
     """
     An async version of :func:`save_model_and_optim_state()`.
@@ -148,7 +151,7 @@ def async_save_model_and_optim_state(
     planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
     return dist_cp.state_dict_saver.async_save(
         state_dict,
-        storage_writer=RemoteFileSystemWriter(dir),
+        storage_writer=RemoteFileSystemWriter(dir, thread_count=thread_count),
         process_group=process_group,
         planner=planner,
     )
