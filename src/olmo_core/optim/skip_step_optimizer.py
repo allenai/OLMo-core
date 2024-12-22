@@ -97,11 +97,13 @@ class SkipStepOptimizer(Optimizer):
         loss_std, loss_mean = torch.std_mean(torch.stack(self._losses[:-1]))
         if self._grad_norms:
             grad_norm_std, grad_norm_mean = torch.std_mean(torch.stack(self._grad_norms[:-1]))
-            return ((self.latest_loss - loss_mean) <= self.sigma_factor * loss_std) and (
+            step_factor = ((self.latest_loss - loss_mean) <= self.sigma_factor * loss_std) and (
                 (self.latest_grad_norm - grad_norm_mean) <= self.sigma_factor * grad_norm_std
             )
         else:
-            return (self.latest_loss - loss_mean) <= self.sigma_factor * loss_std
+            step_factor = (self.latest_loss - loss_mean) <= self.sigma_factor * loss_std
+
+        return step_factor.float()
 
     @property
     def step_skipped(self) -> torch.Tensor:
