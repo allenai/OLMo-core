@@ -63,6 +63,7 @@ def build_optim_config(common: CommonComponents) -> SkipStepAdamWConfig:
         ],
         fused=True,
         rolling_interval_length=10,
+        sigma_factor=2,
     )
 
 
