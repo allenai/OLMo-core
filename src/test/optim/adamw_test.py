@@ -1,9 +1,10 @@
+from test.utils import DEVICES
+
 import pytest
 import torch
 import torch.nn as nn
 
 from olmo_core.optim import AdamWConfig, OptimGroupOverride, SkipStepAdamWConfig
-from test.utils import DEVICES
 
 
 class MyModel(nn.Module):
