@@ -1,4 +1,4 @@
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Union
 
 import torch
 from torch.optim.optimizer import Optimizer
@@ -94,16 +94,17 @@ class SkipStepOptimizer(Optimizer):
         if len(self._losses) < max(2, self.rolling_interval_length // 2):
             return torch.tensor(1.0).to(device=self.device, non_blocking=True)
 
-        losses_interval = torch.stack(self._losses[:-1])
-        loss_std, loss_mean = _std_mean(losses_interval)
+        loss_std, loss_mean = torch.std_mean(torch.stack(self._losses[:-1]))
         if self._grad_norms:
-            grad_norms_interval = torch.stack(self._grad_norms[:-1])
-            grad_norm_std, grad_norm_mean = _std_mean(grad_norms_interval)
-            return ((self.latest_loss - loss_mean) <= self.sigma_factor * loss_std) and (
-                (self.latest_grad_norm - grad_norm_mean) <= self.sigma_factor * grad_norm_std
+            grad_norm_std, grad_norm_mean = torch.std_mean(torch.stack(self._grad_norms[:-1]))
+            step_factor = torch.logical_and(
+                (self.latest_loss - loss_mean) <= self.sigma_factor * loss_std,
+                (self.latest_grad_norm - grad_norm_mean) <= self.sigma_factor * grad_norm_std,
             )
         else:
-            return (self.latest_loss - loss_mean) <= self.sigma_factor * loss_std
+            step_factor = (self.latest_loss - loss_mean) <= self.sigma_factor * loss_std
+
+        return step_factor.float()
 
     @property
     def step_skipped(self) -> torch.Tensor:
@@ -111,10 +112,3 @@ class SkipStepOptimizer(Optimizer):
         Returns a float tensor which will be `1.0` if the step was skipped and `0.0` otherwise.
         """
         return 1 - self.get_step_factor()
-
-
-def _std_mean(inp: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-    mean = inp.mean()
-    sum_squared_error = ((inp - mean).pow(2)).sum()
-    variance = sum_squared_error / (inp.numel() - torch.tensor(1.0).to(device=inp.device))
-    return variance.sqrt(), mean
