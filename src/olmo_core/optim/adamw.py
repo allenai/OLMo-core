@@ -84,7 +84,6 @@ class AdamW(Optimizer):
                     state["step"] = torch.tensor(0.0, dtype=torch.float32, device=p.device)
                     state["exp_avg"] = torch.zeros_like(p)
                     state["exp_avg_sq"] = torch.zeros_like(p)
-                    state["step_factor"] = torch.tensor(1.0, device=p.device)
 
                 adamw_step(
                     p,
@@ -95,7 +94,7 @@ class AdamW(Optimizer):
                     exp_avg=state["exp_avg"],
                     exp_avg_sq=state["exp_avg_sq"],
                     step=state["step"],
-                    step_factor=state["step_factor"],
+                    step_factor=torch.tensor(1.0, device=p.device),
                 )
 
 
@@ -118,15 +117,7 @@ class SkipStepAdamW(SkipStepOptimizer):
     ) -> None:
         assert lr > 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
-        defaults = dict(
-            lr=lr,
-            betas=betas,
-            eps=eps,
-            weight_decay=weight_decay,
-            foreach=foreach,
-            fused=fused,
-            step_factor=1.0,
-        )
+        defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay, foreach=foreach, fused=fused)
         super().__init__(
             params,
             defaults,
@@ -160,7 +151,6 @@ class SkipStepAdamW(SkipStepOptimizer):
                     state["step"] = torch.tensor(0.0, dtype=torch.float32, device=p.device)
                     state["exp_avg"] = torch.zeros_like(p)
                     state["exp_avg_sq"] = torch.zeros_like(p)
-                    state["step_factor"] = torch.tensor(1.0, device=p.device)
 
                 adamw_step(
                     p,
@@ -171,7 +161,7 @@ class SkipStepAdamW(SkipStepOptimizer):
                     exp_avg=state["exp_avg"],
                     exp_avg_sq=state["exp_avg_sq"],
                     step=state["step"],
-                    step_factor=state["step_factor"],
+                    step_factor=step_factor,
                 )
 
 
