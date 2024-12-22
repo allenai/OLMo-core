@@ -4,7 +4,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from olmo_core.optim import AdamWConfig, OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.optim import AdamW, AdamWConfig, OptimGroupOverride, SkipStepAdamWConfig
 
 
 class MyModel(nn.Module):
@@ -23,7 +23,7 @@ def test_adamw_config_to_optim():
     model = MyModel()
     optim = config.build(model)
 
-    assert isinstance(optim, torch.optim.AdamW)
+    assert isinstance(optim, AdamW)
     assert len(optim.param_groups) == 1
 
     assert config.merge(["lr=1e-1"]).lr == 0.1
@@ -36,7 +36,7 @@ def test_adamw_config_to_optim_with_group_overrides():
 
     model = MyModel()
     optim = config.build(model)
-    assert isinstance(optim, torch.optim.AdamW)
+    assert isinstance(optim, AdamW)
     assert len(optim.param_groups) == 2
     assert optim.param_groups[0]["weight_decay"] == 0.0
     assert len(optim.param_groups[0]["params"]) == 1
