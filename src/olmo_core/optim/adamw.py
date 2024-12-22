@@ -1,4 +1,3 @@
-import math
 from dataclasses import dataclass
 from typing import Optional, Tuple, Type
 
@@ -19,7 +18,7 @@ def adamw_step(
     weight_decay: float,
     exp_avg: torch.Tensor,
     exp_avg_sq: torch.Tensor,
-    step: int,
+    step: torch.Tensor,
     step_factor: torch.Tensor,
 ):
     if p.grad is None:
@@ -40,8 +39,7 @@ def adamw_step(
 
     step_size = lr / bias_correction1
 
-    bias_correction2_sqrt = math.sqrt(bias_correction2)
-    denom = (exp_avg_sq.sqrt() / bias_correction2_sqrt).add_(eps)
+    denom = (exp_avg_sq.sqrt() / bias_correction2.sqrt()).add_(eps)
 
     update = -step_size * torch.div(exp_avg, denom)
     update.mul_(step_factor)
