@@ -61,7 +61,8 @@ def build_optim_config(common: CommonComponents) -> SkipStepAdamWConfig:
         group_overrides=[
             OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
         ],
-        fused=True,
+        # fused=True,
+        compile=True,
     )
 
 
