@@ -38,7 +38,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            num_replicas=16 // 8,
+            num_replicas=16,
         ),
         ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
         float8_config=Float8Config(compile=compile, enabled=False),
