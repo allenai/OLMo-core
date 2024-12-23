@@ -63,7 +63,9 @@ class AdamW(Optimizer):
     ):
         assert lr > 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
-        defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay, foreach=foreach, fused=fused)
+        defaults = dict(
+            lr=lr, betas=betas, eps=eps, weight_decay=weight_decay, foreach=foreach, fused=fused
+        )
         super().__init__(params, defaults)
 
     @torch.no_grad()
@@ -115,7 +117,9 @@ class SkipStepAdamW(SkipStepOptimizer):
     ) -> None:
         assert lr > 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
-        defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay, foreach=foreach, fused=fused)
+        defaults = dict(
+            lr=lr, betas=betas, eps=eps, weight_decay=weight_decay, foreach=foreach, fused=fused
+        )
         super().__init__(
             params,
             defaults,
