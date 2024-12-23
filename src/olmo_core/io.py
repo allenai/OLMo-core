@@ -598,6 +598,7 @@ def _gcs_upload(source: Path, bucket_name: str, key: str, save_overwrite: bool =
                 f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
             )
 
+        blob.reload()
         assert blob.generation is not None
         generation = blob.generation
 
