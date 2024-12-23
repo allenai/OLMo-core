@@ -600,7 +600,9 @@ def _gcs_upload(source: Path, bucket_name: str, key: str, save_overwrite: bool =
                 f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
             )
 
-    blob.upload_from_filename(source, if_generation_match=generation, retry=_get_gcs_conditional_retry())
+    blob.upload_from_filename(
+        source, if_generation_match=generation, retry=_get_gcs_conditional_retry()
+    )
 
 
 @retriable()
