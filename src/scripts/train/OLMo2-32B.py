@@ -35,19 +35,12 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         fused_ops=False,
         use_flash=not compile,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
+            name=DataParallelType.hsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
+            num_replicas=16 // 8,
         ),
-        # dp_config=TransformerDataParallelConfig(
-        #     name=DataParallelType.hsdp,
-        #     param_dtype=DType.bfloat16,
-        #     reduce_dtype=DType.float32,
-        #     num_replicas=64 // 16,  # common.launch.num_nodes // 2,
-        # ),
-        # ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
-        ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=[f"blocks.{i}.feed_forward" for i in range(64)],
-        ),
+        ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
         float8_config=Float8Config(compile=compile, enabled=False),
     )
 
@@ -67,11 +60,11 @@ def build_optim_config(common: CommonComponents) -> SkipStepAdamWConfig:
 
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
-    project_name = "peteish32"
+    project_name = "peteish32-hybrid"
     return (
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/{project_name}/",
-            rank_microbatch_size=2 * 4096,
+            rank_microbatch_size=1 * 4096,
             checkpointer=CheckpointerConfig(save_thread_count=1, load_thread_count=32),
             save_overwrite=True,
             metrics_collect_interval=10,
@@ -94,7 +87,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             CometCallback(
                 name=common.run_name,
                 workspace="ai2",
-                project=project_name,
+                project="peteish32",
                 enabled=True,
                 cancel_check_interval=10,
             ),
@@ -104,7 +97,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=common.run_name,
                 entity="ai2-llm",
-                project=project_name,
+                project="peteish32",
                 enabled=False,
                 cancel_check_interval=10,
             ),
