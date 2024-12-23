@@ -2,6 +2,7 @@ import io
 import logging
 import os
 import pickle
+import random
 import re
 import shutil
 import time
@@ -591,14 +592,15 @@ def _gcs_upload(source: Path, bucket_name: str, key: str, save_overwrite: bool =
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(key)
 
-    generation: Optional[int] = None
+    generation: int = 0
     if blob.exists():
-        if save_overwrite:
-            generation = blob.generation
-        else:
+        if not save_overwrite:
             raise FileExistsError(
                 f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
             )
+
+        assert blob.generation is not None
+        generation = blob.generation
 
     blob.upload_from_filename(
         source, if_generation_match=generation, retry=_get_gcs_conditional_retry()
