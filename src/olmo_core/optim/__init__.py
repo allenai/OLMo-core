@@ -1,5 +1,5 @@
 from .adam import AdamConfig
-from .adamw import AdamWConfig
+from .adamw import AdamW, AdamWConfig, SkipStepAdamW, SkipStepAdamWConfig
 from .config import OptimConfig, OptimGroupOverride
 from .lion import Lion, LionConfig, SkipStepLion, SkipStepLionConfig
 from .scheduler import (
@@ -19,6 +19,9 @@ __all__ = [
     "SkipStepOptimizer",
     "AdamWConfig",
     "AdamConfig",
+    "AdamW",
+    "SkipStepAdamWConfig",
+    "SkipStepAdamW",
     "LionConfig",
     "Lion",
     "SkipStepLionConfig",
