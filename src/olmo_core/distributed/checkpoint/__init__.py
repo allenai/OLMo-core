@@ -261,16 +261,17 @@ def load_model_and_optim_state(
                     group["params"][idx] = current_key
                     break
 
-    dist_cp_sd.set_model_state_dict(
-        model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=True)
-    )
-    gc_cuda()
-
+    # optimizer first, because it needs more memory to load
     if optim is not None:
         dist_cp_sd.set_optimizer_state_dict(
             model, optim, state_dict["optim"], options=dist_cp_sd.StateDictOptions(strict=True)
         )
         gc_cuda()
+
+    dist_cp_sd.set_model_state_dict(
+        model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=True)
+    )
+    gc_cuda()
 
 
 def unshard_checkpoint(
