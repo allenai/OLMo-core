@@ -582,7 +582,7 @@ def _gcs_get_bytes_range(bucket_name: str, key: str, bytes_start: int, num_bytes
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(key)
     try:
-        blob.reload()
+        blob.reload(retry=_get_gcs_retry())
     except NotFound:
         raise FileNotFoundError(f"gs://{bucket_name}/{key}")
     return blob.download_as_bytes(
@@ -597,13 +597,13 @@ def _gcs_upload(source: Path, bucket_name: str, key: str, save_overwrite: bool =
     blob = bucket.blob(key)
 
     generation: int = 0
-    if blob.exists():
+    if blob.exists(retry=_get_gcs_retry()):
         if not save_overwrite:
             raise FileExistsError(
                 f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
             )
 
-        blob.reload()
+        blob.reload(retry=_get_gcs_retry())
         assert blob.generation is not None
         generation = blob.generation
 
