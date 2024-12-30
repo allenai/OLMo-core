@@ -47,6 +47,9 @@ def adamw_step(
     exp_avg_sq.add_(step_factor * p.grad * p.grad, alpha=1 - beta2)
     assert torch.isfinite(exp_avg_sq).all()
 
+    log.info("step: %s", step)
+    log.info("beta1: %s", beta1)
+    log.info("beta2: %s", beta2)
     bias_correction1 = 1 - beta1**step
     bias_correction2 = 1 - beta2**step
 
