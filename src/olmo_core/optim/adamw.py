@@ -28,24 +28,24 @@ def adamw_step(
     if p.grad is None:
         return
 
-    assert not torch.isnan(p).any()
-    assert not torch.isnan(p.grad).any()
-    assert not torch.isnan(exp_avg).any()
-    assert not torch.isnan(exp_avg_sq).any()
+    assert torch.isfinite(p).all()
+    assert torch.isfinite(p.grad).all()
+    assert torch.isfinite(exp_avg).all()
+    assert torch.isfinite(exp_avg_sq).all()
 
     beta1, beta2 = betas
 
     # Perform step weight decay.
     p.mul_(1 - step_factor * (lr * weight_decay))
-    assert not torch.isnan(p).any()
+    assert torch.isfinite(p).all()
 
     # Decay the first and second moment running average coefficient.
     exp_avg.lerp_(p.grad, step_factor * (1 - beta1))
-    assert not torch.isnan(exp_avg).any()
+    assert torch.isfinite(exp_avg).all()
     exp_avg_sq.mul_(1 - step_factor * (1 - beta2))
-    assert not torch.isnan(exp_avg_sq).any()
+    assert torch.isfinite(exp_avg_sq).all()
     exp_avg_sq.add_(step_factor * p.grad * p.grad, alpha=1 - beta2)
-    assert not torch.isnan(exp_avg_sq).any()
+    assert torch.isfinite(exp_avg_sq).all()
 
     bias_correction1 = 1 - beta1**step
     bias_correction2 = 1 - beta2**step
@@ -56,11 +56,11 @@ def adamw_step(
     log.info("AdamW denom: %s", denom)
 
     update = -step_size * torch.div(exp_avg, denom)
-    assert not torch.isnan(update).any()
+    assert torch.isfinite(update).all()
     update.mul_(step_factor)
-    assert not torch.isnan(update).any()
+    assert torch.isfinite(update).all()
     p.add_(update)
-    assert not torch.isnan(p).any()
+    assert torch.isfinite(p).all()
 
 
 class AdamW(Optimizer):
