@@ -52,8 +52,11 @@ def adamw_step(
 
     step_size = lr / bias_correction1
 
+    log.info("exp_avg_sq: %s", exp_avg_sq)
+    log.info("bias_correction2: %s", bias_correction2)
+    log.info("eps: %s", eps)
     denom = (exp_avg_sq.sqrt() / bias_correction2.sqrt()).add_(eps)
-    log.info("AdamW denom: %s", denom)
+    log.info("denom: %s", denom)
 
     update = -step_size * torch.div(exp_avg, denom)
     assert torch.isfinite(update).all()
