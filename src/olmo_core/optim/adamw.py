@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple, Type
 
@@ -7,6 +8,9 @@ from torch.optim.optimizer import Optimizer
 
 from .config import OptimConfig
 from .skip_step_optimizer import SkipStepOptimizer
+
+
+log = logging.getLogger(__name__)
 
 
 def adamw_step(
@@ -24,15 +28,24 @@ def adamw_step(
     if p.grad is None:
         return
 
+    assert not torch.isnan(p).any()
+    assert not torch.isnan(p.grad).any()
+    assert not torch.isnan(exp_avg).any()
+    assert not torch.isnan(exp_avg_sq).any()
+
     beta1, beta2 = betas
 
     # Perform step weight decay.
     p.mul_(1 - step_factor * (lr * weight_decay))
+    assert not torch.isnan(p).any()
 
     # Decay the first and second moment running average coefficient.
     exp_avg.lerp_(p.grad, step_factor * (1 - beta1))
+    assert not torch.isnan(exp_avg).any()
     exp_avg_sq.mul_(1 - step_factor * (1 - beta2))
+    assert not torch.isnan(exp_avg_sq).any()
     exp_avg_sq.add_(step_factor * p.grad * p.grad, alpha=1 - beta2)
+    assert not torch.isnan(exp_avg_sq).any()
 
     bias_correction1 = 1 - beta1**step
     bias_correction2 = 1 - beta2**step
@@ -40,10 +53,14 @@ def adamw_step(
     step_size = lr / bias_correction1
 
     denom = (exp_avg_sq.sqrt() / bias_correction2.sqrt()).add_(eps)
+    log.info("AdamW denom: %s", denom)
 
     update = -step_size * torch.div(exp_avg, denom)
+    assert not torch.isnan(update).any()
     update.mul_(step_factor)
+    assert not torch.isnan(update).any()
     p.add_(update)
+    assert not torch.isnan(p).any()
 
 
 class AdamW(Optimizer):
