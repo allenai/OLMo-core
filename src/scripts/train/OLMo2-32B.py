@@ -38,7 +38,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            num_replicas=2,
+            num_replicas=4,
         ),
         ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
         float8_config=Float8Config(compile=compile, enabled=False),
@@ -64,7 +64,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/{project_name}/",
-            rank_microbatch_size=1 * 4096,
+            rank_microbatch_size=2 * 4096,
             checkpointer=CheckpointerConfig(save_thread_count=1, load_thread_count=32),
             save_overwrite=True,
             metrics_collect_interval=10,
