@@ -102,7 +102,6 @@ class Checkpointer:
                 optim,
                 process_group=self.process_group,
                 save_overwrite=self.save_overwrite,
-                thread_count=self.thread_count,
             )
 
         self._save_metadata(dir, CheckpointMetadata())
@@ -132,7 +131,6 @@ class Checkpointer:
             optim,
             process_group=self.process_group,
             save_overwrite=self.save_overwrite,
-            thread_count=self.thread_count,
         )
 
         def done_callback(fut: Future):
