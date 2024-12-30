@@ -14,7 +14,7 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerDataParallelConfig,
 )
-from olmo_core.optim import SkipStepAdamWConfig, OptimGroupOverride
+from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, DurationUnit, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
