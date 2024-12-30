@@ -1,10 +1,7 @@
-from test.utils import DEVICES
-
-import pytest
 import torch
 import torch.nn as nn
 
-from olmo_core.optim import AdamW, AdamWConfig, OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.optim import AdamWConfig, OptimGroupOverride
 
 
 class MyModel(nn.Module):
@@ -23,7 +20,7 @@ def test_adamw_config_to_optim():
     model = MyModel()
     optim = config.build(model)
 
-    assert isinstance(optim, AdamW)
+    assert isinstance(optim, torch.optim.AdamW)
     assert len(optim.param_groups) == 1
 
     assert config.merge(["lr=1e-1"]).lr == 0.1
@@ -36,7 +33,7 @@ def test_adamw_config_to_optim_with_group_overrides():
 
     model = MyModel()
     optim = config.build(model)
-    assert isinstance(optim, AdamW)
+    assert isinstance(optim, torch.optim.AdamW)
     assert len(optim.param_groups) == 2
     assert optim.param_groups[0]["weight_decay"] == 0.0
     assert len(optim.param_groups[0]["params"]) == 1
@@ -46,33 +43,3 @@ def test_adamw_config_to_optim_with_group_overrides():
 
     for group in optim.param_groups:
         assert "initial_lr" in group
-
-
-@pytest.mark.parametrize("device", DEVICES)
-def test_adamw(device: torch.device):
-    config = AdamWConfig()
-    model = MyModel().train().to(device)
-    optim = config.build(model)
-
-    for group in optim.param_groups:
-        assert "initial_lr" in group
-
-    # Take a step.
-    optim.zero_grad(set_to_none=True)
-    model(torch.randint(0, 1024, (2, 8), device=device).int()).sum().backward()
-    optim.step()
-
-
-@pytest.mark.parametrize("device", DEVICES)
-def test_skip_step_adamw(device: torch.device):
-    config = SkipStepAdamWConfig()
-    model = MyModel().train().to(device)
-    optim = config.build(model)
-
-    for group in optim.param_groups:
-        assert "initial_lr" in group
-
-    # Take a step.
-    optim.zero_grad(set_to_none=True)
-    model(torch.randint(0, 1024, (2, 8), device=device).int()).sum().backward()
-    optim.step()

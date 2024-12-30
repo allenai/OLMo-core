@@ -91,7 +91,7 @@ class SkipStepOptimizer(Optimizer):
         The tensor can be used within the optimizer's step computation to essentially skip a step
         without a host-device sync.
         """
-        if len(self._losses) < max(2, self.rolling_interval_length // 2):
+        if len(self._losses) < max(20, self.rolling_interval_length // 2):
             return torch.tensor(1.0).to(device=self.device, non_blocking=True)
 
         loss_std, loss_mean = torch.std_mean(torch.stack(self._losses[:-1]))
