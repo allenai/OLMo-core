@@ -34,8 +34,8 @@ def adamw_step(
     exp_avg_sq.mul_(1 - step_factor * (1 - beta2))
     exp_avg_sq.add_(step_factor * p.grad * p.grad, alpha=1 - beta2)
 
-    bias_correction1 = 1 - beta1**step
-    bias_correction2 = 1 - beta2**step
+    bias_correction1 = 1 - beta1**(step + 1)
+    bias_correction2 = 1 - beta2**(step + 1)
 
     step_size = lr / bias_correction1
 
