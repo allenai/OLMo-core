@@ -95,8 +95,10 @@ class DataLoaderBase(ABC):
         self.collator = collator
         self.work_dir = work_dir
         self.global_batch_size = global_batch_size
+        assert dp_rank < dp_world_size
         self.dp_world_size = dp_world_size
         self.dp_rank = dp_rank
+
         self.fs_local_rank = fs_local_rank
 
         self.batches_processed = 0
