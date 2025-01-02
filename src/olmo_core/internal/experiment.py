@@ -156,7 +156,6 @@ def build_common_components(
 
     callbacks: Dict[str, Callback] = {
         "lr_scheduler": SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=2000)),
-        "gpu_monitor": GPUMemoryMonitorCallback(),
         "grad_clipper": GradClipperCallback(max_grad_norm=1.0),
         "config_saver": ConfigSaverCallback(),
         "profiler": ProfilerCallback(enabled=False),
@@ -174,6 +173,8 @@ def build_common_components(
         ),
         "slack_notifier": SlackNotifierCallback(name=run_name, enabled=False),
     }
+    if torch.cuda.is_available():
+        callbacks["gpu_monitor"] = GPUMemoryMonitorCallback()
 
     return CommonComponents(
         run_name=run_name,
