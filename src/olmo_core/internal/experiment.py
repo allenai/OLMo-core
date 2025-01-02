@@ -310,6 +310,7 @@ def main(
 [b magenta]launch:[/]      Launch the script on Beaker with the [b magenta]train[/] subcommand.
 [b magenta]train:[/]       Run the trainer. You usually shouldn't invoke the script with this subcommand directly.
              Instead use [b magenta]launch[/] or run it with torchrun.
+[b magenta]train_single:[/]       Run the trainer on a single device (GPU, CPU, MPS). num_nodes is ignored.
 [b magenta]prep:[/]        Prepare the dataset ahead of training to save GPU time.
 [b magenta]launch_prep:[/] Launch the script on Beaker with the [b magenta]prep[/] subcommand.
 [b magenta]dry_run:[/]     Pretty print the config and exit.
