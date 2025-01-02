@@ -124,6 +124,8 @@ def get_default_device() -> torch.device:
     """
     if torch.cuda.is_available() and torch.cuda.is_initialized():
         return torch.device("cuda")
+    elif torch.mps.is_available():
+        return torch.device("mps")
     else:
         return torch.device("cpu")
 
