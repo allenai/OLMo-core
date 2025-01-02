@@ -380,7 +380,10 @@ class Trainer:
         else:
             self._loss_fn = cross_entropy_loss
         if self.compile_loss:
-            self._loss_fn = torch.compile(self._loss_fn)
+            if torch.cuda.is_available():
+                self._loss_fn = torch.compile(self._loss_fn)
+            else:
+                log.warning("compile_loss was set to True, but CUDA is not available. Compiling only works with CUDA. Ignoring.")
 
     @property
     def global_batch_size(self) -> int:
