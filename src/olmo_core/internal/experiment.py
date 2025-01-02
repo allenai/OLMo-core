@@ -3,6 +3,7 @@ import sys
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, cast
 
+import torch
 from rich import print
 
 from olmo_core.config import Config, StrEnum
@@ -72,6 +73,7 @@ class ExperimentConfig(Config):
 class SubCmd(StrEnum):
     launch = "launch"
     train = "train"
+    train_single = "train_single"
     prep = "prep"
     launch_prep = "launch_prep"
     dry_run = "dry_run"
@@ -81,6 +83,8 @@ class SubCmd(StrEnum):
             prepare_cli_environment()
         elif self == SubCmd.train:
             prepare_training_environment()
+        elif self == SubCmd.train_single:
+            prepare_training_environment(backend=None)
         else:
             raise NotImplementedError(self)
 
@@ -97,7 +101,7 @@ class SubCmd(StrEnum):
             launch(config)
         elif self == SubCmd.dry_run:
             pass
-        elif self == SubCmd.train:
+        elif self in (SubCmd.train, SubCmd.train_single):
             try:
                 train(config)
             finally:
