@@ -26,6 +26,7 @@ from olmo_core.train.checkpoint import CheckpointerConfig
 
 log = logging.getLogger(__name__)
 
+NUM_NODES = 32
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     compile = True
@@ -38,7 +39,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            num_replicas=4,
+            num_replicas=NUM_NODES // 2,
         ),
         ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
         float8_config=Float8Config(compile=compile, enabled=False),
@@ -185,7 +186,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 if __name__ == "__main__":
     main(
-        global_batch_size=2 * 4096 * 8 * 8,
+        global_batch_size=2 * 4096 * NUM_NODES * 8,
         model_config_builder=build_model_config,
         optim_config_builder=build_optim_config,
         trainer_config_builder=build_trainer_config,
