@@ -489,7 +489,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
         assert isinstance(self.dataset, NumpyFSLDataset)
         if self.rank_batch_size % self.dataset.sequence_length != 0:
             raise OLMoConfigurationError(
-                "rank batch size (in tokens) must be divisible by sequence length"
+                f"rank batch size (in tokens) must be divisible by sequence length; got rbs={self.rank_batch_size}, sl={self.dataset.sequence_length}"
             )
 
     @property
