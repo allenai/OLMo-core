@@ -14,7 +14,7 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerDataParallelConfig,
 )
-from olmo_core.optim import OptimGroupOverride, AdamWConfig
+from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, DurationUnit, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
@@ -46,9 +46,9 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     )
 
 
-def build_optim_config(common: CommonComponents) -> AdamWConfig:
+def build_optim_config(common: CommonComponents) -> SkipStepAdamWConfig:
     del common
-    return AdamWConfig(
+    return SkipStepAdamWConfig(
         lr=6e-4,
         weight_decay=0.1,
         betas=(0.9, 0.95),
