@@ -26,7 +26,7 @@ from olmo_core.train.checkpoint import CheckpointerConfig
 
 log = logging.getLogger(__name__)
 
-NUM_NODES = 32
+NUM_NODES = 16
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     compile = True
