@@ -316,6 +316,7 @@ class BeakerLaunchConfig(Config):
         entrypoint_script = [
             "#!/usr/bin/env bash",
             "set -exuo pipefail",
+            "[[ -d /usr/lib/x86_64-linux-gnu ]] && export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH",
             "[[ -d /var/lib/tcpxo/lib64 ]] && export LD_LIBRARY_PATH=/var/lib/tcpxo/lib64:$LD_LIBRARY_PATH",
             "mkdir -p /olmo-core-runtime",
             "cd /olmo-core-runtime",
