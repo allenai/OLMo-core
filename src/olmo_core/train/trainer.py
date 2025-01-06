@@ -549,7 +549,11 @@ class Trainer:
 
         # Maybe load a checkpoint.
         if not self.checkpoint_loaded and self.load_strategy != LoadStrategy.never:
-            if not self.maybe_load_checkpoint(self.save_folder) and self.load_path is not None:
+            # Try loading from the save folder first.
+            self.maybe_load_checkpoint(self.save_folder)
+
+            # Then fallback to the load path, if provided.
+            if not self.checkpoint_loaded and self.load_path is not None:
                 self.maybe_load_checkpoint(self.load_path)
 
             if not self.checkpoint_loaded:
@@ -720,7 +724,10 @@ class Trainer:
                 load_optimizer_state=load_optimizer_state,
                 load_trainer_state=load_trainer_state,
             )
-        return should_load
+            assert self.checkpoint_loaded
+            return True
+        else:
+            return False
 
     def save_checkpoint(self) -> PathOrStr:
         """
