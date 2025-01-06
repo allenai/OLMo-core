@@ -39,7 +39,7 @@ from torch.distributed.checkpoint.default_planner import DefaultSavePlanner
 from torch.distributed.checkpoint.metadata import Metadata
 
 from olmo_core.aliases import PathOrStr
-from olmo_core.io import clear_directory, dir_is_empty, is_url, normalize_path, resource_path
+from olmo_core.io import clear_directory, dir_is_empty, is_url, normalize_path, resource_path, file_exists
 from olmo_core.utils import gc_cuda, wait_for
 from . import safetensors_util
 
@@ -210,7 +210,12 @@ def load_model_and_optim_state(
     """
     dir = normalize_path(dir)
 
-    if dir.endswith("-unsharded"):
+    can_load_unsharded =(
+        file_exists(f"{dir}_unsharded/model.safetensors") and
+        file_exists(f"{dir}_unsharded/optim.safetensors")
+    )
+
+    if can_load_unsharded:
         assert key_mapping is None
 
         if dist.get_rank() == 0:
