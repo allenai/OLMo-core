@@ -217,11 +217,16 @@ def load_model_and_optim_state(
 
     if can_load_unsharded:
         if dist.get_node_local_rank() == 0:
+            log.info(f"Local rank 0 loading model.safetensors from {dir}")
             model_path = resource_path(dir, "model.safetensors", local_cache=work_dir)
+            log.info(f"Local rank 0 loaded model.safetensors from {dir}")
             dist.barrier()
         else:
+            log.info("Nonzero rank waiting for rank 0 to load model.safetensors")
             dist.barrier()
+            log.info("Nonzero rank loading model.safetensors")
             model_path = resource_path(dir, "model.safetensors", local_cache=work_dir)
+            log.info("Nonzero rank loaded model.safetensors")
 
         model_state_dict = safetensors_util.safetensors_file_to_state_dict(model_path)
         if key_mapping is not None:
