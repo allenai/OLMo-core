@@ -53,6 +53,7 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
         elif "augusta" in get_node_hostname():
             # NOTE: For single-node training we still need all of these settings and we also
             # need host networking enabled so that the ethernet interface names don't change.
+            set_env_var("NCCL_NET", "FasTrak")
             set_env_var("NCCL_CROSS_NIC", "0")
             set_env_var("NCCL_ALGO", "Ring,Tree")
             set_env_var("NCCL_PROTO", "Simple")
