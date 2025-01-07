@@ -7,7 +7,7 @@ import logging
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
-from olmo_core.internal.experiment import CommonComponents, main
+from olmo_core.internal.experiment import CommonComponents, main, ExperimentConfig
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
@@ -184,10 +184,27 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     )
 
 
+def finalize_config(config: ExperimentConfig) -> None:
+    if config.trainer.load_path is not None and config.trainer.load_path.startswith("gs://"):
+        source_path = config.trainer.load_path.rstrip("/")
+        assert len(source_path) > 0
+        final_path_component = source_path.rsplit("/", maxsplit=1)[-1]
+        assert len(final_path_component) > 0
+        target_path = f"/data/olmo_core/{final_path_component}"
+        assert len(target_path) > 0  # just to be extra sure, because we're rm'ing it below
+        config.launch.setup_steps.extend([
+            f"rm -rf {target_path}",
+            f"mkdir -p {target_path}",
+            f"gsutil -m rsync -r {source_path} {target_path}"
+        ])
+        config.trainer.load_path = target_path
+
+
 if __name__ == "__main__":
     main(
         global_batch_size=2 * 4096 * NUM_NODES * 8,
         model_config_builder=build_model_config,
         optim_config_builder=build_optim_config,
         trainer_config_builder=build_trainer_config,
+        finalize_config=finalize_config,
     )
