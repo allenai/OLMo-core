@@ -219,7 +219,6 @@ def load_model_and_optim_state(
 
     if can_load_unsharded:
         if dist.get_node_local_rank() == 0:
-            log_all_threads()
             log.info(f"Local rank 0 loading {dir}/model.safetensors")
             model_path = resource_path(dir, "model.safetensors", local_cache=work_dir)
             log.info(f"Local rank 0 loaded {dir}/model.safetensors")
