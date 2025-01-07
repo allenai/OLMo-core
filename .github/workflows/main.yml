@@ -184,7 +184,6 @@ jobs:
                   cluster:
                     # H100 clusters
                     - ai2/jupiter-cirrascale-2
-                    - ai2/pluto-cirrascale
                     - ai2/augusta-google-1
                     # A100 clusters
                     - ai2/saturn-cirrascale
