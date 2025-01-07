@@ -653,4 +653,4 @@ def log_all_threads():
         log.info(str(thread))
 
         for item in traceback.StackSummary.from_list(traceback.extract_stack(sys._current_frames()[thread.ident])).format():
-            log.info(str(item))
+            log.info(str(item).strip())
