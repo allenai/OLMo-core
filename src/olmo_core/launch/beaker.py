@@ -318,6 +318,8 @@ class BeakerLaunchConfig(Config):
             "set -exuo pipefail",
             "[[ -d /usr/lib/x86_64-linux-gnu ]] && export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH",
             "[[ -d /var/lib/tcpxo/lib64 ]] && export LD_LIBRARY_PATH=/var/lib/tcpxo/lib64:$LD_LIBRARY_PATH",
+            "[[ -f /var/lib/tcpxo/lib64/nccl-env-profile.sh ]] && cat /var/lib/tcpxo/lib64/nccl-env-profile.sh",
+            "[[ -f /var/lib/tcpxo/lib64/nccl-env-profile.sh ]] && NCCL_LIB_DIR=\"/var/lib/tcpxo/lib64\" source /var/lib/tcpxo/lib64/nccl-env-profile.sh",
             "mkdir -p /olmo-core-runtime",
             "cd /olmo-core-runtime",
             *self.setup_steps,
