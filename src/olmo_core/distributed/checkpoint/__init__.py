@@ -40,7 +40,7 @@ from torch.distributed.checkpoint.metadata import Metadata
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.io import clear_directory, dir_is_empty, is_url, normalize_path, resource_path, file_exists
-from olmo_core.utils import gc_cuda, wait_for
+from olmo_core.utils import gc_cuda, wait_for, log_all_threads
 from . import safetensors_util
 
 from ..utils import barrier, get_fs_local_rank, is_distributed
@@ -219,6 +219,7 @@ def load_model_and_optim_state(
 
     if can_load_unsharded:
         if dist.get_node_local_rank() == 0:
+            log_all_threads()
             log.info(f"Local rank 0 loading {dir}/model.safetensors")
             model_path = resource_path(dir, "model.safetensors", local_cache=work_dir)
             log.info(f"Local rank 0 loaded {dir}/model.safetensors")

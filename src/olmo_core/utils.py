@@ -4,7 +4,9 @@ import logging
 import os
 import socket
 import sys
+import threading
 import time
+import traceback
 import uuid
 import warnings
 from contextlib import contextmanager
@@ -644,3 +646,11 @@ def cuda_sync_debug_mode(debug_mode: Union[int, str]):
     finally:
         if current_mode is not None:
             torch.cuda.set_sync_debug_mode(current_mode)
+
+
+def log_all_threads():
+    for thread in threading.enumerate():
+        log.info(str(thread))
+
+        for item in traceback.StackSummary.from_list(traceback.extract_stack(sys._current_frames()[thread.ident])).format():
+            log.info(str(item))
