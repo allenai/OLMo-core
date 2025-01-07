@@ -65,7 +65,7 @@ def resource_path(folder: PathOrStr, fname: str, local_cache: Optional[PathOrStr
         log.info(f"Found local cache of {fname} at {local_path}")
         return local_path
     else:
-        return cached_path(f"{folder}/{fname}", quiet=False)
+        return cached_path(f"{folder}/{fname}", quiet=True)
 
 
 def is_url(path: PathOrStr) -> bool:
