@@ -208,6 +208,8 @@ def load_model_and_optim_state(
     :param work_dir: A working directory for caching files/directories.
     :param thread_count: Set the number of threads used for certain operations.
     """
+    assert process_group is None
+
     dir = normalize_path(dir)
 
     can_load_unsharded =(
