@@ -57,6 +57,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git && \
     rm -rf /var/lib/apt/lists/*
 
+# Install google cloud CLI
+RUN apt-get install apt-transport-https ca-certificates gnupg curl && \
+    curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && \
+    apt-get update && \
+    apt-get install google-cloud-cli
+
 # Install MLNX OFED user-space drivers
 # See https://docs.nvidia.com/networking/pages/releaseview.action?pageId=15049785#Howto:DeployRDMAacceleratedDockercontaineroverInfiniBandfabric.-Dockerfile
 ENV MOFED_VER="24.01-0.3.3.1"
