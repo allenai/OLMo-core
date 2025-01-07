@@ -224,11 +224,11 @@ def load_model_and_optim_state(
             log.info(f"Local rank 0 loaded {dir}/model.safetensors")
             dist.barrier()
         else:
-            log.info("Nonzero rank waiting for rank 0 to load model.safetensors")
+            log.info("Nonzero local rank waiting for rank 0 to load model.safetensors")
             dist.barrier()
-            log.info("Nonzero rank loading model.safetensors")
+            log.info("Nonzero local rank loading model.safetensors")
             model_path = resource_path(dir, "model.safetensors", local_cache=work_dir)
-            log.info("Nonzero rank loaded model.safetensors")
+            log.info("Nonzero local rank loaded model.safetensors")
 
         model_state_dict = safetensors_util.safetensors_file_to_state_dict(model_path)
         if key_mapping is not None:
