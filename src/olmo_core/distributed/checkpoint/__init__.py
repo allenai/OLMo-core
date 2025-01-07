@@ -216,21 +216,24 @@ def load_model_and_optim_state(
     )
 
     if can_load_unsharded:
-        if dist.get_rank() == 0:
+        if dist.get_node_local_rank() == 0:
             model_path = resource_path(dir, "model.safetensors", local_cache=work_dir)
-            model_state_dict = safetensors_util.safetensors_file_to_state_dict(model_path)
-            if key_mapping is not None:
-                for current_key, original_key in key_mapping.items():
-                    if original_key in model_state_dict:
-                        assert current_key not in model_state_dict, f"Mapping {original_key} to {current_key} in the model state dict would overwrite existing {current_key}"
-                        model_state_dict[current_key] = model_state_dict.pop(original_key)
+            dist.barrier()
         else:
-            model_state_dict = {}
+            dist.barrier()
+            model_path = resource_path(dir, "model.safetensors", local_cache=work_dir)
+
+        model_state_dict = safetensors_util.safetensors_file_to_state_dict(model_path)
+        if key_mapping is not None:
+            for current_key, original_key in key_mapping.items():
+                if original_key in model_state_dict:
+                    assert current_key not in model_state_dict, f"Mapping {original_key} to {current_key} in the model state dict would overwrite existing {current_key}"
+                    model_state_dict[current_key] = model_state_dict.pop(original_key)
 
         sd_options = dist_cp_sd.StateDictOptions(
             strict=True,
             full_state_dict=True,
-            broadcast_from_rank0=True
+            broadcast_from_rank0=False
         )
         dist_cp_sd.set_model_state_dict(model, model_state_dict, options=sd_options)
         del model_path
@@ -238,21 +241,24 @@ def load_model_and_optim_state(
         gc_cuda()
 
         if optim is not None:
-            if dist.get_rank() == 0:
+            if dist.get_node_local_rank() == 0:
                 optim_path = resource_path(dir, "optim.safetensors", local_cache=work_dir)
-                optim_state_dict = safetensors_util.safetensors_file_to_state_dict(optim_path)
-                if key_mapping is not None:
-                    for current_key, original_key in key_mapping.items():
-                        if original_key in optim_state_dict["state"]:
-                            assert current_key not in optim_state_dict["state"], f"Mapping {original_key} to {current_key} in the optimizer state dict would overwrite existing {current_key}"
-                            optim_state_dict["state"][current_key] = optim_state_dict["state"].pop(original_key)
-                            for group in optim_state_dict["param_groups"]:
-                                if original_key in group["params"]:
-                                    idx = group["params"].index(original_key)
-                                    group["params"][idx] = current_key
-                                    break
+                dist.barrier()
             else:
-                optim_state_dict = {}
+                dist.barrier()
+                optim_path = resource_path(dir, "optim.safetensors", local_cache=work_dir)
+
+            optim_state_dict = safetensors_util.safetensors_file_to_state_dict(optim_path)
+            if key_mapping is not None:
+                for current_key, original_key in key_mapping.items():
+                    if original_key in optim_state_dict["state"]:
+                        assert current_key not in optim_state_dict["state"], f"Mapping {original_key} to {current_key} in the optimizer state dict would overwrite existing {current_key}"
+                        optim_state_dict["state"][current_key] = optim_state_dict["state"].pop(original_key)
+                        for group in optim_state_dict["param_groups"]:
+                            if original_key in group["params"]:
+                                idx = group["params"].index(original_key)
+                                group["params"][idx] = current_key
+                                break
 
             dist_cp_sd.set_optimizer_state_dict(model, optim, optim_state_dict, options=sd_options)
             del optim_path
