@@ -218,7 +218,7 @@ def load_model_and_optim_state(
     )
 
     if can_load_unsharded:
-        if dist.get_node_local_rank() == 0:
+        if get_fs_local_rank() == 0:
             log.info(f"Local rank 0 loading {dir}/model.safetensors")
             model_path = resource_path(dir, "model.safetensors", local_cache=work_dir)
             log.info(f"Local rank 0 loaded {dir}/model.safetensors")
@@ -248,7 +248,7 @@ def load_model_and_optim_state(
         gc_cuda()
 
         if optim is not None:
-            if dist.get_node_local_rank() == 0:
+            if get_fs_local_rank() == 0:
                 optim_path = resource_path(dir, "optim.safetensors", local_cache=work_dir)
                 dist.barrier()
             else:
