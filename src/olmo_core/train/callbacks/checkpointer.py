@@ -216,7 +216,10 @@ class CheckpointerCallback(Callback):
                 path for _, path in sorted(ephemeral_checkpoints, key=lambda x: x[0])
             ]
             for path in self._ephemeral_checkpoints:
-                log.info(f"Collected existing ephemeral checkpoint at '{path}'")
+                log.info(
+                    f"Found existing ephemeral checkpoint at '{path}' which will "
+                    "be removed when the next checkpoint is saved"
+                )
 
     def post_train_batch(self):
         self._await_last_checkpoint(blocking=False)
