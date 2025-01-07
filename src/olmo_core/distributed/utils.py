@@ -93,6 +93,7 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             )
             set_env_var("NCCL_SOCKET_IFNAME", "enp0s12")
             set_env_var("NCCL_DEBUG_SUBSYS", "INIT,NET")
+            set_env_var("TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC", str(15 * 60))
 
     if backend_supports_cuda(backend):
         # Set CUDA device.
