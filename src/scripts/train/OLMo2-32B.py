@@ -193,6 +193,7 @@ def finalize_config(config: ExperimentConfig) -> None:
         target_path = f"/data/olmo_core/{final_path_component}"
         assert len(target_path) > 0  # just to be extra sure, because we're rm'ing it below
         config.launch.setup_steps.extend([
+            "pip install gsutil",
             f"rm -rf {target_path}",
             f"mkdir -p {target_path}",
             f"gsutil -m rsync -r {source_path} {target_path}"
