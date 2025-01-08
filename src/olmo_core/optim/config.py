@@ -87,7 +87,8 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
 
                 if matches == 0:
                     raise OLMoConfigurationError(
-                        f"optim group {g_idx} override pattern '{pattern}' does not match any parameters"
+                        f"optim group {g_idx} override pattern '{pattern}' does not match any parameters; "
+                        f"valid names are: {', '.join(list(all_params.keys()))}"
                     )
 
         # Put any left-over params into a default group.
