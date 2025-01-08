@@ -23,6 +23,7 @@ This major release introduces a few breaking changes. As such, we've provided an
 ### Changed
 
 - Changed storage of shared shard state in sharded checkpoints from smallest shard to lowest rank (normally 0).
+- Changed how the trainer handles loading a checkpoint when `load_path` is provided. Now `load_path` is only used if no checkpoint is found in the `save_folder`.
 
 ### Changed
 
