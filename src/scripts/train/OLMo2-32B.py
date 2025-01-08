@@ -47,7 +47,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 "embeddings",
                 "blocks.*.attention",
                 "blocks.*.attention_norm",
-                "blocks.*.feed_forward",
+                "blocks.*.feed_forward.w1",
+                "blocks.*.feed_forward.w3",
                 "blocks.*.feed_forward_norm"
             ]
         ),
