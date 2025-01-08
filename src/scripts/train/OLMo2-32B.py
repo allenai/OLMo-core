@@ -195,7 +195,7 @@ def finalize_config(config: ExperimentConfig) -> None:
         config.launch.setup_steps.extend([
             f"rm -rf {target_path}",
             f"mkdir -p {target_path}",
-            f"gsutil -m rsync -r {source_path} {target_path}"
+            f"gsutil -q -m rsync -r {source_path} {target_path}"
         ])
         config.trainer.load_path = target_path
 
