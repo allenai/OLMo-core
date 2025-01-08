@@ -71,6 +71,7 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
 
         all_params: Dict[str, torch.Tensor] = OrderedDict()
         for n, p in model.named_parameters():
+            n = n.replace("._checkpoint_wrapped_module.", ".")
             all_params[n] = p
 
         # Build groups.
