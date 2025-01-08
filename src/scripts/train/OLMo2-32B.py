@@ -3,8 +3,6 @@ Train a 32B OLMo model. Run this script without any arguments to see usage info.
 """
 
 import logging
-from functools import reduce
-from typing import List
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
@@ -31,10 +29,6 @@ log = logging.getLogger(__name__)
 NUM_NODES = 16
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-
-    def flatten(l: List) -> List:
-        return reduce(lambda x, y: x + y, l)
-
     compile = True
     return TransformerConfig.olmo2_32B(
         vocab_size=common.tokenizer.padded_vocab_size(),
@@ -49,16 +43,13 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         ),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=["embeddings"] + flatten(
-                [
-                    [
-                        f"blocks.{i}.attention",
-                        f"blocks.{i}.attention_norm",
-                        f"blocks.{i}.feed_forward",
-                        f"blocks.{i}.feed_forward_norm",
-                    ] for i in range(64)
-                ]
-            )
+            modules=[
+                "embeddings",
+                "blocks.*.attention",
+                "blocks.*.attention_norm",
+                "blocks.*.feed_forward",
+                "blocks.*.feed_forward_norm"
+            ]
         ),
         float8_config=Float8Config(compile=compile, enabled=False),
     )
