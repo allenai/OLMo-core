@@ -4,15 +4,19 @@ from typing import List, Optional, Sequence, cast
 
 import torch
 import torch.nn as nn
+from torch.ao.nn.qat import Embedding
 from torch.distributed import DeviceMesh
 
 from olmo_core.config import StrEnum
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.doc_utils import beta_feature
 from olmo_core.utils import get_default_device
+from ..attention import Attention
 
 from ..buffer_cache import BufferCache
+from ..feed_forward import FeedForward
 from ..functional import l2_normalize
+from ..layer_norm import RMSNorm
 from ..lm_head import LMHeadConfig
 from ..utils import selective_checkpointing_context_fn
 from .block import TransformerBlock, TransformerBlockConfig
@@ -310,6 +314,7 @@ class Transformer(nn.Module):
 
         # TODO: only preserve RNG state if dropout is active
         preserve_rng_state = True
+        modules_without_randomness = (Attention, RMSNorm, FeedForward, Embedding)
 
         if mode == TransformerActivationCheckpointingMode.selected_modules:
             from fnmatch import fnmatch
@@ -324,7 +329,11 @@ class Transformer(nn.Module):
 
                 parent_name = ".".join(name.split(".")[:-1])
                 parent = self if not parent_name else self.get_submodule(parent_name)
-                module = ptd_checkpoint_wrapper(module, preserve_rng_state=preserve_rng_state)
+
+                module = ptd_checkpoint_wrapper(
+                    module,
+                    preserve_rng_state=False if isinstance(module, modules_without_randomness) else preserve_rng_state
+                )
                 parent.register_module(name.split(".")[-1], module)
                 log.info(f"Wrapped '{name}' for activation checkpointing")
         else:
