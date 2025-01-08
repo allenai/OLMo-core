@@ -12,7 +12,7 @@ def main():
     parser.add_argument('-o', '--output', help='output directory', default=None)
     args = parser.parse_args()
     if args.output is None:
-        args.output = f"{args.directory}_unsharded"
+        args.output = f"{args.directory.rstrip('/')}_unsharded"
 
     unshard_checkpoint(args.directory, args.output, optim=True)
 
