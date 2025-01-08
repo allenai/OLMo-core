@@ -43,14 +43,15 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         ),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=[
-                "embeddings",
-                "blocks.*.attention",
-                "blocks.*.attention_norm",
-                "blocks.*.feed_forward.w1",
-                "blocks.*.feed_forward.w3",
-                "blocks.*.feed_forward_norm"
-            ]
+            modules=[f"blocks.{i}.feed_forward" for i in range(64)],
+            #modules=[
+            #    "embeddings",
+            #    "blocks.*.attention",
+            #    "blocks.*.attention_norm",
+            #    "blocks.*.feed_forward.w1",
+            #    "blocks.*.feed_forward.w3",
+            #    "blocks.*.feed_forward_norm"
+            #]
         ),
         float8_config=Float8Config(compile=compile, enabled=False),
     )
