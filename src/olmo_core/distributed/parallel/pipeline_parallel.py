@@ -1,12 +1,9 @@
-import math
 from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Tuple
 
 import torch
-import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed import DeviceMesh
-from torch.distributed._tensor import DTensor
 from torch.distributed.pipelining import PipelineStage
 from torch.distributed.pipelining.schedules import (
     PipelineScheduleMulti,
@@ -163,28 +160,3 @@ class PipelineSchedule:
         else:
             self.base_schedule.step()
             return None, None
-
-    def clip_grad_norm_(
-        self, max_norm: float, norm_type: float = 2.0, foreach: Optional[bool] = None
-    ) -> torch.Tensor:
-        parameters = [p for m in self.model_parts for p in m.parameters()]
-        grads = [p.grad for p in parameters if p.grad is not None]
-
-        total_norm = nn.utils.get_total_norm(grads, norm_type, False, True)
-        if isinstance(total_norm, DTensor):
-            # Will reach here if PP + other parallelism is used. If only using PP, total_norm will be a local tensor.
-            # If total_norm is a DTensor, the placements must be `torch.distributed._tensor.ops.math_ops._NormPartial`.
-            # We can simply reduce the DTensor to get the total norm in this tensor's process group
-            # and then convert it to a local tensor
-            total_norm = total_norm.full_tensor()
-
-        # TODO: cleanup maybe using DTensor
-        if math.isinf(norm_type):
-            dist.all_reduce(total_norm, op=dist.ReduceOp.MAX, group=self.pp_mesh.get_group())
-        else:
-            total_norm **= norm_type
-            dist.all_reduce(total_norm, op=dist.ReduceOp.SUM, group=self.pp_mesh.get_group())
-            total_norm **= 1.0 / norm_type
-
-        torch.nn.utils.clip_grads_with_norm_(parameters, max_norm, total_norm, foreach=foreach)
-        return total_norm
