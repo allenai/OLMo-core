@@ -11,6 +11,8 @@ from olmo_core.exceptions import OLMoEnvironmentError
 from .callback import Callback
 
 SLACK_WEBHOOK_URL_ENV_VAR = "SLACK_WEBHOOK_URL"
+BEAKER_JOB_ID_ENV_VAR = "BEAKER_JOB_ID"
+EXC_LINE_LIMIT = 30
 
 
 class SlackNotificationSetting(StrEnum):
@@ -97,7 +99,12 @@ class SlackNotifierCallback(Callback):
             SlackNotificationSetting.end_only,
             SlackNotificationSetting.failure_only,
         ):
-            self._post_message(f"failed with error:\n{exc}")
+            exc_lines = str(exc).rstrip("\n").split("\n")
+            if len(exc_lines) > EXC_LINE_LIMIT:
+                exc_lines = exc_lines[:EXC_LINE_LIMIT]
+                exc_lines.append("...")
+            exc_str = "\n".join(exc_lines)
+            self._post_message(f"failed with error:\n```\n{exc_str}\n```")
 
     def _post_message(self, msg: str):
         webhook_url = self.webhook_url or os.environ.get(SLACK_WEBHOOK_URL_ENV_VAR)
@@ -110,8 +117,13 @@ class SlackNotifierCallback(Callback):
             f"- epoch: {self.trainer.epoch}\n"
             f"- tokens: {self.trainer.global_train_tokens_seen:,d}"
         )
+
         if self.name is not None:
             msg = f"Run `{self.name}` {msg}\n{progress}"
         else:
             msg = f"Run {msg}\n{progress}"
+
+        if BEAKER_JOB_ID_ENV_VAR in os.environ:
+            msg = f"{msg}\n*Beaker job:* https://beaker.org/job/{os.environ[BEAKER_JOB_ID_ENV_VAR]}"
+
         requests.post(webhook_url, json={"text": msg})
