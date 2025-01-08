@@ -8,9 +8,11 @@ on:
   pull_request:
     branches:
       - main
+      - v2
   push:
     branches:
       - main
+      - v2
     tags:
       - 'v*.*.*'
 
