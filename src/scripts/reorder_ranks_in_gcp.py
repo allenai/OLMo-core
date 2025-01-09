@@ -53,9 +53,13 @@ def main():
     store.set(f"node_{args.rank}_hostid", host_id)
     store.wait([f"node_{i}_hostid" for i in range(args.world_size)])
     all_host_ids = [store.get(f"node_{i}_hostid").decode("UTF-8") for i in range(args.world_size)]
-    all_host_ids.sort()
     assert len(set(all_host_ids)) == len(all_host_ids)
     assert host_id in all_host_ids
+    rank0_host_id = all_host_ids[0]
+    all_host_ids.sort()
+    # Rank 0 needs to remain rank 0, so we reshuffle around it
+    rank0_index = all_host_ids.index(rank0_host_id)
+    all_host_ids = all_host_ids[rank0_index:] + all_host_ids[:rank0_index]
     print(all_host_ids.index(host_id))
 
     # Make sure we're all done before exiting
