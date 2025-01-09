@@ -43,7 +43,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         ),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=[f"blocks.{i}.attention" for i in range(64)],
+            modules=[f"blocks.{i}.feed_forward" for i in range(64)],
             #modules=[
             #    "embeddings",
             #    "blocks.*.attention",
