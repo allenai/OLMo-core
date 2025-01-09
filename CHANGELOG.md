@@ -5,25 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v2
 
 This major release introduces a few breaking changes. As such, we've provided an upgrade guide here: [OLMo-core upgrade guide](https://docs.google.com/document/d/1LvANhNzA-MdtiD2pLniLTqB9wxSSuqY435WuJIADeFM/edit?usp=sharing).
 
 ### Added
 
 - Added `TrainModule` abstraction with `TransformerTrainModule` implementation, which encapsulates both a model and optimizer.
-- Added support for tensor parallelism. See the `TransformerTrainModule` class for usage.
 - Added `namespace` argument to `Trainer.record_metric()`.
-- Added more downstream tasks from the model ladder.
-- Added `io.copy_dir()` function.
-- Added new LR schedulers: `LinearWithWarmup`, `InvSqrtWithWarmup`, `ConstantWithWarmup`, `SequentialScheduler`.
-- Added option to pre-download checkpoint files from remote storage before trying to load a checkpoint.
-- Added a callback for sending Slack notifications.
-
-### Changed
-
-- Changed storage of shared shard state in sharded checkpoints from smallest shard to lowest rank (normally 0).
-- Changed how the trainer handles loading a checkpoint when `load_path` is provided. Now `load_path` is only used if no checkpoint is found in the `save_folder`.
 
 ### Changed
 
@@ -35,7 +24,22 @@ This major release introduces a few breaking changes. As such, we've provided an
 - Removed the following callbacks: `MoEHandlerCallback`, `SchedulerCallback`, `MatrixNormalizerCallback`, `GradClipperCallback`, and `Float8HandlerCallback`.
   The functionality from all of those callbacks has been moved to the `TransformerTrainModule` class.
 - Removed the callback methods `.pre_eval_batch()` and `.post_eval_batch()`.
-- Removed `load_key_mapping` field to the `Trainer`.
+
+## Unreleased
+
+### Added
+
+- Added support for tensor parallelism. See the `TransformerConfig` class for usage.
+- Added more downstream tasks from the model ladder.
+- Added `io.copy_dir()` function.
+- Added new LR schedulers: `LinearWithWarmup`, `InvSqrtWithWarmup`, `ConstantWithWarmup`, `SequentialScheduler`.
+- Added option to pre-download checkpoint files from remote storage before trying to load a checkpoint.
+- Added a callback for sending Slack notifications.
+
+### Changed
+
+- Changed storage of shared shard state in sharded checkpoints from smallest shard to lowest rank (normally 0).
+- Changed how the trainer handles loading a checkpoint when `load_path` is provided. Now `load_path` is only used if no checkpoint is found in the `save_folder`.
 
 ### Fixed
 
