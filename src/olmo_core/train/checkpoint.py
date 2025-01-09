@@ -17,6 +17,7 @@ from ..aliases import PathOrStr
 from ..config import Config
 from ..distributed.checkpoint import (
     async_save_state_dict,
+    get_checkpoint_metadata,
     load_state_dict,
     save_state_dict,
 )
@@ -164,7 +165,8 @@ class Checkpointer:
 
         # Load train module state.
         train_module_dir = f"{dir}/model_and_optim"
-        state_dict = train_module.state_dict_to_load()
+        metadata = get_checkpoint_metadata(train_module_dir)
+        state_dict = train_module.state_dict_to_load(metadata)
         load_state_dict(
             train_module_dir,
             state_dict,

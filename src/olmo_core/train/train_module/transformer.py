@@ -2,7 +2,7 @@ import contextlib
 import copy
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any, Dict, Generator, List, Optional, Tuple, cast
 
@@ -11,6 +11,7 @@ import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
 from torch.distributed import DeviceMesh
+from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.pipelining import PipelineStage
 from torch.distributed.tensor import DTensor
@@ -19,6 +20,7 @@ from torch.optim import Optimizer
 
 from olmo_core.config import Config, DType
 from olmo_core.data.utils import get_labels, split_batch
+from olmo_core.distributed.checkpoint import _swap_param_keys
 from olmo_core.distributed.parallel import (
     DataParallelConfig,
     DataParallelType,
@@ -266,6 +268,7 @@ class TransformerTrainModuleConfig(Config):
 
     state_dict_save_opts: Optional[Dict[str, Any]] = None
     state_dict_load_opts: Optional[Dict[str, Any]] = None
+    load_key_mapping: Optional[Dict[str, str]] = None
 
     # Other train settings.
 
@@ -340,6 +343,8 @@ class TransformerTrainModule(TrainModule):
         when saving a checkpoint.
     :param state_dict_load_opts: Can be used to override the state dict options used
         when loading a checkpoint.
+    :param load_key_mapping: Can be used to load a checkpoint where certain parameter have different names.
+        This dictionary should map current keys to keys in the checkpoint to be loaded.
     """
 
     def __init__(
@@ -363,6 +368,7 @@ class TransformerTrainModule(TrainModule):
         device: Optional[torch.device] = None,
         state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
+        load_key_mapping: Optional[Dict[str, str]] = None,
     ):
         super().__init__()
 
@@ -498,6 +504,7 @@ class TransformerTrainModule(TrainModule):
         self.state_dict_load_opts = state_dict_load_opts or dist_cp_sd.StateDictOptions(
             flatten_optimizer_state_dict=True, strict=not self.pp_enabled
         )
+        self.load_key_mapping = load_key_mapping
 
         self.moe_handler: Optional[MoEHandler] = None
         for model in self.model_parts:
@@ -652,13 +659,40 @@ class TransformerTrainModule(TrainModule):
     def state_dict(self) -> Dict[str, Any]:
         return self._get_state_dict(self.state_dict_save_opts)
 
-    def state_dict_to_load(self) -> Dict[str, Any]:
-        return self._get_state_dict(self.state_dict_load_opts)
+    def state_dict_to_load(self, metadata: Metadata) -> Dict[str, Any]:
+        load_opts = self.state_dict_load_opts
+
+        if "optim.param_groups.0.params" in metadata.state_dict_metadata:
+            # unflattened optimizer state
+            if load_opts.flatten_optimizer_state_dict:
+                log.warning(
+                    "Loading checkpoint with an unflattened optimizer state even though "
+                    "'flatten_optimizer_state_dict=True' in train module's 'state_dict_load_opts', "
+                    "automatically switching to 'flatten_optimizer_state_dict=False'."
+                )
+                load_opts = replace(load_opts, flatten_optimizer_state_dict=False)
+        else:
+            # flattened optimizer state
+            if not load_opts.flatten_optimizer_state_dict:
+                log.warning(
+                    "Loading checkpoint with a flattened optimizer state even though "
+                    "'flatten_optimizer_state_dict=False' in train module's 'state_dict_load_opts', "
+                    "automatically switching to 'flatten_optimizer_state_dict=True'."
+                )
+                load_opts = replace(load_opts, flatten_optimizer_state_dict=True)
+
+        state_dict = self._get_state_dict(load_opts)
+        if self.load_key_mapping is not None:
+            _swap_param_keys(state_dict, self.load_key_mapping, metadata=metadata)
+
+        return state_dict
 
     def state_dict_to_save(self) -> Dict[str, Any]:
         return self._get_state_dict(self.state_dict_save_opts)
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        if self.load_key_mapping is not None:
+            _swap_param_keys(state_dict, self.load_key_mapping, reverse=True, quiet=True)
         for model, optim in zip(self.model_parts, self.optimizers):
             dist_cp_sd.set_model_state_dict(
                 model,

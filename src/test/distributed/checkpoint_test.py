@@ -362,7 +362,7 @@ def test_load_checkpoint_with_extra_keys(tmp_path):
     )
 
 
-def run_load_checkpoint_with_different_keys(dir):
+def run_load_checkpoint_with_different_keys(dir, flatten_optim_state: bool):
     class FF1(nn.Module):
         def __init__(self, dim: int = 16):
             super().__init__()
@@ -390,14 +390,24 @@ def run_load_checkpoint_with_different_keys(dir):
     ff2 = FF2()
     optim2 = torch.optim.AdamW(ff2.parameters())
 
-    save_model_and_optim_state(dir, ff1, optim1)
-    load_model_and_optim_state(dir, ff2, optim2, key_mapping={"fc_out.weight": "w2.weight"})
+    save_model_and_optim_state(dir, ff1, optim1, flatten_optimizer_state=flatten_optim_state)
+    load_model_and_optim_state(
+        dir,
+        ff2,
+        optim2,
+        key_mapping={"fc_out.weight": "w2.weight"},
+        flatten_optimizer_state=flatten_optim_state,
+    )
 
 
-def test_load_checkpoint_with_different_keys(tmp_path):
+@pytest.mark.parametrize(
+    "flatten_optim_state",
+    [pytest.param(True, id="flat-optim"), pytest.param(False, id="nested-optim")],
+)
+def test_load_checkpoint_with_different_keys(tmp_path, flatten_optim_state):
     run_distributed_test(
         run_load_checkpoint_with_different_keys,
         backend="gloo",
         start_method="spawn",
-        func_args=(tmp_path,),
+        func_args=(tmp_path, flatten_optim_state),
     )

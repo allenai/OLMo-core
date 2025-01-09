@@ -285,24 +285,7 @@ def load_model_and_optim_state(
 
     if key_mapping is not None:
         metadata = reader.read_metadata()
-        for current_key, original_key in key_mapping.items():
-            if f"model.{original_key}" not in metadata.state_dict_metadata:
-                continue
-
-            log.info(f"Mapping current param '{current_key}' to '{original_key}' in checkpoint")
-            state_dict["model"][original_key] = state_dict["model"].pop(current_key)
-
-            if optim is None:
-                continue
-
-            state_dict["optim"]["state"][original_key] = state_dict["optim"]["state"].pop(
-                current_key
-            )
-            for group in state_dict["optim"]["param_groups"]:
-                if current_key in group["params"]:
-                    idx = group["params"].index(current_key)
-                    group["params"][idx] = original_key
-                    break
+        _swap_param_keys(state_dict, key_mapping, metadata=metadata)
 
     dist_cp.load(
         state_dict,
@@ -312,24 +295,7 @@ def load_model_and_optim_state(
     )
 
     if key_mapping is not None:
-        metadata = reader.read_metadata()
-        for current_key, original_key in key_mapping.items():
-            if f"model.{original_key}" not in metadata.state_dict_metadata:
-                continue
-
-            state_dict["model"][current_key] = state_dict["model"].pop(original_key)
-
-            if optim is None:
-                continue
-
-            state_dict["optim"]["state"][current_key] = state_dict["optim"]["state"].pop(
-                original_key
-            )
-            for group in state_dict["optim"]["param_groups"]:
-                if original_key in group["params"]:
-                    idx = group["params"].index(original_key)
-                    group["params"][idx] = current_key
-                    break
+        _swap_param_keys(state_dict, key_mapping, reverse=True, quiet=True)
 
     dist_cp_sd.set_model_state_dict(
         model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=strict)
@@ -513,6 +479,52 @@ def _prepare_state_dict(
         state_dict["optim"] = dist_cp_sd.get_optimizer_state_dict(model, optim, options=sd_options)
 
     return state_dict
+
+
+def _swap_param_keys(
+    state_dict: Dict[str, Any],
+    key_mapping: Dict[str, str],
+    metadata: Optional[Metadata] = None,
+    reverse: bool = False,
+    quiet: bool = False,
+):
+    for current_key, original_key in key_mapping.items():
+        if metadata is not None and f"model.{original_key}" not in metadata.state_dict_metadata:
+            continue
+
+        if reverse:
+            current_key, original_key = original_key, current_key
+
+        if current_key not in state_dict["model"]:
+            continue
+
+        if not quiet:
+            log.info(f"Mapping current param '{current_key}' to '{original_key}' in checkpoint")
+
+        state_dict["model"][original_key] = state_dict["model"].pop(current_key)
+
+        if "optim" not in state_dict:
+            continue
+
+        if "state" in state_dict["optim"]:  # unflattened optim state dict
+            state_dict["optim"]["state"][original_key] = state_dict["optim"]["state"].pop(
+                current_key
+            )
+            for group in state_dict["optim"]["param_groups"]:
+                if current_key in group["params"]:
+                    idx = group["params"].index(current_key)
+                    group["params"][idx] = original_key
+                    break
+        else:  # flattened optim state dict
+            for key in list(state_dict["optim"].keys()):
+                if key.startswith(f"state.{current_key}."):
+                    new_key = key.replace(f"state.{current_key}.", f"state.{original_key}.", 1)
+                    state_dict["optim"][new_key] = state_dict["optim"].pop(key)
+                elif key.startswith(f"param_groups.{current_key}."):
+                    new_key = key.replace(
+                        f"param_groups.{current_key}.", f"param_groups.{original_key}.", 1
+                    )
+                    state_dict["optim"][new_key] = state_dict["optim"].pop(key)
 
 
 def _get_key(state_dict: Dict[str, Any], key: str, pop: bool = False) -> Any:
