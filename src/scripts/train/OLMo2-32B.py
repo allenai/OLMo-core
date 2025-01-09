@@ -46,7 +46,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         # ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=[f"blocks.{i}.feed_forward" for i in range(64) if i % 4 != 0],
+            modules=[f"blocks.{i}.feed_forward" for i in range(64)],
         ),
         float8_config=Float8Config(compile=compile, enabled=False),
     )
