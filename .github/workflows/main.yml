@@ -239,7 +239,7 @@ jobs:
       - name: Generate release notes
         run: |
           . .venv/bin/activate
-          python src/scripts/release_notes.py > ${{ github.workspace }}-RELEASE_NOTES.md
+          python src/scripts/release/release_notes.py > ${{ github.workspace }}-RELEASE_NOTES.md
 
       - name: Publish package to PyPI
         run: |
@@ -260,4 +260,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ./scripts/add_pr_comments_on_release.sh
+          ./src/scripts/release/add_pr_comments_on_release.sh
