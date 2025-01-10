@@ -533,8 +533,13 @@ def _get_gcs_client():
 
 def _gcs_is_retriable(exc: Exception) -> bool:
     from google.api_core.retry import if_transient_error
+    from google.api_core.exceptions import BadRequest
 
-    return if_transient_error(exc) or isinstance(exc, requests.exceptions.Timeout)
+    return (
+        if_transient_error(exc) or
+        isinstance(exc, requests.exceptions.Timeout) or
+        isinstance(exc, BadRequest)     # Weird choice, but Google throws this transiently
+    )
 
 
 def _get_gcs_retry():
@@ -577,7 +582,7 @@ def _gcs_get_bytes_range(bucket_name: str, key: str, bytes_start: int, num_bytes
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(key)
     try:
-        blob.reload()
+        blob.reload(retry=_get_gcs_retry())
     except NotFound:
         raise FileNotFoundError(f"gs://{bucket_name}/{key}")
     return blob.download_as_bytes(
@@ -590,11 +595,21 @@ def _gcs_upload(source: Path, bucket_name: str, key: str, save_overwrite: bool =
     storage_client = _get_gcs_client()
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(key)
-    if not save_overwrite and blob.exists():
-        raise FileExistsError(
-            f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
-        )
-    blob.upload_from_filename(source, retry=_get_gcs_conditional_retry())
+
+    generation: int = 0
+    if blob.exists(retry=_get_gcs_retry()):
+        if not save_overwrite:
+            raise FileExistsError(
+                f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
+            )
+
+        blob.reload(retry=_get_gcs_retry())
+        assert blob.generation is not None
+        generation = blob.generation
+
+    blob.upload_from_filename(
+        source, if_generation_match=generation, retry=_get_gcs_conditional_retry()
+    )
 
 
 @retriable()

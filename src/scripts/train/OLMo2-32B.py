@@ -14,7 +14,7 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerDataParallelConfig,
 )
-from olmo_core.optim import AdamWConfig, OptimGroupOverride
+from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, DurationUnit, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
@@ -34,53 +34,48 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         compile=compile,
         fused_ops=False,
         use_flash=not compile,
-        # dp_config=TransformerDataParallelConfig(
-        #     name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
-        # ),
         dp_config=TransformerDataParallelConfig(
-           name=DataParallelType.hsdp,
-           param_dtype=DType.bfloat16,
-           reduce_dtype=DType.float32,
-           num_replicas=2, #common.launch.num_nodes,
+            name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
-        ac_config=TransformerActivationCheckpointingConfig(
-            TransformerActivationCheckpointingMode.full
-        ),
-        # ac_config=TransformerActivationCheckpointingConfig(
-        #    mode=TransformerActivationCheckpointingMode.selected_modules,
-        #    modules=[
-        #        f"blocks.{i}.feed_forward"
-        #        for i in range(64)
-        #    ]
+        # dp_config=TransformerDataParallelConfig(
+        #     name=DataParallelType.hsdp,
+        #     param_dtype=DType.bfloat16,
+        #     reduce_dtype=DType.float32,
+        #     num_replicas=64 // 16,  # common.launch.num_nodes // 2,
         # ),
+        # ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.selected_modules,
+            modules=[f"blocks.{i}.feed_forward" for i in range(64)],
+        ),
         float8_config=Float8Config(compile=compile, enabled=False),
     )
 
 
-def build_optim_config(common: CommonComponents) -> AdamWConfig:
+def build_optim_config(common: CommonComponents) -> SkipStepAdamWConfig:
     del common
-    return AdamWConfig(
+    return SkipStepAdamWConfig(
         lr=6e-4,
         weight_decay=0.1,
         betas=(0.9, 0.95),
         group_overrides=[
             OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
         ],
-        fused=True,
+        # fused=True,
+        compile=True,
     )
 
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
-    project_name = "shanea-testing"
+    project_name = "peteish32"
     return (
         TrainerConfig(
-            save_folder=f"gs://ai2-llm/checkpoints/shanea/{project_name}/",
-            load_path="gs://ai2-llm/checkpoints/shanea/shanea-testing/step55005",
-            checkpointer=CheckpointerConfig(pre_download=True),
+            save_folder=f"gs://ai2-llm/checkpoints/{project_name}/",
             rank_microbatch_size=2 * 4096,
+            checkpointer=CheckpointerConfig(save_thread_count=1, load_thread_count=32),
             save_overwrite=True,
-            metrics_collect_interval=2,
-            cancel_check_interval=2,
+            metrics_collect_interval=10,
+            cancel_check_interval=10,
             z_loss_multiplier=1e-5,
             compile_loss=False,
             fused_loss=True,
@@ -90,7 +85,6 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
-                ephemeral_save_interval=250,
                 save_async=True,
             ),
         )
@@ -101,7 +95,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 workspace="ai2",
                 project=project_name,
                 enabled=True,
-                cancel_check_interval=2,
+                cancel_check_interval=10,
             ),
         )
         .with_callback(
@@ -111,7 +105,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 entity="ai2-llm",
                 project=project_name,
                 enabled=False,
-                cancel_check_interval=2,
+                cancel_check_interval=10,
             ),
         )
         .with_callback(
@@ -128,32 +122,65 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                     "mmlu_humanities_mc_5shot_test",
                     "mmlu_social_sciences_mc_5shot_test",
                     "mmlu_other_mc_5shot_test",
-                    # Core 12 tasks for backwards compatibility
-                    "arc_challenge",
-                    "arc_easy",
-                    "basic_arithmetic",
-                    "boolq",
-                    "commonsense_qa",
-                    "copa",
-                    "hellaswag",
-                    "openbook_qa",
-                    "piqa",
-                    "sciq",
-                    "social_iqa",
-                    "winogrande",
-                    # Core 12 tasks 5-shot
-                    "arc_challenge_rc_5shot",
-                    "arc_easy_rc_5shot",
-                    # "basic_arithmetic_rc_5shot",  # doesn't exist
-                    # "boolq_rc_5shot",  # we don't like it
-                    "csqa_rc_5shot",
-                    # "copa_rc_5shot",  # doesn't exist
-                    "hellaswag_rc_5shot",
-                    "openbookqa_rc_5shot",
-                    "piqa_rc_5shot",
-                    # "sciq_rc_5shot",  # doesn't exist
-                    "socialiqa_rc_5shot",
-                    "winogrande_rc_5shot",
+                    ## Core 12 tasks for backwards compatibility
+                    #"arc_challenge",
+                    #"arc_easy",
+                    #"basic_arithmetic",
+                    #"boolq",
+                    #"commonsense_qa",
+                    #"copa",
+                    #"hellaswag",
+                    #"openbook_qa",
+                    #"piqa",
+                    #"sciq",
+                    #"social_iqa",
+                    #"winogrande",
+                    ## Core 12 tasks 5-shot
+                    #"arc_challenge_rc_5shot",
+                    #"arc_easy_rc_5shot",
+                    ## "basic_arithmetic_rc_5shot",  # doesn't exist
+                    ## "boolq_rc_5shot",  # we don't like it
+                    #"csqa_rc_5shot",
+                    ## "copa_rc_5shot",  # doesn't exist
+                    #"hellaswag_rc_5shot",
+                    #"openbookqa_rc_5shot",
+                    #"piqa_rc_5shot",
+                    ## "sciq_rc_5shot",  # doesn't exist
+                    #"socialiqa_rc_5shot",
+                    #"winogrande_rc_5shot",
+                    ## New in-loop evals
+                    #"arc_challenge_val_rc_5shot",
+                    #"arc_challenge_val_mc_5shot",
+                    "arc_challenge_test_rc_5shot",
+                    #"arc_challenge_test_mc_5shot",
+                    #"arc_easy_val_rc_5shot",
+                    #"arc_easy_val_mc_5shot",
+                    "arc_easy_test_rc_5shot",
+                    #"arc_easy_test_mc_5shot",
+                    #"boolq_val_rc_5shot",
+                    #"boolq_val_mc_5shot",
+                    "csqa_val_rc_5shot",
+                    #"csqa_val_mc_5shot",
+                    "hellaswag_val_rc_5shot",
+                    #"hellaswag_val_mc_5shot",
+                    #"openbookqa_val_rc_5shot",
+                    #"openbookqa_val_mc_5shot",
+                    "openbookqa_test_rc_5shot",
+                    #"openbookqa_test_mc_5shot",
+                    "piqa_val_rc_5shot",
+                    #"piqa_val_mc_5shot",
+                    "socialiqa_val_rc_5shot",
+                    #"socialiqa_val_mc_5shot",
+                    #"winogrande_val_rc_5shot",
+                    #"winogrande_val_mc_5shot",
+                    #"mmlu_stem_val_rc_5shot",
+                    #"mmlu_stem_val_mc_5shot",
+                    #"mmlu_humanities_val_rc_5shot",
+                    #"mmlu_humanities_val_mc_5shot",
+                    #"mmlu_social_sciences_val_rc_5shot",
+                    #"mmlu_social_sciences_val_mc_5shot",
+                    #"mmlu_other_val_rc_5shot",
+                    #"mmlu_other_val_mc_5shot",
                 ],
                 tokenizer=common.tokenizer,
                 eval_interval=1000,

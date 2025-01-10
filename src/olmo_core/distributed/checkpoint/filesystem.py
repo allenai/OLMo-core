@@ -273,7 +273,12 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
     """
 
     def __init__(
-        self, path: PathOrStr, *, thread_count: Optional[int] = None, pre_download: bool = False
+        self,
+        path: PathOrStr,
+        *,
+        thread_count: Optional[int] = None,
+        pre_download: bool = False,
+        work_dir: Optional[PathOrStr] = None,
     ):
         super().__init__()
         if thread_count is not None and thread_count <= 0:
@@ -281,13 +286,14 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
         self.path = normalize_path(path)
         self.thread_count = thread_count or get_default_thread_count()
         self.pre_download = pre_download
+        self.work_dir = normalize_path(work_dir) if work_dir is not None else None
         self.storage_data: Dict[MetadataIndex, _StorageInfo] = dict()
         self.load_id = generate_uuid()
         self._metadata: Optional[Metadata] = None
 
     def _get_bytes(self, relative_path: str, offset: int, length: int) -> bytes:
         if self.pre_download:
-            full_path = str(resource_path(self.path, relative_path))
+            full_path = str(resource_path(self.path, relative_path, local_cache=self.work_dir))
         else:
             full_path = f"{self.path}/{relative_path}"
         return get_bytes_range(full_path, offset, length)
@@ -352,7 +358,9 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
 
     def read_metadata(self) -> Metadata:
         if self._metadata is None:
-            with resource_path(self.path, ".metadata").open("rb") as metadata_file:
+            with resource_path(self.path, ".metadata", local_cache=self.work_dir).open(
+                "rb"
+            ) as metadata_file:
                 metadata = pickle.load(metadata_file)
 
             if getattr(metadata, "storage_meta", None) is None:

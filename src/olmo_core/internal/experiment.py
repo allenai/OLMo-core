@@ -36,6 +36,7 @@ from olmo_core.train.callbacks import (
     LMEvaluatorCallbackConfig,
     ProfilerCallback,
     SchedulerCallback,
+    SlackNotifierCallback,
     WandBCallback,
 )
 from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
@@ -129,6 +130,7 @@ def build_common_components(
         root_dir=root_dir,
         cmd=[script, cmd_to_launch, run_name, cluster, *overrides],
         cluster=cluster,
+        nccl_debug=False,
     )
 
     beaker_user = get_beaker_username()
@@ -171,6 +173,7 @@ def build_common_components(
             ),
             eval_interval=1000,
         ),
+        "slack_notifier": SlackNotifierCallback(name=run_name, enabled=False),
     }
 
     return CommonComponents(

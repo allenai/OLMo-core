@@ -10,12 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added support for tensor parallelism. See the `TransformerConfig` class for usage.
+- Added more downstream tasks from the model ladder.
 - Added `io.copy_dir()` function.
 - Added new LR schedulers: `LinearWithWarmup`, `InvSqrtWithWarmup`, `ConstantWithWarmup`, `SequentialScheduler`.
+- Added option to pre-download checkpoint files from remote storage before trying to load a checkpoint.
+- Added a callback for sending Slack notifications.
+- Added `SkipStepAdamW` optimizer.
+
+### Changed
+
+- Changed storage of shared shard state in sharded checkpoints from smallest shard to lowest rank (normally 0).
+- Changed underlying AdamW implementation.
 
 ### Fixed
 
 - Added missing `weights_only=False` argument to fix loading train checkpoints with newer versions of PyTorch.
+- Fixed bug where GCS upload does not retry on transient failures. 
 
 ## [v1.7.0](https://github.com/allenai/OLMo-core/releases/tag/v1.7.0) - 2024-11-27
 

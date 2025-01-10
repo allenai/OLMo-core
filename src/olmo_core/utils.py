@@ -643,4 +643,4 @@ def cuda_sync_debug_mode(debug_mode: Union[int, str]):
         yield
     finally:
         if current_mode is not None:
-            torch.cuda.set_sync_debug_mode(debug_mode)
+            torch.cuda.set_sync_debug_mode(current_mode)
