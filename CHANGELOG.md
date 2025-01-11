@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Added ability to override `dataset` and `data_loader` configurations in internal experiment builder.
+
 ### Added
 
 - Added support for tensor parallelism. See the `TransformerConfig` class for usage.
