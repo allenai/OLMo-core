@@ -198,6 +198,7 @@ def build_config(
     optim_config_builder: Callable[[CommonComponents], OptimConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     dataset_config_builder: Callable[[CommonComponents], NumpyDatasetConfig] | None = None,
+    data_loader_config_builder: Callable[[CommonComponents], NumpyDataLoaderConfig] | None = None,
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
 ) -> ExperimentConfig:
     common = build_common_components(
@@ -224,13 +225,20 @@ def build_config(
         dataset_config_builder(common) if dataset_config_builder is not None else common.dataset
     )
 
+    # allow the data loader to be overridden
+    data_loader = (
+        data_loader_config_builder(common)
+        if data_loader_config_builder is not None
+        else common.data_loader
+    )
+
     config = ExperimentConfig(
         run_name=run_name,
         launch=common.launch,
         model=model,
         optim=optim_config_builder(common),
         dataset=dataset,
-        data_loader=common.data_loader,
+        data_loader=data_loader,
         trainer=trainer,
     )
 
@@ -303,6 +311,7 @@ def main(
     optim_config_builder: Callable[[CommonComponents], OptimConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     dataset_config_builder: Callable[[CommonComponents], NumpyDatasetConfig] | None = None,
+    data_loader_config_builder: Callable[[CommonComponents], NumpyDataLoaderConfig] | None = None,
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
 ):
     usage = f"""
@@ -342,6 +351,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         optim_config_builder=optim_config_builder,
         trainer_config_builder=trainer_config_builder,
         dataset_config_builder=dataset_config_builder,
+        data_loader_config_builder=data_loader_config_builder,
         finalize_config=finalize_config,
     )
 
