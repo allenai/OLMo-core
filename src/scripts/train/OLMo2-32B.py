@@ -78,6 +78,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_folder=f"gs://ai2-llm/checkpoints/{project_name}/",
             rank_microbatch_size=2 * 4096,
             checkpointer=CheckpointerConfig(save_thread_count=1, load_thread_count=32),
+            load_path="gs://ai2-llm/checkpoints/peteish32/step205000/",
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=10,
@@ -99,7 +100,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 name=common.run_name,
                 workspace="ai2",
                 project="peteish32",
-                enabled=True,
+                enabled=False,
                 cancel_check_interval=10,
             ),
         )
