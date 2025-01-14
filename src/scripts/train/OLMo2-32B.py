@@ -3,6 +3,7 @@ Train a 32B OLMo model. Run this script without any arguments to see usage info.
 """
 
 import logging
+from typing import Optional
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
@@ -26,7 +27,10 @@ from olmo_core.train.checkpoint import CheckpointerConfig
 
 log = logging.getLogger(__name__)
 
+
 NUM_NODES = 16
+START_FROM: Optional[int] = None  # 205000
+
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     compile = True
@@ -78,7 +82,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_folder=f"gs://ai2-llm/checkpoints/{project_name}/",
             rank_microbatch_size=2 * 4096,
             checkpointer=CheckpointerConfig(save_thread_count=1, load_thread_count=32),
-            load_path=None, #"gs://ai2-llm/checkpoints/peteish32/step205000/",
+            load_path=None if START_FROM is None else f"gs://ai2-llm/checkpoints/peteish32/step{START_FROM}/",
+            hard_stop=None if START_FROM is None else Duration.steps(START_FROM + 100),
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=10,
