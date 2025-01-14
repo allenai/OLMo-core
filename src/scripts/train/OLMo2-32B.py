@@ -36,10 +36,10 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         fused_ops=False,
         use_flash=not compile,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp,
+            name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            num_replicas=NUM_NODES // 2,
+            num_replicas=NUM_NODES // 8,
         ),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.selected_modules,
