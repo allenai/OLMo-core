@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 
 
 NUM_NODES = 16
-START_FROM: Optional[int] = None  # 205000
+START_FROM: Optional[int] = 205000
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
