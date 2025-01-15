@@ -83,7 +83,11 @@ def build_launch_config(
         num_gpus=8,
         shared_filesystem=not is_url(root_dir),
         allow_dirty=False,
-        env_vars=[BeakerEnvVar(name="NCCL_DEBUG", value="INFO" if nccl_debug else "WARN")],
+        env_vars=[
+            BeakerEnvVar(name="NCCL_DEBUG", value="INFO" if nccl_debug else "WARN"),
+            BeakerEnvVar(name="TORCH_NCCL_TRACE_BUFFER_SIZE", value="2000" if nccl_debug else "0"),
+            BeakerEnvVar(name="TORCH_NCCL_TRACE_CPP_STACK", value="true" if nccl_debug else "false"),
+        ],
         env_secrets=[
             BeakerEnvSecret(name="BEAKER_TOKEN", secret=f"{beaker_user}_BEAKER_TOKEN"),
             BeakerEnvSecret(name="WANDB_API_KEY", secret=f"{beaker_user}_WANDB_API_KEY"),
