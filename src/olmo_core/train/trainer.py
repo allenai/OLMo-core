@@ -572,7 +572,7 @@ class Trainer:
         try:
             while not self.training_complete:
                 self._fit_epoch()
-        except (BaseException, Exception) as exc:
+        except BaseException as exc:
             log.error(f"Training failed due to:\n{exc}")
             for callback in self.callbacks.values():
                 callback.on_error(exc)
