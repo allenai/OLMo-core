@@ -590,7 +590,7 @@ def _gcs_get_bytes_range(bucket_name: str, key: str, bytes_start: int, num_bytes
     except NotFound:
         raise FileNotFoundError(f"gs://{bucket_name}/{key}")
     return blob.download_as_bytes(
-        start=bytes_start, end=bytes_start + num_bytes - 1, retry=_get_gcs_retry()
+        start=bytes_start, end=bytes_start + num_bytes - 1, retry=_get_gcs_retry(), checksum=None, # type: ignore
     )
 
 
