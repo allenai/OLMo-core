@@ -317,6 +317,8 @@ class BeakerLaunchConfig(Config):
             "#!/usr/bin/env bash",
             "set -exuo pipefail",
             "[[ -d /var/lib/tcpxo/lib64 ]] && export LD_LIBRARY_PATH=/var/lib/tcpxo/lib64:$LD_LIBRARY_PATH",
+            # Setup the kernel cache directory used by pytorch
+            "mkdir -p /root/.cache/torch/kernels && export PYTORCH_KERNEL_CACHE_PATH=/root/.cache/torch/kernels",
             "mkdir -p /olmo-core-runtime",
             "cd /olmo-core-runtime",
             *self.setup_steps,
