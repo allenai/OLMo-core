@@ -130,7 +130,7 @@ def build_common_components(
         root_dir=root_dir,
         cmd=[script, cmd_to_launch, run_name, cluster, *overrides],
         cluster=cluster,
-        nccl_debug=True,
+        nccl_debug=False,
     )
 
     beaker_user = get_beaker_username()
