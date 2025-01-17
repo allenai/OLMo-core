@@ -171,6 +171,7 @@ class Checkpointer:
             for path in (f"{dir}/train/rank{get_rank()}.pt", f"{dir}/train/rank0.pt"):
                 try:
                     trainer_state = torch.load(cached_path(path, quiet=True), weights_only=False)
+                    break
                 except FileNotFoundError:
                     pass
 
