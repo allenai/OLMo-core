@@ -685,6 +685,16 @@ class TransformerTrainModule(TrainModule):
         if self.load_key_mapping is not None:
             _swap_param_keys(state_dict, self.load_key_mapping, metadata=metadata)
 
+        has_optim_state: bool = False
+        for key in metadata.state_dict_metadata.keys():
+            if key.startswith("optim."):
+                has_optim_state = True
+                break
+
+        if not has_optim_state:
+            del state_dict["optim"]
+            log.warning("No optimizer state found in checkpoint")
+
         return state_dict
 
     def state_dict_to_save(self) -> Dict[str, Any]:
@@ -700,13 +710,14 @@ class TransformerTrainModule(TrainModule):
                 options=self.state_dict_load_opts,
             )
             gc_cuda()
-            dist_cp_sd.set_optimizer_state_dict(
-                model,
-                optim,
-                state_dict["optim"],
-                options=self.state_dict_load_opts,
-            )
-            gc_cuda()
+            if "optim" in state_dict:
+                dist_cp_sd.set_optimizer_state_dict(
+                    model,
+                    optim,
+                    state_dict["optim"],
+                    options=self.state_dict_load_opts,
+                )
+                gc_cuda()
 
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         # Set model to train mode if it isn't already.

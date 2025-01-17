@@ -2,9 +2,12 @@
 
 set -e
 
-TAG=$(python -c 'from olmo_core.version import VERSION; print("v" + VERSION)')
+# Make sure clone is up-to-date with remote.
+git pull > /dev/null
+git tag -l | xargs git tag -d > /dev/null
+git fetch -t > /dev/null
 
-git pull
+TAG=$(python -c 'from olmo_core.version import VERSION; print("v" + VERSION)')
 
 # Make sure tag/release doesn't already exist.
 STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://github.com/allenai/OLMo-core/releases/tag/${TAG}")
@@ -13,7 +16,7 @@ if [[ $STATUS_CODE == "200" ]]; then
     exit 1
 fi
 
-python src/scripts/prepare_changelog.py
+python src/scripts/release/prepare_changelog.py
 
 read -rp "Creating new release for $TAG. Do you want to continue? [Y/n] " prompt
 

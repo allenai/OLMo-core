@@ -605,7 +605,7 @@ class Trainer:
                 "were saved with a different world size."
             )
 
-    def load_checkpoint(self, dir: PathOrStr, *, load_trainer_state: bool = True):
+    def load_checkpoint(self, dir: PathOrStr, *, load_trainer_state: Optional[bool] = None):
         """
         Load a checkpoint.
 
@@ -630,8 +630,7 @@ class Trainer:
             self.train_module,
             load_trainer_state=load_trainer_state,
         )
-        if load_trainer_state:
-            assert trainer_state is not None
+        if trainer_state is not None:
             self.load_state_dict(cast(TrainerStateDict, trainer_state))
 
         for callback in self.callbacks.values():
@@ -640,7 +639,9 @@ class Trainer:
         self._checkpoint_loaded = True
         log.info("Checkpoint successfully loaded")
 
-    def maybe_load_checkpoint(self, dir: PathOrStr, *, load_trainer_state: bool = True) -> bool:
+    def maybe_load_checkpoint(
+        self, dir: PathOrStr, *, load_trainer_state: Optional[bool] = None
+    ) -> bool:
         """
         Like :meth:`load_checkpoint()` but is a no-op if there is no checkpoint in the ``dir`` provided.
 
