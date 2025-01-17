@@ -237,7 +237,9 @@ class TransformerConfig(Config):
             if torch.cuda.is_available():
                 model.apply_compile()
             else:
-                log.warning("model.compile was set to True, but CUDA is not available. Compiling only works with CUDA. Ignoring.")
+                log.warning(
+                    "model.compile was set to True, but CUDA is not available. Compiling only works with CUDA. Ignoring."
+                )
 
         # Maybe wrap for data parallel.
         if dp_mesh is None and mesh is not None:
