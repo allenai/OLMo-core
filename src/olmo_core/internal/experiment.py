@@ -101,7 +101,18 @@ class SubCmd(StrEnum):
             launch(config)
         elif self == SubCmd.dry_run:
             pass
-        elif self in (SubCmd.train, SubCmd.train_single):
+        elif self == SubCmd.train:
+            try:
+                train(config)
+            finally:
+                teardown_training_environment()
+        elif self == SubCmd.train_single:
+            if config.model.dp_config is not None:
+                log.warning("dp_config is set to %s, but you can't use data parallelism when running on a single node. Disabling.", config.model.dp_config)
+                config.model.dp_config = None
+            if config.model.tp_config is not None:
+                log.warning("tp_config is set to %s, but you can't use tensor parallelism when running on a single node. Disabling.", config.model.dp_config)
+                config.model.tp_config = None
             try:
                 train(config)
             finally:
