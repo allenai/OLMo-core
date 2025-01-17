@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Added missing `weights_only=False` argument to fix loading train checkpoints with newer versions of PyTorch.
+- Fixed bug where GCS upload does not retry on transient failures.
 
 ## [v1.7.0](https://github.com/allenai/OLMo-core/releases/tag/v1.7.0) - 2024-11-27
 
