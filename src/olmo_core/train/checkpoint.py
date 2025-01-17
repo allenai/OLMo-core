@@ -19,10 +19,17 @@ from ..aliases import PathOrStr
 from ..config import Config
 from ..distributed.checkpoint import (
     async_save_model_and_optim_state,
+    get_checkpoint_metadata,
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
-from ..distributed.utils import barrier, get_fs_local_rank, get_rank, is_distributed
+from ..distributed.utils import (
+    barrier,
+    get_fs_local_rank,
+    get_rank,
+    is_distributed,
+    scatter_object,
+)
 from ..exceptions import OLMoConfigurationError
 from ..io import (
     clear_directory,
@@ -146,8 +153,8 @@ class Checkpointer:
         model: nn.Module,
         optim: Optimizer,
         *,
-        load_optimizer_state: bool = True,
-        load_trainer_state: bool = True,
+        load_optimizer_state: Optional[bool] = None,
+        load_trainer_state: Optional[bool] = None,
         key_mapping: Optional[Dict[str, str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
@@ -158,21 +165,44 @@ class Checkpointer:
 
         # Maybe load trainer state.
         trainer_state: Optional[Dict[str, Any]] = None
-        if load_trainer_state:
-            try:
-                trainer_state = torch.load(
-                    cached_path(f"{dir}/train/rank{get_rank()}.pt", quiet=True), weights_only=False
-                )
-            except FileNotFoundError:
-                # Fall back to rank 0 train state.
-                # This can happen when we're restoring a checkpoint with a different world size.
-                trainer_state = torch.load(
-                    cached_path(f"{dir}/train/rank0.pt", quiet=True), weights_only=False
-                )
+        if load_trainer_state is not False:
+            # Try loading the given rank's state first, then fall back to rank 0 train state if it
+            # doesn't exist, which can happen when we're restoring a checkpoint with a different world size.
+            for path in (f"{dir}/train/rank{get_rank()}.pt", f"{dir}/train/rank0.pt"):
+                try:
+                    trainer_state = torch.load(cached_path(path, quiet=True), weights_only=False)
+                except FileNotFoundError:
+                    pass
+
+            if load_trainer_state is True and trainer_state is None:
+                raise FileNotFoundError(f"Missing trainer state in checkpoint dir '{dir}'")
 
         # Load model and optimizer state.
+        model_and_optim_dir: str = f"{dir}/model_and_optim"
+        if get_rank(self.process_group) == 0:
+            try:
+                metadata = get_checkpoint_metadata(model_and_optim_dir)
+            except FileNotFoundError:
+                # Try base directory, which could be the case if user is trying to load model weights
+                # (possibly with optimizer state), and not an actual train checkpoint.
+                if trainer_state is None:
+                    metadata = get_checkpoint_metadata(dir)
+                    model_and_optim_dir = dir
+                else:
+                    raise
+            if load_optimizer_state is None:
+                for key in metadata.state_dict_metadata.keys():
+                    if key.startswith("optim."):
+                        load_optimizer_state = True
+                        break
+                else:
+                    load_optimizer_state = False
+
+        model_and_optim_dir = scatter_object(model_and_optim_dir, group=self.process_group)
+        load_optimizer_state = scatter_object(load_optimizer_state, group=self.process_group)
+
         load_model_and_optim_state(
-            f"{dir}/model_and_optim",
+            model_and_optim_dir,
             model,
             optim if load_optimizer_state else None,
             process_group=self.process_group,
@@ -233,6 +263,8 @@ class Checkpointer:
         Check if a directory is a checkpoint directory.
         """
         dir = normalize_path(dir)
+        if file_exists(f"{dir}/.metadata"):  # just model (and maybe optim state), no trainer state
+            return True
         paths_to_check = [
             f"{dir}/train/rank0.pt",
             f"{dir}/model_and_optim/.metadata",
