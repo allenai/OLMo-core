@@ -9,9 +9,6 @@ from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelC
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
-from olmo_core.train.callbacks.evaluator_callback import (
-    DownstreamEvaluatorCallbackConfig,
-)
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
