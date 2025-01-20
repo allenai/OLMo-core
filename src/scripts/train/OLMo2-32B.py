@@ -20,6 +20,7 @@ from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
     DownstreamEvaluatorCallbackConfig,
+    ProfilerCallback,
     WandBCallback,
 )
 from olmo_core.train.checkpoint import CheckpointerConfig
@@ -87,6 +88,16 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_interval=1000,
                 save_async=True,
             ),
+        )
+        .with_callback(
+            "profiler",
+            ProfilerCallback(
+                skip_first=3,
+                wait=10,
+                warmup=2,
+                active=3,
+                repeat=1
+            )
         )
         .with_callback(
             "comet",
