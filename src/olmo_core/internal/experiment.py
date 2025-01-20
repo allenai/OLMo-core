@@ -229,10 +229,10 @@ def build_config(
         trainer=trainer,
     )
 
+    config = config.merge(overrides)
+
     if finalize_config is not None:
         finalize_config(config)
-
-    config = config.merge(overrides)
 
     if config.model.float8_config is not None and config.model.float8_config.enabled:
         config.trainer.add_callback(

@@ -39,8 +39,9 @@ from torch.distributed.checkpoint.default_planner import DefaultSavePlanner
 from torch.distributed.checkpoint.metadata import Metadata
 
 from olmo_core.aliases import PathOrStr
-from olmo_core.io import clear_directory, dir_is_empty, is_url, normalize_path
-from olmo_core.utils import gc_cuda, wait_for
+from olmo_core.io import clear_directory, dir_is_empty, is_url, normalize_path, resource_path, file_exists
+from olmo_core.utils import gc_cuda, wait_for, log_all_threads
+from . import safetensors_util
 
 from ..utils import barrier, get_fs_local_rank, is_distributed
 from .filesystem import RemoteFileSystemReader, RemoteFileSystemWriter
@@ -207,70 +208,133 @@ def load_model_and_optim_state(
     :param work_dir: A working directory for caching files/directories.
     :param thread_count: Set the number of threads used for certain operations.
     """
+    assert process_group is None
+
     dir = normalize_path(dir)
-    state_dict = _prepare_state_dict(model, optim, process_group=process_group)
-    reader = RemoteFileSystemReader(
-        dir, thread_count=thread_count, pre_download=pre_download, work_dir=work_dir
+
+    can_load_unsharded =(
+        file_exists(f"{dir}_unsharded/model.safetensors") and
+        file_exists(f"{dir}_unsharded/optim.safetensors")
     )
 
-    if key_mapping is not None:
-        metadata = reader.read_metadata()
-        for current_key, original_key in key_mapping.items():
-            if f"model.{original_key}" not in metadata.state_dict_metadata:
-                continue
+    if can_load_unsharded:
+        if get_fs_local_rank() == 0:
+            log.info(f"Local rank 0 loading {dir}/model.safetensors")
+            model_path = resource_path(dir, "model.safetensors", local_cache=work_dir)
+            log.info(f"Local rank 0 loaded {dir}/model.safetensors")
+            dist.barrier()
+        else:
+            log.info("Nonzero local rank waiting for rank 0 to load model.safetensors")
+            dist.barrier()
+            log.info("Nonzero local rank loading model.safetensors")
+            model_path = resource_path(dir, "model.safetensors", local_cache=work_dir)
+            log.info("Nonzero local rank loaded model.safetensors")
 
-            log.info(f"Mapping current param '{current_key}' to '{original_key}' in checkpoint")
-            state_dict["model"][original_key] = state_dict["model"].pop(current_key)
+        model_state_dict = safetensors_util.safetensors_file_to_state_dict(model_path)
+        if key_mapping is not None:
+            for current_key, original_key in key_mapping.items():
+                if original_key in model_state_dict:
+                    assert current_key not in model_state_dict, f"Mapping {original_key} to {current_key} in the model state dict would overwrite existing {current_key}"
+                    model_state_dict[current_key] = model_state_dict.pop(original_key)
 
-            if optim is None:
-                continue
+        sd_options = dist_cp_sd.StateDictOptions(
+            strict=True,
+            full_state_dict=True,
+            broadcast_from_rank0=False
+        )
+        dist_cp_sd.set_model_state_dict(model, model_state_dict, options=sd_options)
+        del model_path
+        del model_state_dict
+        gc_cuda()
 
-            state_dict["optim"]["state"][original_key] = state_dict["optim"]["state"].pop(
-                current_key
-            )
-            for group in state_dict["optim"]["param_groups"]:
-                if current_key in group["params"]:
-                    idx = group["params"].index(current_key)
-                    group["params"][idx] = original_key
-                    break
+        if optim is not None:
+            if get_fs_local_rank() == 0:
+                optim_path = resource_path(dir, "optim.safetensors", local_cache=work_dir)
+                dist.barrier()
+            else:
+                dist.barrier()
+                optim_path = resource_path(dir, "optim.safetensors", local_cache=work_dir)
 
-    dist_cp.load(
-        state_dict,
-        checkpoint_id=dir,
-        storage_reader=reader,
-        process_group=process_group,
-    )
+            optim_state_dict = safetensors_util.safetensors_file_to_state_dict(optim_path)
+            if key_mapping is not None:
+                for current_key, original_key in key_mapping.items():
+                    if original_key in optim_state_dict["state"]:
+                        assert current_key not in optim_state_dict["state"], f"Mapping {original_key} to {current_key} in the optimizer state dict would overwrite existing {current_key}"
+                        optim_state_dict["state"][current_key] = optim_state_dict["state"].pop(original_key)
+                        for group in optim_state_dict["param_groups"]:
+                            if original_key in group["params"]:
+                                idx = group["params"].index(original_key)
+                                group["params"][idx] = current_key
+                                break
 
-    if key_mapping is not None:
-        metadata = reader.read_metadata()
-        for current_key, original_key in key_mapping.items():
-            if f"model.{original_key}" not in metadata.state_dict_metadata:
-                continue
+            dist_cp_sd.set_optimizer_state_dict(model, optim, optim_state_dict, options=sd_options)
+            del optim_path
+            del optim_state_dict
+            gc_cuda()
+    else:
+        state_dict = _prepare_state_dict(model, optim, process_group=process_group)
+        reader = RemoteFileSystemReader(
+            dir, thread_count=thread_count, pre_download=pre_download, work_dir=work_dir
+        )
 
-            state_dict["model"][current_key] = state_dict["model"].pop(original_key)
+        if key_mapping is not None:
+            metadata = reader.read_metadata()
+            for current_key, original_key in key_mapping.items():
+                if f"model.{original_key}" not in metadata.state_dict_metadata:
+                    continue
 
-            if optim is None:
-                continue
+                log.info(f"Mapping current param '{current_key}' to '{original_key}' in checkpoint")
+                state_dict["model"][original_key] = state_dict["model"].pop(current_key)
 
-            state_dict["optim"]["state"][current_key] = state_dict["optim"]["state"].pop(
-                original_key
-            )
-            for group in state_dict["optim"]["param_groups"]:
-                if original_key in group["params"]:
-                    idx = group["params"].index(original_key)
-                    group["params"][idx] = current_key
-                    break
+                if optim is None:
+                    continue
 
-    dist_cp_sd.set_model_state_dict(
-        model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=True)
-    )
-    gc_cuda()
+                state_dict["optim"]["state"][original_key] = state_dict["optim"]["state"].pop(
+                    current_key
+                )
+                for group in state_dict["optim"]["param_groups"]:
+                    if current_key in group["params"]:
+                        idx = group["params"].index(current_key)
+                        group["params"][idx] = original_key
+                        break
 
-    if optim is not None:
-        dist_cp_sd.set_optimizer_state_dict(
-            model, optim, state_dict["optim"], options=dist_cp_sd.StateDictOptions(strict=True)
+        dist_cp.load(
+            state_dict,
+            checkpoint_id=dir,
+            storage_reader=reader,
+            process_group=process_group,
+        )
+
+        if key_mapping is not None:
+            metadata = reader.read_metadata()
+            for current_key, original_key in key_mapping.items():
+                if f"model.{original_key}" not in metadata.state_dict_metadata:
+                    continue
+
+                state_dict["model"][current_key] = state_dict["model"].pop(original_key)
+
+                if optim is None:
+                    continue
+
+                state_dict["optim"]["state"][current_key] = state_dict["optim"]["state"].pop(
+                    original_key
+                )
+                for group in state_dict["optim"]["param_groups"]:
+                    if original_key in group["params"]:
+                        idx = group["params"].index(original_key)
+                        group["params"][idx] = current_key
+                        break
+
+        dist_cp_sd.set_model_state_dict(
+            model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=True)
         )
         gc_cuda()
+
+        if optim is not None:
+            dist_cp_sd.set_optimizer_state_dict(
+                model, optim, state_dict["optim"], options=dist_cp_sd.StateDictOptions(strict=True)
+            )
+            gc_cuda()
 
 
 def unshard_checkpoint(

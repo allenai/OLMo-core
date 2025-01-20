@@ -2,6 +2,7 @@ from typing import Optional, Union
 
 import torch
 import torch.nn as nn
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import ActivationWrapper
 
 from olmo_core.config import StrEnum
 
@@ -75,6 +76,9 @@ class InitMethod(StrEnum):
         std = 0.02
         if self == InitMethod.normalized:
             std = d_model**-0.5
+
+        if isinstance(m, ActivationWrapper):
+            m = m._checkpoint_wrapped_module
 
         if isinstance(m, Attention):
             for w in (m.w_q, m.w_k, m.w_v):

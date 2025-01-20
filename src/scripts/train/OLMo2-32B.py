@@ -3,11 +3,12 @@ Train a 32B OLMo model. Run this script without any arguments to see usage info.
 """
 
 import logging
+from typing import Optional
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
-from olmo_core.internal.experiment import CommonComponents, main
+from olmo_core.internal.experiment import CommonComponents, main, ExperimentConfig
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
@@ -28,6 +29,10 @@ from olmo_core.train.checkpoint import CheckpointerConfig
 log = logging.getLogger(__name__)
 
 
+NUM_NODES = 16
+START_FROM: Optional[int] = 205000
+
+
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     compile = True
     return TransformerConfig.olmo2_32B(
@@ -36,18 +41,22 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         fused_ops=False,
         use_flash=not compile,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
+            name=DataParallelType.hsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
+            num_replicas=NUM_NODES // 8,
         ),
-        # dp_config=TransformerDataParallelConfig(
-        #     name=DataParallelType.hsdp,
-        #     param_dtype=DType.bfloat16,
-        #     reduce_dtype=DType.float32,
-        #     num_replicas=64 // 16,  # common.launch.num_nodes // 2,
-        # ),
-        # ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.selected_modules,
             modules=[f"blocks.{i}.feed_forward" for i in range(64)],
+            #modules=[
+            #    "embeddings",
+            #    "blocks.*.attention",
+            #    "blocks.*.attention_norm",
+            #    "blocks.*.feed_forward.w1",
+            #    "blocks.*.feed_forward.w3",
+            #    "blocks.*.feed_forward_norm"
+            #]
         ),
         float8_config=Float8Config(compile=compile, enabled=False),
     )
@@ -63,17 +72,19 @@ def build_optim_config(common: CommonComponents) -> SkipStepAdamWConfig:
             OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
         ],
         # fused=True,
-        compile=True,
+        compile=False,
     )
 
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
-    project_name = "peteish32"
+    project_name = "peteish32-hybrid"
     return (
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/{project_name}/",
             rank_microbatch_size=2 * 4096,
             checkpointer=CheckpointerConfig(save_thread_count=1, load_thread_count=32),
+            load_path=None if START_FROM is None else f"gs://ai2-llm/checkpoints/peteish32/step{START_FROM}/",
+            hard_stop=None if START_FROM is None else Duration.steps(START_FROM + 100),
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=10,
@@ -87,6 +98,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             CheckpointerCallback(
                 save_interval=1000,
                 save_async=True,
+                pre_train_checkpoint=False
             ),
         )
         .with_callback(
@@ -104,8 +116,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             CometCallback(
                 name=common.run_name,
                 workspace="ai2",
-                project=project_name,
-                enabled=True,
+                project="peteish32",
+                enabled=False,
                 cancel_check_interval=10,
             ),
         )
@@ -114,7 +126,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=common.run_name,
                 entity="ai2-llm",
-                project=project_name,
+                project="peteish32",
                 enabled=False,
                 cancel_check_interval=10,
             ),
@@ -200,10 +212,27 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     )
 
 
+def finalize_config(config: ExperimentConfig) -> None:
+    if config.trainer.load_path is not None and config.trainer.load_path.startswith("gs://"):
+        source_path = config.trainer.load_path.rstrip("/")
+        assert len(source_path) > 0
+        final_path_component = source_path.rsplit("/", maxsplit=1)[-1]
+        assert len(final_path_component) > 0
+        target_path = f"/data/olmo_core/{final_path_component}"
+        assert len(target_path) > 0  # just to be extra sure, because we're rm'ing it below
+        config.launch.setup_steps.extend([
+            f"rm -rf {target_path}",
+            f"mkdir -p {target_path}",
+            f"gsutil -q -m rsync -r {source_path} {target_path}"
+        ])
+        config.trainer.load_path = target_path
+
+
 if __name__ == "__main__":
     main(
-        global_batch_size=2048 * 4096,
+        global_batch_size=2 * 4096 * NUM_NODES * 8,
         model_config_builder=build_model_config,
         optim_config_builder=build_optim_config,
         trainer_config_builder=build_trainer_config,
+        finalize_config=finalize_config,
     )

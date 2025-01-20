@@ -1,5 +1,4 @@
 import sys
-from datetime import timedelta
 
 import requests
 import torch.distributed as dist
