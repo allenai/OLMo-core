@@ -21,8 +21,6 @@ __all__ = [
     "SkipStepAdamWConfig",
     "SkipStepAdamW",
     "AdamConfig",
-    "SkipStepAdamWConfig",
-    "SkipStepAdamW",
     "LionConfig",
     "Lion",
     "SkipStepLionConfig",
