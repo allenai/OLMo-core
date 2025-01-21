@@ -668,7 +668,11 @@ class Trainer:
             )
 
     def load_checkpoint(
-        self, dir: PathOrStr, *, load_optimizer_state: bool = True, load_trainer_state: bool = True
+        self,
+        dir: PathOrStr,
+        *,
+        load_optimizer_state: Optional[bool] = None,
+        load_trainer_state: Optional[bool] = None,
     ):
         """
         Load a checkpoint.
@@ -698,8 +702,7 @@ class Trainer:
             load_trainer_state=load_trainer_state,
             key_mapping=self.load_key_mapping,
         )
-        if load_trainer_state:
-            assert trainer_state is not None
+        if trainer_state is not None:
             self.load_state_dict(cast(TrainerStateDict, trainer_state))
 
         for callback in self.callbacks.values():
@@ -709,7 +712,11 @@ class Trainer:
         log.info("Checkpoint successfully loaded")
 
     def maybe_load_checkpoint(
-        self, dir: PathOrStr, *, load_optimizer_state: bool = True, load_trainer_state: bool = True
+        self,
+        dir: PathOrStr,
+        *,
+        load_optimizer_state: Optional[bool] = None,
+        load_trainer_state: Optional[bool] = None,
     ) -> bool:
         """
         Like :meth:`load_checkpoint()` but is a no-op if there is no checkpoint in the ``dir`` provided.
