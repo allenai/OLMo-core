@@ -184,11 +184,12 @@ jobs:
                   cluster:
                     # H100 clusters
                     - ai2/jupiter-cirrascale-2
-                    - ai2/pluto-cirrascale
                     - ai2/augusta-google-1
+                    - ai2/allennlp-elara-cirrascale
+                    - ai2/ganymede-cirrascale
+                    - ai2/ceres-cirrascale
                     # A100 clusters
                     - ai2/saturn-cirrascale
-                    - ai2/allennlp-cirrascale
                     # - ai2/allennlp-elanding-a100-40g
                 envVars:
                   - name: CUBLAS_WORKSPACE_CONFIG
@@ -238,7 +239,7 @@ jobs:
       - name: Generate release notes
         run: |
           . .venv/bin/activate
-          python src/scripts/release_notes.py > ${{ github.workspace }}-RELEASE_NOTES.md
+          python src/scripts/release/release_notes.py > ${{ github.workspace }}-RELEASE_NOTES.md
 
       - name: Publish package to PyPI
         run: |
@@ -254,3 +255,9 @@ jobs:
           prerelease: ${{ contains(env.TAG, 'rc') }}
           files: |
             dist/*
+
+      - name: Add PR comments on release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./src/scripts/release/add_pr_comments_on_release.sh

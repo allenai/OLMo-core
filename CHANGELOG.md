@@ -16,16 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added option to pre-download checkpoint files from remote storage before trying to load a checkpoint.
 - Added a callback for sending Slack notifications.
 - Added `SkipStepAdamW` optimizer.
+- The trainer can load model-only checkpoints now.
 
 ### Changed
 
 - Changed storage of shared shard state in sharded checkpoints from smallest shard to lowest rank (normally 0).
-- Changed underlying AdamW implementation.
+- Changed how the trainer handles loading a checkpoint when `load_path` is provided. Now `load_path` is only used if no checkpoint is found in the `save_folder`.
 
 ### Fixed
 
 - Added missing `weights_only=False` argument to fix loading train checkpoints with newer versions of PyTorch.
-- Fixed bug where GCS upload does not retry on transient failures. 
+- Fixed bug where GCS upload does not retry on transient failures.
 
 ## [v1.7.0](https://github.com/allenai/OLMo-core/releases/tag/v1.7.0) - 2024-11-27
 
