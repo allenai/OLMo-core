@@ -1,10 +1,8 @@
+import argparse
 import sys
-from datetime import timedelta
 
 import requests
 import torch.distributed as dist
-import argparse
-
 from urllib3.exceptions import MaxRetryError, NameResolutionError
 
 
@@ -22,18 +20,19 @@ def main():
         host_name=args.master_addr,
         port=args.master_port,
         world_size=args.world_size,
-        is_master=(args.rank == 0)
+        is_master=(args.rank == 0),
     )
 
     # Get our own host id
     if args.debug:
         import socket
+
         host_id = f"{socket.gethostname()}_{args.rank}"
     else:
         try:
             response = requests.get(
                 "http://metadata.google.internal/computeMetadata/v1/instance/attributes/physical_host",
-                headers={"Metadata-Flavor": "Google"}
+                headers={"Metadata-Flavor": "Google"},
             )
             assert response.status_code == 200
             host_id = response.text.strip()
