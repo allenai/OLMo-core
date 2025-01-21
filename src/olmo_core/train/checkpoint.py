@@ -55,6 +55,8 @@ class CheckpointerConfig(Config):
     work_dir: Optional[str] = None
     save_overwrite: Optional[bool] = None
     pre_download: bool = False
+    save_thread_count: Optional[int] = None
+    load_thread_count: Optional[int] = None
 
     def build(self, process_group: Optional[dist.ProcessGroup] = None, **kwargs) -> "Checkpointer":
         kwargs = {**self.as_dict(exclude_none=True, recurse=False), **kwargs}
@@ -82,6 +84,8 @@ class Checkpointer:
     save_overwrite: bool = False
     pre_download: bool = False
     process_group: Optional[dist.ProcessGroup] = None
+    save_thread_count: Optional[int] = None
+    load_thread_count: Optional[int] = None
 
     def __post_init__(self):
         self.work_dir = Path(self.work_dir)
@@ -107,6 +111,7 @@ class Checkpointer:
                 optim,
                 process_group=self.process_group,
                 save_overwrite=self.save_overwrite,
+                thread_count=self.save_thread_count,
             )
 
         self._save_metadata(dir, CheckpointMetadata())
@@ -136,6 +141,7 @@ class Checkpointer:
             optim,
             process_group=self.process_group,
             save_overwrite=self.save_overwrite,
+            thread_count=self.save_thread_count,
         )
 
         def done_callback(fut: Future):
@@ -210,6 +216,7 @@ class Checkpointer:
             key_mapping=key_mapping,
             pre_download=is_url(dir) and self.pre_download,
             work_dir=self.work_dir,
+            thread_count=self.load_thread_count,
         )
 
         return trainer_state
@@ -332,7 +339,7 @@ class Checkpointer:
         # NOTE: if 'dir' is a URL, the 'wd' will be a different temp dir for each rank.
         if is_url(dir) or get_fs_local_rank() == 0:
             train_dir.mkdir(exist_ok=True, parents=True)
-        wait_for(train_dir.exists, description=f"Waiting on '{train_dir}' to be created...")
+        wait_for(train_dir.exists, description=f"Waiting for '{train_dir}' to be created...")
         torch.save(train_state, train_dir / f"rank{get_rank()}.pt")
 
     def _save_metadata(self, dir: PathOrStr, metadata: CheckpointMetadata):
