@@ -213,7 +213,13 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
             for bucket in buckets:
                 file_name = gen_file_name()
                 path = f"{self.path}/{file_name}"
-                results.extend(_write_items(path, file_name, bucket, planner))
+                try:
+                    results.extend(_write_items(path, file_name, bucket, planner))
+                except BaseException:
+                    # NOTE: we might get an error here that can't be pickled, which causes a different failure
+                    # later when PyTorch tries to reduce that error across ranks. So here we just make
+                    # sure we're raising a simple error type that can be pickled.
+                    raise OLMoCheckpointError(f"Original error:\n{traceback.format_exc()}")
             return results
 
         results: List[WriteResult]
@@ -229,15 +235,8 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
                 futures = []
                 for bucket in buckets:
                     futures.append(executor.submit(write_items, [bucket]))
-
                 for f in as_completed(futures):
-                    try:
-                        results.extend(f.result())
-                    except BaseException:
-                        # NOTE: we might get an error here that can't be pickled, which causes a different failure
-                        # later when PyTorch tries to reduce that error across ranks. So here we just make
-                        # sure we're raising a simple error type that can be pickled.
-                        raise OLMoCheckpointError(f"Original error:\n{traceback.format_exc()}")
+                    results.extend(f.result())
 
         fut: Future[List[WriteResult]] = Future()
         fut.set_result(results)
