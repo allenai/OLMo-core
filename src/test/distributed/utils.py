@@ -1,5 +1,6 @@
 import datetime
 import logging
+import os
 import sys
 from typing import Any, Callable, Dict, Optional, Tuple
 
@@ -8,7 +9,11 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from olmo_core.distributed.utils import is_distributed
+from olmo_core.distributed.utils import (
+    OLMO_LOCAL_WORLD_SIZE_ENV_VAR,
+    OLMO_NUM_NODES_ENV_VAR,
+    is_distributed,
+)
 
 from ..utils import (
     DEVICES,
@@ -114,6 +119,9 @@ def init_process(
         rank=process_rank,
         timeout=datetime.timedelta(seconds=120),
     )
+
+    os.environ.setdefault(OLMO_NUM_NODES_ENV_VAR, "1")
+    os.environ.setdefault(OLMO_LOCAL_WORLD_SIZE_ENV_VAR, str(world_size))
 
     log.info("Starting test...")
 

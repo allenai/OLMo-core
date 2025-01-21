@@ -3,9 +3,10 @@ Distributed helpers, most of which work in a non-distributed context as well for
 """
 
 import logging
+import math
 import os
 from datetime import timedelta
-from typing import List, Optional, TypeVar
+from typing import Callable, List, Optional, TypeVar, cast
 
 import torch
 import torch.distributed as dist
@@ -421,3 +422,36 @@ def get_local_tensor(x: torch.Tensor) -> torch.Tensor:
         return x.to_local()
     else:
         return x
+
+
+def do_n_at_a_time(
+    f: Callable[[], T],
+    *,
+    n: Optional[int] = None,
+    process_group: Optional[dist.ProcessGroup] = None,
+    world_size: Optional[int] = None,
+    local_rank: Optional[int] = None,
+) -> T:
+    """
+    Call a function ``f`` in a distributed context from at most ``n`` ranks at a time.
+
+    All ranks will eventually call the given function exactly once, at which point this function
+    will return.
+
+    :param f: The function to call from each rank.
+    :param n: The level of concurrency, i.e. how many ranks are allowed to call ``f`` at once.
+        This defaults to the number of nodes, in which case one rank from each node will
+        call ``f`` at a time.
+    :param process_group: The process group to use.
+    """
+    world_size = world_size if world_size is not None else get_world_size(process_group)
+    local_rank = local_rank if local_rank is not None else get_rank(process_group)
+    n = n if n is not None else get_num_nodes()
+    group_count = math.ceil(world_size / n)
+    group_rank = local_rank % group_count
+    result: Optional[T] = None
+    for active_group in range(group_count):
+        if group_rank == active_group:
+            result = f()
+        barrier(process_group)
+    return cast(T, result)
