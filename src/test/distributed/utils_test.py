@@ -36,4 +36,4 @@ def test_do_n_at_a_time(n: int, world_size: int):
         dist_utils.do_n_at_a_time(partial(func, rank), n=n, world_size=world_size, local_rank=rank)
 
     assert times_called == world_size
-    assert calling_ranks == set(list(range(world_size)))
+    assert calling_ranks == set(range(world_size))
