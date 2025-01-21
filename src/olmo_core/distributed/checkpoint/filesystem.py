@@ -7,10 +7,12 @@ import tempfile
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, cast
 
 import torch
+import torch.distributed as dist
 import torch.distributed.checkpoint as dist_cp
 from torch.distributed.checkpoint.filesystem import WriteResult
 from torch.distributed.checkpoint.metadata import Metadata, MetadataIndex, StorageMeta
@@ -25,6 +27,7 @@ from torch.distributed.checkpoint.planner import (
 from torch.futures import Future
 
 from olmo_core.aliases import PathOrStr
+from olmo_core.distributed.utils import do_n_at_a_time
 from olmo_core.exceptions import OLMoCheckpointError
 from olmo_core.io import (
     get_bytes_range,
@@ -154,12 +157,16 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
         self,
         path: PathOrStr,
         thread_count: Optional[int] = None,
+        process_group: Optional[dist.ProcessGroup] = None,
+        throttle_uploads: bool = False,
     ) -> None:
         super().__init__()
         if thread_count is not None and thread_count <= 0:
             raise ValueError("thread count must be at least 1")
         self.path = normalize_path(path)
         self.thread_count = thread_count or get_default_thread_count()
+        self.process_group = process_group
+        self.throttle_uploads = throttle_uploads
         self.save_id = generate_uuid()
 
     def reset(self, checkpoint_id: Optional[PathOrStr] = None) -> None:
@@ -201,22 +208,35 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
             file_count += 1
             return file_name
 
-        with ThreadPoolExecutor(max_workers=self.thread_count) as executor:
-            futures = []
-            for bucket in _split_by_size_and_type(self.thread_count, plan.items):
+        def write_items(buckets: List[List[WriteItem]]) -> List[WriteResult]:
+            results: List[WriteResult] = []
+            for bucket in buckets:
                 file_name = gen_file_name()
                 path = f"{self.path}/{file_name}"
-                futures.append(executor.submit(_write_items, path, file_name, bucket, planner))
-
-            results = []
-            for f in as_completed(futures):
                 try:
-                    results += f.result()
+                    results.extend(_write_items(path, file_name, bucket, planner))
                 except BaseException:
                     # NOTE: we might get an error here that can't be pickled, which causes a different failure
                     # later when PyTorch tries to reduce that error across ranks. So here we just make
                     # sure we're raising a simple error type that can be pickled.
                     raise OLMoCheckpointError(f"Original error:\n{traceback.format_exc()}")
+            return results
+
+        results: List[WriteResult]
+        if self.throttle_uploads and is_url(self.path):
+            buckets = _split_by_size_and_type(1, plan.items)
+            results = do_n_at_a_time(
+                partial(write_items, buckets), process_group=self.process_group
+            )
+        else:
+            buckets = _split_by_size_and_type(self.thread_count, plan.items)
+            results = []
+            with ThreadPoolExecutor(max_workers=self.thread_count) as executor:
+                futures = []
+                for bucket in buckets:
+                    futures.append(executor.submit(write_items, [bucket]))
+                for f in as_completed(futures):
+                    results.extend(f.result())
 
         fut: Future[List[WriteResult]] = Future()
         fut.set_result(results)

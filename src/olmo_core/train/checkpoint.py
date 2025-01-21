@@ -57,6 +57,7 @@ class CheckpointerConfig(Config):
     pre_download: bool = False
     save_thread_count: Optional[int] = None
     load_thread_count: Optional[int] = None
+    throttle_uploads: bool = False
 
     def build(self, process_group: Optional[dist.ProcessGroup] = None, **kwargs) -> "Checkpointer":
         kwargs = {**self.as_dict(exclude_none=True, recurse=False), **kwargs}
@@ -86,6 +87,7 @@ class Checkpointer:
     process_group: Optional[dist.ProcessGroup] = None
     save_thread_count: Optional[int] = None
     load_thread_count: Optional[int] = None
+    throttle_uploads: bool = False
 
     def __post_init__(self):
         self.work_dir = Path(self.work_dir)
@@ -112,6 +114,7 @@ class Checkpointer:
                 process_group=self.process_group,
                 save_overwrite=self.save_overwrite,
                 thread_count=self.save_thread_count,
+                throttle_uploads=self.throttle_uploads,
             )
 
         self._save_metadata(dir, CheckpointMetadata())
@@ -142,6 +145,7 @@ class Checkpointer:
             process_group=self.process_group,
             save_overwrite=self.save_overwrite,
             thread_count=self.save_thread_count,
+            throttle_uploads=self.throttle_uploads,
         )
 
         def done_callback(fut: Future):
