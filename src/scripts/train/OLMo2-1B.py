@@ -41,7 +41,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=common.save_folder,
-            rank_microbatch_size=8 * 4096,
+            rank_microbatch_size=2 * 4096,
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
@@ -61,7 +61,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             CometCallback(
                 name=common.run_name,
                 workspace="ai2",
-                project="OLMo-core-1B",
+                project="shanea-testing",
                 enabled=True,
                 cancel_check_interval=10,
             ),
@@ -71,7 +71,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=common.run_name,
                 entity="ai2-llm",
-                project="OLMo-core-1B",
+                project="shanea-testing",
                 enabled=False,
                 cancel_check_interval=10,
             ),
