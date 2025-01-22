@@ -1,18 +1,17 @@
 import logging
 import os
-import random
-import string
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
-
-from comet_ml import Experiment
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from olmo_core.config import StrEnum
-from olmo_core.distributed.utils import get_rank, is_distributed
-from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
+from olmo_core.distributed.utils import get_rank
+from olmo_core.exceptions import OLMoEnvironmentError
 from olmo_core.utils import set_env_var
 
 from .callback import Callback
+
+if TYPE_CHECKING:
+    from comet_ml import Experiment
 
 log = logging.getLogger(__name__)
 
@@ -78,15 +77,6 @@ class CometCallback(Callback):
     The name of the Comet.ml workspace to use.
     """
 
-    experiment_key: Optional[str] = field(
-        default_factory=lambda: "".join(
-            random.Random().choices(string.ascii_uppercase + string.digits, k=32)
-        )
-    )
-    """
-    An experiment identifier. Used to link different ranks of the same run to the same experiment.
-    """
-
     tags: Optional[List[str]] = None
     """
     Tags to assign the experiment.
@@ -125,11 +115,11 @@ class CometCallback(Callback):
     _finalized: bool = False
 
     @property
-    def exp(self) -> Experiment:
+    def exp(self) -> "Experiment":
         return self._exp  # type: ignore
 
     @exp.setter
-    def exp(self, exp: Experiment):
+    def exp(self, exp: "Experiment"):
         self._exp = exp
 
     @property
@@ -142,57 +132,39 @@ class CometCallback(Callback):
             self._finalized = True
 
     def pre_train(self):
-        if self.enabled:
+        if self.enabled and get_rank() == 0:
             set_env_var("COMET_DISABLE_AUTO_LOGGING", "1")
 
             import comet_ml as comet
 
             if COMET_API_KEY_ENV_VAR not in os.environ:
                 raise OLMoEnvironmentError(f"missing env var '{COMET_API_KEY_ENV_VAR}'")
-            if is_distributed() and self.experiment_key is None:
-                raise OLMoConfigurationError("Experiment key must be set in distributed contexts")
 
-            exp = comet.start(
+            self.exp = comet.Experiment(
                 api_key=os.environ[COMET_API_KEY_ENV_VAR],
                 project_name=self.project,
                 workspace=self.workspace,
-                experiment_key=self.experiment_key,
-                experiment_config=comet.ExperimentConfig(
-                    auto_output_logging="simple",
-                    display_summary_level=0,
-                    distributed_node_identifier=str(get_rank()),
-                    log_env_gpu=True,
-                    log_env_cpu=True,
-                    log_env_network=True,
-                    log_env_disk=True,
-                    log_env_host=False,
-                    log_env_details=True,
-                ),
+                auto_output_logging="simple",
+                display_summary_level=0,
             )
-            if not isinstance(exp, Experiment):
-                raise RuntimeError(
-                    f"Expected a comet Experiment, got an object of type {type(exp)}: {exp}"
+
+            if self.name is not None:
+                self.exp.set_name(self.name)
+
+            if self.tags:
+                self.exp.add_tags(self.tags)
+
+            if self.config is not None:
+                self.exp.log_parameters(self.config)
+
+            if self.notifications == CometNotificationSetting.all:
+                self.exp.send_notification(
+                    f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
+                    status="started",
                 )
-            self.exp = exp
-
-            if get_rank() == 0:
-                if self.name is not None:
-                    self.exp.set_name(self.name)
-
-                if self.tags:
-                    self.exp.add_tags(self.tags)
-
-                if self.config is not None:
-                    self.exp.log_parameters(self.config)
-
-                if self.notifications == CometNotificationSetting.all:
-                    self.exp.send_notification(
-                        f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
-                        status="started",
-                    )
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):
-        if self.enabled:
+        if self.enabled and get_rank() == 0:
             self.exp.log_metrics(metrics, step=step)
 
     def post_step(self):
@@ -201,8 +173,9 @@ class CometCallback(Callback):
             self.trainer.thread_pool.submit(self.check_if_canceled)
 
     def post_train(self):
-        if self.enabled:
-            if get_rank() == 0 and self.notifications in (
+        if self.enabled and get_rank() == 0:
+            log.info("Finalizing successful Comet.ml experiment...")
+            if self.notifications in (
                 CometNotificationSetting.all,
                 CometNotificationSetting.end_only,
             ):
@@ -210,26 +183,22 @@ class CometCallback(Callback):
                     f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
                     status="completed successfully",
                 )
-
-            log.info("Finalizing successful Comet.ml experiment...")
             self.finalize()
 
     def on_error(self, exc: BaseException):
         del exc
-        if self.enabled:
-            if get_rank() == 0:
-                if self.notifications in (
-                    CometNotificationSetting.all,
-                    CometNotificationSetting.end_only,
-                    CometNotificationSetting.failure_only,
-                ):
-                    self.exp.send_notification(
-                        f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
-                        status="failed",
-                    )
-
+        if self.enabled and get_rank() == 0:
             log.warning("Finalizing failed Comet.ml experiment...")
             self.exp.add_tag(self.failure_tag)
+            if self.notifications in (
+                CometNotificationSetting.all,
+                CometNotificationSetting.end_only,
+                CometNotificationSetting.failure_only,
+            ):
+                self.exp.send_notification(
+                    f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
+                    status="failed",
+                )
             self.finalize()
 
     def check_if_canceled(self):

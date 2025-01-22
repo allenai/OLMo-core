@@ -173,8 +173,10 @@ class Trainer:
 
     load_path: Optional[PathOrStr] = None
     """
-    Where to load a checkpoint from prior to training.
-    Defaults to ``save_folder``.
+    An alternative location to load a checkpoint from if no checkpoint is found in the current :data:`save_folder`.
+
+    This can be set to a checkpoint path or the path to a folder of checkpoints such as the :data:`save_folder`
+    from a different run.
     """
 
     load_strategy: LoadStrategy = LoadStrategy.if_available
@@ -538,7 +540,7 @@ class Trainer:
 
     def fit(self):
         """
-        Fit the model, potentially loading a checkpoint before hand depending on the
+        Fit the model, potentially loading a checkpoint first depending on the
         :data:`load_strategy`.
         """
         self._canceled = False
@@ -546,12 +548,30 @@ class Trainer:
         self._canceling_rank = None
 
         # Maybe load a checkpoint.
-        if not self.checkpoint_loaded:
-            load_path = self.load_path if self.load_path is not None else self.save_folder
-            if self.load_strategy == LoadStrategy.always:
-                self.load_checkpoint(load_path)
-            elif self.load_strategy == LoadStrategy.if_available:
-                self.maybe_load_checkpoint(load_path)
+        if not self.checkpoint_loaded and self.load_strategy != LoadStrategy.never:
+            # Try loading from the save folder first.
+            self.maybe_load_checkpoint(self.save_folder)
+
+            # Then fallback to the load path, if provided.
+            if self.load_path is not None:
+                if not self.checkpoint_loaded:
+                    self.maybe_load_checkpoint(self.load_path)
+                else:
+                    log.warning(
+                        f"Ignoring load path ('{self.load_path}') since checkpoint was found in save folder"
+                    )
+
+            if not self.checkpoint_loaded:
+                if self.load_strategy == LoadStrategy.always:
+                    raise FileNotFoundError(
+                        f"No checkpoint found in save folder ('{self.save_folder}') or "
+                        f"load path ('{self.load_path}')"
+                    )
+                else:
+                    log.warning(
+                        f"No checkpoint found in save folder ('{self.save_folder}') or "
+                        f"load path ('{self.load_path}'), will train from scratch..."
+                    )
 
         log.info(f"Training for {self.max_steps:,d} steps")
 
@@ -648,7 +668,11 @@ class Trainer:
             )
 
     def load_checkpoint(
-        self, dir: PathOrStr, *, load_optimizer_state: bool = True, load_trainer_state: bool = True
+        self,
+        dir: PathOrStr,
+        *,
+        load_optimizer_state: Optional[bool] = None,
+        load_trainer_state: Optional[bool] = None,
     ):
         """
         Load a checkpoint.
@@ -678,8 +702,7 @@ class Trainer:
             load_trainer_state=load_trainer_state,
             key_mapping=self.load_key_mapping,
         )
-        if load_trainer_state:
-            assert trainer_state is not None
+        if trainer_state is not None:
             self.load_state_dict(cast(TrainerStateDict, trainer_state))
 
         for callback in self.callbacks.values():
@@ -689,7 +712,11 @@ class Trainer:
         log.info("Checkpoint successfully loaded")
 
     def maybe_load_checkpoint(
-        self, dir: PathOrStr, *, load_optimizer_state: bool = True, load_trainer_state: bool = True
+        self,
+        dir: PathOrStr,
+        *,
+        load_optimizer_state: Optional[bool] = None,
+        load_trainer_state: Optional[bool] = None,
     ) -> bool:
         """
         Like :meth:`load_checkpoint()` but is a no-op if there is no checkpoint in the ``dir`` provided.
@@ -709,9 +736,10 @@ class Trainer:
                 load_optimizer_state=load_optimizer_state,
                 load_trainer_state=load_trainer_state,
             )
+            assert self.checkpoint_loaded
+            return True
         else:
-            log.warning(f"No checkpoint found in '{dir}', will train from scratch...")
-        return should_load
+            return False
 
     def save_checkpoint(self) -> PathOrStr:
         """

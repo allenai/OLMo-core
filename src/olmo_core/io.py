@@ -590,7 +590,10 @@ def _gcs_get_bytes_range(bucket_name: str, key: str, bytes_start: int, num_bytes
     except NotFound:
         raise FileNotFoundError(f"gs://{bucket_name}/{key}")
     return blob.download_as_bytes(
-        start=bytes_start, end=bytes_start + num_bytes - 1, retry=_get_gcs_retry(), checksum=None, # type: ignore
+        start=bytes_start,
+        end=bytes_start + num_bytes - 1,
+        retry=_get_gcs_retry(),
+        checksum=None,  # type: ignore
     )
 
 
@@ -612,7 +615,10 @@ def _gcs_upload(source: Path, bucket_name: str, key: str, save_overwrite: bool =
         generation = blob.generation
 
     blob.upload_from_filename(
-        source, if_generation_match=generation, retry=_get_gcs_conditional_retry(), checksum=None,
+        source,
+        if_generation_match=generation,
+        retry=_get_gcs_conditional_retry(),
+        checksum=None,
     )
 
 

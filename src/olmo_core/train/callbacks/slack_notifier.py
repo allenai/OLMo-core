@@ -12,6 +12,7 @@ from .callback import Callback
 
 SLACK_WEBHOOK_URL_ENV_VAR = "SLACK_WEBHOOK_URL"
 BEAKER_JOB_ID_ENV_VAR = "BEAKER_JOB_ID"
+EXC_LINE_LIMIT = 30
 
 
 class SlackNotificationSetting(StrEnum):
@@ -98,7 +99,12 @@ class SlackNotifierCallback(Callback):
             SlackNotificationSetting.end_only,
             SlackNotificationSetting.failure_only,
         ):
-            self._post_message(f"failed with error:\n{exc}")
+            exc_lines = str(exc).rstrip("\n").split("\n")
+            if len(exc_lines) > EXC_LINE_LIMIT:
+                exc_lines = exc_lines[:EXC_LINE_LIMIT]
+                exc_lines.append("...")
+            exc_str = "\n".join(exc_lines)
+            self._post_message(f"failed with error:\n```\n{exc_str}\n```")
 
     def _post_message(self, msg: str):
         webhook_url = self.webhook_url or os.environ.get(SLACK_WEBHOOK_URL_ENV_VAR)

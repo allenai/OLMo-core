@@ -75,17 +75,19 @@ class LoadStrategy(StrEnum):
 
     if_available = "if_available"
     """
-    Only load from the load path if a checkpoint exists there.
+    The trainer will attempt to load a checkpoint from the save folder or load path (in that order)
+    but will train from scratch if no checkoint is found.
     """
 
     always = "always"
     """
-    Always try loading from the load path.
+    The trainer will attempt to load a checkpoint from the save folder or load path (in that order)
+    and raise an error if no checkpoint is found.
     """
 
     never = "never"
     """
-    Never load from the load path.
+    The trainer will never load a checkpoint even if one exists in the save folder or load path.
     """
 
 

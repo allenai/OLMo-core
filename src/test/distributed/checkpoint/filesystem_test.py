@@ -13,7 +13,7 @@ from olmo_core.io import dir_is_empty
 from ..utils import BACKENDS, get_default_device, run_distributed_test
 
 
-def run_save_and_load_with_dtensors(dir):
+def run_save_and_load_with_dtensors(dir, throttle: bool = False):
     mesh = init_device_mesh(get_default_device().type, (dist.get_world_size(),))
 
     x_full = torch.randn(4, 4, device=get_default_device())
@@ -30,7 +30,7 @@ def run_save_and_load_with_dtensors(dir):
     distcp.state_dict_saver.save(
         {"x": x, "y": y},
         checkpoint_id=dir,
-        storage_writer=RemoteFileSystemWriter(dir, thread_count=2),
+        storage_writer=RemoteFileSystemWriter(dir, thread_count=2, throttle_uploads=throttle),
     )
 
     # Now create new sharded copies with a different sharding strategy and load the checkpoint.
@@ -51,11 +51,17 @@ def run_save_and_load_with_dtensors(dir):
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_save_and_load_locally_with_dtensors(backend, tmp_path):
-    run_distributed_test(run_save_and_load_with_dtensors, backend=backend, func_args=(tmp_path,))
+    run_distributed_test(
+        run_save_and_load_with_dtensors,
+        backend=backend,
+        func_args=(tmp_path,),
+        start_method="spawn",
+    )
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_save_and_load_remotely_with_dtensors(backend, s3_checkpoint_dir):
+@pytest.mark.parametrize("throttle", [True, False])
+def test_save_and_load_remotely_with_dtensors(backend, s3_checkpoint_dir, throttle):
     from botocore.exceptions import NoCredentialsError
 
     try:
@@ -66,6 +72,6 @@ def test_save_and_load_remotely_with_dtensors(backend, s3_checkpoint_dir):
     run_distributed_test(
         run_save_and_load_with_dtensors,
         backend=backend,
-        func_args=(s3_checkpoint_dir,),
+        func_args=(s3_checkpoint_dir, throttle),
         start_method="spawn",  # NOTE: forking causes a crash with boto3
     )
