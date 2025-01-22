@@ -103,6 +103,7 @@ def build_launch_config(
             "conda shell.bash activate base",
             "pip install -e '.[all]'",
             "pip install --upgrade beaker-py",
+            "pip install --upgrade comet_ml",
             # Quickly try a new version of PyTorch like this
             #  "pip install --upgrade --pre torch==2.6.0.dev20241112+cu121 --index-url https://download.pytorch.org/whl/nightly/cu121",
             "pip freeze",
