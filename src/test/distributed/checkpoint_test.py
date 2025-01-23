@@ -12,6 +12,7 @@ from torch.distributed.tensor.parallel import (
 )
 
 from olmo_core.distributed.checkpoint import (
+    UnshardStrategy,
     async_save_model_and_optim_state,
     load_model_and_optim_state,
     save_model_and_optim_state,
@@ -231,18 +232,14 @@ def test_unshard_checkpoint(backend, tmp_path):
 
     # Unshard with regular PyTorch format.
     model_path_pt, optim_path_pt = unshard_checkpoint(
-        sharded_checkpoint_dir, unsharded_checkpoint_dir
+        sharded_checkpoint_dir,
+        unsharded_checkpoint_dir,
     )
     assert model_path_pt.is_file()
     assert model_path_pt.suffix == ".pt"
-    assert optim_path_pt is not None and optim_path_pt.is_file()
-
-    # Unshard with model safetensors format.
-    model_path_st, _ = unshard_checkpoint(
-        sharded_checkpoint_dir, unsharded_checkpoint_dir, optim=False, use_safetensors=True
-    )
-    assert model_path_st.is_file()
-    assert model_path_st.suffix == ".safetensors"
+    assert optim_path_pt is not None
+    assert optim_path_pt.is_file()
+    assert optim_path_pt.suffix == ".pt"
 
     model_state_pt = torch.load(model_path_pt, map_location="cpu", weights_only=True)
     assert model_state_pt
@@ -255,8 +252,6 @@ def test_unshard_checkpoint(backend, tmp_path):
         "w3.bias",
     }
     assert model_state_pt["w1.weight"].shape == (16, 16)
-    model_state_st = safetensors.torch.load_file(model_path_st)
-    torch.testing.assert_close(model_state_pt, model_state_st)
 
     optim_state = torch.load(optim_path_pt, map_location="cpu", weights_only=False)
     assert optim_state
@@ -271,6 +266,33 @@ def test_unshard_checkpoint(backend, tmp_path):
     }
     assert optim_state["state"]["w1.weight"].keys() == {"step", "exp_avg", "exp_avg_sq"}
     assert optim_state["state"]["w1.weight"]["exp_avg"].shape == (16, 16)
+
+    # Unshard model with safetensors format.
+    model_path_st, optim_path_st = unshard_checkpoint(
+        sharded_checkpoint_dir, unsharded_checkpoint_dir, optim=False, use_safetensors=True
+    )
+    assert model_path_st.is_file()
+    assert model_path_st.suffix == ".safetensors"
+    assert optim_path_st is None
+
+    model_state_st = safetensors.torch.load_file(model_path_st)
+    torch.testing.assert_close(model_state_pt, model_state_st)
+
+    # Unshard model with safetensors format, one file per tensor.
+    model_dir_st, optim_dir_st = unshard_checkpoint(
+        sharded_checkpoint_dir,
+        unsharded_checkpoint_dir,
+        optim=False,
+        use_safetensors=True,
+        unshard_strategy=UnshardStrategy.one_file_per_tensor,
+    )
+    assert model_dir_st.is_dir()
+    assert optim_dir_st is None
+
+    combined_model_state = {}
+    for path in model_dir_st.iterdir():
+        combined_model_state.update(safetensors.torch.load_file(path))
+    torch.testing.assert_close(combined_model_state, model_state_st)
 
 
 def run_load_checkpoint_with_missing_keys(dir):

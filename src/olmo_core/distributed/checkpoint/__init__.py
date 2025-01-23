@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 from concurrent.futures import Future
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -39,6 +39,7 @@ from torch.distributed.checkpoint.default_planner import DefaultSavePlanner
 from torch.distributed.checkpoint.metadata import Metadata
 
 from olmo_core.aliases import PathOrStr
+from olmo_core.config import StrEnum
 from olmo_core.io import clear_directory, dir_is_empty, is_url, normalize_path
 from olmo_core.utils import gc_cuda, wait_for
 
@@ -52,6 +53,7 @@ __all__ = [
     "load_model_and_optim_state",
     "unshard_checkpoint",
     "get_checkpoint_metadata",
+    "UnshardStrategy",
 ]
 
 log = logging.getLogger(__name__)
@@ -298,6 +300,25 @@ def load_model_and_optim_state(
         gc_cuda()
 
 
+class UnshardStrategy(StrEnum):
+    """
+    An enumeration of the unsharding strategies that can be used with :func:`unshard_checkpoint`.
+    """
+
+    one_file = "one_file"
+    """
+    Save the unsharded model state into a one file, and optionally the optimizer state into
+    another file. The bigger the model, the more memory this requires. For very big models,
+    :data:`one_file_per_tensor` will scale better.
+    """
+
+    one_file_per_tensor = "one_file_per_tensor"
+    """
+    Save each unsharded tensor to its own file. Currently this is not compatible with optimizer
+    state.
+    """
+
+
 def unshard_checkpoint(
     dir: PathOrStr,
     target_dir: PathOrStr,
@@ -305,6 +326,7 @@ def unshard_checkpoint(
     optim: Optional[bool] = None,
     save_overwrite: bool = False,
     use_safetensors: bool = False,
+    unshard_strategy: UnshardStrategy = UnshardStrategy.one_file,
     pre_download: bool = False,
     work_dir: Optional[PathOrStr] = None,
 ) -> Tuple[Path, Optional[Path]]:
@@ -329,11 +351,13 @@ def unshard_checkpoint(
     :param save_overwrite: Overwrite any existing files in ``target_dir``.
     :param use_safetensors: Save the unsharded files with :func:`safetensors.torch.save_file()` instead
         of :func:`torch.save()`.
+    :param unshard_strategy: The strategy to use when unsharding.
     :param pre_download: Download and cache relevant remote checkpoint files before trying to read from them.
     :param work_dir: A working directory for caching files/directories.
 
     :return: The path to the unsharded model checkpoint and the path to the unsharded
-        optimizer checkpoint if ``optim=True``.
+        optimizer checkpoint if ``optim=True``. These paths may represent files or directories
+        depending on the ``unshard_strategy``.
 
     :raises FileExistsError: If the ``target_dir`` is non-empty and ``save_overwrite=False``.
     """
@@ -343,18 +367,34 @@ def unshard_checkpoint(
     from torch.distributed.checkpoint.state_dict_loader import _load_state_dict
 
     if optim is None:
-        optim = not use_safetensors
+        optim = (not use_safetensors) and (unshard_strategy == UnshardStrategy.one_file)
     elif optim and use_safetensors:
         raise NotImplementedError("`optim=True` is incompatible with `use_safetensors=True`")
+    elif optim and unshard_strategy != UnshardStrategy.one_file:
+        raise NotImplementedError(
+            f"`optim=True` is incompatible with `unshard_strategy={unshard_strategy}`"
+        )
 
     if is_distributed():
         raise RuntimeError("'unshard_checkpoint' cannot be called in a distributed context")
+
+    dir = normalize_path(dir)
+
+    if is_url(target_dir):
+        raise ValueError("'target_dir' must be a local directory")
+    target_dir = Path(normalize_path(target_dir))
+    target_dir.mkdir(exist_ok=True, parents=True)
+
+    ext = "pt" if not use_safetensors else "safetensors"
+    metadata = get_checkpoint_metadata(dir)
 
     def save(state_dict: Dict[str, Any], path: Path):
         if path.is_file() and not save_overwrite:
             raise FileExistsError(
                 f"'{path}' already exists, use `save_overwrite=True` to overwrite it"
             )
+
+        path.parent.mkdir(parents=True, exist_ok=True)
 
         if use_safetensors:
             from safetensors.torch import save_file
@@ -363,44 +403,46 @@ def unshard_checkpoint(
         else:
             torch.save(state_dict, path)
 
-    dir = normalize_path(dir)
-    if is_url(target_dir):
-        raise ValueError("'target_dir' must be a local directory")
-    target_dir = Path(normalize_path(target_dir))
-    target_dir.mkdir(exist_ok=True, parents=True)
+    def get_chunks(prefix: str) -> Tuple[Path, List[Tuple[Path, List[str]]]]:
+        if unshard_strategy == UnshardStrategy.one_file:
+            path = target_dir / f"{prefix}.{ext}"
+            return path, [(path, [prefix])]
+        elif unshard_strategy == UnshardStrategy.one_file_per_tensor:
+            path = target_dir / prefix
+            chunks = []
+            for chunk_num, key in enumerate(metadata.state_dict_metadata.keys()):
+                if key.startswith(f"{prefix}."):
+                    chunks.append((path / f"chunk-{chunk_num:05d}.{ext}", [key]))
+            return path, chunks
+        else:
+            raise NotImplementedError(unshard_strategy)
 
-    ext = "pt" if not use_safetensors else "safetensors"
-    model_path = target_dir / f"model.{ext}"
-    optim_path = target_dir / f"optim.{ext}" if optim else None
-
-    model_sd: Dict[str, Any] = {}
-    _load_state_dict(
-        model_sd,
-        storage_reader=RemoteFileSystemReader(dir, pre_download=pre_download, work_dir=work_dir),
-        planner=_EmptyStateDictLoadPlanner(keys=["model"]),
-        no_dist=True,
-    )
-    if not model_sd:
-        raise RuntimeError("no model state found in checkpoint")
-    save(model_sd["model"], model_path)
-    del model_sd
-    gc_cuda()
-
-    if optim_path is not None:
-        optim_sd: Dict[str, Any] = {}
+    def unshard_chunk(prefix: str, path: Path, keys: List[str]):
+        state_dict: Dict[str, Any] = {}
         _load_state_dict(
-            optim_sd,
+            state_dict,
             storage_reader=RemoteFileSystemReader(
                 dir, pre_download=pre_download, work_dir=work_dir
             ),
-            planner=_EmptyStateDictLoadPlanner(keys=["optim"]),
+            planner=_EmptyStateDictLoadPlanner(keys=keys),
             no_dist=True,
         )
-        if not optim_sd:
-            raise RuntimeError("no optimizer state found in checkpoint")
-        save(optim_sd["optim"], optim_path)
-        del optim_sd
+        if not state_dict:
+            raise RuntimeError(f"missing keys '{keys}' in checkpoint")
+
+        save(state_dict[prefix], path)
+        del state_dict
         gc_cuda()
+
+    model_path, model_chunks = get_chunks("model")
+    for chunk_path, chunk_keys in model_chunks:
+        unshard_chunk("model", chunk_path, chunk_keys)
+
+    optim_path: Optional[Path] = None
+    if optim:
+        optim_path, optim_chunks = get_chunks("optim")
+        for chunk_path, chunk_keys in optim_chunks:
+            unshard_chunk("optim", chunk_path, chunk_keys)
 
     return model_path, optim_path
 
