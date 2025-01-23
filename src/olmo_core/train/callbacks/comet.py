@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from comet_ml import Experiment
 
 from olmo_core.config import StrEnum
-from olmo_core.distributed.utils import get_rank, is_distributed
+from olmo_core.distributed.utils import barrier, get_rank, is_distributed
 from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
 from olmo_core.utils import set_env_var
 
@@ -154,12 +154,13 @@ class CometCallback(Callback):
                 else:
                     raise OLMoConfigurationError("Experiment key must be set in distributed contexts")
 
-            exp = comet.start(
-                api_key=os.environ[COMET_API_KEY_ENV_VAR],
-                project_name=self.project,
-                workspace=self.workspace,
-                experiment_key=self.experiment_key,
-                experiment_config=comet.ExperimentConfig(
+            # Start up an experiment that all the ranks can log to
+            if get_rank() == 0:
+                comet.Experiment(
+                    api_key=os.environ[COMET_API_KEY_ENV_VAR],
+                    project_name=self.project,
+                    workspace=self.workspace,
+                    experiment_key=self.experiment_key,
                     auto_output_logging="simple",
                     display_summary_level=0,
                     distributed_node_identifier=str(get_rank()),
@@ -169,13 +170,24 @@ class CometCallback(Callback):
                     log_env_disk=True,
                     log_env_host=False,
                     log_env_details=True,
-                ),
-            )
-            if not isinstance(exp, Experiment):
-                raise RuntimeError(
-                    f"Expected a comet Experiment, got an object of type {type(exp)}: {exp}"
                 )
-            self.exp = exp
+            barrier()
+
+            self.exp = comet.ExistingExperiment(
+                api_key=os.environ[COMET_API_KEY_ENV_VAR],
+                project_name=self.project,
+                workspace=self.workspace,
+                experiment_key=self.experiment_key,
+                auto_output_logging="simple",
+                display_summary_level=0,
+                distributed_node_identifier=str(get_rank()),
+                log_env_gpu=True,
+                log_env_cpu=True,
+                log_env_network=True,
+                log_env_disk=True,
+                log_env_host=False,
+                log_env_details=True,
+            )
 
             if get_rank() == 0:
                 if self.name is not None:
