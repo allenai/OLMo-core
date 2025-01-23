@@ -37,7 +37,7 @@ from olmo_core.io import (
     resource_path,
     upload,
 )
-from olmo_core.utils import generate_uuid, get_default_thread_count
+from olmo_core.utils import generate_uuid, get_default_thread_count, get_element_size
 
 log = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ def _item_size(item: WriteItem) -> int:
         size *= s
 
     dtype = item.tensor_data.properties.dtype
-    return size * torch._utils._element_size(dtype)
+    return size * get_element_size(dtype)
 
 
 def _split_by_size_and_type(bins: int, items: List[WriteItem]) -> List[List[WriteItem]]:

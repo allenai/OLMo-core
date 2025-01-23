@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import Future
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -36,12 +37,12 @@ import torch.distributed.checkpoint as dist_cp
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
 from torch.distributed.checkpoint.default_planner import DefaultSavePlanner
-from torch.distributed.checkpoint.metadata import Metadata
+from torch.distributed.checkpoint.metadata import Metadata, TensorStorageMetadata
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import StrEnum
 from olmo_core.io import clear_directory, dir_is_empty, is_url, normalize_path
-from olmo_core.utils import gc_cuda, wait_for
+from olmo_core.utils import gc_cuda, get_element_size, wait_for
 
 from ..utils import barrier, get_fs_local_rank, is_distributed
 from .filesystem import RemoteFileSystemReader, RemoteFileSystemWriter
@@ -54,6 +55,7 @@ __all__ = [
     "unshard_checkpoint",
     "get_checkpoint_metadata",
     "UnshardStrategy",
+    "UnshardStrategyType",
 ]
 
 log = logging.getLogger(__name__)
@@ -300,7 +302,7 @@ def load_model_and_optim_state(
         gc_cuda()
 
 
-class UnshardStrategy(StrEnum):
+class UnshardStrategyType(StrEnum):
     """
     An enumeration of the unsharding strategies that can be used with :func:`unshard_checkpoint`.
     """
@@ -318,6 +320,55 @@ class UnshardStrategy(StrEnum):
     state.
     """
 
+    chunks = "chunks"
+    """
+    Save multiple tensors to a file.
+    """
+
+
+@dataclass
+class UnshardStrategy:
+    """
+    Unsharding strategy config for :func:`unshard_checkpoint`.
+    """
+
+    name: UnshardStrategyType = UnshardStrategyType.one_file
+    """
+    The strategy type.
+    """
+
+    chunk_size_bytes: Optional[int] = None
+    """
+    The approximate max chunk size, in bytes, for the :data:`UnshardStrategyType.chunks` strategy.
+    """
+
+    def __post_init__(self):
+        if self.name == UnshardStrategyType.chunks and self.chunk_size_bytes is None:
+            raise ValueError("'chunk_size_bytes' is required for the 'chunks' strategy")
+        if self.chunk_size_bytes is not None and self.name != UnshardStrategyType.chunks:
+            raise ValueError("'chunk_size_bytes' is only valid for the 'chunks' strategy")
+
+    @classmethod
+    def one_file(cls) -> "UnshardStrategy":
+        """
+        Use the :data:`UnshardStrategy.one_file` strategy.
+        """
+        return cls(name=UnshardStrategyType.one_file)
+
+    @classmethod
+    def one_file_per_tensor(cls) -> "UnshardStrategy":
+        """
+        Use the :data:`UnshardStrategy.one_file_per_tensor` strategy.
+        """
+        return cls(name=UnshardStrategyType.one_file_per_tensor)
+
+    @classmethod
+    def chunks(cls, chunk_size_in_bytes: int) -> "UnshardStrategy":
+        """
+        Use the :data:`UnshardStrategy.chunks` strategy.
+        """
+        return cls(name=UnshardStrategyType.chunks, chunk_size_bytes=chunk_size_in_bytes)
+
 
 def unshard_checkpoint(
     dir: PathOrStr,
@@ -326,7 +377,7 @@ def unshard_checkpoint(
     optim: Optional[bool] = None,
     save_overwrite: bool = False,
     use_safetensors: bool = False,
-    unshard_strategy: UnshardStrategy = UnshardStrategy.one_file,
+    unshard_strategy: Optional[UnshardStrategy] = None,
     pre_download: bool = False,
     work_dir: Optional[PathOrStr] = None,
 ) -> Tuple[Path, Optional[Path]]:
@@ -351,7 +402,7 @@ def unshard_checkpoint(
     :param save_overwrite: Overwrite any existing files in ``target_dir``.
     :param use_safetensors: Save the unsharded files with :func:`safetensors.torch.save_file()` instead
         of :func:`torch.save()`.
-    :param unshard_strategy: The strategy to use when unsharding.
+    :param unshard_strategy: The strategy to use. Defaults to :meth:`UnshardStrategy.one_file`.
     :param pre_download: Download and cache relevant remote checkpoint files before trying to read from them.
     :param work_dir: A working directory for caching files/directories.
 
@@ -366,11 +417,14 @@ def unshard_checkpoint(
     from torch.distributed.checkpoint.default_planner import _EmptyStateDictLoadPlanner
     from torch.distributed.checkpoint.state_dict_loader import _load_state_dict
 
+    if unshard_strategy is None:
+        unshard_strategy = UnshardStrategy.one_file()
+
     if optim is None:
-        optim = (not use_safetensors) and (unshard_strategy == UnshardStrategy.one_file)
+        optim = (not use_safetensors) and (unshard_strategy.name == UnshardStrategyType.one_file)
     elif optim and use_safetensors:
         raise NotImplementedError("`optim=True` is incompatible with `use_safetensors=True`")
-    elif optim and unshard_strategy != UnshardStrategy.one_file:
+    elif optim and unshard_strategy.name != UnshardStrategyType.one_file:
         raise NotImplementedError(
             f"`optim=True` is incompatible with `unshard_strategy={unshard_strategy}`"
         )
@@ -404,18 +458,42 @@ def unshard_checkpoint(
             torch.save(state_dict, path)
 
     def get_chunks(prefix: str) -> Tuple[Path, List[Tuple[Path, List[str]]]]:
-        if unshard_strategy == UnshardStrategy.one_file:
+        assert unshard_strategy is not None
+        if unshard_strategy.name == UnshardStrategyType.one_file:
             path = target_dir / f"{prefix}.{ext}"
             return path, [(path, [prefix])]
-        elif unshard_strategy == UnshardStrategy.one_file_per_tensor:
+        elif unshard_strategy.name == UnshardStrategyType.one_file_per_tensor:
             path = target_dir / prefix
             chunks = []
             for chunk_num, key in enumerate(metadata.state_dict_metadata.keys()):
                 if key.startswith(f"{prefix}."):
                     chunks.append((path / f"chunk-{chunk_num:05d}.{ext}", [key]))
             return path, chunks
+        elif unshard_strategy.name == UnshardStrategyType.chunks:
+            assert unshard_strategy.chunk_size_bytes is not None
+            path = target_dir / prefix
+            chunks = []
+            current_size = 0
+            current_keys: List[str] = []
+            for key, meta in metadata.state_dict_metadata.items():
+                if key.startswith(f"{prefix}."):
+                    if isinstance(meta, TensorStorageMetadata):
+                        size = meta.size.numel() * get_element_size(meta.properties.dtype)
+                        if current_keys and current_size + size > unshard_strategy.chunk_size_bytes:
+                            chunks.append((path / f"chunk-{len(chunks):05d}.{ext}", current_keys))
+                            current_size = 0
+                            current_keys = []
+                        current_size += size
+                        current_keys.append(key)
+                    else:
+                        # This is a pickled Python object, which is probably pretty small,
+                        # so we don't worry about recording the size.
+                        current_keys.append(key)
+            if current_keys:
+                chunks.append((path / f"chunk-{len(chunks):05d}.{ext}", current_keys))
+            return path, chunks
         else:
-            raise NotImplementedError(unshard_strategy)
+            raise NotImplementedError(unshard_strategy.name)
 
     def unshard_chunk(prefix: str, path: Path, keys: List[str]):
         state_dict: Dict[str, Any] = {}

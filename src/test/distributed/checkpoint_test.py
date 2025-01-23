@@ -281,16 +281,34 @@ def test_unshard_checkpoint(backend, tmp_path):
     # Unshard model with safetensors format, one file per tensor.
     model_dir_st, optim_dir_st = unshard_checkpoint(
         sharded_checkpoint_dir,
-        unsharded_checkpoint_dir,
+        unsharded_checkpoint_dir / "one_file_per_tensor",
         optim=False,
         use_safetensors=True,
-        unshard_strategy=UnshardStrategy.one_file_per_tensor,
+        unshard_strategy=UnshardStrategy.one_file_per_tensor(),
     )
     assert model_dir_st.is_dir()
     assert optim_dir_st is None
 
     combined_model_state = {}
     for path in model_dir_st.iterdir():
+        assert path.suffix == ".safetensors"
+        combined_model_state.update(safetensors.torch.load_file(path))
+    torch.testing.assert_close(combined_model_state, model_state_st)
+
+    # Unshard model with safetensors format, multiple tensors per file by size.
+    model_dir_st, optim_dir_st = unshard_checkpoint(
+        sharded_checkpoint_dir,
+        unsharded_checkpoint_dir / "chunks",
+        optim=False,
+        use_safetensors=True,
+        unshard_strategy=UnshardStrategy.chunks(1_000),
+    )
+    assert model_dir_st.is_dir()
+    assert optim_dir_st is None
+
+    combined_model_state = {}
+    for path in model_dir_st.iterdir():
+        assert path.suffix == ".safetensors"
         combined_model_state.update(safetensors.torch.load_file(path))
     torch.testing.assert_close(combined_model_state, model_state_st)
 
