@@ -459,6 +459,8 @@ def unshard_checkpoint(
 
     def get_chunks(prefix: str) -> Tuple[Path, List[Tuple[Path, List[str]]]]:
         assert unshard_strategy is not None
+        assert isinstance(target_dir, Path)
+
         if unshard_strategy.name == UnshardStrategyType.one_file:
             path = target_dir / f"{prefix}.{ext}"
             return path, [(path, [prefix])]
