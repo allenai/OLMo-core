@@ -19,10 +19,17 @@ from ..aliases import PathOrStr
 from ..config import Config
 from ..distributed.checkpoint import (
     async_save_model_and_optim_state,
+    get_checkpoint_metadata,
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
-from ..distributed.utils import barrier, get_fs_local_rank, get_rank, is_distributed
+from ..distributed.utils import (
+    barrier,
+    get_fs_local_rank,
+    get_rank,
+    is_distributed,
+    scatter_object,
+)
 from ..exceptions import OLMoConfigurationError
 from ..io import (
     clear_directory,
@@ -48,6 +55,9 @@ class CheckpointerConfig(Config):
     work_dir: Optional[str] = None
     save_overwrite: Optional[bool] = None
     pre_download: bool = False
+    save_thread_count: Optional[int] = None
+    load_thread_count: Optional[int] = None
+    throttle_uploads: bool = False
 
     def build(self, process_group: Optional[dist.ProcessGroup] = None, **kwargs) -> "Checkpointer":
         kwargs = {**self.as_dict(exclude_none=True, recurse=False), **kwargs}
@@ -75,6 +85,9 @@ class Checkpointer:
     save_overwrite: bool = False
     pre_download: bool = False
     process_group: Optional[dist.ProcessGroup] = None
+    save_thread_count: Optional[int] = None
+    load_thread_count: Optional[int] = None
+    throttle_uploads: bool = False
 
     def __post_init__(self):
         self.work_dir = Path(self.work_dir)
@@ -100,6 +113,8 @@ class Checkpointer:
                 optim,
                 process_group=self.process_group,
                 save_overwrite=self.save_overwrite,
+                thread_count=self.save_thread_count,
+                throttle_uploads=self.throttle_uploads,
             )
 
         self._save_metadata(dir, CheckpointMetadata())
@@ -129,6 +144,8 @@ class Checkpointer:
             optim,
             process_group=self.process_group,
             save_overwrite=self.save_overwrite,
+            thread_count=self.save_thread_count,
+            throttle_uploads=self.throttle_uploads,
         )
 
         def done_callback(fut: Future):
@@ -146,8 +163,8 @@ class Checkpointer:
         model: nn.Module,
         optim: Optimizer,
         *,
-        load_optimizer_state: bool = True,
-        load_trainer_state: bool = True,
+        load_optimizer_state: Optional[bool] = None,
+        load_trainer_state: Optional[bool] = None,
         key_mapping: Optional[Dict[str, str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
@@ -158,27 +175,53 @@ class Checkpointer:
 
         # Maybe load trainer state.
         trainer_state: Optional[Dict[str, Any]] = None
-        if load_trainer_state:
-            try:
-                trainer_state = torch.load(
-                    cached_path(f"{dir}/train/rank{get_rank()}.pt", quiet=True), weights_only=False
-                )
-            except FileNotFoundError:
-                # Fall back to rank 0 train state.
-                # This can happen when we're restoring a checkpoint with a different world size.
-                trainer_state = torch.load(
-                    cached_path(f"{dir}/train/rank0.pt", quiet=True), weights_only=False
-                )
+        if load_trainer_state is not False:
+            # Try loading the given rank's state first, then fall back to rank 0 train state if it
+            # doesn't exist, which can happen when we're restoring a checkpoint with a different world size.
+            for path in (f"{dir}/train/rank{get_rank()}.pt", f"{dir}/train/rank0.pt"):
+                try:
+                    trainer_state = torch.load(cached_path(path, quiet=True), weights_only=False)
+                    break
+                except FileNotFoundError:
+                    pass
+
+            if load_trainer_state is True and trainer_state is None:
+                raise FileNotFoundError(f"Missing trainer state in checkpoint dir '{dir}'")
 
         # Load model and optimizer state.
+        model_and_optim_dir: str = f"{dir}/model_and_optim"
+        if get_rank(self.process_group) == 0:
+            try:
+                metadata = get_checkpoint_metadata(model_and_optim_dir)
+            except FileNotFoundError as exc:
+                # Try base directory, which could be the case if user is trying to load model weights
+                # (possibly with optimizer state), and not an actual train checkpoint.
+                if trainer_state is None:
+                    metadata = get_checkpoint_metadata(dir)
+                    model_and_optim_dir = dir
+                else:
+                    raise FileNotFoundError(f"Missing checkpointing metadata in '{dir}'") from exc
+
+            if load_optimizer_state is None:
+                for key in metadata.state_dict_metadata.keys():
+                    if key.startswith("optim."):
+                        load_optimizer_state = True
+                        break
+                else:
+                    load_optimizer_state = False
+
+        model_and_optim_dir = scatter_object(model_and_optim_dir, group=self.process_group)
+        load_optimizer_state = scatter_object(load_optimizer_state, group=self.process_group)
+
         load_model_and_optim_state(
-            f"{dir}/model_and_optim",
+            model_and_optim_dir,
             model,
             optim if load_optimizer_state else None,
             process_group=self.process_group,
             key_mapping=key_mapping,
             pre_download=is_url(dir) and self.pre_download,
             work_dir=self.work_dir,
+            thread_count=self.load_thread_count,
         )
 
         return trainer_state
@@ -233,6 +276,8 @@ class Checkpointer:
         Check if a directory is a checkpoint directory.
         """
         dir = normalize_path(dir)
+        if file_exists(f"{dir}/.metadata"):  # just model (and maybe optim state), no trainer state
+            return True
         paths_to_check = [
             f"{dir}/train/rank0.pt",
             f"{dir}/model_and_optim/.metadata",
@@ -299,7 +344,7 @@ class Checkpointer:
         # NOTE: if 'dir' is a URL, the 'wd' will be a different temp dir for each rank.
         if is_url(dir) or get_fs_local_rank() == 0:
             train_dir.mkdir(exist_ok=True, parents=True)
-        wait_for(train_dir.exists, description=f"Waiting on '{train_dir}' to be created...")
+        wait_for(train_dir.exists, description=f"Waiting for '{train_dir}' to be created...")
         torch.save(train_state, train_dir / f"rank{get_rank()}.pt")
 
     def _save_metadata(self, dir: PathOrStr, metadata: CheckpointMetadata):

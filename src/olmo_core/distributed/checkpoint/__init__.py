@@ -61,8 +61,11 @@ log = logging.getLogger(__name__)
 def save_state_dict(
     dir: PathOrStr,
     state_dict: Dict[str, Any],
+    *,
     process_group: Optional[dist.ProcessGroup] = None,
     save_overwrite: bool = False,
+    thread_count: Optional[int] = None,
+    throttle_uploads: bool = False,
 ):
     """
     Save an arbitrary state dictionary to a distributed format that can loaded again with
@@ -76,11 +79,19 @@ def save_state_dict(
     :param state_dict: The state dict to save.
     :param process_group: The process group to use for distributed collectives.
     :param save_overwrite: Overwrite existing files.
+    :param thread_count: Set this to override the number of threads used while writing data.
+    :param throttle_uploads: If this is set to ``True`` and ``dir`` is a URL then only one
+        rank from each node will upload data at a time.
     """
     dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
     dist_cp.state_dict_saver.save(
         state_dict,
-        storage_writer=RemoteFileSystemWriter(dir),
+        storage_writer=RemoteFileSystemWriter(
+            dir,
+            thread_count=thread_count,
+            process_group=process_group,
+            throttle_uploads=throttle_uploads,
+        ),
         process_group=process_group,
     )
 
@@ -93,6 +104,8 @@ def save_model_and_optim_state(
     *,
     process_group: Optional[dist.ProcessGroup] = None,
     save_overwrite: bool = False,
+    thread_count: Optional[int] = None,
+    throttle_uploads: bool = False,
 ) -> None:
     """
     Save model and optimizer state dictionaries. The model state can be a sharded model, in which
@@ -115,6 +128,9 @@ def save_model_and_optim_state(
     :param optim: The optimizer to save state from.
     :param process_group: The process group to use for distributed collectives.
     :param save_overwrite: Overwrite existing files.
+    :param thread_count: Set this to override the number of threads used while writing data.
+    :param throttle_uploads: If this is set to ``True`` and ``dir`` is a URL then only one
+        rank from each node will upload data at a time.
 
     :raises FileExistsError: If the checkpoint dir exists and is non-empty unless ``save_overwrite=True``.
     """
@@ -123,7 +139,12 @@ def save_model_and_optim_state(
     planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
     dist_cp.state_dict_saver.save(
         state_dict,
-        storage_writer=RemoteFileSystemWriter(dir),
+        storage_writer=RemoteFileSystemWriter(
+            dir,
+            thread_count=thread_count,
+            process_group=process_group,
+            throttle_uploads=throttle_uploads,
+        ),
         process_group=process_group,
         planner=planner,
     )
@@ -137,6 +158,8 @@ def async_save_model_and_optim_state(
     *,
     process_group: Optional[dist.ProcessGroup] = None,
     save_overwrite: bool = False,
+    thread_count: Optional[int] = None,
+    throttle_uploads: bool = False,
 ) -> Future[None]:
     """
     An async version of :func:`save_model_and_optim_state()`.
@@ -148,7 +171,12 @@ def async_save_model_and_optim_state(
     planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
     return dist_cp.state_dict_saver.async_save(
         state_dict,
-        storage_writer=RemoteFileSystemWriter(dir),
+        storage_writer=RemoteFileSystemWriter(
+            dir,
+            thread_count=thread_count,
+            process_group=process_group,
+            throttle_uploads=throttle_uploads,
+        ),
         process_group=process_group,
         planner=planner,
     )
@@ -164,6 +192,7 @@ def load_model_and_optim_state(
     key_mapping: Optional[Dict[str, str]] = None,
     pre_download: bool = False,
     work_dir: Optional[PathOrStr] = None,
+    thread_count: Optional[int] = None,
 ):
     """
     Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
@@ -201,10 +230,13 @@ def load_model_and_optim_state(
         This dictionary should map current keys to keys in the checkpoint to be loaded.
     :param pre_download: Download and cache relevant remote checkpoint files before trying to read from them.
     :param work_dir: A working directory for caching files/directories.
+    :param thread_count: Set the number of threads used for certain operations.
     """
     dir = normalize_path(dir)
     state_dict = _prepare_state_dict(model, optim, process_group=process_group)
-    reader = RemoteFileSystemReader(dir, pre_download=pre_download, work_dir=work_dir)
+    reader = RemoteFileSystemReader(
+        dir, thread_count=thread_count, pre_download=pre_download, work_dir=work_dir
+    )
 
     if key_mapping is not None:
         metadata = reader.read_metadata()
