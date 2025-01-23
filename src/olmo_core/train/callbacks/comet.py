@@ -207,7 +207,7 @@ class CometCallback(Callback):
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):
         if self.enabled:
-            self.exp.log_metrics(metrics, step=step, prefix=str(get_rank()))
+            self.exp.log_metrics(metrics, step=step)
 
     def post_step(self):
         cancel_check_interval = self.cancel_check_interval or self.trainer.cancel_check_interval
