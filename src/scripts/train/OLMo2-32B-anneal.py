@@ -54,7 +54,7 @@ from olmo_core.utils import get_default_device, prepare_cli_environment, seed_al
 
 # The max number of pretraining steps configured for the purpose of setting the learning rate
 # schedule. I'm hard-coding this here based on the number found in the logs. It only changes
-# if batch size changes, which we're not planning on changing over the course of the run.
+# if batch size changes, which we're not planning on changing that over the course of the run.
 MAX_PRETRAIN_STEPS = 774861
 
 
@@ -127,7 +127,7 @@ def build_config(
             compile=True,
         ),
         dataset=NumpyDatasetConfig.from_data_mix(
-            DataMix.OLMoE_mix_0824,  # TODO: change this to annealing mix
+            DataMix.dolmino,
             tokenizer=tokenizer_config,
             mix_base_dir=root_dir,
             sequence_length=4096,
@@ -135,11 +135,11 @@ def build_config(
         ),
         data_loader=NumpyDataLoaderConfig(
             global_batch_size=2048 * 4096,  # NOTE: this is specified in TOKENS, not instances.
-            seed=34521,  # Can update this to change data order.
+            seed=34521,  # NOTE: can update this to change data order.
             num_workers=4,
         ),
         trainer=TrainerConfig(
-            save_folder="gs://ai2-llm/checkpoints/peteish32-anneal",
+            save_folder=f"gs://ai2-llm/checkpoints/peteish32-anneal/{run_name}",
             rank_microbatch_size=2 * 4096,  # NOTE: again this is specified in tokens.
             checkpointer=CheckpointerConfig(
                 save_thread_count=1, load_thread_count=32, throttle_uploads=True
@@ -150,7 +150,7 @@ def build_config(
             z_loss_multiplier=1e-5,
             compile_loss=False,
             fused_loss=True,
-            max_duration=Duration.tokens(int(6.5e12)),
+            max_duration=Duration.tokens(int(100e9)),
         )
         .with_callback(
             "checkpointer",
@@ -174,7 +174,7 @@ def build_config(
             SchedulerCallback(
                 scheduler=LinearWithWarmup(
                     warmup_steps=0,
-                    alpha_f=0.1,  # TODO: change this to 0.0 if you want to go down to 0
+                    alpha_f=0.0,
                 )
             ),
         )
