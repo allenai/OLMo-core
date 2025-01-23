@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from comet_ml import Experiment
 
 from olmo_core.config import StrEnum
-from olmo_core.distributed.utils import barrier, get_rank, is_distributed
+from olmo_core.distributed.utils import barrier, get_local_world_size, get_rank, is_distributed
 from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
 from olmo_core.utils import set_env_var
 
@@ -163,7 +163,7 @@ class CometCallback(Callback):
                     experiment_key=self.experiment_key,
                     auto_output_logging="simple",
                     display_summary_level=0,
-                    distributed_node_identifier=str(get_rank()),
+                    distributed_node_identifier=str(get_rank() // get_local_world_size()),
                     log_env_gpu=True,
                     log_env_cpu=True,
                     log_env_network=True,
@@ -180,7 +180,7 @@ class CometCallback(Callback):
                 experiment_key=self.experiment_key,
                 auto_output_logging="simple",
                 display_summary_level=0,
-                distributed_node_identifier=str(get_rank()),
+                distributed_node_identifier=str(get_rank() // get_local_world_size()),
                 log_env_gpu=True,
                 log_env_cpu=True,
                 log_env_network=True,
@@ -207,7 +207,7 @@ class CometCallback(Callback):
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):
         if self.enabled:
-            self.exp.log_metrics(metrics, step=step)
+            self.exp.log_metrics(metrics, step=step, prefix=str(get_rank()))
 
     def post_step(self):
         cancel_check_interval = self.cancel_check_interval or self.trainer.cancel_check_interval
