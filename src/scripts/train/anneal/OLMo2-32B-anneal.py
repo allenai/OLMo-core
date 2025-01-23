@@ -7,7 +7,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass
-from typing import List, cast
+from typing import List, Tuple, cast
 
 import rich
 import torch
@@ -15,10 +15,11 @@ from rich import print
 
 from olmo_core.config import Config, DType
 from olmo_core.data import (
-    DataMix,
+    DataMixBase,
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
     TokenizerConfig,
+    TokenizerName,
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank
@@ -62,6 +63,33 @@ from olmo_core.utils import get_default_device, prepare_cli_environment, seed_al
 # if batch size changes, which we're not planning on changing that over the course of the run.
 # TODO: pull this from the checkpoint when https://github.com/allenai/OLMo-core/pull/143 merges.
 MAX_PRETRAIN_STEPS = 774861
+
+
+class AnnealingDataMix(DataMixBase):
+    """
+    Defines the annealing mixes. To create a new mix, make a new file in this folder and add its
+    name (without the '.txt' extension) below.
+    """
+
+    dolmino = "dolmino"
+
+    def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
+        if not base_dir.endswith("/"):
+            base_dir = base_dir + "/"
+
+        assert tokenizer == TokenizerName.dolma2
+        paths = []
+        labels = []
+
+        with open(f"src/scripts/train/anneal/{self}.txt") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                paths.append(f"{base_dir}{line}")
+                labels.append(line.split("/")[1])
+
+        return paths, labels
 
 
 @dataclass
@@ -150,7 +178,7 @@ class AnnealingConfig(Config):
                 compile=True,
             ),
             dataset=NumpyDatasetConfig.from_data_mix(
-                DataMix.dolmino,
+                AnnealingDataMix.dolmino,
                 tokenizer=tokenizer_config,
                 mix_base_dir=root_dir,
                 sequence_length=4096,

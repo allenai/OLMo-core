@@ -51,21 +51,3 @@ def test_v3_small_ppl_validation_mix():
         assert file_exists(paths[-1])
     except NoCredentialsError:
         pytest.skip("Requires AWS credentials")
-
-
-def test_dolmino_mix():
-    from botocore.exceptions import NoCredentialsError
-
-    paths, labels = DataMix.dolmino.build("s3://ai2-llm", TokenizerName.dolma2)
-    assert len(paths) == len(labels)
-    assert (
-        paths[0]
-        == "s3://ai2-llm/preprocessed/proof-pile-2/v0_decontaminated/open-web-math/train/allenai/dolma2-tokenizer/part-00-00000.npy"
-    )
-    assert labels[0] == "proofpile2"
-
-    try:
-        assert file_exists(paths[0])
-        assert file_exists(paths[-1])
-    except NoCredentialsError:
-        pytest.skip("Requires AWS credentials")

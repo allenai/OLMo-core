@@ -38,7 +38,6 @@ class DataMix(DataMixBase):
     OLMoE_mix_0824 = "OLMoE-mix-0824"
     dolma17 = "dolma17"
     v3_small_ppl_validation = "v3-small-ppl-validation"
-    dolmino = "dolmino"
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
@@ -57,12 +56,13 @@ class DataMix(DataMixBase):
         labels = []
         with _get_data_mix_path(self) as mix_path:
             with mix_path.open() as f:
-                for line in f:
+                for line_num, line in enumerate(f):
                     line = line.strip()
                     if not line or line.startswith("#"):
                         continue
                     label, path = line.split(",")
-                    assert "{TOKENIZER}" in path
+                    if "{TOKENIZER}" not in path:
+                        raise ValueError(f"line {line_num+1} in data mix '{self}' is invalid")
                     path = path.replace("{TOKENIZER}", tokenizer_id)
                     paths.append(f"{base_dir}{path}")
                     labels.append(label)
