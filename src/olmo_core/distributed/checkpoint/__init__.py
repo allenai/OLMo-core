@@ -29,7 +29,7 @@ import logging
 from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Generator, Iterable, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -53,6 +53,7 @@ __all__ = [
     "async_save_model_and_optim_state",
     "load_model_and_optim_state",
     "unshard_checkpoint",
+    "load_keys",
     "get_checkpoint_metadata",
     "UnshardStrategy",
     "UnshardStrategyType",
@@ -525,6 +526,47 @@ def unshard_checkpoint(
             unshard_chunk("optim", chunk_path, chunk_keys)
 
     return model_path, optim_path
+
+
+def load_keys(
+    dir: PathOrStr,
+    keys: Iterable[str],
+    *,
+    pre_download: bool = False,
+    work_dir: Optional[PathOrStr] = None,
+) -> Generator[Any, None, None]:
+    """
+    Load specific keys from a checkpoint.
+
+    .. warning::
+        This should only be called in a non-distributed context. Otherwise a :class:`RuntimeError` is raised.
+
+    :param dir: The path/URL to the original checkpoint created via :func:`save_model_and_optim_state()`,
+        :func:`save_state_dict`, or one of the other functions in this module.
+    :param keys: The keys to load.
+    :param pre_download: Download and cache relevant remote checkpoint files before trying to read from them.
+    :param work_dir: A working directory for caching files/directories.
+
+    :returns: The (unsharded) objects from the checkpoint corresponding to the given keys.
+    """
+    from torch.distributed.checkpoint.default_planner import _EmptyStateDictLoadPlanner
+    from torch.distributed.checkpoint.state_dict_loader import _load_state_dict
+
+    if is_distributed():
+        raise RuntimeError("'load_keys' cannot be called in a distributed context")
+
+    dir = normalize_path(dir)
+
+    keys = list(keys)
+    state_dict: Dict[str, Any] = {}
+    _load_state_dict(
+        state_dict,
+        storage_reader=RemoteFileSystemReader(dir, pre_download=pre_download, work_dir=work_dir),
+        planner=_EmptyStateDictLoadPlanner(keys=keys),
+        no_dist=True,
+    )
+    for key in keys:
+        yield _get_key(state_dict, key, pop=True)
 
 
 def get_checkpoint_metadata(dir: PathOrStr) -> Metadata:

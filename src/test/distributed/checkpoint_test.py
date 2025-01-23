@@ -14,6 +14,7 @@ from torch.distributed.tensor.parallel import (
 from olmo_core.distributed.checkpoint import (
     UnshardStrategy,
     async_save_model_and_optim_state,
+    load_keys,
     load_model_and_optim_state,
     save_model_and_optim_state,
     save_state_dict,
@@ -311,6 +312,12 @@ def test_unshard_checkpoint(backend, tmp_path):
         assert path.suffix == ".safetensors"
         combined_model_state.update(safetensors.torch.load_file(path))
     torch.testing.assert_close(combined_model_state, model_state_st)
+
+    # Try loading specific keys.
+    tensors = list(load_keys(sharded_checkpoint_dir, ["model.w1.weight", "model.w2.bias"]))
+    assert len(tensors) == 2
+    assert tensors[0].shape == (16, 16)
+    assert tensors[1].shape == (16,)
 
 
 def run_load_checkpoint_with_missing_keys(dir):
