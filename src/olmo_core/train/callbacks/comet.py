@@ -17,6 +17,7 @@ from .callback import Callback
 log = logging.getLogger(__name__)
 
 COMET_API_KEY_ENV_VAR = "COMET_API_KEY"
+BEAKER_EXPERIMENT_ID_ENV_VAR = "BEAKER_EXPERIMENT_ID"
 
 
 class CometNotificationSetting(StrEnum):
@@ -78,11 +79,7 @@ class CometCallback(Callback):
     The name of the Comet.ml workspace to use.
     """
 
-    experiment_key: Optional[str] = field(
-        default_factory=lambda: "".join(
-            random.Random().choices(string.ascii_uppercase + string.digits, k=32)
-        )
-    )
+    experiment_key: Optional[str] = None
     """
     An experiment identifier. Used to link different ranks of the same run to the same experiment.
     """
@@ -150,7 +147,12 @@ class CometCallback(Callback):
             if COMET_API_KEY_ENV_VAR not in os.environ:
                 raise OLMoEnvironmentError(f"missing env var '{COMET_API_KEY_ENV_VAR}'")
             if is_distributed() and self.experiment_key is None:
-                raise OLMoConfigurationError("Experiment key must be set in distributed contexts")
+                if BEAKER_EXPERIMENT_ID_ENV_VAR in os.environ:
+                    log.info("Using beaker ID to create 32-50 character Comet.ml experiment id")
+                    self.experiment_key = os.environ[BEAKER_EXPERIMENT_ID_ENV_VAR].rjust(32, "0")
+                    assert len(self.experiment_key) <= 50
+                else:
+                    raise OLMoConfigurationError("Experiment key must be set in distributed contexts")
 
             exp = comet.start(
                 api_key=os.environ[COMET_API_KEY_ENV_VAR],
@@ -175,16 +177,16 @@ class CometCallback(Callback):
                 )
             self.exp = exp
 
-            if self.name is not None:
-                self.exp.set_name(self.name)
-
-            if self.tags:
-                self.exp.add_tags(self.tags)
-
-            if self.config is not None:
-                self.exp.log_parameters(self.config)
-
             if get_rank() == 0:
+                if self.name is not None:
+                    self.exp.set_name(self.name)
+
+                if self.tags:
+                    self.exp.add_tags(self.tags)
+
+                if self.config is not None:
+                    self.exp.log_parameters(self.config)
+
                 if self.notifications == CometNotificationSetting.all:
                     self.exp.send_notification(
                         f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
