@@ -175,16 +175,16 @@ class CometCallback(Callback):
                 )
             self.exp = exp
 
+            if self.name is not None:
+                self.exp.set_name(self.name)
+
+            if self.tags:
+                self.exp.add_tags(self.tags)
+
+            if self.config is not None:
+                self.exp.log_parameters(self.config)
+
             if get_rank() == 0:
-                if self.name is not None:
-                    self.exp.set_name(self.name)
-
-                if self.tags:
-                    self.exp.add_tags(self.tags)
-
-                if self.config is not None:
-                    self.exp.log_parameters(self.config)
-
                 if self.notifications == CometNotificationSetting.all:
                     self.exp.send_notification(
                         f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
