@@ -566,6 +566,12 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         self._path_offset_index = path_offset_index
         self._seed = seed
 
+    @property
+    def indices_dtype(
+        self,
+    ) -> NumpyUIntTypes:
+        return np.uint32
+
     def prepare(self):
         if self.fs_local_rank == 0:
             log.info("Gathering indices...")
@@ -625,6 +631,15 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                         f"Created {total_instances:,d} instances of sequence length up to "
                         f"{self.sequence_length} from '{path}'"
                     )
+
+    def _read_chunk_from_array(self, path: PathOrStr, index: int) -> torch.Tensor:
+        indices_path = self._get_indices_path(path)
+        indices = load_array_slice_into_tensor(
+            indices_path, index * 2, index * 2 + 2, self.indices_dtype
+        )
+        start_idx, end_idx = indices
+        data = load_array_slice_into_tensor(path, int(start_idx), int(end_idx), self.dtype)
+        return data
 
     def _get_file_size_and_length(
         self, path: PathOrStr, idx: int, dtype: Optional[NumpyUIntTypes] = None
