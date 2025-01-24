@@ -170,7 +170,9 @@ class Config:
         try:
             dotlist = _clean_opts(dotlist)
             if prefix is not None:
-                dotlist = [o.lstrip(f"{prefix}.") for o in dotlist if o.startswith(f"{prefix}.")]
+                dotlist = [
+                    o.replace(f"{prefix}.", "", 1) for o in dotlist if o.startswith(f"{prefix}.")
+                ]
             if not strict:
                 field_names = set(f.name for f in fields(self))
                 dotlist = [
