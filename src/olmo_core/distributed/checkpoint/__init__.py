@@ -42,14 +42,7 @@ from torch.distributed.checkpoint.metadata import Metadata, TensorStorageMetadat
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import StrEnum
-from olmo_core.io import (
-    clear_directory,
-    dir_is_empty,
-    file_exists,
-    is_url,
-    join_path,
-    normalize_path,
-)
+from olmo_core.io import clear_directory, dir_is_empty, is_url, normalize_path
 from olmo_core.utils import gc_cuda, get_element_size, wait_for
 
 from ..utils import barrier, get_fs_local_rank, is_distributed
@@ -250,9 +243,9 @@ def load_model_and_optim_state(
     reader = RemoteFileSystemReader(
         dir, thread_count=thread_count, pre_download=pre_download, work_dir=work_dir
     )
+    metadata = reader.read_metadata()
 
     if key_mapping is not None:
-        metadata = reader.read_metadata()
         for current_key, original_key in key_mapping.items():
             if f"model.{original_key}" not in metadata.state_dict_metadata:
                 continue
@@ -280,7 +273,6 @@ def load_model_and_optim_state(
     )
 
     if key_mapping is not None:
-        metadata = reader.read_metadata()
         for current_key, original_key in key_mapping.items():
             if f"model.{original_key}" not in metadata.state_dict_metadata:
                 continue
@@ -579,15 +571,8 @@ def get_checkpoint_metadata(dir: PathOrStr) -> Metadata:
     :param dir: The path/URL to the checkpoint.
     """
     dir = normalize_path(dir)
-    try:
-        storage_reader = RemoteFileSystemReader(dir)
-        return storage_reader.read_metadata()
-    except FileNotFoundError as exc:
-        msg = f"'{dir}' does not appear to contain a state dict checkpoint."
-        suggested_dir = join_path(dir, "model_and_optim")
-        if file_exists(join_path(suggested_dir, ".metadata")):
-            msg += f" Did you mean to use '{suggested_dir}'?"
-        raise FileNotFoundError(msg) from exc
+    storage_reader = RemoteFileSystemReader(dir)
+    return storage_reader.read_metadata()
 
 
 def _prepare_env_for_save(

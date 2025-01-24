@@ -30,9 +30,11 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.distributed.utils import do_n_at_a_time
 from olmo_core.exceptions import OLMoCheckpointError
 from olmo_core.io import (
+    file_exists,
     get_bytes_range,
     init_client,
     is_url,
+    join_path,
     normalize_path,
     resource_path,
     upload,
@@ -378,10 +380,17 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
 
     def read_metadata(self) -> Metadata:
         if self._metadata is None:
-            with resource_path(self.path, ".metadata", local_cache=self.work_dir).open(
-                "rb"
-            ) as metadata_file:
-                metadata = pickle.load(metadata_file)
+            try:
+                with resource_path(self.path, ".metadata", local_cache=self.work_dir).open(
+                    "rb"
+                ) as metadata_file:
+                    metadata = pickle.load(metadata_file)
+            except FileNotFoundError as exc:
+                msg = f"'{dir}' does not appear to contain a distributed state dict/checkpoint."
+                suggested_dir = join_path(self.path, "model_and_optim")
+                if file_exists(join_path(suggested_dir, ".metadata")):
+                    msg += f" Did you mean to use '{suggested_dir}'?"
+                raise FileNotFoundError(msg) from exc
 
             if getattr(metadata, "storage_meta", None) is None:
                 metadata.storage_meta = StorageMeta()
