@@ -9,7 +9,7 @@ from olmo_core.config import Config, StrEnum
 from olmo_core.data import NumpyDataLoaderConfig, NumpyDatasetConfig
 from olmo_core.distributed.utils import get_local_rank
 from olmo_core.launch.beaker import BeakerLaunchConfig
-from olmo_core.model_ladder import ModelLadder, ModelSize
+from olmo_core.model_ladder import ModelLadder, ModelSize, RunDuration
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import OptimConfig
 from olmo_core.train import (
@@ -97,6 +97,7 @@ def build_config(
     ladder: ModelLadder,
     script: str,
     size: ModelSize,
+    run_duration: RunDuration,
     cmd: SubCmd,
     cluster: str,
     overrides: List[str],
@@ -118,7 +119,9 @@ def build_config(
     optim = ladder.get_optim_config(size=size)
     dataset = ladder.get_dataset_config()
     data_loader = ladder.get_data_loader_config(size=size)
-    trainer = ladder.get_trainer_config(size=size, gpu_type=gpu_type, dp_world_size=dp_world_size)
+    trainer = ladder.get_trainer_config(
+        size=size, run_duration=run_duration, gpu_type=gpu_type, dp_world_size=dp_world_size
+    )
 
     return LadderRunConfig(
         launch=launch,
@@ -133,7 +136,7 @@ def build_config(
 
 def main(ladder_builder: Callable[[str], ModelLadder]):
     usage = f"""
-[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]SIZE CLUSTER[/] [i][OVERRIDES...][/]
+[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]SIZE RUN_DURATION CLUSTER[/] [i][OVERRIDES...][/]
 
 [b]Subcommands[/]
 [b magenta]launch:[/]      Launch the script on Beaker with the [b magenta]train[/] subcommand.
@@ -142,16 +145,17 @@ def main(ladder_builder: Callable[[str], ModelLadder]):
 [b magenta]dry_run:[/]     Pretty print the config to run and exit.
 
 [b]Examples[/]
-$ [i]python {sys.argv[0]} {SubCmd.launch} 1B ai2/pluto-cirrascale --launch.num_nodes=2[/]
+$ [i]python {sys.argv[0]} {SubCmd.launch} 1B Cx1 ai2/pluto-cirrascale --launch.num_nodes=2[/]
     """.strip()
 
     try:
-        script, cmd, size, cluster, overrides = (
+        script, cmd, size, run_duration, cluster, overrides = (
             sys.argv[0],
             SubCmd(sys.argv[1]),
             ModelSize(sys.argv[2]),
-            sys.argv[3],
-            sys.argv[4:],
+            RunDuration(sys.argv[3]),
+            sys.argv[4],
+            sys.argv[5:],
         )
     except (IndexError, ValueError):
         import rich
@@ -166,7 +170,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} 1B ai2/pluto-cirrascale --launch.num_n
     ladder.merge(overrides, prefix="ladder")
 
     # Build run config.
-    config = build_config(ladder, script, size, cmd, cluster, overrides)
+    config = build_config(ladder, script, size, run_duration, cmd, cluster, overrides)
     config.ladder.validate()
 
     # Run the cmd.

@@ -89,6 +89,39 @@ class ModelSize(StrEnum):
             raise NotImplementedError(self)
 
 
+class RunDuration(StrEnum):
+    """
+    An enumeration of the standard training durations for the ladder, in terms of Chinchilla multipliers.
+    """
+
+    Cx0_5 = "0.5xC"
+    """
+    Multiplier of 0.5.
+    """
+
+    Cx1 = "1xC"
+    """
+    Multiplier of 1.
+    """
+    Cx2 = "2xC"
+    """
+    Multiplier of 2.
+    """
+    Cx5 = "5xC"
+    """
+    Multiplier of 5.
+    """
+
+    Cx10 = "10xC"
+    """
+    Multiplier of 10.
+    """
+
+    @property
+    def multiplier(self) -> float:
+        return float(self.split("xC")[0])
+
+
 @beta_feature
 @dataclass
 class ModelLadder(Config, metaclass=ABCMeta):
@@ -236,18 +269,21 @@ class ModelLadder(Config, metaclass=ABCMeta):
 
         return self.sequence_length * global_batch_size
 
-    def get_duration(self, size: ModelSize) -> Duration:
+    def get_duration(
+        self, size: ModelSize, run_duration: RunDuration = RunDuration.Cx2
+    ) -> Duration:
         """
         Get the duration to train for given the model size. Defaults to 2 x Chinchilla optimal.
 
         :param size: The target model size.
         """
-        return Duration.tokens(2 * 20 * size.num_params)
+        return Duration.tokens(int(run_duration.multiplier * 20) * size.num_params)
 
     def get_trainer_config(
         self,
         *,
         size: ModelSize,
+        run_duration: RunDuration,
         gpu_type: str,
         dp_world_size: int,
     ) -> TrainerConfig:
@@ -315,7 +351,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
                 metrics_collect_interval=10,
                 cancel_check_interval=1,
                 compile_loss=True,
-                max_duration=self.get_duration(size),
+                max_duration=self.get_duration(size, run_duration),
             )
             .with_callback(
                 "lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=2000))
