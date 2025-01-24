@@ -415,9 +415,6 @@ def unshard_checkpoint(
     """
     # Adapted from `torch.distributed.checkpoint.format_utils.dcp_to_torch_save()`.
 
-    from torch.distributed.checkpoint.default_planner import _EmptyStateDictLoadPlanner
-    from torch.distributed.checkpoint.state_dict_loader import _load_state_dict
-
     if unshard_strategy is None:
         unshard_strategy = UnshardStrategy.one_file()
 
@@ -499,14 +496,8 @@ def unshard_checkpoint(
             raise NotImplementedError(unshard_strategy.name)
 
     def unshard_chunk(prefix: str, path: Path, keys: List[str]):
-        state_dict: Dict[str, Any] = {}
-        _load_state_dict(
-            state_dict,
-            storage_reader=RemoteFileSystemReader(
-                dir, pre_download=pre_download, work_dir=work_dir
-            ),
-            planner=_EmptyStateDictLoadPlanner(keys=keys),
-            no_dist=True,
+        state_dict: Dict[str, Any] = _load_unsharded_keys(
+            dir, keys, pre_download=pre_download, work_dir=work_dir
         )
         if not state_dict:
             raise RuntimeError(f"missing keys '{keys}' in checkpoint")
@@ -549,22 +540,13 @@ def load_keys(
 
     :returns: The (unsharded) objects from the checkpoint corresponding to the given keys.
     """
-    from torch.distributed.checkpoint.default_planner import _EmptyStateDictLoadPlanner
-    from torch.distributed.checkpoint.state_dict_loader import _load_state_dict
-
     if is_distributed():
         raise RuntimeError("'load_keys' cannot be called in a distributed context")
 
     dir = normalize_path(dir)
 
     keys = list(keys)
-    state_dict: Dict[str, Any] = {}
-    _load_state_dict(
-        state_dict,
-        storage_reader=RemoteFileSystemReader(dir, pre_download=pre_download, work_dir=work_dir),
-        planner=_EmptyStateDictLoadPlanner(keys=keys),
-        no_dist=True,
-    )
+    state_dict = _load_unsharded_keys(dir, keys, pre_download=pre_download, work_dir=work_dir)
     for key in keys:
         yield _get_key(state_dict, key, pop=True)
 
@@ -621,6 +603,26 @@ def _prepare_state_dict(
     if optim is not None:
         state_dict["optim"] = dist_cp_sd.get_optimizer_state_dict(model, optim, options=sd_options)
 
+    return state_dict
+
+
+def _load_unsharded_keys(
+    dir: PathOrStr,
+    keys: List[str],
+    *,
+    pre_download: bool = False,
+    work_dir: Optional[PathOrStr] = None,
+) -> Dict[str, Any]:
+    from torch.distributed.checkpoint.default_planner import _EmptyStateDictLoadPlanner
+    from torch.distributed.checkpoint.state_dict_loader import _load_state_dict
+
+    state_dict: Dict[str, Any] = {}
+    _load_state_dict(
+        state_dict,
+        storage_reader=RemoteFileSystemReader(dir, pre_download=pre_download, work_dir=work_dir),
+        planner=_EmptyStateDictLoadPlanner(keys=keys),
+        no_dist=True,
+    )
     return state_dict
 
 
