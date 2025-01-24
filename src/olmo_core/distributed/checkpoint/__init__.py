@@ -584,8 +584,9 @@ def get_checkpoint_metadata(dir: PathOrStr) -> Metadata:
         return storage_reader.read_metadata()
     except FileNotFoundError as exc:
         msg = f"'{dir}' does not appear to contain a state dict checkpoint."
-        if file_exists((suggested_path := join_path(dir, "model_and_optim/.metadata"))):
-            msg += f" Did you mean to use '{suggested_path}'?"
+        suggested_dir = join_path(dir, "model_and_optim")
+        if file_exists(join_path(suggested_dir, ".metadata")):
+            msg += f" Did you mean to use '{suggested_dir}'?"
         raise FileNotFoundError(msg) from exc
 
 
