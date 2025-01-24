@@ -42,7 +42,14 @@ from torch.distributed.checkpoint.metadata import Metadata, TensorStorageMetadat
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import StrEnum
-from olmo_core.io import clear_directory, dir_is_empty, is_url, normalize_path
+from olmo_core.io import (
+    clear_directory,
+    dir_is_empty,
+    file_exists,
+    is_url,
+    join_path,
+    normalize_path,
+)
 from olmo_core.utils import gc_cuda, get_element_size, wait_for
 
 from ..utils import barrier, get_fs_local_rank, is_distributed
@@ -445,10 +452,7 @@ def unshard_checkpoint(
     target_dir.mkdir(exist_ok=True, parents=True)
 
     ext = "pt" if not use_safetensors else "safetensors"
-    try:
-        metadata = get_checkpoint_metadata(dir)
-    except FileNotFoundError as exc:
-        raise FileNotFoundError(f"'{dir}' does not appear to be a model/optim checkpoint") from exc
+    metadata = get_checkpoint_metadata(dir)
 
     def save(state_dict: Dict[str, Any], path: Path):
         if path.is_file() and not save_overwrite:
@@ -559,6 +563,8 @@ def load_keys(
         raise RuntimeError("'load_keys' cannot be called in a distributed context")
 
     dir = normalize_path(dir)
+    # validate checkpoint.
+    get_checkpoint_metadata(dir)
 
     keys = list(keys)
     state_dict = _load_unsharded_keys(dir, keys, pre_download=pre_download, work_dir=work_dir)
@@ -573,7 +579,13 @@ def get_checkpoint_metadata(dir: PathOrStr) -> Metadata:
     :param dir: The path/URL to the checkpoint.
     """
     dir = normalize_path(dir)
-    storage_reader = RemoteFileSystemReader(dir)
+    try:
+        storage_reader = RemoteFileSystemReader(dir)
+    except FileNotFoundError as exc:
+        msg = f"'{dir}' does not appear to contain a state dict checkpoint."
+        if file_exists((suggested_path := join_path(dir, "model_and_optim/.metadata"))):
+            msg += f" Did you mean to use '{suggested_path}'?"
+        raise FileNotFoundError(msg) from exc
     return storage_reader.read_metadata()
 
 
