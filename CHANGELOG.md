@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `SkipStepAdamW` optimizer.
 - The trainer can load model-only checkpoints now.
 - Added the option to throttle checkpoint uploads to one rank from each node at a time.
+- Added `unshard_strategy` parameter to `unshard_checkpoint()` function in `olmo_coer.distributed.checkpoint`.
+- Added function `load_keys()` to `olmo_core.distributed.checkpoint`.
 
 ### Changed
 

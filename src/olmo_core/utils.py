@@ -644,3 +644,10 @@ def cuda_sync_debug_mode(debug_mode: Union[int, str]):
     finally:
         if current_mode is not None:
             torch.cuda.set_sync_debug_mode(current_mode)
+
+
+def get_element_size(dtype: torch.dtype) -> int:
+    """
+    Get the size in bytes of element of the given PyTorch dtype.
+    """
+    return torch._utils._element_size(dtype)  # type: ignore
