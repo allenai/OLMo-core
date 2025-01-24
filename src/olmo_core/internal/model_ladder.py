@@ -108,7 +108,7 @@ def build_config(
     launch = build_launch_config(
         name=f"{ladder.name}-{size}",
         root_dir=root_dir,
-        cmd=[script, SubCmd.train, size, cluster, *overrides],
+        cmd=[script, SubCmd.train, size, run_duration, cluster, *overrides],
         cluster=cluster,
     ).merge(overrides, strict=False)
 
