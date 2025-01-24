@@ -532,16 +532,25 @@ def _get_gcs_client():
 
 
 def _gcs_is_retriable(exc: Exception) -> bool:
+    from google.api_core.exceptions import BadRequest
     from google.api_core.retry import if_transient_error
 
-    return if_transient_error(exc) or isinstance(exc, requests.exceptions.Timeout)
+    return (
+        if_transient_error(exc)
+        or isinstance(exc, requests.exceptions.Timeout)
+        or isinstance(exc, BadRequest)  # Weird choice, but Google throws this transiently
+    )
 
 
 def _get_gcs_retry():
     from google.api_core.retry import Retry
 
     return Retry(
-        predicate=_gcs_is_retriable, initial=1.0, maximum=10.0, multiplier=2.0, timeout=600.0
+        predicate=_gcs_is_retriable,  # NOTE: it appears google might ignore this
+        initial=1.0,
+        maximum=10.0,
+        multiplier=2.0,
+        timeout=600.0,
     )
 
 
@@ -554,7 +563,7 @@ def _get_gcs_conditional_retry():
     return ConditionalRetryPolicy(_get_gcs_retry(), is_generation_specified, ["query_params"])
 
 
-@retriable()
+@retriable(retry_condition=_gcs_is_retriable)
 def _gcs_file_size(bucket_name: str, key: str) -> int:
     from google.api_core.exceptions import NotFound
 
@@ -569,7 +578,7 @@ def _gcs_file_size(bucket_name: str, key: str) -> int:
     return blob.size
 
 
-@retriable()
+@retriable(retry_condition=_gcs_is_retriable)
 def _gcs_get_bytes_range(bucket_name: str, key: str, bytes_start: int, num_bytes: int) -> bytes:
     from google.api_core.exceptions import NotFound
 
@@ -577,27 +586,43 @@ def _gcs_get_bytes_range(bucket_name: str, key: str, bytes_start: int, num_bytes
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(key)
     try:
-        blob.reload()
+        blob.reload(retry=_get_gcs_retry())
     except NotFound:
         raise FileNotFoundError(f"gs://{bucket_name}/{key}")
     return blob.download_as_bytes(
-        start=bytes_start, end=bytes_start + num_bytes - 1, retry=_get_gcs_retry()
+        start=bytes_start,
+        end=bytes_start + num_bytes - 1,
+        retry=_get_gcs_retry(),
+        checksum=None,  # type: ignore
     )
 
 
-@retriable()
+@retriable(retry_condition=_gcs_is_retriable)
 def _gcs_upload(source: Path, bucket_name: str, key: str, save_overwrite: bool = False):
     storage_client = _get_gcs_client()
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(key)
-    if not save_overwrite and blob.exists():
-        raise FileExistsError(
-            f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
-        )
-    blob.upload_from_filename(source, retry=_get_gcs_conditional_retry())
+
+    generation: int = 0
+    if blob.exists(retry=_get_gcs_retry()):
+        if not save_overwrite:
+            raise FileExistsError(
+                f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
+            )
+
+        blob.reload(retry=_get_gcs_retry())
+        assert blob.generation is not None
+        generation = blob.generation
+
+    blob.upload_from_filename(
+        source,
+        if_generation_match=generation,
+        retry=_get_gcs_conditional_retry(),
+        checksum=None,
+    )
 
 
-@retriable()
+@retriable(retry_condition=_gcs_is_retriable)
 def _gcs_clear_directory(bucket_name: str, prefix: str):
     from google.api_core.exceptions import NotFound
 

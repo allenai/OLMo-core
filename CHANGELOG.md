@@ -16,7 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added option to pre-download checkpoint files from remote storage before trying to load a checkpoint.
 - Added a callback for sending Slack notifications.
 - Makes the MPS device work on Apple Silicon
+- Added `SkipStepAdamW` optimizer.
 - The trainer can load model-only checkpoints now.
+- Added the option to throttle checkpoint uploads to one rank from each node at a time.
+- Added `unshard_strategy` parameter to `unshard_checkpoint()` function in `olmo_coer.distributed.checkpoint`.
+- Added function `load_keys()` to `olmo_core.distributed.checkpoint`.
 
 ### Changed
 
@@ -26,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Added missing `weights_only=False` argument to fix loading train checkpoints with newer versions of PyTorch.
+- Fixed bug where GCS upload does not retry on transient failures.
 
 ## [v1.7.0](https://github.com/allenai/OLMo-core/releases/tag/v1.7.0) - 2024-11-27
 
