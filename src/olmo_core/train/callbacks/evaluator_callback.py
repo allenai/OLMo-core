@@ -60,8 +60,6 @@ class EvaluatorCallback(Callback):
         if self.step <= 1 or self.step % self.eval_interval != 0:
             return
 
-        start_time = time.monotonic()
-
         # Put model in eval train mode.
         self.trainer.optim.zero_grad(set_to_none=True)
         self.trainer.model.eval()
@@ -112,8 +110,6 @@ class EvaluatorCallback(Callback):
 
         # Restore model to train mode.
         self.trainer.model.train()
-
-        log.info(f"Finished evals in {time.monotonic() - start_time:.1f} seconds")
 
     def _log_progress(self, evaluator: Evaluator, eval_step: int):
         if evaluator.total_batches is not None:
