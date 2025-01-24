@@ -33,7 +33,7 @@ from .train.callbacks import (
     WandBCallback,
 )
 
-__all__ = ["ModelSize", "ModelLadder"]
+__all__ = ["ModelSize", "ModelLadder", "RunDuration"]
 
 log = logging.getLogger(__name__)
 
