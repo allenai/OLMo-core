@@ -471,9 +471,9 @@ def unshard_checkpoint(
         elif unshard_strategy.name == UnshardStrategyType.one_file_per_tensor:
             path = target_dir / prefix
             chunks = []
-            for chunk_num, key in enumerate(metadata.state_dict_metadata.keys()):
+            for key in metadata.state_dict_metadata.keys():
                 if key.startswith(f"{prefix}."):
-                    chunks.append((path / f"chunk-{chunk_num:05d}.{ext}", [key]))
+                    chunks.append((path / f"{key.replace('.', '-')}.{ext}", [key]))
             return path, chunks
         elif unshard_strategy.name == UnshardStrategyType.chunks:
             assert unshard_strategy.chunk_size_bytes is not None

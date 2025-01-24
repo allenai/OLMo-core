@@ -386,9 +386,7 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
                 ) as metadata_file:
                     metadata = pickle.load(metadata_file)
             except FileNotFoundError as exc:
-                msg = (
-                    f"'{self.path}' does not appear to contain a distributed state dict/checkpoint."
-                )
+                msg = f"'{self.path}' is not a distributed checkpoint folder."
                 suggested_dir = join_path(self.path, "model_and_optim")
                 if file_exists(join_path(suggested_dir, ".metadata")):
                     msg += f" Did you mean to use '{suggested_dir}'?"
