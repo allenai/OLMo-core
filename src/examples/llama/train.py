@@ -150,8 +150,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
                     tokenizer=tokenizer_config,
                     work_dir="/tmp/dataset-cache",
                 ),
-                #  eval_interval=250,
-                eval_interval=50,
+                eval_interval=250,
                 eval_duration=Duration.steps(10),
             ),
         )
@@ -160,8 +159,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             DownstreamEvaluatorCallbackConfig(
                 tasks=["hellaswag"],
                 tokenizer=tokenizer_config,
-                #  eval_interval=250,
-                eval_interval=50,
+                eval_interval=250,
             ),
         )
     )
