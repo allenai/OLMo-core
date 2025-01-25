@@ -67,7 +67,7 @@ class EvaluatorCallback(Callback):
 
         for evaluator in self.evaluators:
             log.info(f"Running {evaluator.name} evals...")
-            inner_start_time = time.monotonic()
+            start_time = time.monotonic()
             evaluator.reset_metrics()
             eval_step = 0
             eval_tokens = 0
@@ -104,7 +104,7 @@ class EvaluatorCallback(Callback):
                     metrics.append(f"    {name}={format_float(value.item())}")
                     self.trainer.record_metric(f"eval/{evaluator.name}/{name}", value)
             log.info(
-                f"Finished {evaluator.name} evals in {time.monotonic() - inner_start_time:.1f} seconds. Metrics:\n"
+                f"Finished {evaluator.name} evals in {time.monotonic() - start_time:.1f} seconds. Metrics:\n"
                 + "\n".join(metrics)
             )
 
