@@ -4,7 +4,7 @@ Run the script without any arguments to see usage info.
 """
 
 import json
-import os
+import logging
 import sys
 from dataclasses import dataclass
 from typing import List, Tuple, cast
@@ -58,11 +58,7 @@ from olmo_core.train.callbacks import (
 from olmo_core.train.checkpoint import CheckpointerConfig
 from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
 
-# The max number of pretraining steps configured for the purpose of setting the learning rate
-# schedule. I'm hard-coding this here based on the number found in the logs. It only changes
-# if batch size changes, which we're not planning on changing that over the course of the run.
-# TODO: pull this from the checkpoint when https://github.com/allenai/OLMo-core/pull/143 merges.
-MAX_PRETRAIN_STEPS = 774861
+log = logging.getLogger(__name__)
 
 
 class AnnealingDataMix(DataMixBase):
@@ -126,14 +122,15 @@ class AnnealingConfig(Config):
 
         tokenizer_config = TokenizerConfig.dolma2()
 
-        # Try to guess step number to infer where the learning rate left off.
-        last_pretrain_step: int
-        if (basename := os.path.basename(checkpoint)).startswith("step"):
-            last_pretrain_step = int(basename.replace("step", ""))
-        else:
-            last_pretrain_step = torch.load(
-                resource_path(f"{checkpoint}/train", "rank0.pt"), weights_only=False
-            )["global_step"]
+        # Get step number and max steps to infer where the learning rate left off.
+        train_state = torch.load(
+            resource_path(f"{checkpoint}/train", "rank0.pt"), weights_only=False
+        )
+        last_pretrain_step: int = train_state["global_step"]
+        max_pretrain_steps: int = train_state.get("max_steps", 774861)  # default found in logs
+        log.info(
+            f"Will anneal from checkpoint at step {last_pretrain_step:,d} of {max_pretrain_steps:,d}"
+        )
 
         # Now infer the learning rate.
         with resource_path(checkpoint, "config.json").open() as f:
@@ -142,7 +139,7 @@ class AnnealingConfig(Config):
         scheduler_config = config["trainer"]["callbacks"]["lr_scheduler"]["scheduler"]
         assert scheduler_config.pop("_CLASS_") == CosWithWarmup.__name__
         scheduler = CosWithWarmup(**scheduler_config)
-        starting_lr = float(scheduler.get_lr(base_lr, last_pretrain_step, MAX_PRETRAIN_STEPS))
+        starting_lr = float(scheduler.get_lr(base_lr, last_pretrain_step, max_pretrain_steps))
 
         return AnnealingConfig(
             run_name=run_name,
