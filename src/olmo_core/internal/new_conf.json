@@ -1,0 +1,534 @@
+{
+  "model": {
+    "value": {
+      "dp_config": {
+        "name": "hsdp",
+        "param_dtype": "bfloat16",
+        "_CLASS_": "TransformerDataParallelConfig",
+        "wrapping_strategy": "full",
+        "reduce_dtype": "float32"
+      },
+      "init_seed": 2352,
+      "init_method": "normal",
+      "compile": true,
+      "dtype": "float32",
+      "vocab_size": 100352,
+      "lm_head": {
+        "_CLASS_": "LMHeadConfig",
+        "layer_norm": {
+          "bias": false,
+          "dtype": "float32",
+          "eps": 0.000001,
+          "_CLASS_": "LayerNormConfig",
+          "name": "rms"
+        },
+        "bias": false,
+        "name": "default",
+        "dtype": "float32"
+      },
+      "block": {
+        "feed_forward": {
+          "name": "default",
+          "_CLASS_": "FeedForwardConfig",
+          "hidden_size": 3072,
+          "dtype": "float32",
+          "bias": false
+        },
+        "layer_norm": {
+          "_CLASS_": "LayerNormConfig",
+          "dtype": "float32",
+          "name": "rms",
+          "eps": 0.000001,
+          "bias": false
+        },
+        "attention": {
+          "bias": false,
+          "_CLASS_": "AttentionConfig",
+          "use_flash": false,
+          "rope": {
+            "name": "default",
+            "theta": 500000,
+            "full_precision": true,
+            "_CLASS_": "RoPEConfig"
+          },
+          "name": "default",
+          "n_heads": 12,
+          "qk_norm": {
+            "bias": false,
+            "eps": 0.000001,
+            "_CLASS_": "LayerNormConfig",
+            "name": "rms",
+            "dtype": "float32"
+          },
+          "dtype": "float32"
+        },
+        "name": "reordered_norm",
+        "_CLASS_": "TransformerBlockConfig"
+      },
+      "n_layers": 12,
+      "d_model": 768,
+      "name": "default",
+      "_CLASS_": "TransformerConfig"
+    }
+  },
+  "ladder": {
+    "value": {
+      "name": "OLMo2",
+      "data_seed": 6198,
+      "_CLASS_": "BaselineModelLadder",
+      "mix_base_dir": "/weka/oe-training-default/ai2-llm",
+      "max_dp_world_size": 64,
+      "sequence_length": 2048,
+      "tokenizer": {
+        "vocab_size": 100278,
+        "_CLASS_": "TokenizerConfig",
+        "identifier": "allenai/dolma2-tokenizer",
+        "pad_token_id": 100277,
+        "eos_token_id": 100257
+      },
+      "work_dir": "/weka/oe-training-default/ai2-llm/checkpoints/akshitab/dataset-cache",
+      "save_folder": "/weka/oe-training-default/ai2-llm/checkpoints/akshitab/ladder",
+      "init_seed": 2331786,
+      "project": "OLMo2-model-ladder",
+      "data_mix": "OLMoE_mix_0824"
+    }
+  },
+  "trainer": {
+    "value": {
+      "metrics_collect_interval": 10,
+      "checkpointer": {
+        "throttle_uploads": false,
+        "pre_download": false,
+        "_CLASS_": "CheckpointerConfig"
+      },
+      "max_duration": {
+        "unit": "tokens",
+        "value": 3800000000,
+        "_CLASS_": "Duration"
+      },
+      "compile_loss": true,
+      "cancel_check_interval": 1,
+      "fused_loss": false,
+      "rank_microbatch_size": 65536,
+      "callbacks": {
+        "lr_scheduler": {
+          "scheduler": {
+            "_CLASS_": "CosWithWarmup",
+            "initial_lr_field": "initial_lr",
+            "warmup_steps": 2000,
+            "alpha_f": 0.1,
+            "warmup_min_lr": 0,
+            "lr_field": "lr"
+          },
+          "_CLASS_": "SchedulerCallback"
+        },
+        "checkpointer": {
+          "remove": "ephemeral_only",
+          "_CLASS_": "CheckpointerCallback",
+          "save_async": true,
+          "ephemeral_save_interval": 250,
+          "save_interval": 100000
+        },
+        "comet": {
+          "enabled": false,
+          "failure_tag": "failed",
+          "cancel_tags": [
+            "cancel",
+            "canceled",
+            "cancelled"
+          ],
+          "cancel_check_interval": 5,
+          "workspace": "ai2",
+          "notifications": "none",
+          "name": "OLMo2-190M",
+          "project": "OLMo2-model-ladder",
+          "_CLASS_": "CometCallback"
+        },
+        "downstream_evaluator": {
+          "eval_duration": {
+            "unit": "epochs",
+            "_CLASS_": "Duration",
+            "value": 1
+          },
+          "eval_interval": 200,
+          "tokenizer": {
+            "eos_token_id": 100257,
+            "vocab_size": 100278,
+            "identifier": "allenai/dolma2-tokenizer",
+            "_CLASS_": "TokenizerConfig",
+            "pad_token_id": 100277
+          },
+          "tasks": [
+            "piqa",
+            "hellaswag",
+            "winogrande",
+            "openbook_qa",
+            "boolq",
+            "sciq",
+            "arc_easy",
+            "arc_easy_ppl",
+            "arc_challenge",
+            "basic_arithmetic",
+            "copa",
+            "rte",
+            "commitment_bank",
+            "mrpc",
+            "sst2",
+            "commonsense_qa",
+            "social_iqa",
+            "trivia_qa_wiki_ppl",
+            "natural_qs_open_ppl",
+            "mmlu_stem_test",
+            "mmlu_humanities_test",
+            "mmlu_social_sciences_test",
+            "mmlu_other_test",
+            "mmlu_stem",
+            "mmlu_humanities",
+            "mmlu_social_sciences",
+            "mmlu_other",
+            "mmlu_stem_bpb",
+            "mmlu_humanities_bpb",
+            "mmlu_social_sciences_bpb",
+            "mmlu_other_bpb",
+            "arc_challenge_rc_0shot",
+            "arc_challenge_rc_0shot_bpb",
+            "arc_challenge_rc_5shot",
+            "arc_challenge_rc_5shot_bpb",
+            "arc_easy_rc_0shot",
+            "arc_easy_rc_0shot_bpb",
+            "arc_easy_rc_5shot",
+            "arc_easy_rc_5shot_bpb",
+            "boolq_rc_0shot",
+            "boolq_rc_0shot_bpb",
+            "boolq_rc_5shot",
+            "boolq_rc_5shot_bpb",
+            "copa_rc_0shot",
+            "copa_rc_0shot_bpb",
+            "copycolors_10way",
+            "copycolors_10way_bpb",
+            "copycolors_xl_10way",
+            "copycolors_xl_10way_bpb",
+            "csqa_rc_0shot",
+            "csqa_rc_0shot_bpb",
+            "csqa_rc_5shot",
+            "csqa_rc_5shot_bpb",
+            "hellaswag_rc_0shot",
+            "hellaswag_rc_0shot_bpb",
+            "hellaswag_rc_5shot",
+            "hellaswag_rc_5shot_bpb",
+            "openbookqa_rc_0shot",
+            "openbookqa_rc_0shot_bpb",
+            "openbookqa_rc_5shot",
+            "openbookqa_rc_5shot_bpb",
+            "piqa_rc_0shot",
+            "piqa_rc_0shot_bpb",
+            "piqa_rc_5shot",
+            "piqa_rc_5shot_bpb",
+            "sciq_rc_0shot",
+            "sciq_rc_0shot_bpb",
+            "socialiqa_rc_0shot",
+            "socialiqa_rc_0shot_bpb",
+            "socialiqa_rc_5shot",
+            "socialiqa_rc_5shot_bpb",
+            "winogrande_rc_0shot",
+            "winogrande_rc_0shot_bpb",
+            "winogrande_rc_5shot",
+            "winogrande_rc_5shot_bpb",
+            "arc_challenge_val_rc_5shot",
+            "arc_challenge_test_rc_5shot",
+            "arc_easy_val_rc_5shot",
+            "arc_easy_test_rc_5shot",
+            "boolq_val_rc_5shot",
+            "csqa_val_rc_5shot",
+            "hellaswag_val_rc_5shot",
+            "openbookqa_val_rc_5shot",
+            "openbookqa_test_rc_5shot",
+            "piqa_val_rc_5shot",
+            "socialiqa_val_rc_5shot",
+            "winogrande_val_rc_5shot",
+            "mmlu_stem_val_rc_5shot",
+            "mmlu_stem_test_rc_5shot",
+            "mmlu_humanities_val_rc_5shot",
+            "mmlu_humanities_test_rc_5shot",
+            "mmlu_social_sciences_val_rc_5shot",
+            "mmlu_social_sciences_test_rc_5shot",
+            "mmlu_other_val_rc_5shot",
+            "mmlu_other_test_rc_5shot"
+          ],
+          "enabled": true,
+          "_CLASS_": "DownstreamEvaluatorCallbackConfig",
+          "log_interval": 5
+        },
+        "gpu_monitor": {
+          "_CLASS_": "GPUMemoryMonitorCallback"
+        },
+        "garbage_collector": {
+          "gc_interval": 1000,
+          "_CLASS_": "GarbageCollectorCallback",
+          "enabled": true
+        },
+        "config_saver": {
+          "_CLASS_": "ConfigSaverCallback",
+          "fname": "config.json"
+        },
+        "wandb": {
+          "enabled": true,
+          "name": "OLMo2-190M",
+          "cancel_tags": [
+            "cancel",
+            "canceled",
+            "cancelled"
+          ],
+          "_CLASS_": "WandBCallback",
+          "project": "olmo-ladder",
+          "entity": "ai2-llm",
+          "cancel_check_interval": 5
+        },
+        "grad_clipper": {
+          "max_grad_norm": 1,
+          "_CLASS_": "GradClipperCallback"
+        },
+        "lm_evaluator": {
+          "enabled": true,
+          "eval_interval": 200,
+          "eval_dataset": {
+            "_CLASS_": "NumpyDatasetConfig",
+            "name": "padded_fsl",
+            "mix_base_dir": "/weka/oe-training-default/ai2-llm",
+            "include_instance_metadata": true,
+            "tokenizer": {
+              "identifier": "allenai/dolma2-tokenizer",
+              "vocab_size": 100278,
+              "pad_token_id": 100277,
+              "_CLASS_": "TokenizerConfig",
+              "eos_token_id": 100257
+            },
+            "mix": "v3_small_ppl_validation",
+            "generate_doc_lengths": false,
+            "work_dir": "/weka/oe-training-default/ai2-llm/checkpoints/akshitab/dataset-cache",
+            "expand_glob": false,
+            "sequence_length": 2048
+          },
+          "_CLASS_": "LMEvaluatorCallbackConfig",
+          "eval_duration": {
+            "unit": "epochs",
+            "_CLASS_": "Duration",
+            "value": 1
+          },
+          "log_interval": 5
+        }
+      },
+      "_CLASS_": "TrainerConfig",
+      "load_strategy": "if_available",
+      "save_overwrite": false,
+      "save_folder": "/weka/oe-training-default/ai2-llm/checkpoints/akshitab/ladder/checkpoints/OLMo2-190M"
+    }
+  },
+  "launch": {
+    "value": {
+      "num_gpus": 8,
+      "task_name": "train",
+      "weka_buckets": [
+        {
+          "_CLASS_": "BeakerWekaBucket",
+          "mount": "/weka/oe-training-default",
+          "bucket": "oe-training-default"
+        }
+      ],
+      "shared_filesystem": true,
+      "beaker_image": "shanea/olmo-torch23-gantry",
+      "allow_dirty": false,
+      "env_vars": [
+        {
+          "name": "NCCL_DEBUG",
+          "value": "WARN",
+          "_CLASS_": "BeakerEnvVar"
+        }
+      ],
+      "clusters": [
+        "ai2/jupiter-cirrascale-2"
+      ],
+      "workspace": "OLMo-tiny",
+      "nfs": false,
+      "_CLASS_": "BeakerLaunchConfig",
+      "name": "OLMo2-190M-f496e6d1",
+      "num_nodes": 1,
+      "budget": "ai2/oe-training",
+      "priority": "high",
+      "cmd": [
+        "src/scripts/train/OLMo2-ladder.py",
+        "train",
+        "190M",
+        "1xC",
+        "ai2/jupiter-cirrascale-2",
+        "--launch.num_nodes=1",
+        "--launch.workspace=OLMo-tiny",
+        "--launch.beaker_image=shanea/olmo-torch23-gantry",
+        "--launch.priority=high",
+        "--trainer.callbacks.wandb.enabled=True",
+        "--trainer.callbacks.wandb.entity=ai2-llm",
+        "--trainer.callbacks.wandb.project=olmo-ladder",
+        "--trainer.callbacks.comet.enabled=False",
+        "--trainer.callbacks.lm_evaluator.eval_interval=200",
+        "--trainer.callbacks.downstream_evaluator.eval_interval=200",
+        "--ladder.data_seed=6198",
+        "--ladder.init_seed=2331786"
+      ],
+      "setup_steps": [
+        "git clone \"$REPO_URL\" .",
+        "git checkout \"$GIT_REF\"",
+        "git submodule update --init --recursive",
+        "conda shell.bash activate base",
+        "pip install -e '.[all]'",
+        "pip install --upgrade beaker-py",
+        "pip freeze",
+        "mkdir -p ~/.aws",
+        "printenv AWS_CONFIG > ~/.aws/config",
+        "printenv AWS_CREDENTIALS > ~/.aws/credentials"
+      ],
+      "env_secrets": [
+        {
+          "name": "BEAKER_TOKEN",
+          "secret": "akshitab_BEAKER_TOKEN",
+          "_CLASS_": "BeakerEnvSecret"
+        },
+        {
+          "name": "WANDB_API_KEY",
+          "secret": "akshitab_WANDB_API_KEY",
+          "_CLASS_": "BeakerEnvSecret"
+        },
+        {
+          "name": "COMET_API_KEY",
+          "secret": "akshitab_COMET_API_KEY",
+          "_CLASS_": "BeakerEnvSecret"
+        },
+        {
+          "_CLASS_": "BeakerEnvSecret",
+          "name": "AWS_CONFIG",
+          "secret": "akshitab_AWS_CONFIG"
+        },
+        {
+          "name": "AWS_CREDENTIALS",
+          "secret": "akshitab_AWS_CREDENTIALS",
+          "_CLASS_": "BeakerEnvSecret"
+        },
+        {
+          "secret": "R2_ENDPOINT_URL",
+          "_CLASS_": "BeakerEnvSecret",
+          "name": "R2_ENDPOINT_URL"
+        },
+        {
+          "name": "WEKA_ENDPOINT_URL",
+          "secret": "WEKA_ENDPOINT_URL",
+          "_CLASS_": "BeakerEnvSecret"
+        },
+        {
+          "_CLASS_": "BeakerEnvSecret",
+          "name": "SLACK_WEBHOOK_URL",
+          "secret": "SLACK_WEBHOOK_URL"
+        }
+      ],
+      "preemptible": true
+    }
+  },
+  "optim": {
+    "value": {
+      "weight_decay": 0.1,
+      "betas": [
+        0.9,
+        0.95
+      ],
+      "eps": 1e-8,
+      "lr": 0.0038933302380253663,
+      "_CLASS_": "AdamWConfig",
+      "compile": false,
+      "group_overrides": [
+        {
+          "opts": {
+            "weight_decay": 0
+          },
+          "params": [
+            "embeddings.weight"
+          ],
+          "_CLASS_": "OptimGroupOverride"
+        }
+      ],
+      "fused": true
+    }
+  },
+  "_wandb": {
+    "value": {
+      "huggingface_version": "4.42.3",
+      "t": {
+        "1": [
+          1,
+          5,
+          11,
+          49,
+          51,
+          53,
+          55
+        ],
+        "2": [
+          1,
+          5,
+          11,
+          49,
+          51,
+          53,
+          55
+        ],
+        "3": [
+          13,
+          16,
+          23,
+          61
+        ],
+        "4": "3.11.9",
+        "5": "0.17.4",
+        "6": "4.42.3",
+        "8": [
+          5
+        ],
+        "13": "linux-x86_64"
+      },
+      "framework": "huggingface",
+      "start_time": 1738093988,
+      "cli_version": "0.17.4",
+      "is_jupyter_run": false,
+      "python_version": "3.11.9",
+      "is_kaggle_kernel": false
+    }
+  },
+  "data_loader": {
+    "value": {
+      "num_workers": 4,
+      "global_batch_size": 524288,
+      "seed": 34521,
+      "_CLASS_": "NumpyDataLoaderConfig"
+    }
+  },
+  "dataset": {
+    "value": {
+      "_CLASS_": "NumpyDatasetConfig",
+      "generate_doc_lengths": false,
+      "mix": "OLMoE_mix_0824",
+      "sequence_length": 2048,
+      "work_dir": "/weka/oe-training-default/ai2-llm/checkpoints/akshitab/dataset-cache",
+      "name": "fsl",
+      "include_instance_metadata": true,
+      "tokenizer": {
+        "identifier": "allenai/dolma2-tokenizer",
+        "_CLASS_": "TokenizerConfig",
+        "pad_token_id": 100277,
+        "vocab_size": 100278,
+        "eos_token_id": 100257
+      },
+      "mix_base_dir": "/weka/oe-training-default/ai2-llm",
+      "expand_glob": false
+    }
+  },
+  "_CLASS_": {
+    "value": "LadderRunConfig"
+  }
+}

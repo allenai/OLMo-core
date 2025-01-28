@@ -167,7 +167,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} 1B 1xC ai2/pluto-cirrascale --launch.n
 
     # Build ladder config.
     ladder = ladder_builder(get_root_dir(cluster))
-    ladder.merge(overrides, prefix="ladder")
+    ladder = ladder.merge(overrides, prefix="ladder")
 
     # Build run config.
     config = build_config(ladder, script, size, run_duration, cmd, cluster, overrides)
