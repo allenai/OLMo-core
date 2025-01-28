@@ -610,18 +610,22 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                     max_instances = (
                         self._path_offset_index[(str(path), idx)] // self.sequence_length
                     )
-                    future = executor.submit(
-                        run_worker_func,
-                        segment_documents_into_instances,
-                        path,
-                        indices_path,
-                        max_sequence_length=self.sequence_length,
-                        eos_token_id=self.eos_token_id,
-                        dtype=self.dtype,
-                        indices_dtype=self.indices_dtype,
-                        sample=(max_instances, self._seed),
-                    )
-                    futures.append(future)
+
+                    # Sampling from small npy files can result in 0 instance indices.
+                    # We skip processing these to avoid writing empty mmapped files.
+                    if max_instances > 0:
+                        future = executor.submit(
+                            run_worker_func,
+                            segment_documents_into_instances,
+                            path,
+                            indices_path,
+                            max_sequence_length=self.sequence_length,
+                            eos_token_id=self.eos_token_id,
+                            dtype=self.dtype,
+                            indices_dtype=self.indices_dtype,
+                            sample=(max_instances, self._seed),
+                        )
+                        futures.append(future)
 
                 concurrent.futures.wait(futures, return_when="ALL_COMPLETED")
 
