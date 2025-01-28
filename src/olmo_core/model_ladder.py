@@ -192,11 +192,18 @@ class ModelLadder(Config, metaclass=ABCMeta):
     The maximum data parallel world size that you intent to run with. This is used to set the batch size.
     """
 
+    @property
+    def model_size(self) -> int:
+        """
+        The size of the model in terms of non-embedding parameters.
+        """
+        return self._model_size
+
     def get_save_folder(self, size: ModelSize, run_duration: RunDuration) -> str:
         return str(join_path(self.save_folder, f"checkpoints/{self.name}-{size}-{run_duration}"))
 
     @abstractmethod
-    def get_model_config(self, *, size: ModelSize) -> TransformerConfig:
+    def _get_model_config(self, *, size: ModelSize) -> TransformerConfig:
         """
         Get the model config for a given model size.
 
@@ -204,8 +211,18 @@ class ModelLadder(Config, metaclass=ABCMeta):
         """
         raise NotImplementedError
 
+    def get_model_config(self, *, size: ModelSize) -> TransformerConfig:
+        """
+        Get the model config for a given model size.
+
+        :param size: The target model size.
+        """
+        model_config = self._get_model_config(size=size)
+        self._model_size = model_config.num_non_embedding_params
+        return model_config
+
     @abstractmethod
-    def get_optim_config(self, *, size: ModelSize) -> OptimConfig:
+    def get_optim_config(self) -> OptimConfig:
         """
         Get the optimizer config for a given model size.
 
@@ -227,14 +244,14 @@ class ModelLadder(Config, metaclass=ABCMeta):
             work_dir=self.work_dir,
         )
 
-    def get_data_loader_config(self, *, size: ModelSize) -> NumpyDataLoaderConfig:
+    def get_data_loader_config(self) -> NumpyDataLoaderConfig:
         """
         Get the data loader config.
 
         :param size: The target model size.
         """
         return NumpyDataLoaderConfig(
-            global_batch_size=self.get_global_batch_size(size=size),
+            global_batch_size=self.get_global_batch_size(),
             seed=self.data_seed,
             num_workers=4,
         )
@@ -250,7 +267,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
         """
         raise NotImplementedError
 
-    def get_global_batch_size(self, *, size: ModelSize) -> int:
+    def get_global_batch_size(self) -> int:
         """
         Get the global batch size in tokens for a given model size.
 
@@ -261,7 +278,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
         assert self.sequence_length in {2048, 4096, 8192}
         seq_len_divisor = self.sequence_length // 2048
 
-        global_batch_size = 160 * (size.num_params / 108000000) ** (2 / 3)
+        global_batch_size = 160 * (self.model_size / 108000000) ** (2 / 3)
         global_batch_size /= seq_len_divisor
         global_batch_size /= self.max_dp_world_size
         global_batch_size = round(global_batch_size)
@@ -269,15 +286,13 @@ class ModelLadder(Config, metaclass=ABCMeta):
 
         return self.sequence_length * global_batch_size
 
-    def get_duration(
-        self, size: ModelSize, run_duration: RunDuration = RunDuration.Cx2
-    ) -> Duration:
+    def get_duration(self, run_duration: RunDuration = RunDuration.Cx2) -> Duration:
         """
         Get the duration to train for given the model size. Defaults to 2 x Chinchilla optimal.
 
         :param size: The target model size.
         """
-        return Duration.tokens(int(run_duration.multiplier * 20) * size.num_params)
+        return Duration.tokens(int(run_duration.multiplier * 20) * self.model_size)
 
     def get_trainer_config(
         self,
@@ -311,14 +326,14 @@ class ModelLadder(Config, metaclass=ABCMeta):
 
         rank_mbz_instances = rank_mbz // self.sequence_length
 
-        global_bz = self.get_global_batch_size(size=size)
+        global_bz = self.get_global_batch_size()
         if global_bz % self.sequence_length != 0:
             raise OLMoConfigurationError(
                 f"global batch size ({rank_mbz:,d} tokens) must be divisible "
                 f"by the sequence length ({self.sequence_length:,d})"
             )
 
-        global_bz_instances = self.get_global_batch_size(size=size) // self.sequence_length
+        global_bz_instances = self.get_global_batch_size() // self.sequence_length
 
         if global_bz_instances % (rank_mbz_instances * dp_world_size) != 0:
             new_rank_mbz_instances = global_bz_instances // dp_world_size
@@ -351,10 +366,13 @@ class ModelLadder(Config, metaclass=ABCMeta):
                 metrics_collect_interval=10,
                 cancel_check_interval=1,
                 compile_loss=True,
-                max_duration=self.get_duration(size, run_duration),
+                max_duration=self.get_duration(run_duration),
             )
             .with_callback(
-                "lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=2000))
+                "lr_scheduler",
+                SchedulerCallback(
+                    scheduler=CosWithWarmup(warmup_steps=round(self.model_size / global_bz))
+                ),
             )
             .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
             .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0))
@@ -439,9 +457,9 @@ class ModelLadder(Config, metaclass=ABCMeta):
                     f"too far from target size of {size}: {model_config}"
                 )
 
-            self.get_optim_config(size=size)
+            self.get_optim_config()
             self.get_rank_microbatch_size(size=size, gpu_type="H100")
-            bz_tokens = self.get_global_batch_size(size=size)
+            bz_tokens = self.get_global_batch_size()
             if bz_tokens % self.sequence_length != 0:
                 raise OLMoConfigurationError(
                     f"Batch size of {bz_tokens:,d} tokens for model size {size} "

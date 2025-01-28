@@ -35,7 +35,7 @@ class BaselineModelLadder(ModelLadder):
         ModelSize.size_1B: dict(n_layers=16),  # need to scale down our actual 1B model
     }
 
-    def get_model_config(self, *, size: ModelSize) -> TransformerConfig:
+    def _get_model_config(self, *, size: ModelSize) -> TransformerConfig:
         # if size in [ModelSize.size_7B, ModelSize.size_13B]:
         #     data_parallel_type = DataParallelType.fsdp
         # else:
@@ -51,10 +51,10 @@ class BaselineModelLadder(ModelLadder):
             **self.MODEL_OVERRIDES.get(size, {}),
         )
 
-    def get_optim_config(self, *, size: ModelSize) -> OptimConfig:
+    def get_optim_config(self) -> OptimConfig:
         # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838
         assert self.sequence_length in {2048, 4096}
-        lr = 0.0047 * (size.num_params / 108000000) ** (-1 / 3)
+        lr = 0.0047 * (self.model_size / 108000000) ** (-1 / 3)
         if self.sequence_length == 4096:
             lr /= 4
 
