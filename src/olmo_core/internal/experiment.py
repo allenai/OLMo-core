@@ -3,6 +3,7 @@ import sys
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, cast
 
+import torch
 from rich import print
 
 from olmo_core.config import Config, StrEnum
@@ -72,6 +73,7 @@ class ExperimentConfig(Config):
 class SubCmd(StrEnum):
     launch = "launch"
     train = "train"
+    train_single = "train_single"
     prep = "prep"
     launch_prep = "launch_prep"
     dry_run = "dry_run"
@@ -81,6 +83,8 @@ class SubCmd(StrEnum):
             prepare_cli_environment()
         elif self == SubCmd.train:
             prepare_training_environment()
+        elif self == SubCmd.train_single:
+            prepare_training_environment(backend=None)
         else:
             raise NotImplementedError(self)
 
@@ -98,6 +102,23 @@ class SubCmd(StrEnum):
         elif self == SubCmd.dry_run:
             pass
         elif self == SubCmd.train:
+            try:
+                train(config)
+            finally:
+                teardown_training_environment()
+        elif self == SubCmd.train_single:
+            if config.model.dp_config is not None:
+                log.warning(
+                    "dp_config is set to %s, but you can't use data parallelism when running on a single node. Disabling.",
+                    config.model.dp_config,
+                )
+                config.model.dp_config = None
+            if config.model.tp_config is not None:
+                log.warning(
+                    "tp_config is set to %s, but you can't use tensor parallelism when running on a single node. Disabling.",
+                    config.model.dp_config,
+                )
+                config.model.tp_config = None
             try:
                 train(config)
             finally:
@@ -157,7 +178,6 @@ def build_common_components(
 
     callbacks: Dict[str, Callback] = {
         "lr_scheduler": SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=2000)),
-        "gpu_monitor": GPUMemoryMonitorCallback(),
         "grad_clipper": GradClipperCallback(max_grad_norm=1.0),
         "config_saver": ConfigSaverCallback(),
         "profiler": ProfilerCallback(enabled=False),
@@ -175,6 +195,8 @@ def build_common_components(
         ),
         "slack_notifier": SlackNotifierCallback(name=run_name, enabled=False),
     }
+    if torch.cuda.is_available():
+        callbacks["gpu_monitor"] = GPUMemoryMonitorCallback()
 
     return CommonComponents(
         run_name=run_name,
@@ -306,6 +328,7 @@ def main(
 [b magenta]launch:[/]      Launch the script on Beaker with the [b magenta]train[/] subcommand.
 [b magenta]train:[/]       Run the trainer. You usually shouldn't invoke the script with this subcommand directly.
              Instead use [b magenta]launch[/] or run it with torchrun.
+[b magenta]train_single:[/]       Run the trainer on a single device (GPU, CPU, MPS). num_nodes is ignored.
 [b magenta]prep:[/]        Prepare the dataset ahead of training to save GPU time.
 [b magenta]launch_prep:[/] Launch the script on Beaker with the [b magenta]prep[/] subcommand.
 [b magenta]dry_run:[/]     Pretty print the config and exit.

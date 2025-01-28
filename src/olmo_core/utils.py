@@ -124,6 +124,8 @@ def get_default_device() -> torch.device:
     """
     if torch.cuda.is_available() and torch.cuda.is_initialized():
         return torch.device("cuda")
+    elif torch.mps.is_available():
+        return torch.device("mps")
     else:
         return torch.device("cpu")
 
@@ -644,3 +646,10 @@ def cuda_sync_debug_mode(debug_mode: Union[int, str]):
     finally:
         if current_mode is not None:
             torch.cuda.set_sync_debug_mode(current_mode)
+
+
+def get_element_size(dtype: torch.dtype) -> int:
+    """
+    Get the size in bytes of element of the given PyTorch dtype.
+    """
+    return torch._utils._element_size(dtype)  # type: ignore
