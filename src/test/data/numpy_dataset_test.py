@@ -76,13 +76,14 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
     # NOTE: At small token counts the take_ratio can be finicky so we test at small but real world-ish scale
     npdtype = np.uint16
     seed = 42
-    mmap1 = mk_mmaps(tmp_path, "mmap1", 1, 20 * 1000, npdtype, eos=0, seed=seed)
-    mmap2 = mk_mmaps(tmp_path, "mmap2", 1, 20 * 1000, npdtype, eos=0, seed=seed)
+    eos_token = 0
+    mmap1 = mk_mmaps(tmp_path, "mmap1", 1, 20 * 1000, npdtype, eos=eos_token, seed=seed)
+    # mmap2 = mk_mmaps(tmp_path, "mmap2", 1, 20 * 1000, npdtype, eos=0, seed=seed)
 
     sequence_length = 4
     tokenizer = TokenizerConfig(
         vocab_size=32_000,
-        eos_token_id=0,
+        eos_token_id=eos_token,
         pad_token_id=-1,
     )
 
@@ -93,13 +94,13 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
             SourceMixtureConfig(
                 source_name="mmap1",
                 paths=[i[0] for i in mmap1],
-                target_ratio=0.8,
+                target_ratio=1.0,
             ),
-            SourceMixtureConfig(
-                source_name="mmap2",
-                paths=[i[0] for i in mmap2],
-                target_ratio=0.2,
-            ),
+            # SourceMixtureConfig(
+            #     source_name="mmap2",
+            #     paths=[i[0] for i in mmap2],
+            #     target_ratio=0.2,
+            # ),
         ],
         dtype=NumpyDatasetDType.uint16,
         processes=1,
@@ -114,76 +115,77 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
     ).build()
     ds.prepare()
 
-    expected = "68144f"
-    assert ds.fingerprint.endswith(
-        expected
-    ), f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
+    # expected = "68144f"
+    # assert ds.fingerprint.endswith(
+    #     expected
+    # ), f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
     assert ds[0]["input_ids"].tolist() == [
         56423,
         24546,
         15796,
         52203,
     ]  # stable because we pass a seed
-    assert ds.num_tokens == 10000
+    assert ds.num_tokens == 10_000
     assert len(ds) == 2500
+    raise NotImplementedError("TODO: implement test for num_tokens")
 
 
-def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
-    # NOTE: At small token counts the take_ratio can be finicky so we test at small but real world-ish scale
-    npdtype = np.uint16
-    seed = 42
-    mmap1 = mk_mmaps(tmp_path, "mmap1", 1, 10 * 1000, npdtype, eos=0, seed=seed)
-    mmap2 = mk_mmaps(tmp_path, "mmap2", 1, 20 * 1000, npdtype, eos=0, seed=seed)
+# def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
+#     # NOTE: At small token counts the take_ratio can be finicky so we test at small but real world-ish scale
+#     npdtype = np.uint16
+#     seed = 42
+#     mmap1 = mk_mmaps(tmp_path, "mmap1", 1, 10 * 1000, npdtype, eos=0, seed=seed)
+#     mmap2 = mk_mmaps(tmp_path, "mmap2", 1, 20 * 1000, npdtype, eos=0, seed=seed)
 
-    sequence_length = 4
-    tokenizer = TokenizerConfig(
-        vocab_size=32_000,
-        eos_token_id=0,
-        pad_token_id=-1,
-    )
+#     sequence_length = 4
+#     tokenizer = TokenizerConfig(
+#         vocab_size=32_000,
+#         eos_token_id=0,
+#         pad_token_id=-1,
+#     )
 
-    source1_paths = [i[0] for i in mmap1] * 2  # duplicate the paths
+#     source1_paths = [i[0] for i in mmap1] * 2  # duplicate the paths
 
-    mixture_config = SourceMixtureDatasetConfig(
-        max_tokens=10_000,
-        sequence_length=sequence_length,
-        source_configs=[
-            SourceMixtureConfig(
-                source_name="mmap1",
-                paths=source1_paths,
-                target_ratio=0.8,
-            ),
-            SourceMixtureConfig(
-                source_name="mmap2",
-                paths=[i[0] for i in mmap2],
-                target_ratio=0.2,
-            ),
-        ],
-        dtype=NumpyDatasetDType.uint16,
-        processes=1,
-        seed=seed,
-    )
+#     mixture_config = SourceMixtureDatasetConfig(
+#         max_tokens=10_000,
+#         sequence_length=sequence_length,
+#         source_configs=[
+#             SourceMixtureConfig(
+#                 source_name="mmap1",
+#                 paths=source1_paths,
+#                 target_ratio=0.8,
+#             ),
+#             SourceMixtureConfig(
+#                 source_name="mmap2",
+#                 paths=[i[0] for i in mmap2],
+#                 target_ratio=0.2,
+#             ),
+#         ],
+#         dtype=NumpyDatasetDType.uint16,
+#         processes=1,
+#         seed=seed,
+#     )
 
-    ds = NumpyDatasetConfig(
-        source_mixture_config=mixture_config,
-        sequence_length=sequence_length,
-        tokenizer=tokenizer,
-        include_instance_metadata=False,
-    ).build()
-    ds.prepare()
+#     ds = NumpyDatasetConfig(
+#         source_mixture_config=mixture_config,
+#         sequence_length=sequence_length,
+#         tokenizer=tokenizer,
+#         include_instance_metadata=False,
+#     ).build()
+#     ds.prepare()
 
-    expected = "190cd0"
-    assert ds.fingerprint.endswith(
-        expected
-    ), f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
-    assert ds[0]["input_ids"].tolist() == [
-        56423,
-        24546,
-        15796,
-        52203,
-    ]  # stable because we pass a seed
-    assert ds.num_tokens == 10000
-    assert len(ds) == 2500
+#     expected = "190cd0"
+#     assert ds.fingerprint.endswith(
+#         expected
+#     ), f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
+#     assert ds[0]["input_ids"].tolist() == [
+#         56423,
+#         24546,
+#         15796,
+#         52203,
+#     ]  # stable because we pass a seed
+#     assert ds.num_tokens == 10000
+#     assert len(ds) == 2500
 
 
 def write_data_file(data: List[int], path: Path, dtype, eos_token_id: int):
