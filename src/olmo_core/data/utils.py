@@ -438,14 +438,10 @@ def segment_documents_into_instances(
         rng = get_rng(seed)
         indices = rng.choice(indices.reshape(-1, 2), size=max_instances).reshape(-1)
 
-    # NOTE: It's possible to sample 0 instances from small source files. Rather than try to write this empty array we conditionally skip if indices_out is 0.
-    indices_out = len(indices) // 2
+    with memmap_to_write(target, dtype=indices_dtype, shape=(indices.size,)) as indices_mmap:
+        indices_mmap[:] = indices
 
-    if indices_out > 0:
-        with memmap_to_write(target, dtype=indices_dtype, shape=(indices.size,)) as indices_mmap:
-            indices_mmap[:] = indices
-
-    return total_og_docs, indices_out
+    return total_og_docs, len(indices) // 2
 
 
 def run_worker_func(func, *args, **kwargs):

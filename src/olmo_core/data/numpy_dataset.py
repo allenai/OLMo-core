@@ -566,12 +566,74 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         self._path_offset_index = path_offset_index
         self._seed = seed
 
+    @property
+    def indices_dtype(
+        self,
+    ) -> NumpyUIntTypes:
+        return np.uint32
+
     def prepare(self):
         if self.fs_local_rank == 0:
             log.info("Gathering indices...")
             self._write_document_indices()
         barrier()
         len(self)
+
+    # @property
+    # def _sizes_and_offsets(self) -> Tuple[Tuple[int, ...], Tuple[Tuple[int, int], ...]]:
+    #     if self._array_offsets is None or self._array_file_sizes is None:
+    #         array_offsets: List[Tuple[int, int]] = []
+    #         array_file_sizes: List[int] = []
+
+    #         start_offset = 0
+    #         for size, length in self.map(self._get_file_size_and_length):
+    #             end_offset = start_offset + length
+    #             array_offsets.append((start_offset, end_offset))
+    #             array_file_sizes.append(size)
+    #             start_offset += length
+
+    #         self._array_offsets = tuple(array_offsets)
+    #         self._array_file_sizes = tuple(array_file_sizes)
+
+    #         print("ARRAY OFFSETS", self._array_offsets)
+    #         print("ARRAY FILE SIZES", self._array_file_sizes)
+
+    #     return self._array_file_sizes, self._array_offsets
+
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        index = int(index)  # in case this is a numpy int type.
+        pos_index = index if index >= 0 else len(self) + index
+        # The index of the array within 'self.paths'.
+        array_index: Optional[int] = None
+        # The index within the corresponding array.
+        array_local_index: Optional[int] = None
+        for i, (offset_start, offset_end) in enumerate(self.offsets):
+            if offset_start <= pos_index < offset_end:
+                array_index = i
+                array_local_index = pos_index - offset_start
+                break
+
+        if array_index is None or array_local_index is None:
+            raise IndexError(f"{index} is out of bounds for dataset of size {len(self)}")
+
+        # Read the data from file.
+        input_ids = self._read_chunk_from_array(self.paths[array_index], array_local_index)
+        out: Dict[str, Any] = {"input_ids": input_ids}
+
+        if self._include_instance_metadata:
+            metadata = self._metadata[array_index]
+            out["metadata"] = deepcopy(metadata)
+
+        return out
+
+    def _read_chunk_from_array(self, path: PathOrStr, index: int) -> torch.Tensor:
+        indices_path = self._get_indices_path(path)
+        indices = load_array_slice_into_tensor(
+            indices_path, index * 2, index * 2 + 2, self.indices_dtype
+        )
+        start_idx, end_idx = indices
+        data = load_array_slice_into_tensor(path, int(start_idx), int(end_idx), self.dtype)
+        return data
 
     def _get_indices_path(self, path: PathOrStr) -> Path:
         sha256_hash = hashlib.sha256()
@@ -603,26 +665,27 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                     max_instances = (
                         self._path_offset_index[(str(path), idx)] // self.sequence_length
                     )
-                    future = executor.submit(
-                        run_worker_func,
-                        segment_documents_into_instances,
-                        path,
-                        indices_path,
-                        max_sequence_length=self.sequence_length,
-                        eos_token_id=self.eos_token_id,
-                        dtype=self.dtype,
-                        indices_dtype=self.dtype,
-                        sample=(max_instances, self._seed),
-                    )
-                    futures.append(future)
+                    if max_instances > 0:
+                        future = executor.submit(
+                            run_worker_func,
+                            segment_documents_into_instances,
+                            path,
+                            indices_path,
+                            max_sequence_length=self.sequence_length,
+                            eos_token_id=self.eos_token_id,
+                            dtype=self.dtype,
+                            indices_dtype=self.dtype,
+                            sample=(max_instances, self._seed),
+                        )
+                        futures.append(future)
 
                 concurrent.futures.wait(futures, return_when="ALL_COMPLETED")
 
                 # Log results.
                 for path, future in zip([item[0] for item in paths_needed], futures):
-                    _, total_instances = future.result()
+                    original_instances, total_instances = future.result()
                     log.info(
-                        f"Created {total_instances:,d} instances of sequence length up to "
+                        f"Collected {total_instances:,d} instances from {original_instances:,d} instances of sequence length "
                         f"{self.sequence_length} from '{path}'"
                     )
 
@@ -1688,6 +1751,7 @@ class NumpyDatasetConfig(Config):
                 )
             if self.source_mixture_config:
                 mixture = self.source_mixture_config.build()
+                print(mixture.to_index())
                 return NumpyFSLDatasetMixture(
                     *mixture.to_paths(),
                     seed=mixture.seed,
