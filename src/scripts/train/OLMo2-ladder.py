@@ -36,10 +36,11 @@ class BaselineModelLadder(ModelLadder):
     }
 
     def get_model_config(self, *, size: ModelSize) -> TransformerConfig:
-        if size in [ModelSize.size_7B, ModelSize.size_13B]:
-            data_parallel_type = DataParallelType.fsdp
-        else:
-            data_parallel_type = DataParallelType.ddp
+        # if size in [ModelSize.size_7B, ModelSize.size_13B]:
+        #     data_parallel_type = DataParallelType.fsdp
+        # else:
+        #     data_parallel_type = DataParallelType.ddp
+        data_parallel_type = DataParallelType.hsdp
         return getattr(TransformerConfig, f"olmo2_{size}")(
             vocab_size=self.tokenizer.padded_vocab_size(),
             init_seed=self.init_seed,
