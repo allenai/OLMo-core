@@ -146,7 +146,7 @@ class AnnealingConfig(Config):
             launch=build_launch_config(
                 name=run_name,
                 root_dir=root_dir,
-                cmd=[script, cmd, run_name, cluster, *overrides],
+                cmd=[script, cmd, run_name, checkpoint, cluster, *overrides],
                 cluster=cluster,
                 nccl_debug=False,
             ),
