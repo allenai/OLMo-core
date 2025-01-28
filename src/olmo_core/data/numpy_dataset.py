@@ -583,6 +583,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         sha256_hash = hashlib.sha256()
         sha256_hash.update(str(path).encode())
         sha256_hash.update(str(self._get_file_size(path)).encode())
+        sha256_hash.update(self.indices_dtype.__name__.encode())
         path_hash = sha256_hash.hexdigest()
         return (
             self.work_dir
@@ -617,7 +618,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                         max_sequence_length=self.sequence_length,
                         eos_token_id=self.eos_token_id,
                         dtype=self.dtype,
-                        indices_dtype=self.dtype,
+                        indices_dtype=self.indices_dtype,
                         sample=(max_instances, self._seed),
                     )
                     futures.append(future)
