@@ -106,7 +106,7 @@ def build_config(
 
     root_dir = get_root_dir(cluster)
     launch = build_launch_config(
-        name=f"{ladder.name}-{size}",
+        name=f"{ladder.name}-{size}-{run_duration}",
         root_dir=root_dir,
         cmd=[script, SubCmd.train, size, run_duration, cluster, *overrides],
         cluster=cluster,

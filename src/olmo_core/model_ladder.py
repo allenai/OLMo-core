@@ -192,8 +192,8 @@ class ModelLadder(Config, metaclass=ABCMeta):
     The maximum data parallel world size that you intent to run with. This is used to set the batch size.
     """
 
-    def get_save_folder(self, size: ModelSize) -> str:
-        return str(join_path(self.save_folder, f"checkpoints/{self.name}-{size}"))
+    def get_save_folder(self, size: ModelSize, run_duration: RunDuration) -> str:
+        return str(join_path(self.save_folder, f"checkpoints/{self.name}-{size}-{run_duration}"))
 
     @abstractmethod
     def get_model_config(self, *, size: ModelSize) -> TransformerConfig:
@@ -346,7 +346,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
 
         return (
             TrainerConfig(
-                save_folder=self.get_save_folder(size),
+                save_folder=self.get_save_folder(size, run_duration),
                 rank_microbatch_size=rank_mbz,
                 metrics_collect_interval=10,
                 cancel_check_interval=1,
@@ -395,7 +395,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
             .with_callback(
                 "comet",
                 CometCallback(
-                    name=f"{self.name}-{size}",
+                    name=f"{self.name}-{size}-{run_duration}",
                     workspace="ai2",
                     project=self.project,
                     enabled=True,
@@ -405,7 +405,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
             .with_callback(
                 "wandb",
                 WandBCallback(
-                    name=f"{self.name}-{size}",
+                    name=f"{self.name}-{size}-{run_duration}",
                     entity="ai2",
                     project=self.project,
                     enabled=False,
