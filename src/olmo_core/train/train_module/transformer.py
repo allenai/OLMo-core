@@ -389,7 +389,10 @@ class TransformerTrainModule(TrainModule):
 
         self.base_loss_fn = fused_cross_entropy_loss if fused_loss else cross_entropy_loss
         if compile_loss:
-            self.base_loss_fn = torch.compile(self.base_loss_fn)
+            if torch.cuda.is_available():
+                self.base_loss_fn = torch.compile(self.base_loss_fn)
+            else:
+                log.warning("Skipping loss compilation since CUDA is not available")
 
         self.float8_handler: Optional[Float8Handler] = None
         float8_enabled = False
@@ -450,9 +453,12 @@ class TransformerTrainModule(TrainModule):
 
         # Maybe compile.
         if compile_model:
-            for model in self.model_parts:
-                model.apply_compile()
-            log.info("Applied torch.compile() to the model")
+            if torch.cuda.is_available():
+                for model in self.model_parts:
+                    model.apply_compile()
+                log.info("Applied torch.compile() to the model")
+            else:
+                log.warning("Skipping model compilation since CUDA is not available")
 
         # Maybe shard/replicate according to data parallel config.
         self._dp_config = dp_config

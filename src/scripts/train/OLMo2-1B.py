@@ -10,9 +10,6 @@ from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
-from olmo_core.train.callbacks.evaluator_callback import (
-    DownstreamEvaluatorCallbackConfig,
-)
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
@@ -82,47 +79,6 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 project="OLMo-core-1B",
                 enabled=False,
                 cancel_check_interval=10,
-            ),
-        )
-        .with_callback(
-            "downstream_evaluator",
-            DownstreamEvaluatorCallbackConfig(
-                tasks=[
-                    "arc_challenge_val_rc_5shot",
-                    "arc_challenge_val_mc_5shot",
-                    "arc_challenge_test_rc_5shot",
-                    "arc_challenge_test_mc_5shot",
-                    "arc_easy_val_rc_5shot",
-                    "arc_easy_val_mc_5shot",
-                    "arc_easy_test_rc_5shot",
-                    "arc_easy_test_mc_5shot",
-                    "boolq_val_rc_5shot",
-                    "boolq_val_mc_5shot",
-                    "csqa_val_rc_5shot",
-                    "csqa_val_mc_5shot",
-                    "hellaswag_val_rc_5shot",
-                    "hellaswag_val_mc_5shot",
-                    "openbookqa_val_rc_5shot",
-                    "openbookqa_val_mc_5shot",
-                    "openbookqa_test_rc_5shot",
-                    "openbookqa_test_mc_5shot",
-                    "piqa_val_rc_5shot",
-                    "piqa_val_mc_5shot",
-                    "socialiqa_val_rc_5shot",
-                    "socialiqa_val_mc_5shot",
-                    "winogrande_val_rc_5shot",
-                    "winogrande_val_mc_5shot",
-                    "mmlu_stem_val_rc_5shot",
-                    "mmlu_stem_val_mc_5shot",
-                    "mmlu_humanities_val_rc_5shot",
-                    "mmlu_humanities_val_mc_5shot",
-                    "mmlu_social_sciences_val_rc_5shot",
-                    "mmlu_social_sciences_val_mc_5shot",
-                    "mmlu_other_val_rc_5shot",
-                    "mmlu_other_val_mc_5shot",
-                ],
-                tokenizer=common.tokenizer,
-                eval_interval=1000,
             ),
         )
     )

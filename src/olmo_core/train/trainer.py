@@ -62,6 +62,7 @@ T = TypeVar("T")
 class TrainerStateDict(TypedDict):
     global_step: int
     global_train_tokens_seen: int
+    max_steps: int
     data_loader: Dict[str, Any]
     epoch: int
     world_size: int
@@ -552,6 +553,7 @@ class Trainer:
         return {
             "global_step": self.global_step,
             "global_train_tokens_seen": self.global_train_tokens_seen,
+            "max_steps": self.max_steps,
             "data_loader": self.data_loader.state_dict(),
             "epoch": self.epoch,
             "world_size": get_world_size(),  # global world size here on purpose
@@ -1010,7 +1012,8 @@ class Trainer:
 
             if first_batch or self.global_step % self.metrics_collect_interval == 0:
                 self._log_metrics()
-                torch.cuda.set_sync_debug_mode("warn")
+                if torch.cuda.is_available():
+                    torch.cuda.set_sync_debug_mode("warn")
 
             first_batch = False
 
