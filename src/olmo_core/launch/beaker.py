@@ -150,7 +150,7 @@ class BeakerLaunchConfig(Config):
     The number of nodes to use.
     """
 
-    num_gpus: int = 8
+    num_gpus: int = 1
     """
     The number of GPUs to use per node.
     """
@@ -218,7 +218,7 @@ class BeakerLaunchConfig(Config):
         env_vars: List[Tuple[str, str]] = [
             ("NCCL_DEBUG", "INFO"),
             (LOG_FILTER_TYPE_ENV_VAR, LogFilterType.local_rank0_only),
-            ("OMP_NUM_THREADS", "4"),
+            ("OMP_NUM_THREADS", "1"),
             ("R2_PROFILE", "R2"),
             ("S3_PROFILE", "S3"),
             ("WEKA_PROFILE", "WEKA"),

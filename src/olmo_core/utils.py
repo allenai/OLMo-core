@@ -416,7 +416,7 @@ def set_env_variables():
     .. seealso::
         :func:`prepare_cli_environment()`
     """
-    set_env_var("OMP_NUM_THREADS", "4")
+    set_env_var("OMP_NUM_THREADS", "1")
     set_env_var("TOKENIZERS_PARALLELISM", "false")
 
 
