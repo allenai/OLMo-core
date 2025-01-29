@@ -365,6 +365,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
                 rank_microbatch_size=rank_mbz,
                 metrics_collect_interval=10,
                 cancel_check_interval=1,
+                z_loss_multiplier=1e-5,
                 compile_loss=True,
                 max_duration=self.get_duration(run_duration),
             )
