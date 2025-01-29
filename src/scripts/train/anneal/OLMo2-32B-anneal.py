@@ -204,6 +204,7 @@ class AnnealingConfig(Config):
                 "checkpointer",
                 CheckpointerCallback(
                     save_interval=1000,
+                    ephemeral_save_interval=500,
                     save_async=True,
                 ),
             )
