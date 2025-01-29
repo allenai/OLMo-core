@@ -39,7 +39,8 @@ This major release introduces a few breaking changes. As such, we've provided an
 - Added `SkipStepAdamW` optimizer.
 - The trainer can load model-only checkpoints now.
 - Added the option to throttle checkpoint uploads to one rank from each node at a time.
-- Added `unshard_strategy` parameter to `unshard_checkpoint()` function in `olmo_coer.distributed.checkpoint`.
+- Added support for logging rich Table objects as text in source mixture datasets.
+- Added `unshard_strategy` parameter to `unshard_checkpoint()` function in `olmo_core.distributed.checkpoint`.
 - Added function `load_keys()` to `olmo_core.distributed.checkpoint`.
 
 ### Changed
@@ -51,6 +52,8 @@ This major release introduces a few breaking changes. As such, we've provided an
 
 - Added missing `weights_only=False` argument to fix loading train checkpoints with newer versions of PyTorch.
 - Fixed bug where GCS upload does not retry on transient failures.
+- Fixed bug where source mixture datasets were truncating source files instead of randomly sampling.
+- Fixed bug in source mixture datsets where sampling from small npy files raised an mmap exception due to 0 instances in the sampled index.
 
 ## [v1.7.0](https://github.com/allenai/OLMo-core/releases/tag/v1.7.0) - 2024-11-27
 
