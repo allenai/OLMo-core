@@ -18,7 +18,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         budget="ai2/oe-training",
         cmd=["src/examples/llama/train.py", run_name, *overrides],
         task_name="train",
-        workspace="ai2/oe-support",
+        workspace="ai2/OLMo-core",
         description="Testing OLMo-core launch utilities",
         clusters=["ai2/allennlp-cirrascale"],
         num_nodes=1,
