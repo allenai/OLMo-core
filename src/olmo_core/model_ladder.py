@@ -366,7 +366,8 @@ class ModelLadder(Config, metaclass=ABCMeta):
                 metrics_collect_interval=10,
                 cancel_check_interval=1,
                 z_loss_multiplier=1e-5,
-                compile_loss=True,
+                compile_loss=False,
+                fused_loss=True,
                 max_duration=self.get_duration(run_duration),
             )
             .with_callback(
