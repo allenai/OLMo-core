@@ -434,10 +434,7 @@ class NumpyDataLoaderBase(DataLoaderBase):
         self.build_and_save_global_indices(in_memory=in_memory)
 
     def get_mock_batch(self) -> Dict[str, Any]:
-        generator_device = str(get_default_device())
-        if generator_device.startswith("cuda"):
-            generator_device = "cpu"    # GPUs can't random?
-        rng = torch.Generator(device=generator_device)
+        rng = torch.Generator(device="cpu")
         rng.manual_seed(self.seed + self.dp_rank)
         num_instances = self.rank_batch_size // self.dataset.max_sequence_length
         input_ids = torch.randint(
