@@ -62,7 +62,7 @@ def build_launch_config(
     cmd: List[str],
     cluster: str,
     task_name: str = "train",
-    workspace: str = "ai2/OLMo-core",
+    workspace: str = "ai2/oe-support",
     budget: str = "ai2/oe-training",
     nccl_debug: bool = False,
 ) -> BeakerLaunchConfig:
