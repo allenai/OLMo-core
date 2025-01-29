@@ -7,10 +7,10 @@ from itertools import chain
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+from rich.console import Console
 from rich.progress import Progress
 from rich.table import Table
 from rich.text import Text
-from rich.console import Console
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
