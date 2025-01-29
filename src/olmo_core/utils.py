@@ -118,15 +118,12 @@ def mark_dynamic(x: torch.Tensor, dim: Union[int, Sequence[int]]):
     torch._dynamo.mark_dynamic(x, dim)
 
 
-def get_default_device(non_cuda: bool = False) -> torch.device:
+def get_default_device() -> torch.device:
     """
     Get the default device.
     """
     if torch.cuda.is_available() and torch.cuda.is_initialized():
-        if non_cuda:
-            return torch.device("cpu")
-        else:
-            return torch.device("cuda")
+        return torch.device("cuda")
     elif torch.mps.is_available():
         return torch.device("mps")
     else:
