@@ -340,8 +340,9 @@ def train(checkpoint: str, config: AnnealingConfig):
     cast(CometCallback, trainer.callbacks["comet"]).config = config_dict
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
-    # Load the pretraining checkpoint.
-    trainer.load_checkpoint(checkpoint, load_trainer_state=False)
+    # Try loading a checkpoint from the save folder, otherwise start from the pretraining checkpoint.
+    if not trainer.maybe_load_checkpoint(trainer.save_folder):
+        trainer.load_checkpoint(checkpoint, load_trainer_state=False)
 
     # Train.
     trainer.fit()
