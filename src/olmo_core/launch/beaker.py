@@ -327,13 +327,14 @@ class BeakerLaunchConfig(Config):
         if torchrun:
             if any(["augusta" in cluster for cluster in self.clusters]):
                 entrypoint_script.append(
-                    "export BEAKER_REPLICA_RANK=$("
+                    "BEAKER_REPLICA_RANK=$("
                     "python -m olmo_core.launch.reorder_ranks_in_gcp "
                     "${BEAKER_REPLICA_RANK} "
                     "${BEAKER_REPLICA_COUNT} "
                     "${BEAKER_LEADER_REPLICA_HOSTNAME}"
                     ")"
                 )
+                entrypoint_script.append("export BEAKER_REPLICA_RANK=$BEAKER_REPLICA_RANK")
             entrypoint_script.append(" ".join(self._get_torchrun_cmd()) + ' "$@"')
         else:
             entrypoint_script.append('python "$@"')
