@@ -188,7 +188,6 @@ class AnnealingConfig(Config):
             ),
             trainer=TrainerConfig(
                 save_folder=f"gs://ai2-llm/checkpoints/peteish32-anneal/{run_name}",
-                load_path=checkpoint,
                 rank_microbatch_size=2 * 4096,  # NOTE: again this is specified in tokens.
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
@@ -315,7 +314,7 @@ class AnnealingConfig(Config):
         ).merge(overrides)
 
 
-def train(config: AnnealingConfig):
+def train(checkpoint: str, config: AnnealingConfig):
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
@@ -340,6 +339,9 @@ def train(config: AnnealingConfig):
     config_dict = config.as_config_dict()
     cast(CometCallback, trainer.callbacks["comet"]).config = config_dict
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
+
+    # Load the pretraining checkpoint.
+    trainer.load_checkpoint(checkpoint, load_trainer_state=False)
 
     # Train.
     trainer.fit()
@@ -396,7 +398,7 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/peteish32/step41
         config.launch.launch(follow=True)
     elif cmd == "train":
         try:
-            train(config)
+            train(checkpoint, config)
         finally:
             teardown_training_environment()
     else:
