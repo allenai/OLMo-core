@@ -434,7 +434,7 @@ class NumpyDataLoaderBase(DataLoaderBase):
         self.build_and_save_global_indices(in_memory=in_memory)
 
     def get_mock_batch(self) -> Dict[str, Any]:
-        rng = torch.Generator(device=get_default_device())
+        rng = torch.Generator(device="cpu")
         rng.manual_seed(self.seed + self.dp_rank)
         num_instances = self.rank_batch_size // self.dataset.max_sequence_length
         input_ids = torch.randint(
