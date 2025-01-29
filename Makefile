@@ -14,7 +14,7 @@ VERSION = $(shell python src/olmo_core/version.py)
 VERSION_SHORT = $(shell python src/olmo_core/version.py short)
 STABLE_IMAGE = tch$(TORCH_VERSION_SHORT)cu$(TORCH_CUDA_VERSION)
 NIGHTLY_IMAGE = tch$(TORCH_NIGHTLY_VERSION_SHORT)cu$(TORCH_CUDA_VERSION)
-BEAKER_WORKSPACE = ai2/OLMo-core
+BEAKER_WORKSPACE = ai2/oe-support
 BEAKER_USER = $(shell beaker account whoami --format=json | jq -r '.[0].name')
 
 .PHONY : checks
