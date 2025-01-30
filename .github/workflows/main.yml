@@ -262,4 +262,5 @@ jobs:
 
       - name: Send Slack notifications about release
         run: |
+          . .venv/bin/activate
           python ./src/scripts/release/slack_notification.py '${{ secrets.SLACK_WEBHOOK_URL}}'
