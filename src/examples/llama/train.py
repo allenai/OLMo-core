@@ -86,7 +86,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=256 * 1024,
+        global_batch_size=256,
         seed=0,
         num_workers=4,
     )
@@ -94,7 +94,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     trainer_config = (
         TrainerConfig(
             save_folder=f"/tmp/{run_name}",
-            rank_microbatch_size=16 * 1024,
+            rank_microbatch_size=16,
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=5,
