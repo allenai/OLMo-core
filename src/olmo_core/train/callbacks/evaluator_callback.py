@@ -7,7 +7,12 @@ import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
 
-from olmo_core.data import NumpyDatasetConfig, NumpyPaddedFSLDataset, TokenizerConfig
+from olmo_core.data import (
+    NumpyDatasetConfig,
+    NumpyPaddedFSLDataset,
+    TextDataLoaderBase,
+    TokenizerConfig,
+)
 from olmo_core.data.utils import get_labels
 from olmo_core.distributed.utils import get_rank, get_world_size, is_distributed
 from olmo_core.eval import Evaluator
@@ -81,10 +86,7 @@ class EvaluatorCallback(Callback):
                 batch = move_to_device(batch, self.trainer.device)
                 with torch.no_grad():
                     # Run forward pass, get logits and un-reduced CE loss.
-                    labels = get_labels(
-                        batch,
-                        label_ignore_index=self.trainer.data_loader.collator.label_ignore_index,
-                    )
+                    labels = get_labels(batch)
                     logits, ce_loss = self.trainer.train_module.eval_batch(batch, labels=labels)
 
                     # NOTE: might have host-device syncs here but that's okay.
@@ -162,6 +164,11 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
         if not isinstance(dataset, NumpyPaddedFSLDataset):
             raise OLMoConfigurationError(
                 f"Expected a padded FSL dataset, got '{dataset.__class__.__name__}' instead"
+            )
+
+        if not isinstance(trainer.data_loader, TextDataLoaderBase):
+            raise OLMoConfigurationError(
+                f"Expected a text-based data loader, got '{dataset.__class__.__name__}' instead"
             )
 
         evaluator = LMEvaluator.from_numpy_dataset(

@@ -947,21 +947,6 @@ class Trainer:
             except StopIteration:
                 break
 
-    def _validate_batch(self, batch: Dict[str, Any]) -> int:
-        """
-        Validate the data in a batch and return the global total number of tokens in the batch.
-        """
-        # NOTE: To track the global number of tokens seen per batch we make the
-        # assumption that all ranks see the same number batch size in tokens per step,
-        # which should always be the case for training efficiency at least.
-        # Alternatively we'd have to use a distributed collective which isn't worth it.
-        if batch["input_ids"].numel() != self.rank_batch_size:
-            raise RuntimeError(
-                f"Expected batch size of {self.rank_batch_size:,d} tokens on rank {get_rank()}, "
-                f"got input IDs with shape {tuple(batch['input_ids'].shape)} = {batch['input_ids'].numel():,d} tokens"
-            )
-        return self.global_batch_size
-
     def _dry_run_batch(self):
         try:
             batch = self.data_loader.get_mock_batch()
@@ -969,7 +954,6 @@ class Trainer:
             return  # for backwards compatibility
 
         log.info("Starting forward/backward dry-run batch...")
-        self._validate_batch(batch)
         self.train_module.train_batch(batch, dry_run=True)
         log.info("Dry-run complete")
 
@@ -987,11 +971,10 @@ class Trainer:
         for batch in self._iter_batches():
             # Bookkeeping.
             self.global_step += 1
-            self.global_train_tokens_seen += self._validate_batch(batch)
-
-            self.record_metric(
-                "sequence length", float(batch["input_ids"].shape[1]), namespace="data"
-            )
+            if (
+                global_num_tokens := self.data_loader.global_num_tokens_in_batch(batch)
+            ) is not None:
+                self.global_train_tokens_seen += global_num_tokens
 
             for callback in self.callbacks.values():
                 callback.pre_step(batch)

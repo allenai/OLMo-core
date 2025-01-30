@@ -235,6 +235,7 @@ class BasicTrainModule(TrainModule):
         optim: Optimizer,
         rank_microbatch_size: int,
         max_grad_norm: Optional[float] = None,
+        label_ignore_index: int = -100,
     ):
         super().__init__()
         self.model = model
@@ -242,6 +243,7 @@ class BasicTrainModule(TrainModule):
         self.rank_microbatch_size = rank_microbatch_size
         self.max_grad_norm = max_grad_norm
         self.loss_fn = cross_entropy_loss
+        self.label_ignore_index = label_ignore_index
 
     @property
     def eval_batch_spec(self) -> EvalBatchSpec:
@@ -287,12 +289,8 @@ class BasicTrainModule(TrainModule):
 
         # Generate labels, calculate how many tokens are going to be use in the loss.
         if "labels" not in batch:
-            batch["labels"] = get_labels(
-                batch, label_ignore_index=self.trainer.data_loader.collator.label_ignore_index
-            )
-        batch_num_tokens_for_loss = (
-            batch["labels"] != self.trainer.data_loader.collator.label_ignore_index
-        ).sum()
+            batch["labels"] = get_labels(batch, label_ignore_index=self.label_ignore_index)
+        batch_num_tokens_for_loss = (batch["labels"] != self.label_ignore_index).sum()
 
         # Split into micro-batches.
         if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
@@ -312,7 +310,7 @@ class BasicTrainModule(TrainModule):
             logits_for_loss, labels_for_loss = get_inputs_for_loss(
                 micro_batch,
                 logits,
-                label_ignore_index=self.trainer.data_loader.collator.label_ignore_index,
+                label_ignore_index=self.label_ignore_index,
             )
 
             # Calculate loss.
@@ -322,7 +320,7 @@ class BasicTrainModule(TrainModule):
             ce_loss, _ = self.loss_fn(
                 logits_for_loss,
                 labels_for_loss,
-                ignore_index=self.trainer.data_loader.collator.label_ignore_index,
+                ignore_index=self.label_ignore_index,
                 reduction="sum",
             )
             ce_loss.div_(batch_num_tokens_for_loss)
@@ -354,7 +352,7 @@ class BasicTrainModule(TrainModule):
             loss, _ = self.loss_fn(
                 logits,
                 labels,
-                ignore_index=self.trainer.data_loader.collator.label_ignore_index,
+                ignore_index=self.label_ignore_index,
                 reduction="none",
             )
         return logits, loss

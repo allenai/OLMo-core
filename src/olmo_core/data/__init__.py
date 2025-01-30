@@ -19,6 +19,7 @@ from .data_loader import (
     NumpyDataLoaderConfig,
     NumpyFSLDataLoader,
     NumpyVSLDataLoader,
+    TextDataLoaderBase,
 )
 from .mixes import DataMix, DataMixBase
 from .numpy_dataset import (
@@ -60,6 +61,7 @@ __all__ = [
     "DataCollator",
     "PaddingDirection",
     "DataLoaderBase",
+    "TextDataLoaderBase",
     "NumpyDataLoaderBase",
     "NumpyFSLDataLoader",
     "NumpyVSLDataLoader",

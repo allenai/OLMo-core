@@ -54,6 +54,7 @@ from .utils import get_rng, iter_batched, load_array_slice, memmap_to_write
 
 __all__ = [
     "DataLoaderBase",
+    "TextDataLoaderBase",
     "NumpyDataLoaderBase",
     "NumpyFSLDataLoader",
     "NumpyVSLDataLoader",
@@ -74,9 +75,9 @@ class DataLoaderBase(ABC):
         epoch (i.e. after the iterator returned from :meth:`__iter__` has been exhausted).
         Failure to do so will result in incorrect data order.
 
-    :param collator: The data collator to use to create batches from instances.
     :param work_dir: The working directory. Should be shared among local ranks.
-    :param global_batch_size: The global batch size *in tokens*.
+    :param global_batch_size: The global batch size. The units for this depend on the data loader
+        implementation.
     :param dp_world_size: The data parallel world size.
     :param dp_rank: The local data parallel rank.
     :param fs_local_rank: The filesystem-local rank.
@@ -85,14 +86,12 @@ class DataLoaderBase(ABC):
     def __init__(
         self,
         *,
-        collator: DataCollator,
         work_dir: PathOrStr,
         global_batch_size: int,
         dp_world_size: int = 1,
         dp_rank: int = 0,
         fs_local_rank: int = 0,
     ):
-        self.collator = collator
         self.work_dir = work_dir
         self.global_batch_size = global_batch_size
         assert dp_rank < dp_world_size
@@ -104,11 +103,6 @@ class DataLoaderBase(ABC):
         self.batches_processed = 0
         """
         The total number of batches processed so far in the current epoch.
-        """
-
-        self.tokens_processed = 0
-        """
-        The total number of tokens processed globally so far in the current epoch.
         """
 
         self._epoch: Optional[int] = None
@@ -151,19 +145,13 @@ class DataLoaderBase(ABC):
         Iterate over the local rank batches.
         """
         for batch in self._iter_batches():
-            if batch["input_ids"].numel() != self.rank_batch_size:
-                raise RuntimeError(
-                    f"Expected batch size of {self.rank_batch_size:,d} tokens on rank {self.dp_rank}, "
-                    f"got input IDs with shape {tuple(batch['input_ids'].shape)} = {batch['input_ids'].numel():,d} tokens"
-                )
             self.batches_processed += 1
-            self.tokens_processed += self.global_batch_size
             yield batch
 
     @property
     def rank_batch_size(self) -> int:
         """
-        The batch size, per rank, in tokens.
+        The batch size per rank.
         """
         return self.global_batch_size // self.dp_world_size
 
@@ -201,7 +189,7 @@ class DataLoaderBase(ABC):
             batch should be generated from this method.
 
         :returns: All batches in the epoch, where each batch just contains the local rank's portion
-            of the batch, which should have exactly :data:`rank_batch_size` tokens.
+            of the batch, which should have size exactly :data:`rank_batch_size`.
         """
         raise NotImplementedError
 
@@ -210,7 +198,6 @@ class DataLoaderBase(ABC):
         Reset epoch bookkeeping. Should be called at the end of an epoch.
         """
         self.batches_processed = 0
-        self.tokens_processed = 0
 
     @abstractmethod
     def get_mock_batch(self) -> Dict[str, Any]:
@@ -220,8 +207,73 @@ class DataLoaderBase(ABC):
         """
         raise NotImplementedError
 
+    def global_num_tokens_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
+        """
+        For text-based data loaders this should return the total (global) number of tokens
+        in the batch. This is used by the trainer for bookkeeping.
+        """
+        del batch
+        return None
 
-class NumpyDataLoaderBase(DataLoaderBase):
+
+class TextDataLoaderBase(DataLoaderBase):
+    """
+    An abstract base class for text-based data loaders.
+
+    :param collator: The data collator to use to create batches from instances.
+    :param work_dir: The working directory. Should be shared among local ranks.
+    :param global_batch_size: The global batch size *in tokens*.
+    :param dp_world_size: The data parallel world size.
+    :param dp_rank: The local data parallel rank.
+    :param fs_local_rank: The filesystem-local rank.
+    """
+
+    def __init__(
+        self,
+        *,
+        collator: DataCollator,
+        work_dir: PathOrStr,
+        global_batch_size: int,
+        dp_world_size: int = 1,
+        dp_rank: int = 0,
+        fs_local_rank: int = 0,
+    ):
+        super().__init__(
+            work_dir=work_dir,
+            global_batch_size=global_batch_size,
+            dp_world_size=dp_world_size,
+            dp_rank=dp_rank,
+            fs_local_rank=fs_local_rank,
+        )
+        self.collator = collator
+        """
+        The data collator.
+        """
+        self.tokens_processed: int = 0
+        """
+        The total number of tokens processed so far in the current epoch.
+        """
+
+    def __iter__(self) -> Iterator[Dict[str, Any]]:
+        for batch in super().__iter__():
+            if batch["input_ids"].numel() != self.rank_batch_size:
+                raise RuntimeError(
+                    f"Expected batch size of {self.rank_batch_size:,d} tokens on rank {self.dp_rank}, "
+                    f"got input IDs with shape {tuple(batch['input_ids'].shape)} = {batch['input_ids'].numel():,d} tokens"
+                )
+            self.tokens_processed += self.global_batch_size
+            yield batch
+
+    def reset(self):
+        super().reset()
+        self.tokens_processed = 0
+
+    def global_num_tokens_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
+        del batch
+        return self.global_batch_size
+
+
+class NumpyDataLoaderBase(TextDataLoaderBase):
     """
     A distributed, deterministic, stateful data loader base class for use with
     :class:`~olmo_core.data.numpy_dataset.NumpyDatasetBase` dataset classes.

@@ -4,10 +4,10 @@ from typing import Any, Dict, Iterable, List, Optional
 import torch
 
 from olmo_core.aliases import PathOrStr
-from olmo_core.data import DataCollator, DataLoaderBase
+from olmo_core.data import DataCollator, TextDataLoaderBase
 
 
-class CustomDataLoader(DataLoaderBase):
+class CustomDataLoader(TextDataLoaderBase):
     """
     An example custom data loader that generates random token IDs.
     """

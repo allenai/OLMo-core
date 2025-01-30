@@ -273,6 +273,7 @@ class TransformerTrainModuleConfig(Config):
     # Other train settings.
 
     autocast_precision: Optional[DType] = None
+    label_ignore_index: int = -100
 
     def build(
         self,
@@ -369,6 +370,7 @@ class TransformerTrainModule(TrainModule):
         state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         load_key_mapping: Optional[Dict[str, str]] = None,
+        label_ignore_index: int = -100,
     ):
         super().__init__()
 
@@ -511,6 +513,7 @@ class TransformerTrainModule(TrainModule):
             flatten_optimizer_state_dict=True, strict=not self.pp_enabled
         )
         self.load_key_mapping = load_key_mapping
+        self.label_ignore_index = label_ignore_index
 
         self.moe_handler: Optional[MoEHandler] = None
         for model in self.model_parts:
@@ -586,7 +589,7 @@ class TransformerTrainModule(TrainModule):
         ce_loss, z_loss = self.base_loss_fn(
             logits_for_loss,
             labels_for_loss,
-            ignore_index=self.trainer.data_loader.collator.label_ignore_index,
+            ignore_index=self.label_ignore_index,
             reduction="sum",
             compute_z_loss=self.z_loss_multiplier is not None,
             z_loss_multiplier=self.z_loss_multiplier or 1e-4,
@@ -619,7 +622,7 @@ class TransformerTrainModule(TrainModule):
         ce_loss, _ = self.base_loss_fn(
             logits_for_loss,
             labels_for_loss,
-            ignore_index=self.trainer.data_loader.collator.label_ignore_index,
+            ignore_index=self.label_ignore_index,
             reduction="none",
         )
         return ce_loss.view(logits.shape[0], -1)
@@ -735,14 +738,10 @@ class TransformerTrainModule(TrainModule):
 
         # Generate labels.
         if "labels" not in batch:
-            batch["labels"] = get_labels(
-                batch, label_ignore_index=self.trainer.data_loader.collator.label_ignore_index
-            )
+            batch["labels"] = get_labels(batch, label_ignore_index=self.label_ignore_index)
 
         # Calculate how many tokens are going to be used in the loss.
-        self._batch_num_tokens_for_loss = (
-            batch["labels"] != self.trainer.data_loader.collator.label_ignore_index
-        ).sum()
+        self._batch_num_tokens_for_loss = (batch["labels"] != self.label_ignore_index).sum()
 
         if not self.pp_enabled:
             # Split into micro-batches.
