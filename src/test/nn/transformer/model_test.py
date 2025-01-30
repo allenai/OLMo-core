@@ -3,7 +3,7 @@ import logging
 import pytest
 import torch
 import torch.nn as nn
-from torch.distributed._tensor import DTensor, init_device_mesh
+from torch.distributed.tensor import DTensor, init_device_mesh
 
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
