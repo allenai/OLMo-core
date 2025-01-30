@@ -1,26 +1,6 @@
 """
 Distributed, deterministic, stateful data loaders used by the :class:`~olmo_core.train.Trainer`.
 
-Overview
---------
-
-Construct a data loader from a :class:`~olmo_core.data.numpy_dataset.NumpyDatasetBase` instance
-using :meth:`NumpyDataLoaderBase.wrap_numpy_dataset()`::
-
-    data_loader = NumpyDataLoaderBase.wrap_numpy_dataset(dataset, ...)
-
-Then load batches for an epoch like this::
-
-    # Prepare for the epoch.
-    data_loader.reshuffle(epoch=1)
-
-    for batch in data_loader:
-        # process batch
-        pass
-
-    # Reset internal bookkeeping.
-    data_loader.reset()
-
 """
 
 import logging
@@ -74,6 +54,17 @@ class DataLoaderBase(ABC):
         (i.e. before calling :meth:`__iter__`) and you must call :meth:`reset()` *after* each
         epoch (i.e. after the iterator returned from :meth:`__iter__` has been exhausted).
         Failure to do so will result in incorrect data order.
+        For example::
+
+            # Prepare for the epoch.
+            data_loader.reshuffle(epoch=1)
+
+            for batch in data_loader:
+                # process batch
+                pass
+
+            # Reset internal bookkeeping.
+            data_loader.reset()
 
     :param work_dir: The working directory. Should be shared among local ranks.
     :param global_batch_size: The global batch size. The units for this depend on the data loader
