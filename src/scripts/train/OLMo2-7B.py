@@ -49,7 +49,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=common.save_folder,
-            rank_microbatch_size=2 * 4096,
+            rank_microbatch_size=2,
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
