@@ -108,9 +108,10 @@ class WandBCallback(Callback):
                 raise OLMoEnvironmentError(f"missing env var '{WANDB_API_KEY_ENV_VAR}'")
 
             wandb_dir = Path(self.trainer.save_folder) / "wandb"
+            wandb_dir_str = str(Path(self.trainer.save_folder) / "wandb")
             wandb_dir.mkdir(parents=True, exist_ok=True)
             self.wandb.init(
-                dir=wandb_dir,
+                dir=wandb_dir_str,
                 project=self.project,
                 entity=self.entity,
                 group=self.group,
