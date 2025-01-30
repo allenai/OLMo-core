@@ -35,7 +35,7 @@ class TrainerConfig(Config):
     rank_microbatch_size: int
 
     work_dir: Optional[str] = None
-    load_path: Optional[str] = None
+    load_path: Optional[str] = "None"
     load_strategy: LoadStrategy = LoadStrategy.if_available
     load_key_mapping: Optional[Dict[str, str]] = None
     checkpointer: CheckpointerConfig = field(default_factory=CheckpointerConfig)
