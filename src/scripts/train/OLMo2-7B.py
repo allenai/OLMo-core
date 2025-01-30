@@ -70,7 +70,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 name=common.run_name,
                 workspace="ai2",
                 project="OLMo-core-7B",
-                enabled=True,
+                enabled=False,
                 cancel_check_interval=10,
             ),
         )
@@ -79,8 +79,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=common.run_name,
                 entity="ai2-llm",
-                project="OLMo-core-7B",
-                enabled=False,
+                project="OLMo-core-7B-test",
+                enabled=True,
                 cancel_check_interval=10,
             ),
         )
