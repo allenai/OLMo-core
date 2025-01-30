@@ -6,9 +6,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
-from torch.distributed._tensor import Shard
+from torch.distributed.tensor import Placement, Shard
 from torch.distributed.tensor.parallel import parallelize_module
-from torch.distributed.tensor.placement_types import Placement
 
 from ..config import Config, DType, StrEnum
 from ..distributed.parallel.tensor_parallel import SequenceParallel

@@ -4,7 +4,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributed._tensor import init_device_mesh
+from torch.distributed.tensor import init_device_mesh
 from torch.distributed.tensor.parallel import (
     ColwiseParallel,
     RowwiseParallel,
