@@ -31,10 +31,9 @@ class TrainerConfig(Config):
         See the :class:`Trainer` documentation for a description of the fields.
     """
 
-    
+    save_folder: str
     rank_microbatch_size: int
-    
-    save_folder: Optional[str] = None
+
     work_dir: Optional[str] = None
     load_path: Optional[str] = None
     load_strategy: LoadStrategy = LoadStrategy.if_available
