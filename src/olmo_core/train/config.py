@@ -31,11 +31,11 @@ class TrainerConfig(Config):
         See the :class:`Trainer` documentation for a description of the fields.
     """
 
-    save_folder: str
+    save_folder: Optional[str] = None
     rank_microbatch_size: int
 
     work_dir: Optional[str] = None
-    load_path: Optional[str] = "None"
+    load_path: Optional[str] = None
     load_strategy: LoadStrategy = LoadStrategy.if_available
     load_key_mapping: Optional[Dict[str, str]] = None
     checkpointer: CheckpointerConfig = field(default_factory=CheckpointerConfig)
