@@ -49,7 +49,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=common.save_folder,
-            rank_microbatch_size=2 * 2048,
+            rank_microbatch_size=2 * 128,
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
@@ -89,7 +89,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 if __name__ == "__main__":
     main(
-        global_batch_size=12 * 2048,
+        global_batch_size=12 * 128,
         model_config_builder=build_model_config,
         optim_config_builder=build_optim_config,
         trainer_config_builder=build_trainer_config,
