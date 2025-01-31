@@ -146,11 +146,11 @@ class MoERouter(nn.Module):
         return torch.topk(scores, self.top_k, dim=-1)
 
     @abstractmethod
-    def get_expert_scores(self, x: torch.Tensor) -> torch.Tensor:
+    def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Given the input ``x`` of shape ``(*, d_model)``, compute the expert scores.
+        Given the input ``x`` of shape ``(*, d_model)``, compute the un-normalized expert scores.
 
-        :returns: The expert scores, shape ``(*, num_experts)``.
+        :returns: The expert logits, shape ``(*, num_experts)``.
         """
         raise NotImplementedError
 
@@ -159,17 +159,17 @@ class MoERouter(nn.Module):
         Given the input ``x`` of shape ``(*, d_model)``, compute the
         experts assignment.
 
-        :returns: The scores of shape ``(N, num_experts)``, the expert weights
+        :returns: The logits of shape ``(N, num_experts)``, the expert weights
             of shape ``(N, top_k)``, and the expert indices of shape ``(N, top_k)``.
         """
         # shape: (batch_size, seq_len, d_model)
         x = self.jitter(x)
 
         # shape: (batch_size * seq_len, num_experts)
-        scores = self.get_expert_scores(x.view(-1, self.d_model))
+        logits = self.get_expert_logits(x.view(-1, self.d_model))
 
         # shape: (batch_size * seq_len, top_k)
-        expert_weights, expert_indices = self.get_top_k(scores)
+        expert_weights, expert_indices = self.get_top_k(logits)
 
         if self.normalize_expert_weights is not None:
             expert_weights.div_(
@@ -184,7 +184,7 @@ class MoERouter(nn.Module):
         if self.uniform_expert_assignment:
             expert_indices = _uniform_expert_assignment(expert_indices, self.num_experts)
 
-        return scores, expert_weights, expert_indices
+        return logits, expert_weights, expert_indices
 
 
 class MoELinearRouter(MoERouter):
@@ -205,7 +205,5 @@ class MoELinearRouter(MoERouter):
             self.d_model, self.num_experts, bias=bias, dtype=dtype, device=init_device
         )
 
-    def get_expert_scores(self, x: torch.Tensor) -> torch.Tensor:
-        logits = self.w_score(x.view(-1, self.d_model))
-        # TODO: save router logits for Z-loss
-        return logits.softmax(dim=-1)
+    def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
+        return self.w_score(x.view(-1, self.d_model))

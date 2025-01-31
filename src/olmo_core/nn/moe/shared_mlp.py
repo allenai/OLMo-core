@@ -1,0 +1,106 @@
+from dataclasses import dataclass
+from typing import Optional
+
+import torch
+import torch.nn as nn
+
+from ...config import Config, DType, StrEnum
+from ...exceptions import OLMoConfigurationError
+from ..feed_forward import FeedForward
+
+__all__ = ["SharedMLP", "SharedMLPConfig", "SharedMLPType"]
+
+
+class SharedMLPType(StrEnum):
+    """
+    An enumeration of the different shared MLP implementations.
+    """
+
+    default = "default"
+    """
+    ➡️ :class:`SharedMLP`
+    """
+
+
+@dataclass
+class SharedMLPConfig(Config):
+    """
+    A config for building :class:`SharedMLP` modules.
+    """
+
+    name: SharedMLPType = SharedMLPType.default
+    """
+    The name of the implementation.
+    """
+    hidden_size: int = 256
+    weighted_sum: bool = True
+    bias: Optional[bool] = None
+    dtype: DType = DType.float32
+
+    def num_params(self, d_model: int) -> int:
+        """
+        The number of params that the module will have once built.
+
+        :param d_model: The model dimensionality.
+        """
+        params = 0
+
+        params += 3 * d_model * self.hidden_size
+        if self.bias:
+            params += 2 * self.hidden_size + d_model
+
+        return params
+
+    def build(self, d_model: int, *, init_device: str = "cpu") -> "SharedMLP":
+        """
+        Build the corresponding shared MLP module.
+
+        :param d_model: The model dimensionality.
+        :param init_device: The device initialize the parameters on, e.g. "cpu", "meta".
+        """
+        kwargs = self.as_dict(exclude_none=True)
+        kwargs.pop("name")
+        kwargs.update(d_model=d_model, init_device=init_device, dtype=kwargs.pop("dtype").as_pt())
+
+        try:
+            if self.name == SharedMLPType.default:
+                return SharedMLP(**kwargs)
+            else:
+                raise NotImplementedError(self.name)
+        except TypeError as e:
+            raise OLMoConfigurationError(
+                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+            ) from e
+
+
+class SharedMLP(nn.Module):
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        hidden_size: int,
+        bias: bool = True,
+        weighted_sum: bool = True,
+        dtype: torch.dtype = torch.float32,
+        init_device: str = "cpu",
+    ):
+        super().__init__()
+        self.mlp = FeedForward(
+            d_model=d_model,
+            hidden_size=hidden_size,
+            bias=bias,
+            dtype=dtype,
+            init_device=init_device,
+        )
+        self.weighted_sum = weighted_sum
+
+    def forward(self, x: torch.Tensor, experts_out: torch.Tensor, top_k: int) -> torch.Tensor:
+        shared_out = self.mlp(x)
+        if self.weighted_sum:
+            # Weighted by number of experts used
+            n_active_experts = top_k + 1
+            shared_out.div_(n_active_experts)
+            shared_out.add_(experts_out, alpha=top_k / n_active_experts)
+        else:
+            shared_out.add_(experts_out)
+        return shared_out

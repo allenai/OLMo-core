@@ -11,8 +11,10 @@ from ...distributed.utils import get_world_size
 from . import ops
 from .mlp import MoEMLP
 
+__all__ = ["ParallelMLP", "ParallelDroplessMLP"]
 
-class ParallelDroplessMLP(nn.Module):
+
+class ParallelMLP(nn.Module):
     """
     Wraps an MoE MLP layer to coordinate the routing and expert parallelism.
     """
@@ -59,17 +61,29 @@ class ParallelDroplessMLP(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        scores: torch.Tensor,
         expert_weights: torch.Tensor,
         expert_indices: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         :param x: The input of shape ``(*, d_model)``.
-        :param scores: The expert scores of shape ``(N, num_experts)``, where ``N``
-            typically equals ``batch_size x seq_len``.
         :param expert_weights: Expert weights of shape ``(N, top_k)``.
         :param expert_indices: The indices of the top-k experts, shape ``(N, top_k)``.
         """
+        del x, expert_weights, expert_indices
+        raise NotImplementedError
+
+
+class ParallelDroplessMLP(ParallelMLP):
+    """
+    A dropless implementation of a :class:`ParallelMLP`.
+    """
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        expert_weights: torch.Tensor,
+        expert_indices: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         in_shape = x.size()
 
         # Compute the experts.
@@ -78,12 +92,7 @@ class ParallelDroplessMLP(nn.Module):
         else:
             x, batch_size_per_expert = self.forward_once(x, expert_weights, expert_indices)
 
-        del scores, batch_size_per_expert
-        # TODO: save load balancing loss
-        #  if self.training and self.args.moe_loss_weight > 0:
-        #      save_load_balancing_loss((tokens_per_expert, scores))
-
-        return x.view(in_shape)
+        return x.view(in_shape), batch_size_per_expert
 
     def forward_once(
         self,
