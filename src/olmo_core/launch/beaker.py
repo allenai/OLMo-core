@@ -302,7 +302,9 @@ class BeakerLaunchConfig(Config):
 
         return dataset
 
-    def build_experiment_spec(self, torchrun: bool = True) -> ExperimentSpec:
+    def build_experiment_spec(
+        self, torchrun: bool = True, entrypoint: Optional[str] = None
+    ) -> ExperimentSpec:
         """
         Get the Beaker experiment spec corresponding to this config instance.
         """
@@ -338,7 +340,8 @@ class BeakerLaunchConfig(Config):
                 )
             entrypoint_script.append(" ".join(self._get_torchrun_cmd()) + ' "$@"')
         else:
-            entrypoint_script.append('python "$@"')
+            entrypoint = entrypoint or "python"
+            entrypoint_script.append(f'{entrypoint} "$@"')
 
         entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
 
@@ -434,7 +437,9 @@ class BeakerLaunchConfig(Config):
         else:
             log.info("Experiment completed successfully")
 
-    def launch(self, follow: bool = False, torchrun: bool = True) -> Experiment:
+    def launch(
+        self, follow: bool = False, torchrun: bool = True, entrypoint: Optional[str] = None
+    ) -> Experiment:
         """
         Launch a Beaker experiment using this config.
 
@@ -444,10 +449,12 @@ class BeakerLaunchConfig(Config):
 
         :param follow: Stream the logs and follow the experiment until completion.
         :param torchrun: Launch the target command with ``torchrun``.
+        :param entrypoint: Provide an optional entrypoint program if ``torchrun`` is ``False``.
+            Defaults to 'python'.
 
         :returns: The Beaker experiment.
         """
-        spec = self.build_experiment_spec(torchrun=torchrun)
+        spec = self.build_experiment_spec(torchrun=torchrun, entrypoint=entrypoint)
         experiment = self.beaker.experiment.create(self.name, spec)
         log.info(f"Experiment submitted, see progress at {self.beaker.experiment.url(experiment)}")
 

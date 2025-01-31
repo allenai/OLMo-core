@@ -1,5 +1,5 @@
 """
-Launch a command on Beaker.
+Launch tests on Beaker.
 """
 
 import sys
@@ -11,7 +11,7 @@ from olmo_core.utils import generate_uuid, prepare_cli_environment
 
 def build_config(cmd: List[str]) -> BeakerLaunchConfig:
     return BeakerLaunchConfig(
-        name=f"olmo-core-test-{generate_uuid()[:8]}",
+        name=f"olmo-core-pytest-{generate_uuid()[:8]}",
         budget="ai2/oe-training",
         cmd=cmd,
         task_name="test",
@@ -31,9 +31,9 @@ def build_config(cmd: List[str]) -> BeakerLaunchConfig:
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print(f"Usage: python {sys.argv[0]} CMD ...")
+        print(f"Usage: python {sys.argv[0]} [PYTEST_OPTS...]")
         sys.exit(1)
 
     prepare_cli_environment()
 
-    build_config(sys.argv[1:]).launch(follow=True, torchrun=False)
+    build_config(sys.argv[1:]).launch(follow=True, torchrun=False, entrypoint="pytest")
