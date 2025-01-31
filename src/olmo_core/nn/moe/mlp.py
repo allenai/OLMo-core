@@ -1,4 +1,5 @@
 import warnings
+from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 import torch
@@ -7,10 +8,11 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Shard, distribute_tensor
 
+from ...config import Config, DType, StrEnum
 from ...distributed.utils import get_local_tensor
 from ...exceptions import OLMoConfigurationError
 
-__all__ = ["MoEMLP"]
+__all__ = ["MoEMLP", "MoEMLPConfig", "MoEMLPType"]
 
 
 class _ScaleGradient(torch.autograd.Function):
@@ -29,7 +31,67 @@ class _ScaleGradient(torch.autograd.Function):
 _scale_gradient: Callable[[torch.Tensor, float], torch.Tensor] = _ScaleGradient.apply  # type: ignore
 
 
+class MoEMLPType(StrEnum):
+    """
+    An enumeration of the different MoE expert MLP implementations.
+    """
+
+    default = "default"
+    """
+    ➡️ :class:`MoEMLP`
+    """
+
+
+@dataclass
+class MoEMLPConfig(Config):
+    name: MoEMLPType = MoEMLPType.default
+    """
+    The name of the implementation.
+    """
+
+    hidden_size: int = 1024
+    num_experts: int = 1
+    dtype: DType = DType.float32
+
+    def num_params(self, d_model: int) -> int:
+        """
+        The number of params that the module will have once built.
+
+        :param d_model: The model dimensionality.
+        """
+        num_params = 0
+        if self.name == MoEMLPType.default:
+            num_params += 3 * d_model * self.hidden_size * self.num_experts
+        else:
+            raise NotImplementedError
+
+        return num_params
+
+    def build(self, d_model: int, *, init_device: str = "cpu") -> "MoEMLP":
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
+        kwargs.pop("name")
+        kwargs.update(
+            dtype=kwargs.pop("dtype").as_pt(),
+            d_model=d_model,
+            init_device=init_device,
+        )
+
+        try:
+            if self.name == MoEMLPType.default:
+                return MoEMLP(**kwargs)
+            else:
+                raise NotImplementedError(self.name)
+        except TypeError as e:
+            raise OLMoConfigurationError(
+                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+            ) from e
+
+
 class MoEMLP(nn.Module):
+    """
+    A basic expert MLP module with SwiGLU activation.
+    """
+
     def __init__(
         self,
         *,
