@@ -12,7 +12,7 @@ __all__ = ["MoERouter", "MoELinearRouter", "MoERouterConfig", "MoERouterType"]
 
 
 # NOTE: To enable end-to-end benchmarking without convergence we
-# support a flag to force the router to assign tokens uniformly
+# support a flag to force the router to assign items/tokens uniformly
 # across the experts. We do this with a custom autograd operation
 # so that PyTorch still executes the full set of router operation.
 class _UniformExpertAssignment(torch.autograd.Function):
@@ -106,7 +106,7 @@ class MoERouter(nn.Module):
 
     :param d_model: The model dimensionality (hidden size).
     :param num_experts: The total number of experts.
-    :param top_k: The number of experts to assign to each token.
+    :param top_k: The number of experts to assign to each item/token.
     :param jitter_eps: Controls the amount of noise added to the input during training.
     :param normalize_expert_weights: The type of norm (e.g. ``2.0`` for L2 norm) to use to normalize
         the expert weights.
@@ -156,12 +156,11 @@ class MoERouter(nn.Module):
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Given the input ``x`` of shape ``(batch_size, seq_len, d_model)``, compute the
+        Given the input ``x`` of shape ``(*, d_model)``, compute the
         experts assignment.
 
-        :returns: The scores of shape ``(batch_size, seq_len, num_experts)``, the expert weights
-            of shape ``(batch_size, seq_len, top_k)``, and the expert indices of shape
-            ``(batch_size, seq_len, top_k)``.
+        :returns: The scores of shape ``(N, num_experts)``, the expert weights
+            of shape ``(N, top_k)``, and the expert indices of shape ``(N, top_k)``.
         """
         # shape: (batch_size, seq_len, d_model)
         x = self.jitter(x)

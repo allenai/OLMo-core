@@ -108,6 +108,7 @@ class MoEMLP(nn.Module):
 
         self.gradient_scale: Optional[float] = None
         self.experts_per_rank = num_experts
+        self.hidden_sharding_degree = 1
 
         self.w1 = nn.Parameter(
             torch.empty(
@@ -169,13 +170,13 @@ class MoEMLP(nn.Module):
                 start += size
             return torch.cat(out)
 
-    def forward(self, x: torch.Tensor, tokens_per_expert: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, batch_size_per_expert: torch.Tensor) -> torch.Tensor:
         """
         Compute the expert outputs.
 
-        :param x: The input of shape ``(total_tokens, d_model)``.
-        :param tokens_per_expert: Specifies how many tokens go to each expert. Should be a
-            1-D ``LongTensor``.
+        :param x: The input of shape ``(N, d_model)``.
+        :param batch_size_per_expert: Specifies how many items/tokens go to each expert. Should be a
+            1-D ``LongTensor`` which sums to ``N``.
         """
         # Scale gradients and get local tensors (in case of expert parallelism).
         # shape (all): (experts_per_rank, hidden_size, d_model)
@@ -186,10 +187,10 @@ class MoEMLP(nn.Module):
         )
 
         # Compute the MLP.
-        x1 = self.gmm(x, w1, tokens_per_expert, trans_b=True)
-        x2 = self.gmm(x, w3, tokens_per_expert, trans_b=True)
+        x1 = self.gmm(x, w1, batch_size_per_expert, trans_b=True)
+        x2 = self.gmm(x, w3, batch_size_per_expert, trans_b=True)
         x1 = F.silu(x1) * x2
-        return self.gmm(x1, w2, tokens_per_expert)
+        return self.gmm(x1, w2, batch_size_per_expert)
 
     def apply_ep(self, ep_mesh: DeviceMesh):
         """
