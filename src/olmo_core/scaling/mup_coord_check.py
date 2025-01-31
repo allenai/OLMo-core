@@ -1,16 +1,18 @@
 import argparse
 import os
+import numpy as np
 from typing import List, Optional
 
 from mup.coord_check import plot_coord_data
 from torch.utils.data import DataLoader
 
-from olmo.config import ModelConfig, TrainConfig
-from olmo.data import build_train_dataloader
-from olmo.scaling.mup_olmo.coord_check import get_coord_data
-from olmo.scaling.mup_olmo.mup_utils import load_mu_model, save_base_shapes
-from olmo.torch_util import seed_all
-from olmo.train import cross_entropy_loss
+from olmo_core.config import ModelConfig, TrainConfig
+# from olmo.data import build_train_dataloader
+from olmo_core.data import NumpyFSLDataset, NumpyFSLDataLoader
+from olmo_core.scaling.coord_check import get_coord_data
+from olmo_core.scaling.mup_utils import load_mu_model, save_base_shapes
+from olmo_core.utils import seed_all
+from olmo_core.nn.functional import cross_entropy_loss
 
 
 def get_dataloader(cfg: TrainConfig, batch_size: int) -> DataLoader:
@@ -19,8 +21,30 @@ def get_dataloader(cfg: TrainConfig, batch_size: int) -> DataLoader:
 
     cfg.global_train_batch_size = batch_size
     cfg.device_train_batch_size = batch_size // 1  # TODO: assuming single GPU for now
-    train_loader = build_train_dataloader(cfg)
-    return train_loader
+    # train_loader = build_train_dataloader(cfg)
+    dataset = NumpyFSLDataset(
+        *cfg.data.paths,
+        sequence_length=cfg.model.max_sequence_length,
+        pad_token_id=cfg.model.pad_token_id,
+        eos_token_id=cfg.model.eos_token_id,
+        vocab_size=cfg.model.vocab_size,
+        dtype=np.uint16,  
+        metadata=None,
+        include_instance_metadata=False,  
+    )
+
+    assert cfg.global_train_batch_size % dataset.sequence_length == 0, \
+        "Global batch size must be divisible by sequence length!"
+    
+    train_loader = NumpyFSLDataLoader(
+        dataset,
+        global_batch_size=cfg.global_train_batch_size,
+        seed=cfg.seed,
+        shuffle=True,
+        num_workers=cfg.data.num_workers,
+    )
+
+    return train_loader # type: ignore
 
 
 def coord_check(

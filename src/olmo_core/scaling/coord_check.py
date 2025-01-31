@@ -2,7 +2,7 @@ from typing import List
 
 from mup.coord_check import _record_coords
 
-from olmo.train import get_labels
+from olmo_core.data.utils import get_labels
 
 
 def get_batch_loss(model, batch, lossfn, compute_z_loss):

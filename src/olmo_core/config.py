@@ -599,3 +599,4 @@ class ModelConfig(Config):
                 raise OLMoConfigurationError(
                     "You can't set `multi_query_attention` and `n_kv_heads` at the same time."
                 )
+
