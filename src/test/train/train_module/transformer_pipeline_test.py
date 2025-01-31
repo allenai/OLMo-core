@@ -1,5 +1,7 @@
 from olmo_core.distributed.parallel import PipelineScheduleType
-from olmo_core.train.train_module.transformer import TransformerPipelineParallelConfig
+from olmo_core.train.train_module.transformer_pipeline import (
+    TransformerPipelineParallelConfig,
+)
 
 
 def test_generate_pipeline_split_points():

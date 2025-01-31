@@ -9,10 +9,14 @@ from .transformer import (
     TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
-    TransformerPipelineParallelConfig,
     TransformerTensorParallelConfig,
     TransformerTrainModule,
     TransformerTrainModuleConfig,
+)
+from .transformer_pipeline import (
+    TransformerPipelineParallelConfig,
+    TransformerPipelineTrainModule,
+    TransformerPipelineTrainModuleConfig,
 )
 
 __all__ = [
@@ -22,6 +26,8 @@ __all__ = [
     "BasicTrainModule",
     "TransformerTrainModule",
     "TransformerTrainModuleConfig",
+    "TransformerPipelineTrainModule",
+    "TransformerPipelineTrainModuleConfig",
     "TransformerActivationCheckpointingConfig",
     "TransformerActivationCheckpointingMode",
     "TransformerDataParallelConfig",
