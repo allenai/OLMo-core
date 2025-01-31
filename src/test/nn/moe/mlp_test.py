@@ -19,13 +19,18 @@ def test_mlp():
 
 
 def run_mlp_with_expert_parallelism():
-    mlp = MoEMLP(d_model=128, hidden_size=256, num_experts=4, init_device="meta")
     ep_mesh = init_device_mesh(get_default_device().type, (dist.get_world_size(),))
+
+    mlp = MoEMLP(
+        d_model=128, hidden_size=256, num_experts=dist.get_world_size() * 2, init_device="meta"
+    )
     mlp.apply_ep(ep_mesh)
     mlp.to_empty(device=get_default_device())
+
     x = torch.randn(5, 128, device="cuda")
     tokens_per_expert = torch.tensor([3, 2], device="cuda")
     out = mlp(x, tokens_per_expert)
+
     assert out.shape == (5, 128)
 
 
