@@ -25,6 +25,7 @@ def build_config(cmd: List[str]) -> BeakerLaunchConfig:
         num_nodes=1,
         num_gpus=2,
         shared_filesystem=True,
+        host_networking=False,
     )
 
 

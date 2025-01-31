@@ -206,6 +206,8 @@ class BeakerLaunchConfig(Config):
     Allow running with uncommitted changed.
     """
 
+    host_networking: Optional[bool] = None
+
     # NOTE: don't assign a type here because omegaconf can't validate arbitrary classes
     #  _beaker: Optional[Beaker] = None
     _beaker = None
@@ -350,9 +352,11 @@ class BeakerLaunchConfig(Config):
                 command=["bash", "/olmo-core/entrypoint.sh"],
                 replicas=self.num_nodes if self.num_nodes > 1 else None,
                 leader_selection=self.num_nodes > 1,
-                #  host_networking=self.num_nodes > 1
-                #  or any(["augusta" in cluster for cluster in self.clusters]),
-                host_networking=self.num_nodes > 1,
+                host_networking=self.host_networking
+                if self.host_networking is not None
+                else (
+                    self.num_nodes > 1 or any(["augusta" in cluster for cluster in self.clusters])
+                ),
                 propagate_failure=False if self.num_nodes > 1 else None,
                 propagate_preemption=True if self.num_nodes > 1 else None,
                 synchronized_start_timeout="90m" if self.num_nodes > 1 else None,
