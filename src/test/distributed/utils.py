@@ -12,6 +12,7 @@ import torch.multiprocessing as mp
 from olmo_core.distributed.utils import (
     OLMO_LOCAL_WORLD_SIZE_ENV_VAR,
     OLMO_NUM_NODES_ENV_VAR,
+    init_distributed,
     is_distributed,
 )
 
@@ -112,16 +113,23 @@ def init_process(
 
     log = logging.getLogger()
 
-    dist.init_process_group(
+    os.environ.setdefault(OLMO_NUM_NODES_ENV_VAR, "1")
+    os.environ.setdefault(OLMO_LOCAL_WORLD_SIZE_ENV_VAR, str(world_size))
+
+    #  dist.init_process_group(
+    #      backend=backend,
+    #      init_method=f"tcp://{primary_addr}:{primary_port}",
+    #      world_size=world_size,
+    #      rank=process_rank,
+    #      timeout=datetime.timedelta(seconds=120),
+    #  )
+    init_distributed(
         backend=backend,
+        timeout=datetime.timedelta(seconds=120),
         init_method=f"tcp://{primary_addr}:{primary_port}",
         world_size=world_size,
         rank=process_rank,
-        timeout=datetime.timedelta(seconds=120),
     )
-
-    os.environ.setdefault(OLMO_NUM_NODES_ENV_VAR, "1")
-    os.environ.setdefault(OLMO_LOCAL_WORLD_SIZE_ENV_VAR, str(world_size))
 
     log.info("Starting test...")
 
