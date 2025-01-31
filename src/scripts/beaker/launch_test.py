@@ -27,7 +27,7 @@ def build_config(pytest_opts: List[str], overrides: List[str]) -> BeakerLaunchCo
         num_nodes=1,
         num_gpus=2,
         shared_filesystem=True,
-        host_networking=False,
+        #  host_networking=False,
     ).merge(overrides)
 
 
