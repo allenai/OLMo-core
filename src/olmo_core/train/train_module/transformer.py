@@ -501,7 +501,7 @@ class TransformerTrainModule(TrainModule):
         # Calculate how many tokens are going to be used in the loss.
         batch_num_tokens_for_loss = (batch["labels"] != self.label_ignore_index).sum()
 
-        # Batch losses.
+        # Batch losses to record.
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
         z_batch_loss: Optional[torch.Tensor] = None
         if self.z_loss_multiplier is not None:
@@ -532,9 +532,11 @@ class TransformerTrainModule(TrainModule):
 
                 # Update total batch CE and Z loss.
                 ce_batch_loss += ce_loss
+                del ce_loss
                 if z_batch_loss is not None:
                     assert z_loss is not None
                     z_batch_loss += z_loss
+                    del z_loss
 
                 # Optionally get MoE losses and update the total batch MoE losses.
                 if self.model.is_moe:

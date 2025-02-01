@@ -68,6 +68,9 @@ class ParallelMLP(nn.Module):
         :param x: The input of shape ``(*, d_model)``.
         :param expert_weights: Expert weights of shape ``(N, top_k)``.
         :param expert_indices: The indices of the top-k experts, shape ``(N, top_k)``.
+
+        :returns: The output with the same shape as ``x`` and a tensor with shape ``(num_experts,)``
+            containing the number of items/tokens routed to each expert.
         """
         del x, expert_weights, expert_indices
         raise NotImplementedError

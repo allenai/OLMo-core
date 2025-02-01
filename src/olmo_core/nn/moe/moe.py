@@ -74,12 +74,12 @@ class MoEConfig(Config):
 
 class MoELoss(metaclass=ABCMeta):
     @abstractmethod
-    def update(self, expert_logits: torch.Tensor, batch_size_per_expert: torch.Tensor):
+    def update(self, expert_logits: torch.Tensor, *, batch_size_per_expert: torch.Tensor, **kwargs):
         raise NotImplementedError
 
     @abstractmethod
     def compute(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+        self, total_bz: Union[int, torch.Tensor], reset: bool = True, **kwargs
     ) -> Dict[str, torch.Tensor]:
         raise NotImplementedError
 
@@ -96,8 +96,12 @@ class MoELoadBalancingLoss(MoELoss):
         self.top_k = top_k
         self.loss: Optional[torch.Tensor] = None
 
-    def update(self, expert_logits: torch.Tensor, batch_size_per_expert: torch.Tensor):
+    def update(self, expert_logits: torch.Tensor, *, batch_size_per_expert: torch.Tensor, **kwargs):
+        del kwargs
+        # shape: (N, num_experts)
         expert_scores = expert_logits.softmax(dim=-1)
+        # shape: (num_experts,)
+        expert_scores = expert_scores.mean(dim=0)
         loss = torch.dot(batch_size_per_expert, expert_scores)
         if self.loss is None:
             self.loss = loss
@@ -105,8 +109,9 @@ class MoELoadBalancingLoss(MoELoss):
             self.loss += loss
 
     def compute(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+        self, total_bz: Union[int, torch.Tensor], reset: bool = True, **kwargs
     ) -> Dict[str, torch.Tensor]:
+        del kwargs
         if self.loss is None:
             raise RuntimeError(
                 f"'{self.__class__.__name__}.update()' needs to be called before '.compute()'"
@@ -128,8 +133,8 @@ class MoERouterZLoss(MoELoss):
         self.num_experts = num_experts
         self.loss: Optional[torch.Tensor] = None
 
-    def update(self, expert_logits: torch.Tensor, batch_size_per_expert: torch.Tensor):
-        del batch_size_per_expert
+    def update(self, expert_logits: torch.Tensor, **kwargs):
+        del kwargs
         loss = torch.logsumexp(expert_logits, dim=-1).square().sum()
         if self.loss is None:
             self.loss = loss
@@ -137,13 +142,14 @@ class MoERouterZLoss(MoELoss):
             self.loss += loss
 
     def compute(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+        self, total_bz: Union[int, torch.Tensor], reset: bool = True, **kwargs
     ) -> Dict[str, torch.Tensor]:
+        del kwargs
         if self.loss is None:
             raise RuntimeError(
                 f"'{self.__class__.__name__}.update()' needs to be called before '.compute()'"
             )
-        scale = self.loss_weight / (self.num_layers * total_bz * self.num_experts)
+        scale = self.loss_weight / (self.num_layers * total_bz)
         lb_loss = scale * self.loss
         if reset:
             self.reset()
@@ -234,7 +240,7 @@ class MoEBase(nn.Module):
         if self.training and self.losses:
             expert_logits = expert_logits.float()
             for loss_fn in self.losses:
-                loss_fn.update(expert_logits, batch_size_per_expert)
+                loss_fn.update(expert_logits, batch_size_per_expert=batch_size_per_expert)
 
         return out
 
