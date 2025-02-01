@@ -300,7 +300,7 @@ class ParallelDroplessMLP(ParallelMLP):
 
         # Reduce along the hidden sharding to get the final outputs.
         # TODO: Fuse this into the following local permutation?
-        x = ops.sum(x.view(self.hidden_sharding_degree, -1, self.d_model), dim=0)
+        x = ops.sum_tensor(x.view(self.hidden_sharding_degree, -1, self.d_model), dim=0)
 
         # Un-permute locally to setup for the next series of operations.
         x = ops.scatter(x, indices, bin_ids, expert_weights, bins, top_k)

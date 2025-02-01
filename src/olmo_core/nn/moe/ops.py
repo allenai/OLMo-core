@@ -211,7 +211,7 @@ def all_to_all(
     )
 
 
-def sum(x: torch.Tensor, dim: int = 0) -> torch.Tensor:
+def sum_tensor(x: torch.Tensor, dim: int = 0) -> torch.Tensor:
     if x.shape[dim] == 1:
         return x.squeeze(dim=dim)
     return x.sum(dim=dim)
