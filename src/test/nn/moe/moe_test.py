@@ -15,8 +15,10 @@ def test_moe(moe_type, dtype):
     d_model = 128
     config = MoEConfig(
         name=moe_type,
-        router=MoERouterConfig(num_experts=4, top_k=1, dtype=DType.from_pt(dtype)),
-        mlp=MoEMLPConfig(num_experts=8, hidden_size=512, dtype=DType.from_pt(dtype)),
+        num_experts=4,
+        hidden_size=256,
+        router=MoERouterConfig(top_k=1, dtype=DType.from_pt(dtype)),
+        mlp=MoEMLPConfig(dtype=DType.from_pt(dtype)),
         z_loss_weight=0.1,
     )
     moe = config.build(d_model=d_model, num_layers=1, init_device="cuda")
