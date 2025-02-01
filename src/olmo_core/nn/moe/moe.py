@@ -1,6 +1,6 @@
-from abc import abstractmethod
+from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
+from typing import Dict, List, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -72,6 +72,87 @@ class MoEConfig(Config):
             ) from e
 
 
+class MoELoss(metaclass=ABCMeta):
+    @abstractmethod
+    def update(self, expert_logits: torch.Tensor, batch_size_per_expert: torch.Tensor):
+        raise NotImplementedError
+
+    @abstractmethod
+    def compute(
+        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+    ) -> Dict[str, torch.Tensor]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def reset(self):
+        raise NotImplementedError
+
+
+class MoELoadBalancingLoss(MoELoss):
+    def __init__(self, *, loss_weight: float, num_layers: int, num_experts: int, top_k: int):
+        self.loss_weight = loss_weight
+        self.num_layers = num_layers
+        self.num_experts = num_experts
+        self.top_k = top_k
+        self.loss: Optional[torch.Tensor] = None
+
+    def update(self, expert_logits: torch.Tensor, batch_size_per_expert: torch.Tensor):
+        expert_scores = expert_logits.softmax(dim=-1)
+        loss = torch.dot(batch_size_per_expert, expert_scores)
+        if self.loss is None:
+            self.loss = loss
+        else:
+            self.loss += loss
+
+    def compute(
+        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+    ) -> Dict[str, torch.Tensor]:
+        if self.loss is None:
+            raise RuntimeError(
+                f"'{self.__class__.__name__}.update()' needs to be called before '.compute()'"
+            )
+        scale = (self.num_experts * self.loss_weight) / (self.num_layers * total_bz * self.top_k)
+        lb_loss = scale * self.loss
+        if reset:
+            self.reset()
+        return {"load balancing loss": lb_loss}
+
+    def reset(self):
+        self.loss = None
+
+
+class MoERouterZLoss(MoELoss):
+    def __init__(self, *, loss_weight: float, num_layers: int, num_experts: int):
+        self.loss_weight = loss_weight
+        self.num_layers = num_layers
+        self.num_experts = num_experts
+        self.loss: Optional[torch.Tensor] = None
+
+    def update(self, expert_logits: torch.Tensor, batch_size_per_expert: torch.Tensor):
+        del batch_size_per_expert
+        loss = torch.logsumexp(expert_logits, dim=-1).square().sum()
+        if self.loss is None:
+            self.loss = loss
+        else:
+            self.loss += loss
+
+    def compute(
+        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+    ) -> Dict[str, torch.Tensor]:
+        if self.loss is None:
+            raise RuntimeError(
+                f"'{self.__class__.__name__}.update()' needs to be called before '.compute()'"
+            )
+        scale = self.loss_weight / (self.num_layers * total_bz * self.num_experts)
+        lb_loss = scale * self.loss
+        if reset:
+            self.reset()
+        return {"router Z loss": lb_loss}
+
+    def reset(self):
+        self.loss = None
+
+
 class MoEBase(nn.Module):
     """
     Base class for MoE implementations.
@@ -102,17 +183,41 @@ class MoEBase(nn.Module):
             else shared_mlp.build(d_model, hidden_size, init_device=init_device)
         )
         self.num_layers = num_layers
-        self.lb_loss_weight = lb_loss_weight
-        self.z_loss_weight = z_loss_weight
+        self.losses: List[MoELoss] = []
+        if lb_loss_weight is not None:
+            self.losses.append(
+                MoELoadBalancingLoss(
+                    loss_weight=lb_loss_weight,
+                    num_layers=num_layers,
+                    num_experts=num_experts,
+                    top_k=self.router.top_k,
+                )
+            )
+        if z_loss_weight is not None:
+            self.losses.append(
+                MoERouterZLoss(
+                    loss_weight=z_loss_weight, num_layers=num_layers, num_experts=num_experts
+                )
+            )
+
+    def compute_losses(
+        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+    ) -> Dict[str, torch.Tensor]:
+        out: Dict[str, torch.Tensor] = {}
+        for loss_fn in self.losses:
+            out.update(loss_fn.compute(total_bz, reset=reset))
+        return out
+
+    def reset_losses(self):
+        for loss_fn in self.losses:
+            loss_fn.reset()
 
     @abstractmethod
     @classmethod
     def _init_parallel_mlp(cls, mlp: MoEMLP) -> ParallelMLP:
         raise NotImplementedError
 
-    def forward(
-        self, x: torch.Tensor
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Run the MoE on the input ``x`` of shape ``(*, d_model)``.
 
@@ -126,25 +231,12 @@ class MoEBase(nn.Module):
         if self.shared_experts is not None:
             out = self.shared_experts(x, out, self.router.top_k)
 
-        lb_loss: Optional[torch.Tensor] = None
-        z_loss: Optional[torch.Tensor] = None
-        if self.training and (self.lb_loss_weight is not None or self.z_loss_weight is not None):
+        if self.training and self.losses:
             expert_logits = expert_logits.float()
+            for loss_fn in self.losses:
+                loss_fn.update(expert_logits, batch_size_per_expert)
 
-            # Compute load-balancing loss.
-            if self.lb_loss_weight is not None:
-                expert_scores = expert_logits.softmax(dim=-1)
-                total_bz = expert_scores.shape[0]
-                scale = (self.router.num_experts * self.lb_loss_weight) / (
-                    self.num_layers * total_bz * self.router.top_k
-                )
-                lb_loss = scale * torch.dot(batch_size_per_expert, expert_scores)
-
-            # Compute router Z-loss.
-            if self.z_loss_weight is not None:
-                z_loss = torch.logsumexp(expert_logits, dim=-1).square().mean() * self.z_loss_weight
-
-        return out, lb_loss, z_loss
+        return out
 
     def apply_ep(self, ep_mesh: DeviceMesh):
         """

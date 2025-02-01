@@ -1,7 +1,7 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -407,12 +407,20 @@ class MoETransformerBlock(TransformerBlockBase):
         self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
 
+    def compute_losses(
+        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+    ) -> Dict[str, torch.Tensor]:
+        return self.feed_forward_moe.compute_losses(total_bz, reset=reset)
+
+    def reset_losses(self):
+        self.feed_forward_moe.reset_losses()
+
     def forward(
         self,
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> torch.Tensor:
         """
         Run the block on the input ``x``.
 
@@ -421,8 +429,7 @@ class MoETransformerBlock(TransformerBlockBase):
         h = x + self.dropout(
             self.attention(self.attention_norm(x), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
         )
-        moe_out, lb_loss, z_loss = self.feed_forward_moe(self.feed_forward_norm(h))
-        return h + self.dropout(moe_out), lb_loss, z_loss
+        return h + self.dropout(self.feed_forward_moe(self.feed_forward_norm(h)))
 
     def apply_ep(self, ep_mesh: DeviceMesh):
         self.feed_forward_moe.apply_ep(ep_mesh)
@@ -450,9 +457,8 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> torch.Tensor:
         h = x + self.dropout(
             self.attention_norm(self.attention(x, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens))
         )
-        moe_out, lb_loss, z_loss = self.feed_forward_moe(h)
-        return h + self.dropout(self.feed_forward_norm(moe_out)), lb_loss, z_loss
+        return h + self.dropout(self.feed_forward_norm(self.feed_forward_moe(h)))

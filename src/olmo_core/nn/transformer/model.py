@@ -1,6 +1,6 @@
 import logging
 from functools import cached_property
-from typing import List, Optional, Sequence, Tuple, cast
+from typing import Dict, List, Optional, Sequence, Union, cast
 
 import torch
 import torch.nn as nn
@@ -616,24 +616,30 @@ class MoETransformer(Transformer):
                 f"'{self.__class__.__name__}' requires a '{MoETransformerBlock.__name__}' block"
             )
 
+    def compute_losses(
+        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+    ) -> Dict[str, torch.Tensor]:
+        out: Dict[str, torch.Tensor] = {}
+        for block in self.blocks.values():
+            for loss_name, loss_val in (
+                cast(MoETransformerBlock, block).compute_losses(total_bz, reset=reset).items()
+            ):
+                if loss_name in out:
+                    out[loss_name] += loss_val
+                else:
+                    out[loss_name] = loss_val
+        return out
+
+    def reset_losses(self):
+        for block in self.blocks.values():
+            cast(MoETransformer, block).reset_losses()
+
     def forward(
         self,
         input_ids: torch.Tensor,
         doc_lens: Optional[torch.Tensor] = None,
         max_doc_lens: Optional[Sequence[int]] = None,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
-        """
-        Run the transformer on the token input IDs.
-
-        :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
-        :param doc_lens: Document lengths to use in attention for intra-document masking.
-            Shape ``(batch_size, max_docs)``.
-            Required together with ``max_doc_lens`` when using intra-document masking.
-        :param max_doc_lens: Maximum document length for each instance in the batch.
-            Required together with ``doc_lens`` when using intra-document masking.
-
-        :returns: The output logits, the optional load-balancing loss, and the optional router Z-loss.
-        """
+    ) -> torch.Tensor:
         max_doc_len: Optional[int] = None
         cu_doc_lens: Optional[torch.Tensor] = None
         if doc_lens is not None and max_doc_lens is not None:
@@ -643,24 +649,10 @@ class MoETransformer(Transformer):
         # passthrough for non-existent layers, allows easy pipeline parallel configuration
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
-        lb_losses: List[torch.Tensor] = []
-        z_losses: List[torch.Tensor] = []
         for block in self.blocks.values():
-            h, lb_loss, z_loss = block(h, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
-            if lb_loss is not None:
-                lb_losses.append(lb_loss)
-            if z_loss is not None:
-                z_losses.append(z_loss)
+            h = block(h, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
 
-        lb_loss = None
-        if lb_losses:
-            lb_loss = torch.stack(lb_losses).sum() / self.n_layers
-
-        z_loss = None
-        if z_losses:
-            z_loss = torch.stack(z_losses).sum() / self.n_layers
-
-        return self.lm_head(h) if self.lm_head is not None else h, lb_loss, z_loss
+        return self.lm_head(h) if self.lm_head is not None else h
 
     def apply_ep(self, ep_mesh: DeviceMesh):
         for block in self.blocks.values():

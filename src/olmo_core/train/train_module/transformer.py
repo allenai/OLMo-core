@@ -34,6 +34,7 @@ from olmo_core.nn.functional.cross_entropy_loss import (
     fused_cross_entropy_loss,
 )
 from olmo_core.nn.transformer import (
+    MoETransformer,
     NormalizedTransformer,
     Transformer,
     TransformerActivationCheckpointingMode,
@@ -505,8 +506,9 @@ class TransformerTrainModule(TrainModule):
         z_batch_loss: Optional[torch.Tensor] = None
         if self.z_loss_multiplier is not None:
             z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
-        moe_batch_lb_loss: Optional[torch.Tensor] = None
-        moe_batch_z_loss: Optional[torch.Tensor] = None
+        moe_batch_losses: Optional[Dict[str, torch.Tensor]] = None
+        if self.model.is_moe:
+            moe_batch_losses = {}
 
         # Split into micro-batches.
         if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
@@ -520,32 +522,34 @@ class TransformerTrainModule(TrainModule):
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
             with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
                 # Run forward pass.
-                logits, moe_lb_loss, moe_z_loss = self.model_forward(micro_batch)
+                logits = self.model_forward(micro_batch)
+
+                # Get loss to optimize for, and the separate detached CE and Z loss values.
                 loss, ce_loss, z_loss = self.loss_fn(
                     logits, micro_batch["labels"], batch_num_tokens_for_loss
                 )
                 del logits
 
+                # Update total batch CE and Z loss.
                 ce_batch_loss += ce_loss
                 if z_batch_loss is not None:
                     assert z_loss is not None
                     z_batch_loss += z_loss
 
-                # Maybe add MoE losses.
-                if moe_lb_loss is not None:
-                    loss += moe_lb_loss
-                    moe_lb_loss = get_local_tensor(moe_lb_loss.detach())
-                    if moe_batch_lb_loss is None:
-                        moe_batch_lb_loss = moe_lb_loss
-                    else:
-                        moe_batch_lb_loss += moe_lb_loss
-                if moe_z_loss is not None:
-                    loss += moe_z_loss
-                    moe_z_loss = get_local_tensor(moe_z_loss.detach())
-                    if moe_batch_z_loss is None:
-                        moe_batch_z_loss = moe_z_loss
-                    else:
-                        moe_batch_z_loss += moe_z_loss
+                # Optionally get MoE losses and update the total batch MoE losses.
+                if self.model.is_moe:
+                    assert moe_batch_losses is not None
+                    moe_losses = cast(MoETransformer, self.model).compute_losses(
+                        batch_num_tokens_for_loss, reset=True
+                    )
+                    for loss_name, loss_val in moe_losses.items():
+                        loss += loss_val
+                        loss_val = get_local_tensor(loss_val.detach())
+                        if loss_name in moe_batch_losses:
+                            moe_batch_losses[loss_name] += loss_val
+                        else:
+                            moe_batch_losses[loss_name] = loss_val
+                    del moe_losses
 
                 # Run backward pass.
                 loss.backward()
@@ -565,20 +569,15 @@ class TransformerTrainModule(TrainModule):
                 ReduceType.mean,
                 namespace="train",
             )
-        if moe_batch_lb_loss is not None:
-            self.record_metric(
-                "load balancing loss",
-                moe_batch_lb_loss,
-                ReduceType.mean,
-                namespace="train",
-            )
-        if moe_batch_z_loss is not None:
-            self.record_metric(
-                "router Z loss",
-                moe_batch_z_loss,
-                ReduceType.mean,
-                namespace="train",
-            )
+        if self.model.is_moe:
+            assert moe_batch_losses is not None
+            for loss_name, loss_val in moe_batch_losses.items():
+                self.record_metric(
+                    loss_name,
+                    loss_val,
+                    ReduceType.mean,
+                    namespace="train",
+                )
 
         if isinstance(self.optim, SkipStepOptimizer):
             self.optim.latest_loss = ce_batch_loss
@@ -591,7 +590,7 @@ class TransformerTrainModule(TrainModule):
         self.model.eval()
 
         with torch.no_grad():
-            logits, _, _ = self.model_forward(batch)
+            logits = self.model_forward(batch)
             loss: Optional[torch.Tensor] = None
             if labels is not None:
                 loss = self.eval_loss_fn(logits, labels)
@@ -669,11 +668,9 @@ class TransformerTrainModule(TrainModule):
     def zero_grads(self):
         self.optim.zero_grad(set_to_none=True)
 
-    def model_forward(
-        self, batch: Dict[str, Any]
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    def model_forward(self, batch: Dict[str, Any]) -> torch.Tensor:
         """
-        Run a forward pass on a micro-batch, returning the logits and potentially MoE losses.
+        Run a forward pass on a micro-batch, returning the logits.
         """
         with self._model_forward_context():
             # NOTE: Input sizes might be dynamic, e.g. when training with variable sequence lengths
@@ -687,7 +684,7 @@ class TransformerTrainModule(TrainModule):
 
             # Run model forward, get logits.
             # shape: (batch_size, seq_len, vocab_size)
-            output = self.model(
+            logits = self.model(
                 input_ids=batch["input_ids"],
                 #  attention_mask=micro_batch.get("attention_mask"),
                 #  attention_bias=micro_batch.get("attention_bias"),
@@ -695,14 +692,7 @@ class TransformerTrainModule(TrainModule):
                 max_doc_lens=batch.get("max_doc_lens"),
             )
 
-            moe_lb_loss: Optional[torch.Tensor] = None
-            moe_z_loss: Optional[torch.Tensor] = None
-            if self.model.is_moe:
-                logits, moe_lb_loss, moe_z_loss = output
-            else:
-                logits = output
-
-            return logits, moe_lb_loss, moe_z_loss
+            return logits
 
     def num_flops_per_token(self, seq_len: int) -> int:
         return self.model.num_flops_per_token(seq_len)
