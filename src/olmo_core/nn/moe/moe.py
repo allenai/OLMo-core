@@ -222,8 +222,8 @@ class MoEBase(nn.Module):
         for loss_fn in self.losses:
             loss_fn.reset()
 
-    @abstractmethod
     @classmethod
+    @abstractmethod
     def _init_parallel_mlp(cls, mlp: MoEMLP) -> ParallelMLP:
         raise NotImplementedError
 
