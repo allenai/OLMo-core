@@ -48,7 +48,7 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`MoETransformerBlock`
     """
 
-    moe_reordered_norm = "moe"
+    moe_reordered_norm = "moe_reordered_norm"
     """
     ➡️ :class:`MoEReorderedNormTransformerBlock`
     """
@@ -90,6 +90,7 @@ class TransformerBlockConfig(Config):
         *,
         d_model: int,
         block_idx: int,
+        num_blocks: int,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ) -> "TransformerBlockBase":
@@ -110,9 +111,9 @@ class TransformerBlockConfig(Config):
             elif self.name == TransformerBlockType.normalized:
                 return NormalizedTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe:
-                return MoETransformerBlock(**kwargs)
+                return MoETransformerBlock(num_blocks=num_blocks, **kwargs)
             elif self.name == TransformerBlockType.moe_reordered_norm:
-                return MoEReorderedNormTransformerBlock(**kwargs)
+                return MoEReorderedNormTransformerBlock(num_blocks=num_blocks, **kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
@@ -390,6 +391,7 @@ class MoETransformerBlock(TransformerBlockBase):
         attention: AttentionConfig,
         feed_forward_moe: MoEConfig,
         layer_norm: LayerNormConfig,
+        num_blocks: int,
         dropout: float = 0.0,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
@@ -399,7 +401,9 @@ class MoETransformerBlock(TransformerBlockBase):
         self.block_idx = block_idx
         self.attention = attention.build(d_model, init_device=init_device, cache=cache)
         self.attention_norm = layer_norm.build(d_model, init_device=init_device)
-        self.feed_forward_moe = feed_forward_moe.build(d_model=d_model, init_device=init_device)
+        self.feed_forward_moe = feed_forward_moe.build(
+            d_model=d_model, num_layers=num_blocks, init_device=init_device
+        )
         self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
 
@@ -408,7 +412,7 @@ class MoETransformerBlock(TransformerBlockBase):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         Run the block on the input ``x``.
 
@@ -417,12 +421,18 @@ class MoETransformerBlock(TransformerBlockBase):
         h = x + self.dropout(
             self.attention(self.attention_norm(x), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
         )
-        return h + self.dropout(self.feed_forward_moe(self.feed_forward_norm(h)))
+        moe_out, lb_loss, z_loss = self.feed_forward_moe(self.feed_forward_norm(h))
+        return h + self.dropout(moe_out), lb_loss, z_loss
+
+    def apply_ep(self, ep_mesh: DeviceMesh):
+        self.feed_forward_moe.apply_ep(ep_mesh)
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         del tp_mesh, float8_enabled
 
-        raise NotImplementedError("TP is not implemented yet for the MoE transformer block variant")
+        raise NotImplementedError(
+            f"TP is not implemented yet for the '{self.__class__.__name__}' variant"
+        )
 
     def tp_input_layouts(self) -> Union[Placement, Tuple[Placement, ...]]:
         raise NotImplementedError
@@ -440,18 +450,9 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         h = x + self.dropout(
             self.attention_norm(self.attention(x, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens))
         )
-        return h + self.dropout(self.feed_forward_norm(self.feed_forward_moe(h)))
-
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
-        del tp_mesh, float8_enabled
-
-        raise NotImplementedError(
-            "TP is not implemented yet for the MoE reordered norm transformer block variant"
-        )
-
-    def tp_input_layouts(self) -> Union[Placement, Tuple[Placement, ...]]:
-        raise NotImplementedError
+        moe_out, lb_loss, z_loss = self.feed_forward_moe(h)
+        return h + self.dropout(self.feed_forward_norm(moe_out)), lb_loss, z_loss

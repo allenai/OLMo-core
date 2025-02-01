@@ -1,6 +1,6 @@
 import logging
 from functools import cached_property
-from typing import List, Optional, Sequence, cast
+from typing import List, Optional, Sequence, Tuple, cast
 
 import torch
 import torch.nn as nn
@@ -9,6 +9,7 @@ from torch.distributed import DeviceMesh
 from olmo_core.config import StrEnum
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.doc_utils import beta_feature
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device
 
 from ..buffer_cache import BufferCache
@@ -17,6 +18,7 @@ from ..lm_head import LMHeadConfig
 from ..utils import selective_checkpointing_context_fn
 from .block import (
     MoETransformerBlock,
+    NormalizedTransformerBlock,
     TransformerBlock,
     TransformerBlockBase,
     TransformerBlockConfig,
@@ -26,6 +28,7 @@ from .init import InitMethod
 __all__ = [
     "Transformer",
     "NormalizedTransformer",
+    "MoETransformer",
     "TransformerDataParallelWrappingStrategy",
     "TransformerActivationCheckpointingMode",
 ]
@@ -110,12 +113,15 @@ class Transformer(nn.Module):
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.blocks = nn.ModuleDict()
         for block_idx in range(n_layers):
-            self.blocks[str(block_idx)] = block.build(
+            block_ = block.build(
                 d_model=d_model,
                 block_idx=block_idx,
+                num_blocks=n_layers,
                 init_device=init_device,
                 cache=cache,
             )
+            self._validate_block(block_)
+            self.blocks[str(block_idx)] = block_
         self.lm_head = lm_head.build(
             d_model=d_model, vocab_size=vocab_size, init_device=init_device
         )
@@ -129,6 +135,13 @@ class Transformer(nn.Module):
         # later, like for pipeline parallelism.
         self.num_params
         self.num_non_embedding_params
+
+    def _validate_block(self, block: TransformerBlockBase):
+        del block
+
+    @property
+    def is_moe(self) -> bool:
+        return False
 
     @property
     def device(self) -> torch.device:
@@ -532,6 +545,12 @@ class NormalizedTransformer(Transformer):
             init_seed=init_seed,
         )
 
+    def _validate_block(self, block: TransformerBlockBase):
+        if not isinstance(block, NormalizedTransformerBlock):
+            raise OLMoConfigurationError(
+                f"'{self.__class__.__name__}' requires a '{NormalizedTransformerBlock.__name__}' block"
+            )
+
     @torch.no_grad()
     def init_weights(
         self,
@@ -578,3 +597,71 @@ class NormalizedTransformer(Transformer):
     def apply_compile(self):
         super().apply_compile()
         self.normalize_matrices = torch.compile(self.normalize_matrices)
+
+
+@beta_feature
+class MoETransformer(Transformer):
+    """
+    An MoE transformer implementation, to be used with one of the
+    :class:`MoETransformerBlock` block types.
+    """
+
+    @property
+    def is_moe(self) -> bool:
+        return True
+
+    def _validate_block(self, block: TransformerBlockBase):
+        if not isinstance(block, MoETransformerBlock):
+            raise OLMoConfigurationError(
+                f"'{self.__class__.__name__}' requires a '{MoETransformerBlock.__name__}' block"
+            )
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        doc_lens: Optional[torch.Tensor] = None,
+        max_doc_lens: Optional[Sequence[int]] = None,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+        """
+        Run the transformer on the token input IDs.
+
+        :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
+        :param doc_lens: Document lengths to use in attention for intra-document masking.
+            Shape ``(batch_size, max_docs)``.
+            Required together with ``max_doc_lens`` when using intra-document masking.
+        :param max_doc_lens: Maximum document length for each instance in the batch.
+            Required together with ``doc_lens`` when using intra-document masking.
+
+        :returns: The output logits, the optional load-balancing loss, and the optional router Z-loss.
+        """
+        max_doc_len: Optional[int] = None
+        cu_doc_lens: Optional[torch.Tensor] = None
+        if doc_lens is not None and max_doc_lens is not None:
+            max_doc_len = max(max_doc_lens)
+            cu_doc_lens = get_cumulative_document_lengths(doc_lens)
+
+        # passthrough for non-existent layers, allows easy pipeline parallel configuration
+        h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
+
+        lb_losses: List[torch.Tensor] = []
+        z_losses: List[torch.Tensor] = []
+        for block in self.blocks.values():
+            h, lb_loss, z_loss = block(h, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
+            if lb_loss is not None:
+                lb_losses.append(lb_loss)
+            if z_loss is not None:
+                z_losses.append(z_loss)
+
+        lb_loss = None
+        if lb_losses:
+            lb_loss = torch.stack(lb_losses).sum() / self.n_layers
+
+        z_loss = None
+        if z_losses:
+            z_loss = torch.stack(z_losses).sum() / self.n_layers
+
+        return self.lm_head(h) if self.lm_head is not None else h, lb_loss, z_loss
+
+    def apply_ep(self, ep_mesh: DeviceMesh):
+        for block in self.blocks.values():
+            cast(MoETransformerBlock, block).apply_ep(ep_mesh)

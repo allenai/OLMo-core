@@ -6,8 +6,12 @@ Run this script without any arguments to see usage info.
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.experiment import CommonComponents, main
-from olmo_core.nn.moe import MoEActivationFn, MoEConfig, MoEMLPImplementation, MoEType
-from olmo_core.nn.transformer import TransformerBlockType, TransformerConfig
+from olmo_core.nn.moe import MoEConfig, MoEMLPConfig, MoERouterConfig, MoEType
+from olmo_core.nn.transformer import (
+    TransformerBlockType,
+    TransformerConfig,
+    TransformerType,
+)
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
@@ -25,19 +29,16 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         n_heads=16,
         block_name=TransformerBlockType.moe_reordered_norm,
     )
+    model_config.name = TransformerType.moe
     model_config.block.feed_forward = None
     model_config.block.feed_forward_moe = MoEConfig(
         name=MoEType.dropless,
-        hidden_size=int(0.5 * model_config.d_model),
-        activation_fn=MoEActivationFn.swiglu,
-        mlp_implementation=MoEMLPImplementation.grouped,
         num_experts=64,
-        top_k=8,
-        num_layers=model_config.n_layers,
-        zloss_weight=0.001,
-        loss_weight=0.01,
-        bias=False,
-        dtype=model_config.dtype,
+        hidden_size=int(0.5 * model_config.d_model),
+        router=MoERouterConfig(top_k=8, bias=False),
+        mlp=MoEMLPConfig(),
+        lb_loss_weight=0.01,
+        z_loss_weight=0.001,
     )
     return model_config
 

@@ -33,11 +33,23 @@ class MoEConfig(Config):
     """
     The name of the implementation.
     """
+    num_experts: int = 1
+    hidden_size: int = 256
     router: MoERouterConfig = field(default_factory=MoERouterConfig)
     mlp: MoEMLPConfig = field(default_factory=MoEMLPConfig)
     shared_mlp: Optional[SharedMLPConfig] = None
-    lb_loss_weight: Optional[float] = None
+    lb_loss_weight: Optional[float] = 1.0
     z_loss_weight: Optional[float] = None
+
+    def num_params(self, d_model: int) -> int:
+        num_params = 0
+
+        num_params += self.router.num_params(d_model, self.num_experts)
+        num_params += self.mlp.num_params(d_model, self.num_experts, self.hidden_size)
+        if self.shared_mlp is not None:
+            num_params += self.shared_mlp.num_params(d_model, self.hidden_size)
+
+        return num_params
 
     def build(self, d_model: int, *, num_layers: int, init_device: str = "cpu") -> "MoEBase":
         kwargs = self.as_dict(exclude_none=True, recurse=False)
@@ -69,6 +81,8 @@ class MoEBase(nn.Module):
         self,
         *,
         d_model: int,
+        num_experts: int,
+        hidden_size: int,
         router: MoERouterConfig,
         mlp: MoEMLPConfig,
         num_layers: int,
@@ -78,10 +92,14 @@ class MoEBase(nn.Module):
         z_loss_weight: Optional[float] = None,
     ):
         super().__init__()
-        self.router = router.build(d_model, init_device=init_device)
-        self.experts = self._init_parallel_mlp(mlp.build(d_model, init_device=init_device))
+        self.router = router.build(d_model, num_experts, init_device=init_device)
+        self.experts = self._init_parallel_mlp(
+            mlp.build(d_model, num_experts, hidden_size, init_device=init_device)
+        )
         self.shared_experts = (
-            None if shared_mlp is None else shared_mlp.build(d_model, init_device=init_device)
+            None
+            if shared_mlp is None
+            else shared_mlp.build(d_model, hidden_size, init_device=init_device)
         )
         self.num_layers = num_layers
         self.lb_loss_weight = lb_loss_weight

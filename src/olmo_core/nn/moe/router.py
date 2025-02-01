@@ -50,7 +50,6 @@ class MoERouterConfig(Config):
     """
     The name of the implementation.
     """
-    num_experts: int = 1
     top_k: int = 1
     jitter_eps: Optional[float] = None
     normalize_expert_weights: Optional[float] = None
@@ -58,7 +57,7 @@ class MoERouterConfig(Config):
     bias: bool = True
     dtype: DType = DType.float32
 
-    def num_params(self, d_model: int) -> int:
+    def num_params(self, d_model: int, num_experts: int) -> int:
         """
         The number of params that the module will have once built.
 
@@ -66,19 +65,20 @@ class MoERouterConfig(Config):
         """
         num_params = 0
         if self.name == MoERouterType.default:
-            num_params += d_model * self.num_experts
+            num_params += d_model * num_experts
             if self.bias:
-                num_params += self.num_experts
+                num_params += num_experts
         else:
             raise NotImplementedError
 
         return num_params
 
-    def build(self, d_model: int, *, init_device: str = "cpu") -> "MoERouter":
+    def build(self, d_model: int, num_experts, *, init_device: str = "cpu") -> "MoERouter":
         """
         Build the corresponding MoE router module.
 
         :param d_model: The model dimensionality.
+        :param num_experts: The number of experts.
         :param init_device: The device initialize the parameters on, e.g. "cpu", "meta".
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
@@ -86,6 +86,7 @@ class MoERouterConfig(Config):
         kwargs.update(
             dtype=kwargs.pop("dtype").as_pt(),
             d_model=d_model,
+            num_experts=num_experts,
             init_device=init_device,
         )
 

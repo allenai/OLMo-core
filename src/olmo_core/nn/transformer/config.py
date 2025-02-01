@@ -11,7 +11,7 @@ from ..lm_head import LMHeadConfig, LMHeadType
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from .block import TransformerBlockConfig, TransformerBlockType
 from .init import InitMethod
-from .model import NormalizedTransformer, Transformer
+from .model import MoETransformer, NormalizedTransformer, Transformer
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +29,11 @@ class TransformerType(StrEnum):
     normalized = "normalized"
     """
     ➡️ :class:`NormalizedTransformer` (nGPT)
+    """
+
+    moe = "moe"
+    """
+    ➡️ :class:`MoETransformer`
     """
 
 
@@ -82,6 +87,18 @@ class TransformerConfig(Config):
             )
         elif self.name == TransformerType.normalized:
             model = NormalizedTransformer(
+                d_model=self.d_model,
+                vocab_size=self.vocab_size,
+                n_layers=self.n_layers,
+                block=self.block,
+                lm_head=self.lm_head,
+                dtype=self.dtype.as_pt(),
+                init_method=self.init_method,
+                init_device=init_device,
+                init_seed=self.init_seed,
+            )
+        elif self.name == TransformerType.moe:
+            model = MoETransformer(
                 d_model=self.d_model,
                 vocab_size=self.vocab_size,
                 n_layers=self.n_layers,

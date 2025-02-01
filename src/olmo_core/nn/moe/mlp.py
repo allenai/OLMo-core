@@ -49,30 +49,34 @@ class MoEMLPConfig(Config):
     The name of the implementation.
     """
 
-    hidden_size: int = 1024
-    num_experts: int = 1
     dtype: DType = DType.float32
 
-    def num_params(self, d_model: int) -> int:
+    def num_params(self, d_model: int, num_experts: int, hidden_size: int) -> int:
         """
         The number of params that the module will have once built.
 
         :param d_model: The model dimensionality.
+        :param num_experts: Then number of experts.
+        :param hidden_size: The hidden size of each expert.
         """
         num_params = 0
         if self.name == MoEMLPType.default:
-            num_params += 3 * d_model * self.hidden_size * self.num_experts
+            num_params += 3 * d_model * hidden_size * num_experts
         else:
             raise NotImplementedError
 
         return num_params
 
-    def build(self, d_model: int, *, init_device: str = "cpu") -> "MoEMLP":
+    def build(
+        self, d_model: int, num_experts: int, hidden_size: int, *, init_device: str = "cpu"
+    ) -> "MoEMLP":
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
         kwargs.update(
             dtype=kwargs.pop("dtype").as_pt(),
             d_model=d_model,
+            num_experts=num_experts,
+            hidden_size=hidden_size,
             init_device=init_device,
         )
 

@@ -37,7 +37,6 @@ from olmo_core.nn.functional.cross_entropy_loss import (
     cross_entropy_loss,
     fused_cross_entropy_loss,
 )
-from olmo_core.nn.moe import MoEHandler
 from olmo_core.nn.transformer import NormalizedTransformer, Transformer
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
@@ -447,10 +446,9 @@ class TransformerPipelineTrainModule(TrainModule):
         self.load_key_mapping = load_key_mapping
         self.label_ignore_index = label_ignore_index
 
-        self.moe_handler: Optional[MoEHandler] = None
         for model in self.model_parts:
-            if MoEHandler.has_moe(model):
-                # TODO (epwalsh): need to figure out how to handle the internal MoE losses correctly.
+            if model.is_moe:
+                # TODO (epwalsh): need to handle the internal MoE losses correctly.
                 raise NotImplementedError(
                     "Pipeline parallelism with MoE's is currently not supported"
                 )
@@ -683,12 +681,6 @@ class TransformerPipelineTrainModule(TrainModule):
                     namespace="train",
                 )
 
-        if self.moe_handler is not None:
-            if (moe_lb_loss := self.moe_handler.get_lb_loss()) is not None:
-                self.record_metric("load balancing loss", moe_lb_loss, namespace="train")
-            if (moe_z_loss := self.moe_handler.get_z_loss()) is not None:
-                self.record_metric("router Z loss", moe_z_loss, namespace="train")
-
         for optim in self.optimizers:
             if isinstance(optim, SkipStepOptimizer):
                 assert self._ce_batch_loss is not None
@@ -850,8 +842,6 @@ class TransformerPipelineTrainModule(TrainModule):
         self._batch_num_tokens_for_loss = None
         self._ce_batch_loss = None
         self._z_batch_loss = None
-        if self.moe_handler is not None:
-            self.moe_handler.clear_loss_buffers()
 
     def _get_state_dict(self, sd_options: dist_cp_sd.StateDictOptions) -> Dict[str, Any]:
         return {

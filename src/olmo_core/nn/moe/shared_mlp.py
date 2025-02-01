@@ -32,12 +32,11 @@ class SharedMLPConfig(Config):
     """
     The name of the implementation.
     """
-    hidden_size: int = 256
     weighted_sum: bool = True
     bias: Optional[bool] = None
     dtype: DType = DType.float32
 
-    def num_params(self, d_model: int) -> int:
+    def num_params(self, d_model: int, hidden_size: int) -> int:
         """
         The number of params that the module will have once built.
 
@@ -45,13 +44,13 @@ class SharedMLPConfig(Config):
         """
         params = 0
 
-        params += 3 * d_model * self.hidden_size
+        params += 3 * d_model * hidden_size
         if self.bias:
-            params += 2 * self.hidden_size + d_model
+            params += 2 * hidden_size + d_model
 
         return params
 
-    def build(self, d_model: int, *, init_device: str = "cpu") -> "SharedMLP":
+    def build(self, d_model: int, hidden_size: int, *, init_device: str = "cpu") -> "SharedMLP":
         """
         Build the corresponding shared MLP module.
 
@@ -60,7 +59,12 @@ class SharedMLPConfig(Config):
         """
         kwargs = self.as_dict(exclude_none=True)
         kwargs.pop("name")
-        kwargs.update(d_model=d_model, init_device=init_device, dtype=kwargs.pop("dtype").as_pt())
+        kwargs.update(
+            d_model=d_model,
+            hidden_size=hidden_size,
+            init_device=init_device,
+            dtype=kwargs.pop("dtype").as_pt(),
+        )
 
         try:
             if self.name == SharedMLPType.default:

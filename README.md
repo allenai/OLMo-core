@@ -23,7 +23,7 @@ pip install ai2-olmo-core
 There are a number of optional dependencies that must be installed to use certain functionality as well, including:
 - [flash-attn](https://github.com/Dao-AILab/flash-attention) for flash attention and certain other fused operations.
 - [torchao](https://github.com/pytorch/ao) for float8 training.
-- [megablocks](https://github.com/databricks/megablocks) for mixture-of-experts (MoE) models.
+- [grouped_gemm](https://github.com/tgale96/grouped_gemm) for mixture-of-experts (MoE) models.
 
 The published [Docker images](https://github.com/orgs/allenai/packages?repo_name=OLMo-core) contain all core and optional dependencies, and are regularly tested on our in-house H100 clusters.
 But there are several things to keep in mind if you intend to use these images:
