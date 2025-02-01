@@ -1,3 +1,5 @@
+import math
+
 import pytest
 import torch
 import torch.distributed as dist
@@ -46,7 +48,9 @@ def test_moe(moe_type, dtype):
 
     losses = moe.compute_losses(B * S)
     lb_loss = losses["load balancing loss"]
+    assert math.isfinite(lb_loss.item())
     z_loss = losses["router Z loss"]
+    assert math.isfinite(z_loss.item())
     loss = lb_loss + z_loss
 
     # Run backward pass.
@@ -79,7 +83,9 @@ def run_moe_with_expert_parallelism(moe_type, dtype):
 
     losses = moe.compute_losses(B * S)
     lb_loss = losses["load balancing loss"]
+    assert math.isfinite(lb_loss.item())
     z_loss = losses["router Z loss"]
+    assert math.isfinite(z_loss.item())
     loss = lb_loss + z_loss
 
     # Run backward pass.
