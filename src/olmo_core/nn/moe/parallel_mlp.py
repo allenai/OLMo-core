@@ -330,9 +330,10 @@ class ParallelDroplessMLP(ParallelMLP):
 
         # Calculate the bin bounds for the sorted items/tokens.
         # shape: (num_experts,)
-        bins = torch.cumsum(batch_size_per_expert, 0)
+        bins = torch.empty_like(batch_size_per_expert)
+        torch.cumsum(batch_size_per_expert, 0, out=bins)
 
-        return indices, bin_ids, bins, batch_size_per_expert
+        return indices.int(), bin_ids, bins, batch_size_per_expert
 
     def permute_and_compute(
         self,

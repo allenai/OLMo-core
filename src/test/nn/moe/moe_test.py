@@ -34,11 +34,15 @@ def test_moe(moe_type, dtype):
     assert config.num_params(d_model) == num_params
 
     # Run forward pass.
-    x = torch.randn(2, 16, d_model, dtype=dtype, device="cuda", requires_grad=True)
-    output, lb_loss, z_loss = moe(x)
+    B, S = 2, 16
+    x = torch.randn(B, S, d_model, dtype=dtype, device="cuda", requires_grad=True)
+
+    output = moe(x)
     assert output.shape == x.shape
-    assert lb_loss is not None
-    assert z_loss is not None
+
+    losses = moe.compute_losses(B * S)
+    lb_loss = losses["load balancing loss"]
+    z_loss = losses["router Z loss"]
     loss = lb_loss + z_loss
 
     # Run backward pass.
