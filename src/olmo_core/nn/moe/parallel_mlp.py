@@ -155,15 +155,13 @@ class ParallelDroplessMLP(ParallelMLP):
         # its set of experts in its local HBM.
         #
         # 3. Permute the tokens locally so that they are grouped by their
-        # expert assignement. After the distributed permutation the tokens
+        # expert assignment. After the distributed permutation the tokens
         # are grouped by which device they came from. We re-order them
         # locally to allow for efficient computation.
         #
         # After this series of permutations we compute the linear layers
         # and then repeat these three steps in reverse to produce the final
         # output.
-        #
-        # Compute the mapping of local tokens to experts.
 
         top_k = expert_weights.shape[-1]
 
