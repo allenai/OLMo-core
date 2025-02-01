@@ -105,7 +105,7 @@ class MoELoadBalancingLoss(MoELoss):
         expert_scores = expert_logits.softmax(dim=-1)
         # shape: (num_experts,)
         expert_scores = expert_scores.mean(dim=0)
-        loss = torch.dot(batch_size_per_expert, expert_scores)
+        loss = torch.dot(batch_size_per_expert.type_as(expert_scores), expert_scores)
         if self.loss is None:
             self.loss = loss
         else:
