@@ -89,6 +89,10 @@ class MoELoss(metaclass=ABCMeta):
 
 
 class MoELoadBalancingLoss(MoELoss):
+    """
+    Implements the load balancing loss from Switch Transformers.
+    """
+
     def __init__(self, *, loss_weight: float, num_layers: int, num_experts: int, top_k: int):
         self.loss_weight = loss_weight
         self.num_layers = num_layers
