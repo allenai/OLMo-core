@@ -55,7 +55,6 @@ class MoEConfig(Config):
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
         kwargs.update(
-            dtype=kwargs.pop("dtype").as_pt(),
             d_model=d_model,
             num_layers=num_layers,
             init_device=init_device,
