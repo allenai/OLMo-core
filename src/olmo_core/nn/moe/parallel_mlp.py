@@ -270,12 +270,10 @@ class ParallelDroplessMLP(ParallelMLP):
             # Calculate the bins boundaries from the token counts.
             parallel_tokens_per_expert = parallel_tokens_per_expert.sum(
                 dim=0,
-                dtype=torch.int,
+                dtype=torch.long,
             )
-            parallel_bins = torch.cumsum(parallel_tokens_per_expert, 0)
-            parallel_bins = (
-                parallel_bins.view(1) if not len(parallel_bins.size()) else parallel_bins
-            )
+            parallel_bins = torch.empty_like(parallel_tokens_per_expert, dtype=torch.int32)
+            torch.cumsum(parallel_tokens_per_expert, 0, out=parallel_bins)
 
         # Locally permute the tokens and perform the expert computation.
         # Block to make sure that the cross-device permutation is complete.
@@ -283,7 +281,7 @@ class ParallelDroplessMLP(ParallelMLP):
         parallel_x = self.permute_and_compute(
             parallel_x,
             parallel_tokens_per_expert,
-            parallel_indices,
+            parallel_indices.int(),
             parallel_bin_ids,
             None,  # expert_weights
             parallel_bins,
