@@ -6,6 +6,7 @@ from typing import List, Optional
 from mup.coord_check import plot_coord_data
 from torch.utils.data import DataLoader
 
+from olmo_core.nn.transformer import TransformerConfig, TransformerBlockConfig
 from olmo_core.config import ModelConfig, TrainConfig
 # from olmo.data import build_train_dataloader
 from olmo_core.data import NumpyFSLDataset, NumpyFSLDataLoader
@@ -62,20 +63,28 @@ def coord_check(
 ):
     def model_generator(d_model, standparam=False):
         def f():
-            config = ModelConfig.load(config_path, key="model")
-            config.d_model = d_model
-            model = load_mu_model(config)
+            config = TransformerConfig(
+                d_model=d_model,
+                vocab_size=100352,
+                n_layers=32,
+                block=TransformerBlockConfig(
+                    attention=AttentionConfig(n_heads=32),
+                    feed_forward=FeedForwardConfig(hidden_size=11008),
+                ),
+            )
+            
+            model = TransformerModel(config)  # Assuming this is how the model is initialized
 
             if standparam:
                 config.mup_base_shapes = None
             else:
-                assert load_base_shapes, "load_base_shapes needs to be nonempty"
+                assert load_base_shapes, "load_base_shapes needs to be specified for μP."
                 config.mup_base_shapes = load_base_shapes
+            
+            model.set_base_shapes()  # Required for μP initialization
+            model.reset_parameters()  # Ensures correct μP init
 
-            model.set_base_shapes()
-            model.reset_parameters()  # to apply mup init
             return model
-
         return f
 
     train_config = TrainConfig.load(config_path)

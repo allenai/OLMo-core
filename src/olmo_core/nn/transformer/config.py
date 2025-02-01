@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 import torch
 from torch.distributed import DeviceMesh
@@ -104,6 +104,11 @@ class TransformerType(StrEnum):
     ➡️ :class:`NormalizedTransformer` (nGPT)
     """
 
+    mup = "muP"
+    """
+    ➡️ :class:`muPTransformer`
+    """
+
 
 @dataclass
 class TransformerConfig(Config):
@@ -134,6 +139,16 @@ class TransformerConfig(Config):
     tp_config: Optional[TensorParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
     float8_config: Optional[Float8Config] = None
+    use_mup: bool = False
+    mup_base_shapes: Optional[Dict[str, Any]] = None  
+
+    # def set_base_shapes(self, base_shapes: Dict[str, Any]):
+    #     """
+    #     Stores muP base shapes for scaling.
+    #     """
+    #     if self.use_mup:
+    #         log.info("Applying muP.")
+    #         self.mup_base_shapes = base_shapes
 
     def build(
         self,
@@ -193,6 +208,23 @@ class TransformerConfig(Config):
                 init_device=init_device,
                 init_seed=self.init_seed,
             )
+
+        elif self.name == TransformerType.mup:
+            # self.block.feed_forward.set_base_shapes(self.mup_base_shapes)
+            # self.block.attention.set_base_shapes(self.mup_base_shapes)
+
+            model = muPTransformer(
+                d_model=self.d_model,
+                vocab_size=self.vocab_size,
+                n_layers=self.n_layers,
+                block=self.block,
+                lm_head=self.lm_head,
+                dtype=self.dtype.as_pt(),
+                init_method=self.init_method,
+                init_device=init_device,
+                init_seed=self.init_seed,
+            )
+
         else:
             raise NotImplementedError(self.name)
 
@@ -284,39 +316,44 @@ class TransformerConfig(Config):
         The total number of parameters that a model from this config would have.
         """
 
+        if self.use_mup and self.mup_base_shapes:
+            base_d_model = self.mup_base_shapes.get("d_model", self.d_model)
+        else:
+            base_d_model = self.d_model
+
         num_params = 0
 
         # Embedding params.
-        num_params += self.d_model * self.vocab_size
+        num_params += base_d_model * self.vocab_size
 
         block_params = 0
 
         # Block attn and MLP scaling factors.
         if self.block.name == TransformerBlockType.normalized:
-            block_params += 2 * self.d_model
+            block_params += 2 * base_d_model
 
         # Block attention params.
-        block_params += self.block.attention.num_params(self.d_model)
+        block_params += self.block.attention.num_params(base_d_model)
 
         # Block attention norm.
         if self.block.layer_norm is not None:
-            block_params += self.block.layer_norm.num_params(self.d_model)
+            block_params += self.block.layer_norm.num_params(base_d_model)
 
         # Block feed forward.
         if self.block.feed_forward is not None:
-            block_params += self.block.feed_forward.num_params(self.d_model)
+            block_params += self.block.feed_forward.num_params(base_d_model)
         elif self.block.feed_forward_moe is not None:
-            block_params += self.block.feed_forward_moe.num_params(self.d_model)
+            block_params += self.block.feed_forward_moe.num_params(base_d_model)
 
         # Block feed forward norm.
         if self.block.layer_norm is not None:
-            block_params += self.block.layer_norm.num_params(self.d_model)
+            block_params += self.block.layer_norm.num_params(base_d_model)
 
         # All block params.
         num_params += self.n_layers * block_params
 
         # LM head.
-        num_params += self.lm_head.num_params(self.d_model, self.vocab_size)
+        num_params += self.lm_head.num_params(base_d_model, self.vocab_size)
 
         return num_params
 
