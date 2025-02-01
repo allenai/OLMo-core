@@ -313,7 +313,13 @@ class ParallelDroplessMLP(ParallelMLP):
         """
         :param expert_indices: A 1D tensor.
         """
-        # shape: (N,)
+        # Histogram the expert ids to identify the number of
+        # items/tokens routed to each expert.
+        # shape: (num_experts,), LongTensor
+        batch_size_per_expert = torch.histc(
+            expert_indices, bins=self.num_experts, min=0, max=self.num_experts - 1
+        )
+
         expert_indices = expert_indices.int()
 
         # Sort the expert ids to produce the scatter/gather
@@ -321,16 +327,9 @@ class ParallelDroplessMLP(ParallelMLP):
         # shape: (N,), (N,)
         bin_ids, indices = torch.sort(expert_indices)
 
-        # Histogram the expert ids to identify the number of
-        # items/tokens routed to each expert.
-        # shape: (num_experts,)
-        batch_size_per_expert = torch.histc(
-            expert_indices, bins=self.num_experts, min=0, max=self.num_experts - 1
-        )
-
         # Calculate the bin bounds for the sorted items/tokens.
         # shape: (num_experts,)
-        bins = torch.empty_like(batch_size_per_expert)
+        bins = torch.empty_like(batch_size_per_expert, dtype=torch.int32)
         torch.cumsum(batch_size_per_expert, 0, out=bins)
 
         return indices.int(), bin_ids, bins, batch_size_per_expert
