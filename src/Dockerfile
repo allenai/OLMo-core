@@ -24,9 +24,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install/upgrade Python build dependencies.
 RUN pip install --upgrade --no-cache-dir pip wheel packaging "setuptools<70.0.0" ninja
 
-# Build grouped-gemm
+# Build grouped-gemm.
+# NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
+# See https://github.com/tgale96/grouped_gemm/pull/21
 ENV TORCH_CUDA_ARCH_LIST="8.0 9.0"
-# ENV GROUPED_GEMM_CUTLASS="1"
+ENV GROUPED_GEMM_CUTLASS="1"
 ARG GROUPED_GEMM_VERSION="grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
 RUN pip wheel --no-build-isolation --no-cache-dir "${GROUPED_GEMM_VERSION}"
 
