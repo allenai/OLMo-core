@@ -1,14 +1,14 @@
 CUDA_VERSION = "12.4"
 TORCH_CUDA_VERSION = $(shell echo $(CUDA_VERSION) | tr -d .)
-TORCH_VERSION = "2.5.1"
+TORCH_VERSION = "2.6.0"
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
 # NOTE: when upgrading the nightly version you also need to upgrade the torch version specification
 # in 'pyproject.toml' to include that nightly version.
 TORCH_NIGHTLY_VERSION = "2.6.0.dev20241209"
 TORCH_NIGHTLY_VERSION_SHORT = $(shell echo $(TORCH_NIGHTLY_VERSION) | tr -d .)
-TORCHAO_VERSION = "0.6.1"
+TORCHAO_VERSION = "0.8.0"
 GROUPED_GEMM_VERSION = "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
-FLASH_ATTN_WHEEL = https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.2.post1/flash_attn-2.7.2.post1+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
+FLASH_ATTN_WHEEL = https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
 
 VERSION = $(shell python src/olmo_core/version.py)
 VERSION_SHORT = $(shell python src/olmo_core/version.py short)
