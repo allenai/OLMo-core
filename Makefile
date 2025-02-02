@@ -7,7 +7,7 @@ TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
 TORCH_NIGHTLY_VERSION = "2.7.0.dev20250202"
 TORCH_NIGHTLY_VERSION_SHORT = $(shell echo $(TORCH_NIGHTLY_VERSION) | tr -d .)
 TORCHAO_VERSION = "0.8.0"
-GROUPED_GEMM_VERSION = "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
+GROUPED_GEMM_VERSION = "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@ebeae0bb3ded459886309b2a30410deb16937af4"
 FLASH_ATTN_WHEEL = https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
 
 VERSION = $(shell python src/olmo_core/version.py)
