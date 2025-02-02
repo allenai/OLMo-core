@@ -8,7 +8,6 @@ TORCH_NIGHTLY_VERSION = "2.6.0.dev20241209"
 TORCH_NIGHTLY_VERSION_SHORT = $(shell echo $(TORCH_NIGHTLY_VERSION) | tr -d .)
 TORCHAO_VERSION = "0.6.1"
 GROUPED_GEMM_VERSION = "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
-MEGABLOCKS_VERSION = "megablocks @ git+https://git@github.com/epwalsh/megablocks.git@epwalsh/deps"
 FLASH_ATTN_WHEEL = https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.2.post1/flash_attn-2.7.2.post1+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
 
 VERSION = $(shell python src/olmo_core/version.py)
@@ -57,7 +56,6 @@ stable-image :
 		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
 		--build-arg FLASH_ATTN_WHEEL=$(FLASH_ATTN_WHEEL) \
 		--build-arg GROUPED_GEMM_VERSION=$(GROUPED_GEMM_VERSION) \
-		--build-arg MEGABLOCKS_VERSION=$(MEGABLOCKS_VERSION) \
 		--build-arg TORCHAO_VERSION=$(TORCHAO_VERSION) \
 		--target stable \
 		--progress plain \
@@ -73,7 +71,6 @@ nightly-image :
 		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
 		--build-arg FLASH_ATTN_WHEEL=$(FLASH_ATTN_WHEEL) \
 		--build-arg GROUPED_GEMM_VERSION=$(GROUPED_GEMM_VERSION) \
-		--build-arg MEGABLOCKS_VERSION=$(MEGABLOCKS_VERSION) \
 		--build-arg TORCHAO_VERSION=$(TORCHAO_VERSION) \
 		--build-arg TORCH_NIGHTLY_VERSION=$(TORCH_NIGHTLY_VERSION) \
 		--target nightly \

@@ -26,12 +26,9 @@ RUN pip install --upgrade --no-cache-dir pip wheel packaging "setuptools<70.0.0"
 
 # Build megablocks, grouped-gemm, stanford-stk
 ENV TORCH_CUDA_ARCH_LIST="8.0 9.0"
-ENV GROUPED_GEMM_CUTLASS="1"
+# ENV GROUPED_GEMM_CUTLASS="1"
 ARG GROUPED_GEMM_VERSION="grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
 RUN pip wheel --no-build-isolation --no-cache-dir "${GROUPED_GEMM_VERSION}"
-
-ARG MEGABLOCKS_VERSION="megablocks @ git+https://git@github.com/epwalsh/megablocks.git@epwalsh/deps"
-RUN pip wheel --no-build-isolation --no-cache-dir "${MEGABLOCKS_VERSION}"
 
 # Build flash-attn.
 ARG FLASH_ATTN_WHEEL=https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.2.post1/flash_attn-2.7.2.post1+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
