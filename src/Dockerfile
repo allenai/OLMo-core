@@ -99,7 +99,7 @@ WORKDIR /app/olmo-core
 FROM stable as nightly
 
 ARG TORCH_CUDA_VERSION
-ARG TORCH_NIGHTLY_VERSION="2.6.0.dev20241209"
+ARG TORCH_NIGHTLY_VERSION="2.7.0.dev20250202"
 RUN pip install --no-cache-dir --pre \
     --index-url https://download.pytorch.org/whl/nightly/cu${TORCH_CUDA_VERSION} \
     torch==${TORCH_NIGHTLY_VERSION}+cu${TORCH_CUDA_VERSION}
