@@ -35,11 +35,10 @@ ARG FLASH_ATTN_WHEEL=https://github.com/Dao-AILab/flash-attention/releases/downl
 RUN wget ${FLASH_ATTN_WHEEL}
 
 # Only keep the target wheels and dependencies with CUDA extensions.
-RUN echo "Built wheels:" \
-    && ls -lh . \
-    && ls -1 | grep -Ev 'grouped_gemm|flash_attn' | xargs rm \
-    && echo "Final wheels:" \
-    && ls -lh .
+RUN echo "Built wheels:" && ls -lh .
+    # && ls -1 | grep -Ev 'grouped_gemm|flash_attn' | xargs rm \
+    # && echo "Final wheels:" \
+    # && ls -lh .
 
 #########################################################################
 # Stable image
