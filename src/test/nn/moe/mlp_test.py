@@ -7,11 +7,10 @@ from olmo_core.nn.moe.mlp import MoEMLP
 from olmo_core.utils import get_default_device
 
 from ...distributed.utils import requires_multi_gpu, run_distributed_test
-from ...utils import requires_gpu, requires_grouped_gemm
+from ...utils import requires_gpu
 
 
 @requires_gpu
-@requires_grouped_gemm
 def test_mlp():
     mlp = MoEMLP(
         d_model=128, hidden_size=256, num_experts=2, init_device="cuda", dtype=torch.bfloat16
@@ -44,6 +43,5 @@ def run_mlp_with_expert_parallelism():
 
 
 @requires_multi_gpu
-@requires_grouped_gemm
 def test_mlp_with_expert_parallelism():
     run_distributed_test(run_mlp_with_expert_parallelism, backend="nccl", start_method="spawn")
