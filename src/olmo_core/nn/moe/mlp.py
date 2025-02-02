@@ -67,6 +67,9 @@ class MoEMLPConfig(Config):
 
         return num_params
 
+    def num_active_params(self, d_model: int, top_k: int, hidden_size: int) -> int:
+        return self.num_params(d_model, top_k, hidden_size)
+
     def build(
         self, d_model: int, num_experts: int, hidden_size: int, *, init_device: str = "cpu"
     ) -> "MoEMLP":

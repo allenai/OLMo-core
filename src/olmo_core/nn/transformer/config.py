@@ -159,11 +159,32 @@ class TransformerConfig(Config):
         return num_params
 
     @property
+    def num_active_params(self) -> int:
+        """
+        The total number of active parameters that a model from this config would have.
+        """
+        num_params = self.num_params
+        if self.block.feed_forward_moe is None:
+            return num_params
+        diff_per_block = self.block.feed_forward_moe.num_params(
+            self.d_model
+        ) - self.block.feed_forward_moe.num_active_params(self.d_model)
+        total_diff = self.n_layers * diff_per_block
+        return num_params - total_diff
+
+    @property
     def num_non_embedding_params(self) -> int:
         """
         The number of parameters excluding embedding parameters.
         """
         return self.num_params - self.d_model * self.vocab_size
+
+    @property
+    def num_active_non_embedding_params(self) -> int:
+        """
+        The number of active parameters excluding embedding parameters.
+        """
+        return self.num_active_params - self.d_model * self.vocab_size
 
     def num_flops_per_token(self, seq_len: int) -> int:
         """

@@ -51,6 +51,13 @@ class MoEConfig(Config):
 
         return num_params
 
+    def num_active_params(self, d_model: int) -> int:
+        return (
+            self.num_params(d_model)
+            - self.mlp.num_params(d_model, self.num_experts, self.hidden_size)
+            + self.mlp.num_active_params(d_model, self.router.top_k, self.hidden_size)
+        )
+
     def build(self, d_model: int, *, num_layers: int, init_device: str = "cpu") -> "MoEBase":
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
