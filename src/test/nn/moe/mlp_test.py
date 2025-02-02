@@ -2,6 +2,7 @@ import torch
 import torch.distributed as dist
 from torch.distributed.tensor import init_device_mesh
 
+from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.nn.moe.mlp import MoEMLP
 from olmo_core.utils import get_default_device
 
@@ -33,6 +34,7 @@ def run_mlp_with_expert_parallelism():
     )
     mlp.apply_ep(ep_mesh)
     mlp.to_empty(device=get_default_device())
+    assert get_local_tensor(mlp.w1).shape == (2, 256, 128)
 
     x = torch.randn(5, 128, device="cuda", dtype=torch.bfloat16)
     tokens_per_expert = torch.tensor([3, 2], device="cuda")
