@@ -9,6 +9,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device
 
 from .data_parallel import DataParallelConfig, DataParallelType, DPMeshDimName
+from .expert_parallel import ExpertParallelConfig
 from .pipeline_parallel import (
     PipelineParallelConfig,
     PipelineSchedule,
@@ -21,12 +22,14 @@ __all__ = [
     "MeshDimName",
     "get_dp_mesh",
     "get_tp_mesh",
+    "get_ep_mesh",
     "get_pp_mesh",
     "get_dp_process_group",
     "DataParallelType",
     "DataParallelConfig",
     "DPMeshDimName",
     "TensorParallelConfig",
+    "ExpertParallelConfig",
     "PipelineParallelConfig",
     "PipelineScheduleType",
     "PipelineSchedule",
@@ -55,6 +58,11 @@ class MeshDimName(StrEnum):
     The DP dimension over which the model is sharded.
     """
 
+    ep = "ep"
+    """
+    Expert parallel (EP).
+    """
+
     tp = "tp"
     """
     Tensor parallel (TP).
@@ -69,6 +77,7 @@ class MeshDimName(StrEnum):
 def build_device_mesh(
     *,
     dp: Optional[DataParallelConfig] = None,
+    ep: Optional[ExpertParallelConfig] = None,
     tp: Optional[TensorParallelConfig] = None,
     pp: Optional[PipelineParallelConfig] = None,
     device_type: Optional[str] = None,
@@ -78,13 +87,13 @@ def build_device_mesh(
     The resulting dimension names will be defined in :class:`MeshDimName`.
 
     .. important::
-        A data parallel config is required if either a pipeline or tensor parallel config is set.
+        A data parallel config is required if any other parallel config is set.
     """
-    if pp is None and tp is None and dp is None:
+    if ep is None and pp is None and tp is None and dp is None:
         return None
     if dp is None:
         raise OLMoConfigurationError(
-            "Data parallel config is required in addition to tensor/pipeline parallel configs"
+            "Data parallel config is required in addition to expert/tensor/pipeline parallel configs"
         )
 
     device_type = device_type or get_default_device().type
@@ -103,6 +112,12 @@ def build_device_mesh(
                 f"{tp.__class__.__name__}.degree must be at least 1 and divide into the world size"
             )
         dp_world_size //= tp.degree
+    if ep is not None:
+        if ep.degree < 1 or dp_world_size % ep.degree != 0:
+            raise OLMoConfigurationError(
+                f"{ep.__class__.__name__}.degree must be at least 1 and divide into the world size"
+            )
+        dp_world_size //= ep.degree
 
     # Build up mesh dimensions.
     names: List[str] = []
@@ -129,10 +144,13 @@ def build_device_mesh(
         names.append(MeshDimName.dp)
         dims.append(dp_world_size)
 
-    # And lastly tensor parallel.
+    # And lastly tensor/expert parallel.
     if tp is not None:
         names.append(MeshDimName.tp)
         dims.append(tp.degree)
+    if ep is not None:
+        names.append(MeshDimName.ep)
+        dims.append(ep.degree)
 
     log.info(f"Building {len(dims)}-D device mesh with dimensions:")
     for i, (name, dim) in enumerate(zip(names, dims)):
@@ -218,6 +236,27 @@ def get_tp_mesh(
 
     if device_mesh.mesh_dim_names is None:
         raise RuntimeError("could not determine tensor parallel sub-mesh without dimension names")
+
+    if dim_name in device_mesh.mesh_dim_names:
+        return device_mesh[dim_name]
+    else:
+        return None
+
+
+def get_ep_mesh(
+    device_mesh: Optional[DeviceMesh] = None, *, dim_name: str = MeshDimName.ep
+) -> Optional[DeviceMesh]:
+    """
+    Get the expert parallel sub-mesh associated with a ``DeviceMesh`` that was potentially
+    created from :func:`build_device_mesh()`.
+
+    :param dim_name: The name of the target mesh dimension.
+    """
+    if device_mesh is None:
+        return None
+
+    if device_mesh.mesh_dim_names is None:
+        raise RuntimeError("could not determine expert parallel sub-mesh without dimension names")
 
     if dim_name in device_mesh.mesh_dim_names:
         return device_mesh[dim_name]

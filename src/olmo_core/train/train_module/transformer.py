@@ -19,10 +19,12 @@ from olmo_core.distributed.checkpoint import _swap_param_keys
 from olmo_core.distributed.parallel import (
     DataParallelConfig,
     DataParallelType,
+    ExpertParallelConfig,
     TensorParallelConfig,
     build_device_mesh,
     get_dp_mesh,
     get_dp_process_group,
+    get_ep_mesh,
     get_tp_mesh,
 )
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
@@ -68,6 +70,13 @@ class TransformerDataParallelConfig(DataParallelConfig):
 class TransformerTensorParallelConfig(TensorParallelConfig):
     """
     Transformer-specific tensor parallel config.
+    """
+
+
+@dataclass
+class TransformerExpertParallelConfig(ExpertParallelConfig):
+    """
+    Transformer-specific expert parallel config.
     """
 
 
@@ -135,6 +144,7 @@ class TransformerTrainModuleConfig(Config):
     float8_config: Optional[Float8Config] = None
     dp_config: Optional[TransformerDataParallelConfig] = None
     tp_config: Optional[TransformerTensorParallelConfig] = None
+    ep_config: Optional[TransformerExpertParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
 
     # Loss function settings.
@@ -236,6 +246,7 @@ class TransformerTrainModule(TrainModule):
         float8_config: Optional[Float8Config] = None,
         dp_config: Optional[TransformerDataParallelConfig] = None,
         tp_config: Optional[TransformerTensorParallelConfig] = None,
+        ep_config: Optional[TransformerExpertParallelConfig] = None,
         ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
         compile_loss: bool = False,
         fused_loss: bool = False,
@@ -289,7 +300,9 @@ class TransformerTrainModule(TrainModule):
             )
             log.info("Swapped linear layers to Float8 linear layers")
 
-        # Maybe apply tensor parallelism.
+        # Maybe apply tensor/expert parallelism.
+        if tp_config is not None and ep_config is not None:
+            raise NotImplementedError("TP + EP is not implemented yet")
         if tp_config is not None:
             tp_mesh = get_tp_mesh(self.world_mesh)
             assert tp_mesh is not None
@@ -302,6 +315,13 @@ class TransformerTrainModule(TrainModule):
             log.info(
                 f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model"
             )
+        if ep_config is not None:
+            if not self.model.is_moe:
+                raise OLMoConfigurationError("Expert parallelism is only valid for MoE models")
+            ep_mesh = get_ep_mesh(self.world_mesh)
+            assert ep_mesh is not None
+            cast(MoETransformer, self.model).apply_ep(ep_mesh)
+            log.info("Applied expert parallelism to the model")
 
         # Maybe apply activation checkpointing.
         if ac_config is not None:
