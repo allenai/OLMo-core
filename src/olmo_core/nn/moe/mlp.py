@@ -9,7 +9,6 @@ from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Shard, distribute_tensor
 
 from ...config import Config, DType, StrEnum
-from ...distributed.parallel import get_num_ep_shards
 from ...distributed.utils import get_local_tensor
 from ...exceptions import OLMoConfigurationError
 
@@ -204,7 +203,9 @@ class MoEMLP(nn.Module):
         """
         Apply expert parallelism.
         """
-        num_shards = get_num_ep_shards(ep_mesh)
+        if ep_mesh.ndim > 1:
+            raise RuntimeError("local expert parallel sub-mesh must be 1-dimensional")
+        num_shards = ep_mesh.size()
         if self.num_experts % num_shards != 0:
             raise OLMoConfigurationError(
                 f"'num_experts' ({self.num_experts}) must be divisible by the expert parallel shard degree ({num_shards})."

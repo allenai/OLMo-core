@@ -25,7 +25,6 @@ __all__ = [
     "get_tp_mesh",
     "get_pp_mesh",
     "get_dp_process_group",
-    "get_num_ep_shards",
     "DataParallelType",
     "DataParallelConfig",
     "DPMeshDimName",
@@ -193,7 +192,9 @@ def build_expert_parallel_mesh(
     for i, (name, dim) in enumerate(zip(names, dims)):
         log.info(f" > dimension {i}, size={dim}, name={name}")
 
-    return init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))
+    return init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))[
+        MeshDimName.ep_shard
+    ]
 
 
 def get_dp_mesh(
@@ -296,19 +297,3 @@ def get_pp_mesh(
         return device_mesh[dim_name]
     else:
         return None
-
-
-def get_num_ep_shards(ep_mesh: DeviceMesh, *, shard_dim_name: Optional[str] = None) -> int:
-    """
-    Get the number of expert parallel shards.
-    """
-    if ep_mesh.mesh_dim_names is None:
-        raise RuntimeError("could not determine expert parallel shard sub-mesh")
-    elif shard_dim_name is not None:
-        return ep_mesh[shard_dim_name].size()
-    elif MeshDimName.ep_shard in ep_mesh.mesh_dim_names:
-        return ep_mesh[MeshDimName.ep_shard].size()
-    elif MeshDimName.tp in ep_mesh.mesh_dim_names:
-        return ep_mesh[MeshDimName.tp].size()
-    else:
-        raise RuntimeError("could not determine expert parallel shard sub-mesh")
