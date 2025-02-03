@@ -18,10 +18,9 @@ def test_mlp():
     mlp = MoEMLP(
         d_model=128, hidden_size=256, num_experts=2, init_device="cuda", dtype=torch.bfloat16
     )
-    x = torch.randn(6, 128, device="cuda", dtype=torch.bfloat16)
-    tokens_per_expert = torch.tensor([3, 3], device="cuda")
-    out = mlp(x, tokens_per_expert)
-    assert out.shape == (6, 128)
+    x = torch.randn(2, 3, 128, device="cuda", dtype=torch.bfloat16)
+    out = mlp(x)
+    assert out.shape == (2, 3, 128)
 
 
 @requires_gpu
@@ -50,11 +49,10 @@ def run_mlp_with_expert_parallelism():
     mlp.to_empty(device=get_default_device())
     assert get_local_tensor(mlp.w1).shape == (2, 128, 256)
 
-    x = torch.randn(6, 128, device="cuda", dtype=torch.bfloat16)
-    tokens_per_expert = torch.tensor([3, 3], device="cuda")
-    out = mlp(x, tokens_per_expert)
+    x = torch.randn(2, 3, 128, device="cuda", dtype=torch.bfloat16)
+    out = mlp(x)
 
-    assert out.shape == (6, 128)
+    assert out.shape == (2, 3, 128)
 
 
 @requires_multi_gpu

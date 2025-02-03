@@ -12,7 +12,7 @@ from ...config import Config, DType, StrEnum
 from ...distributed.utils import get_local_tensor
 from ...exceptions import OLMoConfigurationError
 
-__all__ = ["MoEMLP", "MoEMLPConfig", "MoEMLPType"]
+__all__ = ["MoEMLP", "DroplessMoEMLP", "MoEMLPConfig", "MoEMLPType"]
 
 
 class _ScaleGradient(torch.autograd.Function):
@@ -184,7 +184,7 @@ class MoEMLP(MoEMLPBase):
         """
         Compute the expert outputs.
 
-        :param x: The input of shape ``(*, d_model)``.
+        :param x: The input of shape ``(num_local_experts, N, d_model)``.
         """
         # Scale gradients and get local tensors (in case of expert parallelism).
         # shape (all): (experts_per_rank, hidden_size, d_model)
