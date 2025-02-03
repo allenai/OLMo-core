@@ -48,7 +48,7 @@ def run_mlp_with_expert_parallelism():
     )
     mlp.apply_ep(ep_mesh)
     mlp.to_empty(device=get_default_device())
-    assert get_local_tensor(mlp.w1).shape == (2, 256, 128)
+    assert get_local_tensor(mlp.w1).shape == (2, 128, 256)
 
     x = torch.randn(6, 128, device="cuda", dtype=torch.bfloat16)
     tokens_per_expert = torch.tensor([3, 3], device="cuda")
@@ -65,7 +65,7 @@ def test_mlp_with_expert_parallelism():
 def run_dropless_mlp_with_expert_parallelism():
     ep_mesh = build_expert_parallel_mesh(ExpertParallelConfig(degree=dist.get_world_size()))
 
-    mlp = MoEMLP(
+    mlp = DroplessMoEMLP(
         d_model=128,
         hidden_size=256,
         num_experts=dist.get_world_size() * 2,
@@ -84,6 +84,7 @@ def run_dropless_mlp_with_expert_parallelism():
 
 
 @requires_multi_gpu
+@requires_grouped_gemm
 def test_dropless_mlp_with_expert_parallelism():
     run_distributed_test(
         run_dropless_mlp_with_expert_parallelism, backend="nccl", start_method="spawn"
