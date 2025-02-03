@@ -25,6 +25,7 @@ from .numpy_dataset import (
     NumpyDatasetBase,
     NumpyDatasetConfig,
     NumpyFSLDataset,
+    NumpyFSLDatasetMixture,
     NumpyPaddedFSLDataset,
     NumpyVSLDataset,
     VSLCurriculum,
@@ -41,6 +42,7 @@ from .types import NumpyDatasetDType, NumpyDatasetType
 __all__ = [
     "NumpyDatasetBase",
     "NumpyFSLDataset",
+    "NumpyFSLDatasetMixture",
     "NumpyPaddedFSLDataset",
     "NumpyVSLDataset",
     "VSLCurriculum",
