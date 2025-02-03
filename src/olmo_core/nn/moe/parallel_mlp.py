@@ -12,7 +12,7 @@ from olmo_core.distributed.utils import get_world_size
 from olmo_core.utils import move_to_device
 
 from . import ops
-from .mlp import MoEMLP
+from .mlp import DroplessMoEMLP, MoEMLP, MoEMLPBase
 
 __all__ = ["ParallelMLPBase", "ParallelMLP", "ParallelDroplessMLP"]
 
@@ -22,7 +22,7 @@ class ParallelMLPBase(nn.Module):
     Wraps an MoE MLP layer to coordinate the routing and expert parallelism.
     """
 
-    def __init__(self, *, mlp: MoEMLP):
+    def __init__(self, *, mlp: MoEMLPBase):
         super().__init__()
         self.mlp = mlp
         self._expert_parallel_enabled: bool = False
@@ -340,6 +340,9 @@ class ParallelDroplessMLP(ParallelMLPBase):
     .. warning::
         When expert parallelism is enabled the forward pass involves a host-device sync.
     """
+
+    def __init__(self, *, mlp: DroplessMoEMLP):
+        super().__init__(mlp=mlp)
 
     def forward_once(
         self,

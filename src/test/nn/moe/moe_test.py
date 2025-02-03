@@ -10,7 +10,7 @@ from olmo_core.distributed.parallel import (
     build_expert_parallel_mesh,
 )
 from olmo_core.nn.moe import MoEConfig, MoEMLPConfig, MoERouterConfig, MoEType
-from olmo_core.utils import get_default_device
+from olmo_core.utils import get_default_device, seed_all
 
 from ...distributed.utils import requires_multi_gpu, run_distributed_test
 from ...utils import requires_gpu
@@ -20,6 +20,8 @@ from ...utils import requires_gpu
 @pytest.mark.parametrize("moe_type", [MoEType.dropless, MoEType.default])
 @pytest.mark.parametrize("dtype", [pytest.param(torch.bfloat16, id="BF16")])
 def test_moe(moe_type, dtype):
+    seed_all(42)
+
     d_model = 128
     config = MoEConfig(
         name=moe_type,
@@ -61,6 +63,8 @@ def test_moe(moe_type, dtype):
 
 
 def run_moe_with_expert_parallelism(moe_type, dtype):
+    seed_all(42)
+
     ep_mesh = build_expert_parallel_mesh(ExpertParallelConfig(degree=min(dist.get_world_size(), 2)))
 
     d_model = 128

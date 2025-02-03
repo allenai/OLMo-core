@@ -41,14 +41,14 @@ class MoEMLPType(StrEnum):
     ➡️ :class:`MoEMLP`
     """
 
+    dropless = "dropless"
+    """
+    ➡️ :class:`DroplessMoEMLP`
+    """
+
 
 @dataclass
 class MoEMLPConfig(Config):
-    name: MoEMLPType = MoEMLPType.default
-    """
-    The name of the implementation.
-    """
-
     dtype: DType = DType.float32
 
     def num_params(self, d_model: int, num_experts: int, hidden_size: int) -> int:
@@ -59,22 +59,21 @@ class MoEMLPConfig(Config):
         :param num_experts: Then number of experts.
         :param hidden_size: The hidden size of each expert.
         """
-        num_params = 0
-        if self.name == MoEMLPType.default:
-            num_params += 3 * d_model * hidden_size * num_experts
-        else:
-            raise NotImplementedError
-
-        return num_params
+        return 3 * d_model * hidden_size * num_experts
 
     def num_active_params(self, d_model: int, top_k: int, hidden_size: int) -> int:
         return self.num_params(d_model, top_k, hidden_size)
 
     def build(
-        self, d_model: int, num_experts: int, hidden_size: int, *, init_device: str = "cpu"
-    ) -> "MoEMLP":
+        self,
+        *,
+        name: MoEMLPType,
+        d_model: int,
+        num_experts: int,
+        hidden_size: int,
+        init_device: str = "cpu",
+    ) -> "MoEMLPBase":
         kwargs = self.as_dict(exclude_none=True, recurse=False)
-        kwargs.pop("name")
         kwargs.update(
             dtype=kwargs.pop("dtype").as_pt(),
             d_model=d_model,
@@ -84,17 +83,61 @@ class MoEMLPConfig(Config):
         )
 
         try:
-            if self.name == MoEMLPType.default:
+            if name == MoEMLPType.default:
                 return MoEMLP(**kwargs)
+            elif name == MoEMLPType.dropless:
+                return DroplessMoEMLP(**kwargs)
             else:
-                raise NotImplementedError(self.name)
+                raise NotImplementedError(name)
         except TypeError as e:
             raise OLMoConfigurationError(
-                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+                f"invalid options for '{name}' {self.__class__.__name__}, {e}"
             ) from e
 
 
-class MoEMLP(nn.Module):
+class MoEMLPBase(nn.Module):
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        hidden_size: int,
+        num_experts: int,
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.hidden_size = hidden_size
+        self.num_experts = num_experts
+
+        self.gradient_scale: Optional[float] = None
+        self.experts_per_rank = num_experts
+        self.hidden_sharding_degree = 1
+
+    def scale_grad(self, w: torch.Tensor) -> torch.Tensor:
+        if self.gradient_scale is None:
+            return w
+        return _scale_gradient(w, self.gradient_scale)
+
+    def apply_ep(self, ep_mesh: DeviceMesh):
+        """
+        Apply expert parallelism.
+        """
+        if ep_mesh.ndim > 1:
+            raise RuntimeError("local expert parallel sub-mesh must be 1-dimensional")
+        num_shards = ep_mesh.size()
+        if self.num_experts % num_shards != 0:
+            raise OLMoConfigurationError(
+                f"'num_experts' ({self.num_experts}) must be divisible by the expert parallel shard degree ({num_shards})."
+            )
+
+        self.experts_per_rank = self.num_experts // num_shards
+        self.gradient_scale = 1.0 / num_shards
+
+        self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, ep_mesh, [Shard(0)])))
+        self.register_parameter("w2", nn.Parameter(distribute_tensor(self.w2, ep_mesh, [Shard(0)])))
+        self.register_parameter("w3", nn.Parameter(distribute_tensor(self.w3, ep_mesh, [Shard(0)])))
+
+
+class MoEMLP(MoEMLPBase):
     """
     A basic expert MLP module with SwiGLU activation.
     """
@@ -108,15 +151,71 @@ class MoEMLP(nn.Module):
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
     ):
-        super().__init__()
-        self.d_model = d_model
-        self.hidden_size = hidden_size
-        self.num_experts = num_experts
+        super().__init__(d_model=d_model, hidden_size=hidden_size, num_experts=num_experts)
+        self.w1 = nn.Parameter(
+            torch.empty(
+                num_experts,
+                d_model,
+                hidden_size,
+                device=init_device,
+                dtype=dtype,
+            ),
+        )
+        self.w2 = nn.Parameter(
+            torch.empty(
+                num_experts,
+                d_model,
+                hidden_size,
+                device=init_device,
+                dtype=dtype,
+            ),
+        )
+        self.w3 = nn.Parameter(
+            torch.empty(
+                num_experts,
+                hidden_size,
+                d_model,
+                device=init_device,
+                dtype=dtype,
+            ),
+        )
 
-        self.gradient_scale: Optional[float] = None
-        self.experts_per_rank = num_experts
-        self.hidden_sharding_degree = 1
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the expert outputs.
 
+        :param x: The input of shape ``(*, d_model)``.
+        """
+        # Scale gradients and get local tensors (in case of expert parallelism).
+        # shape (all): (experts_per_rank, hidden_size, d_model)
+        w1, w2, w3 = (
+            get_local_tensor(self.scale_grad(self.w1)),
+            get_local_tensor(self.scale_grad(self.w2)),
+            get_local_tensor(self.scale_grad(self.w3)),
+        )
+
+        # Compute the MLP.
+        x1 = torch.bmm(x, w1)
+        x2 = torch.bmm(x, w3)
+        x1 = F.silu(x1) * x2
+        return torch.bmm(x1, w2)
+
+
+class DroplessMoEMLP(MoEMLPBase):
+    """
+    A dropless expert MLP module with SwiGLU activation.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        hidden_size: int,
+        num_experts: int,
+        dtype: torch.dtype = torch.float32,
+        init_device: str = "cpu",
+    ):
+        super().__init__(d_model=d_model, hidden_size=hidden_size, num_experts=num_experts)
         self.w1 = nn.Parameter(
             torch.empty(
                 num_experts,
@@ -158,11 +257,6 @@ class MoEMLP(nn.Module):
                 "https://github.com/tgale96/grouped_gemm"
             )
 
-    def scale_grad(self, w: torch.Tensor) -> torch.Tensor:
-        if self.gradient_scale is None:
-            return w
-        return _scale_gradient(w, self.gradient_scale)
-
     def gmm(
         self, x: torch.Tensor, w: torch.Tensor, batch_sizes: torch.Tensor, trans_b: bool = False
     ) -> torch.Tensor:
@@ -198,22 +292,3 @@ class MoEMLP(nn.Module):
         x2 = self.gmm(x, w3, batch_size_per_expert, trans_b=True)
         x1 = F.silu(x1) * x2
         return self.gmm(x1, w2, batch_size_per_expert)
-
-    def apply_ep(self, ep_mesh: DeviceMesh):
-        """
-        Apply expert parallelism.
-        """
-        if ep_mesh.ndim > 1:
-            raise RuntimeError("local expert parallel sub-mesh must be 1-dimensional")
-        num_shards = ep_mesh.size()
-        if self.num_experts % num_shards != 0:
-            raise OLMoConfigurationError(
-                f"'num_experts' ({self.num_experts}) must be divisible by the expert parallel shard degree ({num_shards})."
-            )
-
-        self.experts_per_rank = self.num_experts // num_shards
-        self.gradient_scale = 1.0 / num_shards
-
-        self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, ep_mesh, [Shard(0)])))
-        self.register_parameter("w2", nn.Parameter(distribute_tensor(self.w2, ep_mesh, [Shard(0)])))
-        self.register_parameter("w3", nn.Parameter(distribute_tensor(self.w3, ep_mesh, [Shard(0)])))
