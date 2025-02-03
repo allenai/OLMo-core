@@ -164,8 +164,8 @@ class MoEMLP(MoEMLPBase):
         self.w2 = nn.Parameter(
             torch.empty(
                 num_experts,
-                d_model,
                 hidden_size,
+                d_model,
                 device=init_device,
                 dtype=dtype,
             ),
@@ -173,8 +173,8 @@ class MoEMLP(MoEMLPBase):
         self.w3 = nn.Parameter(
             torch.empty(
                 num_experts,
-                hidden_size,
                 d_model,
+                hidden_size,
                 device=init_device,
                 dtype=dtype,
             ),
