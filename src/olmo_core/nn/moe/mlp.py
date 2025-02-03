@@ -9,6 +9,7 @@ from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Shard, distribute_tensor
 
 from ...config import Config, DType, StrEnum
+from ...distributed.parallel import get_num_ep_shards
 from ...distributed.utils import get_local_tensor
 from ...exceptions import OLMoConfigurationError
 
@@ -199,17 +200,18 @@ class MoEMLP(nn.Module):
         x1 = F.silu(x1) * x2
         return self.gmm(x1, w2, batch_size_per_expert)
 
-    def apply_ep(self, ep_mesh: DeviceMesh):
+    def apply_ep(self, ep_mesh: Optional[DeviceMesh] = None):
         """
         Apply expert parallelism.
         """
-        if self.num_experts % ep_mesh.size() != 0:
+        num_shards = get_num_ep_shards(ep_mesh)
+        if self.num_experts % num_shards != 0:
             raise OLMoConfigurationError(
-                f"'num_experts' ({self.num_experts}) must be divisible by the expert parallel degree ({ep_mesh.size()})."
+                f"'num_experts' ({self.num_experts}) must be divisible by the expert parallel shard degree ({num_shards})."
             )
 
-        self.experts_per_rank = self.num_experts // ep_mesh.size()
-        self.gradient_scale = 1.0 / ep_mesh.size()
+        self.experts_per_rank = self.num_experts // num_shards
+        self.gradient_scale = 1.0 / num_shards
 
         self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, ep_mesh, [Shard(0)])))
         self.register_parameter("w2", nn.Parameter(distribute_tensor(self.w2, ep_mesh, [Shard(0)])))

@@ -251,38 +251,6 @@ class ReorderedNormTransformerBlock(TransformerBlock):
         )
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
-    @property
-    def tp_input_layouts(self) -> Union[Placement, Tuple[Placement, ...]]:
-        return Replicate()
-
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
-        _, _, prepare_module_input = get_tp_wrappers(float8_enabled=float8_enabled)
-
-        plan = {
-            "attention": prepare_module_input(
-                input_layouts=(Replicate(),),
-                desired_input_layouts=(Replicate(),),
-            ),
-            "attention_norm": SequenceParallel(output_layouts=Replicate(), use_local_output=True),
-            "feed_forward": prepare_module_input(
-                input_layouts=(Replicate(),),
-                desired_input_layouts=(Replicate(),),
-            ),
-            "feed_forward_norm": SequenceParallel(
-                output_layouts=Replicate(), use_local_output=True
-            ),
-        }
-        if isinstance(self.dropout, nn.Dropout):
-            plan["dropout"] = SequenceParallel()
-        parallelize_module(
-            module=self,
-            device_mesh=tp_mesh,
-            parallelize_plan=plan,
-        )
-
-        self.attention.apply_tp(tp_mesh, output_layouts=Shard(1), float8_enabled=float8_enabled)
-        self.feed_forward.apply_tp(tp_mesh, output_layouts=Shard(1), float8_enabled=float8_enabled)
-
 
 @beta_feature
 class NormalizedTransformerBlock(TransformerBlockBase):
@@ -431,18 +399,33 @@ class MoETransformerBlock(TransformerBlockBase):
         )
         return h + self.dropout(self.feed_forward_moe(self.feed_forward_norm(h)))
 
-    def apply_ep(self, ep_mesh: DeviceMesh):
+    def apply_ep(self, ep_mesh: Optional[DeviceMesh] = None):
         self.feed_forward_moe.apply_ep(ep_mesh)
 
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
-        del tp_mesh, float8_enabled
+    def tp_input_layouts(self) -> Union[Placement, Tuple[Placement, ...]]:
+        return Shard(1)
 
-        raise NotImplementedError(
-            f"TP is not implemented yet for the '{self.__class__.__name__}' variant"
+    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
+        _, _, prepare_module_input = get_tp_wrappers(float8_enabled=float8_enabled)
+
+        plan = {
+            "attention_norm": SequenceParallel(),
+            "attention": prepare_module_input(
+                input_layouts=(Shard(1),),
+                desired_input_layouts=(Replicate(),),
+            ),
+            "feed_forward_norm": SequenceParallel(),
+        }
+        if isinstance(self.dropout, nn.Dropout):
+            plan["dropout"] = SequenceParallel()
+        parallelize_module(
+            module=self,
+            device_mesh=tp_mesh,
+            parallelize_plan=plan,
         )
 
-    def tp_input_layouts(self) -> Union[Placement, Tuple[Placement, ...]]:
-        raise NotImplementedError
+        self.attention.apply_tp(tp_mesh, output_layouts=Shard(1), float8_enabled=float8_enabled)
+        self.feed_forward_moe.apply_tp(tp_mesh, output_layouts=Shard(1), use_local_output=False)
 
 
 class MoEReorderedNormTransformerBlock(MoETransformerBlock):

@@ -1,7 +1,10 @@
 import torch
 import torch.distributed as dist
-from torch.distributed.tensor import init_device_mesh
 
+from olmo_core.distributed.parallel import (
+    ExpertParallelConfig,
+    build_expert_parallel_mesh,
+)
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.nn.moe.mlp import MoEMLP
 from olmo_core.utils import get_default_device
@@ -22,7 +25,7 @@ def test_mlp():
 
 
 def run_mlp_with_expert_parallelism():
-    ep_mesh = init_device_mesh(get_default_device().type, (dist.get_world_size(),))
+    ep_mesh = build_expert_parallel_mesh(ExpertParallelConfig(degree=dist.get_world_size()))
 
     mlp = MoEMLP(
         d_model=128,

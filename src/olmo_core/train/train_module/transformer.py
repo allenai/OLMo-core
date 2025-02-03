@@ -22,9 +22,9 @@ from olmo_core.distributed.parallel import (
     ExpertParallelConfig,
     TensorParallelConfig,
     build_device_mesh,
+    build_expert_parallel_mesh,
     get_dp_mesh,
     get_dp_process_group,
-    get_ep_mesh,
     get_tp_mesh,
 )
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
@@ -318,8 +318,7 @@ class TransformerTrainModule(TrainModule):
         if ep_config is not None:
             if not self.model.is_moe:
                 raise OLMoConfigurationError("Expert parallelism is only valid for MoE models")
-            ep_mesh = get_ep_mesh(self.world_mesh)
-            assert ep_mesh is not None
+            ep_mesh = build_expert_parallel_mesh(ep_config)
             cast(MoETransformer, self.model).apply_ep(ep_mesh)
             log.info("Applied expert parallelism to the model")
 

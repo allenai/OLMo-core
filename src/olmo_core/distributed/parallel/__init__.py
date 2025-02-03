@@ -19,12 +19,13 @@ from .tensor_parallel import TensorParallelConfig
 
 __all__ = [
     "build_device_mesh",
+    "build_expert_parallel_mesh",
     "MeshDimName",
     "get_dp_mesh",
     "get_tp_mesh",
-    "get_ep_mesh",
     "get_pp_mesh",
     "get_dp_process_group",
+    "get_num_ep_shards",
     "DataParallelType",
     "DataParallelConfig",
     "DPMeshDimName",
@@ -58,9 +59,14 @@ class MeshDimName(StrEnum):
     The DP dimension over which the model is sharded.
     """
 
-    ep = "ep"
+    ep_replicate = "ep_replicate"
     """
-    Expert parallel (EP).
+    The EP dimension over which the experts are replicated.
+    """
+
+    ep_shard = "ep_shard"
+    """
+    The EP dimension over which the experts are sharded.
     """
 
     tp = "tp"
@@ -77,7 +83,6 @@ class MeshDimName(StrEnum):
 def build_device_mesh(
     *,
     dp: Optional[DataParallelConfig] = None,
-    ep: Optional[ExpertParallelConfig] = None,
     tp: Optional[TensorParallelConfig] = None,
     pp: Optional[PipelineParallelConfig] = None,
     device_type: Optional[str] = None,
@@ -88,8 +93,12 @@ def build_device_mesh(
 
     .. important::
         A data parallel config is required if any other parallel config is set.
+
+    .. seealso::
+        Expert parallel device meshes need to be created separately with
+        :func:`build_expert_parallel_mesh`.
     """
-    if ep is None and pp is None and tp is None and dp is None:
+    if pp is None and tp is None and dp is None:
         return None
     if dp is None:
         raise OLMoConfigurationError(
@@ -112,12 +121,6 @@ def build_device_mesh(
                 f"{tp.__class__.__name__}.degree must be at least 1 and divide into the world size"
             )
         dp_world_size //= tp.degree
-    if ep is not None:
-        if ep.degree < 1 or dp_world_size % ep.degree != 0:
-            raise OLMoConfigurationError(
-                f"{ep.__class__.__name__}.degree must be at least 1 and divide into the world size"
-            )
-        dp_world_size //= ep.degree
 
     # Build up mesh dimensions.
     names: List[str] = []
@@ -148,9 +151,6 @@ def build_device_mesh(
     if tp is not None:
         names.append(MeshDimName.tp)
         dims.append(tp.degree)
-    if ep is not None:
-        names.append(MeshDimName.ep)
-        dims.append(ep.degree)
 
     log.info(f"Building {len(dims)}-D device mesh with dimensions:")
     for i, (name, dim) in enumerate(zip(names, dims)):
@@ -160,6 +160,40 @@ def build_device_mesh(
     # Ensure data parallel process group is created here.
     get_dp_process_group(mesh)
     return mesh
+
+
+def build_expert_parallel_mesh(
+    ep_config: ExpertParallelConfig, device_type: Optional[str] = None
+) -> Optional[DeviceMesh]:
+    """
+    Build a device mesh for expert parallelism.
+    """
+    device_type = device_type or get_default_device().type
+    world_size = get_world_size()
+
+    if ep_config.degree == world_size:
+        return None
+
+    # Build up mesh dimensions.
+    names: List[str] = []
+    dims: List[int] = []
+
+    if world_size % ep_config.degree != 0:
+        raise OLMoConfigurationError(
+            f"Expert parallelism requires world size ({world_size}) to "
+            f"be divisible by 'degree' ({ep_config.degree})"
+        )
+    names.append(MeshDimName.ep_replicate)
+    dims.append(world_size // ep_config.degree)
+
+    names.append(MeshDimName.ep_shard)
+    dims.append(ep_config.degree)
+
+    log.info(f"Building {len(dims)}-D device mesh with dimensions:")
+    for i, (name, dim) in enumerate(zip(names, dims)):
+        log.info(f" > dimension {i}, size={dim}, name={name}")
+
+    return init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))
 
 
 def get_dp_mesh(
@@ -174,8 +208,8 @@ def get_dp_mesh(
     created from :func:`build_device_mesh()`.
 
     :param dim_name: The name of the base data parallel mesh dimension.
-    :param dim_name: The name of the replica-specific data parallel mesh dimension.
-    :param dim_name: The name of the shard-specific data parallel mesh dimension.
+    :param replicate_dim_name: The name of the replica-specific data parallel mesh dimension.
+    :param shard_dim_name: The name of the shard-specific data parallel mesh dimension.
     """
     if device_mesh is None:
         return None
@@ -243,27 +277,6 @@ def get_tp_mesh(
         return None
 
 
-def get_ep_mesh(
-    device_mesh: Optional[DeviceMesh] = None, *, dim_name: str = MeshDimName.ep
-) -> Optional[DeviceMesh]:
-    """
-    Get the expert parallel sub-mesh associated with a ``DeviceMesh`` that was potentially
-    created from :func:`build_device_mesh()`.
-
-    :param dim_name: The name of the target mesh dimension.
-    """
-    if device_mesh is None:
-        return None
-
-    if device_mesh.mesh_dim_names is None:
-        raise RuntimeError("could not determine expert parallel sub-mesh without dimension names")
-
-    if dim_name in device_mesh.mesh_dim_names:
-        return device_mesh[dim_name]
-    else:
-        return None
-
-
 def get_pp_mesh(
     device_mesh: Optional[DeviceMesh] = None, *, dim_name: str = MeshDimName.pp
 ) -> Optional[DeviceMesh]:
@@ -283,3 +296,24 @@ def get_pp_mesh(
         return device_mesh[dim_name]
     else:
         return None
+
+
+def get_num_ep_shards(
+    ep_mesh: Optional[DeviceMesh] = None, *, shard_dim_name: Optional[str] = None
+) -> int:
+    """
+    Get the number of expert parallel shards.
+    """
+    if ep_mesh is None:
+        return get_world_size()
+
+    if ep_mesh.mesh_dim_names is None:
+        raise RuntimeError("could not determine expert parallel shard sub-mesh")
+    elif shard_dim_name is not None:
+        return ep_mesh[shard_dim_name].size()
+    elif MeshDimName.ep_shard in ep_mesh.mesh_dim_names:
+        return ep_mesh[MeshDimName.ep_shard].size()
+    elif MeshDimName.tp in ep_mesh.mesh_dim_names:
+        return ep_mesh[MeshDimName.tp].size()
+    else:
+        raise RuntimeError("could not determine expert parallel shard sub-mesh")

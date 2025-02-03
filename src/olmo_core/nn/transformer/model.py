@@ -277,16 +277,13 @@ class Transformer(nn.Module):
             parallelize_module,
         )
 
-        emb_output_layout = cast(TransformerBlockBase, self.blocks["0"]).tp_input_layouts
         parallelize_module(
             module=self,
             device_mesh=tp_mesh,
             parallelize_plan={
                 "embeddings": RowwiseParallel(
                     input_layouts=Replicate(),
-                    output_layouts=emb_output_layout[0]
-                    if isinstance(emb_output_layout, tuple)
-                    else emb_output_layout,
+                    use_local_output=False,
                 ),
                 "lm_head": PrepareModuleInput(
                     # block output layouts are same as block input layouts
@@ -303,7 +300,13 @@ class Transformer(nn.Module):
         #       by folding (and unfolding) the batch dimension and the sequence dimension.
         #       Examples can be found at https://github.com/pytorch/torchtitan/pull/437
         for block in self.blocks.values():
-            cast(TransformerBlockBase, block).apply_tp(tp_mesh, float8_enabled=float8_enabled)
+            block = cast(TransformerBlockBase, block)
+            block.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+            parallelize_module(
+                block,
+                device_mesh=tp_mesh,
+                parallelize_plan=PrepareModuleInput(desired_input_layouts=block.tp_input_layouts),
+            )
 
     def apply_activation_checkpointing(
         self,
@@ -654,6 +657,6 @@ class MoETransformer(Transformer):
 
         return self.lm_head(h) if self.lm_head is not None else h
 
-    def apply_ep(self, ep_mesh: DeviceMesh):
+    def apply_ep(self, ep_mesh: Optional[DeviceMesh] = None):
         for block in self.blocks.values():
             cast(MoETransformerBlock, block).apply_ep(ep_mesh)

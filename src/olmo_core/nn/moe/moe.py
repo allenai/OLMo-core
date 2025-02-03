@@ -5,9 +5,13 @@ from typing import Dict, List, Optional, Union
 import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
+from torch.distributed.tensor import Placement, Replicate, Shard
+from torch.distributed.tensor.parallel import PrepareModuleOutput, parallelize_module
 
-from ...config import Config, StrEnum
-from ...exceptions import OLMoConfigurationError
+from olmo_core.config import Config, StrEnum
+from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
+from olmo_core.exceptions import OLMoConfigurationError
+
 from .loss import MoELoadBalancingLoss, MoELoss, MoERouterZLoss
 from .mlp import MoEMLP, MoEMLPConfig
 from .parallel_mlp import ParallelDroplessMLP, ParallelMLP
@@ -164,11 +168,33 @@ class MoEBase(nn.Module):
 
         return out
 
-    def apply_ep(self, ep_mesh: DeviceMesh):
+    def apply_ep(self, ep_mesh: Optional[DeviceMesh] = None):
         """
         Apply expert parallelism.
         """
         self.experts.apply_ep(ep_mesh)
+
+    def apply_tp(
+        self,
+        tp_mesh: Optional[DeviceMesh] = None,
+        output_layouts: Optional[Placement] = None,
+        use_local_output: bool = True,
+    ):
+        parallelize_module(
+            self.router,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(use_local_output=True),
+        )
+        self.experts.apply_ep(tp_mesh)
+        parallelize_module(
+            self,
+            device_mesh=tp_mesh,
+            parallelize_plan=PrepareModuleOutput(
+                output_layouts=(Shard(1),),
+                desired_output_layouts=(output_layouts or Replicate(),),
+                use_local_output=use_local_output,
+            ),
+        )
 
 
 class DroplessMoE(MoEBase):
