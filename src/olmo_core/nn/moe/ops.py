@@ -151,6 +151,100 @@ def scatter(
     return ScatterOp.apply(x, indices, bin_ids, weights, bins, top_k)  # type: ignore
 
 
+class BinnedGatherOp(torch.autograd.Function):
+    @staticmethod
+    @autocast_fwd
+    def forward(
+        ctx: Any,
+        x: torch.Tensor,
+        indices: torch.Tensor,
+        bins: torch.Tensor,
+        bin_size: int,
+        top_k: int,
+    ):
+        from . import kernels
+
+        ctx.save_for_backward(indices, bins)
+        ctx.top_k = top_k
+        return kernels.binned_gather(x, indices, None, bins, bin_size, top_k)
+
+    @staticmethod
+    @autocast_bwd
+    def backward(ctx: Any, grad: torch.Tensor):
+        from . import kernels
+
+        grad = grad.contiguous()
+        indices, bins = ctx.saved_tensors
+        out = kernels.binned_scatter(grad, indices, None, bins, ctx.top_k)
+        return out, None, None, None, None
+
+
+def binned_gather(
+    x: torch.Tensor, indices: torch.Tensor, bins: torch.Tensor, bin_size: int, top_k: int
+) -> torch.Tensor:
+    return BinnedGatherOp.apply(x, indices, bins, bin_size, top_k)  # type: ignore
+
+
+class BinnedScatterOp(torch.autograd.Function):
+    @staticmethod
+    @autocast_fwd
+    def forward(
+        ctx: Any,
+        x: torch.Tensor,
+        indices: torch.Tensor,
+        weights: torch.Tensor,
+        bins: torch.Tensor,
+        top_k: int,
+    ):
+        from . import kernels
+
+        assert len(x.size()) == 3
+        ctx.bin_size = x.size(1)
+        ctx.top_k = top_k
+
+        # TODO(tgale): Don't save 'x' for backwards if we don't need to
+        # calculate the gradient w.r.t. 'weights'.
+        ctx.save_for_backward(x, indices, weights, bins)
+        return kernels.binned_scatter(x, indices, weights, bins, top_k)
+
+    @staticmethod
+    @autocast_bwd
+    def backward(ctx: Any, grad: torch.Tensor):
+        from . import kernels
+
+        grad = grad.contiguous()
+        x, indices, weights, bins = ctx.saved_tensors
+        out = kernels.binned_gather(
+            grad,
+            indices,
+            weights,
+            bins,
+            ctx.bin_size,
+            ctx.top_k,
+        )
+
+        wgrad = None
+        if ctx.needs_input_grad[2]:
+            wgrad = kernels.binned_scatter_wgrad(
+                x,
+                grad,
+                indices,
+                bins,
+                ctx.top_k,
+            )
+        return out, None, wgrad, None, None
+
+
+def binned_scatter(
+    x: torch.Tensor,
+    indices: torch.Tensor,
+    weights: torch.Tensor,
+    bins: torch.Tensor,
+    top_k: int,
+) -> torch.Tensor:
+    return BinnedScatterOp.apply(x, indices, weights, bins, top_k)  # type: ignore
+
+
 def repeat(x: torch.Tensor, tiling: Union[torch.Size, Tuple[int, ...]]) -> torch.Tensor:
     if all((t == 1 for t in tiling)):
         return x

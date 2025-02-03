@@ -14,16 +14,21 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from .loss import MoELoadBalancingLoss, MoELoss, MoERouterZLoss
 from .mlp import MoEMLP, MoEMLPConfig
-from .parallel_mlp import ParallelDroplessMLP, ParallelMLP
+from .parallel_mlp import ParallelDroplessMLP, ParallelMLP, ParallelMLPBase
 from .router import MoERouterConfig
 from .shared_mlp import SharedMLPConfig
 
-__all__ = ["MoEBase", "DroplessMoE", "MoEConfig", "MoEType"]
+__all__ = ["MoEBase", "MoE", "DroplessMoE", "MoEConfig", "MoEType"]
 
 
 class MoEType(StrEnum):
     """
     An enumeration of the different MoE implementations.
+    """
+
+    default = "default"
+    """
+    ➡️ :class:`MoE`
     """
 
     dropless = "dropless"
@@ -34,12 +39,13 @@ class MoEType(StrEnum):
 
 @dataclass
 class MoEConfig(Config):
-    name: MoEType = MoEType.dropless
+    name: MoEType = MoEType.dropless  # TODO: change to default
     """
     The name of the implementation.
     """
     num_experts: int = 1
     hidden_size: int = 256
+    capacity_factor: Optional[float] = None
     router: MoERouterConfig = field(default_factory=MoERouterConfig)
     mlp: MoEMLPConfig = field(default_factory=MoEMLPConfig)
     shared_mlp: Optional[SharedMLPConfig] = None
@@ -101,11 +107,12 @@ class MoEBase(nn.Module):
         init_device: str = "cpu",
         lb_loss_weight: Optional[float] = None,
         z_loss_weight: Optional[float] = None,
+        **kwargs,
     ):
         super().__init__()
         self.router = router.build(d_model, num_experts, init_device=init_device)
         self.experts = self._init_parallel_mlp(
-            mlp.build(d_model, num_experts, hidden_size, init_device=init_device)
+            mlp.build(d_model, num_experts, hidden_size, init_device=init_device), **kwargs
         )
         self.shared_experts = (
             None
@@ -142,9 +149,8 @@ class MoEBase(nn.Module):
         for loss_fn in self.losses:
             loss_fn.reset()
 
-    @classmethod
     @abstractmethod
-    def _init_parallel_mlp(cls, mlp: MoEMLP) -> ParallelMLP:
+    def _init_parallel_mlp(self, mlp: MoEMLP, **kwargs) -> ParallelMLPBase:
         raise NotImplementedError
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -197,11 +203,48 @@ class MoEBase(nn.Module):
         )
 
 
+class MoE(MoEBase):
+    """
+    A basic MoE implementation.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        num_experts: int,
+        hidden_size: int,
+        router: MoERouterConfig,
+        mlp: MoEMLPConfig,
+        num_layers: int,
+        shared_mlp: Optional[SharedMLPConfig] = None,
+        capacity_factor: float = 1.2,
+        init_device: str = "cpu",
+        lb_loss_weight: Optional[float] = None,
+        z_loss_weight: Optional[float] = None,
+    ):
+        super().__init__(
+            d_model=d_model,
+            num_experts=num_experts,
+            hidden_size=hidden_size,
+            router=router,
+            mlp=mlp,
+            num_layers=num_layers,
+            shared_mlp=shared_mlp,
+            init_device=init_device,
+            lb_loss_weight=lb_loss_weight,
+            z_loss_weight=z_loss_weight,
+            capacity_factor=capacity_factor,
+        )
+
+    def _init_parallel_mlp(self, mlp: MoEMLP, *, capacity_factor: float) -> ParallelMLP:  # type: ignore[override]
+        return ParallelMLP(mlp=mlp, capacity_factor=capacity_factor)
+
+
 class DroplessMoE(MoEBase):
     """
     A dropless MoE implementation.
     """
 
-    @classmethod
-    def _init_parallel_mlp(cls, mlp: MoEMLP) -> ParallelMLP:
+    def _init_parallel_mlp(self, mlp: MoEMLP) -> ParallelDroplessMLP:  # type: ignore[override]
         return ParallelDroplessMLP(mlp=mlp)

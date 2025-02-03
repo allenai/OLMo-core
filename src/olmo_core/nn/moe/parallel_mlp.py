@@ -1,5 +1,6 @@
 # Adapted from 'https://github.com/databricks/megablocks/blob/main/megablocks/layers/moe.py' and 'dmoe.py'
 
+from abc import abstractmethod
 from typing import Optional, Tuple
 
 import torch
@@ -11,10 +12,10 @@ from ...distributed.utils import get_world_size
 from . import ops
 from .mlp import MoEMLP
 
-__all__ = ["ParallelMLP", "ParallelDroplessMLP"]
+__all__ = ["ParallelMLPBase", "ParallelMLP", "ParallelDroplessMLP"]
 
 
-class ParallelMLP(nn.Module):
+class ParallelMLPBase(nn.Module):
     """
     Wraps an MoE MLP layer to coordinate the routing and expert parallelism.
     """
@@ -58,6 +59,33 @@ class ParallelMLP(nn.Module):
         self._ep_mesh = ep_mesh
         self._ep_pg = None if ep_mesh is None else ep_mesh.get_group()
 
+    def indices_and_bins(
+        self, expert_indices: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        :param expert_indices: A 1D tensor.
+        """
+        # Histogram the expert ids to identify the number of
+        # items/tokens routed to each expert.
+        # shape: (num_experts,), LongTensor
+        batch_size_per_expert = torch.histc(
+            expert_indices, bins=self.num_experts, min=0, max=self.num_experts - 1
+        )
+
+        expert_indices = expert_indices.int()
+
+        # Sort the expert ids to produce the scatter/gather
+        # indices for the permutation.
+        # shape: (N,), (N,)
+        bin_ids, indices = torch.sort(expert_indices)
+
+        # Calculate the bin bounds for the sorted items/tokens.
+        # shape: (num_experts,)
+        bins = torch.empty_like(batch_size_per_expert, dtype=torch.int32)
+        torch.cumsum(batch_size_per_expert, 0, out=bins)
+
+        return indices.int(), bin_ids, bins, batch_size_per_expert
+
     def forward(
         self,
         x: torch.Tensor,
@@ -72,21 +100,6 @@ class ParallelMLP(nn.Module):
         :returns: The output with the same shape as ``x`` and a tensor with shape ``(num_experts,)``
             containing the number of items/tokens routed to each expert.
         """
-        del x, expert_weights, expert_indices
-        raise NotImplementedError
-
-
-class ParallelDroplessMLP(ParallelMLP):
-    """
-    A dropless implementation of a :class:`ParallelMLP`.
-    """
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        expert_weights: torch.Tensor,
-        expert_indices: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
         in_shape = x.size()
 
         # Compute the experts.
@@ -97,6 +110,7 @@ class ParallelDroplessMLP(ParallelMLP):
 
         return x.view(in_shape), batch_size_per_expert
 
+    @abstractmethod
     def forward_once(
         self,
         x: torch.Tensor,
@@ -109,28 +123,9 @@ class ParallelDroplessMLP(ParallelMLP):
             typically equals ``batch_size x seq_len``.
         :param expert_indices: The indices of the top-k experts, shape ``(N, top_k)``.
         """
-        top_k = expert_weights.shape[-1]
+        raise NotImplementedError
 
-        # shape: (N * top_k,)
-        expert_weights = expert_weights.flatten()
-        # shape: (N * top_k,)
-        expert_indices = expert_indices.flatten()
-
-        with torch.no_grad():
-            indices, bin_ids, bins, tokens_per_expert = self.indices_and_bins(expert_indices)
-
-        out = self.permute_and_compute(
-            x,
-            tokens_per_expert,
-            indices,
-            bin_ids,
-            expert_weights,
-            bins,
-            top_k,
-        )
-
-        return out, tokens_per_expert
-
+    @abstractmethod
     def parallel_forward_once(
         self,
         x: torch.Tensor,
@@ -143,6 +138,116 @@ class ParallelDroplessMLP(ParallelMLP):
             typically equals ``batch_size x seq_len``.
         :param expert_indices: The indices of the top-k experts, shape ``(N, top_k)``.
         """
+        raise NotImplementedError
+
+
+class ParallelMLP(ParallelMLPBase):
+    def __init__(self, *, mlp: MoEMLP, capacity_factor: float):
+        super().__init__(mlp=mlp)
+        self.capacity_factor = capacity_factor
+
+    def expert_capacity(self, top_k: int, num_items: int) -> int:
+        items_per_expert = top_k * num_items * self.ep_world_size / self.num_experts
+        return int(self.capacity_factor * items_per_expert)
+
+    def forward_once(
+        self,
+        x: torch.Tensor,
+        expert_weights: torch.Tensor,
+        expert_indices: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        num_items, top_k = expert_weights.shape
+
+        # shape: (N * top_k,)
+        expert_weights = expert_weights.flatten()
+        # shape: (N * top_k,)
+        expert_indices = expert_indices.flatten()
+
+        with torch.no_grad():
+            indices, _, bins, batch_size_per_expert = self.indices_and_bins(expert_indices)
+            expert_capacity = self.expert_capacity(top_k, num_items)
+
+        x = self.permute_and_compute(
+            x,
+            indices,
+            expert_weights,
+            bins,
+            expert_capacity,
+            top_k,
+        )
+        return x, batch_size_per_expert
+
+    def parallel_forward_once(
+        self,
+        x: torch.Tensor,
+        expert_weights: torch.Tensor,
+        expert_indices: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        del x, expert_weights, expert_indices
+        raise NotImplementedError
+
+    def permute_and_compute(
+        self,
+        x: torch.Tensor,
+        indices: torch.Tensor,
+        expert_weights: torch.Tensor,
+        bins: torch.Tensor,
+        expert_capacity: int,
+        top_k: int,
+    ) -> torch.Tensor:
+        # Route the tokens for MoE computation.
+        x = x.view(-1, x.shape[-1])
+        x = ops.binned_gather(x, indices, bins, expert_capacity, top_k)
+
+        # Perform the expert computation.
+        x = self.mlp(x)
+
+        # Un-route the data for the MoE output.
+        return ops.binned_scatter(x, indices, expert_weights, bins, top_k)
+
+
+class ParallelDroplessMLP(ParallelMLPBase):
+    """
+    A dropless implementation of a :class:`ParallelMLP`.
+
+    .. warning::
+        When expert parallelism is enabled the forward pass involves a host-device sync.
+    """
+
+    def forward_once(
+        self,
+        x: torch.Tensor,
+        expert_weights: torch.Tensor,
+        expert_indices: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        top_k = expert_weights.shape[-1]
+
+        # shape: (N * top_k,)
+        expert_weights = expert_weights.flatten()
+        # shape: (N * top_k,)
+        expert_indices = expert_indices.flatten()
+
+        with torch.no_grad():
+            indices, bin_ids, bins, batch_size_per_expert = self.indices_and_bins(expert_indices)
+
+        out = self.permute_and_compute(
+            x,
+            batch_size_per_expert,
+            indices,
+            bin_ids,
+            expert_weights,
+            bins,
+            top_k,
+        )
+
+        return out, batch_size_per_expert
+
+    def parallel_forward_once(
+        self,
+        x: torch.Tensor,
+        expert_weights: torch.Tensor,
+        expert_indices: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         # NOTE: This function implements the same computation as forward_once
         # but with expert model parallelism.
         #
@@ -302,33 +407,6 @@ class ParallelDroplessMLP(ParallelMLP):
         x = ops.scatter(x, indices, bin_ids, expert_weights, bins, top_k)
 
         return x, tokens_per_expert.flatten()
-
-    def indices_and_bins(
-        self, expert_indices: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        :param expert_indices: A 1D tensor.
-        """
-        # Histogram the expert ids to identify the number of
-        # items/tokens routed to each expert.
-        # shape: (num_experts,), LongTensor
-        batch_size_per_expert = torch.histc(
-            expert_indices, bins=self.num_experts, min=0, max=self.num_experts - 1
-        )
-
-        expert_indices = expert_indices.int()
-
-        # Sort the expert ids to produce the scatter/gather
-        # indices for the permutation.
-        # shape: (N,), (N,)
-        bin_ids, indices = torch.sort(expert_indices)
-
-        # Calculate the bin bounds for the sorted items/tokens.
-        # shape: (num_experts,)
-        bins = torch.empty_like(batch_size_per_expert, dtype=torch.int32)
-        torch.cumsum(batch_size_per_expert, 0, out=bins)
-
-        return indices.int(), bin_ids, bins, batch_size_per_expert
 
     def permute_and_compute(
         self,
