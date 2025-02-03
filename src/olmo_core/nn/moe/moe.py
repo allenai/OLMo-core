@@ -247,7 +247,7 @@ class MoE(MoEBase):
             capacity_factor=capacity_factor,
         )
 
-    def _init_parallel_mlp(
+    def _init_parallel_mlp(  # type: ignore[override]
         self,
         mlp: MoEMLPConfig,
         d_model: int,
@@ -276,7 +276,7 @@ class DroplessMoE(MoEBase):
     A dropless MoE implementation.
     """
 
-    def _init_parallel_mlp(
+    def _init_parallel_mlp(  # type: ignore[override]
         self,
         mlp: MoEMLPConfig,
         d_model: int,

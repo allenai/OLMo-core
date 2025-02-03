@@ -132,9 +132,9 @@ class MoEMLPBase(nn.Module):
         self.experts_per_rank = self.num_experts // num_shards
         self.gradient_scale = 1.0 / num_shards
 
-        self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, ep_mesh, [Shard(0)])))
-        self.register_parameter("w2", nn.Parameter(distribute_tensor(self.w2, ep_mesh, [Shard(0)])))
-        self.register_parameter("w3", nn.Parameter(distribute_tensor(self.w3, ep_mesh, [Shard(0)])))
+        self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, ep_mesh, [Shard(0)])))  # type: ignore
+        self.register_parameter("w2", nn.Parameter(distribute_tensor(self.w2, ep_mesh, [Shard(0)])))  # type: ignore
+        self.register_parameter("w3", nn.Parameter(distribute_tensor(self.w3, ep_mesh, [Shard(0)])))  # type: ignore
 
 
 class MoEMLP(MoEMLPBase):
