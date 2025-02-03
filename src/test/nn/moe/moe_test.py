@@ -3,9 +3,12 @@ import math
 import pytest
 import torch
 import torch.distributed as dist
-from torch.distributed.tensor import init_device_mesh
 
 from olmo_core.config import DType
+from olmo_core.distributed.parallel import (
+    ExpertParallelConfig,
+    build_expert_parallel_mesh,
+)
 from olmo_core.nn.moe import MoEConfig, MoEMLPConfig, MoERouterConfig, MoEType
 from olmo_core.utils import get_default_device
 
@@ -59,7 +62,7 @@ def test_moe(moe_type, dtype):
 
 
 def run_moe_with_expert_parallelism(moe_type, dtype):
-    ep_mesh = init_device_mesh(get_default_device().type, (dist.get_world_size(),))
+    ep_mesh = build_expert_parallel_mesh(ExpertParallelConfig(degree=min(dist.get_world_size(), 2)))
 
     d_model = 128
     config = MoEConfig(
