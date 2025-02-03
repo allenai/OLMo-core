@@ -49,7 +49,7 @@ class ParallelMLP(nn.Module):
         else:
             return 1
 
-    def apply_ep(self, ep_mesh: Optional[DeviceMesh] = None):
+    def apply_ep(self, ep_mesh: DeviceMesh):
         """
         Apply expert parallelism.
         """

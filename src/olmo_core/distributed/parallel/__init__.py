@@ -164,7 +164,7 @@ def build_device_mesh(
 
 def build_expert_parallel_mesh(
     ep_config: ExpertParallelConfig, device_type: Optional[str] = None
-) -> Optional[DeviceMesh]:
+) -> DeviceMesh:
     """
     Build a device mesh for expert parallelism.
     """
@@ -172,7 +172,7 @@ def build_expert_parallel_mesh(
     world_size = get_world_size()
 
     if ep_config.degree == world_size:
-        return None
+        return init_device_mesh(device_type, (world_size,), mesh_dim_names=(MeshDimName.ep_shard,))
 
     # Build up mesh dimensions.
     names: List[str] = []
@@ -298,15 +298,10 @@ def get_pp_mesh(
         return None
 
 
-def get_num_ep_shards(
-    ep_mesh: Optional[DeviceMesh] = None, *, shard_dim_name: Optional[str] = None
-) -> int:
+def get_num_ep_shards(ep_mesh: DeviceMesh, *, shard_dim_name: Optional[str] = None) -> int:
     """
     Get the number of expert parallel shards.
     """
-    if ep_mesh is None:
-        return get_world_size()
-
     if ep_mesh.mesh_dim_names is None:
         raise RuntimeError("could not determine expert parallel shard sub-mesh")
     elif shard_dim_name is not None:

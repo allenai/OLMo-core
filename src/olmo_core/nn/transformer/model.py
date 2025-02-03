@@ -657,6 +657,6 @@ class MoETransformer(Transformer):
 
         return self.lm_head(h) if self.lm_head is not None else h
 
-    def apply_ep(self, ep_mesh: Optional[DeviceMesh] = None):
+    def apply_ep(self, ep_mesh: DeviceMesh):
         for block in self.blocks.values():
             cast(MoETransformerBlock, block).apply_ep(ep_mesh)

@@ -200,7 +200,7 @@ class MoEMLP(nn.Module):
         x1 = F.silu(x1) * x2
         return self.gmm(x1, w2, batch_size_per_expert)
 
-    def apply_ep(self, ep_mesh: Optional[DeviceMesh] = None):
+    def apply_ep(self, ep_mesh: DeviceMesh):
         """
         Apply expert parallelism.
         """

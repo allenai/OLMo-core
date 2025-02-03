@@ -168,7 +168,7 @@ class MoEBase(nn.Module):
 
         return out
 
-    def apply_ep(self, ep_mesh: Optional[DeviceMesh] = None):
+    def apply_ep(self, ep_mesh: DeviceMesh):
         """
         Apply expert parallelism.
         """
@@ -176,7 +176,7 @@ class MoEBase(nn.Module):
 
     def apply_tp(
         self,
-        tp_mesh: Optional[DeviceMesh] = None,
+        tp_mesh: DeviceMesh,
         output_layouts: Optional[Placement] = None,
         use_local_output: bool = True,
     ):

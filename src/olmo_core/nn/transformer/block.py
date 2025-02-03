@@ -399,7 +399,7 @@ class MoETransformerBlock(TransformerBlockBase):
         )
         return h + self.dropout(self.feed_forward_moe(self.feed_forward_norm(h)))
 
-    def apply_ep(self, ep_mesh: Optional[DeviceMesh] = None):
+    def apply_ep(self, ep_mesh: DeviceMesh):
         self.feed_forward_moe.apply_ep(ep_mesh)
 
     def tp_input_layouts(self) -> Union[Placement, Tuple[Placement, ...]]:
