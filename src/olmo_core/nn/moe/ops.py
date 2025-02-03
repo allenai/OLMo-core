@@ -192,7 +192,7 @@ class BinnedScatterOp(torch.autograd.Function):
         ctx: Any,
         x: torch.Tensor,
         indices: torch.Tensor,
-        weights: torch.Tensor,
+        weights: Optional[torch.Tensor],
         bins: torch.Tensor,
         top_k: int,
     ):
@@ -238,7 +238,7 @@ class BinnedScatterOp(torch.autograd.Function):
 def binned_scatter(
     x: torch.Tensor,
     indices: torch.Tensor,
-    weights: torch.Tensor,
+    weights: Optional[torch.Tensor],
     bins: torch.Tensor,
     top_k: int,
 ) -> torch.Tensor:
@@ -254,7 +254,12 @@ def repeat(x: torch.Tensor, tiling: Union[torch.Size, Tuple[int, ...]]) -> torch
 class AllToAllOp(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, output_split_sizes, input_split_sizes, group, async_op):
-        out = torch.empty((sum(output_split_sizes),) + x.shape[1:], device=x.device, dtype=x.dtype)
+        if output_split_sizes is not None:
+            out = torch.empty(
+                (sum(output_split_sizes),) + x.shape[1:], device=x.device, dtype=x.dtype
+            )
+        else:
+            out = torch.empty_like(x)
 
         ctx.input_shape = x.shape
         ctx.output_split_sizes = output_split_sizes
@@ -291,8 +296,8 @@ class AllToAllOp(torch.autograd.Function):
 
 def all_to_all(
     x: torch.Tensor,
-    output_split_sizes: List[int],
-    input_split_sizes: List[int],
+    output_split_sizes: Optional[List[int]] = None,
+    input_split_sizes: Optional[List[int]] = None,
     group: Optional[dist.ProcessGroup] = None,
     async_op: bool = False,
 ) -> Tuple[torch.Tensor, Any]:

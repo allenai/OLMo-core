@@ -181,9 +181,9 @@ class MoEMLP(nn.Module):
         """
         Compute the expert outputs.
 
-        :param x: The input of shape ``(N, d_model)``.
+        :param x: The input of shape ``(*, d_model)``.
         :param batch_size_per_expert: Specifies how many items/tokens go to each expert. Should be a
-            1-D ``LongTensor`` which sums to ``N``.
+            1-D ``LongTensor``.
         """
         # Scale gradients and get local tensors (in case of expert parallelism).
         # shape (all): (experts_per_rank, hidden_size, d_model)

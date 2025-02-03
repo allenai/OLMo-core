@@ -8,7 +8,9 @@ import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 
-from ...distributed.utils import get_world_size
+from olmo_core.distributed.utils import get_world_size
+from olmo_core.utils import move_to_device
+
 from . import ops
 from .mlp import MoEMLP
 
@@ -77,6 +79,8 @@ class ParallelMLPBase(nn.Module):
         # Sort the expert ids to produce the scatter/gather
         # indices for the permutation.
         # shape: (N,), (N,)
+        # TODO: for non-dropless MoE, should do secondary sort by expert weight so we drop tokens
+        # with the lowest expert weight.
         bin_ids, indices = torch.sort(expert_indices)
 
         # Calculate the bin bounds for the sorted items/tokens.
@@ -169,11 +173,11 @@ class ParallelMLP(ParallelMLPBase):
 
         x = self.permute_and_compute(
             x,
-            indices,
-            expert_weights,
-            bins,
-            expert_capacity,
-            top_k,
+            indices=indices,
+            expert_weights=expert_weights,
+            bins=bins,
+            expert_capacity=expert_capacity,
+            top_k=top_k,
         )
         return x, batch_size_per_expert
 
@@ -183,26 +187,149 @@ class ParallelMLP(ParallelMLPBase):
         expert_weights: torch.Tensor,
         expert_indices: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        del x, expert_weights, expert_indices
-        raise NotImplementedError
+        # NOTE: This function implements the same computation as forward_once
+        # but with expert model parallelism.
+        #
+        # 1. Permute the tokens locally so that they are grouped by their
+        # expert assignments. This allows us to transfer all of the tokens
+        # for a remote device in one communication primitive.
+        #
+        # 2. Permute the tokens across the expert parallel devices. After
+        # this is completed each device has all of the tokens assigned to
+        # its set of experts in its local HBM.
+        #
+        # 3. Permute the tokens locally so that they are grouped by their
+        # expert assignment. After the distributed permutation the tokens
+        # are grouped by which device they came from. We re-order them
+        # locally to allow for efficient computation.
+        #
+        # After this series of permutations we compute the linear layers
+        # and then repeat these three steps in reverse to produce the final
+        # output.
+
+        num_items, top_k = expert_weights.shape
+
+        # shape: (N * top_k,)
+        expert_weights = expert_weights.flatten()
+        # shape: (N * top_k,)
+        expert_indices = expert_indices.flatten()
+
+        with torch.no_grad():
+            indices, bin_ids, bins, tokens_per_expert = self.indices_and_bins(expert_indices)
+            expert_capacity = self.expert_capacity(top_k, num_items)
+
+        # Permute locally so that the tokens for each device are stored contiguously.
+        # shape: (num_experts, expert_capacity, d_model)
+        x = ops.binned_gather(x, indices, bins, expert_capacity, top_k)
+
+        # If we're sharding the experts along the hidden dimension
+        # multiple devices own parts of the same sets of experts.
+        # Replicate the token counts so devices that share experts
+        # get all of the tokens assigned to them.
+        # TODO: Fuse this into the prior, local permutation?
+        if self.hidden_sharding_degree > 1:
+            # shape: (num_local_experts, ep_world_size // hidden_sharding_degree, expert_capacity, d_model)
+            x = x.view(self.experts_per_rank, -1, expert_capacity, self.d_model)
+            # shape: (num_experts * hidden_sharding_degree, expert_capacity, d_model)
+            x = x.repeat(1, self.hidden_sharding_degree, 1, 1).view(
+                -1, expert_capacity, self.d_model
+            )
+
+        # Start the cross-device permutation asynchronously so we can
+        # overlap communication with computation.
+        # shape: (num_local_experts * ep_world_size, expert_capacity, d_model)
+        #      = (num_experts, expert_capacity, d_model)
+        parallel_x, parallel_x_handle = ops.all_to_all(
+            x,
+            group=self._ep_pg,
+            async_op=True,
+        )
+
+        with torch.no_grad():
+            # After we do the cross-device permutation we have the tokens on the
+            # correct device but not yet grouped by expert because we received
+            # tokens from each device as contiguous chunks. To group the tokens
+            # for expert computation we'll do one more local permutation. The
+            # rest of this torch.no_grad() scope sets up the indices and bins
+            # for this permutation.
+
+            # Construct the expert indices for the permuted tokens.
+            # shape: (num_experts,) = (num_local_experts * ep_world_size,)
+            parallel_top_expert = torch.remainder(
+                torch.arange(
+                    self.num_experts * self.hidden_sharding_degree,
+                    dtype=torch.int32,
+                    device=indices.device,
+                ),
+                self.experts_per_rank,
+            )
+
+            # shape: (num_experts * expert_capacity,)
+            parallel_top_expert = torch.repeat_interleave(
+                parallel_top_expert,
+                expert_capacity,
+                output_size=parallel_top_expert.numel() * expert_capacity,
+            )
+
+            # shape: (num_experts * expert_capacity,)
+            _, parallel_indices = torch.sort(parallel_top_expert)
+
+            # Calculate the bins boundaries from the token counts.
+            # shape: (num_local_experts,)
+            parallel_tokens_per_expert = move_to_device(
+                torch.tensor([expert_capacity] * self.experts_per_rank), parallel_indices.device
+            )
+            # shape: (num_local_experts,)
+            parallel_bins = torch.empty_like(parallel_tokens_per_expert, dtype=torch.int32)
+            torch.cumsum(parallel_tokens_per_expert, 0, out=parallel_bins)
+
+        # Locally permute the tokens and perform the expert computation.
+        # Block to make sure that the cross-device permutation is complete.
+        parallel_x_handle.wait()
+        parallel_x = self.permute_and_compute(
+            parallel_x,
+            indices=parallel_indices.int(),
+            expert_weights=None,  # expert_weights
+            bins=parallel_bins,
+            expert_capacity=expert_capacity,
+            top_k=1,
+        )
+
+        # Un-permute the tokens across the devices.
+        x, _ = ops.all_to_all(parallel_x, group=self._ep_pg)
+
+        # Reduce along the hidden sharding to get the final outputs.
+        # TODO: Fuse this into the following local permutation?
+        x = ops.sum_tensor(x.view(self.hidden_sharding_degree, -1, self.d_model), dim=0)
+
+        # Un-permute locally to setup for the next series of operations.
+        x = ops.scatter(x, indices, bin_ids, expert_weights, bins, top_k)
+
+        return x, tokens_per_expert.flatten()
 
     def permute_and_compute(
         self,
         x: torch.Tensor,
+        *,
         indices: torch.Tensor,
-        expert_weights: torch.Tensor,
+        expert_weights: Optional[torch.Tensor],
         bins: torch.Tensor,
         expert_capacity: int,
         top_k: int,
     ) -> torch.Tensor:
-        # Route the tokens for MoE computation.
+        # shape: (N, d_model)
         x = x.view(-1, x.shape[-1])
+
+        # Route the tokens for MoE computation.
+        # shape: (num_experts, expert_capacity, d_model)
         x = ops.binned_gather(x, indices, bins, expert_capacity, top_k)
 
         # Perform the expert computation.
-        x = self.mlp(x)
+        # shape: (num_experts, expert_capacity, d_model)
+        x = self.mlp(x, torch.tensor([expert_capacity] * x.shape[0]))
 
-        # Un-route the data for the MoE output.
+        # Un-route the data for the MoE output. Items that were dropped will be zeroed out.
+        # shape: (N, d_model)
         return ops.binned_scatter(x, indices, expert_weights, bins, top_k)
 
 
@@ -232,12 +359,12 @@ class ParallelDroplessMLP(ParallelMLPBase):
 
         out = self.permute_and_compute(
             x,
-            batch_size_per_expert,
-            indices,
-            bin_ids,
-            expert_weights,
-            bins,
-            top_k,
+            batch_size_per_expert=batch_size_per_expert,
+            indices=indices,
+            bin_ids=bin_ids,
+            expert_weights=expert_weights,
+            bins=bins,
+            top_k=top_k,
         )
 
         return out, batch_size_per_expert
@@ -316,7 +443,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
                 self.ep_world_size, self.experts_per_rank
             )
 
-            # TODO: can we avoid the host-device sync?
+            # NOTE: host-device sync here.
             send_counts = repeated_tokens_per_expert.sum(dim=-1).cpu().tolist()
             recv_counts = parallel_tokens_per_expert.sum(dim=-1).cpu().tolist()
             tokens_received = sum(recv_counts)
@@ -361,12 +488,6 @@ class ParallelDroplessMLP(ParallelMLPBase):
                 parallel_tokens_per_expert.flatten(),
                 output_size=tokens_received,
             )
-            #  replicate_bins = torch.cumsum(parallel_tokens_per_expert.flatten(), 0)
-            #  parallel_top_expert = ops.replicate(
-            #      parallel_top_expert.unsqueeze(dim=0),
-            #      replicate_bins,
-            #      tokens_received,
-            #  ).flatten()
 
             parallel_bin_ids, parallel_indices = torch.sort(parallel_top_expert)
 
@@ -383,12 +504,12 @@ class ParallelDroplessMLP(ParallelMLPBase):
         parallel_x_handle.wait()
         parallel_x = self.permute_and_compute(
             parallel_x,
-            parallel_tokens_per_expert,
-            parallel_indices.int(),
-            parallel_bin_ids,
-            None,  # expert_weights
-            parallel_bins,
-            1,
+            batch_size_per_expert=parallel_tokens_per_expert,
+            indices=parallel_indices.int(),
+            bin_ids=parallel_bin_ids,
+            expert_weights=None,
+            bins=parallel_bins,
+            top_k=1,
         )
 
         # Un-permute the tokens across the devices.
@@ -411,7 +532,8 @@ class ParallelDroplessMLP(ParallelMLPBase):
     def permute_and_compute(
         self,
         x: torch.Tensor,
-        tokens_per_expert: torch.Tensor,
+        *,
+        batch_size_per_expert: torch.Tensor,
         indices: torch.Tensor,
         bin_ids: torch.Tensor,
         expert_weights: Optional[torch.Tensor],
@@ -423,7 +545,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
         x = ops.gather(x, indices, bin_ids, bins, top_k)
 
         # Perform the expert computation.
-        x = self.mlp(x, tokens_per_expert)
+        x = self.mlp(x, batch_size_per_expert)
 
         # Un-route the data for the MoE output.
         return ops.scatter(x, indices, bin_ids, expert_weights, bins, top_k)

@@ -79,7 +79,9 @@ class MoEConfig(Config):
         )
 
         try:
-            if self.name == MoEType.dropless:
+            if self.name == MoEType.default:
+                return MoE(**kwargs)
+            elif self.name == MoEType.dropless:
                 return DroplessMoE(**kwargs)
             else:
                 raise NotImplementedError(self.name)
