@@ -114,7 +114,12 @@ class MoEBase(nn.Module):
         super().__init__()
         self.router = router.build(d_model, num_experts, init_device=init_device)
         self.experts = self._init_parallel_mlp(
-            mlp, d_model, num_experts, hidden_size, init_device, **kwargs
+            mlp,
+            d_model=d_model,
+            num_experts=num_experts,
+            hidden_size=hidden_size,
+            init_device=init_device,
+            **kwargs,
         )
         self.shared_experts = (
             None
@@ -155,6 +160,7 @@ class MoEBase(nn.Module):
     def _init_parallel_mlp(
         self,
         mlp: MoEMLPConfig,
+        *,
         d_model: int,
         num_experts: int,
         hidden_size: int,
@@ -250,6 +256,7 @@ class MoE(MoEBase):
     def _init_parallel_mlp(  # type: ignore[override]
         self,
         mlp: MoEMLPConfig,
+        *,
         d_model: int,
         num_experts: int,
         hidden_size: int,
@@ -279,6 +286,7 @@ class DroplessMoE(MoEBase):
     def _init_parallel_mlp(  # type: ignore[override]
         self,
         mlp: MoEMLPConfig,
+        *,
         d_model: int,
         num_experts: int,
         hidden_size: int,
