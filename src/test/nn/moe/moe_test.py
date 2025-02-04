@@ -86,10 +86,12 @@ def run_moe_with_expert_parallelism(
     # Load checkpoint.
     load_model_and_optim_state(checkpoint_dir, moe)
 
-    # Run forward pass.
+    # Split batch across process group.
     total_tokens = batch.shape[0] * batch.shape[1]
     batch = batch.to(device=get_default_device()).requires_grad_(True)
     batch = distribute_tensor(batch, device_mesh=ep_mesh, placements=(Shard(0),))
+
+    # Run forward pass.
     output = moe(batch)
     assert output.shape == batch.shape
     torch.testing.assert_close(output, expected_output.to(device=output.device))
@@ -113,6 +115,8 @@ def run_moe_with_expert_parallelism(
 def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: torch.dtype):
     seed_all(42)
 
+    device = torch.device("cuda")
+
     d_model = 128
     config = MoEConfig(
         name=moe_type,
@@ -123,13 +127,13 @@ def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: t
         dtype=DType.from_pt(dtype),
     )
     moe = config.build(d_model=d_model, num_layers=1, init_device="cpu")
-    moe.to(device=get_default_device())
+    moe.to(device=device)
 
     # Save checkpoint.
     save_model_and_optim_state(tmp_path, moe)
 
     B, S = 4, 16
-    batch = torch.randn(B, S, d_model, dtype=dtype, device="cuda", requires_grad=True)
+    batch = torch.randn(B, S, d_model, dtype=dtype, device=device, requires_grad=True)
     output = moe(batch)
     assert output.shape == batch.shape
 
