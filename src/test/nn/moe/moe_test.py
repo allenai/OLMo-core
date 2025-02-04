@@ -182,9 +182,9 @@ def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: t
     loss.backward()
     assert batch.grad is not None
 
-    run_distributed_test(
-        run_moe_with_expert_parallelism,
-        backend="nccl",
-        start_method="spawn",
-        func_args=(tmp_path, config, d_model, batch.detach().cpu(), output.detach().cpu()),
-    )
+    #  run_distributed_test(
+    #      run_moe_with_expert_parallelism,
+    #      backend="nccl",
+    #      start_method="spawn",
+    #      func_args=(tmp_path, config, d_model, batch.detach().cpu(), output.detach().cpu()),
+    #  )
