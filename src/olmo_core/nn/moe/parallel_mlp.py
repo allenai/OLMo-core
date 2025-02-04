@@ -380,25 +380,9 @@ class ParallelDroplessMLP(ParallelMLPBase):
         expert_weights: torch.Tensor,
         expert_indices: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        # NOTE: This function implements the same computation as forward_once
-        # but with expert model parallelism.
-        #
-        # 1. Permute the tokens locally so that they are grouped by their
-        # expert assignments. This allows us to transfer all of the tokens
-        # for a remote device in one communication primitive.
-        #
-        # 2. Permute the tokens across the expert parallel devices. After
-        # this is completed each device has all of the tokens assigned to
-        # its set of experts in its local HBM.
-        #
-        # 3. Permute the tokens locally so that they are grouped by their
-        # expert assignment. After the distributed permutation the tokens
-        # are grouped by which device they came from. We re-order them
-        # locally to allow for efficient computation.
-        #
-        # After this series of permutations we compute the linear layers
-        # and then repeat these three steps in reverse to produce the final
-        # output.
+        # NOTE: This function does the same thing as `ParallelMLP.parallel_forward_once()`
+        # but with extra bookkeeping to manage the dynamic sizes, and unfortunately this introduces
+        # a host-device sync.
 
         top_k = expert_weights.shape[-1]
 
