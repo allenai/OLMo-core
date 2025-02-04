@@ -335,6 +335,9 @@ class ParallelMLP(ParallelMLPBase):
         # Perform the expert computation.
         # shape: (num_experts, expert_capacity, d_model)
         x = self.mlp(x)
+        print(f"{self.mlp.w1}")
+        print(f"{self.mlp.w2}")
+        print(f"{self.mlp.w3}")
         print(f"{x=}")
 
         # Un-route the data for the MoE output. Items that were dropped will be zeroed out.
