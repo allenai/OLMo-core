@@ -171,6 +171,10 @@ class ParallelMLP(ParallelMLPBase):
         with torch.no_grad():
             indices, _, bins, batch_size_per_expert = self.indices_and_bins(expert_indices)
             expert_capacity = self.expert_capacity(top_k, num_items)
+            print(f"{indices=}")
+            print(f"{bins=}")
+            print(f"{batch_size_per_expert=}")
+            print(f"{expert_capacity=}")
 
         x = self.permute_and_compute(
             x,
@@ -326,10 +330,12 @@ class ParallelMLP(ParallelMLPBase):
         # Route the tokens for MoE computation.
         # shape: (num_experts, expert_capacity, d_model)
         x = ops.binned_gather(x, indices, bins, expert_capacity, top_k)
+        print(f"{x=}")
 
         # Perform the expert computation.
         # shape: (num_experts, expert_capacity, d_model)
         x = self.mlp(x)
+        print(f"{x=}")
 
         # Un-route the data for the MoE output. Items that were dropped will be zeroed out.
         # shape: (N, d_model)

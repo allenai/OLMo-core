@@ -132,10 +132,7 @@ class MoEMLP(MoEMLPBase):
         )
 
         # Compute the MLP.
-        x1 = torch.bmm(x, w1)
-        x2 = torch.bmm(x, w3)
-        x1 = F.silu(x1) * x2
-        return torch.bmm(x1, w2)
+        return torch.bmm(F.silu(torch.bmm(x, w1)) * torch.bmm(x, w3), w2)
 
 
 class DroplessMoEMLP(MoEMLPBase):
