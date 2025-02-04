@@ -168,6 +168,7 @@ class ParallelMLP(ParallelMLPBase):
         # shape: (N * top_k,)
         expert_weights = expert_weights.flatten()
         # shape: (N * top_k,)
+        print(f"{expert_indices=}")
         expert_indices = expert_indices.flatten()
 
         with torch.no_grad():
