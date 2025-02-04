@@ -326,7 +326,7 @@ class ParallelMLP(ParallelMLPBase):
 
         # Perform the expert computation.
         # shape: (num_experts, expert_capacity, d_model)
-        x = self.mlp(x, torch.tensor([expert_capacity] * x.shape[0]))
+        x = self.mlp(x)
 
         # Un-route the data for the MoE output. Items that were dropped will be zeroed out.
         # shape: (N, d_model)
