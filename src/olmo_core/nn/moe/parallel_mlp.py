@@ -206,6 +206,8 @@ class ParallelMLP(ParallelMLPBase):
         # After this series of permutations we compute the linear layers
         # and then repeat these three steps in reverse to produce the final
         # output.
+        # shape: (N, d_model)
+        x = x.view(-1, x.shape[-1])
 
         num_items, top_k = expert_weights.shape
 
