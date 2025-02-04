@@ -149,7 +149,11 @@ def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: t
         name=moe_type,
         num_experts=4,
         hidden_size=256,
-        router=MoERouterConfig(top_k=1, dtype=DType.from_pt(dtype)),
+        router=MoERouterConfig(
+            top_k=1,
+            uniform_expert_assignment=moe_type == MoEType.default,
+            dtype=DType.from_pt(dtype),
+        ),
         z_loss_weight=0.1,
         dtype=DType.from_pt(dtype),
     )
@@ -167,7 +171,6 @@ def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: t
     assert output.shape == batch.shape
     assert torch.isfinite(output).all()
     assert (output > 0).any()
-    print(f"before dist, expected_output={output}")
 
     # Get losses.
     losses = moe.compute_losses(B * S)
@@ -182,10 +185,9 @@ def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: t
     loss.backward()
     assert batch.grad is not None
 
-    assert False
-    #  run_distributed_test(
-    #      run_moe_with_expert_parallelism,
-    #      backend="nccl",
-    #      start_method="spawn",
-    #      func_args=(tmp_path, config, d_model, batch.detach().cpu(), output.detach().cpu()),
-    #  )
+    run_distributed_test(
+        run_moe_with_expert_parallelism,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(tmp_path, config, d_model, batch.detach().cpu(), output.detach().cpu()),
+    )

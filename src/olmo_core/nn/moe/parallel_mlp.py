@@ -168,7 +168,6 @@ class ParallelMLP(ParallelMLPBase):
         # shape: (N * top_k,)
         expert_weights = expert_weights.flatten()
         # shape: (N * top_k,)
-        print(f"{expert_indices=}")
         expert_indices = expert_indices.flatten()
 
         with torch.no_grad():
@@ -325,23 +324,18 @@ class ParallelMLP(ParallelMLPBase):
     ) -> torch.Tensor:
         # shape: (N, d_model)
         x = x.view(-1, x.shape[-1])
-        print(f"A, {x=}")
 
         # Route the tokens for MoE computation.
         # shape: (num_experts, expert_capacity, d_model)
         x = ops.binned_gather(x, indices, bins, expert_capacity, top_k)
-        print(f"B, {x=}")
 
         # Perform the expert computation.
         # shape: (num_experts, expert_capacity, d_model)
         x = self.mlp(x)
-        print(f"C, {x=}")
 
         # Un-route the data for the MoE output. Items that were dropped will be zeroed out.
         # shape: (N, d_model)
-        x = ops.binned_scatter(x, indices, expert_weights, bins, top_k)
-        print(f"D, {x=}")
-        return x
+        return ops.binned_scatter(x, indices, expert_weights, bins, top_k)
 
 
 class ParallelDroplessMLP(ParallelMLPBase):
