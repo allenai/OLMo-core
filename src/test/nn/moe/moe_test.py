@@ -100,7 +100,7 @@ def run_moe_with_expert_parallelism(moe_type, dtype):
 
 
 @requires_multi_gpu
-@pytest.mark.parametrize("moe_type", [MoEType.dropless])
+@pytest.mark.parametrize("moe_type", [MoEType.dropless, MoEType.default])
 @pytest.mark.parametrize("dtype", [pytest.param(torch.bfloat16, id="BF16")])
 def test_moe_with_expert_parallelism(moe_type, dtype):
     run_distributed_test(
