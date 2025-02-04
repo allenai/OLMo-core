@@ -33,8 +33,8 @@ class SharedMLPConfig(Config):
     The name of the implementation.
     """
     weighted_sum: bool = True
-    bias: Optional[bool] = None
-    dtype: DType = DType.float32
+    bias: bool = True
+    dtype: Optional[DType] = None
 
     def num_params(self, d_model: int, hidden_size: int) -> int:
         """
@@ -50,7 +50,14 @@ class SharedMLPConfig(Config):
 
         return params
 
-    def build(self, d_model: int, hidden_size: int, *, init_device: str = "cpu") -> "SharedMLP":
+    def build(
+        self,
+        d_model: int,
+        hidden_size: int,
+        *,
+        dtype: Optional[torch.dtype] = None,
+        init_device: str = "cpu",
+    ) -> "SharedMLP":
         """
         Build the corresponding shared MLP module.
 
@@ -65,6 +72,10 @@ class SharedMLPConfig(Config):
             init_device=init_device,
             dtype=kwargs.pop("dtype").as_pt(),
         )
+        if self.dtype is not None:
+            kwargs["dtype"] = self.dtype.as_pt()
+        elif dtype is not None:
+            kwargs["dtype"] = dtype
 
         try:
             if self.name == SharedMLPType.default:

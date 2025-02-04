@@ -9,7 +9,7 @@ from olmo_core.distributed.parallel import (
     ExpertParallelConfig,
     build_expert_parallel_mesh,
 )
-from olmo_core.nn.moe import MoEConfig, MoEMLPConfig, MoERouterConfig, MoEType
+from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
 from olmo_core.utils import get_default_device, seed_all
 
 from ...distributed.utils import requires_multi_gpu, run_distributed_test
@@ -28,8 +28,8 @@ def test_moe(moe_type, dtype):
         num_experts=4,
         hidden_size=256,
         router=MoERouterConfig(top_k=1, dtype=DType.from_pt(dtype)),
-        mlp=MoEMLPConfig(dtype=DType.from_pt(dtype)),
         z_loss_weight=0.1,
+        dtype=DType.from_pt(dtype),
     )
     moe = config.build(d_model=d_model, num_layers=1, init_device="cuda")
 
@@ -73,8 +73,8 @@ def run_moe_with_expert_parallelism(moe_type, dtype):
         num_experts=4,
         hidden_size=256,
         router=MoERouterConfig(top_k=1, dtype=DType.from_pt(dtype)),
-        mlp=MoEMLPConfig(dtype=DType.from_pt(dtype)),
         z_loss_weight=0.1,
+        dtype=DType.from_pt(dtype),
     )
     moe = config.build(d_model=d_model, num_layers=1, init_device="meta")
     moe.apply_ep(ep_mesh)

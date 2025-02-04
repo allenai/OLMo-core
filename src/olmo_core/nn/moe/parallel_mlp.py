@@ -1,4 +1,5 @@
-# Adapted from 'https://github.com/databricks/megablocks/blob/main/megablocks/layers/moe.py' and 'dmoe.py'
+# This code was originally adapted from 'https://github.com/databricks/megablocks/blob/main/megablocks/layers/moe.py'.
+# It has since changed substantially.
 
 from abc import abstractmethod
 from typing import Optional, Tuple

@@ -1,6 +1,6 @@
 from abc import abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Union, cast
+from typing import Dict, List, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -8,12 +8,12 @@ from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import PrepareModuleOutput, parallelize_module
 
-from olmo_core.config import Config, StrEnum
+from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.exceptions import OLMoConfigurationError
 
 from .loss import MoELoadBalancingLoss, MoELoss, MoERouterZLoss
-from .mlp import DroplessMoEMLP, MoEMLP, MoEMLPConfig, MoEMLPType
+from .mlp import DroplessMoEMLP, MoEMLP
 from .parallel_mlp import ParallelDroplessMLP, ParallelMLP, ParallelMLPBase
 from .router import MoERouterConfig
 from .shared_mlp import SharedMLPConfig
@@ -47,26 +47,24 @@ class MoEConfig(Config):
     hidden_size: int = 256
     capacity_factor: Optional[float] = None
     router: MoERouterConfig = field(default_factory=MoERouterConfig)
-    mlp: MoEMLPConfig = field(default_factory=MoEMLPConfig)
     shared_mlp: Optional[SharedMLPConfig] = None
     lb_loss_weight: Optional[float] = 1.0
     z_loss_weight: Optional[float] = None
+    dtype: DType = DType.float32
 
     def num_params(self, d_model: int) -> int:
         num_params = 0
-
         num_params += self.router.num_params(d_model, self.num_experts)
-        num_params += self.mlp.num_params(d_model, self.num_experts, self.hidden_size)
+        num_params += 3 * d_model * self.hidden_size * self.num_experts
         if self.shared_mlp is not None:
             num_params += self.shared_mlp.num_params(d_model, self.hidden_size)
-
         return num_params
 
     def num_active_params(self, d_model: int) -> int:
         return (
             self.num_params(d_model)
-            - self.mlp.num_params(d_model, self.num_experts, self.hidden_size)
-            + self.mlp.num_active_params(d_model, self.router.top_k, self.hidden_size)
+            - (3 * d_model * self.hidden_size * self.num_experts)
+            + (3 * d_model * self.hidden_size * self.router.top_k)
         )
 
     def build(self, d_model: int, *, num_layers: int, init_device: str = "cpu") -> "MoEBase":
@@ -76,6 +74,7 @@ class MoEConfig(Config):
             d_model=d_model,
             num_layers=num_layers,
             init_device=init_device,
+            dtype=kwargs.pop("dtype").as_pt(),
         )
 
         try:
@@ -103,28 +102,28 @@ class MoEBase(nn.Module):
         num_experts: int,
         hidden_size: int,
         router: MoERouterConfig,
-        mlp: MoEMLPConfig,
         num_layers: int,
         shared_mlp: Optional[SharedMLPConfig] = None,
         init_device: str = "cpu",
         lb_loss_weight: Optional[float] = None,
         z_loss_weight: Optional[float] = None,
+        dtype: torch.dtype = torch.float32,
         **kwargs,
     ):
         super().__init__()
-        self.router = router.build(d_model, num_experts, init_device=init_device)
+        self.router = router.build(d_model, num_experts, dtype=dtype, init_device=init_device)
         self.experts = self._init_parallel_mlp(
-            mlp,
             d_model=d_model,
             num_experts=num_experts,
             hidden_size=hidden_size,
+            dtype=dtype,
             init_device=init_device,
             **kwargs,
         )
         self.shared_experts = (
             None
             if shared_mlp is None
-            else shared_mlp.build(d_model, hidden_size, init_device=init_device)
+            else shared_mlp.build(d_model, hidden_size, dtype=dtype, init_device=init_device)
         )
         self.num_layers = num_layers
         self.losses: List[MoELoss] = []
@@ -159,11 +158,11 @@ class MoEBase(nn.Module):
     @abstractmethod
     def _init_parallel_mlp(
         self,
-        mlp: MoEMLPConfig,
         *,
         d_model: int,
         num_experts: int,
         hidden_size: int,
+        dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
         **kwargs,
     ) -> ParallelMLPBase:
@@ -231,48 +230,45 @@ class MoE(MoEBase):
         num_experts: int,
         hidden_size: int,
         router: MoERouterConfig,
-        mlp: MoEMLPConfig,
         num_layers: int,
         shared_mlp: Optional[SharedMLPConfig] = None,
         capacity_factor: float = 1.2,
         init_device: str = "cpu",
         lb_loss_weight: Optional[float] = None,
         z_loss_weight: Optional[float] = None,
+        dtype: torch.dtype = torch.float32,
     ):
         super().__init__(
             d_model=d_model,
             num_experts=num_experts,
             hidden_size=hidden_size,
             router=router,
-            mlp=mlp,
             num_layers=num_layers,
             shared_mlp=shared_mlp,
             init_device=init_device,
             lb_loss_weight=lb_loss_weight,
             z_loss_weight=z_loss_weight,
+            dtype=dtype,
             capacity_factor=capacity_factor,
         )
 
     def _init_parallel_mlp(  # type: ignore[override]
         self,
-        mlp: MoEMLPConfig,
         *,
         d_model: int,
         num_experts: int,
         hidden_size: int,
         capacity_factor: float,
+        dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
     ) -> ParallelMLP:
         return ParallelMLP(
-            mlp=cast(
-                MoEMLP,
-                mlp.build(
-                    name=MoEMLPType.default,
-                    d_model=d_model,
-                    num_experts=num_experts,
-                    hidden_size=hidden_size,
-                    init_device=init_device,
-                ),
+            mlp=MoEMLP(
+                d_model=d_model,
+                hidden_size=hidden_size,
+                num_experts=num_experts,
+                dtype=dtype,
+                init_device=init_device,
             ),
             capacity_factor=capacity_factor,
         )
@@ -285,22 +281,19 @@ class DroplessMoE(MoEBase):
 
     def _init_parallel_mlp(  # type: ignore[override]
         self,
-        mlp: MoEMLPConfig,
         *,
         d_model: int,
         num_experts: int,
         hidden_size: int,
+        dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
     ) -> ParallelDroplessMLP:
         return ParallelDroplessMLP(
-            mlp=cast(
-                DroplessMoEMLP,
-                mlp.build(
-                    name=MoEMLPType.dropless,
-                    d_model=d_model,
-                    num_experts=num_experts,
-                    hidden_size=hidden_size,
-                    init_device=init_device,
-                ),
+            mlp=DroplessMoEMLP(
+                d_model=d_model,
+                num_experts=num_experts,
+                hidden_size=hidden_size,
+                dtype=dtype,
+                init_device=init_device,
             ),
         )

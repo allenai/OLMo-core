@@ -1,5 +1,4 @@
 import warnings
-from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 import torch
@@ -8,11 +7,10 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Shard, distribute_tensor
 
-from ...config import Config, DType, StrEnum
 from ...distributed.utils import get_local_tensor
 from ...exceptions import OLMoConfigurationError
 
-__all__ = ["MoEMLP", "DroplessMoEMLP", "MoEMLPConfig", "MoEMLPType"]
+__all__ = ["MoEMLP", "DroplessMoEMLP"]
 
 
 class _ScaleGradient(torch.autograd.Function):
@@ -29,70 +27,6 @@ class _ScaleGradient(torch.autograd.Function):
 
 
 _scale_gradient: Callable[[torch.Tensor, float], torch.Tensor] = _ScaleGradient.apply  # type: ignore
-
-
-class MoEMLPType(StrEnum):
-    """
-    An enumeration of the different MoE expert MLP implementations.
-    """
-
-    default = "default"
-    """
-    ➡️ :class:`MoEMLP`
-    """
-
-    dropless = "dropless"
-    """
-    ➡️ :class:`DroplessMoEMLP`
-    """
-
-
-@dataclass
-class MoEMLPConfig(Config):
-    dtype: DType = DType.float32
-
-    def num_params(self, d_model: int, num_experts: int, hidden_size: int) -> int:
-        """
-        The number of params that the module will have once built.
-
-        :param d_model: The model dimensionality.
-        :param num_experts: Then number of experts.
-        :param hidden_size: The hidden size of each expert.
-        """
-        return 3 * d_model * hidden_size * num_experts
-
-    def num_active_params(self, d_model: int, top_k: int, hidden_size: int) -> int:
-        return self.num_params(d_model, top_k, hidden_size)
-
-    def build(
-        self,
-        *,
-        name: MoEMLPType,
-        d_model: int,
-        num_experts: int,
-        hidden_size: int,
-        init_device: str = "cpu",
-    ) -> "MoEMLPBase":
-        kwargs = self.as_dict(exclude_none=True, recurse=False)
-        kwargs.update(
-            dtype=kwargs.pop("dtype").as_pt(),
-            d_model=d_model,
-            num_experts=num_experts,
-            hidden_size=hidden_size,
-            init_device=init_device,
-        )
-
-        try:
-            if name == MoEMLPType.default:
-                return MoEMLP(**kwargs)
-            elif name == MoEMLPType.dropless:
-                return DroplessMoEMLP(**kwargs)
-            else:
-                raise NotImplementedError(name)
-        except TypeError as e:
-            raise OLMoConfigurationError(
-                f"invalid options for '{name}' {self.__class__.__name__}, {e}"
-            ) from e
 
 
 class MoEMLPBase(nn.Module):

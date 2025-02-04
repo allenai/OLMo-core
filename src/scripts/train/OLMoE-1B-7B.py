@@ -6,7 +6,7 @@ Run this script without any arguments to see usage info.
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.experiment import CommonComponents, main
-from olmo_core.nn.moe import MoEConfig, MoEMLPConfig, MoERouterConfig, MoEType
+from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
 from olmo_core.nn.transformer import (
     TransformerBlockType,
     TransformerConfig,
@@ -36,7 +36,6 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         num_experts=64,
         hidden_size=int(0.5 * model_config.d_model),
         router=MoERouterConfig(top_k=8, bias=False),
-        mlp=MoEMLPConfig(),
         lb_loss_weight=0.01,
         z_loss_weight=0.001,
     )

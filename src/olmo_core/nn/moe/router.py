@@ -55,7 +55,7 @@ class MoERouterConfig(Config):
     normalize_expert_weights: Optional[float] = None
     uniform_expert_assignment: bool = False
     bias: bool = True
-    dtype: DType = DType.float32
+    dtype: Optional[DType] = None
 
     def num_params(self, d_model: int, num_experts: int) -> int:
         """
@@ -73,7 +73,14 @@ class MoERouterConfig(Config):
 
         return num_params
 
-    def build(self, d_model: int, num_experts, *, init_device: str = "cpu") -> "MoERouter":
+    def build(
+        self,
+        d_model: int,
+        num_experts,
+        *,
+        dtype: Optional[torch.dtype] = None,
+        init_device: str = "cpu",
+    ) -> "MoERouter":
         """
         Build the corresponding MoE router module.
 
@@ -84,11 +91,14 @@ class MoERouterConfig(Config):
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
         kwargs.update(
-            dtype=kwargs.pop("dtype").as_pt(),
             d_model=d_model,
             num_experts=num_experts,
             init_device=init_device,
         )
+        if self.dtype is not None:
+            kwargs["dtype"] = self.dtype.as_pt()
+        elif dtype is not None:
+            kwargs["dtype"] = dtype
 
         try:
             if self.name == MoERouterType.default:
