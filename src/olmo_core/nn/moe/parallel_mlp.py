@@ -39,8 +39,8 @@ class ParallelMLPBase(nn.Module):
         return self.mlp.num_experts
 
     @property
-    def experts_per_rank(self) -> int:
-        return self.mlp.experts_per_rank
+    def num_local_experts(self) -> int:
+        return self.mlp.num_local_experts
 
     @property
     def hidden_sharding_degree(self) -> int:
@@ -152,6 +152,8 @@ class ParallelMLP(ParallelMLPBase):
         self.capacity_factor = capacity_factor
 
     def expert_capacity(self, top_k: int, num_items: int) -> int:
+        # TODO: need to ensure this is the same across the process group, could be different w/
+        # different batch sizes.
         items_per_expert = top_k * num_items * self.ep_world_size / self.num_experts
         return int(self.capacity_factor * items_per_expert)
 
@@ -232,7 +234,7 @@ class ParallelMLP(ParallelMLPBase):
         # TODO: Fuse this into the prior, local permutation?
         if self.hidden_sharding_degree > 1:
             # shape: (num_local_experts, ep_world_size // hidden_sharding_degree, expert_capacity, d_model)
-            x = x.view(self.experts_per_rank, -1, expert_capacity, self.d_model)
+            x = x.view(self.num_local_experts, -1, expert_capacity, self.d_model)
             # shape: (num_experts * hidden_sharding_degree, expert_capacity, d_model)
             x = x.repeat(1, self.hidden_sharding_degree, 1, 1).view(
                 -1, expert_capacity, self.d_model
@@ -264,7 +266,7 @@ class ParallelMLP(ParallelMLPBase):
                     dtype=torch.int32,
                     device=indices.device,
                 ),
-                self.experts_per_rank,
+                self.num_local_experts,
             )
 
             # shape: (num_experts * expert_capacity,)
@@ -280,7 +282,7 @@ class ParallelMLP(ParallelMLPBase):
             # Calculate the bins boundaries from the token counts.
             # shape: (num_local_experts,)
             parallel_tokens_per_expert = move_to_device(
-                torch.tensor([expert_capacity] * self.experts_per_rank), parallel_indices.device
+                torch.tensor([expert_capacity] * self.num_local_experts), parallel_indices.device
             )
             # shape: (num_local_experts,)
             parallel_bins = torch.empty_like(parallel_tokens_per_expert, dtype=torch.int32)
@@ -425,12 +427,12 @@ class ParallelDroplessMLP(ParallelMLPBase):
         with torch.no_grad():
             tpe_handle.wait()
 
-            # Reshape to (ep_world_size, experts_per_rank).
+            # Reshape to (ep_world_size, num_local_experts).
             repeated_tokens_per_expert = repeated_tokens_per_expert.view(
-                self.ep_world_size, self.experts_per_rank
+                self.ep_world_size, self.num_local_experts
             )
             parallel_tokens_per_expert = parallel_tokens_per_expert.view(
-                self.ep_world_size, self.experts_per_rank
+                self.ep_world_size, self.num_local_experts
             )
 
             # NOTE: host-device sync here.
@@ -470,7 +472,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
                     dtype=torch.int32,
                     device=indices.device,
                 ),
-                self.experts_per_rank,
+                self.num_local_experts,
             )
 
             parallel_top_expert = torch.repeat_interleave(

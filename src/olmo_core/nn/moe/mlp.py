@@ -43,7 +43,7 @@ class MoEMLPBase(nn.Module):
         self.num_experts = num_experts
 
         self.gradient_scale: Optional[float] = None
-        self.experts_per_rank = num_experts
+        self.num_local_experts = num_experts
         self.hidden_sharding_degree = 1
 
     def scale_grad(self, w: torch.Tensor) -> torch.Tensor:
@@ -63,7 +63,7 @@ class MoEMLPBase(nn.Module):
                 f"'num_experts' ({self.num_experts}) must be divisible by the expert parallel shard degree ({num_shards})."
             )
 
-        self.experts_per_rank = self.num_experts // num_shards
+        self.num_local_experts = self.num_experts // num_shards
         self.gradient_scale = 1.0 / num_shards
 
         self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, ep_mesh, [Shard(0)])))  # type: ignore
@@ -124,7 +124,7 @@ class MoEMLP(MoEMLPBase):
         :param x: The input of shape ``(num_local_experts, N, d_model)``.
         """
         # Scale gradients and get local tensors (in case of expert parallelism).
-        # shape (all): (experts_per_rank, hidden_size, d_model)
+        # shape (all): (num_local_experts, hidden_size, d_model)
         w1, w2, w3 = (
             get_local_tensor(self.scale_grad(self.w1)),
             get_local_tensor(self.scale_grad(self.w2)),
@@ -214,7 +214,7 @@ class DroplessMoEMLP(MoEMLPBase):
             1-D ``LongTensor``.
         """
         # Scale gradients and get local tensors (in case of expert parallelism).
-        # shape (all): (experts_per_rank, hidden_size, d_model)
+        # shape (all): (num_local_experts, hidden_size, d_model)
         w1, w2, w3 = (
             get_local_tensor(self.scale_grad(self.w1)),
             get_local_tensor(self.scale_grad(self.w2)),
