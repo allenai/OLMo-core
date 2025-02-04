@@ -15,6 +15,7 @@ from olmo_core.distributed.parallel import (
     ExpertParallelConfig,
     build_expert_parallel_mesh,
 )
+from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
 from olmo_core.utils import get_default_device, seed_all
 
@@ -92,7 +93,7 @@ def run_moe_with_expert_parallelism(
     batch = distribute_tensor(batch, device_mesh=ep_mesh, placements=(Shard(0),))
 
     # Run forward pass.
-    output = moe(batch)
+    output = moe(get_local_tensor(batch))
     assert output.shape == batch.shape
     torch.testing.assert_close(output, expected_output.to(device=output.device))
 
