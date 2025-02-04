@@ -90,10 +90,10 @@ def run_moe_with_expert_parallelism(
     # Split batch across process group.
     total_tokens = batch.shape[0] * batch.shape[1]
     batch = batch.to(device=get_default_device()).requires_grad_(True)
-    batch = distribute_tensor(batch, device_mesh=ep_mesh, placements=(Shard(0),))
+    batch = get_local_tensor(distribute_tensor(batch, device_mesh=ep_mesh, placements=(Shard(0),)))
 
     # Run forward pass.
-    output = moe(get_local_tensor(batch))
+    output = moe(batch)
     assert output.shape == batch.shape
     torch.testing.assert_close(output, expected_output.to(device=output.device))
 
