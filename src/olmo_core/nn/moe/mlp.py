@@ -114,6 +114,9 @@ class MoEMLP(MoEMLPBase):
             ),
         )
 
+    def extra_repr(self):
+        return f"d_model={self.d_model}, num_experts={self.num_experts}, hidden_size={self.hidden_size}"
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Compute the expert outputs.
