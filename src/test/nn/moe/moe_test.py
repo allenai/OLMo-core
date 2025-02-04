@@ -89,8 +89,12 @@ def run_moe_with_expert_parallelism(
 
     # Split batch and expected output across process group.
     total_tokens = batch.shape[0] * batch.shape[1]
-    batch = batch.to(device=get_default_device()).requires_grad_(True)
-    batch = get_local_tensor(distribute_tensor(batch, device_mesh=ep_mesh, placements=(Shard(0),)))
+    batch = get_local_tensor(
+        distribute_tensor(
+            batch.to(device=get_default_device()), device_mesh=ep_mesh, placements=(Shard(0),)
+        )
+    )
+    batch.requires_grad_(True)
     expected_output = get_local_tensor(
         distribute_tensor(
             expected_output.to(device=get_default_device()),
@@ -121,6 +125,11 @@ def run_moe_with_expert_parallelism(
 @pytest.mark.parametrize("moe_type", [MoEType.dropless, MoEType.default])
 @pytest.mark.parametrize("dtype", [pytest.param(torch.bfloat16, id="BF16")])
 def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: torch.dtype):
+    """
+    Test that we get the same result when we run an MoE on a single device as we do when
+    we run it across multiple devices with expert parallelism.
+    """
+    # This test proceeds as follows.
     seed_all(42)
 
     device = torch.device("cuda")
@@ -137,7 +146,6 @@ def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: t
     moe = config.build(d_model=d_model, num_layers=1, init_device="cpu")
     moe.to(device=device)
 
-    # Save checkpoint.
     save_model_and_optim_state(tmp_path, moe)
 
     B, S = 4, 16
