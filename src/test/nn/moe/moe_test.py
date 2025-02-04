@@ -88,11 +88,11 @@ def run_moe_with_expert_parallelism(
 
     # Run forward pass.
     total_tokens = batch.shape[0] * batch.shape[1]
-    batch = batch.cuda().requires_grad_(True)
+    batch = batch.to(device=get_default_device()).requires_grad_(True)
     batch = distribute_tensor(batch, device_mesh=ep_mesh, placements=(Shard(0),))
     output = moe(batch)
     assert output.shape == batch.shape
-    torch.testing.assert_close(output, expected_output)
+    torch.testing.assert_close(output, expected_output.to(device=output.device))
 
     losses = moe.compute_losses(total_tokens // ep_mesh.size())
     lb_loss = losses["load balancing loss"]
