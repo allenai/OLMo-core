@@ -114,10 +114,10 @@ def run_moe_with_expert_parallelism(
     # Run forward pass.
     output = moe(batch)
     assert output.shape == batch.shape
-    torch.testing.assert_close(output, expected_output)
     if dist.get_rank() == 0:
         print(f"{output=}")
         print(f"{expected_output=}")
+    torch.testing.assert_close(output, expected_output)
 
     losses = moe.compute_losses(total_tokens // ep_mesh.size())
     lb_loss = losses["load balancing loss"]
