@@ -1,10 +1,16 @@
 import math
+from pathlib import Path
 
 import pytest
 import torch
 import torch.distributed as dist
+from torch.distributed.tensor import Shard, distribute_tensor
 
 from olmo_core.config import DType
+from olmo_core.distributed.checkpoint import (
+    load_model_and_optim_state,
+    save_model_and_optim_state,
+)
 from olmo_core.distributed.parallel import (
     ExpertParallelConfig,
     build_expert_parallel_mesh,
@@ -62,10 +68,50 @@ def test_moe(moe_type, dtype):
     assert x.grad is not None
 
 
-def run_moe_with_expert_parallelism(moe_type, dtype):
+def run_moe_with_expert_parallelism(
+    checkpoint_dir: Path,
+    config: MoEConfig,
+    d_model: int,
+    batch: torch.Tensor,
+    expected_output: torch.Tensor,
+):
     seed_all(42)
 
     ep_mesh = build_expert_parallel_mesh(ExpertParallelConfig(degree=min(dist.get_world_size(), 2)))
+
+    moe = config.build(d_model=d_model, num_layers=1, init_device="meta")
+    moe.apply_ep(ep_mesh)
+    moe.to_empty(device=get_default_device())
+
+    # Load checkpoint.
+    load_model_and_optim_state(checkpoint_dir, moe)
+
+    # Run forward pass.
+    total_tokens = batch.shape[0] * batch.shape[1]
+    batch = batch.cuda().requires_grad_(True)
+    batch = distribute_tensor(batch, device_mesh=ep_mesh, placements=(Shard(0),))
+    output = moe(batch)
+    assert output.shape == batch.shape
+    torch.testing.assert_close(output, expected_output)
+
+    losses = moe.compute_losses(total_tokens // ep_mesh.size())
+    lb_loss = losses["load balancing loss"]
+    assert math.isfinite(lb_loss.item())
+
+    z_loss = losses["router Z loss"]
+    assert math.isfinite(z_loss.item())
+    loss = lb_loss + z_loss
+
+    # Run backward pass.
+    loss.backward()
+    assert batch.grad is not None
+
+
+@requires_multi_gpu
+@pytest.mark.parametrize("moe_type", [MoEType.dropless, MoEType.default])
+@pytest.mark.parametrize("dtype", [pytest.param(torch.bfloat16, id="BF16")])
+def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: torch.dtype):
+    seed_all(42)
 
     d_model = 128
     config = MoEConfig(
@@ -76,36 +122,20 @@ def run_moe_with_expert_parallelism(moe_type, dtype):
         z_loss_weight=0.1,
         dtype=DType.from_pt(dtype),
     )
-    moe = config.build(d_model=d_model, num_layers=1, init_device="meta")
-    moe.apply_ep(ep_mesh)
-    moe.to_empty(device=get_default_device())
+    moe = config.build(d_model=d_model, num_layers=1, init_device="cpu")
+    moe.to(device=get_default_device())
 
-    # Run forward pass.
-    B, S = 2, 16
-    x = torch.randn(B, S, d_model, dtype=dtype, device="cuda", requires_grad=True)
+    # Save checkpoint.
+    save_model_and_optim_state(tmp_path, moe)
 
-    output = moe(x)
-    assert output.shape == x.shape
+    B, S = 4, 16
+    batch = torch.randn(B, S, d_model, dtype=dtype, device="cuda", requires_grad=True)
+    output = moe(batch)
+    assert output.shape == batch.shape
 
-    losses = moe.compute_losses(B * S)
-    lb_loss = losses["load balancing loss"]
-    assert math.isfinite(lb_loss.item())
-    z_loss = losses["router Z loss"]
-    assert math.isfinite(z_loss.item())
-    loss = lb_loss + z_loss
-
-    # Run backward pass.
-    loss.backward()
-    assert x.grad is not None
-
-
-@requires_multi_gpu
-@pytest.mark.parametrize("moe_type", [MoEType.dropless, MoEType.default])
-@pytest.mark.parametrize("dtype", [pytest.param(torch.bfloat16, id="BF16")])
-def test_moe_with_expert_parallelism(moe_type, dtype):
     run_distributed_test(
         run_moe_with_expert_parallelism,
         backend="nccl",
         start_method="spawn",
-        func_args=(moe_type, dtype),
+        func_args=(tmp_path, config, d_model, batch.detach().cpu(), output.detach().cpu()),
     )
