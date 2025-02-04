@@ -56,6 +56,8 @@ def test_moe(moe_type, dtype):
 
     output = moe(x)
     assert output.shape == x.shape
+    assert torch.isfinite(output).all()
+    assert (output > 0).any()
 
     losses = moe.compute_losses(B * S)
     lb_loss = losses["load balancing loss"]
@@ -153,6 +155,8 @@ def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: t
     batch = torch.randn(B, S, d_model, dtype=dtype, device=device, requires_grad=True)
     output = moe(batch)
     assert output.shape == batch.shape
+    assert torch.isfinite(output).all()
+    assert (output > 0).any()
 
     # Get losses.
     losses = moe.compute_losses(B * S)
