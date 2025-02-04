@@ -34,6 +34,15 @@ class InitMethod(StrEnum):
     dependent on either ``d_model`` or the layer index.
     """
 
+    mup = "mup"
+    """
+    Apply muP, where:
+    - Linear layers are initialized with variance ~ `1/d_model`
+    - Embedding layers are initialized with variance ~ `1/d_model`
+    - Output layers follow the same scaling
+    - Bias terms are zero-initialized
+    """
+
     def _init_linear(
         self, m: nn.Linear, *, std: float = 0.02, generator: Optional[torch.Generator] = None
     ):
@@ -48,8 +57,8 @@ class InitMethod(StrEnum):
     ):
         if self in (InitMethod.llama, InitMethod.llama_depth):
             nn.init.normal_(m.weight, generator=generator)
-        elif self == InitMethod.normalized:
-            nn.init.normal_(m.weight, std=d_model**-0.5)
+        elif self in (InitMethod.normalized, InitMethod.mup):
+            nn.init.normal_(m.weight, std=d_model**-0.5)        
         else:
             nn.init.trunc_normal_(
                 m.weight, mean=0.0, std=0.02, a=-3 * 0.02, b=3 * 0.02, generator=generator
@@ -59,7 +68,7 @@ class InitMethod(StrEnum):
         self, m: nn.Linear, *, d_model: int, generator: Optional[torch.Generator] = None
     ):
         std = 0.02
-        if self in (InitMethod.llama, InitMethod.llama_depth, InitMethod.normalized):
+        if self in (InitMethod.llama, InitMethod.llama_depth, InitMethod.normalized, InitMethod.mup):
             std = d_model**-0.5
         self._init_linear(m, std=std, generator=generator)
 
@@ -73,7 +82,7 @@ class InitMethod(StrEnum):
         generator: Optional[torch.Generator] = None,
     ):
         std = 0.02
-        if self == InitMethod.normalized:
+        if self in (InitMethod.normalized, InitMethod.mup):
             std = d_model**-0.5
 
         if isinstance(m, Attention):
@@ -88,7 +97,7 @@ class InitMethod(StrEnum):
             std = std / (2 * num_blocks) ** 0.5
         elif self == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
-        elif self == InitMethod.normalized:
+        elif self in (InitMethod.normalized, InitMethod.mup):
             std = std / (2 * num_blocks) ** 0.5
 
         self._init_linear(m.w_out, std=std, generator=generator)
@@ -103,7 +112,7 @@ class InitMethod(StrEnum):
         generator: Optional[torch.Generator] = None,
     ):
         std = 0.02
-        if self == InitMethod.normalized:
+        if self in (InitMethod.normalized, InitMethod.mup):
             std = d_model**-0.5
 
         self._init_linear(m.w1, std=std, generator=generator)
@@ -113,7 +122,7 @@ class InitMethod(StrEnum):
             std = 0.02 / (2 * num_blocks) ** 0.5
         elif self == InitMethod.llama_depth:
             std = 0.02 / (2 * (block_idx + 1)) ** 0.5
-        elif self == InitMethod.normalized:
+        elif self in (InitMethod.normalized, InitMethod.mup):
             std = d_model**-0.5
 
         self._init_linear(m.w3, std=std, generator=generator)

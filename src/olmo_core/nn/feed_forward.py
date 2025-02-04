@@ -36,7 +36,7 @@ class FeedForwardType(StrEnum):
 
     mup = "mup"
     """
-    ➡️ :class:`MuPFeedForward`
+    ➡️ :class:`muPFeedForward`
     """
 
 
@@ -74,7 +74,8 @@ class FeedForwardConfig(Config):
         if self.name == FeedForwardType.normalized:
             params += 2 * self.hidden_size
 
-        if self.use_mup and self.mup_base_shapes:
+        # if self.use_mup and self.mup_base_shapes:
+        if self.name == FeedForwardType.mup and self.mup_base_shapes:
             base_d_model = self.mup_base_shapes.get("d_model", d_model)
             base_hidden_size = self.mup_base_shapes.get("hidden_size", self.hidden_size)
 
@@ -100,6 +101,8 @@ class FeedForwardConfig(Config):
                 return FeedForward(**kwargs)
             elif self.name == FeedForwardType.normalized:
                 return NormalizedFeedForward(**kwargs)
+            elif self.name == FeedForwardType.mup:
+                return muPFeedForward(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
@@ -228,7 +231,7 @@ class NormalizedFeedForward(FeedForward):
         w.copy_(l2_normalize(w, dim=dim))
 
 
-class muPFeedForward(nn.Module):
+class muPFeedForward(FeedForward):
     """
     Feed-forward module with muP.
     """
@@ -243,9 +246,13 @@ class muPFeedForward(nn.Module):
         init_device: str = "cpu",
         mup_base_shapes: Optional[Dict[str, Any]] = None,
     ):
-        super().__init__()
-        self.d_model = d_model
-        self.hidden_size = hidden_size
+        super().__init__(
+            d_model=d_model,
+            hidden_size=hidden_size,
+            dtype=dtype,
+            init_device=init_device,
+            bias=False,
+        )
         self.mup_base_shapes = mup_base_shapes
 
         from mup import MuReadout, set_base_shapes
@@ -259,7 +266,7 @@ class muPFeedForward(nn.Module):
 
     def set_base_shapes(self):
         """
-        Applies μP base shapes.
+        Applies muP base shapes.
         """
         from mup import set_base_shapes
         log.info("Applying muP base shapes to MuPFeedForward layers...")
@@ -267,7 +274,9 @@ class muPFeedForward(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass with μP-aware scaling.
+        Run the feed-forward on the input ``x`` with MuReadout.
+
+        :param x: The input of shape ``(*, d_model)``.
         """
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
@@ -278,9 +287,6 @@ class muPFeedForward(nn.Module):
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
-        """
-        Applies Tensor Parallelism (TP) using `get_tp_wrappers()`.
-        """
         rowwise_parallel, colwise_parallel, _ = get_tp_wrappers(float8_enabled=float8_enabled)
 
         parallelize_module(

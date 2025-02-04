@@ -78,11 +78,11 @@ def coord_check(
             if standparam:
                 config.mup_base_shapes = None
             else:
-                assert load_base_shapes, "load_base_shapes needs to be specified for μP."
+                assert load_base_shapes, "load_base_shapes needs to be specified for muP."
                 config.mup_base_shapes = load_base_shapes
             
-            model.set_base_shapes()  # Required for μP initialization
-            model.reset_parameters()  # Ensures correct μP init
+            model.set_base_shapes()  # Required for muP initialization
+            model.reset_parameters()  # Ensures correct muP init
 
             return model
         return f
@@ -130,7 +130,7 @@ def coord_check(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Run coord check for OLMo model with μP",
+        description="Run coord check for OLMo model with muP",
     )
 
     parser.add_argument("config_path")

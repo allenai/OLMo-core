@@ -104,7 +104,7 @@ class TransformerType(StrEnum):
     ➡️ :class:`NormalizedTransformer` (nGPT)
     """
 
-    mup = "muP"
+    mup = "mup"
     """
     ➡️ :class:`muPTransformer`
     """
