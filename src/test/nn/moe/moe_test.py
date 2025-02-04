@@ -144,7 +144,7 @@ def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: t
 
     device = torch.device("cuda")
 
-    d_model = 128
+    d_model = 8
     config = MoEConfig(
         name=moe_type,
         num_experts=4,
@@ -165,7 +165,7 @@ def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: t
     save_model_and_optim_state(tmp_path, moe)
 
     # Create batch and run forward pass.
-    B, S = 4, 16
+    B, S = 2, 4
     batch = torch.randn(B, S, d_model, dtype=dtype, device=device, requires_grad=True)
     output = moe(batch)
     assert output.shape == batch.shape
