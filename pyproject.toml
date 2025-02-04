@@ -169,4 +169,5 @@ filterwarnings = [
     'ignore::DeprecationWarning:pkg_resources',
     'ignore::DeprecationWarning:google\.rpc',
     'ignore::FutureWarning:torch\.distributed\.checkpoint\.default_planner',
+    'ignore::UserWarning:torch\.distributed\.checkpoint\.state_dict_saver',
 ]

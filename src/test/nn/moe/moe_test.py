@@ -129,7 +129,6 @@ def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: t
     Test that we get the same result when we run an MoE on a single device as we do when
     we run it across multiple devices with expert parallelism.
     """
-    # This test proceeds as follows.
     seed_all(42)
 
     device = torch.device("cuda")
@@ -146,12 +145,27 @@ def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: t
     moe = config.build(d_model=d_model, num_layers=1, init_device="cpu")
     moe.to(device=device)
 
+    # Save state so when we spawn distributed processes they can load the same weights.
     save_model_and_optim_state(tmp_path, moe)
 
+    # Create batch and run forward pass.
     B, S = 4, 16
     batch = torch.randn(B, S, d_model, dtype=dtype, device=device, requires_grad=True)
     output = moe(batch)
     assert output.shape == batch.shape
+
+    # Get losses.
+    losses = moe.compute_losses(B * S)
+    lb_loss = losses["load balancing loss"]
+    assert math.isfinite(lb_loss.item())
+
+    z_loss = losses["router Z loss"]
+    assert math.isfinite(z_loss.item())
+    loss = lb_loss + z_loss
+
+    # Run backward pass.
+    loss.backward()
+    assert batch.grad is not None
 
     run_distributed_test(
         run_moe_with_expert_parallelism,
