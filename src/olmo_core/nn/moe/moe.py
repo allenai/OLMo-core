@@ -12,6 +12,7 @@ from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.exceptions import OLMoConfigurationError
 
+from ..buffer_cache import BufferCache
 from .loss import MoELoadBalancingLoss, MoELoss, MoERouterZLoss
 from .mlp import DroplessMoEMLP, MoEMLP
 from .parallel_mlp import ParallelDroplessMLP, ParallelMLP, ParallelMLPBase
@@ -67,7 +68,14 @@ class MoEConfig(Config):
             + (3 * d_model * self.hidden_size * self.router.top_k)
         )
 
-    def build(self, d_model: int, *, num_layers: int, init_device: str = "cpu") -> "MoEBase":
+    def build(
+        self,
+        d_model: int,
+        *,
+        num_layers: int,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ) -> "MoEBase":
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
         kwargs.update(
@@ -75,6 +83,7 @@ class MoEConfig(Config):
             num_layers=num_layers,
             init_device=init_device,
             dtype=kwargs.pop("dtype").as_pt(),
+            cache=cache,
         )
 
         try:
@@ -108,6 +117,7 @@ class MoEBase(nn.Module):
         lb_loss_weight: Optional[float] = None,
         z_loss_weight: Optional[float] = None,
         dtype: torch.dtype = torch.float32,
+        cache: Optional[BufferCache] = None,
         **kwargs,
     ):
         super().__init__()
@@ -118,6 +128,7 @@ class MoEBase(nn.Module):
             hidden_size=hidden_size,
             dtype=dtype,
             init_device=init_device,
+            cache=cache,
             **kwargs,
         )
         self.shared_experts = (
@@ -261,6 +272,7 @@ class MoE(MoEBase):
         capacity_factor: float,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
     ) -> ParallelMLP:
         return ParallelMLP(
             mlp=MoEMLP(
@@ -271,6 +283,7 @@ class MoE(MoEBase):
                 init_device=init_device,
             ),
             capacity_factor=capacity_factor,
+            cache=cache,
         )
 
 
@@ -287,6 +300,7 @@ class DroplessMoE(MoEBase):
         hidden_size: int,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
     ) -> ParallelDroplessMLP:
         return ParallelDroplessMLP(
             mlp=DroplessMoEMLP(
@@ -296,4 +310,5 @@ class DroplessMoE(MoEBase):
                 dtype=dtype,
                 init_device=init_device,
             ),
+            cache=cache,
         )

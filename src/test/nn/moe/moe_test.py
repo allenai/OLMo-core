@@ -114,9 +114,6 @@ def run_moe_with_expert_parallelism(
     # Run forward pass.
     output = moe(batch)
     assert output.shape == batch.shape
-    if dist.get_rank() == 0:
-        print(f"{output=}")
-        print(f"{expected_output=}")
     torch.testing.assert_close(output, expected_output)
 
     losses = moe.compute_losses(total_tokens // ep_mesh.size())
@@ -151,7 +148,8 @@ def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: t
         hidden_size=256,
         router=MoERouterConfig(
             top_k=1,
-            uniform_expert_assignment=moe_type == MoEType.default,
+            uniform_expert_assignment=moe_type
+            == MoEType.default,  # EP results may be different otherwise
             dtype=DType.from_pt(dtype),
         ),
         z_loss_weight=0.1,
