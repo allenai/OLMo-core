@@ -104,12 +104,14 @@ class ParallelMLPBase(nn.Module):
         expert_indices: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        :param x: The input of shape ``(*, d_model)``.
-        :param expert_weights: Expert weights of shape ``(N, top_k)``.
-        :param expert_indices: The indices of the top-k experts, shape ``(N, top_k)``.
+        :param x: The input of shape ``(*, d_model)``, typically ``(num_docs, seq_len, d_model)``
+            such that ``num_docs x seq_len = batch_size``.
+        :param expert_weights: Expert weights of shape ``(batch_size, top_k)``, where ``batch_size``
+            typically equals ``num_docs x seq_len``.
+        :param expert_indices: The indices of the top-k experts, shape ``(batch_size, top_k)``.
 
-        :returns: The output with the same shape as ``x`` and a tensor with shape ``(num_experts,)``
-            containing the number of items/tokens routed to each expert.
+        :returns: The output with the same shape as ``x`` and a tensor with shape ``(num_local_experts,)``
+            containing the number of items/tokens routed to each (local) expert.
         """
         in_shape = x.size()
 
@@ -129,10 +131,11 @@ class ParallelMLPBase(nn.Module):
         expert_indices: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        :param x: The input of shape ``(*, d_model)``.
-        :param expert_weights: Expert weights of shape ``(N, top_k)``, where ``N``
-            typically equals ``batch_size x seq_len``.
-        :param expert_indices: The indices of the top-k experts, shape ``(N, top_k)``.
+        :param x: The input of shape ``(*, d_model)``, typically ``(num_docs, seq_len, d_model)``
+            such that ``num_docs x seq_len = batch_size``.
+        :param expert_weights: Expert weights of shape ``(batch_size, top_k)``, where ``batch_size``
+            typically equals ``num_docs x seq_len``.
+        :param expert_indices: The indices of the top-k experts, shape ``(batch_size, top_k)``.
         """
         raise NotImplementedError
 

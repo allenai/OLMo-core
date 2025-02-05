@@ -76,6 +76,7 @@ def test_moe(moe_type: MoEType, shared: bool, dtype: torch.dtype):
     losses = moe.compute_losses(B * S)
     lb_loss = losses["load balancing loss"]
     assert math.isfinite(lb_loss.item())
+
     z_loss = losses["router Z loss"]
     assert math.isfinite(z_loss.item())
     loss = lb_loss + z_loss
@@ -91,6 +92,8 @@ def run_moe_with_expert_parallelism(
     d_model: int,
     batch: torch.Tensor,
     expected_output: torch.Tensor,
+    expected_lb_loss: torch.Tensor,
+    expected_z_loss: torch.Tensor,
 ):
     seed_all(42)
 
@@ -125,14 +128,21 @@ def run_moe_with_expert_parallelism(
     torch.testing.assert_close(output, expected_output)
 
     losses = moe.compute_losses(total_tokens // ep_mesh.size())
+
     lb_loss = losses["load balancing loss"]
     assert math.isfinite(lb_loss.item())
+    total_lb_loss = lb_loss.detach().clone()
+    dist.all_reduce(total_lb_loss)
+    torch.testing.assert_close(total_lb_loss, expected_lb_loss)
 
     z_loss = losses["router Z loss"]
     assert math.isfinite(z_loss.item())
-    loss = lb_loss + z_loss
+    total_z_loss = z_loss.detach().clone()
+    dist.all_reduce(total_z_loss)
+    torch.testing.assert_close(total_z_loss, expected_z_loss)
 
     # Run backward pass.
+    loss = lb_loss + z_loss
     loss.backward()
     assert batch.grad is not None
 
@@ -195,5 +205,13 @@ def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: t
         run_moe_with_expert_parallelism,
         backend="nccl",
         start_method="spawn",
-        func_args=(tmp_path, config, d_model, batch.detach().cpu(), output.detach().cpu()),
+        func_args=(
+            tmp_path,
+            config,
+            d_model,
+            batch.detach().cpu(),
+            output.detach().cpu(),
+            lb_loss.detach().cpu(),
+            z_loss.detach().cpu(),
+        ),
     )
