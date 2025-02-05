@@ -224,6 +224,7 @@ class ParallelMLP(ParallelMLPBase):
         with torch.no_grad():
             indices, bin_ids, bins, tokens_per_expert = self.indices_and_bins(expert_indices)
             expert_capacity = self.expert_capacity(top_k, num_items)
+            print(f"{expert_capacity=}")
 
         # Permute locally so that the tokens for each device are stored contiguously.
         # shape: (num_experts, expert_capacity, d_model)
@@ -304,12 +305,15 @@ class ParallelMLP(ParallelMLPBase):
             bins=parallel_bins,
             expert_capacity=expert_capacity,
             top_k=1,
+            debug=dist.get_rank() == 0,
         )
+        if dist.get_rank() == 0:
+            print(f"D {parallel_x=}")
 
         # Un-permute the tokens across the devices.
         x, _ = ops.all_to_all(parallel_x, group=self._ep_pg)
         if dist.get_rank() == 0:
-            print(f"D {x=}")
+            print(f"E {x=}")
 
         # Reduce along the hidden sharding to get the final outputs.
         if self.hidden_sharding_degree > 1:
@@ -331,21 +335,31 @@ class ParallelMLP(ParallelMLPBase):
         bins: torch.Tensor,
         expert_capacity: int,
         top_k: int,
+        debug: bool = False,
     ) -> torch.Tensor:
         # shape: (N, d_model)
         x = x.view(-1, x.shape[-1])
+        if debug:
+            print(f"C.1 {x=}")
 
         # Route the tokens for MoE computation.
         # shape: (num_experts, expert_capacity, d_model)
         x = ops.binned_gather(x, indices, bins, expert_capacity, top_k)
+        if debug:
+            print(f"C.2 {x=}")
 
         # Perform the expert computation.
         # shape: (num_experts, expert_capacity, d_model)
         x = self.mlp(x)
+        if debug:
+            print(f"C.3 {x=}")
 
         # Un-route the data for the MoE output. Items that were dropped will be zeroed out.
         # shape: (N, d_model)
-        return ops.binned_scatter(x, indices, expert_weights, bins, top_k)
+        x = ops.binned_scatter(x, indices, expert_weights, bins, top_k)
+        if debug:
+            print(f"C.4 {x=}")
+        return x
 
 
 class ParallelDroplessMLP(ParallelMLPBase):
