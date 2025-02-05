@@ -85,7 +85,7 @@ class ParallelMLPBase(nn.Module):
 
         # Sort the expert ids to produce the scatter/gather
         # indices for the permutation.
-        # shape: (N,), (N,)
+        # shape: (batch_size,), (batch_size,)
         # TODO: for non-dropless MoE, should do secondary sort by expert weight so we drop tokens
         # with the lowest expert weight.
         bin_ids, indices = torch.sort(expert_indices)

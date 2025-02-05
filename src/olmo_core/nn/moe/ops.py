@@ -4,6 +4,8 @@ from typing import Any, List, Optional, Tuple, Union
 import torch
 import torch.distributed as dist
 
+from olmo_core.utils import move_to_device
+
 
 def _is_eligible(x):
     return x.is_floating_point() and x.is_cuda and (x.dtype is not torch.float64)
@@ -314,3 +316,13 @@ def sum_tensor(x: torch.Tensor, dim: int = 0) -> torch.Tensor:
     if x.shape[dim] == 1:
         return x.squeeze(dim=dim)
     return x.sum(dim=dim)
+
+
+def batched_histc(x: torch.Tensor, num_classes: int) -> torch.Tensor:
+    """
+    A batched version of ``torch.histc``.
+    """
+    hist = move_to_device(torch.zeros((*x.shape[:-1], num_classes), dtype=x.dtype), x.device)
+    ones = move_to_device(torch.tensor(1, dtype=x.dtype), x.device).expand_as(x)
+    hist.scatter_add_(-1, ((x * num_classes) // (x.max() + 1)).long(), ones)
+    return hist

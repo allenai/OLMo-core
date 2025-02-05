@@ -7,7 +7,7 @@ import torch
 
 from olmo_core.nn.moe import ops
 
-from ...utils import requires_gpu
+from ...utils import DEVICES, requires_gpu
 
 
 @requires_gpu
@@ -157,3 +157,10 @@ def testBinnedScatter(sl: int, hs: int, ne: int, top_k: int):
         )
         is None
     )
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_batched_histc(device: torch.device):
+    x = torch.tensor([[0, 1, 1], [2, 0, 0]], device=device)
+    hist = ops.batched_histc(x, 3)
+    torch.testing.assert_close(hist, torch.tensor([[1, 2, 0], [2, 0, 1]], device=device))
