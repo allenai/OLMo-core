@@ -70,7 +70,6 @@ class SharedMLPConfig(Config):
             d_model=d_model,
             hidden_size=hidden_size,
             init_device=init_device,
-            dtype=kwargs.pop("dtype").as_pt(),
         )
         if self.dtype is not None:
             kwargs["dtype"] = self.dtype.as_pt()
