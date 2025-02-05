@@ -133,13 +133,13 @@ def run_moe_with_expert_parallelism(
     assert math.isfinite(lb_loss.item())
     total_lb_loss = lb_loss.detach().clone()
     dist.all_reduce(total_lb_loss)
-    torch.testing.assert_close(total_lb_loss, expected_lb_loss)
+    torch.testing.assert_close(total_lb_loss, expected_lb_loss.to(total_lb_loss.device))
 
     z_loss = losses["router Z loss"]
     assert math.isfinite(z_loss.item())
     total_z_loss = z_loss.detach().clone()
     dist.all_reduce(total_z_loss)
-    torch.testing.assert_close(total_z_loss, expected_z_loss)
+    torch.testing.assert_close(total_z_loss, expected_z_loss.to(total_z_loss.device))
 
     # Run backward pass.
     loss = lb_loss + z_loss
