@@ -69,6 +69,6 @@ def test_binned_gather(sl: int, hs: int, ne: int, top_k: int):
             start = end
         return torch.from_numpy(out).cuda().half()
 
-    out = ops.binned_gather(x, indices, bins, ec, top_k)
-    expected_out = binned_gather(x, indices.int(), bins, ec, top_k)
+    out = ops.binned_gather(x, indices.int(), bins.int(), ec, top_k)
+    expected_out = binned_gather(x, indices, bins, ec, top_k)
     assert torch.all(torch.eq(out, expected_out))
