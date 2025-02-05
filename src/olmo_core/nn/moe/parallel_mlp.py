@@ -342,11 +342,8 @@ class ParallelMLP(ParallelMLPBase):
         # Start the cross-device permutation asynchronously so we can
         # overlap communication with computation.
         # shape: (num_local_experts * ep_world_size, local_expert_capacity, d_model)
-        parallel_x, parallel_x_handle = ops.all_to_all(
-            x,
-            group=self._ep_pg,
-            async_op=True,
-        )
+        #     ~= (num_local_experts, expert_capacity, d_model)
+        parallel_x, _ = ops.all_to_all(x, group=self._ep_pg)
 
         # After we do the cross-device permutation we have the tokens on the
         # correct device but not yet grouped by expert because we received
@@ -360,10 +357,6 @@ class ParallelMLP(ParallelMLPBase):
         )
 
         # Locally permute the tokens and perform the expert computation.
-        # Block to make sure that the cross-device permutation is complete.
-        parallel_x_handle.wait()
-        # shape: (num_local_experts * ep_world_size, local_expert_capacity, d_model)
-        #     ~= (num_local_experts, expert_capacity, d_model)
         parallel_x = self.permute_and_compute(
             parallel_x,
             indices=parallel_indices.int(),
