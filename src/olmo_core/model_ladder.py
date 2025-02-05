@@ -441,7 +441,13 @@ class ModelLadder(Config, metaclass=ABCMeta):
         :raises OLMoConfigurationError: If the ladder has any issues.
         """
         for size in ModelSize:
-            target_size = int(size[:-1])
+            # validating to match old ladder sizes.
+            if size == ModelSize.size_1B:
+                target_size = 1.3
+            elif size == ModelSize.size_3B:
+                target_size = 3.2
+            else:
+                target_size = int(size[:-1])
             if size.endswith("M"):
                 target_size = target_size * 10**6
             elif size.endswith("B"):
