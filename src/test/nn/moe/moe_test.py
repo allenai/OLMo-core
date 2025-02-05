@@ -97,7 +97,7 @@ def run_moe_with_expert_parallelism(
 ):
     seed_all(42)
 
-    ep_mesh = build_expert_parallel_mesh(ExpertParallelConfig(degree=min(dist.get_world_size(), 2)))
+    ep_mesh = build_expert_parallel_mesh(ExpertParallelConfig(degree=dist.get_world_size()))
 
     moe = config.build(d_model=d_model, num_layers=1, init_device="meta")
     moe.apply_ep(ep_mesh)
@@ -129,15 +129,17 @@ def run_moe_with_expert_parallelism(
 
     losses = moe.compute_losses(total_tokens // ep_mesh.size())
 
+    # Check load balancing loss.
     lb_loss = losses["load balancing loss"]
     assert math.isfinite(lb_loss.item())
-    total_lb_loss = lb_loss.detach().clone()
+    total_lb_loss = lb_loss.detach() / dist.get_world_size()
     dist.all_reduce(total_lb_loss)
     torch.testing.assert_close(total_lb_loss, expected_lb_loss.to(total_lb_loss.device))
 
+    # Check Z loss.
     z_loss = losses["router Z loss"]
     assert math.isfinite(z_loss.item())
-    total_z_loss = z_loss.detach().clone()
+    total_z_loss = z_loss.detach() / dist.get_world_size()
     dist.all_reduce(total_z_loss)
     torch.testing.assert_close(total_z_loss, expected_z_loss.to(total_z_loss.device))
 
