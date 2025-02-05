@@ -107,7 +107,6 @@ def run_moe_with_expert_parallelism(
     load_model_and_optim_state(checkpoint_dir, moe)
 
     # Split batch and expected output across process group.
-    total_tokens = batch.shape[0] * batch.shape[1]
     batch = get_local_tensor(
         distribute_tensor(
             batch.to(device=get_default_device()), device_mesh=ep_mesh, placements=(Shard(0),)
@@ -127,7 +126,7 @@ def run_moe_with_expert_parallelism(
     assert output.shape == batch.shape
     torch.testing.assert_close(output, expected_output)
 
-    losses = moe.compute_losses(total_tokens // ep_mesh.size())
+    losses = moe.compute_losses(batch.shape[0] * batch.shape[1])
 
     # Check load balancing loss.
     lb_loss = losses["load balancing loss"]
