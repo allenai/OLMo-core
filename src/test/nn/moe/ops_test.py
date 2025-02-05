@@ -56,19 +56,19 @@ def test_binned_gather(sl: int, hs: int, ne: int, top_k: int):
         ec: int,
         top_k: int,
     ):
-        x = x.cpu().numpy()
-        indices = indices.cpu().numpy()
-        bins = bins.cpu().numpy()
+        x_np = x.cpu().numpy()
+        indices_np = indices.cpu().numpy()
+        bins_np = bins.cpu().numpy()
         start = 0
         out = np.zeros((ne, ec, hs))
         for i in range(ne):
-            end = bins[i]
+            end = bins_np[i]
             for j in range(min(ec, end - start)):
-                index = indices[start + j] // top_k
-                out[i, j, :] = x[index, :]
+                index = indices_np[start + j] // top_k
+                out[i, j, :] = x_np[index, :]
             start = end
         return torch.from_numpy(out).cuda().half()
 
     out = ops.binned_gather(x, indices, bins, ec, top_k)
-    expected_out = binned_gather(x, indices, bins, ec, top_k)
+    expected_out = binned_gather(x, indices.int(), bins, ec, top_k)
     assert torch.all(torch.eq(out, expected_out))
