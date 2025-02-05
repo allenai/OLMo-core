@@ -250,8 +250,8 @@ class ParallelMLP(ParallelMLPBase):
 
         # Start the cross-device permutation asynchronously so we can
         # overlap communication with computation.
-        # shape: (num_local_experts * ep_world_size, local_expert_capacity, d_model)
-        #      = (num_experts, local_expert_capacity, d_model)
+        # shape: (num_local_experts * ep_world_size, expert_capacity, d_model)
+        #      = (num_experts, expert_capacity, d_model)
         parallel_x, parallel_x_handle = ops.all_to_all(
             x,
             group=self._ep_pg,
@@ -277,20 +277,20 @@ class ParallelMLP(ParallelMLPBase):
                 self.num_local_experts,
             )
 
-            # shape: (num_experts * local_expert_capacity,)
+            # shape: (num_experts * expert_capacity,)
             parallel_top_expert = torch.repeat_interleave(
                 parallel_top_expert,
-                local_expert_capacity,
-                output_size=parallel_top_expert.numel() * local_expert_capacity,
+                expert_capacity,
+                output_size=parallel_top_expert.numel() * expert_capacity,
             )
 
-            # shape: (num_experts * local_expert_capacity,)
+            # shape: (num_experts * expert_capacity,)
             _, parallel_indices = torch.sort(parallel_top_expert)
 
             # Calculate the bins boundaries from the token counts.
             # shape: (num_local_experts,)
             parallel_tokens_per_expert = move_to_device(
-                torch.tensor([local_expert_capacity] * self.num_local_experts),
+                torch.tensor([expert_capacity] * self.num_local_experts),
                 parallel_indices.device,
             )
             # shape: (num_local_experts,)
