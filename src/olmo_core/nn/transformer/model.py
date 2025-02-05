@@ -116,7 +116,6 @@ class Transformer(nn.Module):
             block_ = block.build(
                 d_model=d_model,
                 block_idx=block_idx,
-                num_blocks=n_layers,
                 init_device=init_device,
                 cache=cache,
             )
@@ -138,6 +137,15 @@ class Transformer(nn.Module):
 
     def _validate_block(self, block: TransformerBlockBase):
         del block
+
+    def compute_auxiliary_losses(
+        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+    ) -> Dict[str, torch.Tensor]:
+        del total_bz, reset
+        return {}
+
+    def reset_auxiliary_losses(self):
+        pass
 
     @property
     def is_moe(self) -> bool:
@@ -625,7 +633,7 @@ class MoETransformer(Transformer):
                 f"'{self.__class__.__name__}' requires a '{MoETransformerBlock.__name__}' block"
             )
 
-    def compute_losses(
+    def compute_auxiliary_losses(
         self, total_bz: Union[int, torch.Tensor], reset: bool = True
     ) -> Dict[str, torch.Tensor]:
         out: Dict[str, torch.Tensor] = {}
@@ -633,15 +641,16 @@ class MoETransformer(Transformer):
             for loss_name, loss_val in (
                 cast(MoETransformerBlock, block).compute_losses(total_bz, reset=reset).items()
             ):
+                loss_val.div_(self.n_layers)
                 if loss_name in out:
                     out[loss_name] += loss_val
                 else:
                     out[loss_name] = loss_val
         return out
 
-    def reset_losses(self):
+    def reset_auxiliary_losses(self):
         for block in self.blocks.values():
-            cast(MoETransformer, block).reset_losses()
+            cast(MoETransformerBlock, block).reset_losses()
 
     def forward(
         self,

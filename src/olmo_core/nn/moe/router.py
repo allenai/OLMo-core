@@ -165,13 +165,17 @@ class MoERouter(nn.Module):
         """
         raise NotImplementedError
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(
+        self, x: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Given the input ``x`` of shape ``(*, d_model)``, compute the
         experts assignment.
 
-        :returns: The logits of shape ``(N, num_experts)``, the expert weights
-            of shape ``(N, top_k)``, and the expert indices of shape ``(N, top_k)``.
+        :returns: The unnormalized scores (logits) of shape ``(N, num_experts)``,
+            the normalized scores of shape ``(N, num_experts)``,
+            the expert weights of shape ``(N, top_k)``,
+            and the expert indices of shape ``(N, top_k)``.
         """
         # shape: (batch_size, seq_len, d_model)
         x = self.jitter(x)
@@ -179,8 +183,11 @@ class MoERouter(nn.Module):
         # shape: (batch_size * seq_len, num_experts)
         logits = self.get_expert_logits(x.view(-1, self.d_model))
 
+        # shape: (batch_size * seq_len, num_experts)
+        scores = logits.softmax(dim=-1)
+
         # shape: (batch_size * seq_len, top_k)
-        expert_weights, expert_indices = self.get_top_k(logits)
+        expert_weights, expert_indices = self.get_top_k(scores)
 
         if self.normalize_expert_weights is not None:
             expert_weights.div_(
@@ -195,7 +202,7 @@ class MoERouter(nn.Module):
         if self.uniform_expert_assignment:
             expert_indices = _uniform_expert_assignment(expert_indices, self.num_experts)
 
-        return logits, expert_weights, expert_indices
+        return logits, scores, expert_weights, expert_indices
 
 
 class MoELinearRouter(MoERouter):

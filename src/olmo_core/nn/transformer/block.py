@@ -90,7 +90,6 @@ class TransformerBlockConfig(Config):
         *,
         d_model: int,
         block_idx: int,
-        num_blocks: int,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ) -> "TransformerBlockBase":
@@ -111,9 +110,9 @@ class TransformerBlockConfig(Config):
             elif self.name == TransformerBlockType.normalized:
                 return NormalizedTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe:
-                return MoETransformerBlock(num_blocks=num_blocks, **kwargs)
+                return MoETransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe_reordered_norm:
-                return MoEReorderedNormTransformerBlock(num_blocks=num_blocks, **kwargs)
+                return MoEReorderedNormTransformerBlock(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
@@ -359,7 +358,6 @@ class MoETransformerBlock(TransformerBlockBase):
         attention: AttentionConfig,
         feed_forward_moe: MoEConfig,
         layer_norm: LayerNormConfig,
-        num_blocks: int,
         dropout: float = 0.0,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
@@ -370,7 +368,7 @@ class MoETransformerBlock(TransformerBlockBase):
         self.attention = attention.build(d_model, init_device=init_device, cache=cache)
         self.attention_norm = layer_norm.build(d_model, init_device=init_device)
         self.feed_forward_moe = feed_forward_moe.build(
-            d_model=d_model, num_layers=num_blocks, init_device=init_device, cache=cache
+            d_model=d_model, init_device=init_device, cache=cache
         )
         self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()

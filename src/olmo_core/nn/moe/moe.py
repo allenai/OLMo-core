@@ -72,7 +72,6 @@ class MoEConfig(Config):
         self,
         d_model: int,
         *,
-        num_layers: int,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ) -> "MoEBase":
@@ -80,7 +79,6 @@ class MoEConfig(Config):
         kwargs.pop("name")
         kwargs.update(
             d_model=d_model,
-            num_layers=num_layers,
             init_device=init_device,
             dtype=kwargs.pop("dtype").as_pt(),
             cache=cache,
@@ -111,7 +109,6 @@ class MoEBase(nn.Module):
         num_experts: int,
         hidden_size: int,
         router: MoERouterConfig,
-        num_layers: int,
         shared_mlp: Optional[SharedMLPConfig] = None,
         init_device: str = "cpu",
         lb_loss_weight: Optional[float] = None,
@@ -136,23 +133,17 @@ class MoEBase(nn.Module):
             if shared_mlp is None
             else shared_mlp.build(d_model, hidden_size, dtype=dtype, init_device=init_device)
         )
-        self.num_layers = num_layers
         self.losses: List[MoELoss] = []
         if lb_loss_weight is not None:
             self.losses.append(
                 MoELoadBalancingLoss(
                     loss_weight=lb_loss_weight,
-                    num_layers=num_layers,
                     num_experts=num_experts,
                     top_k=self.router.top_k,
                 )
             )
         if z_loss_weight is not None:
-            self.losses.append(
-                MoERouterZLoss(
-                    loss_weight=z_loss_weight, num_layers=num_layers, num_experts=num_experts
-                )
-            )
+            self.losses.append(MoERouterZLoss(loss_weight=z_loss_weight, num_experts=num_experts))
 
     def warmup_cache(self, max_local_microbatch_size: int):
         self.experts.warmup_cache(max_local_microbatch_size)
@@ -191,7 +182,7 @@ class MoEBase(nn.Module):
         :returns: The output of the MoE layer, the optional load-balancing loss, and the optional
             router Z-loss.
         """
-        expert_logits, expert_weights, exper_indices = self.router(x)
+        expert_logits, expert_scores, expert_weights, exper_indices = self.router(x)
         out, batch_size_per_expert = self.experts(x, expert_weights, exper_indices)
         if self.shared_experts is not None:
             out = self.shared_experts(x, out, self.router.top_k)
@@ -199,7 +190,11 @@ class MoEBase(nn.Module):
         if self.training and self.losses:
             expert_logits = expert_logits.float()
             for loss_fn in self.losses:
-                loss_fn.update(expert_logits, batch_size_per_expert=batch_size_per_expert)
+                loss_fn.update(
+                    expert_logits=expert_logits,
+                    expert_scores=expert_scores,
+                    batch_size_per_expert=batch_size_per_expert,
+                )
 
         return out
 
@@ -244,7 +239,6 @@ class MoE(MoEBase):
         num_experts: int,
         hidden_size: int,
         router: MoERouterConfig,
-        num_layers: int,
         shared_mlp: Optional[SharedMLPConfig] = None,
         capacity_factor: float = 1.2,
         init_device: str = "cpu",
@@ -258,7 +252,6 @@ class MoE(MoEBase):
             num_experts=num_experts,
             hidden_size=hidden_size,
             router=router,
-            num_layers=num_layers,
             shared_mlp=shared_mlp,
             init_device=init_device,
             lb_loss_weight=lb_loss_weight,

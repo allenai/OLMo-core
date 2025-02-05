@@ -51,7 +51,7 @@ def test_moe(moe_type: MoEType, shared: bool, dtype: torch.dtype):
         z_loss_weight=0.1,
         dtype=DType.from_pt(dtype),
     )
-    moe = config.build(d_model=d_model, num_layers=1, init_device="cuda")
+    moe = config.build(d_model=d_model, init_device="cuda")
     init_mlp_weights(moe)
 
     # Check num params calculation.
@@ -99,7 +99,7 @@ def run_moe_with_expert_parallelism(
 
     ep_mesh = build_expert_parallel_mesh(ExpertParallelConfig(degree=dist.get_world_size()))
 
-    moe = config.build(d_model=d_model, num_layers=1, init_device="meta")
+    moe = config.build(d_model=d_model, init_device="meta")
     moe.apply_ep(ep_mesh)
     moe.to_empty(device=get_default_device())
 
@@ -131,9 +131,13 @@ def run_moe_with_expert_parallelism(
     # Check load balancing loss.
     lb_loss = losses["load balancing loss"]
     assert math.isfinite(lb_loss.item())
-    total_lb_loss = lb_loss.detach() / dist.get_world_size()
-    dist.all_reduce(total_lb_loss)
-    torch.testing.assert_close(total_lb_loss, expected_lb_loss.to(total_lb_loss.device))
+
+    # NOTE: This particular load-balancing loss may differ in distributed case, or even with
+    # gradient accumulation due to ``batch_size_per_expert`` being the local.
+    #  total_lb_loss = lb_loss.detach() / dist.get_world_size()
+    #  dist.all_reduce(total_lb_loss)
+    #  torch.testing.assert_close(total_lb_loss, expected_lb_loss.to(total_lb_loss.device))
+    del expected_lb_loss
 
     # Check Z loss.
     z_loss = losses["router Z loss"]
@@ -174,7 +178,7 @@ def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: t
         z_loss_weight=0.1,
         dtype=DType.from_pt(dtype),
     )
-    moe = config.build(d_model=d_model, num_layers=1, init_device="cpu")
+    moe = config.build(d_model=d_model, init_device="cpu")
     moe.to(device=device)
     init_mlp_weights(moe)
 

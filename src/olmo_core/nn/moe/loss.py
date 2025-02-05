@@ -8,7 +8,14 @@ __all__ = ["MoELoss", "MoELoadBalancingLoss", "MoERouterZLoss"]
 
 class MoELoss(metaclass=ABCMeta):
     @abstractmethod
-    def update(self, expert_logits: torch.Tensor, *, batch_size_per_expert: torch.Tensor, **kwargs):
+    def update(
+        self,
+        *,
+        expert_logits: torch.Tensor,
+        expert_scores: torch.Tensor,
+        batch_size_per_expert: torch.Tensor,
+        **kwargs,
+    ):
         raise NotImplementedError
 
     @abstractmethod
@@ -27,18 +34,21 @@ class MoELoadBalancingLoss(MoELoss):
     Implements the load balancing loss from Switch Transformers.
     """
 
-    def __init__(self, *, loss_weight: float, num_layers: int, num_experts: int, top_k: int):
+    def __init__(self, *, loss_weight: float, num_experts: int, top_k: int):
         self.loss_weight = loss_weight
-        self.num_layers = num_layers
         self.num_experts = num_experts
         self.top_k = top_k
         self.loss: Optional[torch.Tensor] = None
 
-    def update(self, expert_logits: torch.Tensor, *, batch_size_per_expert: torch.Tensor, **kwargs):
+    def update(
+        self,
+        *,
+        expert_scores: torch.Tensor,
+        batch_size_per_expert: torch.Tensor,
+        **kwargs,
+    ):
         del kwargs
-        # shape: (N, num_experts)
-        expert_scores = expert_logits.softmax(dim=-1)
-        # shape: (num_experts,)
+        # shape: (batch_size, num_local_experts) -> (num_local_experts,)
         expert_scores = expert_scores.mean(dim=0)
         loss = torch.dot(batch_size_per_expert.type_as(expert_scores), expert_scores)
         if self.loss is None:
@@ -54,7 +64,7 @@ class MoELoadBalancingLoss(MoELoss):
             raise RuntimeError(
                 f"'{self.__class__.__name__}.update()' needs to be called before '.compute()'"
             )
-        scale = (self.num_experts * self.loss_weight) / (self.num_layers * total_bz * self.top_k)
+        scale = (self.num_experts * self.loss_weight) / (total_bz * self.top_k)
         lb_loss = scale * self.loss
         if reset:
             self.reset()
@@ -65,13 +75,12 @@ class MoELoadBalancingLoss(MoELoss):
 
 
 class MoERouterZLoss(MoELoss):
-    def __init__(self, *, loss_weight: float, num_layers: int, num_experts: int):
+    def __init__(self, *, loss_weight: float, num_experts: int):
         self.loss_weight = loss_weight
-        self.num_layers = num_layers
         self.num_experts = num_experts
         self.loss: Optional[torch.Tensor] = None
 
-    def update(self, expert_logits: torch.Tensor, **kwargs):
+    def update(self, *, expert_logits: torch.Tensor, **kwargs):
         del kwargs
         loss = torch.logsumexp(expert_logits, dim=-1).square().sum()
         if self.loss is None:
@@ -87,7 +96,7 @@ class MoERouterZLoss(MoELoss):
             raise RuntimeError(
                 f"'{self.__class__.__name__}.update()' needs to be called before '.compute()'"
             )
-        scale = self.loss_weight / (self.num_layers * total_bz)
+        scale = self.loss_weight / total_bz
         lb_loss = scale * self.loss
         if reset:
             self.reset()

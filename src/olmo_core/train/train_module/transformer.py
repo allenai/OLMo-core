@@ -529,9 +529,7 @@ class TransformerTrainModule(TrainModule):
         z_batch_loss: Optional[torch.Tensor] = None
         if self.z_loss_multiplier is not None:
             z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
-        moe_batch_losses: Optional[Dict[str, torch.Tensor]] = None
-        if self.model.is_moe:
-            moe_batch_losses = {}
+        auxiliary_batch_losses: Dict[str, torch.Tensor] = {}
 
         # Split into micro-batches.
         if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
@@ -561,20 +559,18 @@ class TransformerTrainModule(TrainModule):
                     z_batch_loss += z_loss
                     del z_loss
 
-                # Optionally get MoE losses and update the total batch MoE losses.
-                if self.model.is_moe:
-                    assert moe_batch_losses is not None
-                    moe_losses = cast(MoETransformer, self.model).compute_losses(
-                        batch_num_tokens_for_loss, reset=True
-                    )
-                    for loss_name, loss_val in moe_losses.items():
-                        loss += loss_val
-                        loss_val = get_local_tensor(loss_val.detach())
-                        if loss_name in moe_batch_losses:
-                            moe_batch_losses[loss_name] += loss_val
-                        else:
-                            moe_batch_losses[loss_name] = loss_val
-                    del moe_losses
+                # Optionally get model auxiliary losses and update the total batch auxiliary losses.
+                auxiliary_losses = self.model.compute_auxiliary_losses(
+                    batch_num_tokens_for_loss, reset=True
+                )
+                for loss_name, loss_val in auxiliary_losses.items():
+                    loss += loss_val
+                    loss_val = get_local_tensor(loss_val.detach())
+                    if loss_name in auxiliary_batch_losses:
+                        auxiliary_batch_losses[loss_name] += loss_val
+                    else:
+                        auxiliary_batch_losses[loss_name] = loss_val
+                del auxiliary_losses
 
                 # Run backward pass.
                 loss.backward()
@@ -594,15 +590,13 @@ class TransformerTrainModule(TrainModule):
                 ReduceType.mean,
                 namespace="train",
             )
-        if self.model.is_moe:
-            assert moe_batch_losses is not None
-            for loss_name, loss_val in moe_batch_losses.items():
-                self.record_metric(
-                    loss_name,
-                    loss_val,
-                    ReduceType.mean,
-                    namespace="train",
-                )
+        for loss_name, loss_val in auxiliary_batch_losses.items():
+            self.record_metric(
+                loss_name,
+                loss_val,
+                ReduceType.mean,
+                namespace="train",
+            )
 
         if isinstance(self.optim, SkipStepOptimizer):
             self.optim.latest_loss = ce_batch_loss
