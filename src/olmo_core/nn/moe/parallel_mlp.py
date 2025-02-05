@@ -153,9 +153,11 @@ class ParallelMLP(ParallelMLPBase):
 
     def expert_capacity(self, top_k: int, num_items: int) -> int:
         # TODO: need to ensure this is the same across the process group, could be different w/
-        # different batch sizes.
-        items_per_expert = top_k * num_items * self.ep_world_size / self.num_experts
-        return int(self.capacity_factor * items_per_expert)
+        # different local batch sizes.
+        num_global_items = num_items * self.ep_world_size
+        num_global_expert_inputs = top_k * num_global_items
+        inputs_per_expert = num_global_expert_inputs / self.num_experts
+        return int(self.capacity_factor * inputs_per_expert)
 
     def forward_once(
         self,
@@ -224,12 +226,13 @@ class ParallelMLP(ParallelMLPBase):
         with torch.no_grad():
             indices, bin_ids, bins, tokens_per_expert = self.indices_and_bins(expert_indices)
             expert_capacity = self.expert_capacity(top_k, num_items)
+            local_expert_capacity = expert_capacity // self.ep_world_size
             if dist.get_rank() == 0:
-                print(f"{expert_capacity=}")
+                print(f"{expert_capacity=}, {local_expert_capacity=}")
 
         # Permute locally so that the tokens for each device are stored contiguously.
-        # shape: (num_experts, expert_capacity, d_model)
-        x = ops.binned_gather(x, indices, bins, expert_capacity, top_k)
+        # shape: (num_experts, local_expert_capacity, d_model)
+        x = ops.binned_gather(x, indices, bins, local_expert_capacity, top_k)
         if dist.get_rank() == 0:
             print(f"B {x.shape=} {x=}")
 
@@ -237,19 +240,18 @@ class ParallelMLP(ParallelMLPBase):
         # multiple devices own parts of the same sets of experts.
         # Replicate the token counts so devices that share experts
         # get all of the tokens assigned to them.
-        # TODO: Fuse this into the prior, local permutation?
         if self.hidden_sharding_degree > 1:
-            # shape: (num_local_experts, ep_world_size // hidden_sharding_degree, expert_capacity, d_model)
-            x = x.view(self.num_local_experts, -1, expert_capacity, self.d_model)
-            # shape: (num_experts * hidden_sharding_degree, expert_capacity, d_model)
+            # shape: (num_local_experts, ep_world_size // hidden_sharding_degree, local_expert_capacity, d_model)
+            x = x.view(self.num_local_experts, -1, local_expert_capacity, self.d_model)
+            # shape: (num_experts * hidden_sharding_degree, local_expert_capacity, d_model)
             x = x.repeat(1, self.hidden_sharding_degree, 1, 1).view(
-                -1, expert_capacity, self.d_model
+                -1, local_expert_capacity, self.d_model
             )
 
         # Start the cross-device permutation asynchronously so we can
         # overlap communication with computation.
-        # shape: (num_local_experts * ep_world_size, expert_capacity, d_model)
-        #      = (num_experts, expert_capacity, d_model)
+        # shape: (num_local_experts * ep_world_size, local_expert_capacity, d_model)
+        #      = (num_experts, local_expert_capacity, d_model)
         parallel_x, parallel_x_handle = ops.all_to_all(
             x,
             group=self._ep_pg,
@@ -275,20 +277,21 @@ class ParallelMLP(ParallelMLPBase):
                 self.num_local_experts,
             )
 
-            # shape: (num_experts * expert_capacity,)
+            # shape: (num_experts * local_expert_capacity,)
             parallel_top_expert = torch.repeat_interleave(
                 parallel_top_expert,
-                expert_capacity,
-                output_size=parallel_top_expert.numel() * expert_capacity,
+                local_expert_capacity,
+                output_size=parallel_top_expert.numel() * local_expert_capacity,
             )
 
-            # shape: (num_experts * expert_capacity,)
+            # shape: (num_experts * local_expert_capacity,)
             _, parallel_indices = torch.sort(parallel_top_expert)
 
             # Calculate the bins boundaries from the token counts.
             # shape: (num_local_experts,)
             parallel_tokens_per_expert = move_to_device(
-                torch.tensor([expert_capacity] * self.num_local_experts), parallel_indices.device
+                torch.tensor([local_expert_capacity] * self.num_local_experts),
+                parallel_indices.device,
             )
             # shape: (num_local_experts,)
             parallel_bins = torch.empty_like(parallel_tokens_per_expert, dtype=torch.int32)
@@ -469,7 +472,6 @@ class ParallelDroplessMLP(ParallelMLPBase):
         # multiple devices own parts of the same sets of experts.
         # Replicate the token counts so devices that share experts
         # get all of the tokens assigned to them.
-        # TODO: Fuse this into the prior, local permutation?
         x = ops.repeat(x, (self.hidden_sharding_degree, 1))
 
         # Start the cross-device permutation asynchronously so we can
@@ -538,7 +540,6 @@ class ParallelDroplessMLP(ParallelMLPBase):
         )
 
         # Reduce along the hidden sharding to get the final outputs.
-        # TODO: Fuse this into the following local permutation?
         x = ops.sum_tensor(x.view(self.hidden_sharding_degree, -1, self.d_model), dim=0)
 
         # Un-permute locally to setup for the next series of operations.
