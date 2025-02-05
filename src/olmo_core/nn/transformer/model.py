@@ -155,13 +155,16 @@ class Transformer(nn.Module):
         self,
         *,
         max_seq_len: Optional[int] = None,
+        max_local_microbatch_size: Optional[int] = None,
         device: Optional[torch.device] = None,
     ) -> torch.Generator:
         """
         Initialize the model weights.
 
-        :param max_seq_len: The maximum sequence length expected during training. This is used
+        :param max_seq_len: The maximum sequence length expected. This is used
             to warm up the RoPE cache.
+        :param max_local_microbatch_size: The maximum local (rank) micro-batch size (in tokens)
+            expected. This is used to warm-up some MoE cache.
         :param device: The device the local copy of the model will be trained on.
         """
         device = device or self.device
@@ -203,8 +206,11 @@ class Transformer(nn.Module):
                     generator=generator,
                 )
             else:
+                block = cast(MoETransformerBlock, block)
+                if max_local_microbatch_size is not None:
+                    block.feed_forward_moe.warmup_cache(max_local_microbatch_size)
                 self.init_method.init_feed_forward_moe(
-                    cast(MoETransformerBlock, block).feed_forward_moe,
+                    block.feed_forward_moe,
                     d_model=self.d_model,
                     block_idx=block.block_idx,
                     num_blocks=self.n_layers,

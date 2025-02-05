@@ -10,7 +10,7 @@ import torch.nn as nn
 from torch.distributed import DeviceMesh
 
 from olmo_core.distributed.utils import get_world_size
-from olmo_core.utils import move_to_device
+from olmo_core.utils import get_default_device, move_to_device
 
 from ..buffer_cache import BufferCache
 from . import ops
@@ -24,13 +24,17 @@ class ParallelMLPBase(nn.Module):
     Wraps an MoE MLP layer to coordinate the routing and expert parallelism.
     """
 
-    def __init__(self, *, mlp: MoEMLPBase, cache: Optional[BufferCache] = None):
+    def __init__(self, *, mlp: MoEMLPBase, top_k: int, cache: Optional[BufferCache] = None):
         super().__init__()
         self.mlp = mlp
+        self.top_k = top_k
         self._cache = cache or BufferCache()
         self._expert_parallel_enabled: bool = False
         self._ep_mesh: Optional[DeviceMesh] = None
         self._ep_pg: Optional[dist.ProcessGroup] = None
+
+    def warmup_cache(self, max_local_microbatch_size: int):
+        del max_local_microbatch_size
 
     @property
     def d_model(self) -> int:
@@ -149,17 +153,56 @@ class ParallelMLPBase(nn.Module):
 
 
 class ParallelMLP(ParallelMLPBase):
-    def __init__(self, *, mlp: MoEMLP, capacity_factor: float, cache: Optional[BufferCache] = None):
-        super().__init__(mlp=mlp, cache=cache)
+    def __init__(
+        self,
+        *,
+        mlp: MoEMLP,
+        top_k: int,
+        capacity_factor: float,
+        cache: Optional[BufferCache] = None,
+        max_local_microbatch_size: Optional[int] = None,
+    ):
+        super().__init__(mlp=mlp, top_k=top_k, cache=cache)
         self.capacity_factor = capacity_factor
+        self.max_local_microbatch_size = max_local_microbatch_size
+        if self.max_local_microbatch_size is not None:
+            self.warmup_cache(self.max_local_microbatch_size)
 
-    def expert_capacity(self, top_k: int, num_items: int) -> int:
-        # TODO: need to ensure this is the same across the process group.
+    def warmup_cache(self, max_local_microbatch_size: int):
+        self.max_local_microbatch_size = max_local_microbatch_size
+        # TODO: call `_get_parallel_indices_and_bins()` up-front to warm the cache so
+        # torch.compile() doesn't try to trace that.
+        expert_capacity = self.expert_capacity(self.max_local_microbatch_size)
+        local_expert_capacity = expert_capacity // self.ep_world_size
+        self._get_parallel_indices_and_bins(
+            expert_capacity=expert_capacity,
+            local_expert_capacity=local_expert_capacity,
+            device=get_default_device(),
+        )
+
+    def apply_ep(self, ep_mesh: DeviceMesh):
+        super().apply_ep(ep_mesh)
+        if self.max_local_microbatch_size is not None:
+            self.warmup_cache(self.max_local_microbatch_size)
+
+    def expert_capacity(self, local_batch_size: int) -> int:
+        # NOTE: need to ensure this is the same across the process group.
         # If local batch sizes are different then these will be different, and `parallel_forward_once`
         # will break. This shouldn't be a problem with our trainer, but would be an issue for inference.
-        num_global_items = num_items * self.ep_world_size
-        num_global_expert_inputs = top_k * num_global_items
+        # To avoid that you could set `self.max_local_microbatch_size` up-front.
+        if self.max_local_microbatch_size is not None:
+            if local_batch_size > self.max_local_microbatch_size:
+                raise RuntimeError(
+                    f"Local batch size ({local_batch_size:,d}) bigger than "
+                    f"configured max local batch size ({self.max_local_microbatch_size:,d})"
+                )
+            else:
+                local_batch_size = self.max_local_microbatch_size
+
+        num_global_items = local_batch_size * self.ep_world_size
+        num_global_expert_inputs = self.top_k * num_global_items
         inputs_per_expert = num_global_expert_inputs / self.num_experts
+
         return int(self.capacity_factor * inputs_per_expert)
 
     @torch.no_grad()
@@ -219,12 +262,12 @@ class ParallelMLP(ParallelMLPBase):
         expert_weights: torch.Tensor,
         expert_indices: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        num_items, top_k = expert_weights.shape
-        expert_capacity = self.expert_capacity(top_k, num_items)
+        batch_size, _ = expert_weights.shape
+        expert_capacity = self.expert_capacity(batch_size)
 
-        # shape: (N * top_k,)
+        # shape: (batch_size * top_k,)
         expert_weights = expert_weights.flatten()
-        # shape: (N * top_k,)
+        # shape: (batch_size * top_k,)
         expert_indices = expert_indices.flatten()
 
         with torch.no_grad():
@@ -236,7 +279,7 @@ class ParallelMLP(ParallelMLPBase):
             expert_weights=expert_weights,
             bins=bins,
             expert_capacity=expert_capacity,
-            top_k=top_k,
+            top_k=self.top_k,
         )
         return x, batch_size_per_expert
 
@@ -268,13 +311,13 @@ class ParallelMLP(ParallelMLPBase):
         # shape: (N, d_model)
         x = x.view(-1, x.shape[-1])
 
-        num_items, top_k = expert_weights.shape
-        expert_capacity = self.expert_capacity(top_k, num_items)
+        num_items, _ = expert_weights.shape
+        expert_capacity = self.expert_capacity(num_items)
         local_expert_capacity = expert_capacity // self.ep_world_size
 
-        # shape: (N * top_k,)
+        # shape: (batch_size * top_k,)
         expert_weights = expert_weights.flatten()
-        # shape: (N * top_k,)
+        # shape: (batch_size * top_k,)
         expert_indices = expert_indices.flatten()
 
         with torch.no_grad():
@@ -282,7 +325,7 @@ class ParallelMLP(ParallelMLPBase):
 
         # Permute locally so that the tokens for each device are stored contiguously.
         # shape: (num_experts, local_expert_capacity, d_model)
-        x = ops.binned_gather(x, indices, bins, local_expert_capacity, top_k)
+        x = ops.binned_gather(x, indices, bins, local_expert_capacity, self.top_k)
 
         # If we're sharding the experts along the hidden dimension
         # multiple devices own parts of the same sets of experts.
@@ -338,7 +381,7 @@ class ParallelMLP(ParallelMLPBase):
             x = ops.sum_tensor(x.view(self.hidden_sharding_degree, -1, self.d_model), dim=0)
 
         # Un-permute locally to setup for the next series of operations.
-        x = ops.scatter(x, indices, bin_ids, expert_weights, bins, top_k)
+        x = ops.scatter(x, indices, bin_ids, expert_weights, bins, self.top_k)
 
         return x, tokens_per_expert.flatten()
 
@@ -377,8 +420,8 @@ class ParallelDroplessMLP(ParallelMLPBase):
         When expert parallelism is enabled the forward pass involves a host-device sync.
     """
 
-    def __init__(self, *, mlp: DroplessMoEMLP, cache: Optional[BufferCache] = None):
-        super().__init__(mlp=mlp, cache=cache)
+    def __init__(self, *, mlp: DroplessMoEMLP, top_k: int, cache: Optional[BufferCache] = None):
+        super().__init__(mlp=mlp, top_k=top_k, cache=cache)
 
     def forward_once(
         self,
@@ -386,11 +429,9 @@ class ParallelDroplessMLP(ParallelMLPBase):
         expert_weights: torch.Tensor,
         expert_indices: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        top_k = expert_weights.shape[-1]
-
-        # shape: (N * top_k,)
+        # shape: (batch_size * top_k,)
         expert_weights = expert_weights.flatten()
-        # shape: (N * top_k,)
+        # shape: (batch_size * top_k,)
         expert_indices = expert_indices.flatten()
 
         with torch.no_grad():
@@ -403,7 +444,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
             bin_ids=bin_ids,
             expert_weights=expert_weights,
             bins=bins,
-            top_k=top_k,
+            top_k=self.top_k,
         )
 
         return out, batch_size_per_expert
@@ -418,11 +459,9 @@ class ParallelDroplessMLP(ParallelMLPBase):
         # but with extra bookkeeping to manage the dynamic sizes, and unfortunately this introduces
         # a host-device sync.
 
-        top_k = expert_weights.shape[-1]
-
-        # shape: (N * top_k,)
+        # shape: (batch_size * top_k,)
         expert_weights = expert_weights.flatten()
-        # shape: (N * top_k,)
+        # shape: (batch_size * top_k,)
         expert_indices = expert_indices.flatten()
 
         with torch.no_grad():
@@ -451,7 +490,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
 
         # Permute locally and without any padding so that tokens for each
         # parallel device are stored contiguously.
-        x = ops.gather(x.view(-1, x.shape[-1]), indices, bin_ids, bins, top_k)
+        x = ops.gather(x.view(-1, x.shape[-1]), indices, bin_ids, bins, self.top_k)
 
         # Compute the number of tokens that will be received from each
         # device and permute the input data across the devices.
@@ -546,7 +585,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
         x = ops.sum_tensor(x.view(self.hidden_sharding_degree, -1, self.d_model), dim=0)
 
         # Un-permute locally to setup for the next series of operations.
-        x = ops.scatter(x, indices, bin_ids, expert_weights, bins, top_k)
+        x = ops.scatter(x, indices, bin_ids, expert_weights, bins, self.top_k)
 
         return x, tokens_per_expert.flatten()
 

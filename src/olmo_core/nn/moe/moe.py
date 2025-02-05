@@ -154,6 +154,9 @@ class MoEBase(nn.Module):
                 )
             )
 
+    def warmup_cache(self, max_local_microbatch_size: int):
+        self.experts.warmup_cache(max_local_microbatch_size)
+
     def compute_losses(
         self, total_bz: Union[int, torch.Tensor], reset: bool = True
     ) -> Dict[str, torch.Tensor]:
@@ -284,6 +287,7 @@ class MoE(MoEBase):
                 dtype=dtype,
                 init_device=init_device,
             ),
+            top_k=self.router.top_k,
             capacity_factor=capacity_factor,
             cache=cache,
         )
@@ -312,5 +316,6 @@ class DroplessMoE(MoEBase):
                 dtype=dtype,
                 init_device=init_device,
             ),
+            top_k=self.router.top_k,
             cache=cache,
         )

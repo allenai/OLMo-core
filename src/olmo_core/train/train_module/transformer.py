@@ -362,7 +362,11 @@ class TransformerTrainModule(TrainModule):
 
         # Materialize and init parameters.
         log.info("Initializing model weights...")
-        self.model.init_weights(max_seq_len=max_sequence_length, device=self.device)
+        self.model.init_weights(
+            max_seq_len=max_sequence_length,
+            max_local_microbatch_size=rank_microbatch_size,
+            device=self.device,
+        )
 
         # Build optimizer(s).
         log.info("Building optimizer...")
