@@ -448,7 +448,7 @@ class TransformerPipelineTrainModule(TrainModule):
 
         for model in self.model_parts:
             if model.is_moe:
-                # TODO (epwalsh): need to handle the internal MoE losses correctly.
+                # TODO (epwalsh): need to handle the MoE auxiliary losses correctly.
                 raise NotImplementedError(
                     "Pipeline parallelism with MoE's is currently not supported"
                 )
@@ -669,7 +669,6 @@ class TransformerPipelineTrainModule(TrainModule):
             self.record_ce_loss(
                 self._ce_batch_loss / get_world_size(self.dp_process_group), ReduceType.sum
             )
-
         if self.z_loss_multiplier is not None:
             if self._z_batch_loss is None:
                 self.record_metric("Z loss", 0.0, ReduceType.sum, namespace="train")
@@ -680,6 +679,7 @@ class TransformerPipelineTrainModule(TrainModule):
                     ReduceType.sum,
                     namespace="train",
                 )
+        # TODO: handle model auxiliary losses, like with MoE.
 
         for optim in self.optimizers:
             if isinstance(optim, SkipStepOptimizer):
