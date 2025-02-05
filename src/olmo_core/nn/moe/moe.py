@@ -248,6 +248,7 @@ class MoE(MoEBase):
         lb_loss_weight: Optional[float] = None,
         z_loss_weight: Optional[float] = None,
         dtype: torch.dtype = torch.float32,
+        cache: Optional[BufferCache] = None,
     ):
         super().__init__(
             d_model=d_model,
@@ -261,6 +262,7 @@ class MoE(MoEBase):
             z_loss_weight=z_loss_weight,
             dtype=dtype,
             capacity_factor=capacity_factor,
+            cache=cache,
         )
 
     def _init_parallel_mlp(  # type: ignore[override]
