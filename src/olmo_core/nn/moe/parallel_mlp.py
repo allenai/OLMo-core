@@ -212,7 +212,7 @@ class ParallelMLP(ParallelMLPBase):
         # shape: (N, d_model)
         x = x.view(-1, x.shape[-1])
         if dist.get_rank() == 0:
-            print(f"A {x=}")
+            print(f"A {x.shape=} {x=}")
 
         num_items, top_k = expert_weights.shape
 
@@ -230,7 +230,7 @@ class ParallelMLP(ParallelMLPBase):
         # shape: (num_experts, expert_capacity, d_model)
         x = ops.binned_gather(x, indices, bins, expert_capacity, top_k)
         if dist.get_rank() == 0:
-            print(f"B {x=}")
+            print(f"B {x.shape=} {x=}")
 
         # If we're sharding the experts along the hidden dimension
         # multiple devices own parts of the same sets of experts.
@@ -297,7 +297,7 @@ class ParallelMLP(ParallelMLPBase):
         # Block to make sure that the cross-device permutation is complete.
         parallel_x_handle.wait()
         if dist.get_rank() == 0:
-            print(f"C {parallel_x=}")
+            print(f"C {parallel_x.shape=} {parallel_x=}")
         parallel_x = self.permute_and_compute(
             parallel_x,
             indices=parallel_indices.int(),
@@ -313,7 +313,7 @@ class ParallelMLP(ParallelMLPBase):
         # Un-permute the tokens across the devices.
         x, _ = ops.all_to_all(parallel_x, group=self._ep_pg)
         if dist.get_rank() == 0:
-            print(f"E {x=}")
+            print(f"E {x.shape=} {x=}")
 
         # Reduce along the hidden sharding to get the final outputs.
         if self.hidden_sharding_degree > 1:
@@ -322,7 +322,7 @@ class ParallelMLP(ParallelMLPBase):
         # Un-permute locally to setup for the next series of operations.
         x = ops.scatter(x, indices, bin_ids, expert_weights, bins, top_k)
         if dist.get_rank() == 0:
-            print(f"E {x=}")
+            print(f"E {x.shape=} {x=}")
 
         return x, tokens_per_expert.flatten()
 
