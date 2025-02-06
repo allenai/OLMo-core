@@ -9,6 +9,7 @@ from rich import print
 from olmo_core.config import Config, StrEnum
 from olmo_core.data import (
     DataMix,
+    InstanceFilterConfig,
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
     NumpyDatasetType,
@@ -170,6 +171,11 @@ def build_common_components(
             name=VSLCurriculumType.grow_p2, num_cycles=8, balanced=False
         ),
         work_dir=get_work_dir(root_dir),
+        instance_filter_config=InstanceFilterConfig(
+            repetition_max_period=13,
+            repetition_min_period=1,
+            repetition_max_count=32,
+        ),
     )
 
     data_loader_config = NumpyDataLoaderConfig(
