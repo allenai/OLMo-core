@@ -33,6 +33,7 @@ class SharedMLPConfig(Config):
     The name of the implementation.
     """
     weighted_sum: bool = True
+    hidden_size: Optional[int] = None
     bias: bool = True
     dtype: Optional[DType] = None
 
@@ -44,6 +45,7 @@ class SharedMLPConfig(Config):
         """
         params = 0
 
+        hidden_size = self.hidden_size or hidden_size
         params += 3 * d_model * hidden_size
         if self.bias:
             params += 2 * hidden_size + d_model
@@ -68,9 +70,9 @@ class SharedMLPConfig(Config):
         kwargs.pop("name")
         kwargs.update(
             d_model=d_model,
-            hidden_size=hidden_size,
             init_device=init_device,
         )
+        kwargs.setdefault("hidden_size", hidden_size)
         if self.dtype is not None:
             kwargs["dtype"] = self.dtype.as_pt()
         elif dtype is not None:
