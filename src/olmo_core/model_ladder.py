@@ -6,6 +6,8 @@ import logging
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, field
 
+from olmo_core.data.numpy_dataset import InstanceFilterConfig
+
 from .config import Config, StrEnum
 from .data import (
     DataMix,
@@ -242,6 +244,11 @@ class ModelLadder(Config, metaclass=ABCMeta):
             mix_base_dir=self.mix_base_dir,
             sequence_length=self.sequence_length,
             work_dir=self.work_dir,
+            instance_filter_config=InstanceFilterConfig(
+                repetition_max_period=13,
+                repetition_min_period=1,
+                repetition_max_count=32,
+            ),
         )
 
     def get_data_loader_config(self) -> NumpyDataLoaderConfig:
