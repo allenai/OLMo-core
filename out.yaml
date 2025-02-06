@@ -1,10 +1,17 @@
-2025-02-05 16:54:56.926	Dustin-Schwenk-MacBook-Pro:0	olmo_core.utils:195	INFO	Setting env var 'OMP_NUM_THREADS' to '8'
-2025-02-05 16:54:56.926	Dustin-Schwenk-MacBook-Pro:0	olmo_core.utils:195	INFO	Setting env var 'TOKENIZERS_PARALLELISM' to 'false'
+2025-02-05 19:27:40.531	Dustin-Schwenk-MacBook-Pro:0	olmo_core.utils:195	INFO	Setting env var 'OMP_NUM_THREADS' to '8'
+2025-02-05 19:27:40.531	Dustin-Schwenk-MacBook-Pro:0	olmo_core.utils:195	INFO	Setting env var 'TOKENIZERS_PARALLELISM' to 'false'
 LcContTrain(
-    run_name='run01',
+    run_name='lc_p1_8b_instruct_d1_r1',
     launch=BeakerLaunchConfig(
-        name='run01-122043b8',
-        cmd=['OLMo2-7B-lc_p1.py', 'train', 'run01', 'ai2/jupiter-cirrascale-2', '--launch.num_nodes=2', '--launch.workspace=ai2-long-contexts'],
+        name='lc_p1_8b_instruct_d1_r1-34c72d77',
+        cmd=[
+            'src/scripts/train/lc_cont_train/OLMo2-7B-lc_p1.py',
+            'train',
+            'lc_p1_8b_instruct_d1_r1',
+            'ai2/jupiter-cirrascale-2',
+            '--launch.num_nodes=8',
+            '--launch.workspace=ai2-long-contexts'
+        ],
         budget='ai2/oe-training',
         task_name='train',
         workspace='ai2-long-contexts',
@@ -22,7 +29,7 @@ LcContTrain(
             'printenv AWS_CREDENTIALS > ~/.aws/credentials'
         ],
         beaker_image='olmo-core-tch260dev20241209cu124',
-        num_nodes=2,
+        num_nodes=8,
         num_gpus=8,
         clusters=['ai2/jupiter-cirrascale-2'],
         shared_filesystem=True,
@@ -114,7 +121,7 @@ LcContTrain(
     ),
     data_loader=NumpyDataLoaderConfig(global_batch_size=8388608, seed=34521, work_dir=None, num_threads=None, num_workers=4, prefetch_factor=None, target_device_type=None),
     trainer=TrainerConfig(
-        save_folder='weka://oe-training-default/ai2-llm/checkpoints/dustins/run01',
+        save_folder='weka://oe-training-default/ai2-llm/checkpoints/dustins/lc_p1_8b_instruct_d1_r1',
         rank_microbatch_size=32768,
         work_dir=None,
         load_path='s3://ai2-llm/checkpoints/dustins/long-contexts/OLMo-2-1124-7B-Instruct/',
@@ -142,7 +149,7 @@ LcContTrain(
             ),
             'wandb': WandBCallback(
                 enabled=True,
-                name='run01',
+                name='lc_p1_8b_instruct_d1_r1',
                 project='long-contexts',
                 entity='ai2-llm',
                 group=None,
