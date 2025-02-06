@@ -1,8 +1,8 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import torch
 
-from olmo_core.optim.scheduler import ConstantScheduler, Scheduler
+from olmo_core.optim.scheduler import Scheduler
 
 from .callback import Callback
 
@@ -13,7 +13,7 @@ class SchedulerCallback(Callback):
     Introduces a learning rate :class:`~olmo_core.optim.Scheduler` to the training loop.
     """
 
-    scheduler: Scheduler = field(default_factory=ConstantScheduler)
+    scheduler: Scheduler
 
     def pre_optim_step(self):
         for group_idx, group in enumerate(self.trainer.optim.param_groups):
