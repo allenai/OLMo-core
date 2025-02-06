@@ -1,1 +1,0 @@
- python  src/scripts/train/lc_cont_train/OLMo2-7B-lc_p1.py  launch lc_p1_8b_instruct_d1_r1 s3://ai2-llm/checkpoints/dustins/long-contexts/OLMo-2-1124-7B-Instruct/ ai2/jupiter-cirrascale-2 --launch.num_nodes=8 --launch.workspace=ai2-long-contexts
