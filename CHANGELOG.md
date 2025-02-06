@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `instance_filter_config` field to `NumpyDatasetConfig`.
+
+## [v1.8.0](https://github.com/allenai/OLMo-core/releases/tag/v1.8.0) - 2025-01-29
+
+### Added
+
 - Added support for tensor parallelism. See the `TransformerConfig` class for usage.
 - Added more downstream tasks from the model ladder.
 - Added `io.copy_dir()` function.

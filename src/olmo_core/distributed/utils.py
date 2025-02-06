@@ -10,8 +10,8 @@ from typing import Callable, List, Optional, TypeVar, cast
 
 import torch
 import torch.distributed as dist
-from torch.distributed._tensor import DTensor
 from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor
 
 from ..exceptions import OLMoEnvironmentError
 from ..utils import logging_configured, move_to_device, set_env_var

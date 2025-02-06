@@ -37,12 +37,13 @@ from ..aliases import PathOrStr
 from ..config import Config, StrEnum
 from ..distributed.utils import barrier, get_fs_local_rank
 from ..io import _get_s3_client, get_file_size
-from .mixes import DataMixBase
+from .mixes import DataMix, DataMixBase
 from .tokenizer import TokenizerConfig
 from .utils import (
     bucket_documents,
     chunk_array,
     divide_into_buckets,
+    find_periodic_sequences,
     get_doc_lengths_from_indices,
     get_document_lengths,
     get_rng,
@@ -305,6 +306,25 @@ class NumpyDatasetBase(ABC):
         """
         raise NotImplementedError
 
+    def _validate_instance(
+        self, input_ids: torch.Tensor, instance_filter_config: InstanceFilterConfig
+    ) -> bool:
+        for m in find_periodic_sequences(
+            input_ids.numpy(),
+            max_period=instance_filter_config.repetition_max_period,
+            min_period=instance_filter_config.repetition_min_period,
+        ):
+            if m.times >= instance_filter_config.repetition_max_count:
+                return False
+        return True
+
+
+@dataclass
+class InstanceFilterConfig(Config):
+    repetition_max_period: int = 13
+    repetition_min_period: int = 1
+    repetition_max_count: int = 32
+
 
 class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     """
@@ -352,6 +372,7 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         include_instance_metadata: Optional[bool] = None,
         generate_doc_lengths: bool = False,
         max_target_sequence_length: Optional[int] = None,
+        instance_filter_config: Optional[InstanceFilterConfig] = None,
     ):
         if max_target_sequence_length is not None and (
             max_target_sequence_length < sequence_length
@@ -386,6 +407,7 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         self._num_instances: Optional[int] = None
         self._include_instance_metadata = include_instance_metadata
         self._generate_doc_lengths = generate_doc_lengths
+        self.instance_filter_config = instance_filter_config
 
     @property
     def num_tokens(self) -> int:
@@ -449,6 +471,9 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         # Read the data from file.
         input_ids = self._read_chunk_from_array(self.paths[array_index], array_local_index)
         out: Dict[str, Any] = {"input_ids": input_ids}
+
+        if self.instance_filter_config is not None:
+            out["instance_mask"] = self._validate_instance(input_ids, self.instance_filter_config)
 
         if self._include_instance_metadata:
             metadata = self._metadata[array_index]
@@ -525,6 +550,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         include_instance_metadata: Optional[bool] = None,
         generate_doc_lengths: bool = False,
         max_target_sequence_length: Optional[int] = None,
+        instance_filter_config: Optional[InstanceFilterConfig] = None,
     ):
         if max_target_sequence_length is not None and (
             max_target_sequence_length < sequence_length
@@ -565,6 +591,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         self._instances_per_bucket: Optional[Tuple[Tuple[int, int], ...]] = None
         self._path_offset_index = path_offset_index
         self._seed = seed
+        self.instance_filter_config = instance_filter_config
 
     @property
     def indices_dtype(
@@ -692,6 +719,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         dtype: NumpyUIntTypes = np.uint16,
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
+        instance_filter_config: Optional[InstanceFilterConfig] = None,
     ):
         super().__init__(
             *paths,
@@ -702,6 +730,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
             dtype=dtype,
             metadata=metadata,
             include_instance_metadata=include_instance_metadata,
+            instance_filter_config=instance_filter_config,
         )
         self._array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
 
@@ -1122,6 +1151,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         dtype: NumpyUIntTypes = np.uint16,
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
+        instance_filter_config: Optional[InstanceFilterConfig] = None,
     ):
         if math.log(max_sequence_length, 2) % 1 != 0:
             raise OLMoConfigurationError("'max_sequence_length' must be a power of 2")
@@ -1161,6 +1191,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         self._array_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
         self._lengths_dtype: Optional[NumpyUIntTypes] = None
         self._instances_per_bucket: Optional[Tuple[Tuple[int, int], ...]] = None
+        self.instance_filter_config = instance_filter_config
 
     @property
     def fingerprint_version(self) -> str:
@@ -1250,6 +1281,9 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         # Read the data from file.
         input_ids = self._read_chunk_from_array(self.paths[array_index], array_local_index)
         out: Dict[str, Any] = {"input_ids": input_ids}
+
+        if self.instance_filter_config is not None:
+            out["instance_mask"] = self._validate_instance(input_ids, self.instance_filter_config)
 
         if self._include_instance_metadata:
             metadata = self._metadata[array_index]
@@ -1531,7 +1565,7 @@ class NumpyDatasetConfig(Config):
     """
     The paths/URLs to the numpy token ID arrays.
     """
-    mix: Optional[DataMixBase] = None
+    mix: Optional[Union[str, DataMixBase]] = None
     """
     The name of a data mix.
     """
@@ -1570,6 +1604,7 @@ class NumpyDatasetConfig(Config):
         You can save a lot of time and disk space by setting this to a common directory across
         all of you runs.
     """
+    instance_filter_config: Optional[InstanceFilterConfig] = None
 
     def validate(self):
         if self.name in (NumpyDatasetType.fsl, NumpyDatasetType.padded_fsl):
@@ -1680,7 +1715,10 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "Missing tokenizer identifier required to construct data mix"
                 )
-            paths, labels = self.mix.build(self.mix_base_dir, self.tokenizer.identifier)
+            mix = self.mix
+            if not isinstance(mix, DataMixBase):
+                mix = DataMix(mix)
+            paths, labels = mix.build(self.mix_base_dir, self.tokenizer.identifier)
             if metadata is None:
                 metadata = [{"label": label} for label in labels]
 
@@ -1721,6 +1759,7 @@ class NumpyDatasetConfig(Config):
                     include_instance_metadata=self.include_instance_metadata,
                     generate_doc_lengths=self.generate_doc_lengths,
                     path_offset_index=mixture.to_index(),
+                    instance_filter_config=self.instance_filter_config,
                 )
             else:
                 dataset = NumpyFSLDataset(
@@ -1734,6 +1773,7 @@ class NumpyDatasetConfig(Config):
                     metadata=metadata,
                     include_instance_metadata=self.include_instance_metadata,
                     generate_doc_lengths=self.generate_doc_lengths,
+                    instance_filter_config=self.instance_filter_config,
                 )
         elif self.name == NumpyDatasetType.padded_fsl:
             if self.sequence_length is None:
@@ -1773,6 +1813,7 @@ class NumpyDatasetConfig(Config):
                 dtype=self.get_dtype(),
                 metadata=metadata,
                 include_instance_metadata=self.include_instance_metadata,
+                instance_filter_config=self.instance_filter_config,
             )
         elif self.name == NumpyDatasetType.vsl:
             if self.max_sequence_length is None:
@@ -1798,6 +1839,7 @@ class NumpyDatasetConfig(Config):
                 dtype=self.get_dtype(),
                 metadata=metadata,
                 include_instance_metadata=self.include_instance_metadata,
+                instance_filter_config=self.instance_filter_config,
             )
         else:
             raise NotImplementedError(self.name)
