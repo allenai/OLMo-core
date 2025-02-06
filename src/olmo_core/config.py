@@ -207,6 +207,17 @@ class Config:
         :param data: A Python dictionary.
         :param overrides: A list of field overrides with dot notation, e.g. ``foo.bar=1``.
         """
+
+        def clean_data(d: Any) -> Any:
+            if isinstance(d, dict):
+                return {k: clean_data(v) for k, v in d.items() if k != cls.CLASS_NAME_FIELD}
+            elif isinstance(d, (list, tuple, set)):
+                return d.__class__((clean_data(x) for x in d))
+            else:
+                return d
+
+        data = clean_data(data)
+
         try:
             schema = om.structured(cls)
             conf = om.merge(schema, data)
