@@ -170,8 +170,8 @@ def build_expert_parallel_mesh(
     device_type = device_type or get_default_device().type
     world_size = get_world_size()
 
-    if ep_config.degree == world_size:
-        return init_device_mesh(device_type, (world_size,), mesh_dim_names=(MeshDimName.ep_shard,))
+    #  if ep_config.degree == world_size:
+    #      return init_device_mesh(device_type, (world_size,), mesh_dim_names=(MeshDimName.ep_shard,))
 
     # Build up mesh dimensions.
     names: List[str] = []
