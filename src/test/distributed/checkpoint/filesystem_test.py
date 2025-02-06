@@ -2,7 +2,7 @@ import pytest
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint as distcp
-from torch.distributed._tensor import Shard, distribute_tensor, init_device_mesh
+from torch.distributed.tensor import Shard, distribute_tensor, init_device_mesh
 
 from olmo_core.distributed.checkpoint.filesystem import (
     RemoteFileSystemReader,
