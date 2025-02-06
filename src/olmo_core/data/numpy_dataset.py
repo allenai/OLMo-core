@@ -37,7 +37,7 @@ from ..aliases import PathOrStr
 from ..config import Config, StrEnum
 from ..distributed.utils import barrier, get_fs_local_rank
 from ..io import _get_s3_client, get_file_size
-from .mixes import DataMixBase
+from .mixes import DataMix, DataMixBase
 from .tokenizer import TokenizerConfig
 from .utils import (
     bucket_documents,
@@ -1531,7 +1531,7 @@ class NumpyDatasetConfig(Config):
     """
     The paths/URLs to the numpy token ID arrays.
     """
-    mix: Optional[DataMixBase] = None
+    mix: Optional[Union[str, DataMixBase]] = None
     """
     The name of a data mix.
     """
@@ -1680,7 +1680,10 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "Missing tokenizer identifier required to construct data mix"
                 )
-            paths, labels = self.mix.build(self.mix_base_dir, self.tokenizer.identifier)
+            mix = self.mix
+            if not isinstance(mix, DataMixBase):
+                mix = DataMix(mix)
+            paths, labels = mix.build(self.mix_base_dir, self.tokenizer.identifier)
             if metadata is None:
                 metadata = [{"label": label} for label in labels]
 
