@@ -2,10 +2,11 @@ import warnings
 from typing import Any, Callable, Optional
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
-from torch.distributed.tensor import Shard, distribute_tensor
+from torch.distributed.tensor import Replicate, Shard, distribute_tensor
 
 from ...distributed.utils import get_local_tensor
 from ...exceptions import OLMoConfigurationError
@@ -45,6 +46,7 @@ class MoEMLPBase(nn.Module):
         self.gradient_scale: Optional[float] = None
         self.num_local_experts = num_experts
         self.hidden_sharding_degree = 1
+        self.ep_pg: Optional[dist.ProcessGroup] = None
 
     def scale_grad(self, w: torch.Tensor) -> torch.Tensor:
         if self.gradient_scale is None:
@@ -55,9 +57,18 @@ class MoEMLPBase(nn.Module):
         """
         Apply expert parallelism.
         """
-        if ep_mesh.ndim > 1:
-            raise RuntimeError("local expert parallel sub-mesh must be 1-dimensional")
-        num_shards = ep_mesh.size()
+        from torch.distributed._composable.replicate import replicate
+
+        if ep_mesh.ndim != 1:
+            raise RuntimeError("expert parallel mesh must be 2-dimensional")
+        if not ep_mesh.mesh_dim_names:
+            raise RuntimeError("expert parallel mesh must have named dimensions")
+
+        replicate_dim_name, shard_dim_name = ep_mesh.mesh_dim_names
+
+        self.ep_pg = ep_mesh[shard_dim_name].get_group()
+        num_shards = ep_mesh[shard_dim_name].size()
+
         if self.num_experts % num_shards != 0:
             raise OLMoConfigurationError(
                 f"'num_experts' ({self.num_experts}) must be divisible by the expert parallel shard degree ({num_shards})."
@@ -66,9 +77,12 @@ class MoEMLPBase(nn.Module):
         self.num_local_experts = self.num_experts // num_shards
         self.gradient_scale = 1.0 / num_shards
 
-        self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, ep_mesh, [Shard(0)])))  # type: ignore
-        self.register_parameter("w2", nn.Parameter(distribute_tensor(self.w2, ep_mesh, [Shard(0)])))  # type: ignore
-        self.register_parameter("w3", nn.Parameter(distribute_tensor(self.w3, ep_mesh, [Shard(0)])))  # type: ignore
+        placements = [Replicate(), Shard(0)]
+        self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, ep_mesh, placements)))  # type: ignore
+        self.register_parameter("w2", nn.Parameter(distribute_tensor(self.w2, ep_mesh, placements)))  # type: ignore
+        self.register_parameter("w3", nn.Parameter(distribute_tensor(self.w3, ep_mesh, placements)))  # type: ignore
+
+        replicate(self, device_mesh=ep_mesh[replicate_dim_name])
 
 
 class MoEMLP(MoEMLPBase):

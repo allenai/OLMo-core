@@ -30,8 +30,6 @@ class ParallelMLPBase(nn.Module):
         self.top_k = top_k
         self._cache = cache or BufferCache()
         self._expert_parallel_enabled: bool = False
-        self._ep_mesh: Optional[DeviceMesh] = None
-        self._ep_pg: Optional[dist.ProcessGroup] = None
 
     def warmup_cache(self, max_local_microbatch_size: int):
         del max_local_microbatch_size
@@ -54,10 +52,14 @@ class ParallelMLPBase(nn.Module):
 
     @property
     def ep_world_size(self) -> int:
-        if self._ep_pg is not None:
-            return get_world_size(self._ep_pg)
+        if self.ep_pg is not None:
+            return get_world_size(self.ep_pg)
         else:
             return 1
+
+    @property
+    def ep_pg(self) -> Optional[dist.ProcessGroup]:
+        return self.mlp.ep_pg
 
     def apply_ep(self, ep_mesh: DeviceMesh):
         """
@@ -65,8 +67,6 @@ class ParallelMLPBase(nn.Module):
         """
         self.mlp.apply_ep(ep_mesh)
         self._expert_parallel_enabled = True
-        self._ep_mesh = ep_mesh
-        self._ep_pg = None if ep_mesh is None else ep_mesh.get_group()
 
     def indices_and_bins(
         self, expert_indices: torch.Tensor
@@ -348,7 +348,7 @@ class ParallelMLP(ParallelMLPBase):
         # overlap communication with computation.
         # shape: (num_local_experts * ep_world_size, local_expert_capacity, d_model)
         #     ~= (num_local_experts, expert_capacity, d_model)
-        parallel_x, _ = ops.all_to_all(x, group=self._ep_pg)
+        parallel_x, _ = ops.all_to_all(x, group=self.ep_pg)
 
         # After we do the cross-device permutation we have the tokens on the
         # correct device but not yet grouped by expert because we received
@@ -372,7 +372,7 @@ class ParallelMLP(ParallelMLPBase):
         )
 
         # Un-permute the tokens across the devices.
-        x, _ = ops.all_to_all(parallel_x, group=self._ep_pg)
+        x, _ = ops.all_to_all(parallel_x, group=self.ep_pg)
 
         # Reduce along the hidden sharding to get the final outputs.
         if self.hidden_sharding_degree > 1:
@@ -481,7 +481,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
             tpe_handle = dist.all_to_all_single(
                 parallel_tokens_per_expert,
                 repeated_tokens_per_expert,
-                group=self._ep_pg,
+                group=self.ep_pg,
                 async_op=True,
             )
             assert tpe_handle is not None
@@ -520,7 +520,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
             x,
             recv_counts,
             send_counts,
-            group=self._ep_pg,
+            group=self.ep_pg,
             async_op=True,
         )
 
@@ -576,7 +576,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
             parallel_x,
             send_counts,
             recv_counts,
-            group=self._ep_pg,
+            group=self.ep_pg,
         )
 
         # Reduce along the hidden sharding to get the final outputs.

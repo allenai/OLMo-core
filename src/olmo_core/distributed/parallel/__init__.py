@@ -192,9 +192,7 @@ def build_expert_parallel_mesh(
     for i, (name, dim) in enumerate(zip(names, dims)):
         log.info(f" > dimension {i}, size={dim}, name={name}")
 
-    return init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))[
-        MeshDimName.ep_shard
-    ]
+    return init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))
 
 
 def get_dp_mesh(
