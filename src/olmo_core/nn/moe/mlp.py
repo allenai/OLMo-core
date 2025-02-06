@@ -59,7 +59,7 @@ class MoEMLPBase(nn.Module):
         """
         from torch.distributed._composable.replicate import replicate
 
-        if ep_mesh.ndim != 1:
+        if ep_mesh.ndim != 2:
             raise RuntimeError("expert parallel mesh must be 2-dimensional")
         if not ep_mesh.mesh_dim_names:
             raise RuntimeError("expert parallel mesh must have named dimensions")
