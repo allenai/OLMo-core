@@ -102,7 +102,7 @@ def test_binned_gather(sl: int, hs: int, ne: int, top_k: int):
         (16384, 768, 128, 4),
     ],
 )
-def testBinnedScatter(sl: int, hs: int, ne: int, top_k: int):
+def test_binned_scatter(sl: int, hs: int, ne: int, top_k: int):
     # NOTE: Capacity factor == 1.
     ec = (sl * top_k) // ne
 

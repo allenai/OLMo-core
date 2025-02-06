@@ -77,6 +77,8 @@ class ParallelMLPBase(nn.Module):
         # Histogram the expert ids to identify the number of
         # items/tokens routed to each expert.
         # shape: (num_experts,), LongTensor
+        # NOTE: if we wanted to keep the batch dimension here like for sequence-level load balancing
+        # loss, we could use `opts.batched_histc`.
         batch_size_per_expert = torch.histc(
             expert_indices, bins=self.num_experts, min=0, max=self.num_experts - 1
         )
@@ -324,7 +326,7 @@ class ParallelMLP(ParallelMLPBase):
         expert_indices = expert_indices.flatten()
 
         with torch.no_grad():
-            indices, bin_ids, bins, tokens_per_expert = self.indices_and_bins(expert_indices)
+            indices, bin_ids, bins, batch_size_per_expert = self.indices_and_bins(expert_indices)
 
         # Permute locally so that the tokens for each device are stored contiguously.
         # shape: (num_experts, local_expert_capacity, d_model)
@@ -379,7 +381,7 @@ class ParallelMLP(ParallelMLPBase):
         # Un-permute locally to setup for the next series of operations.
         x = ops.scatter(x, indices, bin_ids, expert_weights, bins, self.top_k)
 
-        return x, tokens_per_expert.flatten()
+        return x, batch_size_per_expert.flatten()
 
     def permute_and_compute(
         self,
