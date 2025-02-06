@@ -114,6 +114,7 @@ class LcContTrain(Config):
     data_loader: NumpyDataLoaderConfig
     trainer: TrainerConfig
     load_path: str
+    init_seed: int = 12536
 
     @classmethod
     def build(
@@ -318,7 +319,7 @@ class LcContTrain(Config):
 
 def train(config: LcContTrain):
     # Set RNG states on all devices.
-    seed_all(config.init_seed)
+    # seed_all(config.init_seed)
 
     device = get_default_device()
 
