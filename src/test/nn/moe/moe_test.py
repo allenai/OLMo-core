@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 import torch
 import torch.distributed as dist
-from torch.distributed.tensor import Shard, distribute_tensor
+from torch.distributed.tensor import Replicate, Shard, distribute_tensor
 
 from olmo_core.config import DType
 from olmo_core.distributed.checkpoint import (
@@ -109,7 +109,12 @@ def run_moe_with_expert_parallelism(
     # Split batch and expected output across process group.
     batch = get_local_tensor(
         distribute_tensor(
-            batch.to(device=get_default_device()), device_mesh=ep_mesh, placements=(Shard(0),)
+            batch.to(device=get_default_device()),
+            device_mesh=ep_mesh,
+            placements=(
+                Replicate(),
+                Shard(0),
+            ),
         )
     )
     batch.requires_grad_(True)
@@ -117,7 +122,10 @@ def run_moe_with_expert_parallelism(
         distribute_tensor(
             expected_output.to(device=get_default_device()),
             device_mesh=ep_mesh,
-            placements=(Shard(0),),
+            placements=(
+                Replicate(),
+                Shard(0),
+            ),
         )
     )
 
