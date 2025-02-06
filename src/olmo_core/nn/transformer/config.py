@@ -8,6 +8,7 @@ from ..attention import AttentionConfig, AttentionType
 from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
+from ..moe import MoEConfig, MoERouterConfig, MoEType
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from .block import TransformerBlockConfig, TransformerBlockType
 from .init import InitMethod
@@ -281,6 +282,27 @@ class TransformerConfig(Config):
         )
 
     @classmethod
+    def olmoe_1B_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        d_model = kwargs.pop("d_model", 2048)
+        config = cls.olmo2_1B(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 16),
+            n_heads=kwargs.pop("n_heads", 16),
+            name=kwargs.pop("name", TransformerType.moe),
+            block_name=kwargs.pop("block_name", TransformerBlockType.moe_reordered_norm),
+            feed_forward_moe=MoEConfig(
+                name=MoEType.dropless,
+                num_experts=64,
+                hidden_size=int(0.5 * d_model),
+                router=MoERouterConfig(top_k=8, bias=False),
+                lb_loss_weight=0.01,
+                z_loss_weight=0.001,
+            ),
+        )
+        return config
+
+    @classmethod
     def olmo2_3B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=3328,
@@ -548,6 +570,8 @@ class TransformerConfig(Config):
         block_name: TransformerBlockType = TransformerBlockType.default,
         dtype: DType = DType.float32,
         rope_scaling: Optional[RoPEScalingConfig] = None,
+        feed_forward: Optional[FeedForwardConfig] = None,
+        feed_forward_moe: Optional[MoEConfig] = None,
         **kwargs,
     ) -> "TransformerConfig":
         """
@@ -583,6 +607,10 @@ class TransformerConfig(Config):
                 att_type = AttentionType.fused
                 rope_type = RoPEType.fused
 
+        # Feed-forward.
+        if feed_forward is None and feed_forward_moe is None:
+            feed_forward = FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype)
+
         # Configure blocks.
         block = TransformerBlockConfig(
             name=block_name,
@@ -596,7 +624,8 @@ class TransformerConfig(Config):
                 use_flash=use_flash,
                 dtype=dtype,
             ),
-            feed_forward=FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype),
+            feed_forward=feed_forward,
+            feed_forward_moe=feed_forward_moe,
             layer_norm=layer_norm,
         )
 

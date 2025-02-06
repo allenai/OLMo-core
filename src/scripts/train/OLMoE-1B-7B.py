@@ -6,12 +6,7 @@ Run this script without any arguments to see usage info.
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.experiment import CommonComponents, main
-from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
-from olmo_core.nn.transformer import (
-    TransformerBlockType,
-    TransformerConfig,
-    TransformerType,
-)
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
@@ -23,23 +18,7 @@ from olmo_core.train.train_module import (
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    model_config = TransformerConfig.olmo2_1B(
-        vocab_size=common.tokenizer.padded_vocab_size(),
-        n_layers=16,
-        n_heads=16,
-        block_name=TransformerBlockType.moe_reordered_norm,
-    )
-    model_config.name = TransformerType.moe
-    model_config.block.feed_forward = None
-    model_config.block.feed_forward_moe = MoEConfig(
-        name=MoEType.dropless,
-        num_experts=64,
-        hidden_size=int(0.5 * model_config.d_model),
-        router=MoERouterConfig(top_k=8, bias=False),
-        lb_loss_weight=0.01,
-        z_loss_weight=0.001,
-    )
-    return model_config
+    return TransformerConfig.olmoe_1B_7B(vocab_size=common.tokenizer.padded_vocab_size())
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
