@@ -80,7 +80,7 @@ def build_launch_config(
         workspace=workspace,
         clusters=[cluster],
         weka_buckets=weka_buckets,
-        beaker_image=OLMoCoreBeakerImage.nightly,  # some features require nightly at the moment
+        beaker_image=OLMoCoreBeakerImage.stable,  # some features require nightly at the moment
         num_nodes=1,
         num_gpus=8,
         shared_filesystem=not is_url(root_dir),
