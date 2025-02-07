@@ -359,7 +359,7 @@ class TransformerConfig(Config):
             rope_theta=kwargs.pop("rope_theta", 500_000),
             layer_norm_eps=1e-6,
             feed_forward_moe=MoEConfig(
-                name=MoEType.default,
+                name=MoEType.dropless,
                 num_experts=32,
                 hidden_size=int(0.5 * d_model),
                 router=MoERouterConfig(top_k=4, bias=False),
