@@ -206,7 +206,9 @@ class ParallelMLP(ParallelMLPBase):
 
     def apply_tp(self, tp_mesh: DeviceMesh, **kwargs):
         super().apply_tp(tp_mesh, **kwargs)
+        print(tp_mesh)
         self.tp_degree = tp_mesh.size()
+        print(self.tp_degree)
         if self.max_local_microbatch_size is not None:
             self.warmup_cache(self.max_local_microbatch_size)
 
