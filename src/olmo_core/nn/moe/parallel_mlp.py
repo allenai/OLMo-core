@@ -303,6 +303,9 @@ class ParallelMLP(ParallelMLPBase):
         )
         return x, batch_size_per_expert
 
+    @torch.library.custom_op(
+        "olmo_core::moe_parallel_forward_once", mutates_args={}, device_types="cuda"
+    )
     def parallel_forward_once(
         self,
         x: torch.Tensor,
