@@ -120,11 +120,10 @@ class SharedMLP(nn.Module):
         if self.weighted_sum:
             # Weighted by number of experts used
             n_active_experts = top_k + 1
-            shared_out.div_(n_active_experts)
-            shared_out.add_(experts_out, alpha=top_k / n_active_experts)
+            shared_out = shared_out / n_active_experts
+            return shared_out.add(experts_out, alpha=top_k / n_active_experts)
         else:
-            shared_out.add_(experts_out)
-        return shared_out
+            return shared_out + experts_out
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         # Alternatively could do colwise->rowwise->colwise parallelism
