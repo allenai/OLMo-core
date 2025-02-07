@@ -397,7 +397,8 @@ class ParallelMLP(ParallelMLPBase):
             x = ops.sum_tensor(x.view(self.hidden_sharding_degree, -1, self.d_model), dim=0)
 
         # Un-permute locally to setup for the next series of operations.
-        x = ops.scatter(x, indices, bin_ids, expert_weights, bins, self.top_k)
+        #  x = ops.scatter(x, indices, bin_ids, expert_weights, bins, self.top_k)
+        x = ops.binned_scatter(x, indices, expert_weights, bins, self.top_k)
 
         return x, batch_size_per_expert.flatten()
 
