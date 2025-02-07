@@ -318,7 +318,7 @@ class TransformerTrainModule(TrainModule):
             if not self.model.is_moe:
                 raise OLMoConfigurationError("Expert parallelism is only valid for MoE models")
             ep_mesh = get_ep_mesh(self.world_mesh)
-            cast(MoETransformer, self.model).apply_ep(ep_mesh, compile_enabled=compile_model)
+            cast(MoETransformer, self.model).apply_ep(ep_mesh)
             log.info("Applied expert parallelism to the model")
 
         # Maybe apply activation checkpointing.

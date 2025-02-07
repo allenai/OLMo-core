@@ -198,20 +198,17 @@ class MoEBase(nn.Module):
 
         return out
 
-    def apply_ep(
-        self,
-        ep_mesh: DeviceMesh,
-        compile_enabled: bool = False,
-        autograd_compile_enabled: bool = False,
-    ):
+    def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         """
         Apply expert parallelism.
         """
-        self.experts.apply_ep(
-            ep_mesh,
-            compile_enabled=compile_enabled,
-            autograd_compile_enabled=autograd_compile_enabled,
-        )
+        self.experts.apply_ep(ep_mesh, **kwargs)
+
+    def prepare_experts_for_fsdp(self, **kwargs):
+        """
+        Should be called before wrapping this module with FSDP2.
+        """
+        self.experts.prepare_experts_for_fsdp(**kwargs)
 
     def apply_tp(
         self,

@@ -447,7 +447,7 @@ class Transformer(nn.Module):
 
             if self.is_moe:
                 block = cast(MoETransformerBlock, block)
-                block.feed_forward_moe.experts.mlp.fully_shard(
+                block.feed_forward_moe.prepare_experts_for_fsdp(
                     reshard_after_forward=reshard_after_forward, **fsdp_config
                 )
 
@@ -678,15 +678,6 @@ class MoETransformer(Transformer):
 
         return self.lm_head(h) if self.lm_head is not None else h
 
-    def apply_ep(
-        self,
-        ep_mesh: DeviceMesh,
-        compile_enabled: bool = False,
-        autograd_compile_enabled: bool = False,
-    ):
+    def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         for block in self.blocks.values():
-            cast(MoETransformerBlock, block).apply_ep(
-                ep_mesh,
-                compile_enabled=compile_enabled,
-                autograd_compile_enabled=autograd_compile_enabled,
-            )
+            cast(MoETransformerBlock, block).apply_ep(ep_mesh, **kwargs)

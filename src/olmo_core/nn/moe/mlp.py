@@ -6,7 +6,7 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
-from torch.distributed.tensor import Placement, Replicate, Shard, distribute_tensor
+from torch.distributed.tensor import Placement, Shard, distribute_tensor
 
 from ...distributed.utils import get_local_tensor
 from ...exceptions import OLMoConfigurationError
@@ -46,6 +46,7 @@ class MoEMLPBase(nn.Module):
         self.gradient_scale: Optional[float] = None
         self.num_local_experts = num_experts
         self.hidden_sharding_degree = 1
+        self.ep_mesh: Optional[DeviceMesh] = None
         self.ep_pg: Optional[dist.ProcessGroup] = None
 
     def scale_grad(self, w: torch.Tensor) -> torch.Tensor:
@@ -53,17 +54,10 @@ class MoEMLPBase(nn.Module):
             return w
         return _scale_gradient(w, self.gradient_scale)
 
-    def apply_ep(
-        self,
-        ep_mesh: DeviceMesh,
-        compile_enabled: bool = False,
-        autograd_compile_enabled: bool = False,
-    ):
+    def apply_ep(self, ep_mesh: DeviceMesh):
         """
         Apply expert parallelism.
         """
-        from torch.distributed._composable.replicate import replicate
-
         if ep_mesh.ndim > 2:
             raise RuntimeError("expert parallel mesh must be 1 or 2D")
         if not ep_mesh.mesh_dim_names:
@@ -71,6 +65,7 @@ class MoEMLPBase(nn.Module):
 
         shard_dim_name = ep_mesh.mesh_dim_names[-1]
 
+        self.ep_mesh = ep_mesh
         self.ep_pg = ep_mesh[shard_dim_name].get_group()
         num_shards = ep_mesh[shard_dim_name].size()
 
@@ -100,15 +95,24 @@ class MoEMLPBase(nn.Module):
         #      replicate_dim_name = ep_mesh.mesh_dim_names[0]
         #      replicate(self, device_mesh=ep_mesh[replicate_dim_name])
 
-    def fully_shard(self, mesh: Optional[DeviceMesh] = None, **kwargs):
+    def prepare_experts_for_fsdp(self, *, mesh: Optional[DeviceMesh] = None, **kwargs):
+        """
+        Should be called before wrapping this module, or a parent module, with FSDP2.
+
+        If expert parallelism is enabled over the same mesh, this will shard the local experts
+        over the appropriate mesh dimension. Otherwise this is a no-op.
+        """
         from torch.distributed._composable.fsdp import fully_shard
 
-        if self.ep_pg is None or mesh is None or mesh.ndim != 2:
+        if mesh is None or self.mesh is None or mesh != self.mesh:
             return
 
-        assert mesh.mesh_dim_names
-        dim_name = mesh.mesh_dim_names[0]
+        if mesh.ndim != 2:
+            raise RuntimeError("expected 2D mesh!")
+        if mesh.mesh_dim_names is None:
+            raise RuntimeError("mesh must have named dimensions!")
 
+        dim_name = mesh.mesh_dim_names[0]
         fully_shard(self, mesh=mesh[dim_name], **kwargs)
 
 

@@ -61,21 +61,18 @@ class ParallelMLPBase(nn.Module):
     def ep_pg(self) -> Optional[dist.ProcessGroup]:
         return self.mlp.ep_pg
 
-    def apply_ep(
-        self,
-        ep_mesh: DeviceMesh,
-        compile_enabled: bool = False,
-        autograd_compile_enabled: bool = False,
-    ):
+    def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         """
         Apply expert parallelism.
         """
-        self.mlp.apply_ep(
-            ep_mesh,
-            compile_enabled=compile_enabled,
-            autograd_compile_enabled=autograd_compile_enabled,
-        )
+        self.mlp.apply_ep(ep_mesh, **kwargs)
         self._expert_parallel_enabled = True
+
+    def prepare_experts_for_fsdp(self, **kwargs):
+        """
+        Should be called before wrapping this module with FSDP2.
+        """
+        self.mlp.prepare_experts_for_fsdp(**kwargs)
 
     def indices_and_bins(
         self, expert_indices: torch.Tensor
@@ -194,17 +191,8 @@ class ParallelMLP(ParallelMLPBase):
             device=get_default_device(),
         )
 
-    def apply_ep(
-        self,
-        ep_mesh: DeviceMesh,
-        compile_enabled: bool = False,
-        autograd_compile_enabled: bool = False,
-    ):
-        super().apply_ep(
-            ep_mesh,
-            compile_enabled=compile_enabled,
-            autograd_compile_enabled=autograd_compile_enabled,
-        )
+    def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
+        super().apply_ep(ep_mesh, **kwargs)
         if self.max_local_microbatch_size is not None:
             self.warmup_cache(self.max_local_microbatch_size)
 
