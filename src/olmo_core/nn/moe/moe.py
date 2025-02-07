@@ -1,3 +1,4 @@
+import logging
 from abc import abstractmethod
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Union
@@ -19,6 +20,9 @@ from .router import MoERouterConfig
 from .shared_mlp import SharedMLPConfig
 
 __all__ = ["MoEBase", "MoE", "DroplessMoE", "MoEConfig", "MoEType"]
+
+
+log = logging.getLogger(__name__)
 
 
 class MoEType(StrEnum):
@@ -181,8 +185,10 @@ class MoEBase(nn.Module):
         :returns: The output of the MoE layer, the optional load-balancing loss, and the optional
             router Z-loss.
         """
-        expert_logits, expert_scores, expert_weights, exper_indices = self.router(x)
-        out, batch_size_per_expert = self.experts(x, expert_weights, exper_indices)
+        log.info(f"{x=}")
+        expert_logits, expert_scores, expert_weights, expert_indices = self.router(x)
+        log.info(f"{expert_logits=}, {expert_scores=}, {expert_weights=}, {expert_indices=}")
+        out, batch_size_per_expert = self.experts(x, expert_weights, expert_indices)
         if self.shared_experts is not None:
             out = self.shared_experts(x, out, self.router.top_k)
 
