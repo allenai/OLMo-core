@@ -123,6 +123,10 @@ def build_device_mesh(
             raise OLMoConfigurationError(
                 f"{ep.__class__.__name__}.degree must be at least 1 and divide into the world size"
             )
+        if dp.name != DataParallelType.hsdp:
+            raise OLMoConfigurationError(
+                "expert parallelism can currently only be used with HSDP data parallelism"
+            )
         if tp is not None:
             raise OLMoConfigurationError(
                 "expert parallelism is mutually exclusive with tensor parallism"
