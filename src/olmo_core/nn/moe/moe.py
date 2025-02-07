@@ -185,8 +185,10 @@ class MoEBase(nn.Module):
         :returns: The output of the MoE layer, the optional load-balancing loss, and the optional
             router Z-loss.
         """
+        print(f"{x.shape=}")
         expert_logits, expert_scores, expert_weights, expert_indices = self.router(x)
 
+        print(f"{expert_indices.shape=}")
         out, batch_size_per_expert = self.experts(x, expert_weights, expert_indices)
 
         if self.shared_experts is not None:
