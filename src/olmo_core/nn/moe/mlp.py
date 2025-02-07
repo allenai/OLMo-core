@@ -111,7 +111,7 @@ class MoEMLPBase(nn.Module):
         self,
         *,
         mesh: Optional[DeviceMesh] = None,
-        strategy: Literal["replicate", "shard"] = "replicate",
+        strategy: Literal["replicate", "shard"] = "shard",
         **kwargs,
     ):
         """
