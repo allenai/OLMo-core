@@ -50,7 +50,7 @@ class MoEMLPBase(nn.Module):
         self.gradient_scale: Optional[float] = None
         self.num_local_experts = num_experts
         self.hidden_sharding_degree = 1
-        self.ep_mesh: Optional[DeviceMesh] = None
+        self.mesh: Optional[DeviceMesh] = None
         self.ep_pg: Optional[dist.ProcessGroup] = None
 
     def scale_grad(self, w: torch.Tensor) -> torch.Tensor:
@@ -70,7 +70,7 @@ class MoEMLPBase(nn.Module):
         shard_dim_name = ep_mesh.mesh_dim_names[-1]
         log.info(f"Splitting experts over mesh dimension '{shard_dim_name}'...")
 
-        self.ep_mesh = ep_mesh
+        self.mesh = ep_mesh
         self.ep_pg = ep_mesh[shard_dim_name].get_group()
         num_shards = ep_mesh[shard_dim_name].size()
 
