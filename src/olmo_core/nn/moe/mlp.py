@@ -109,7 +109,7 @@ class MoEMLPBase(nn.Module):
         assert dp_mesh.mesh_dim_names
         dim_name = dp_mesh.mesh_dim_names[0]
 
-        fully_shard(self, dp_mesh[dim_name], **kwargs)
+        fully_shard(self, mesh=dp_mesh[dim_name], **kwargs)
 
 
 class MoEMLP(MoEMLPBase):
