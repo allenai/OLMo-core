@@ -47,7 +47,6 @@ from olmo_core.train import (
 )
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
-    CometCallback,
     WandBCallback, 
     ConfigSaverCallback,
     DownstreamEvaluatorCallbackConfig,
@@ -340,7 +339,7 @@ def train(config: LcContTrain):
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
-    cast(CometCallback, trainer.callbacks["comet"]).config = config_dict
+    cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
     # Train.
