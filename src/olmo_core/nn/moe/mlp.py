@@ -112,8 +112,6 @@ class MoEMLPBase(nn.Module):
         *,
         mesh: Optional[DeviceMesh] = None,
         strategy: Literal["replicate", "shard"] = "replicate",
-        compile_enabled: bool = False,
-        autograd_compile_enabled: bool = False,
         **kwargs,
     ):
         """
@@ -138,12 +136,7 @@ class MoEMLPBase(nn.Module):
             log.info(f"Sharding local experts over mesh dimension '{dim_name}'...")
             fully_shard(self, mesh=mesh[dim_name], **kwargs)
         elif strategy == "replicate":
-            if compile_enabled:
-                if autograd_compile_enabled:
-                    torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
-                else:
-                    torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
-
+            # TODO: this doesn't work yet.
             log.info(f"Replicating local experts over mesh dimension '{dim_name}'...")
             replicate(self, device_mesh=mesh[dim_name])
         else:
