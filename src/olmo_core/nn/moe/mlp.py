@@ -1,6 +1,6 @@
 import logging
 import warnings
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Literal, Optional
 
 import torch
 import torch.distributed as dist
@@ -61,18 +61,36 @@ class MoEMLPBase(nn.Module):
     def apply_ep(self, ep_mesh: DeviceMesh):
         """
         Apply expert parallelism.
+
+        :param ep_mesh: A 2D device mesh.
         """
-        if ep_mesh.ndim > 2:
-            raise RuntimeError("expert parallel mesh must be 1 or 2D")
-        if not ep_mesh.mesh_dim_names:
+        self._shard_experts(ep_mesh, "ep")
+
+    def apply_tp(self, tp_mesh: DeviceMesh):
+        """
+        Apply expert parallelism.
+
+        :param tp_mesh: A 1D device mesh.
+        """
+        self._shard_experts(tp_mesh, "tp")
+
+    def _shard_experts(self, mesh: DeviceMesh, flavor: Literal["tp", "ep"]):
+        if flavor == "ep":
+            if mesh.ndim != 2:
+                raise RuntimeError("expert parallel mesh must be 2 dimensional")
+        elif flavor == "tp":
+            if mesh.ndim != 1:
+                raise RuntimeError("tensor parallel mesh must be 1 dimensional")
+
+        if not mesh.mesh_dim_names:
             raise RuntimeError("expert parallel mesh must have named dimensions")
 
-        shard_dim_name = ep_mesh.mesh_dim_names[-1]
+        shard_dim_name = mesh.mesh_dim_names[-1]
         log.info(f"Splitting experts over mesh dimension '{shard_dim_name}'...")
 
-        self.mesh = ep_mesh
-        self.ep_pg = ep_mesh[shard_dim_name].get_group()
-        num_shards = ep_mesh[shard_dim_name].size()
+        self.mesh = mesh
+        self.ep_pg = mesh[shard_dim_name].get_group()
+        num_shards = mesh[shard_dim_name].size()
 
         if self.num_experts % num_shards != 0:
             raise OLMoConfigurationError(
@@ -83,12 +101,10 @@ class MoEMLPBase(nn.Module):
         self.gradient_scale = 1.0 / num_shards
 
         placements: List[Placement] = [Shard(0)]
-        #  if ep_mesh.ndim > 1:
-        #      placements.insert(0, Replicate())
 
-        self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, ep_mesh[shard_dim_name], placements)))  # type: ignore
-        self.register_parameter("w2", nn.Parameter(distribute_tensor(self.w2, ep_mesh[shard_dim_name], placements)))  # type: ignore
-        self.register_parameter("w3", nn.Parameter(distribute_tensor(self.w3, ep_mesh[shard_dim_name], placements)))  # type: ignore
+        self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, mesh[shard_dim_name], placements)))  # type: ignore
+        self.register_parameter("w2", nn.Parameter(distribute_tensor(self.w2, mesh[shard_dim_name], placements)))  # type: ignore
+        self.register_parameter("w3", nn.Parameter(distribute_tensor(self.w3, mesh[shard_dim_name], placements)))  # type: ignore
 
         #  if ep_mesh.ndim > 1:
         #      if compile_enabled:
@@ -113,7 +129,7 @@ class MoEMLPBase(nn.Module):
             return
 
         if mesh.ndim != 2:
-            raise RuntimeError("expected 2D mesh!")
+            raise RuntimeError("expected a 2D mesh!")
         if mesh.mesh_dim_names is None:
             raise RuntimeError("mesh must have named dimensions!")
 

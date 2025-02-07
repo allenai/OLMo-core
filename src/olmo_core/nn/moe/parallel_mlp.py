@@ -68,6 +68,13 @@ class ParallelMLPBase(nn.Module):
         self.mlp.apply_ep(ep_mesh, **kwargs)
         self._expert_parallel_enabled = True
 
+    def apply_tp(self, tp_mesh: DeviceMesh, **kwargs):
+        """
+        Apply tensor parallelism.
+        """
+        self.mlp.apply_tp(tp_mesh, **kwargs)
+        self._expert_parallel_enabled = True
+
     def prepare_experts_for_fsdp(self, **kwargs):
         """
         Should be called before wrapping this module with FSDP2.

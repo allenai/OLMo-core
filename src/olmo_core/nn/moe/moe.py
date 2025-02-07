@@ -215,19 +215,13 @@ class MoEBase(nn.Module):
         tp_mesh: DeviceMesh,
         output_layouts: Optional[Placement] = None,
         use_local_output: bool = True,
-        compile_enabled: bool = False,
-        autograd_compile_enabled: bool = False,
     ):
         parallelize_module(
             self.router,
             device_mesh=tp_mesh,
             parallelize_plan=SequenceParallel(use_local_output=True),
         )
-        self.experts.apply_ep(
-            tp_mesh,
-            compile_enabled=compile_enabled,
-            autograd_compile_enabled=autograd_compile_enabled,
-        )
+        self.experts.apply_tp(tp_mesh)
         parallelize_module(
             self,
             device_mesh=tp_mesh,
