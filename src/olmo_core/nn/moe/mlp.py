@@ -81,6 +81,8 @@ class MoEMLPBase(nn.Module):
         elif flavor == "tp":
             if mesh.ndim != 1:
                 raise RuntimeError("tensor parallel mesh must be 1 dimensional")
+        else:
+            raise ValueError(flavor)
 
         if not mesh.mesh_dim_names:
             raise RuntimeError("expert parallel mesh must have named dimensions")
@@ -101,22 +103,19 @@ class MoEMLPBase(nn.Module):
         self.gradient_scale = 1.0 / num_shards
 
         placements: List[Placement] = [Shard(0)]
-
         self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, mesh[shard_dim_name], placements)))  # type: ignore
         self.register_parameter("w2", nn.Parameter(distribute_tensor(self.w2, mesh[shard_dim_name], placements)))  # type: ignore
         self.register_parameter("w3", nn.Parameter(distribute_tensor(self.w3, mesh[shard_dim_name], placements)))  # type: ignore
 
-        #  if ep_mesh.ndim > 1:
-        #      if compile_enabled:
-        #          if autograd_compile_enabled:
-        #              torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
-        #          else:
-        #              torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
-
-        #      replicate_dim_name = ep_mesh.mesh_dim_names[0]
-        #      replicate(self, device_mesh=ep_mesh[replicate_dim_name])
-
-    def prepare_experts_for_fsdp(self, *, mesh: Optional[DeviceMesh] = None, **kwargs):
+    def prepare_experts_for_fsdp(
+        self,
+        *,
+        mesh: Optional[DeviceMesh] = None,
+        strategy: Literal["replicate", "shard"] = "replicate",
+        compile_enabled: bool = False,
+        autograd_compile_enabled: bool = False,
+        **kwargs,
+    ):
         """
         Should be called before wrapping this module, or a parent module, with FSDP2.
 
@@ -124,6 +123,7 @@ class MoEMLPBase(nn.Module):
         over the appropriate mesh dimension. Otherwise this is a no-op.
         """
         from torch.distributed._composable.fsdp import fully_shard
+        from torch.distributed._composable.replicate import replicate
 
         if mesh is None or self.mesh is None or mesh != self.mesh:
             return
@@ -134,8 +134,20 @@ class MoEMLPBase(nn.Module):
             raise RuntimeError("mesh must have named dimensions!")
 
         dim_name = mesh.mesh_dim_names[0]
-        log.info(f"Sharding local experts over mesh dimension '{dim_name}'...")
-        fully_shard(self, mesh=mesh[dim_name], **kwargs)
+        if strategy == "shard":
+            log.info(f"Sharding local experts over mesh dimension '{dim_name}'...")
+            fully_shard(self, mesh=mesh[dim_name], **kwargs)
+        elif strategy == "replicate":
+            if compile_enabled:
+                if autograd_compile_enabled:
+                    torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
+                else:
+                    torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
+
+            log.info(f"Replicating local experts over mesh dimension '{dim_name}'...")
+            replicate(self, device_mesh=mesh[dim_name])
+        else:
+            raise ValueError(strategy)
 
 
 class MoEMLP(MoEMLPBase):
