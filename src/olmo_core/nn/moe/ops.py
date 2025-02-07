@@ -181,7 +181,6 @@ class BinnedGatherOp(torch.autograd.Function):
         return out, None, None, None, None
 
 
-@torch.library.custom_op("olmo_core::moe_binned_gather", mutates_args={}, device_types="cuda")
 def binned_gather(
     x: torch.Tensor, indices: torch.Tensor, bins: torch.Tensor, bin_size: int, top_k: int
 ) -> torch.Tensor:
@@ -238,7 +237,6 @@ class BinnedScatterOp(torch.autograd.Function):
         return out, None, wgrad, None, None
 
 
-@torch.library.custom_op("olmo_core::moe_binned_scatter", mutates_args={}, device_types="cuda")
 def binned_scatter(
     x: torch.Tensor,
     indices: torch.Tensor,

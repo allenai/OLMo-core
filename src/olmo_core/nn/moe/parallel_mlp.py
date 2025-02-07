@@ -303,6 +303,7 @@ class ParallelMLP(ParallelMLPBase):
         )
         return x, batch_size_per_expert
 
+    @torch._dynamo.disable()
     def parallel_forward_once(
         self,
         x: torch.Tensor,
