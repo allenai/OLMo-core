@@ -191,7 +191,7 @@ class ParallelMLP(ParallelMLPBase):
         self.max_local_microbatch_size = max_local_microbatch_size
         # TODO: call `_get_parallel_indices_and_bins()` up-front to warm the cache so
         # torch.compile() doesn't try to trace that.
-        expert_capacity = self.expert_capacity(self.max_local_microbatch_size)
+        expert_capacity = self.expert_capacity(self.max_local_microbatch_size // self.tp_degree)
         local_expert_capacity = expert_capacity // self.ep_world_size
         self._get_parallel_indices_and_bins(
             expert_capacity=expert_capacity,
@@ -211,7 +211,6 @@ class ParallelMLP(ParallelMLPBase):
             self.warmup_cache(self.max_local_microbatch_size)
 
     def expert_capacity(self, local_batch_size: int) -> int:
-        assert isinstance(local_batch_size, int)
         # NOTE: need to ensure this is the same across the process group.
         # If local batch sizes are different then these will be different, and `parallel_forward_once`
         # will break. This shouldn't be a problem with our trainer, but would be an issue for inference.
@@ -220,8 +219,8 @@ class ParallelMLP(ParallelMLPBase):
             max_local_microbatch_size = self.max_local_microbatch_size // self.tp_degree
             if local_batch_size > max_local_microbatch_size:
                 raise RuntimeError(
-                    f"Local batch size ({local_batch_size:,d}) bigger than "
-                    f"configured max local batch size ({max_local_microbatch_size:,d})"
+                    f"Local batch size ({local_batch_size:d}) bigger than "
+                    f"configured max local batch size ({max_local_microbatch_size:d})"
                 )
             else:
                 local_batch_size = max_local_microbatch_size
