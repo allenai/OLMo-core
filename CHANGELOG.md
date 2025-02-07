@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Added `instance_filter_config` field to `NumpyDatasetConfig`.
+
 ## [v1.8.0](https://github.com/allenai/OLMo-core/releases/tag/v1.8.0) - 2025-01-29
 
 ### Added
@@ -24,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for logging rich Table objects as text in source mixture datasets.
 - Added `unshard_strategy` parameter to `unshard_checkpoint()` function in `olmo_core.distributed.checkpoint`.
 - Added function `load_keys()` to `olmo_core.distributed.checkpoint`.
+- Added `RunDuration` in `model_ladder` to configure training durations in terms of Chinchilla multipliers.
 
 ### Changed
 
