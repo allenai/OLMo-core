@@ -398,7 +398,9 @@ class ParallelMLP(ParallelMLPBase):
 
         # Un-permute locally to setup for the next series of operations.
         #  x = ops.scatter(x, indices, bin_ids, expert_weights, bins, self.top_k)
-        x = ops.binned_scatter(x, indices, expert_weights, bins, self.top_k)
+        x = ops.binned_scatter(
+            x.view(self.num_experts, -1, self.d_model), indices, expert_weights, bins, self.top_k
+        )
 
         return x, batch_size_per_expert.flatten()
 
