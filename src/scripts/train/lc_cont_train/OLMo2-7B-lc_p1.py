@@ -156,10 +156,10 @@ class LcContTrain(Config):
                 use_flash=False,
                 rope_theta = 658623,
                 dp_config=TransformerDataParallelConfig(
-                    name=DataParallelType.hsdp,
+                    name=DataParallelType.fsdp,
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
-                    wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+                    wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
                 ),
                 ac_config=TransformerActivationCheckpointingConfig(
                     mode=TransformerActivationCheckpointingMode.selected_modules,
