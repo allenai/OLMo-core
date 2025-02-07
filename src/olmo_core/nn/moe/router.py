@@ -242,6 +242,15 @@ class MoELinearRouter(MoERouter):
             parallelize_plan=PrepareModuleInput(
                 input_layouts=(Shard(1),),
                 desired_input_layouts=(Shard(1),),
+                use_local_output=True,
+            ),
+        )
+        parallelize_module(
+            self.w_score,
+            device_mesh=tp_mesh,
+            parallelize_plan=PrepareModuleInput(
+                input_layouts=(Shard(1),),
+                desired_input_layouts=(Shard(1),),
             ),
         )
         parallelize_module(
