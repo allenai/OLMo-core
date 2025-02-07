@@ -22,9 +22,9 @@ from olmo_core.distributed.parallel import (
     ExpertParallelConfig,
     TensorParallelConfig,
     build_device_mesh,
-    build_expert_parallel_mesh,
     get_dp_mesh,
     get_dp_process_group,
+    get_ep_mesh,
     get_tp_mesh,
 )
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
@@ -273,7 +273,7 @@ class TransformerTrainModule(TrainModule):
 
         self.device = device or get_default_device()
         self.world_mesh = build_device_mesh(
-            dp=dp_config, tp=tp_config, device_type=self.device.type
+            dp=dp_config, tp=tp_config, ep=ep_config, device_type=self.device.type
         )
         log.info(f"Data parallel world size = {get_world_size(self.dp_process_group):,d}")
 
@@ -305,7 +305,6 @@ class TransformerTrainModule(TrainModule):
             raise NotImplementedError("TP + EP is not implemented yet")
         if tp_config is not None:
             tp_mesh = get_tp_mesh(self.world_mesh)
-            assert tp_mesh is not None
             self.model.apply_tp(
                 tp_mesh,
                 float8_enabled=float8_enabled,
@@ -318,8 +317,8 @@ class TransformerTrainModule(TrainModule):
         if ep_config is not None:
             if not self.model.is_moe:
                 raise OLMoConfigurationError("Expert parallelism is only valid for MoE models")
-            ep_mesh = build_expert_parallel_mesh(ep_config)
-            cast(MoETransformer, self.model).apply_ep(ep_mesh)
+            ep_mesh = get_ep_mesh(self.world_mesh)
+            cast(MoETransformer, self.model).apply_ep(ep_mesh, compile_enabled=compile_model)
             log.info("Applied expert parallelism to the model")
 
         # Maybe apply activation checkpointing.

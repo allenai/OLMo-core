@@ -397,8 +397,17 @@ class MoETransformerBlock(TransformerBlockBase):
         )
         return h + self.dropout(self.feed_forward_moe(self.feed_forward_norm(h)))
 
-    def apply_ep(self, ep_mesh: DeviceMesh):
-        self.feed_forward_moe.apply_ep(ep_mesh)
+    def apply_ep(
+        self,
+        ep_mesh: DeviceMesh,
+        compile_enabled: bool = False,
+        autograd_compile_enabled: bool = False,
+    ):
+        self.feed_forward_moe.apply_ep(
+            ep_mesh,
+            compile_enabled=compile_enabled,
+            autograd_compile_enabled=autograd_compile_enabled,
+        )
 
     def tp_input_layouts(self) -> Union[Placement, Tuple[Placement, ...]]:
         return Shard(1)

@@ -61,11 +61,20 @@ class ParallelMLPBase(nn.Module):
     def ep_pg(self) -> Optional[dist.ProcessGroup]:
         return self.mlp.ep_pg
 
-    def apply_ep(self, ep_mesh: DeviceMesh):
+    def apply_ep(
+        self,
+        ep_mesh: DeviceMesh,
+        compile_enabled: bool = False,
+        autograd_compile_enabled: bool = False,
+    ):
         """
         Apply expert parallelism.
         """
-        self.mlp.apply_ep(ep_mesh)
+        self.mlp.apply_ep(
+            ep_mesh,
+            compile_enabled=compile_enabled,
+            autograd_compile_enabled=autograd_compile_enabled,
+        )
         self._expert_parallel_enabled = True
 
     def indices_and_bins(

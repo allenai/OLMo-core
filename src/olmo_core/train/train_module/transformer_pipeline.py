@@ -346,7 +346,6 @@ class TransformerPipelineTrainModule(TrainModule):
 
         self.model_parts: List[Transformer] = []
         pp_mesh = get_pp_mesh(self.world_mesh)
-        assert pp_mesh is not None
         stages, model_parts = pp_config.split_model(model, pp_mesh=pp_mesh, device=self.device)
         self._pp_stages = stages
         self.model_parts = model_parts
@@ -362,7 +361,6 @@ class TransformerPipelineTrainModule(TrainModule):
         # Maybe apply tensor parallelism.
         if tp_config is not None:
             tp_mesh = get_tp_mesh(self.world_mesh)
-            assert tp_mesh is not None
             for model in self.model_parts:
                 model.apply_tp(
                     tp_mesh,

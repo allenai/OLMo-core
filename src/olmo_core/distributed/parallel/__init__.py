@@ -24,6 +24,7 @@ __all__ = [
     "get_dp_mesh",
     "get_tp_mesh",
     "get_pp_mesh",
+    "get_ep_mesh",
     "get_dp_process_group",
     "DataParallelType",
     "DataParallelConfig",
@@ -84,30 +85,27 @@ def build_device_mesh(
     dp: Optional[DataParallelConfig] = None,
     tp: Optional[TensorParallelConfig] = None,
     pp: Optional[PipelineParallelConfig] = None,
+    ep: Optional[ExpertParallelConfig] = None,
     device_type: Optional[str] = None,
-) -> Optional[DeviceMesh]:
+) -> DeviceMesh:
     """
     Build a ``DeviceMesh`` suitable for the given parallel strategies.
     The resulting dimension names will be defined in :class:`MeshDimName`.
 
     .. important::
         A data parallel config is required if any other parallel config is set.
-
-    .. seealso::
-        Expert parallel device meshes need to be created separately with
-        :func:`build_expert_parallel_mesh`.
     """
-    if pp is None and tp is None and dp is None:
-        return None
+    device_type = device_type or get_default_device().type
+    dp_world_size = get_world_size()
+
+    if pp is None and tp is None and dp is None and ep is None:
+        return init_device_mesh(device_type, (dp_world_size,), mesh_dim_names=(MeshDimName.dp,))
+
     if dp is None:
         raise OLMoConfigurationError(
             "Data parallel config is required in addition to expert/tensor/pipeline parallel configs"
         )
 
-    device_type = device_type or get_default_device().type
-
-    # Determine data parallel world size.
-    dp_world_size = get_world_size()
     if pp is not None:
         if pp.degree < 1 or dp_world_size % pp.degree != 0:
             raise OLMoConfigurationError(
@@ -120,6 +118,19 @@ def build_device_mesh(
                 f"{tp.__class__.__name__}.degree must be at least 1 and divide into the world size"
             )
         dp_world_size //= tp.degree
+    if ep is not None:
+        if ep.degree < 1 or dp_world_size % ep.degree != 0:
+            raise OLMoConfigurationError(
+                f"{ep.__class__.__name__}.degree must be at least 1 and divide into the world size"
+            )
+        if tp is not None:
+            raise OLMoConfigurationError(
+                "expert parallelism is mutually exclusive with tensor parallism"
+            )
+        if pp is not None:
+            raise NotImplementedError(
+                "expert parallelism + pipeline parallelism is not implemented yet"
+            )
 
     # Build up mesh dimensions.
     names: List[str] = []
@@ -137,16 +148,27 @@ def build_device_mesh(
             raise OLMoConfigurationError(
                 f"HSDP requires DP world size ({dp_world_size}) to be divisible by 'num_replicas' ({num_replicas})"
             )
+        shard_degree = dp_world_size // num_replicas
+        if ep is not None:
+            if ep.degree != shard_degree:
+                raise OLMoConfigurationError(
+                    "expert parallelism + HSDP requires the same sharding degree"
+                )
+
         names.append(MeshDimName.dp_replicate)
         dims.append(num_replicas)
-
         names.append(MeshDimName.dp_shard)
-        dims.append(dp_world_size // num_replicas)
+        dims.append(shard_degree)
+    elif ep is not None:
+        names.append(MeshDimName.ep_replicate)
+        dims.append(dp_world_size // ep.degree)
+        names.append(MeshDimName.ep_shard)
+        dims.append(ep.degree)
     else:
         names.append(MeshDimName.dp)
         dims.append(dp_world_size)
 
-    # And lastly tensor/expert parallel.
+    # And lastly tensor parallel.
     if tp is not None:
         names.append(MeshDimName.tp)
         dims.append(tp.degree)
@@ -169,9 +191,6 @@ def build_expert_parallel_mesh(
     """
     device_type = device_type or get_default_device().type
     world_size = get_world_size()
-
-    #  if ep_config.degree == world_size:
-    #      return init_device_mesh(device_type, (world_size,), mesh_dim_names=(MeshDimName.ep_shard,))
 
     # Build up mesh dimensions.
     names: List[str] = []
@@ -201,6 +220,8 @@ def get_dp_mesh(
     dim_name: str = MeshDimName.dp,
     replicate_dim_name: str = MeshDimName.dp_replicate,
     shard_dim_name: str = MeshDimName.dp_shard,
+    ep_replicate_dim_name: str = MeshDimName.ep_replicate,
+    ep_shard_dim_name: str = MeshDimName.ep_shard,
 ) -> Optional[DeviceMesh]:
     """
     Get the data parallel sub-mesh associated with a ``DeviceMesh`` that was potentially
@@ -223,9 +244,47 @@ def get_dp_mesh(
         and shard_dim_name in device_mesh.mesh_dim_names
     ):
         return device_mesh[replicate_dim_name, shard_dim_name]
+    elif (
+        ep_replicate_dim_name in device_mesh.mesh_dim_names
+        and ep_shard_dim_name in device_mesh.mesh_dim_names
+    ):
+        return device_mesh[ep_replicate_dim_name, ep_shard_dim_name]._flatten(
+            mesh_dim_name=dim_name
+        )
     else:
         raise RuntimeError(
             f"could not determine data parallel sub-mesh from mesh with dimensions {device_mesh.mesh_dim_names}"
+        )
+
+
+def get_ep_mesh(
+    device_mesh: DeviceMesh,
+    *,
+    replicate_dim_name: str = MeshDimName.dp_replicate,
+    shard_dim_name: str = MeshDimName.dp_shard,
+    ep_replicate_dim_name: str = MeshDimName.ep_replicate,
+    ep_shard_dim_name: str = MeshDimName.ep_shard,
+) -> DeviceMesh:
+    """
+    Get the expert parallel sub-mesh associated with a ``DeviceMesh`` that was potentially
+    created from :func:`build_device_mesh()`.
+    """
+    if device_mesh.mesh_dim_names is None:
+        raise RuntimeError("could not determine expert parallel sub-mesh without dimension names")
+
+    if (
+        ep_replicate_dim_name in device_mesh.mesh_dim_names
+        and ep_shard_dim_name in device_mesh.mesh_dim_names
+    ):
+        return device_mesh[ep_replicate_dim_name, ep_shard_dim_name]
+    elif (
+        replicate_dim_name in device_mesh.mesh_dim_names
+        and shard_dim_name in device_mesh.mesh_dim_names
+    ):
+        return device_mesh[replicate_dim_name, shard_dim_name]
+    else:
+        raise RuntimeError(
+            f"could not determine expert parallel sub-mesh from mesh with dimensions {device_mesh.mesh_dim_names}"
         )
 
 
@@ -255,43 +314,37 @@ def get_dp_process_group(
             return dp_mesh.get_group()
 
 
-def get_tp_mesh(
-    device_mesh: Optional[DeviceMesh] = None, *, dim_name: str = MeshDimName.tp
-) -> Optional[DeviceMesh]:
+def get_tp_mesh(device_mesh: DeviceMesh, *, dim_name: str = MeshDimName.tp) -> DeviceMesh:
     """
     Get the tensor parallel sub-mesh associated with a ``DeviceMesh`` that was potentially
     created from :func:`build_device_mesh()`.
 
     :param dim_name: The name of the target mesh dimension.
     """
-    if device_mesh is None:
-        return None
-
     if device_mesh.mesh_dim_names is None:
         raise RuntimeError("could not determine tensor parallel sub-mesh without dimension names")
 
     if dim_name in device_mesh.mesh_dim_names:
         return device_mesh[dim_name]
     else:
-        return None
+        raise RuntimeError(
+            f"could not determine tensor parallel sub-mesh from mesh with dimensions {device_mesh.mesh_dim_names}"
+        )
 
 
-def get_pp_mesh(
-    device_mesh: Optional[DeviceMesh] = None, *, dim_name: str = MeshDimName.pp
-) -> Optional[DeviceMesh]:
+def get_pp_mesh(device_mesh: DeviceMesh, *, dim_name: str = MeshDimName.pp) -> DeviceMesh:
     """
     Get the tensor parallel sub-mesh associated with a ``DeviceMesh`` that was potentially
     created from :func:`build_device_mesh()`.
 
     :param dim_name: The name of the target mesh dimension.
     """
-    if device_mesh is None:
-        return None
-
     if device_mesh.mesh_dim_names is None:
         raise RuntimeError("could not determine pipeline parallel sub-mesh without dimension names")
 
     if dim_name in device_mesh.mesh_dim_names:
         return device_mesh[dim_name]
     else:
-        return None
+        raise RuntimeError(
+            f"could not determine pipeline parallel sub-mesh from mesh with dimensions {device_mesh.mesh_dim_names}"
+        )

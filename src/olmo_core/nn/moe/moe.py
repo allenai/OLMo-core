@@ -198,24 +198,39 @@ class MoEBase(nn.Module):
 
         return out
 
-    def apply_ep(self, ep_mesh: DeviceMesh):
+    def apply_ep(
+        self,
+        ep_mesh: DeviceMesh,
+        compile_enabled: bool = False,
+        autograd_compile_enabled: bool = False,
+    ):
         """
         Apply expert parallelism.
         """
-        self.experts.apply_ep(ep_mesh)
+        self.experts.apply_ep(
+            ep_mesh,
+            compile_enabled=compile_enabled,
+            autograd_compile_enabled=autograd_compile_enabled,
+        )
 
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
         output_layouts: Optional[Placement] = None,
         use_local_output: bool = True,
+        compile_enabled: bool = False,
+        autograd_compile_enabled: bool = False,
     ):
         parallelize_module(
             self.router,
             device_mesh=tp_mesh,
             parallelize_plan=SequenceParallel(use_local_output=True),
         )
-        self.experts.apply_ep(tp_mesh)
+        self.experts.apply_ep(
+            tp_mesh,
+            compile_enabled=compile_enabled,
+            autograd_compile_enabled=autograd_compile_enabled,
+        )
         parallelize_module(
             self,
             device_mesh=tp_mesh,
