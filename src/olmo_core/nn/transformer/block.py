@@ -228,8 +228,12 @@ class TransformerBlock(TransformerBlockBase):
             parallelize_plan=plan,
         )
 
-        self.attention.apply_tp(tp_mesh, output_layouts=Shard(1), float8_enabled=float8_enabled)
-        self.feed_forward.apply_tp(tp_mesh, output_layouts=Shard(1), float8_enabled=float8_enabled)
+        self.attention.apply_tp(
+            tp_mesh, output_layouts=Shard(1), use_local_output=False, float8_enabled=float8_enabled
+        )
+        self.feed_forward.apply_tp(
+            tp_mesh, output_layouts=Shard(1), use_local_output=False, float8_enabled=float8_enabled
+        )
 
 
 class ReorderedNormTransformerBlock(TransformerBlock):
