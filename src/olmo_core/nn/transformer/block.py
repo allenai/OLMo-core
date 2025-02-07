@@ -418,6 +418,10 @@ class MoETransformerBlock(TransformerBlockBase):
                 desired_input_layouts=(Replicate(),),
             ),
             "feed_forward_norm": SequenceParallel(),
+            "feed_forward_moe": prepare_module_input(
+                input_layouts=(Shard(1),),
+                desired_input_layouts=(Shard(1),),
+            ),
         }
         if isinstance(self.dropout, nn.Dropout):
             plan["dropout"] = SequenceParallel()
@@ -427,7 +431,9 @@ class MoETransformerBlock(TransformerBlockBase):
             parallelize_plan=plan,
         )
 
-        self.attention.apply_tp(tp_mesh, output_layouts=Shard(1), float8_enabled=float8_enabled)
+        self.attention.apply_tp(
+            tp_mesh, output_layouts=Shard(1), use_local_output=False, float8_enabled=float8_enabled
+        )
         self.feed_forward_moe.apply_tp(
             tp_mesh, output_layouts=Shard(1), use_local_output=False, float8_enabled=float8_enabled
         )
