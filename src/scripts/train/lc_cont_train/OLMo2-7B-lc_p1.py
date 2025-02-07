@@ -153,7 +153,7 @@ class LcContTrain(Config):
                 vocab_size=tokenizer_config.padded_vocab_size(),
                 compile=True,
                 fused_ops=False,
-                use_flash=False,
+                use_flash=True,
                 rope_theta = 658623,
                 dp_config=TransformerDataParallelConfig(
                     name=DataParallelType.fsdp,
