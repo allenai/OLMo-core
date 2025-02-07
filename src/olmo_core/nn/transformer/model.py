@@ -453,8 +453,12 @@ class Transformer(nn.Module):
                         **fsdp_config,
                     )
                 else:
+                    block = cast(MoETransformerBlock, block)
+                    block.feed_forward_moe.experts.mlp.fully_shard(
+                        dp_mesh, reshard_after_forward=reshard_after_forward, **fsdp_config
+                    )
                     fully_shard(
-                        block.feed_forward_moe,  # type: ignore
+                        block.feed_forward_moe,
                         reshard_after_forward=reshard_after_forward,
                         **fsdp_config,
                     )
