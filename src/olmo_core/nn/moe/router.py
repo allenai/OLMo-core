@@ -185,7 +185,7 @@ class MoERouter(nn.Module):
         x = self.jitter(x)
 
         # shape: (batch_size * seq_len, num_experts)
-        logits = self.get_expert_logits(x.view(-1, self.d_model))
+        logits = self.get_expert_logits(x).view(-1, self.num_experts)
 
         # shape: (batch_size * seq_len, num_experts)
         scores = logits.softmax(dim=-1)
@@ -232,7 +232,7 @@ class MoELinearRouter(MoERouter):
         )
 
     def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
-        return self.w_score(x.view(-1, self.d_model))
+        return self.w_score(x)
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         del float8_enabled
