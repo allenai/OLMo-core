@@ -216,11 +216,7 @@ class MoEBase(nn.Module):
         output_layouts: Optional[Placement] = None,
         use_local_output: bool = True,
     ):
-        parallelize_module(
-            self.router,
-            device_mesh=tp_mesh,
-            parallelize_plan=SequenceParallel(use_local_output=True),
-        )
+        self.router.apply_tp(tp_mesh)
         self.experts.apply_tp(tp_mesh)
         parallelize_module(
             self,

@@ -4,9 +4,12 @@ from typing import Any, Callable, Optional, Tuple
 
 import torch
 import torch.nn as nn
+from torch.distributed import DeviceMesh
+from torch.distributed.tensor.parallel import parallelize_module
 
-from ...config import Config, DType, StrEnum
-from ...exceptions import OLMoConfigurationError
+from olmo_core.config import Config, DType, StrEnum
+from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
+from olmo_core.exceptions import OLMoConfigurationError
 
 __all__ = ["MoERouter", "MoELinearRouter", "MoERouterConfig", "MoERouterType"]
 
@@ -204,6 +207,10 @@ class MoERouter(nn.Module):
 
         return logits, scores, expert_weights, expert_indices
 
+    @abstractmethod
+    def apply_tp(self, tp_mesh: DeviceMesh):
+        raise NotImplementedError
+
 
 class MoELinearRouter(MoERouter):
     """
@@ -225,3 +232,10 @@ class MoELinearRouter(MoERouter):
 
     def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
         return self.w_score(x.view(-1, self.d_model))
+
+    def apply_tp(self, tp_mesh: DeviceMesh):
+        parallelize_module(
+            self.w_score,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(use_local_output=True),
+        )
