@@ -153,6 +153,8 @@ class MoEMLP(MoEMLPBase):
 
         :param x: The input of shape ``(num_local_experts, N, d_model)``.
         """
+        og_dtype = x.dtype
+
         # Scale gradients and get local tensors (in case of expert parallelism).
         # shape (all): (num_local_experts, hidden_size, d_model)
         w1, w2, w3 = (
@@ -161,8 +163,10 @@ class MoEMLP(MoEMLPBase):
             get_local_tensor(self.scale_grad(self.w3)),
         )
 
+        x = x.type_as(w1)
+
         # Compute the MLP.
-        return torch.bmm(F.silu(torch.bmm(x, w1)) * torch.bmm(x, w3), w2)
+        return torch.bmm(F.silu(torch.bmm(x, w1)) * torch.bmm(x, w3), w2).to(dtype=og_dtype)
 
 
 class DroplessMoEMLP(MoEMLPBase):
