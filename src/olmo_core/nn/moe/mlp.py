@@ -66,12 +66,13 @@ class MoEMLPBase(nn.Module):
         """
         self._shard_experts(ep_mesh, "ep")
 
-    def apply_tp(self, tp_mesh: DeviceMesh):
+    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         """
         Apply expert parallelism.
 
         :param tp_mesh: A 1D device mesh.
         """
+        del float8_enabled  # TODO
         self._shard_experts(tp_mesh, "tp")
 
     def _shard_experts(self, mesh: DeviceMesh, flavor: Literal["tp", "ep"]):

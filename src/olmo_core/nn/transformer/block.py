@@ -424,7 +424,9 @@ class MoETransformerBlock(TransformerBlockBase):
         )
 
         self.attention.apply_tp(tp_mesh, output_layouts=Shard(1), float8_enabled=float8_enabled)
-        self.feed_forward_moe.apply_tp(tp_mesh, output_layouts=Shard(1), use_local_output=False)
+        self.feed_forward_moe.apply_tp(
+            tp_mesh, output_layouts=Shard(1), use_local_output=False, float8_enabled=float8_enabled
+        )
 
 
 class MoEReorderedNormTransformerBlock(MoETransformerBlock):

@@ -9,7 +9,6 @@ from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import PrepareModuleOutput, parallelize_module
 
 from olmo_core.config import Config, DType, StrEnum
-from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.exceptions import OLMoConfigurationError
 
 from ..buffer_cache import BufferCache
@@ -215,9 +214,18 @@ class MoEBase(nn.Module):
         tp_mesh: DeviceMesh,
         output_layouts: Optional[Placement] = None,
         use_local_output: bool = True,
+        float8_enabled: bool = False,
     ):
-        self.router.apply_tp(tp_mesh)
-        self.experts.apply_tp(tp_mesh)
+        # Sequence parallel
+        self.router.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+
+        # Expert parallel
+        self.experts.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+
+        # Sequence parallel
+        if self.shared_experts is not None:
+            self.shared_experts.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+
         parallelize_module(
             self,
             device_mesh=tp_mesh,

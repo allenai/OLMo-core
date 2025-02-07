@@ -3,9 +3,14 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+from torch.distributed import DeviceMesh
+from torch.distributed.tensor import Shard
+from torch.distributed.tensor.parallel import PrepareModuleOutput, parallelize_module
 
-from ...config import Config, DType, StrEnum
-from ...exceptions import OLMoConfigurationError
+from olmo_core.config import Config, DType, StrEnum
+from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
+from olmo_core.exceptions import OLMoConfigurationError
+
 from ..feed_forward import FeedForward
 
 __all__ = ["SharedMLP", "SharedMLPConfig", "SharedMLPType"]
@@ -120,3 +125,21 @@ class SharedMLP(nn.Module):
         else:
             shared_out.add_(experts_out)
         return shared_out
+
+    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
+        # Alternatively could do colwise->rowwise->colwise parallelism
+        del float8_enabled
+        parallelize_module(
+            self,
+            device_mesh=tp_mesh,
+            parallelize_plan={
+                "mlp.w1": SequenceParallel(),
+                "mlp.w2": SequenceParallel(),
+                "mlp.w3": SequenceParallel(),
+                "mlp": PrepareModuleOutput(
+                    output_layouts=(Shard(1),),
+                    desired_output_layouts=(Shard(1),),
+                    use_local_output=True,
+                ),
+            },
+        )
