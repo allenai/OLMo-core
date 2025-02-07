@@ -65,7 +65,7 @@ from olmo_core.utils import get_default_device, prepare_cli_environment, seed_al
 MAX_PRETRAIN_STEPS = 2385
 
 
-MAX_SEQ_LEN = 32768 // 2
+MAX_SEQ_LEN = 32768
 
 
 class AnnealingDataMix(DataMixBase):
