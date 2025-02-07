@@ -145,7 +145,7 @@ class MoEMLP(MoEMLPBase):
         )
 
     def extra_repr(self):
-        return f"d_model={self.d_model}, num_experts={self.num_experts}, hidden_size={self.hidden_size}"
+        return f"num_experts={self.num_experts}, in_features={self.d_model}, hidden_size={self.hidden_size}"
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

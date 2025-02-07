@@ -370,6 +370,8 @@ class TransformerTrainModule(TrainModule):
         # Build optimizer(s).
         log.info("Building optimizer...")
         self.optim: Optimizer = optim.build(self.model, strict=True)
+        for i, (name, param) in enumerate(self.model.named_parameters()):
+            log.info(f"param {i+1}: '{name}' ({tuple(param.shape)})")
 
         self.rank_microbatch_size = rank_microbatch_size
         self.max_sequence_length = max_sequence_length
