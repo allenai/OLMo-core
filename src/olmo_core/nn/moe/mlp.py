@@ -1,3 +1,4 @@
+import logging
 import warnings
 from typing import Any, Callable, List, Optional
 
@@ -12,6 +13,9 @@ from ...distributed.utils import get_local_tensor
 from ...exceptions import OLMoConfigurationError
 
 __all__ = ["MoEMLP", "DroplessMoEMLP"]
+
+
+log = logging.getLogger(__name__)
 
 
 class _ScaleGradient(torch.autograd.Function):
@@ -64,6 +68,7 @@ class MoEMLPBase(nn.Module):
             raise RuntimeError("expert parallel mesh must have named dimensions")
 
         shard_dim_name = ep_mesh.mesh_dim_names[-1]
+        log.info(f"Splitting experts over mesh dimension '{shard_dim_name}'...")
 
         self.ep_mesh = ep_mesh
         self.ep_pg = ep_mesh[shard_dim_name].get_group()
@@ -113,6 +118,7 @@ class MoEMLPBase(nn.Module):
             raise RuntimeError("mesh must have named dimensions!")
 
         dim_name = mesh.mesh_dim_names[0]
+        log.info(f"Sharding local experts over mesh dimension '{dim_name}'...")
         fully_shard(self, mesh=mesh[dim_name], **kwargs)
 
 
