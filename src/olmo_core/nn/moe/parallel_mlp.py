@@ -222,11 +222,9 @@ class ParallelMLP(ParallelMLPBase):
             else:
                 local_batch_size = self.max_local_microbatch_size
 
-        num_global_items = local_batch_size * self.ep_world_size
-        num_global_expert_inputs = self.top_k * num_global_items
-        inputs_per_expert = num_global_expert_inputs / self.num_experts
+        local_inputs_per_expert = self.top_k * local_batch_size / self.num_experts
 
-        return int(self.capacity_factor * inputs_per_expert)
+        return self.ep_world_size * int(self.capacity_factor * local_inputs_per_expert)
 
     @torch.no_grad()
     def _get_parallel_indices_and_bins(
