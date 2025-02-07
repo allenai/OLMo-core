@@ -203,6 +203,11 @@ class ParallelMLP(ParallelMLPBase):
         if self.max_local_microbatch_size is not None:
             self.warmup_cache(self.max_local_microbatch_size)
 
+    def apply_tp(self, tp_mesh: DeviceMesh, **kwargs):
+        super().apply_tp(tp_mesh, **kwargs)
+        if self.max_local_microbatch_size is not None:
+            self.warmup_cache(self.max_local_microbatch_size)
+
     def expert_capacity(self, local_batch_size: int) -> int:
         # NOTE: need to ensure this is the same across the process group.
         # If local batch sizes are different then these will be different, and `parallel_forward_once`
@@ -461,6 +466,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
 
         return out, batch_size_per_expert
 
+    @torch._dynamo.disable()
     def parallel_forward_once(
         self,
         x: torch.Tensor,
