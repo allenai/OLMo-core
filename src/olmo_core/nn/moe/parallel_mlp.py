@@ -206,9 +206,7 @@ class ParallelMLP(ParallelMLPBase):
 
     def apply_tp(self, tp_mesh: DeviceMesh, **kwargs):
         super().apply_tp(tp_mesh, **kwargs)
-        print(tp_mesh)
         self.tp_degree = tp_mesh.size()
-        print(self.tp_degree)
         if self.max_local_microbatch_size is not None:
             self.warmup_cache(self.max_local_microbatch_size)
 
@@ -338,8 +336,7 @@ class ParallelMLP(ParallelMLPBase):
         # shape: (N, d_model)
         x = x.view(-1, x.shape[-1])
 
-        num_items, _ = expert_weights.shape
-        expert_capacity = self.expert_capacity(num_items)
+        expert_capacity = self.expert_capacity(x.shape[0])
         local_expert_capacity = expert_capacity // self.ep_world_size
 
         # shape: (batch_size * top_k,)
