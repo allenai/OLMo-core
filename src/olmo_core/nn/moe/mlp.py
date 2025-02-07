@@ -100,16 +100,16 @@ class MoEMLPBase(nn.Module):
         #      replicate_dim_name = ep_mesh.mesh_dim_names[0]
         #      replicate(self, device_mesh=ep_mesh[replicate_dim_name])
 
-    def fully_shard(self, dp_mesh: Optional[DeviceMesh] = None, **kwargs):
+    def fully_shard(self, mesh: Optional[DeviceMesh] = None, **kwargs):
         from torch.distributed._composable.fsdp import fully_shard
 
-        if self.ep_pg is None or dp_mesh is None or dp_mesh.ndim != 2:
+        if self.ep_pg is None or mesh is None or mesh.ndim != 2:
             return
 
-        assert dp_mesh.mesh_dim_names
-        dim_name = dp_mesh.mesh_dim_names[0]
+        assert mesh.mesh_dim_names
+        dim_name = mesh.mesh_dim_names[0]
 
-        fully_shard(self, mesh=dp_mesh[dim_name], **kwargs)
+        fully_shard(self, mesh=mesh[dim_name], **kwargs)
 
 
 class MoEMLP(MoEMLPBase):

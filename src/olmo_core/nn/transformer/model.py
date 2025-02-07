@@ -448,7 +448,7 @@ class Transformer(nn.Module):
             if self.is_moe:
                 block = cast(MoETransformerBlock, block)
                 block.feed_forward_moe.experts.mlp.fully_shard(
-                    dp_mesh, reshard_after_forward=reshard_after_forward, **fsdp_config
+                    reshard_after_forward=reshard_after_forward, **fsdp_config
                 )
 
             if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
