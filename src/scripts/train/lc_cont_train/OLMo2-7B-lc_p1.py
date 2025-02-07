@@ -188,7 +188,7 @@ class LcContTrain(Config):
                 num_workers=4,
             ),
             trainer=TrainerConfig(
-                save_folder=f"oe-training-default/ai2-llm/checkpoints/dustins/{run_name}",
+                save_folder=f"gs://ai2-llm/checkpoints/dustins/{run_name}",
                 rank_microbatch_size=1 * MAX_SEQ_LEN,  # NOTE: again this is specified in tokens.
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
