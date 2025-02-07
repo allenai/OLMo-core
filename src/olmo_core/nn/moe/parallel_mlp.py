@@ -260,6 +260,7 @@ class ParallelMLP(ParallelMLPBase):
 
         # shape: (num_local_experts * expert_capacity,)
         _, parallel_indices = torch.sort(parallel_top_expert)
+        parallel_indices = parallel_indices.int()
 
         # Calculate the bins boundaries from the token counts.
         # shape: (num_local_experts,)
@@ -380,7 +381,7 @@ class ParallelMLP(ParallelMLPBase):
         # Locally permute the tokens and perform the expert computation.
         parallel_x = self.permute_and_compute(
             parallel_x,
-            indices=parallel_indices.int(),
+            indices=parallel_indices,
             expert_weights=None,
             bins=parallel_bins,
             expert_capacity=expert_capacity,
