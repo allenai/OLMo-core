@@ -223,7 +223,6 @@ class ParallelMLP(ParallelMLPBase):
                 local_batch_size = self.max_local_microbatch_size
 
         local_inputs_per_expert = self.top_k * local_batch_size / self.num_experts
-
         return self.ep_world_size * int(self.capacity_factor * local_inputs_per_expert)
 
     @torch.no_grad()
@@ -342,7 +341,7 @@ class ParallelMLP(ParallelMLPBase):
         expert_indices = expert_indices.flatten()
 
         with torch.no_grad():
-            indices, bin_ids, bins, batch_size_per_expert = self.indices_and_bins(expert_indices)
+            indices, _, bins, batch_size_per_expert = self.indices_and_bins(expert_indices)
 
         # Permute locally so that the tokens for each device are stored contiguously.
         # shape: (num_experts, local_expert_capacity, d_model)
@@ -395,7 +394,6 @@ class ParallelMLP(ParallelMLPBase):
             x = ops.sum_tensor(x.view(self.hidden_sharding_degree, -1, self.d_model), dim=0)
 
         # Un-permute locally to setup for the next series of operations.
-        #  x = ops.scatter(x, indices, bin_ids, expert_weights, bins, self.top_k)
         x = ops.binned_scatter(
             x.view(self.num_experts, -1, self.d_model), indices, expert_weights, bins, self.top_k
         )
