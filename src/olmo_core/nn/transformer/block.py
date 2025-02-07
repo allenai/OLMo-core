@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard
-from torch.distributed.tensor.parallel import parallelize_module
+from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
 from olmo_core.config import Config, StrEnum
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
@@ -418,9 +418,10 @@ class MoETransformerBlock(TransformerBlockBase):
                 desired_input_layouts=(Replicate(),),
             ),
             "feed_forward_norm": SequenceParallel(),
-            "feed_forward_moe": prepare_module_input(
+            "feed_forward_moe": PrepareModuleInput(
                 input_layouts=(Shard(1),),
                 desired_input_layouts=(Shard(1),),
+                use_local_output=True,
             ),
         }
         if isinstance(self.dropout, nn.Dropout):

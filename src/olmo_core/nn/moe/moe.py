@@ -185,9 +185,7 @@ class MoEBase(nn.Module):
         :returns: The output of the MoE layer, the optional load-balancing loss, and the optional
             router Z-loss.
         """
-        log.info(f"{x=}")
         expert_logits, expert_scores, expert_weights, expert_indices = self.router(x)
-        log.info(f"{expert_logits=}, {expert_scores=}, {expert_weights=}, {expert_indices=}")
         out, batch_size_per_expert = self.experts(x, expert_weights, expert_indices)
         if self.shared_experts is not None:
             out = self.shared_experts(x, out, self.router.top_k)
@@ -222,6 +220,8 @@ class MoEBase(nn.Module):
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
+        # Input layouts assumed to be (Shard(1),)
+
         # Sequence parallel
         self.router.apply_tp(tp_mesh, float8_enabled=float8_enabled)
 
