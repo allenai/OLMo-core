@@ -182,6 +182,7 @@ class ParallelMLP(ParallelMLPBase):
     ):
         super().__init__(mlp=mlp, top_k=top_k, cache=cache)
         self.capacity_factor = capacity_factor
+        self.tp_degree: int = 1
         self.max_local_microbatch_size = max_local_microbatch_size
         if self.max_local_microbatch_size is not None:
             self.warmup_cache(self.max_local_microbatch_size)
@@ -205,6 +206,7 @@ class ParallelMLP(ParallelMLPBase):
 
     def apply_tp(self, tp_mesh: DeviceMesh, **kwargs):
         super().apply_tp(tp_mesh, **kwargs)
+        self.tp_degree = tp_mesh.size()
         if self.max_local_microbatch_size is not None:
             self.warmup_cache(self.max_local_microbatch_size)
 
@@ -214,13 +216,14 @@ class ParallelMLP(ParallelMLPBase):
         # will break. This shouldn't be a problem with our trainer, but would be an issue for inference.
         # To avoid that you could set `self.max_local_microbatch_size` up-front.
         if self.max_local_microbatch_size is not None:
-            if local_batch_size > self.max_local_microbatch_size:
+            max_local_microbatch_size = self.max_local_microbatch_size // self.tp_degree
+            if local_batch_size > max_local_microbatch_size:
                 raise RuntimeError(
                     f"Local batch size ({local_batch_size:,d}) bigger than "
-                    f"configured max local batch size ({self.max_local_microbatch_size:,d})"
+                    f"configured max local batch size ({max_local_microbatch_size:,d})"
                 )
             else:
-                local_batch_size = self.max_local_microbatch_size
+                local_batch_size = max_local_microbatch_size
 
         local_inputs_per_expert = self.top_k * local_batch_size / self.num_experts
         return self.ep_world_size * int(self.capacity_factor * local_inputs_per_expert)
