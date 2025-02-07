@@ -211,6 +211,7 @@ class ParallelMLP(ParallelMLPBase):
             self.warmup_cache(self.max_local_microbatch_size)
 
     def expert_capacity(self, local_batch_size: int) -> int:
+        assert isinstance(local_batch_size, int)
         # NOTE: need to ensure this is the same across the process group.
         # If local batch sizes are different then these will be different, and `parallel_forward_once`
         # will break. This shouldn't be a problem with our trainer, but would be an issue for inference.
