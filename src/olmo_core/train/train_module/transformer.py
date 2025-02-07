@@ -378,10 +378,10 @@ class TransformerTrainModule(TrainModule):
         self.max_grad_norm = max_grad_norm
         self.scheduler = scheduler
         self.state_dict_save_opts = state_dict_save_opts or dist_cp_sd.StateDictOptions(
-            flatten_optimizer_state_dict=False, cpu_offload=True
+            flatten_optimizer_state_dict=True, cpu_offload=True
         )
         self.state_dict_load_opts = state_dict_load_opts or dist_cp_sd.StateDictOptions(
-            flatten_optimizer_state_dict=False, strict=True
+            flatten_optimizer_state_dict=True, strict=True
         )
         self.load_key_mapping = load_key_mapping
         self.label_ignore_index = label_ignore_index
