@@ -83,22 +83,22 @@ class MoEMLPBase(nn.Module):
         self.gradient_scale = 1.0 / num_shards
 
         placements: List[Placement] = [Shard(0)]
-        if ep_mesh.ndim > 1:
-            placements.insert(0, Replicate())
+        #  if ep_mesh.ndim > 1:
+        #      placements.insert(0, Replicate())
 
-        self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, ep_mesh, placements)))  # type: ignore
-        self.register_parameter("w2", nn.Parameter(distribute_tensor(self.w2, ep_mesh, placements)))  # type: ignore
-        self.register_parameter("w3", nn.Parameter(distribute_tensor(self.w3, ep_mesh, placements)))  # type: ignore
+        self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, ep_mesh[shard_dim_name], placements)))  # type: ignore
+        self.register_parameter("w2", nn.Parameter(distribute_tensor(self.w2, ep_mesh[shard_dim_name], placements)))  # type: ignore
+        self.register_parameter("w3", nn.Parameter(distribute_tensor(self.w3, ep_mesh[shard_dim_name], placements)))  # type: ignore
 
-        if ep_mesh.ndim > 1:
-            if compile_enabled:
-                if autograd_compile_enabled:
-                    torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
-                else:
-                    torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
+        #  if ep_mesh.ndim > 1:
+        #      if compile_enabled:
+        #          if autograd_compile_enabled:
+        #              torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
+        #          else:
+        #              torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
 
-            replicate_dim_name = ep_mesh.mesh_dim_names[0]
-            replicate(self, device_mesh=ep_mesh[replicate_dim_name])
+        #      replicate_dim_name = ep_mesh.mesh_dim_names[0]
+        #      replicate(self, device_mesh=ep_mesh[replicate_dim_name])
 
 
 class MoEMLP(MoEMLPBase):
