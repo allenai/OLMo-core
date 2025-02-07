@@ -194,8 +194,17 @@ class ParallelMLP(ParallelMLPBase):
             device=get_default_device(),
         )
 
-    def apply_ep(self, ep_mesh: DeviceMesh):
-        super().apply_ep(ep_mesh)
+    def apply_ep(
+        self,
+        ep_mesh: DeviceMesh,
+        compile_enabled: bool = False,
+        autograd_compile_enabled: bool = False,
+    ):
+        super().apply_ep(
+            ep_mesh,
+            compile_enabled=compile_enabled,
+            autograd_compile_enabled=autograd_compile_enabled,
+        )
         if self.max_local_microbatch_size is not None:
             self.warmup_cache(self.max_local_microbatch_size)
 
