@@ -237,12 +237,12 @@ class MoELinearRouter(MoERouter):
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         del float8_enabled
         parallelize_module(
-            self.w_score,
-            device_mesh=tp_mesh,
-            parallelize_plan=SequenceParallel(use_local_output=True),
-        )
-        parallelize_module(
             self,
             device_mesh=tp_mesh,
             parallelize_plan=PrepareModuleInput(desired_input_layouts=(Shard(1),)),
+        )
+        parallelize_module(
+            self.w_score,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(use_local_output=True),
         )
