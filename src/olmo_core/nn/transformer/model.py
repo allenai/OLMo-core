@@ -291,23 +291,27 @@ class Transformer(nn.Module):
             parallelize_module,
         )
 
-        parallelize_module(
-            module=self,
-            device_mesh=tp_mesh,
-            parallelize_plan={
-                "embeddings": RowwiseParallel(
+        if self.embeddings is not None:
+            parallelize_module(
+                self.embeddings,
+                device_mesh=tp_mesh,
+                parallelize_plan=RowwiseParallel(
                     input_layouts=Replicate(),
                     use_local_output=False,
                 ),
-                "lm_head": PrepareModuleInput(
+            )
+
+        if self.lm_head is not None:
+            parallelize_module(
+                self.lm_head,
+                device_mesh=tp_mesh,
+                parallelize_plan=PrepareModuleInput(
                     # block output layouts are same as block input layouts
                     input_layouts=cast(TransformerBlockBase, self.blocks["0"]).tp_input_layouts,
                     desired_input_layouts=self.lm_head.tp_input_layouts,
                 ),
-            },
-        )
-
-        self.lm_head.apply_tp(tp_mesh, loss_parallel=loss_parallel)
+            )
+            self.lm_head.apply_tp(tp_mesh, loss_parallel=loss_parallel)
 
         # Apply tensor + sequence parallelism to every transformer block.
         # NOTE: At the cost of model code change, we can accelerate Sequence Parallel
