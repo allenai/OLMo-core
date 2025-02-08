@@ -189,7 +189,6 @@ class MoEBase(nn.Module):
         :returns: The output of the MoE layer, the optional load-balancing loss, and the optional
             router Z-loss.
         """
-        log.info(f"{x=}")
         expert_logits, expert_scores, expert_weights, expert_indices = self.router(x)
 
         out, batch_size_per_expert = self.experts(x, expert_weights, expert_indices)
@@ -234,6 +233,7 @@ class MoEBase(nn.Module):
             parallelize_plan=PrepareModuleInput(
                 input_layouts=None if input_layout is None else (input_layout,),
                 desired_input_layouts=(Shard(1),),
+                use_local_output=True,
             ),
         )
 
