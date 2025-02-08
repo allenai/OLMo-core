@@ -1,9 +1,39 @@
+import logging
 from typing import Callable, Literal, Optional, Tuple
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 __all__ = ["cross_entropy_loss", "fused_cross_entropy_loss"]
+
+
+log = logging.getLogger(__name__)
+
+
+class CrossEntropyLoss(nn.Module):
+    def __init__(
+        self,
+        *,
+        ignore_index: int = -100,
+        reduction: Literal["mean", "sum", "none"] = "mean",
+        compute_z_loss: bool = False,
+        z_loss_multiplier: float = 1e-4,
+        compile: bool = False,
+        fused: bool = False,
+    ):
+        super().__init__()
+        self.ignore_index = ignore_index
+        self.reduction = reduction
+        self.compute_z_loss = compute_z_loss
+        self.z_loss_multiplier = z_loss_multiplier
+        self.base_loss_fn = fused_cross_entropy_loss if fused else cross_entropy_loss
+        if compile:
+            if torch.cuda.is_available():
+                log.info("Compiling loss function...")
+                self.base_loss_fn = torch.compile(self.base_loss_fn)
+            else:
+                log.warning("Skipping loss compilation since CUDA is not available")
 
 
 def cross_entropy_loss(

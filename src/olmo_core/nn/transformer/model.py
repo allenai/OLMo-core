@@ -307,7 +307,7 @@ class Transformer(nn.Module):
         if self.lm_head is not None:
             self.lm_head.apply_tp(
                 tp_mesh,
-                output_layout=Shard(-1) if loss_parallel else Replicate(),
+                output_layout=Shard(1) if loss_parallel else Replicate(),
                 use_local_output=not loss_parallel,
             )
 
