@@ -33,7 +33,7 @@ from olmo_core.distributed.parallel import (
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
-from olmo_core.nn.cross_entropy_loss import CrossEntropyLoss
+from olmo_core.nn.cross_entropy_loss import LMCrossEntropyLoss
 from olmo_core.nn.transformer import NormalizedTransformer, Transformer
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
@@ -306,9 +306,6 @@ class TransformerPipelineTrainModule(TrainModule):
         super().__init__()
 
         # Validate some options.
-        if fused_loss and compile_loss:
-            raise OLMoConfigurationError("'fused_loss' is not compatible with 'compile_loss'")
-
         if rank_microbatch_size % max_sequence_length != 0:
             raise OLMoConfigurationError(
                 f"'rank_microbatch_size' ({rank_microbatch_size:,d} tokens) must be divisible by "
@@ -322,14 +319,14 @@ class TransformerPipelineTrainModule(TrainModule):
         log.info(f"Data parallel world size = {get_world_size(self.dp_process_group):,d}")
 
         self.label_ignore_index = label_ignore_index
-        self._train_loss_fn = CrossEntropyLoss(
+        self._train_loss_fn = LMCrossEntropyLoss(
             ignore_index=label_ignore_index,
             reduction="sum",
             z_loss_multiplier=z_loss_multiplier,
             compile=compile_loss,
             fused=fused_loss,
         )
-        self._eval_loss_fn = CrossEntropyLoss(
+        self._eval_loss_fn = LMCrossEntropyLoss(
             ignore_index=label_ignore_index,
             reduction="none",
             compile=compile_loss,
@@ -371,10 +368,8 @@ class TransformerPipelineTrainModule(TrainModule):
                 model.apply_tp(
                     tp_mesh,
                     float8_enabled=float8_enabled,
-                    loss_parallel=True,
+                    loss_parallel=False,
                 )
-            self._train_loss_fn.apply_tp(tp_mesh)
-            # TODO: parallel eval loss? The tricky part is we don't reduce it.
             tp_config.maybe_enable_async_tp(tp_mesh)
             log.info(
                 f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model"
@@ -497,7 +492,7 @@ class TransformerPipelineTrainModule(TrainModule):
         # NOTE: we use the "sum" loss reduction and then divide by 'batch_num_tokens_for_loss'
         # (the total number of tokens used in the loss across the whole batch, not just the micro batch)
         # to avoid biasing the loss in the case where micro-batches might not be the same size.
-        ce_loss, z_loss = self._train_loss_fn(logits[..., :-1, :].contiguous(), labels)
+        ce_loss, z_loss = self._train_loss_fn(logits, labels)
 
         ce_loss.div_(self._batch_num_tokens_for_loss)
         if z_loss is not None:
@@ -522,7 +517,7 @@ class TransformerPipelineTrainModule(TrainModule):
         return loss
 
     def eval_loss_fn(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        ce_loss, _ = self._eval_loss_fn(logits[..., :-1, :].contiguous(), labels)
+        ce_loss, _ = self._eval_loss_fn(logits, labels)
         return ce_loss.view(logits.shape[0], -1)
 
     def on_attach(self):

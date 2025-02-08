@@ -3,20 +3,17 @@ from typing import Literal, Optional, Tuple
 
 import torch
 import torch.nn as nn
-from torch.distributed import DeviceMesh
-from torch.distributed.tensor import Placement, Replicate, Shard
-from torch.distributed.tensor.parallel import (
-    PrepareModuleInput,
-    PrepareModuleOutput,
-    parallelize_module,
-)
 
 from .functional import cross_entropy_loss, fused_cross_entropy_loss
 
 log = logging.getLogger(__name__)
 
 
-class CrossEntropyLoss(nn.Module):
+class LMCrossEntropyLoss(nn.Module):
+    """
+    Cross-entropy loss for language modeling.
+    """
+
     def __init__(
         self,
         *,
@@ -27,21 +24,20 @@ class CrossEntropyLoss(nn.Module):
         fused: bool = False,
     ):
         super().__init__()
+
+        if compile and fused:
+            log.warning(f"{self.__class__.__name__} with fused+compile is experimental")
+
         self.ignore_index = ignore_index
         self.reduction: Literal["mean", "sum", "none"] = reduction
         self.z_loss_multiplier = z_loss_multiplier
         self.base_loss_fn = fused_cross_entropy_loss if fused else cross_entropy_loss
-        self._tp_enabled: bool = False
         if compile:
             if torch.cuda.is_available():
                 log.info("Compiling loss function...")
-                self.base_loss_fn = torch.compile(self.base_loss_fn)
+                self.compile()
             else:
                 log.warning("Skipping loss compilation since CUDA is not available")
-
-    @property
-    def tp_enabled(self) -> bool:
-        return self._tp_enabled
 
     def forward(
         self,
@@ -51,12 +47,30 @@ class CrossEntropyLoss(nn.Module):
         """
         Compute the CE loss and optionally Z-loss.
 
-        :param logits: The logits of shape ``(*, num_classes)``.
-        :param labels: The target labels of shape ``(*, )``.
+        :param logits: The logits of shape ``(B, S, V)``.
+            The final logits in the sequence dimension will be discarded to match the shape of
+            the labels.
+        :param labels: The target labels of shape ``(B, S-1)``.
         """
-        # Flatten inputs for loss function.
-        logits_for_loss = logits.reshape(-1, logits.size(-1))
-        labels_for_loss = labels.reshape(-1)
+        if len(logits.shape) != 3:
+            raise RuntimeError(
+                f"expected logits to have shape (B, S, V) but found {tuple(logits.shape)} instead"
+            )
+
+        B, S, V = logits.shape
+        if labels.shape != (B, S - 1):
+            raise RuntimeError(
+                f"expected labels to have shape (B, S-1) = {(B, S-1)}, but found {tuple(labels.shape)} instead"
+            )
+
+        # shape: (B, S - 1, V)
+        logits_for_loss = logits[..., :-1, :].contiguous()
+
+        # shape: (B * (S - 1), V)
+        logits_for_loss = logits_for_loss.view(-1, V)
+
+        # shape: (B, S - 1) -> (B * (S - 1),)
+        labels_for_loss = labels.view(-1)
 
         ce_loss, z_loss = self.base_loss_fn(
             logits_for_loss,
@@ -68,53 +82,8 @@ class CrossEntropyLoss(nn.Module):
         )
 
         if self.reduction == "none":
-            ce_loss = ce_loss.view(logits.shape[:-1])
+            ce_loss = ce_loss.view(labels.shape)
             if z_loss is not None:
-                z_loss = z_loss.view(logits.shape[:-1])
-        elif self.tp_enabled:
-            ce_loss = ce_loss.unsqueeze(0)
-            if z_loss is not None:
-                z_loss = z_loss.unsqueeze(0)
+                z_loss = z_loss.view(labels.shape)
 
         return ce_loss, z_loss
-
-    def apply_tp(
-        self,
-        tp_mesh: DeviceMesh,
-        input_layout: Optional[Placement] = None,
-        shard_dimension: int = 1,
-        output_layout: Optional[Placement] = None,
-        use_local_output: bool = False,
-    ):
-        if self.reduction == "none":
-            raise NotImplementedError(self.reduction)
-
-        parallelize_module(
-            self,
-            device_mesh=tp_mesh,
-            parallelize_plan=PrepareModuleInput(
-                input_layouts=None if input_layout is None else (input_layout, input_layout),  # type: ignore
-                desired_input_layouts=(Shard(shard_dimension),),
-                use_local_output=True,
-            ),
-        )
-
-        expected_output_layout = Shard(shard_dimension) if self.reduction == "none" else Shard(0)
-        desired_output_layout = output_layout or Replicate()
-        parallelize_module(
-            self,
-            device_mesh=tp_mesh,
-            parallelize_plan=PrepareModuleOutput(
-                output_layouts=(  # type: ignore
-                    expected_output_layout,
-                    None if self.z_loss_multiplier is None else expected_output_layout,
-                ),
-                desired_output_layouts=(  # type: ignore
-                    desired_output_layout,
-                    None if self.z_loss_multiplier is None else desired_output_layout,
-                ),
-                use_local_output=use_local_output,
-            ),
-        )
-
-        self._tp_enabled = True
