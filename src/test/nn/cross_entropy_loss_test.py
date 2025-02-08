@@ -12,6 +12,7 @@ from ..utils import requires_gpu
     "fused, compile, reduction",
     [
         pytest.param(False, False, "sum", id="default-sum"),
+        pytest.param(False, False, "none", id="default-none"),
     ],
 )
 @requires_gpu
@@ -48,6 +49,7 @@ def test_cross_entropy_loss_parallel(
         assert loss.shape == tuple()
     else:
         assert loss.shape == labels.shape
+        loss = loss.sum()
 
     # Trigger backward pass.
     loss.backward()
