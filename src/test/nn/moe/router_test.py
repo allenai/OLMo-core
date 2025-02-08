@@ -21,7 +21,8 @@ def test_router(device: torch.device, uniform_expert_assignment: bool):
         uniform_expert_assignment=uniform_expert_assignment,
     ).to(device)
     x = torch.randn((2, 4, 128), device=device)
-    logits, weights, indices = router(x)
+    logits, scores, weights, indices = router(x)
     assert logits.shape == (8, 4)
+    assert scores.shape == (8, 4)
     assert weights.shape == (8, 2)
     assert indices.shape == (8, 2)
