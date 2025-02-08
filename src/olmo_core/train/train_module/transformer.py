@@ -43,7 +43,7 @@ from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, mark_dynamic, move_to_device
 
-from ..common import ReduceType, reshape_inputs_for_loss
+from ..common import ReduceType
 from .train_module import EvalBatchSpec, TrainModule
 
 log = logging.getLogger(__name__)
@@ -524,7 +524,7 @@ class TransformerTrainModule(TrainModule):
         # Batch losses to record.
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
         z_batch_loss: Optional[torch.Tensor] = None
-        if self.z_loss_multiplier is not None:
+        if self._train_loss_fn.z_loss_multiplier is not None:
             z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
         auxiliary_batch_losses: Dict[str, torch.Tensor] = {}
 
@@ -579,8 +579,7 @@ class TransformerTrainModule(TrainModule):
 
         # Record loss metrics.
         self.record_ce_loss(ce_batch_loss, ReduceType.mean)
-        if self.z_loss_multiplier is not None:
-            assert z_batch_loss is not None
+        if z_batch_loss is not None:
             self.record_metric(
                 "Z loss",
                 z_batch_loss,
