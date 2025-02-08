@@ -11,7 +11,7 @@ from ..distributed.utils import requires_multi_gpu
 @pytest.mark.parametrize(
     "fused, compile, reduction",
     [
-        (pytest.param(False, id="default"), pytest.param(False, id="no-compile"), "sum"),
+        pytest.param(False, False, "sum", id="default-sum"),
     ],
 )
 @requires_multi_gpu
