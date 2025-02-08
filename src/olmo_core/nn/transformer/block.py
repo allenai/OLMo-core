@@ -10,7 +10,10 @@ from torch.distributed.tensor import Shard
 from torch.distributed.tensor.parallel import parallelize_module
 
 from olmo_core.config import Config, StrEnum
-from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
+from olmo_core.distributed.parallel.tensor_parallel import (
+    PrepareModuleInput,
+    SequenceParallel,
+)
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 
@@ -196,6 +199,14 @@ class TransformerBlock(TransformerBlockBase):
         return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
+        parallelize_module(
+            self,
+            device_mesh=tp_mesh,
+            parallelize_plan=PrepareModuleInput(
+                desired_input_layouts=(Shard(1),),
+            ),
+        )
+
         parallelize_module(
             self.attention_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
         )
@@ -388,6 +399,14 @@ class MoETransformerBlock(TransformerBlockBase):
         self.feed_forward_moe.apply_ep(ep_mesh, **kwargs)
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
+        parallelize_module(
+            self,
+            device_mesh=tp_mesh,
+            parallelize_plan=PrepareModuleInput(
+                desired_input_layouts=(Shard(1),),
+            ),
+        )
+
         parallelize_module(
             self.attention_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
         )
