@@ -44,11 +44,11 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         #     reduce_dtype=DType.float32,
         #     num_replicas=64 // 16,  # common.launch.num_nodes // 2,
         # ),
-        ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
-        #ac_config=TransformerActivationCheckpointingConfig(
-        #    mode=TransformerActivationCheckpointingMode.selected_modules,
-        #    modules=[f"blocks.{i}.feed_forward" for i in range(64)],
-        #),
+        #ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.selected_modules,
+            modules=[f"blocks.{i}.feed_forward" for i in range(64)],
+        ),
         float8_config=Float8Config(compile=compile, enabled=False),
     )
 
@@ -72,7 +72,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/{project_name}/",
-            rank_microbatch_size=4 * 4096,
+            rank_microbatch_size=2 * 4096,
             checkpointer=CheckpointerConfig(
                 save_thread_count=1, load_thread_count=32, throttle_uploads=True
             ),
