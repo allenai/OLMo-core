@@ -9,7 +9,7 @@ import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 
-from olmo_core.distributed.utils import get_world_size
+from olmo_core.distributed.utils import get_local_tensor, get_world_size
 from olmo_core.utils import get_default_device, move_to_device
 
 from ..buffer_cache import BufferCache
@@ -128,6 +128,7 @@ class ParallelMLPBase(nn.Module):
         :returns: The output with the same shape as ``x`` and a tensor with shape ``(num_local_experts,)``
             containing the number of items/tokens routed to each (local) expert.
         """
+        x = get_local_tensor(x)
         in_shape = x.size()
 
         # Compute the experts.
