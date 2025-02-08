@@ -7,7 +7,11 @@ import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard
-from torch.distributed.tensor.parallel import PrepareModuleOutput, parallelize_module
+from torch.distributed.tensor.parallel import (
+    PrepareModuleInput,
+    PrepareModuleOutput,
+    parallelize_module,
+)
 
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.exceptions import OLMoConfigurationError
@@ -218,11 +222,19 @@ class MoEBase(nn.Module):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        output_layouts: Optional[Placement] = None,
+        input_layout: Optional[Placement] = None,
+        output_layout: Optional[Placement] = None,
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
-        # Input layouts assumed to be (Shard(1),)
+        parallelize_module(
+            self,
+            device_mesh=tp_mesh,
+            parallelize_plan=PrepareModuleInput(
+                input_layouts=None if input_layout is None else (input_layout,),
+                desired_input_layouts=(Shard(1),),
+            ),
+        )
 
         # Sequence parallel
         self.router.apply_tp(tp_mesh, float8_enabled=float8_enabled)
@@ -239,7 +251,7 @@ class MoEBase(nn.Module):
             device_mesh=tp_mesh,
             parallelize_plan=PrepareModuleOutput(
                 output_layouts=(Shard(1),),
-                desired_output_layouts=(output_layouts or Replicate(),),
+                desired_output_layouts=(output_layout or Replicate(),),
                 use_local_output=use_local_output,
             ),
         )

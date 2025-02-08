@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
-from torch.distributed.tensor import Placement, Shard
+from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import parallelize_module
 
 from ..config import Config, DType, StrEnum
@@ -354,11 +354,23 @@ class Attention(nn.Module):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        output_layouts: Optional[Placement] = None,
+        input_layout: Optional[Placement] = None,
+        output_layout: Optional[Placement] = None,
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
-        rowwise_parallel, colwise_parallel, _ = get_tp_wrappers(float8_enabled=float8_enabled)
+        rowwise_parallel, colwise_parallel, prepare_module_input = get_tp_wrappers(
+            float8_enabled=float8_enabled
+        )
+
+        parallelize_module(
+            self,
+            device_mesh=tp_mesh,
+            parallelize_plan=prepare_module_input(
+                input_layouts=None if input_layout is None else (input_layout,),
+                desired_input_layouts=(Replicate(),),
+            ),
+        )
 
         plan = {
             "w_q": colwise_parallel(
@@ -371,7 +383,7 @@ class Attention(nn.Module):
             ),
             "w_v": colwise_parallel(),
             "w_out": rowwise_parallel(
-                output_layouts=output_layouts, use_local_output=use_local_output
+                output_layouts=output_layout, use_local_output=use_local_output
             ),
         }
         if self.q_norm is not None:
@@ -486,11 +498,12 @@ class NormalizedAttention(Attention):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        output_layouts: Optional[Placement] = None,
+        input_layout: Optional[Placement] = None,
+        output_layout: Optional[Placement] = None,
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
-        del tp_mesh, output_layouts, use_local_output, float8_enabled
+        del tp_mesh, input_layout, output_layout, use_local_output, float8_enabled
 
         raise NotImplementedError("TP is not implemented yet for the normalized attention variant")
 
@@ -622,11 +635,12 @@ class FusedAttention(nn.Module):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        output_layouts: Optional[Placement] = None,
+        input_layout: Optional[Placement] = None,
+        output_layout: Optional[Placement] = None,
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
-        del tp_mesh, output_layouts, use_local_output, float8_enabled
+        del tp_mesh, input_layout, output_layout, use_local_output, float8_enabled
 
         raise NotImplementedError("TP is not implemented yet for the fused attention variant")
 

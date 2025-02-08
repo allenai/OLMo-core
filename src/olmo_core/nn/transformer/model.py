@@ -5,6 +5,8 @@ from typing import Dict, List, Optional, Sequence, Union, cast
 import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
+from torch.distributed.tensor import Replicate, Shard
+from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
 from olmo_core.config import StrEnum
 from olmo_core.data.utils import get_cumulative_document_lengths
@@ -284,13 +286,6 @@ class Transformer(nn.Module):
         :param loss_parallel: Set to ``True`` if parallelizing the loss function as well.
         :param float8_enabled: Set this to ``True`` if training with float8 linear layers.
         """
-        from torch.distributed.tensor import Replicate
-        from torch.distributed.tensor.parallel import (
-            PrepareModuleInput,
-            RowwiseParallel,
-            parallelize_module,
-        )
-
         if self.embeddings is not None:
             parallelize_module(
                 self.embeddings,
@@ -301,18 +296,6 @@ class Transformer(nn.Module):
                 ),
             )
 
-        if self.lm_head is not None:
-            parallelize_module(
-                self.lm_head,
-                device_mesh=tp_mesh,
-                parallelize_plan=PrepareModuleInput(
-                    # block output layouts are same as block input layouts
-                    input_layouts=cast(TransformerBlockBase, self.blocks["0"]).tp_input_layouts,
-                    desired_input_layouts=self.lm_head.tp_input_layouts,
-                ),
-            )
-            self.lm_head.apply_tp(tp_mesh, loss_parallel=loss_parallel)
-
         # Apply tensor + sequence parallelism to every transformer block.
         # NOTE: At the cost of model code change, we can accelerate Sequence Parallel
         #       by folding (and unfolding) the batch dimension and the sequence dimension.
@@ -320,10 +303,12 @@ class Transformer(nn.Module):
         for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)
             block.apply_tp(tp_mesh, float8_enabled=float8_enabled)
-            parallelize_module(
-                block,
-                device_mesh=tp_mesh,
-                parallelize_plan=PrepareModuleInput(desired_input_layouts=block.tp_input_layouts),
+
+        if self.lm_head is not None:
+            self.lm_head.apply_tp(
+                tp_mesh,
+                output_layout=Shard(-1) if loss_parallel else Replicate(),
+                use_local_output=not loss_parallel,
             )
 
     def apply_activation_checkpointing(

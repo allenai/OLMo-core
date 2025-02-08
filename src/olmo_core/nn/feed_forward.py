@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor.parallel import parallelize_module
-from torch.distributed.tensor.placement_types import Placement
+from torch.distributed.tensor.placement_types import Placement, Replicate
 
 from ..config import Config, DType, StrEnum
 from ..doc_utils import beta_feature
@@ -124,11 +124,23 @@ class FeedForward(nn.Module):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        output_layouts: Optional[Placement] = None,
+        input_layout: Optional[Placement] = None,
+        output_layout: Optional[Placement] = None,
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
-        rowwise_parallel, colwise_parallel, _ = get_tp_wrappers(float8_enabled=float8_enabled)
+        rowwise_parallel, colwise_parallel, prepare_module_input = get_tp_wrappers(
+            float8_enabled=float8_enabled
+        )
+
+        parallelize_module(
+            module=self,
+            device_mesh=tp_mesh,
+            parallelize_plan=prepare_module_input(
+                input_layouts=None if input_layout is None else (input_layout,),
+                desired_input_layouts=(Replicate(),),
+            ),
+        )
 
         parallelize_module(
             module=self,
@@ -136,7 +148,7 @@ class FeedForward(nn.Module):
             parallelize_plan={
                 "w1": colwise_parallel(),
                 "w2": rowwise_parallel(
-                    output_layouts=output_layouts, use_local_output=use_local_output
+                    output_layouts=output_layout, use_local_output=use_local_output
                 ),
                 "w3": colwise_parallel(),
             },
@@ -188,11 +200,12 @@ class NormalizedFeedForward(FeedForward):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        output_layouts: Optional[Placement] = None,
+        input_layout: Optional[Placement] = None,
+        output_layout: Optional[Placement] = None,
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
-        del tp_mesh, output_layouts, use_local_output, float8_enabled
+        del tp_mesh, input_layout, output_layout, use_local_output, float8_enabled
 
         raise NotImplementedError(
             "TP is not implemented yet for the normalized feed-forward variant"

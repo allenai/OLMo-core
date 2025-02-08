@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple, Union
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -8,7 +8,7 @@ from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import (
     ColwiseParallel,
-    ParallelStyle,
+    PrepareModuleInput,
     SequenceParallel,
     parallelize_module,
 )
@@ -132,24 +132,36 @@ class LMHead(nn.Module):
         h = self.norm(x) if self.norm is not None else x
         return self.w_out(h)
 
-    @property
-    def tp_input_layouts(self) -> Union[Placement, Tuple[Placement, ...]]:
-        return Shard(1) if self.norm is not None else Replicate()
-
-    def apply_tp(self, tp_mesh: DeviceMesh, loss_parallel: bool = False):
-        tp_plan: Dict[str, ParallelStyle] = {
-            "w_out": ColwiseParallel(
-                input_layouts=Shard(1),
-                output_layouts=Shard(-1) if loss_parallel else Replicate(),
-                use_local_output=not loss_parallel,
-            ),
-        }
-        if self.norm is not None:
-            tp_plan["norm"] = SequenceParallel()
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        input_layout: Optional[Placement] = None,
+        output_layout: Optional[Placement] = None,
+        use_local_output: bool = True,
+    ):
         parallelize_module(
             module=self,
             device_mesh=tp_mesh,
-            parallelize_plan=tp_plan,
+            parallelize_plan=PrepareModuleInput(
+                input_layouts=None if input_layout is None else (input_layout,),
+                desired_input_layouts=(Shard(1) if self.norm is not None else Replicate(),),
+            ),
+        )
+
+        if self.norm is not None:
+            parallelize_module(
+                module=self,
+                device_mesh=tp_mesh,
+                parallelize_plan=SequenceParallel(),
+            )
+
+        parallelize_module(
+            module=self.w_out,
+            device_mesh=tp_mesh,
+            parallelize_plan=ColwiseParallel(
+                output_layouts=output_layout,
+                use_local_output=use_local_output,
+            ),
         )
 
 
@@ -192,8 +204,14 @@ class NormalizedLMHead(LMHead):
         sz = self.sz * (self.sz_init_value / self.sz_init_scaling)
         return sz * self.w_out(x)
 
-    def apply_tp(self, tp_mesh: DeviceMesh, loss_parallel: bool = False):
-        del tp_mesh, loss_parallel
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        input_layout: Optional[Placement] = None,
+        output_layout: Optional[Placement] = None,
+        use_local_output: bool = True,
+    ):
+        del tp_mesh, input_layout, output_layout, use_local_output
 
         raise NotImplementedError("TP is not implemented yet for the normalized LM head variant")
 
