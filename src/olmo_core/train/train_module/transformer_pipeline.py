@@ -497,7 +497,7 @@ class TransformerPipelineTrainModule(TrainModule):
         # NOTE: we use the "sum" loss reduction and then divide by 'batch_num_tokens_for_loss'
         # (the total number of tokens used in the loss across the whole batch, not just the micro batch)
         # to avoid biasing the loss in the case where micro-batches might not be the same size.
-        ce_loss, z_loss = self._train_loss_fn(logits, labels)
+        ce_loss, z_loss = self._train_loss_fn(logits[..., :-1, :].contiguous(), labels)
 
         ce_loss.div_(self._batch_num_tokens_for_loss)
         if z_loss is not None:
@@ -522,7 +522,7 @@ class TransformerPipelineTrainModule(TrainModule):
         return loss
 
     def eval_loss_fn(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        ce_loss, _ = self._eval_loss_fn(logits, labels)
+        ce_loss, _ = self._eval_loss_fn(logits[..., :-1, :].contiguous(), labels)
         return ce_loss.view(logits.shape[0], -1)
 
     def on_attach(self):

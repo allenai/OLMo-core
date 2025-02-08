@@ -55,8 +55,8 @@ class CrossEntropyLoss(nn.Module):
         :param labels: The target labels of shape ``(*, )``.
         """
         # Flatten inputs for loss function.
-        logits_for_loss = logits.view(-1, logits.size(-1))
-        labels_for_loss = labels.view(-1)
+        logits_for_loss = logits.reshape(-1, logits.size(-1))
+        labels_for_loss = labels.reshape(-1)
 
         ce_loss, z_loss = self.base_loss_fn(
             logits_for_loss,
