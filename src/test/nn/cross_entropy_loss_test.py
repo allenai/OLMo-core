@@ -25,9 +25,9 @@ def test_cross_entropy_loss_parallel(
         reduction=reduction, compile=compile, fused=fused, z_loss_multiplier=z_loss_multiplier
     )
 
-    B, S, D = 4, 16, 64
-    input_ids = torch.randint(0, 256, (B, S), device="cuda")
-    logits = torch.randn(B, S, D, device="cuda", requires_grad=True)
+    B, S, V = 4, 16, 256
+    input_ids = torch.randint(0, V, (B, S), device="cuda")
+    logits = torch.randn(B, S, V, device="cuda", requires_grad=True)
     labels = input_ids.clone()[..., 1:].contiguous()
     labels[0][2] = -100
     labels[2][9] = -100
