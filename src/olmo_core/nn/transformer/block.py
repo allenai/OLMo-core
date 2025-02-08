@@ -406,6 +406,7 @@ class MoETransformerBlock(TransformerBlockBase):
 
         self.feed_forward_moe.apply_tp(
             tp_mesh,
+            input_layout=Shard(1),
             output_layout=Shard(1),
             use_local_output=False,
             float8_enabled=float8_enabled,
