@@ -189,6 +189,7 @@ class MoEBase(nn.Module):
         :returns: The output of the MoE layer, the optional load-balancing loss, and the optional
             router Z-loss.
         """
+        log.info(f"{x=}")
         expert_logits, expert_scores, expert_weights, expert_indices = self.router(x)
 
         out, batch_size_per_expert = self.experts(x, expert_weights, expert_indices)
