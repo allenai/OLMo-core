@@ -544,7 +544,9 @@ class TransformerTrainModule(TrainModule):
 
                 # Get loss to optimize for, and the separate detached CE and Z loss values.
                 loss, ce_loss, z_loss = self.loss_fn(
-                    logits, micro_batch["labels"], batch_num_tokens_for_loss
+                    logits[..., :-1, :].contiguous(),
+                    micro_batch["labels"],
+                    batch_num_tokens_for_loss,
                 )
                 del logits
 
@@ -608,7 +610,7 @@ class TransformerTrainModule(TrainModule):
             logits = self.model_forward(batch)
             loss: Optional[torch.Tensor] = None
             if labels is not None:
-                loss = self.eval_loss_fn(logits, labels)
+                loss = self.eval_loss_fn(logits[..., :-1, :].contiguous(), labels)
 
         return logits, loss
 

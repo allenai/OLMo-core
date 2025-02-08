@@ -48,16 +48,16 @@ class CrossEntropyLoss(nn.Module):
         logits: torch.Tensor,
         labels: torch.Tensor,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        # shape: (batch_size, seq_len - 1, vocab_size)
-        logits_for_loss = logits[..., :-1, :].contiguous()
+        """
+        Compute the CE loss and optionally Z-loss.
 
-        # shape: (batch_size * (seq_len - 1), vocab_size)
-        logits_for_loss = logits_for_loss.view(-1, logits_for_loss.size(-1))
-
-        # shape: (batch_size, seq_len - 1) -> (batch_size * (seq_len - 1),)
+        :param logits: The logits of shape ``(*, num_classes)``.
+        :param labels: The target labels of shape ``(*, )``.
+        """
+        # Flatten inputs for loss function.
+        logits_for_loss = logits.view(-1, logits.size(-1))
         labels_for_loss = labels.view(-1)
 
-        # shape: depends on reduction
         ce_loss, z_loss = self.base_loss_fn(
             logits_for_loss,
             labels_for_loss,
@@ -84,7 +84,7 @@ class CrossEntropyLoss(nn.Module):
         input_layout: Optional[Placement] = None,
         shard_dimension: int = 1,
         output_layout: Optional[Placement] = None,
-        use_local_output: bool = True,
+        use_local_output: bool = False,
     ):
         if self.reduction == "none":
             raise NotImplementedError(self.reduction)
