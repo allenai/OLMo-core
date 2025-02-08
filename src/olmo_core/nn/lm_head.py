@@ -150,7 +150,7 @@ class LMHead(nn.Module):
 
         if self.norm is not None:
             parallelize_module(
-                module=self,
+                module=self.norm,
                 device_mesh=tp_mesh,
                 parallelize_plan=SequenceParallel(),
             )
