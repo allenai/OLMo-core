@@ -11,11 +11,10 @@ import re
 from tempfile import TemporaryDirectory
 
 import torch
-from transformers import Olmo2Config, AutoModelForCausalLM
+from transformers import Olmo2Config, AutoModelForCausalLM, AutoTokenizer, GPT2Tokenizer
 from safetensors.torch import load_file
 
 
-from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state, save_state_dict
 from olmo_core.internal.experiment import ExperimentConfig
 from olmo_core.io import clear_directory, dir_is_empty
@@ -71,7 +70,8 @@ def load_state_dict(checkpoint_path: str | Path) -> dict[str, torch.Tensor]:
 def convert_to_hf_checkpoint(
     olmo_checkpoint_path: str | Path,
     output_path: str | Path,
-    config: dict
+    olmo_core_config: dict,
+    tokenizer: GPT2Tokenizer
 ) -> None:
     """
     Convert an OLMo core checkpoint to Hugging Face format.
@@ -152,30 +152,48 @@ def convert_to_hf_checkpoint(
     # Verify we used all keys
     assert len(olmo_state_dict) == 0
 
+    assert hasattr(tokenizer, "vocab") and isinstance(tokenizer.vocab, dict), \
+        "Tokenizer must have a vocab dictionary"
+
     log.info(f"Saving HF model checkpoint to {output_path}...")
 
-    breakpoint()
+    assert olmo_core_config["model"]["block"]["layer_norm"]["name"] == "rms", "Only RMSNorm is supported"
 
     # Create HF model instance and load state dict
-    config = Olmo2Config(
-        vocab_size=hf_state_dict["model.embed_tokens.weight"].size(0),
-        hidden_size=hf_state_dict["model.norm.weight"].size(0),
-        intermediate_size=hf_state_dict["model.layers.0.mlp.down_proj.weight"].size(0),
-        num_hidden_layers=n_layers,
-        num_attention_heads=hf_state_dict["model.layers.0.self_attn.q_proj.weight"].size(0),
+    huggingface_config = Olmo2Config(
+        vocab_size=olmo_core_config["model"]["vocab_size"],
+        hidden_size=olmo_core_config["model"]["d_model"],
+        intermediate_size=olmo_core_config['model']['block']['feed_forward']['hidden_size'],
+        num_hidden_layers=olmo_core_config['model']['n_layers'],
+        num_attention_heads=(n_heads := olmo_core_config['model']['block']['attention']['n_heads']),
+        num_key_value_heads=(olmo_core_config['model']['block']['attention'].get("n_kv_heads") or n_heads),
+        hidden_act="silu",
+        max_position_embeddings=min(
+            olmo_core_config["dataset"]["sequence_length"],
+            tokenizer.model_max_length,
+        ),
+        rope_theta=olmo_core_config['model']['block']['attention']['rope']['theta'],
+        attention_bias=olmo_core_config['model']['block']['attention'].get('bias') or False,
+        pad_token_id=tokenizer.vocab.get(tokenizer.pad_token, None),
+        bos_token_id=tokenizer.vocab.get(tokenizer.bos_token, None),
+        eos_token_id=tokenizer.vocab.get(tokenizer.eos_token, None),
+        rms_norm_eps=olmo_core_config["model"]["block"]["layer_norm"]["eps"],
+        tie_word_embeddings=False,
     )
 
     with init_empty_weights():
         # this will not reinit weights in case
-        model = AutoModelForCausalLM.from_config(config)
+        model = AutoModelForCausalLM.from_config(huggingface_config)
 
     model.load_state_dict(hf_state_dict)
-
 
     # Save the model in HF format
     model.save_pretrained(output_path)
     log.info(f"Successfully saved HF model to '{output_path}'")
 
+    # Save the tokenizer in HF format
+    tokenizer.save_pretrained(output_path)
+    log.info(f"Successfully saved HF tokenizer to '{output_path}'")
 
 
 def load_config(checkpoint_input_dir: Path) -> dict:
@@ -191,12 +209,18 @@ def parse_args():
     parser = ArgumentParser(description=__doc__)
     parser.add_argument('-i', '--checkpoint-input-dir', type=Path, required=True)
     parser.add_argument('-o', '--huggingface-output-dir', type=Path, required=True)
+    parser.add_argument('-t', '--tokenizer-name-or-path', type=str, default=None)
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
     experiment_config = load_config(args.checkpoint_input_dir)
+
+    if args.tokenizer_name_or_path is None:
+        args.tokenizer_name_or_path = experiment_config["dataset"]["tokenizer"]["identifier"]
+
+    tokenizer_config = AutoTokenizer.from_pretrained(args.tokenizer_name_or_path)
 
     with TemporaryDirectory() as _unsharded_dir:
         if (shards_dir := (args.checkpoint_input_dir / "model_and_optim")).exists() and shards_dir.is_dir():
@@ -208,7 +232,8 @@ def main():
         convert_to_hf_checkpoint(
             olmo_checkpoint_path=unsharded_dir / "model.pt",
             output_path=args.huggingface_output_dir,
-            config=experiment_config
+            olmo_core_config=experiment_config,
+            tokenizer=tokenizer_config,     # type: ignore
         )
 
 
