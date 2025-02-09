@@ -164,7 +164,7 @@ class CrossEntropyLoss(nn.Module):
 
         inner_output_layout = Shard(shard_dimension) if self.reduction == "none" else Shard(0)
         parallelize_module(
-            self,
+            self._ce_loss,
             device_mesh=tp_mesh,
             parallelize_plan=PrepareModuleOutput(
                 output_layouts=(  # type: ignore
