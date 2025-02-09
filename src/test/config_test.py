@@ -43,10 +43,10 @@ def test_nested_configs():
     assert foo.as_dict(recurse=False) == {"z": "z", "bar": foo.bar}
 
     assert foo.as_config_dict() == {
-        Config.CLASS_NAME_FIELD: "Foo",
+        Config.CLASS_NAME_FIELD: "test.config_test.Foo",
         "z": "z",
         "bar": {
-            Config.CLASS_NAME_FIELD: "Bar",
+            Config.CLASS_NAME_FIELD: "test.config_test.Bar",
             "x": 1,
             "y": 2,
         },
@@ -62,7 +62,7 @@ def test_json_safe_dump():
 
     foo = Foo(x_list=[0, 1], x_tuple=(0, 1), x_set={"a"})
     assert foo.as_config_dict() == {
-        Config.CLASS_NAME_FIELD: "Foo",
+        Config.CLASS_NAME_FIELD: "test.config_test.Foo",
         "x_list": [0, 1],
         "x_tuple": [0, 1],
         "x_set": ["a"],
