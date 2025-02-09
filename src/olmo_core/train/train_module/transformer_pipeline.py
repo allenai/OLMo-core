@@ -661,7 +661,7 @@ class TransformerPipelineTrainModule(TrainModule):
             self.record_ce_loss(
                 self._ce_batch_loss / get_world_size(self.dp_process_group), ReduceType.sum
             )
-        if self._train_loss_fn.z_loss_multiplier is not None:
+        if self._train_loss_fn.z_loss_enabled:
             if self._z_batch_loss is None:
                 self.record_metric("Z loss", 0.0, ReduceType.sum, namespace="train")
             else:

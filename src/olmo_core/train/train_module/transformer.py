@@ -520,7 +520,7 @@ class TransformerTrainModule(TrainModule):
         # Batch losses to record.
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
         z_batch_loss: Optional[torch.Tensor] = None
-        if self._train_loss_fn.z_loss_multiplier is not None:
+        if self._train_loss_fn.z_loss_enabled:
             z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
         auxiliary_batch_losses: Dict[str, torch.Tensor] = {}
 
