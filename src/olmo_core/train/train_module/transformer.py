@@ -313,7 +313,9 @@ class TransformerTrainModule(TrainModule):
                 float8_enabled=float8_enabled,
                 loss_parallel=True,
             )
-            self._train_loss_fn.apply_tp(tp_mesh, input_layouts=(Shard(1), Replicate()))
+            self._train_loss_fn.apply_tp(
+                tp_mesh, input_layouts=(Shard(1), Replicate()), use_local_output=True
+            )
             self._eval_loss_fn.apply_tp(
                 tp_mesh, input_layouts=(Shard(1), Replicate()), use_local_output=True
             )
