@@ -169,11 +169,11 @@ class CrossEntropyLoss(nn.Module):
             parallelize_plan=PrepareModuleOutput(
                 output_layouts=(  # type: ignore
                     inner_output_layout,
-                    None if self.z_loss_enabled is None else inner_output_layout,
+                    None if not self.z_loss_enabled else inner_output_layout,
                 ),
                 desired_output_layouts=(  # type: ignore
                     inner_output_layout,
-                    None if self.z_loss_enabled is None else inner_output_layout,
+                    None if not self.z_loss_enabled else inner_output_layout,
                 ),
                 use_local_output=False,
             ),
@@ -187,11 +187,11 @@ class CrossEntropyLoss(nn.Module):
             parallelize_plan=PrepareModuleOutput(
                 output_layouts=(  # type: ignore
                     expected_output_layout,
-                    None if self.z_loss_enabled is None else expected_output_layout,
+                    None if not self.z_loss_enabled else expected_output_layout,
                 ),
                 desired_output_layouts=(  # type: ignore
                     desired_output_layout,
-                    None if self.z_loss_enabled is None else desired_output_layout,
+                    None if not self.z_loss_enabled else desired_output_layout,
                 ),
                 use_local_output=use_local_output,
             ),
