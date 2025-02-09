@@ -55,6 +55,7 @@ def run_cross_entropy_loss_parallel(
         assert loss.shape == tuple()
     else:
         assert loss.shape == labels.shape
+        loss = loss.sum()
 
     # Trigger backward pass.
     loss.backward()
