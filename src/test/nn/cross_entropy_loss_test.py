@@ -52,7 +52,7 @@ def run_cross_entropy_loss_parallel(
         loss += z_loss
 
     if reduction != "none":
-        assert loss.shape == tuple()
+        assert loss.shape == tuple(), f"{loss}"
     else:
         assert loss.shape == labels.shape
         loss = loss.sum()
