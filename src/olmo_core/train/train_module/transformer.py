@@ -69,6 +69,8 @@ class TransformerTensorParallelConfig(TensorParallelConfig):
     Transformer-specific tensor parallel config.
     """
 
+    loss_parallel: bool = True
+
 
 @dataclass
 class TransformerExpertParallelConfig(ExpertParallelConfig):
@@ -311,14 +313,15 @@ class TransformerTrainModule(TrainModule):
             self.model.apply_tp(
                 tp_mesh,
                 float8_enabled=float8_enabled,
-                loss_parallel=True,
+                loss_parallel=tp_config.loss_parallel,
             )
-            self._train_loss_fn.apply_tp(
-                tp_mesh, input_layouts=(Shard(1), Replicate()), use_local_output=True
-            )
-            self._eval_loss_fn.apply_tp(
-                tp_mesh, input_layouts=(Shard(1), Replicate()), use_local_output=True
-            )
+            if tp_config.loss_parallel:
+                self._train_loss_fn.apply_tp(
+                    tp_mesh, input_layouts=(Shard(1), Replicate()), use_local_output=True
+                )
+                self._eval_loss_fn.apply_tp(
+                    tp_mesh, input_layouts=(Shard(1), Replicate()), use_local_output=True
+                )
             tp_config.maybe_enable_async_tp(tp_mesh)
             log.info(
                 f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model"
