@@ -26,7 +26,9 @@ def run_cross_entropy_loss_parallel(
 
     # Put tensors on target device and potentially distributed over the device mesh .
     logits = distribute_tensor(
-        logits.to(device=get_default_device()), device_mesh=tp_mesh, placements=(Shard(1),)
+        logits.to(device=get_default_device()).requires_grad_(),
+        device_mesh=tp_mesh,
+        placements=(Shard(1),),
     )
     labels = distribute_tensor(
         labels.to(device=get_default_device()), device_mesh=tp_mesh, placements=(Shard(1),)
