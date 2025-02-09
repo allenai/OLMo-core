@@ -152,9 +152,6 @@ class CrossEntropyLoss(nn.Module):
         output_layout: Optional[Placement] = None,
         use_local_output: bool = False,
     ):
-        if self.reduction == "none":
-            raise NotImplementedError(self.reduction)
-
         parallelize_module(
             self,
             device_mesh=tp_mesh,
@@ -171,6 +168,10 @@ class CrossEntropyLoss(nn.Module):
             device_mesh=tp_mesh,
             parallelize_plan=PrepareModuleOutput(
                 output_layouts=(  # type: ignore
+                    expected_output_layout,
+                    None if self.z_loss_enabled is None else expected_output_layout,
+                ),
+                desired_output_layouts=(  # type: ignore
                     expected_output_layout,
                     None if self.z_loss_enabled is None else expected_output_layout,
                 ),
