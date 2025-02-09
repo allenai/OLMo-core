@@ -311,8 +311,10 @@ class TransformerTrainModule(TrainModule):
             self.model.apply_tp(
                 tp_mesh,
                 float8_enabled=float8_enabled,
-                loss_parallel=False,
+                loss_parallel=True,
             )
+            self._train_loss_fn.apply_tp(tp_mesh)
+            self._eval_loss_fn.apply_tp(tp_mesh, use_local_output=True)
             tp_config.maybe_enable_async_tp(tp_mesh)
             log.info(
                 f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model"
