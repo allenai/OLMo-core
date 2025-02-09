@@ -129,7 +129,7 @@ class CrossEntropyLoss(nn.Module):
         """
         ce_loss, z_loss = self._ce_loss(get_local_tensor(logits), get_local_tensor(labels))
 
-        if self.reduction != "none" and ce_loss.numel() > 0:
+        if self.reduction != "none" and ce_loss.numel() > 1:
             # This will be the same case with tensor/sequence parallel loss.
             if self.reduction == "sum":
                 ce_loss = ce_loss.sum()
