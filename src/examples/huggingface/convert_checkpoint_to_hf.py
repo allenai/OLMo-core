@@ -2,26 +2,20 @@
 Example script to convert a OLMo Core model checkpoint to a HuggingFace model checkpoint.
 """
 
-from argparse import ArgumentParser
 import json
 import logging
-from pathlib import Path
-from contextlib import contextmanager
 import re
+from argparse import ArgumentParser
+from contextlib import contextmanager
+from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import torch
-from transformers import Olmo2Config, AutoModelForCausalLM, AutoTokenizer, GPT2Tokenizer
 from safetensors.torch import load_file
+from transformers import AutoModelForCausalLM, AutoTokenizer, GPT2Tokenizer, Olmo2Config
 
-
-from olmo_core.distributed.checkpoint import load_model_and_optim_state, save_state_dict
-from olmo_core.internal.experiment import ExperimentConfig
-from olmo_core.io import clear_directory, dir_is_empty
-from olmo_core.nn.rope import RoPEScalingConfig
-from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.utils import get_default_device, prepare_cli_environment
 from olmo_core.distributed.checkpoint import unshard_checkpoint
+from olmo_core.utils import prepare_cli_environment
 
 try:
     from accelerate import init_empty_weights
@@ -31,7 +25,6 @@ except ImportError:
     @contextmanager
     def init_empty_weights(include_buffers: bool = False):
         yield None
-
 
 
 log = logging.getLogger(__name__)
@@ -49,20 +42,20 @@ def load_state_dict(checkpoint_path: str | Path) -> dict[str, torch.Tensor]:
     """
     checkpoint_path = Path(checkpoint_path)
 
-    if checkpoint_path.suffix == '.safetensors':
+    if checkpoint_path.suffix == ".safetensors":
         # Load safetensors format
         state_dict = load_file(checkpoint_path)
     else:
         # Load PyTorch format (.pt, .pth, .bin)
-        state_dict = torch.load(checkpoint_path, map_location='cpu')
+        state_dict = torch.load(checkpoint_path, map_location="cpu")
 
         # Handle both cases:
         # 1. Direct state dict
         # 2. Nested state dict under 'model' or 'state_dict' key
-        if 'model' in state_dict:
-            state_dict = state_dict['model']
-        elif 'state_dict' in state_dict:
-            state_dict = state_dict['state_dict']
+        if "model" in state_dict:
+            state_dict = state_dict["model"]
+        elif "state_dict" in state_dict:
+            state_dict = state_dict["state_dict"]
 
     return state_dict
 
@@ -71,7 +64,7 @@ def convert_to_hf_checkpoint(
     olmo_checkpoint_path: str | Path,
     output_path: str | Path,
     olmo_core_config: dict,
-    tokenizer: GPT2Tokenizer
+    tokenizer: GPT2Tokenizer,
 ) -> None:
     """
     Convert an OLMo core checkpoint to Hugging Face format.
@@ -88,12 +81,16 @@ def convert_to_hf_checkpoint(
     hf_state_dict = {}
 
     # Map OLMo-core keys to HF keys
-    hf_state_dict["model.embed_tokens.weight"] = olmo_state_dict.pop("embeddings.weight")   # ok
+    hf_state_dict["model.embed_tokens.weight"] = olmo_state_dict.pop("embeddings.weight")  # ok
     hf_state_dict["model.norm.weight"] = olmo_state_dict.pop("norm.weight")  # ok
     hf_state_dict["lm_head.weight"] = olmo_state_dict.pop("w_out.weight")  # ok
 
     # Count number of layers from the state dict keys
-    layer_ids = [match.group(1) for key in olmo_state_dict.keys() if (match := re.match(r"blocks\.(\d+)\.", key))]
+    layer_ids = [
+        match.group(1)
+        for key in olmo_state_dict.keys()
+        if (match := re.match(r"blocks\.(\d+)\.", key))
+    ]
     assert layer_ids, "No layer IDs found in the state dict keys"
     n_layers = max(map(int, layer_ids)) + 1
 
@@ -128,12 +125,12 @@ def convert_to_hf_checkpoint(
 
         if has_qk_norm:
             # Non-Llama model
-            hf_state_dict[f"model.layers.{block}.post_attention_layernorm.weight"] = olmo_state_dict.pop(
-                f"blocks.{block}.attention_norm.weight"
-            )
-            hf_state_dict[f"model.layers.{block}.post_feedforward_layernorm.weight"] = olmo_state_dict.pop(
-                f"blocks.{block}.feed_forward_norm.weight"
-            )
+            hf_state_dict[
+                f"model.layers.{block}.post_attention_layernorm.weight"
+            ] = olmo_state_dict.pop(f"blocks.{block}.attention_norm.weight")
+            hf_state_dict[
+                f"model.layers.{block}.post_feedforward_layernorm.weight"
+            ] = olmo_state_dict.pop(f"blocks.{block}.feed_forward_norm.weight")
             hf_state_dict[f"model.layers.{block}.self_attn.q_norm.weight"] = olmo_state_dict.pop(
                 f"blocks.{block}.attention.q_norm.weight"
             )
@@ -142,9 +139,9 @@ def convert_to_hf_checkpoint(
             )
         else:
             # Llama model
-            hf_state_dict[f"model.layers.{block}.post_attention_layernorm.weight"] = olmo_state_dict.pop(
-                f"blocks.{block}.feed_forward_norm.weight"
-            )
+            hf_state_dict[
+                f"model.layers.{block}.post_attention_layernorm.weight"
+            ] = olmo_state_dict.pop(f"blocks.{block}.feed_forward_norm.weight")
             hf_state_dict[f"model.layers.{block}.input_layernorm.weight"] = olmo_state_dict.pop(
                 f"blocks.{block}.attention_norm.weight"
             )
@@ -152,28 +149,33 @@ def convert_to_hf_checkpoint(
     # Verify we used all keys
     assert len(olmo_state_dict) == 0
 
-    assert hasattr(tokenizer, "vocab") and isinstance(tokenizer.vocab, dict), \
-        "Tokenizer must have a vocab dictionary"
+    assert hasattr(tokenizer, "vocab") and isinstance(
+        tokenizer.vocab, dict
+    ), "Tokenizer must have a vocab dictionary"
 
     log.info(f"Saving HF model checkpoint to {output_path}...")
 
-    assert olmo_core_config["model"]["block"]["layer_norm"]["name"] == "rms", "Only RMSNorm is supported"
+    assert (
+        olmo_core_config["model"]["block"]["layer_norm"]["name"] == "rms"
+    ), "Only RMSNorm is supported"
 
     # Create HF model instance and load state dict
     huggingface_config = Olmo2Config(
         vocab_size=olmo_core_config["model"]["vocab_size"],
         hidden_size=olmo_core_config["model"]["d_model"],
-        intermediate_size=olmo_core_config['model']['block']['feed_forward']['hidden_size'],
-        num_hidden_layers=olmo_core_config['model']['n_layers'],
-        num_attention_heads=(n_heads := olmo_core_config['model']['block']['attention']['n_heads']),
-        num_key_value_heads=(olmo_core_config['model']['block']['attention'].get("n_kv_heads") or n_heads),
+        intermediate_size=olmo_core_config["model"]["block"]["feed_forward"]["hidden_size"],
+        num_hidden_layers=olmo_core_config["model"]["n_layers"],
+        num_attention_heads=(n_heads := olmo_core_config["model"]["block"]["attention"]["n_heads"]),
+        num_key_value_heads=(
+            olmo_core_config["model"]["block"]["attention"].get("n_kv_heads") or n_heads
+        ),
         hidden_act="silu",
         max_position_embeddings=min(
             olmo_core_config["dataset"]["sequence_length"],
             tokenizer.model_max_length,
         ),
-        rope_theta=olmo_core_config['model']['block']['attention']['rope']['theta'],
-        attention_bias=olmo_core_config['model']['block']['attention'].get('bias') or False,
+        rope_theta=olmo_core_config["model"]["block"]["attention"]["rope"]["theta"],
+        attention_bias=olmo_core_config["model"]["block"]["attention"].get("bias") or False,
         pad_token_id=tokenizer.vocab.get(tokenizer.pad_token, None),
         bos_token_id=tokenizer.vocab.get(tokenizer.bos_token, None),
         eos_token_id=tokenizer.vocab.get(tokenizer.eos_token, None),
@@ -197,7 +199,9 @@ def convert_to_hf_checkpoint(
 
 
 def load_config(checkpoint_input_dir: Path) -> dict:
-    assert (checkpoint_input_dir / "config.json").exists(), f"Config file not found at {checkpoint_input_dir}"
+    assert (
+        checkpoint_input_dir / "config.json"
+    ).exists(), f"Config file not found at {checkpoint_input_dir}"
 
     with open(checkpoint_input_dir / "config.json", "r", encoding="utf-8") as f:
         config_dict = json.load(f)
@@ -207,9 +211,9 @@ def load_config(checkpoint_input_dir: Path) -> dict:
 
 def parse_args():
     parser = ArgumentParser(description=__doc__)
-    parser.add_argument('-i', '--checkpoint-input-dir', type=Path, required=True)
-    parser.add_argument('-o', '--huggingface-output-dir', type=Path, required=True)
-    parser.add_argument('-t', '--tokenizer-name-or-path', type=str, default=None)
+    parser.add_argument("-i", "--checkpoint-input-dir", type=Path, required=True)
+    parser.add_argument("-o", "--huggingface-output-dir", type=Path, required=True)
+    parser.add_argument("-t", "--tokenizer-name-or-path", type=str, default=None)
     return parser.parse_args()
 
 
@@ -223,7 +227,9 @@ def main():
     tokenizer_config = AutoTokenizer.from_pretrained(args.tokenizer_name_or_path)
 
     with TemporaryDirectory() as _unsharded_dir:
-        if (shards_dir := (args.checkpoint_input_dir / "model_and_optim")).exists() and shards_dir.is_dir():
+        if (
+            shards_dir := (args.checkpoint_input_dir / "model_and_optim")
+        ).exists() and shards_dir.is_dir():
             unsharded_dir = Path(_unsharded_dir)
             unshard_checkpoint(dir=shards_dir, target_dir=unsharded_dir, optim=False)
         else:
@@ -233,7 +239,7 @@ def main():
             olmo_checkpoint_path=unsharded_dir / "model.pt",
             output_path=args.huggingface_output_dir,
             olmo_core_config=experiment_config,
-            tokenizer=tokenizer_config,     # type: ignore
+            tokenizer=tokenizer_config,  # type: ignore
         )
 
 
