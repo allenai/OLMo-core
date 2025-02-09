@@ -5,6 +5,7 @@ Example script to convert a OLMo Core model checkpoint to a HuggingFace model ch
 import json
 import logging
 import re
+import shutil
 from argparse import ArgumentParser
 from contextlib import contextmanager
 from pathlib import Path
@@ -82,8 +83,24 @@ def convert_to_hf_checkpoint(
 
     # Map OLMo-core keys to HF keys
     hf_state_dict["model.embed_tokens.weight"] = olmo_state_dict.pop("embeddings.weight")  # ok
-    hf_state_dict["model.norm.weight"] = olmo_state_dict.pop("norm.weight")  # ok
-    hf_state_dict["lm_head.weight"] = olmo_state_dict.pop("w_out.weight")  # ok
+
+    if "norm.weight" in olmo_state_dict:
+        log.info("Using norm.weight as model.norm.weight")
+        hf_state_dict["model.norm.weight"] = olmo_state_dict.pop("norm.weight")
+    elif "lm_head.norm.weight" in olmo_state_dict:
+        log.info("Using lm_head.norm.weight as model.norm.weight")
+        hf_state_dict["model.norm.weight"] = olmo_state_dict.pop("lm_head.norm.weight")
+    else:
+        raise ValueError("No norm.weight or lm_head.norm.weight found in the state dict")
+
+    if "w_out.weight" in olmo_state_dict:
+        log.info("Using w_out.weight as lm_head.weight")
+        hf_state_dict["lm_head.weight"] = olmo_state_dict.pop("w_out.weight")
+    elif "lm_head.w_out.weight" in olmo_state_dict:
+        log.info("Using lm_head.w_out.weight as lm_head.weight")
+        hf_state_dict["lm_head.weight"] = olmo_state_dict.pop("lm_head.w_out.weight")
+    else:
+        raise ValueError("No w_out.weight or lm_head.w_out.weight found in the state dict")
 
     # Count number of layers from the state dict keys
     layer_ids = [
@@ -212,6 +229,7 @@ def load_config(checkpoint_input_dir: Path) -> dict:
 def parse_args():
     parser = ArgumentParser(description=__doc__)
     parser.add_argument("-i", "--checkpoint-input-dir", type=Path, required=True)
+    parser.add_argument("-u", "--unsharded-output-dir", type=Path, default=None)
     parser.add_argument("-o", "--huggingface-output-dir", type=Path, required=True)
     parser.add_argument("-t", "--tokenizer-name-or-path", type=str, default=None)
     return parser.parse_args()
@@ -227,12 +245,20 @@ def main():
     tokenizer_config = AutoTokenizer.from_pretrained(args.tokenizer_name_or_path)
 
     with TemporaryDirectory() as _unsharded_dir:
-        if (
-            shards_dir := (args.checkpoint_input_dir / "model_and_optim")
-        ).exists() and shards_dir.is_dir():
-            unsharded_dir = Path(_unsharded_dir)
+        if args.unsharded_output_dir:
+            log.info(f"Using provided unsharded output directory: {args.unsharded_output_dir}")
+            _unsharded_dir = args.unsharded_output_dir
+
+        shards_dir = args.checkpoint_input_dir / "model_and_optim"
+        if shards_dir.exists() and shards_dir.is_dir():
+            logging.info(f"Unsharding checkpoint from {shards_dir} to {_unsharded_dir}")
+            (unsharded_dir := Path(_unsharded_dir)).mkdir(parents=True, exist_ok=True)
             unshard_checkpoint(dir=shards_dir, target_dir=unsharded_dir, optim=False)
+
+            logging.info("Copying config.json to unsharded directory")
+            shutil.copy(args.checkpoint_input_dir / "config.json", unsharded_dir / "config.json")
         else:
+            logging.info("No sharded checkpoint found, using input directory as unsharded")
             unsharded_dir = args.checkpoint_input_dir
 
         convert_to_hf_checkpoint(
