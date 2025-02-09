@@ -21,8 +21,10 @@ def run_cross_entropy_loss_parallel(
     labels: torch.Tensor,
     batch_num_tokens_for_loss: torch.Tensor,
 ):
+    # Init device mesh.
     tp_mesh = init_device_mesh("cuda", (get_world_size(),), mesh_dim_names=("tp",))
 
+    # Put tensors on target device and potentially distributed over the device mesh .
     logits = distribute_tensor(
         logits.to(device=get_default_device()), device_mesh=tp_mesh, placements=(Shard(1),)
     )
@@ -31,12 +33,14 @@ def run_cross_entropy_loss_parallel(
     )
     batch_num_tokens_for_loss = batch_num_tokens_for_loss.to(device=get_default_device())
 
+    # Initialize loss and apply parallelism.
     loss_fn = CrossEntropyLoss(
         reduction=reduction, compile=compile, fused=fused, z_loss_multiplier=z_loss_multiplier
     )
     loss_fn.apply_tp(tp_mesh)
 
-    ce_loss, z_loss = loss_fn(logits[..., :-1, :].contiguous(), labels)
+    # Get loss tensors.
+    ce_loss, z_loss = loss_fn(logits, labels)
     ce_loss.div_(batch_num_tokens_for_loss)
     if z_loss is not None:
         z_loss.div_(batch_num_tokens_for_loss)
