@@ -10,6 +10,7 @@ from argparse import ArgumentParser
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Generator
 
 import torch
 from safetensors.torch import load_file
@@ -18,17 +19,18 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, GPT2Tokenizer, Olm
 from olmo_core.distributed.checkpoint import unshard_checkpoint
 from olmo_core.utils import prepare_cli_environment
 
+log = logging.getLogger(__name__)
+
+
 try:
     from accelerate import init_empty_weights
 except ImportError:
     pass
 
     @contextmanager
-    def init_empty_weights(include_buffers: bool = False):
+    def init_empty_weights(include_buffers: bool = False) -> Generator[None, None, None]:
+        log.warning("accelerate not installed, will initialize weights.")
         yield None
-
-
-log = logging.getLogger(__name__)
 
 
 def load_state_dict(checkpoint_path: str | Path) -> dict[str, torch.Tensor]:
