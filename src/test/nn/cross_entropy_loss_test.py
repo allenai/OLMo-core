@@ -20,6 +20,7 @@ def run_cross_entropy_loss_parallel(
     logits: torch.Tensor,
     labels: torch.Tensor,
     batch_num_tokens_for_loss: torch.Tensor,
+    grad: torch.Tensor,
 ):
     # Init device mesh.
     tp_mesh = init_device_mesh("cuda", (get_world_size(),), mesh_dim_names=("tp",))
@@ -34,6 +35,9 @@ def run_cross_entropy_loss_parallel(
         labels.to(device=get_default_device()), device_mesh=tp_mesh, placements=(Shard(1),)
     )
     batch_num_tokens_for_loss = batch_num_tokens_for_loss.to(device=get_default_device())
+    grad = distribute_tensor(
+        grad.to(device=get_default_device()), device_mesh=tp_mesh, placements=(Shard(1),)
+    )
 
     # Initialize loss and apply parallelism.
     loss_fn = CrossEntropyLoss(
@@ -60,6 +64,9 @@ def run_cross_entropy_loss_parallel(
     # Trigger backward pass.
     loss.backward()
     assert logits.grad is not None
+
+    # Check gradients.
+    torch.testing.assert_close(logits.grad, grad)
 
 
 @pytest.mark.parametrize(
@@ -122,5 +129,6 @@ def test_cross_entropy_loss_parallel(
             logits.detach().cpu(),
             labels.detach().cpu(),
             batch_num_tokens_for_loss.detach().cpu(),
+            logits.grad.detach().cpu(),
         ),
     )
