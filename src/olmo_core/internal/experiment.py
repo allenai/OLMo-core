@@ -136,6 +136,7 @@ def build_common_components(
     overrides: List[str],
     *,
     global_batch_size: int,
+    sequence_length: int = 4096,
 ) -> CommonComponents:
     root_dir = get_root_dir(cluster)
 
@@ -159,10 +160,10 @@ def build_common_components(
         DataMix.OLMoE_mix_0824,
         tokenizer=tokenizer_config,
         mix_base_dir=root_dir,
-        sequence_length=4096,
-        max_target_sequence_length=8192,
-        min_sequence_length=256,
-        max_sequence_length=8192,
+        sequence_length=sequence_length,
+        max_target_sequence_length=max(8192, sequence_length),
+        min_sequence_length=min(256, sequence_length),
+        max_sequence_length=max(8192, sequence_length),
         vsl_curriculum=VSLCurriculumConfig(
             name=VSLCurriculumType.grow_p2, num_cycles=8, balanced=False
         ),
@@ -221,9 +222,16 @@ def build_config(
     train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
+    sequence_length: int = 4096,
 ) -> ExperimentConfig:
     common = build_common_components(
-        script, cmd, run_name, cluster, overrides, global_batch_size=global_batch_size
+        script,
+        cmd,
+        run_name,
+        cluster,
+        overrides,
+        global_batch_size=global_batch_size,
+        sequence_length=sequence_length,
     )
 
     model = model_config_builder(common)
@@ -297,6 +305,7 @@ def main(
     train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
+    sequence_length: int = 4096,
 ):
     usage = f"""
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
@@ -336,6 +345,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         train_module_config_builder=train_module_config_builder,
         trainer_config_builder=trainer_config_builder,
         finalize_config=finalize_config,
+        sequence_length=sequence_length,
     )
 
     cmd.run(config)
