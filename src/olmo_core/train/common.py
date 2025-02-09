@@ -125,14 +125,10 @@ class ReduceType(StrEnum):
 def reshape_inputs_for_loss(
     logits: torch.Tensor, labels: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    # shape: (batch_size, seq_len - 1, vocab_size)
-    logits_for_loss = logits[..., :-1, :].contiguous()
-    # shape: (batch_size * (seq_len - 1), vocab_size)
-    logits_for_loss = logits_for_loss.view(-1, logits_for_loss.size(-1))
-
-    # shape: (batch_size, seq_len - 1) -> (batch_size * (seq_len - 1),)
+    # shape: (B * S, V)
+    logits_for_loss = logits.view(-1, logits.size(-1))
+    # shape: (B, S) -> (B * S,)
     labels_for_loss = labels.view(-1)
-
     return logits_for_loss, labels_for_loss
 
 

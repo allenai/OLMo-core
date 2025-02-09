@@ -31,7 +31,7 @@ from olmo_core.distributed.utils import get_local_tensor, get_world_size
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
-from olmo_core.nn.cross_entropy_loss import LMCrossEntropyLoss
+from olmo_core.nn.cross_entropy_loss import CrossEntropyLoss
 from olmo_core.nn.transformer import (
     MoETransformer,
     NormalizedTransformer,
@@ -273,14 +273,14 @@ class TransformerTrainModule(TrainModule):
         log.info(f"Data parallel world size = {get_world_size(self.dp_process_group):,d}")
 
         self.label_ignore_index = label_ignore_index
-        self._train_loss_fn = LMCrossEntropyLoss(
+        self._train_loss_fn = CrossEntropyLoss(
             ignore_index=label_ignore_index,
             reduction="sum",
             z_loss_multiplier=z_loss_multiplier,
             compile=compile_loss,
             fused=fused_loss,
         )
-        self._eval_loss_fn = LMCrossEntropyLoss(
+        self._eval_loss_fn = CrossEntropyLoss(
             ignore_index=label_ignore_index,
             reduction="none",
             compile=compile_loss,
