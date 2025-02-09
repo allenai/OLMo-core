@@ -23,7 +23,7 @@ from olmo_core.train.train_module import (
 log = logging.getLogger(__name__)
 
 
-CONTEXT_LENGTH = 2 * 16_384
+CONTEXT_LENGTH = 4 * 16_384
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
