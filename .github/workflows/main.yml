@@ -128,7 +128,7 @@ jobs:
 
           - name: Test MoE (GPU)
             image: olmo-core-tch260cu124
-            gpus: 1
+            gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/moe*
