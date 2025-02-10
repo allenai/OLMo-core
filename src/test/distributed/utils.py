@@ -107,9 +107,14 @@ def init_process(
     os.environ.setdefault(OLMO_LOCAL_RANK_ENV_VAR, str(process_rank))
 
     if primary_port is None:
-        primary_port = 29500 + random.randint(0, 100)
-        while port_in_use(primary_addr, primary_port):
-            primary_port += 1
+        primary_port = 29500 + random.Random().randint(0, 100)
+
+        #  attempts = 0
+        #  while port_in_use(primary_addr, primary_port):
+        #      primary_port += 1
+        #      attempts += 1
+        #      if attempts >= 10:
+        #          raise RuntimeError("failed to guess an open port")
 
     #  dist.init_process_group(
     #      backend=backend,
