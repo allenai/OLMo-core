@@ -1,6 +1,7 @@
 import datetime
 import logging
 import os
+import socket
 import sys
 from typing import Any, Callable, Dict, Optional, Tuple
 
@@ -81,6 +82,11 @@ def get_default_device():
         return torch.device("cpu")
 
 
+def port_in_use(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(("localhost", port)) == 0
+
+
 def init_process(
     process_rank: int,
     world_size: int,
@@ -90,13 +96,18 @@ def init_process(
     func_args: Optional[Tuple[Any, ...]] = None,
     func_kwargs: Optional[Dict[str, Any]] = None,
     primary_addr: str = "127.0.0.1",
-    primary_port: int = 29500,
+    primary_port: Optional[int] = 29500,
 ):
     assert world_size > 1
 
     os.environ.setdefault(OLMO_NUM_NODES_ENV_VAR, "1")
     os.environ.setdefault(OLMO_LOCAL_WORLD_SIZE_ENV_VAR, str(world_size))
     os.environ.setdefault(OLMO_LOCAL_RANK_ENV_VAR, str(process_rank))
+
+    if primary_port is None:
+        primary_port = 29500
+        while port_in_use(primary_port):
+            primary_port += 1
 
     #  dist.init_process_group(
     #      backend=backend,
