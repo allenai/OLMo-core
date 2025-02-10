@@ -63,13 +63,15 @@ def run_cross_entropy_loss_parallel(
         assert loss.shape == labels.shape
         loss = loss.sum()
 
+    # Check loss.
+    torch.testing.assert_close(loss.detach(), loss)
+
     # Trigger backward pass.
     loss.backward()
     assert logits.grad is not None
 
     # Check gradients.
     torch.testing.assert_close(logits.grad, grad)
-    torch.testing.assert_close(loss.detach(), loss)
 
 
 @pytest.mark.parametrize(
