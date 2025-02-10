@@ -68,14 +68,16 @@ def convert_to_hf_checkpoint(
     output_path: str | Path,
     olmo_core_config: dict,
     tokenizer: GPT2Tokenizer,
+    max_sequence_length: int = -1
 ) -> None:
     """
     Convert an OLMo core checkpoint to Hugging Face format.
 
     Args:
         olmo_checkpoint_path: Path to the OLMo core checkpoint
-        hf_model_name: Name/path of the HF model to use for configuration
         output_path: Where to save the converted HF model
+        olmo_core_config: OLMo core configuration dictionary
+        tokenizer: HuggingFace tokenizer instance
     """
     log.info(f"Loading OLMo core checkpoint from '{olmo_checkpoint_path}'")
     olmo_state_dict = load_state_dict(olmo_checkpoint_path)
@@ -166,17 +168,28 @@ def convert_to_hf_checkpoint(
             )
 
     # Verify we used all keys
-    assert len(olmo_state_dict) == 0
+    if len(olmo_state_dict) > 0:
+        _unused_keys = "\n".join(f"\t-{k}" for k in olmo_state_dict.keys())
+        raise ValueError(f"Unused keys in the state dict:\n{_unused_keys}")
 
-    assert hasattr(tokenizer, "vocab") and isinstance(
-        tokenizer.vocab, dict
-    ), "Tokenizer must have a vocab dictionary"
+    if not hasattr(tokenizer, "vocab") or not isinstance(tokenizer.vocab, dict):
+        raise ValueError("Tokenizer must have a vocab dictionary")
 
-    log.info(f"Saving HF model checkpoint to {output_path}...")
+    if (
+        k := olmo_core_config.get("model", {})
+        .get("block", {})
+        .get("layer_norm", {})
+        .get("name", None)
+    ) != "rms":
+        raise ValueError(f"Only RMSNorm is supported, found {k}")
 
-    assert (
-        olmo_core_config["model"]["block"]["layer_norm"]["name"] == "rms"
-    ), "Only RMSNorm is supported"
+    max_sequence_length = min(
+        int(olmo_core_config.get("dataset", {}).get("sequence_length", max_sequence_length)),
+        tokenizer.model_max_length,
+    )
+
+    if max_sequence_length <= 0:
+        raise ValueError(f"Missing or invalid sequence length: {max_sequence_length}")
 
     # Create HF model instance and load state dict
     huggingface_config = Olmo2Config(
@@ -189,10 +202,7 @@ def convert_to_hf_checkpoint(
             olmo_core_config["model"]["block"]["attention"].get("n_kv_heads") or n_heads
         ),
         hidden_act="silu",
-        max_position_embeddings=min(
-            olmo_core_config["dataset"]["sequence_length"],
-            tokenizer.model_max_length,
-        ),
+        max_position_embeddings=max_sequence_length,
         rope_theta=olmo_core_config["model"]["block"]["attention"]["rope"]["theta"],
         attention_bias=olmo_core_config["model"]["block"]["attention"].get("bias") or False,
         pad_token_id=tokenizer.vocab.get(tokenizer.pad_token, None),
@@ -203,12 +213,14 @@ def convert_to_hf_checkpoint(
     )
 
     with init_empty_weights():
-        # this will not reinit weights in case
+        log.info("Initializing HF model with empty weights...")
         model = AutoModelForCausalLM.from_config(huggingface_config)
 
-    model.load_state_dict(hf_state_dict)
+    log.info("Loading state dict into HF model...")
+    model.load_state_dict(hf_state_dict, assign=True)
 
     # Save the model in HF format
+    log.info(f"Saving HF model checkpoint to {output_path}...")
     model.save_pretrained(output_path)
     log.info(f"Successfully saved HF model to '{output_path}'")
 
@@ -234,6 +246,7 @@ def parse_args():
     parser.add_argument("-u", "--unsharded-output-dir", type=Path, default=None)
     parser.add_argument("-o", "--huggingface-output-dir", type=Path, required=True)
     parser.add_argument("-t", "--tokenizer-name-or-path", type=str, default=None)
+    parser.add_argument("-s", "--max-sequence-length", type=int, default=-1)
     return parser.parse_args()
 
 
@@ -242,7 +255,10 @@ def main():
     experiment_config = load_config(args.checkpoint_input_dir)
 
     if args.tokenizer_name_or_path is None:
-        args.tokenizer_name_or_path = experiment_config["dataset"]["tokenizer"]["identifier"]
+        args.tokenizer_name_or_path = experiment_config.get("dataset", {}).get("tokenizer", {}).get("identifier", None)
+
+        if args.tokenizer_name_or_path is None:
+            raise ValueError("Tokenizer identifier not found in the config; please provide it manually")
 
     tokenizer_config = AutoTokenizer.from_pretrained(args.tokenizer_name_or_path)
 
@@ -267,6 +283,7 @@ def main():
             olmo_checkpoint_path=unsharded_dir / "model.pt",
             output_path=args.huggingface_output_dir,
             olmo_core_config=experiment_config,
+            max_sequence_length=args.max_sequence_length,
             tokenizer=tokenizer_config,  # type: ignore
         )
 
