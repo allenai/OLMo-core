@@ -1,6 +1,7 @@
 import datetime
 import logging
 import os
+import random
 import socket
 import sys
 from typing import Any, Callable, Dict, Optional, Tuple
@@ -96,7 +97,7 @@ def init_process(
     func_args: Optional[Tuple[Any, ...]] = None,
     func_kwargs: Optional[Dict[str, Any]] = None,
     primary_addr: str = "127.0.0.1",
-    primary_port: Optional[int] = 29500,
+    primary_port: Optional[int] = None,
 ):
     assert world_size > 1
 
@@ -105,7 +106,7 @@ def init_process(
     os.environ.setdefault(OLMO_LOCAL_RANK_ENV_VAR, str(process_rank))
 
     if primary_port is None:
-        primary_port = 29500
+        primary_port = 29500 + random.randint(0, 100)
         while port_in_use(primary_port):
             primary_port += 1
 
