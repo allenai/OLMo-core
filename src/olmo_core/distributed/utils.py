@@ -424,6 +424,13 @@ def get_local_tensor(x: torch.Tensor) -> torch.Tensor:
         return x
 
 
+def get_full_tensor(x: torch.Tensor) -> torch.Tensor:
+    if isinstance(x, DTensor):
+        return x.full_tensor()
+    else:
+        return x
+
+
 def do_n_at_a_time(
     f: Callable[[], T],
     *,

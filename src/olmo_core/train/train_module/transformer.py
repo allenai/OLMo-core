@@ -27,7 +27,11 @@ from olmo_core.distributed.parallel import (
     get_ep_mesh,
     get_tp_mesh,
 )
-from olmo_core.distributed.utils import get_local_tensor, get_world_size
+from olmo_core.distributed.utils import (
+    get_full_tensor,
+    get_local_tensor,
+    get_world_size,
+)
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
@@ -612,6 +616,8 @@ class TransformerTrainModule(TrainModule):
             loss: Optional[torch.Tensor] = None
             if labels is not None:
                 loss = self.eval_loss_fn(logits, labels)
+                loss = get_full_tensor(loss)
+            logits = get_full_tensor(logits)
 
         return logits, loss
 
