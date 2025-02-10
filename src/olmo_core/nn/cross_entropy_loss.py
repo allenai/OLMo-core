@@ -18,7 +18,7 @@ from .functional import cross_entropy_loss, fused_cross_entropy_loss
 log = logging.getLogger(__name__)
 
 
-class _InnerCELoss(nn.Module):
+class _CELossFnWrapper(nn.Module):
     def __init__(
         self,
         ignore_index: int = -100,
@@ -89,7 +89,7 @@ class CrossEntropyLoss(nn.Module):
         if compile and fused:
             log.warning(f"{self.__class__.__name__} with fused+compile is experimental")
 
-        self._ce_loss = _InnerCELoss(
+        self.loss_fn = _CELossFnWrapper(
             ignore_index=ignore_index,
             reduction=reduction,
             z_loss_multiplier=z_loss_multiplier,
@@ -110,11 +110,11 @@ class CrossEntropyLoss(nn.Module):
 
     @property
     def z_loss_enabled(self) -> bool:
-        return self._ce_loss.z_loss_multiplier is not None
+        return self.loss_fn.z_loss_multiplier is not None
 
     @property
     def reduction(self) -> Literal["sum", "mean", "none"]:
-        return self._ce_loss.reduction
+        return self.loss_fn.reduction
 
     def forward(
         self,
@@ -127,7 +127,7 @@ class CrossEntropyLoss(nn.Module):
         :param logits: The logits of shape ``(B, S, V)``.
         :param labels: The target labels of shape ``(B, S)``.
         """
-        ce_loss, z_loss = self._ce_loss(get_local_tensor(logits), get_local_tensor(labels))
+        ce_loss, z_loss = self.loss_fn(get_local_tensor(logits), get_local_tensor(labels))
 
         if self.reduction != "none" and ce_loss.numel() > 1:
             # This will be the same case with tensor/sequence parallel loss.
@@ -164,7 +164,7 @@ class CrossEntropyLoss(nn.Module):
 
         inner_output_layout = Shard(shard_dimension) if self.reduction == "none" else Shard(0)
         parallelize_module(
-            self._ce_loss,
+            self.loss_fn,
             device_mesh=tp_mesh,
             parallelize_plan=PrepareModuleOutput(
                 output_layouts=(  # type: ignore
@@ -198,4 +198,4 @@ class CrossEntropyLoss(nn.Module):
         )
 
         self._tp_enabled = True
-        self._ce_loss.tp_enabled = True
+        self.loss_fn.tp_enabled = True
