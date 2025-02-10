@@ -59,19 +59,14 @@ def get_tp_wrappers(
     else:
         # TODO (epwalsh): once float8 configuration supports delayed scaling,
         # add a check here to enforce supported float8 all-gather configurations.
-        #  from torchao.float8.float8_tensor_parallel import (  # type: ignore
-        #      Float8ColwiseParallel,
-        #      Float8RowwiseParallel,
-        #      PrepareFloat8ModuleInput,
-        #  )
         from torchao.float8.float8_tensor_parallel import (  # type: ignore
             Float8ColwiseParallel,
             Float8RowwiseParallel,
+            PrepareFloat8ModuleInput,
         )
 
         return (
             Float8RowwiseParallel,
             Float8ColwiseParallel,
-            #  PrepareFloat8ModuleInput,
-            PrepareModuleInput,
+            PrepareFloat8ModuleInput,
         )
