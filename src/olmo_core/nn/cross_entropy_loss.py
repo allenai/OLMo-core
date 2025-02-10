@@ -120,6 +120,7 @@ class CrossEntropyLoss(nn.Module):
         self,
         logits: torch.Tensor,
         labels: torch.Tensor,
+        div_factor: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Compute the CE loss and optionally Z-loss.
@@ -143,12 +144,17 @@ class CrossEntropyLoss(nn.Module):
             else:
                 raise NotImplementedError(self.reduction)
 
+        if div_factor is not None:
+            ce_loss = ce_loss / div_factor
+            if z_loss is not None:
+                z_loss = z_loss / div_factor
+
         return ce_loss, z_loss
 
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        input_layouts: Optional[Tuple[Placement, Placement]] = None,
+        input_layouts: Optional[Tuple[Placement, Placement, Placement]] = None,
         shard_dimension: int = 1,
         output_layout: Optional[Placement] = None,
         use_local_output: bool = False,
@@ -158,7 +164,7 @@ class CrossEntropyLoss(nn.Module):
             device_mesh=tp_mesh,
             parallelize_plan=PrepareModuleInput(
                 input_layouts=input_layouts,  # type: ignore
-                desired_input_layouts=(Shard(shard_dimension), Shard(shard_dimension)),  # type: ignore
+                desired_input_layouts=(Shard(shard_dimension), Shard(shard_dimension), Replicate()),  # type: ignore
                 use_local_output=False,
             ),
         )

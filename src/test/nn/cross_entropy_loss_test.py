@@ -18,10 +18,10 @@ def compute_loss(
     labels: torch.Tensor,
     batch_num_tokens_for_loss: torch.Tensor,
 ) -> torch.Tensor:
-    ce_loss, z_loss = loss_fn(logits, labels)
-    ce_loss = ce_loss / batch_num_tokens_for_loss
-    if z_loss is not None:
-        z_loss = z_loss / batch_num_tokens_for_loss
+    ce_loss, z_loss = loss_fn(logits, labels, batch_num_tokens_for_loss)
+    #  ce_loss = ce_loss / batch_num_tokens_for_loss
+    #  if z_loss is not None:
+    #      z_loss = z_loss / batch_num_tokens_for_loss
 
     loss = ce_loss
     if z_loss is not None:

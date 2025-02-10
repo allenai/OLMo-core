@@ -322,10 +322,14 @@ class TransformerTrainModule(TrainModule):
             )
             if tp_config.loss_parallel:
                 self._train_loss_fn.apply_tp(
-                    tp_mesh, input_layouts=(Shard(1), Replicate()), use_local_output=True
+                    tp_mesh,
+                    input_layouts=(Shard(1), Replicate(), Replicate()),
+                    use_local_output=True,
                 )
                 self._eval_loss_fn.apply_tp(
-                    tp_mesh, input_layouts=(Shard(1), Replicate()), use_local_output=True
+                    tp_mesh,
+                    input_layouts=(Shard(1), Replicate(), Replicate()),
+                    use_local_output=True,
                 )
             tp_config.maybe_enable_async_tp(tp_mesh)
             log.info(
