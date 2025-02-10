@@ -310,6 +310,7 @@ class TransformerTrainModule(TrainModule):
             log.info("Swapped linear layers to Float8 linear layers")
 
         # Maybe apply tensor/expert parallelism.
+        self._tp_enabled = False
         if tp_config is not None and ep_config is not None:
             raise NotImplementedError("TP + EP is not implemented yet")
         if tp_config is not None:
@@ -330,12 +331,16 @@ class TransformerTrainModule(TrainModule):
             log.info(
                 f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model"
             )
+            self._tp_enabled = True
+
+        self._ep_enabled = False
         if ep_config is not None:
             if not self.model.is_moe:
                 raise OLMoConfigurationError("Expert parallelism is only valid for MoE models")
             ep_mesh = get_ep_mesh(self.world_mesh)
             cast(MoETransformer, self.model).apply_ep(ep_mesh)
             log.info("Applied expert parallelism to the model")
+            self._ep_enabled = True
 
         # Maybe apply activation checkpointing.
         if ac_config is not None:
@@ -407,8 +412,18 @@ class TransformerTrainModule(TrainModule):
     @property
     def eval_batch_spec(self) -> EvalBatchSpec:
         return EvalBatchSpec(
-            self.rank_microbatch_size, max_sequence_length=self.max_sequence_length
+            self.rank_microbatch_size,
+            max_sequence_length=self.max_sequence_length,
+            fixed_sequence_length=self.tp_enabled,
         )
+
+    @property
+    def tp_enabled(self) -> bool:
+        return self._tp_enabled
+
+    @property
+    def ep_enabled(self) -> bool:
+        return self._ep_enabled
 
     def loss_fn(
         self, logits: torch.Tensor, labels: torch.Tensor, batch_num_tokens_for_loss: torch.Tensor
