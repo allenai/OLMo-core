@@ -159,12 +159,19 @@ class CrossEntropyLoss(nn.Module):
         output_layout: Optional[Placement] = None,
         use_local_output: bool = False,
     ):
+        desired_input_layouts: Tuple[Placement, ...]
+        if input_layouts is None or len(input_layouts) == 3:
+            desired_input_layouts = (Shard(shard_dimension), Shard(shard_dimension), Replicate())
+        elif len(input_layouts) == 2:
+            desired_input_layouts = (Shard(shard_dimension), Shard(shard_dimension))
+        else:
+            raise ValueError(f"expected 2 or 3 input layouts, found {len(input_layouts)}")
         parallelize_module(
             self,
             device_mesh=tp_mesh,
             parallelize_plan=PrepareModuleInput(
                 input_layouts=input_layouts,  # type: ignore
-                desired_input_layouts=(Shard(shard_dimension), Shard(shard_dimension), Replicate()),  # type: ignore
+                desired_input_layouts=desired_input_layouts,  # type: ignore
                 use_local_output=False,
             ),
         )
