@@ -66,11 +66,11 @@ class MoELoadImbalanceMetric(MoEMetric):
             )
 
         ideal_bz_per_expert = total_bz * (self.top_k / self.num_experts)
-        load_imbalance = (
-            self.batch_size_per_expert.max() - ideal_bz_per_expert
-        ) / ideal_bz_per_expert
+        load_imbalance = self.batch_size_per_expert.max() / ideal_bz_per_expert
+
         if reset:
             self.reset()
+
         return {"load imbalance": (load_imbalance, self.reduction)}
 
     def reset(self):
