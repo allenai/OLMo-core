@@ -616,6 +616,17 @@ class TransformerTrainModule(TrainModule):
                 namespace="train",
             )
 
+        # And additional metrics.
+        for metric_name, (metric_val, reduction) in self.model.compute_auxiliary_metrics(
+            batch_num_tokens_for_loss
+        ).items():
+            self.record_metric(
+                metric_name,
+                metric_val,
+                reduction,
+                namespace="train",
+            )
+
         if isinstance(self.optim, SkipStepOptimizer):
             self.optim.latest_loss = ce_batch_loss
 
