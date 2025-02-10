@@ -83,9 +83,10 @@ def get_default_device():
         return torch.device("cpu")
 
 
-def port_in_use(port: int) -> bool:
+def port_in_use(host: str, port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        return s.connect_ex(("localhost", port)) == 0
+        s.settimeout(1)
+        return s.connect_ex((host, port)) == 0
 
 
 def init_process(
@@ -107,7 +108,7 @@ def init_process(
 
     if primary_port is None:
         primary_port = 29500 + random.randint(0, 100)
-        while port_in_use(primary_port):
+        while port_in_use(primary_addr, primary_port):
             primary_port += 1
 
     #  dist.init_process_group(
