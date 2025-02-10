@@ -1,6 +1,8 @@
 import datetime
 import logging
 import os
+import random
+import socket
 import sys
 from typing import Any, Callable, Dict, Optional, Tuple
 
@@ -81,6 +83,12 @@ def get_default_device():
         return torch.device("cpu")
 
 
+def port_in_use(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1)
+        return s.connect_ex((host, port)) == 0
+
+
 def init_process(
     process_rank: int,
     world_size: int,
@@ -151,6 +159,8 @@ def run_distributed_test(
     start_method: Optional[str] = None,
     func_args: Optional[Tuple[Any, ...]] = None,
     func_kwargs: Optional[Dict[str, Any]] = None,
+    primary_addr: str = "127.0.0.1",
+    primary_port: Optional[int] = None,
 ):
     """
     This runs the `func` in a simulated distributed environment.
@@ -158,9 +168,28 @@ def run_distributed_test(
     if start_method is None:
         start_method = "fork" if backend == "gloo" else "spawn"
 
+    if primary_port is None:
+        primary_port = 29500 + random.Random().randint(0, 100)
+
+        attempts = 0
+        while port_in_use(primary_addr, primary_port):
+            primary_port += 1
+            attempts += 1
+            if attempts >= 10:
+                raise RuntimeError("failed to guess an open port")
+
     mp.start_processes(
         init_process,
-        args=(world_size, backend, log_from_all_ranks, func, func_args, func_kwargs),
+        args=(
+            world_size,
+            backend,
+            log_from_all_ranks,
+            func,
+            func_args,
+            func_kwargs,
+            primary_addr,
+            primary_port,
+        ),
         nprocs=world_size,
         start_method=start_method,
     )
