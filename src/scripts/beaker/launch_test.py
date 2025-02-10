@@ -1,0 +1,47 @@
+"""
+Launch tests on Beaker.
+"""
+
+import sys
+from typing import List
+
+from rich import print
+
+from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
+from olmo_core.utils import generate_uuid, prepare_cli_environment
+
+
+def build_config(pytest_opts: List[str], overrides: List[str]) -> BeakerLaunchConfig:
+    return BeakerLaunchConfig(
+        name=f"olmo-core-pytest-{generate_uuid()[:8]}",
+        budget="ai2/oe-training",
+        cmd=pytest_opts,
+        task_name="test",
+        workspace="ai2/OLMo-core",
+        beaker_image=OLMoCoreBeakerImage.stable,
+        clusters=[
+            "ai2/jupiter-cirrascale-2",
+            "ai2/augusta-google-1",
+            "ai2/ceres-cirrascale",
+        ],
+        num_nodes=1,
+        num_gpus=2,
+        shared_filesystem=True,
+        #  host_networking=False,
+    ).merge(overrides)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 3 or "--" not in sys.argv:
+        print(f"Usage: python {sys.argv[0]} [OVERRIDES...] -- [PYTEST_OPTS...] TEST_TARGET")
+        sys.exit(1)
+
+    sep_index = sys.argv.index("--")
+    overrides = sys.argv[1:sep_index]
+    pytest_opts = sys.argv[sep_index + 1 :]
+
+    prepare_cli_environment()
+
+    config = build_config(pytest_opts, overrides)
+    print(config)
+    config.launch(follow=True, torchrun=False, entrypoint="pytest")

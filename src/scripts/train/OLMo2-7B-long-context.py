@@ -1,32 +1,41 @@
 """
-Train a 1B-7B OLMoE model (mixture of experts).
-Run this script without any arguments to see usage info.
+Train a 7B OLMo model on long contexts. Run this script without any arguments to see usage info.
 """
+
+import logging
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
+    TransformerTensorParallelConfig,
     TransformerTrainModuleConfig,
 )
 
+log = logging.getLogger(__name__)
+
+
+CONTEXT_LENGTH = 4 * 16_384
+
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    return TransformerConfig.olmoe_1B_7B(vocab_size=common.tokenizer.padded_vocab_size())
+    return TransformerConfig.olmo2_7B(vocab_size=common.tokenizer.padded_vocab_size())
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     return TransformerTrainModuleConfig(
-        rank_microbatch_size=2 * 4096,
+        rank_microbatch_size=1 * CONTEXT_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=AdamWConfig(
-            lr=4e-4,
+            lr=3e-5,
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
@@ -35,14 +44,20 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             fused=True,
         ),
         compile_model=True,
+        compile_loss=True,
+        z_loss_multiplier=1e-5,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
         ),
-        z_loss_multiplier=1e-5,
-        compile_loss=True,
+        tp_config=TransformerTensorParallelConfig(
+            degree=2,
+            loss_parallel=True,
+        ),
+        ac_config=TransformerActivationCheckpointingConfig(),
+        float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
     )
@@ -60,7 +75,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=10_000,
-                ephemeral_save_interval=1000,
+                ephemeral_save_interval=250,
                 save_async=True,
             ),
         )
@@ -69,7 +84,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             CometCallback(
                 name=common.run_name,
                 workspace="ai2",
-                project="OLMo-core-1B",
+                project="OLMo-core-7B",
                 enabled=True,
                 cancel_check_interval=10,
             ),
@@ -79,7 +94,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=common.run_name,
                 entity="ai2-llm",
-                project="OLMo-core-1B",
+                project="OLMo-core-7B",
                 enabled=False,
                 cancel_check_interval=10,
             ),
@@ -89,8 +104,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 if __name__ == "__main__":
     main(
-        global_batch_size=1024 * 4096,
+        sequence_length=CONTEXT_LENGTH,
+        global_batch_size=64 * CONTEXT_LENGTH,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
+        include_default_evals=False,
     )

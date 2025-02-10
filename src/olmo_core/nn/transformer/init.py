@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional, Union, cast
 
 import torch
 import torch.nn as nn
@@ -7,7 +7,7 @@ from olmo_core.config import StrEnum
 
 from ..attention import Attention, FusedAttention
 from ..feed_forward import FeedForward
-from ..moe import MoE
+from ..moe import MoEBase, MoELinearRouter
 
 
 class InitMethod(StrEnum):
@@ -125,7 +125,7 @@ class InitMethod(StrEnum):
 
     def init_feed_forward_moe(
         self,
-        m: MoE,
+        m: MoEBase,
         *,
         d_model: int,
         block_idx: int,
@@ -140,21 +140,13 @@ class InitMethod(StrEnum):
         elif self == InitMethod.llama_depth:
             std = 0.02 / (2 * (block_idx + 1)) ** 0.5
 
-        self._init_linear(m.inner.router.layer, std=0.02, generator=generator)
+        self._init_linear(cast(MoELinearRouter, m.router).w_score, std=0.02, generator=generator)
         nn.init.trunc_normal_(
-            m.inner.experts.mlp.w1, mean=0.0, std=0.02, a=-3 * std, b=3 * std, generator=generator
+            m.experts.mlp.w1, mean=0.0, std=0.02, a=-3 * std, b=3 * std, generator=generator
         )
         nn.init.trunc_normal_(
-            m.inner.experts.mlp.w2, mean=0.0, std=std, a=-3 * std, b=3 * std, generator=generator
+            m.experts.mlp.w2, mean=0.0, std=std, a=-3 * std, b=3 * std, generator=generator
         )
-        if hasattr(m.inner.experts.mlp, "v1"):
-            nn.init.trunc_normal_(
-                m.inner.experts.mlp.v1,
-                mean=0.0,
-                std=std,
-                a=-3 * std,
-                b=3 * std,
-                generator=generator,
-            )
-        if (bias := getattr(m.inner.experts, "bias", None)) is not None:
-            nn.init.zeros_(bias)
+        nn.init.trunc_normal_(
+            m.experts.mlp.w3, mean=0.0, std=std, a=-3 * std, b=3 * std, generator=generator
+        )

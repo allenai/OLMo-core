@@ -8,10 +8,11 @@ from ..attention import AttentionConfig, AttentionType
 from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
+from ..moe import MoEConfig, MoERouterConfig, MoEType, SharedMLPConfig
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from .block import TransformerBlockConfig, TransformerBlockType
 from .init import InitMethod
-from .model import NormalizedTransformer, Transformer
+from .model import MoETransformer, NormalizedTransformer, Transformer
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +30,11 @@ class TransformerType(StrEnum):
     normalized = "normalized"
     """
     ➡️ :class:`NormalizedTransformer` (nGPT)
+    """
+
+    moe = "moe"
+    """
+    ➡️ :class:`MoETransformer`
     """
 
 
@@ -92,6 +98,18 @@ class TransformerConfig(Config):
                 init_device=init_device,
                 init_seed=self.init_seed,
             )
+        elif self.name == TransformerType.moe:
+            model = MoETransformer(
+                d_model=self.d_model,
+                vocab_size=self.vocab_size,
+                n_layers=self.n_layers,
+                block=self.block,
+                lm_head=self.lm_head,
+                dtype=self.dtype.as_pt(),
+                init_method=self.init_method,
+                init_device=init_device,
+                init_seed=self.init_seed,
+            )
         else:
             raise NotImplementedError(self.name)
 
@@ -142,11 +160,32 @@ class TransformerConfig(Config):
         return num_params
 
     @property
+    def num_active_params(self) -> int:
+        """
+        The total number of active parameters that a model from this config would have.
+        """
+        num_params = self.num_params
+        if self.block.feed_forward_moe is None:
+            return num_params
+        diff_per_block = self.block.feed_forward_moe.num_params(
+            self.d_model
+        ) - self.block.feed_forward_moe.num_active_params(self.d_model)
+        total_diff = self.n_layers * diff_per_block
+        return num_params - total_diff
+
+    @property
     def num_non_embedding_params(self) -> int:
         """
         The number of parameters excluding embedding parameters.
         """
         return self.num_params - self.d_model * self.vocab_size
+
+    @property
+    def num_active_non_embedding_params(self) -> int:
+        """
+        The number of active parameters excluding embedding parameters.
+        """
+        return self.num_active_params - self.d_model * self.vocab_size
 
     def num_flops_per_token(self, seq_len: int) -> int:
         """
@@ -304,6 +343,53 @@ class TransformerConfig(Config):
             hidden_size_multiplier=kwargs.pop("hidden_size_multiplier", 27648 / (8 * d_model / 3)),
             layer_norm_eps=1e-6,
             **kwargs,
+        )
+
+    @classmethod
+    def smallmoe(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        d_model = kwargs.pop("d_model", 768)
+        return cls.llama_like(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 12),
+            n_heads=kwargs.pop("n_heads", 12),
+            name=kwargs.pop("name", TransformerType.moe),
+            block_name=kwargs.pop("block_name", TransformerBlockType.moe_reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            feed_forward_moe=MoEConfig(
+                name=MoEType.default,
+                num_experts=32,
+                hidden_size=int(0.5 * d_model),
+                router=MoERouterConfig(top_k=4, bias=False),
+                shared_mlp=SharedMLPConfig(hidden_size=d_model * 2, bias=False),
+                lb_loss_weight=0.01,
+                z_loss_weight=0.001,
+            ),
+        )
+
+    @classmethod
+    def olmoe_1B_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        d_model = kwargs.pop("d_model", 2048)
+        return cls.llama_like(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 16),
+            n_heads=kwargs.pop("n_heads", 16),
+            name=kwargs.pop("name", TransformerType.moe),
+            block_name=kwargs.pop("block_name", TransformerBlockType.moe_reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            feed_forward_moe=MoEConfig(
+                name=MoEType.dropless,
+                num_experts=64,
+                hidden_size=int(0.5 * d_model),
+                router=MoERouterConfig(top_k=8, bias=False),
+                lb_loss_weight=0.01,
+                z_loss_weight=0.001,
+            ),
         )
 
     @classmethod
@@ -510,6 +596,8 @@ class TransformerConfig(Config):
         block_name: TransformerBlockType = TransformerBlockType.default,
         dtype: DType = DType.float32,
         rope_scaling: Optional[RoPEScalingConfig] = None,
+        feed_forward: Optional[FeedForwardConfig] = None,
+        feed_forward_moe: Optional[MoEConfig] = None,
         **kwargs,
     ) -> "TransformerConfig":
         """
@@ -545,6 +633,10 @@ class TransformerConfig(Config):
                 att_type = AttentionType.fused
                 rope_type = RoPEType.fused
 
+        # Feed-forward.
+        if feed_forward is None and feed_forward_moe is None:
+            feed_forward = FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype)
+
         # Configure blocks.
         block = TransformerBlockConfig(
             name=block_name,
@@ -558,7 +650,8 @@ class TransformerConfig(Config):
                 use_flash=use_flash,
                 dtype=dtype,
             ),
-            feed_forward=FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype),
+            feed_forward=feed_forward,
+            feed_forward_moe=feed_forward_moe,
             layer_norm=layer_norm,
         )
 

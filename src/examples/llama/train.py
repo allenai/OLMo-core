@@ -57,6 +57,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     tokenizer_config = TokenizerConfig.gpt2()
 
     model_config = TransformerConfig.llama2_271M(
+        #  model_config = TransformerConfig.smallmoe(
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
     )
 

@@ -250,7 +250,20 @@ class DownstreamEvaluator(Evaluator):
         if batch_spec.batch_size_unit == EvalBatchSizeUnit.instances:
             rank_batch_size_instances = batch_spec.rank_batch_size
         elif batch_spec.batch_size_unit == EvalBatchSizeUnit.tokens:
-            rank_batch_size_instances = batch_spec.rank_batch_size // self.task.max_sequence_length
+            if batch_spec.fixed_sequence_length:
+                assert batch_spec.max_sequence_length is not None
+                if batch_spec.rank_batch_size % batch_spec.max_sequence_length != 0:
+                    raise OLMoConfigurationError(
+                        f"The eval batch size ({batch_spec.rank_batch_size} tokens) must be divisible "
+                        f"by the maximum eval sequence length ({batch_spec.max_sequence_length:,d} tokens)"
+                    )
+                rank_batch_size_instances = (
+                    batch_spec.rank_batch_size // batch_spec.max_sequence_length
+                )
+            else:
+                rank_batch_size_instances = (
+                    batch_spec.rank_batch_size // self.task.max_sequence_length
+                )
         else:
             raise NotImplementedError(batch_spec.batch_size_unit)
 

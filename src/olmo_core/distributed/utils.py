@@ -27,7 +27,7 @@ BEAKER_HOSTNAME_ENV_VAR = "BEAKER_NODE_HOSTNAME"
 log = logging.getLogger(__name__)
 
 
-def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minutes=30)):
+def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minutes=30), **kwargs):
     """
     Initialize the distributed process group with the given backend(s) and check/set the
     relevant environment variables.
@@ -102,7 +102,7 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
         device = torch.device(f"cuda:{int(os.environ[OLMO_LOCAL_RANK_ENV_VAR])}")
         torch.cuda.set_device(device)
 
-    dist.init_process_group(backend, timeout=timeout)
+    dist.init_process_group(backend, timeout=timeout, **kwargs)
 
     validate_env_vars()
 
@@ -420,6 +420,13 @@ def get_reduce_divide_factor(world_size: int) -> float:
 def get_local_tensor(x: torch.Tensor) -> torch.Tensor:
     if isinstance(x, DTensor):
         return x.to_local()
+    else:
+        return x
+
+
+def get_full_tensor(x: torch.Tensor) -> torch.Tensor:
+    if isinstance(x, DTensor):
+        return x.full_tensor()
     else:
         return x
 

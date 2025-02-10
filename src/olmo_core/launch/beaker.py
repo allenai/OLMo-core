@@ -57,12 +57,12 @@ class OLMoCoreBeakerImage(StrEnum):
     includes *versioned* images that are published with each release of the OLMo-core package.
     """
 
-    stable = "olmo-core-tch251cu124"
+    stable = "olmo-core-tch260cu124"
     """
     Built with the latest compatible stable version of PyTorch.
     """
 
-    nightly = "olmo-core-tch260dev20241209cu124"
+    nightly = "olmo-core-tch270dev20250202cu124"
     """
     Built with the latest compatible nightly version of PyTorch.
     """
@@ -206,6 +206,8 @@ class BeakerLaunchConfig(Config):
     Allow running with uncommitted changed.
     """
 
+    host_networking: Optional[bool] = None
+
     # NOTE: don't assign a type here because omegaconf can't validate arbitrary classes
     #  _beaker: Optional[Beaker] = None
     _beaker = None
@@ -300,7 +302,9 @@ class BeakerLaunchConfig(Config):
 
         return dataset
 
-    def build_experiment_spec(self, torchrun: bool = True) -> ExperimentSpec:
+    def build_experiment_spec(
+        self, torchrun: bool = True, entrypoint: Optional[str] = None
+    ) -> ExperimentSpec:
         """
         Get the Beaker experiment spec corresponding to this config instance.
         """
@@ -336,7 +340,8 @@ class BeakerLaunchConfig(Config):
                 )
             entrypoint_script.append(" ".join(self._get_torchrun_cmd()) + ' "$@"')
         else:
-            entrypoint_script.append('python "$@"')
+            entrypoint = entrypoint or "python"
+            entrypoint_script.append(f'{entrypoint} "$@"')
 
         entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
 
@@ -350,8 +355,11 @@ class BeakerLaunchConfig(Config):
                 command=["bash", "/olmo-core/entrypoint.sh"],
                 replicas=self.num_nodes if self.num_nodes > 1 else None,
                 leader_selection=self.num_nodes > 1,
-                host_networking=self.num_nodes > 1
-                or any(["augusta" in cluster for cluster in self.clusters]),
+                host_networking=self.host_networking
+                if self.host_networking is not None
+                else (
+                    self.num_nodes > 1 or any(["augusta" in cluster for cluster in self.clusters])
+                ),
                 propagate_failure=False if self.num_nodes > 1 else None,
                 propagate_preemption=True if self.num_nodes > 1 else None,
                 synchronized_start_timeout="90m" if self.num_nodes > 1 else None,
@@ -429,7 +437,9 @@ class BeakerLaunchConfig(Config):
         else:
             log.info("Experiment completed successfully")
 
-    def launch(self, follow: bool = False, torchrun: bool = True) -> Experiment:
+    def launch(
+        self, follow: bool = False, torchrun: bool = True, entrypoint: Optional[str] = None
+    ) -> Experiment:
         """
         Launch a Beaker experiment using this config.
 
@@ -439,10 +449,12 @@ class BeakerLaunchConfig(Config):
 
         :param follow: Stream the logs and follow the experiment until completion.
         :param torchrun: Launch the target command with ``torchrun``.
+        :param entrypoint: Provide an optional entrypoint program if ``torchrun`` is ``False``.
+            Defaults to 'python'.
 
         :returns: The Beaker experiment.
         """
-        spec = self.build_experiment_spec(torchrun=torchrun)
+        spec = self.build_experiment_spec(torchrun=torchrun, entrypoint=entrypoint)
         experiment = self.beaker.experiment.create(self.name, spec)
         log.info(f"Experiment submitted, see progress at {self.beaker.experiment.url(experiment)}")
 

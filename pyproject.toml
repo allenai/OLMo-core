@@ -22,7 +22,7 @@ dependencies = [
     "omegaconf",
     "safetensors",
     "importlib_resources",
-    "ai2-olmo-eval==0.5.0",
+    "ai2-olmo-eval==0.6.1",
 ]
 
 [project.urls]
@@ -169,4 +169,5 @@ filterwarnings = [
     'ignore::DeprecationWarning:pkg_resources',
     'ignore::DeprecationWarning:google\.rpc',
     'ignore::FutureWarning:torch\.distributed\.checkpoint\.default_planner',
+    'ignore::UserWarning:torch\.distributed\.checkpoint\.state_dict_saver',
 ]

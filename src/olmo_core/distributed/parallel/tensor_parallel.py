@@ -49,7 +49,7 @@ class SequenceParallel(_SequenceParallel):
         output_layouts: Optional[Placement] = None,
     ):
         super().__init__(sequence_dim=sequence_dim, use_local_output=use_local_output)
-        self.output_layouts = (output_layouts or Shard(1),)
+        self.output_layouts = (output_layouts or Shard(sequence_dim),)
 
     @staticmethod
     def _prepare_output_fn(output_layouts, use_local_output, mod, outputs, device_mesh):

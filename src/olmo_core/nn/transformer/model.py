@@ -1,14 +1,17 @@
 import logging
 from functools import cached_property
-from typing import List, Optional, Sequence, cast
+from typing import Dict, List, Optional, Sequence, Union, cast
 
 import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
+from torch.distributed.tensor import Replicate, Shard
+from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
 from olmo_core.config import StrEnum
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.doc_utils import beta_feature
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device
 
 from ..buffer_cache import BufferCache
@@ -17,6 +20,7 @@ from ..lm_head import LMHeadConfig
 from ..utils import selective_checkpointing_context_fn
 from .block import (
     MoETransformerBlock,
+    NormalizedTransformerBlock,
     TransformerBlock,
     TransformerBlockBase,
     TransformerBlockConfig,
@@ -26,6 +30,7 @@ from .init import InitMethod
 __all__ = [
     "Transformer",
     "NormalizedTransformer",
+    "MoETransformer",
     "TransformerDataParallelWrappingStrategy",
     "TransformerActivationCheckpointingMode",
 ]
@@ -110,12 +115,14 @@ class Transformer(nn.Module):
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.blocks = nn.ModuleDict()
         for block_idx in range(n_layers):
-            self.blocks[str(block_idx)] = block.build(
+            block_ = block.build(
                 d_model=d_model,
                 block_idx=block_idx,
                 init_device=init_device,
                 cache=cache,
             )
+            self._validate_block(block_)
+            self.blocks[str(block_idx)] = block_
         self.lm_head = lm_head.build(
             d_model=d_model, vocab_size=vocab_size, init_device=init_device
         )
@@ -130,6 +137,22 @@ class Transformer(nn.Module):
         self.num_params
         self.num_non_embedding_params
 
+    def _validate_block(self, block: TransformerBlockBase):
+        del block
+
+    def compute_auxiliary_losses(
+        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+    ) -> Dict[str, torch.Tensor]:
+        del total_bz, reset
+        return {}
+
+    def reset_auxiliary_losses(self):
+        pass
+
+    @property
+    def is_moe(self) -> bool:
+        return False
+
     @property
     def device(self) -> torch.device:
         for p in self.parameters():
@@ -142,13 +165,16 @@ class Transformer(nn.Module):
         self,
         *,
         max_seq_len: Optional[int] = None,
+        max_local_microbatch_size: Optional[int] = None,
         device: Optional[torch.device] = None,
     ) -> torch.Generator:
         """
         Initialize the model weights.
 
-        :param max_seq_len: The maximum sequence length expected during training. This is used
+        :param max_seq_len: The maximum sequence length expected. This is used
             to warm up the RoPE cache.
+        :param max_local_microbatch_size: The maximum local (rank) micro-batch size (in tokens)
+            expected. This is used to warm-up some MoE cache.
         :param device: The device the local copy of the model will be trained on.
         """
         device = device or self.device
@@ -190,8 +216,11 @@ class Transformer(nn.Module):
                     generator=generator,
                 )
             else:
+                block = cast(MoETransformerBlock, block)
+                if max_local_microbatch_size is not None:
+                    block.feed_forward_moe.warmup_cache(max_local_microbatch_size)
                 self.init_method.init_feed_forward_moe(
-                    cast(MoETransformerBlock, block).feed_forward_moe,
+                    block.feed_forward_moe,
                     d_model=self.d_model,
                     block_idx=block.block_idx,
                     num_blocks=self.n_layers,
@@ -257,40 +286,30 @@ class Transformer(nn.Module):
         :param loss_parallel: Set to ``True`` if parallelizing the loss function as well.
         :param float8_enabled: Set this to ``True`` if training with float8 linear layers.
         """
-        from torch.distributed.tensor import Replicate
-        from torch.distributed.tensor.parallel import (
-            PrepareModuleInput,
-            RowwiseParallel,
-            parallelize_module,
-        )
-
-        emb_output_layout = cast(TransformerBlockBase, self.blocks["0"]).tp_input_layouts
-        parallelize_module(
-            module=self,
-            device_mesh=tp_mesh,
-            parallelize_plan={
-                "embeddings": RowwiseParallel(
+        if self.embeddings is not None:
+            parallelize_module(
+                self.embeddings,
+                device_mesh=tp_mesh,
+                parallelize_plan=RowwiseParallel(
                     input_layouts=Replicate(),
-                    output_layouts=emb_output_layout[0]
-                    if isinstance(emb_output_layout, tuple)
-                    else emb_output_layout,
+                    use_local_output=False,
                 ),
-                "lm_head": PrepareModuleInput(
-                    # block output layouts are same as block input layouts
-                    input_layouts=cast(TransformerBlockBase, self.blocks["0"]).tp_input_layouts,
-                    desired_input_layouts=self.lm_head.tp_input_layouts,
-                ),
-            },
-        )
+            )
 
-        self.lm_head.apply_tp(tp_mesh, loss_parallel=loss_parallel)
-
-        # Apply tensor + sequence parallelism to every transformer block.
+        # Apply tensor/sequence parallelism to every transformer block.
         # NOTE: At the cost of model code change, we can accelerate Sequence Parallel
         #       by folding (and unfolding) the batch dimension and the sequence dimension.
         #       Examples can be found at https://github.com/pytorch/torchtitan/pull/437
         for block in self.blocks.values():
-            cast(TransformerBlockBase, block).apply_tp(tp_mesh, float8_enabled=float8_enabled)
+            block = cast(TransformerBlockBase, block)
+            block.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+
+        if self.lm_head is not None:
+            self.lm_head.apply_tp(
+                tp_mesh,
+                output_layout=Shard(1) if loss_parallel else Replicate(),
+                use_local_output=not loss_parallel,
+            )
 
     def apply_activation_checkpointing(
         self,
@@ -415,6 +434,12 @@ class Transformer(nn.Module):
             # all-gathers, which can be expensive and non-overlapped
             reshard_after_forward = False if pp_enabled else True
 
+            if self.is_moe:
+                block = cast(MoETransformerBlock, block)
+                block.feed_forward_moe.prepare_experts_for_fsdp(
+                    reshard_after_forward=reshard_after_forward, **fsdp_config
+                )
+
             if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
                 if hasattr(block, "feed_forward"):
                     fully_shard(
@@ -532,6 +557,12 @@ class NormalizedTransformer(Transformer):
             init_seed=init_seed,
         )
 
+    def _validate_block(self, block: TransformerBlockBase):
+        if not isinstance(block, NormalizedTransformerBlock):
+            raise OLMoConfigurationError(
+                f"'{self.__class__.__name__}' requires a '{NormalizedTransformerBlock.__name__}' block"
+            )
+
     @torch.no_grad()
     def init_weights(
         self,
@@ -578,3 +609,64 @@ class NormalizedTransformer(Transformer):
     def apply_compile(self):
         super().apply_compile()
         self.normalize_matrices = torch.compile(self.normalize_matrices)
+
+
+@beta_feature
+class MoETransformer(Transformer):
+    """
+    An MoE transformer implementation, to be used with one of the
+    :class:`MoETransformerBlock` block types.
+    """
+
+    @property
+    def is_moe(self) -> bool:
+        return True
+
+    def _validate_block(self, block: TransformerBlockBase):
+        if not isinstance(block, MoETransformerBlock):
+            raise OLMoConfigurationError(
+                f"'{self.__class__.__name__}' requires a '{MoETransformerBlock.__name__}' block"
+            )
+
+    def compute_auxiliary_losses(
+        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+    ) -> Dict[str, torch.Tensor]:
+        out: Dict[str, torch.Tensor] = {}
+        for block in self.blocks.values():
+            for loss_name, loss_val in (
+                cast(MoETransformerBlock, block).compute_losses(total_bz, reset=reset).items()
+            ):
+                loss_val.div_(self.n_layers)
+                if loss_name in out:
+                    out[loss_name] += loss_val
+                else:
+                    out[loss_name] = loss_val
+        return out
+
+    def reset_auxiliary_losses(self):
+        for block in self.blocks.values():
+            cast(MoETransformerBlock, block).reset_losses()
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        doc_lens: Optional[torch.Tensor] = None,
+        max_doc_lens: Optional[Sequence[int]] = None,
+    ) -> torch.Tensor:
+        max_doc_len: Optional[int] = None
+        cu_doc_lens: Optional[torch.Tensor] = None
+        if doc_lens is not None and max_doc_lens is not None:
+            max_doc_len = max(max_doc_lens)
+            cu_doc_lens = get_cumulative_document_lengths(doc_lens)
+
+        # passthrough for non-existent layers, allows easy pipeline parallel configuration
+        h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
+
+        for block in self.blocks.values():
+            h = block(h, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
+
+        return self.lm_head(h) if self.lm_head is not None else h
+
+    def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
+        for block in self.blocks.values():
+            cast(MoETransformerBlock, block).apply_ep(ep_mesh, **kwargs)

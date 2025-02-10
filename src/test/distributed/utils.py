@@ -10,8 +10,10 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 
 from olmo_core.distributed.utils import (
+    OLMO_LOCAL_RANK_ENV_VAR,
     OLMO_LOCAL_WORLD_SIZE_ENV_VAR,
     OLMO_NUM_NODES_ENV_VAR,
+    init_distributed,
     is_distributed,
 )
 
@@ -92,6 +94,27 @@ def init_process(
 ):
     assert world_size > 1
 
+    os.environ.setdefault(OLMO_NUM_NODES_ENV_VAR, "1")
+    os.environ.setdefault(OLMO_LOCAL_WORLD_SIZE_ENV_VAR, str(world_size))
+    os.environ.setdefault(OLMO_LOCAL_RANK_ENV_VAR, str(process_rank))
+
+    #  dist.init_process_group(
+    #      backend=backend,
+    #      init_method=f"tcp://{primary_addr}:{primary_port}",
+    #      world_size=world_size,
+    #      rank=process_rank,
+    #      timeout=datetime.timedelta(seconds=120),
+    #  )
+    #  if "nccl" in backend:
+    #      torch.cuda.set_device(int(process_rank))
+    init_distributed(
+        backend=backend,
+        timeout=datetime.timedelta(seconds=120),
+        init_method=f"tcp://{primary_addr}:{primary_port}",
+        world_size=world_size,
+        rank=process_rank,
+    )
+
     old_log_record_factory = logging.getLogRecordFactory()
 
     def log_record_factory(*args, **kwargs) -> logging.LogRecord:
@@ -112,21 +135,7 @@ def init_process(
 
     log = logging.getLogger()
 
-    dist.init_process_group(
-        backend=backend,
-        init_method=f"tcp://{primary_addr}:{primary_port}",
-        world_size=world_size,
-        rank=process_rank,
-        timeout=datetime.timedelta(seconds=120),
-    )
-
-    os.environ.setdefault(OLMO_NUM_NODES_ENV_VAR, "1")
-    os.environ.setdefault(OLMO_LOCAL_WORLD_SIZE_ENV_VAR, str(world_size))
-
     log.info("Starting test...")
-
-    if "nccl" in backend:
-        torch.cuda.set_device(int(process_rank))
 
     try:
         func(*(func_args or []), **(func_kwargs or {}))

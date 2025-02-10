@@ -90,8 +90,8 @@ class SubCmd(StrEnum):
             print(config)
             print(
                 "\n"
-                f"[b blue]Total parameters:[/]                {config.model.num_params:,d}\n"
-                f"[b blue]Non-embedding parameters:[/]        {config.model.num_non_embedding_params:,d}"
+                f"[b blue]Total parameters:[/]         {config.model.num_params:,d} ({config.model.num_active_params:,d} active)\n"
+                f"[b blue]Non-embedding parameters:[/] {config.model.num_non_embedding_params:,d} ({config.model.num_active_non_embedding_params:,d} active)"
             )
 
         if self == SubCmd.launch:
@@ -136,6 +136,8 @@ def build_common_components(
     overrides: List[str],
     *,
     global_batch_size: int,
+    sequence_length: int = 4096,
+    include_default_evals: bool = True,
 ) -> CommonComponents:
     root_dir = get_root_dir(cluster)
 
@@ -159,10 +161,10 @@ def build_common_components(
         DataMix.OLMoE_mix_0824,
         tokenizer=tokenizer_config,
         mix_base_dir=root_dir,
-        sequence_length=4096,
-        max_target_sequence_length=8192,
-        min_sequence_length=256,
-        max_sequence_length=8192,
+        sequence_length=sequence_length,
+        max_target_sequence_length=max(8192, sequence_length),
+        min_sequence_length=min(256, sequence_length),
+        max_sequence_length=max(8192, sequence_length),
         vsl_curriculum=VSLCurriculumConfig(
             name=VSLCurriculumType.grow_p2, num_cycles=8, balanced=False
         ),
@@ -177,7 +179,14 @@ def build_common_components(
         "config_saver": ConfigSaverCallback(),
         "profiler": ProfilerCallback(enabled=False),
         "garbage_collector": GarbageCollectorCallback(),
-        "lm_evaluator": LMEvaluatorCallbackConfig(
+        "slack_notifier": SlackNotifierCallback(name=run_name, enabled=False),
+    }
+
+    if torch.cuda.is_available():
+        callbacks["gpu_monitor"] = GPUMemoryMonitorCallback()
+
+    if include_default_evals:
+        callbacks["lm_evaluator"] = LMEvaluatorCallbackConfig(
             eval_dataset=NumpyDatasetConfig.from_data_mix(
                 DataMix.v3_small_ppl_validation,
                 name=NumpyDatasetType.padded_fsl,
@@ -187,16 +196,12 @@ def build_common_components(
                 work_dir=get_work_dir(root_dir),
             ),
             eval_interval=1000,
-        ),
-        "downstream_evaluator": DownstreamEvaluatorCallbackConfig(
+        )
+        callbacks["downstream_evaluator"] = DownstreamEvaluatorCallbackConfig(
             tasks=["hellaswag"],
             tokenizer=tokenizer_config,
             eval_interval=1000,
-        ),
-        "slack_notifier": SlackNotifierCallback(name=run_name, enabled=False),
-    }
-    if torch.cuda.is_available():
-        callbacks["gpu_monitor"] = GPUMemoryMonitorCallback()
+        )
 
     return CommonComponents(
         run_name=run_name,
@@ -221,9 +226,18 @@ def build_config(
     train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
+    sequence_length: int = 4096,
+    include_default_evals: bool = True,
 ) -> ExperimentConfig:
     common = build_common_components(
-        script, cmd, run_name, cluster, overrides, global_batch_size=global_batch_size
+        script,
+        cmd,
+        run_name,
+        cluster,
+        overrides,
+        global_batch_size=global_batch_size,
+        sequence_length=sequence_length,
+        include_default_evals=include_default_evals,
     )
 
     model = model_config_builder(common)
@@ -297,6 +311,8 @@ def main(
     train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
+    sequence_length: int = 4096,
+    include_default_evals: bool = True,
 ):
     usage = f"""
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
@@ -336,6 +352,8 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         train_module_config_builder=train_module_config_builder,
         trainer_config_builder=trainer_config_builder,
         finalize_config=finalize_config,
+        sequence_length=sequence_length,
+        include_default_evals=include_default_evals,
     )
 
     cmd.run(config)

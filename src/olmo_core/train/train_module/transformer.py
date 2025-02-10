@@ -9,7 +9,7 @@ import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
 from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.tensor import DTensor
+from torch.distributed.tensor import DTensor, Replicate, Shard
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 
@@ -19,22 +19,25 @@ from olmo_core.distributed.checkpoint import _swap_param_keys
 from olmo_core.distributed.parallel import (
     DataParallelConfig,
     DataParallelType,
+    ExpertParallelConfig,
     TensorParallelConfig,
     build_device_mesh,
     get_dp_mesh,
     get_dp_process_group,
+    get_ep_mesh,
     get_tp_mesh,
 )
-from olmo_core.distributed.utils import get_local_tensor, get_world_size
+from olmo_core.distributed.utils import (
+    get_full_tensor,
+    get_local_tensor,
+    get_world_size,
+)
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
-from olmo_core.nn.functional.cross_entropy_loss import (
-    cross_entropy_loss,
-    fused_cross_entropy_loss,
-)
-from olmo_core.nn.moe import MoEHandler
+from olmo_core.nn.cross_entropy_loss import CrossEntropyLoss
 from olmo_core.nn.transformer import (
+    MoETransformer,
     NormalizedTransformer,
     Transformer,
     TransformerActivationCheckpointingMode,
@@ -44,7 +47,7 @@ from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, mark_dynamic, move_to_device
 
-from ..common import ReduceType, reshape_inputs_for_loss
+from ..common import ReduceType
 from .train_module import EvalBatchSpec, TrainModule
 
 log = logging.getLogger(__name__)
@@ -68,6 +71,15 @@ class TransformerDataParallelConfig(DataParallelConfig):
 class TransformerTensorParallelConfig(TensorParallelConfig):
     """
     Transformer-specific tensor parallel config.
+    """
+
+    loss_parallel: bool = True
+
+
+@dataclass
+class TransformerExpertParallelConfig(ExpertParallelConfig):
+    """
+    Transformer-specific expert parallel config.
     """
 
 
@@ -135,6 +147,7 @@ class TransformerTrainModuleConfig(Config):
     float8_config: Optional[Float8Config] = None
     dp_config: Optional[TransformerDataParallelConfig] = None
     tp_config: Optional[TransformerTensorParallelConfig] = None
+    ep_config: Optional[TransformerExpertParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
 
     # Loss function settings.
@@ -236,6 +249,7 @@ class TransformerTrainModule(TrainModule):
         float8_config: Optional[Float8Config] = None,
         dp_config: Optional[TransformerDataParallelConfig] = None,
         tp_config: Optional[TransformerTensorParallelConfig] = None,
+        ep_config: Optional[TransformerExpertParallelConfig] = None,
         ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
         compile_loss: bool = False,
         fused_loss: bool = False,
@@ -252,8 +266,6 @@ class TransformerTrainModule(TrainModule):
         super().__init__()
 
         # Validate some options.
-        if fused_loss and compile_loss:
-            raise OLMoConfigurationError("'fused_loss' is not compatible with 'compile_loss'")
         if rank_microbatch_size % max_sequence_length != 0:
             raise OLMoConfigurationError(
                 f"'rank_microbatch_size' ({rank_microbatch_size:,d} tokens) must be divisible by "
@@ -262,16 +274,24 @@ class TransformerTrainModule(TrainModule):
 
         self.device = device or get_default_device()
         self.world_mesh = build_device_mesh(
-            dp=dp_config, tp=tp_config, device_type=self.device.type
+            dp=dp_config, tp=tp_config, ep=ep_config, device_type=self.device.type
         )
         log.info(f"Data parallel world size = {get_world_size(self.dp_process_group):,d}")
 
-        self.base_loss_fn = fused_cross_entropy_loss if fused_loss else cross_entropy_loss
-        if compile_loss:
-            if torch.cuda.is_available():
-                self.base_loss_fn = torch.compile(self.base_loss_fn)
-            else:
-                log.warning("Skipping loss compilation since CUDA is not available")
+        self.label_ignore_index = label_ignore_index
+        self._train_loss_fn = CrossEntropyLoss(
+            ignore_index=label_ignore_index,
+            reduction="sum",
+            z_loss_multiplier=z_loss_multiplier,
+            compile=compile_loss,
+            fused=fused_loss,
+        )
+        self._eval_loss_fn = CrossEntropyLoss(
+            ignore_index=label_ignore_index,
+            reduction="none",
+            compile=compile_loss,
+            fused=fused_loss,
+        )
 
         self.float8_handler: Optional[Float8Handler] = None
         float8_enabled = False
@@ -289,19 +309,42 @@ class TransformerTrainModule(TrainModule):
             )
             log.info("Swapped linear layers to Float8 linear layers")
 
-        # Maybe apply tensor parallelism.
+        # Maybe apply tensor/expert parallelism.
+        self._tp_enabled = False
+        if tp_config is not None and ep_config is not None:
+            raise NotImplementedError("TP + EP is not implemented yet")
         if tp_config is not None:
             tp_mesh = get_tp_mesh(self.world_mesh)
-            assert tp_mesh is not None
             self.model.apply_tp(
                 tp_mesh,
                 float8_enabled=float8_enabled,
-                loss_parallel=False,  # TODO (epwalsh): figure out if this will work w/ z-loss
+                loss_parallel=tp_config.loss_parallel,
             )
+            if tp_config.loss_parallel:
+                self._train_loss_fn.apply_tp(
+                    tp_mesh,
+                    input_layouts=(Shard(1), Replicate(), Replicate()),
+                    use_local_output=True,
+                )
+                self._eval_loss_fn.apply_tp(
+                    tp_mesh,
+                    input_layouts=(Shard(1), Replicate()),
+                    use_local_output=True,
+                )
             tp_config.maybe_enable_async_tp(tp_mesh)
             log.info(
                 f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model"
             )
+            self._tp_enabled = True
+
+        self._ep_enabled = False
+        if ep_config is not None:
+            if not self.model.is_moe:
+                raise OLMoConfigurationError("Expert parallelism is only valid for MoE models")
+            ep_mesh = get_ep_mesh(self.world_mesh)
+            cast(MoETransformer, self.model).apply_ep(ep_mesh)
+            log.info("Applied expert parallelism to the model")
+            self._ep_enabled = True
 
         # Maybe apply activation checkpointing.
         if ac_config is not None:
@@ -343,7 +386,11 @@ class TransformerTrainModule(TrainModule):
 
         # Materialize and init parameters.
         log.info("Initializing model weights...")
-        self.model.init_weights(max_seq_len=max_sequence_length, device=self.device)
+        self.model.init_weights(
+            max_seq_len=max_sequence_length,
+            max_local_microbatch_size=rank_microbatch_size,
+            device=self.device,
+        )
 
         # Build optimizer(s).
         log.info("Building optimizer...")
@@ -351,7 +398,6 @@ class TransformerTrainModule(TrainModule):
 
         self.rank_microbatch_size = rank_microbatch_size
         self.max_sequence_length = max_sequence_length
-        self.z_loss_multiplier = z_loss_multiplier
         self.autocast_precision = autocast_precision
         self.max_grad_norm = max_grad_norm
         self.scheduler = scheduler
@@ -362,11 +408,6 @@ class TransformerTrainModule(TrainModule):
             flatten_optimizer_state_dict=True, strict=True
         )
         self.load_key_mapping = load_key_mapping
-        self.label_ignore_index = label_ignore_index
-
-        self.moe_handler: Optional[MoEHandler] = None
-        if MoEHandler.has_moe(self.model):
-            self.moe_handler = MoEHandler(model=self.model)
 
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
@@ -375,29 +416,26 @@ class TransformerTrainModule(TrainModule):
     @property
     def eval_batch_spec(self) -> EvalBatchSpec:
         return EvalBatchSpec(
-            self.rank_microbatch_size, max_sequence_length=self.max_sequence_length
+            self.rank_microbatch_size,
+            max_sequence_length=self.max_sequence_length,
+            #  fixed_sequence_length=self.tp_enabled,
         )
+
+    @property
+    def tp_enabled(self) -> bool:
+        return self._tp_enabled
+
+    @property
+    def ep_enabled(self) -> bool:
+        return self._ep_enabled
 
     def loss_fn(
         self, logits: torch.Tensor, labels: torch.Tensor, batch_num_tokens_for_loss: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-        logits_for_loss, labels_for_loss = reshape_inputs_for_loss(logits, labels)
-
         # NOTE: we use the "sum" loss reduction and then divide by 'batch_num_tokens_for_loss'
         # (the total number of tokens used in the loss across the whole batch, not just the micro batch)
         # to avoid biasing the loss in the case where micro-batches might not be the same size.
-        ce_loss, z_loss = self.base_loss_fn(
-            logits_for_loss,
-            labels_for_loss,
-            ignore_index=self.label_ignore_index,
-            reduction="sum",
-            compute_z_loss=self.z_loss_multiplier is not None,
-            z_loss_multiplier=self.z_loss_multiplier or 1e-4,
-        )
-
-        ce_loss.div_(batch_num_tokens_for_loss)
-        if z_loss is not None:
-            z_loss.div_(batch_num_tokens_for_loss)
+        ce_loss, z_loss = self._train_loss_fn(logits, labels, batch_num_tokens_for_loss)
 
         # Get loss to optimize for.
         loss = ce_loss
@@ -411,13 +449,7 @@ class TransformerTrainModule(TrainModule):
         )
 
     def eval_loss_fn(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        logits_for_loss, labels_for_loss = reshape_inputs_for_loss(logits, labels)
-        ce_loss, _ = self.base_loss_fn(
-            logits_for_loss,
-            labels_for_loss,
-            ignore_index=self.label_ignore_index,
-            reduction="none",
-        )
+        ce_loss, _ = self._eval_loss_fn(logits, labels)
         return ce_loss.view(logits.shape[0], -1)
 
     def on_attach(self):
@@ -511,13 +543,12 @@ class TransformerTrainModule(TrainModule):
         # Calculate how many tokens are going to be used in the loss.
         batch_num_tokens_for_loss = (batch["labels"] != self.label_ignore_index).sum()
 
-        # Update overall CE batch loss.
+        # Batch losses to record.
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
-
-        # Update overall Z batch loss.
         z_batch_loss: Optional[torch.Tensor] = None
-        if self.z_loss_multiplier is not None:
+        if self._train_loss_fn.z_loss_enabled:
             z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
+        auxiliary_batch_losses: Dict[str, torch.Tensor] = {}
 
         # Split into micro-batches.
         if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
@@ -532,23 +563,33 @@ class TransformerTrainModule(TrainModule):
             with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
                 # Run forward pass.
                 logits = self.model_forward(micro_batch)
+
+                # Get loss to optimize for, and the separate detached CE and Z loss values.
                 loss, ce_loss, z_loss = self.loss_fn(
                     logits, micro_batch["labels"], batch_num_tokens_for_loss
                 )
                 del logits
 
+                # Update total batch CE and Z loss.
                 ce_batch_loss += ce_loss
+                del ce_loss
                 if z_batch_loss is not None:
                     assert z_loss is not None
                     z_batch_loss += z_loss
+                    del z_loss
 
-                # Maybe add MoE losses.
-                if self.moe_handler is not None:
-                    moe_loss = self.moe_handler.get_combined_loss(
-                        batch=batch, micro_batch=micro_batch
-                    )
-                    if moe_loss is not None:
-                        loss += moe_loss
+                # Optionally get model auxiliary losses and update the total batch auxiliary losses.
+                auxiliary_losses = self.model.compute_auxiliary_losses(
+                    batch_num_tokens_for_loss, reset=True
+                )
+                for loss_name, loss_val in auxiliary_losses.items():
+                    loss += loss_val
+                    loss_val = get_local_tensor(loss_val.detach())
+                    if loss_name in auxiliary_batch_losses:
+                        auxiliary_batch_losses[loss_name] += loss_val
+                    else:
+                        auxiliary_batch_losses[loss_name] = loss_val
+                del auxiliary_losses
 
                 # Run backward pass.
                 loss.backward()
@@ -556,32 +597,27 @@ class TransformerTrainModule(TrainModule):
         del batch  # In case this helps with memory utilization.
 
         if dry_run:
-            self._clear_loss_buffers()
             return
 
         # Record loss metrics.
-        self.record_ce_loss(ce_batch_loss / get_world_size(self.dp_process_group), ReduceType.sum)
-
-        if self.z_loss_multiplier is not None:
-            assert z_batch_loss is not None
+        self.record_ce_loss(ce_batch_loss, ReduceType.mean)
+        if z_batch_loss is not None:
             self.record_metric(
                 "Z loss",
-                z_batch_loss / get_world_size(self.dp_process_group),
-                ReduceType.sum,
+                z_batch_loss,
+                ReduceType.mean,
+                namespace="train",
+            )
+        for loss_name, loss_val in auxiliary_batch_losses.items():
+            self.record_metric(
+                loss_name,
+                loss_val,
+                ReduceType.mean,
                 namespace="train",
             )
 
-        if self.moe_handler is not None:
-            if (moe_lb_loss := self.moe_handler.get_lb_loss()) is not None:
-                self.record_metric("load balancing loss", moe_lb_loss, namespace="train")
-            if (moe_z_loss := self.moe_handler.get_z_loss()) is not None:
-                self.record_metric("router Z loss", moe_z_loss, namespace="train")
-
         if isinstance(self.optim, SkipStepOptimizer):
             self.optim.latest_loss = ce_batch_loss
-
-        # Lastly, clear internal loss buffers.
-        self._clear_loss_buffers()
 
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
@@ -595,8 +631,8 @@ class TransformerTrainModule(TrainModule):
             loss: Optional[torch.Tensor] = None
             if labels is not None:
                 loss = self.eval_loss_fn(logits, labels)
-
-        self._clear_loss_buffers()
+                loss = get_full_tensor(loss)
+            logits = get_full_tensor(logits)
 
         return logits, loss
 
@@ -673,7 +709,7 @@ class TransformerTrainModule(TrainModule):
 
     def model_forward(self, batch: Dict[str, Any]) -> torch.Tensor:
         """
-        Run a forward pass on a micro-batch, returning the logits and potentially the loss.
+        Run a forward pass on a micro-batch, returning the logits.
         """
         with self._model_forward_context():
             # NOTE: Input sizes might be dynamic, e.g. when training with variable sequence lengths
@@ -716,10 +752,6 @@ class TransformerTrainModule(TrainModule):
             if self.autocast_precision is not None:
                 stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
             yield
-
-    def _clear_loss_buffers(self):
-        if self.moe_handler is not None:
-            self.moe_handler.clear_loss_buffers()
 
     def _get_state_dict(self, sd_options: dist_cp_sd.StateDictOptions) -> Dict[str, Any]:
         return {

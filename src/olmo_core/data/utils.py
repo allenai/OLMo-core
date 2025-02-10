@@ -19,6 +19,7 @@ from typing import (
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.io import add_cached_path_clients, get_bytes_range, is_url, resource_path
@@ -467,4 +468,5 @@ def get_labels(batch: Dict[str, Any], label_ignore_index: int = -100) -> torch.T
         labels.masked_fill_(attention_mask == 0.0, label_ignore_index)
     if instance_mask is not None:
         labels.masked_fill_(~instance_mask.unsqueeze(-1), value=label_ignore_index)
-    return labels[..., 1:].contiguous()
+    # Shift and pad.
+    return F.pad(labels[..., 1:], (0, 1, 0, 0), value=label_ignore_index)

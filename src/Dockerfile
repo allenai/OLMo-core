@@ -1,7 +1,7 @@
 # NOTE: make sure CUDA_VERSION and TORCH_CUDA_VERSION always match, except for punctuation
 ARG CUDA_VERSION="12.4"
 ARG TORCH_CUDA_VERSION="124"
-ARG TORCH_VERSION="2.5.1"
+ARG TORCH_VERSION="2.6.0
 
 #########################################################################
 # Build image
@@ -24,22 +24,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install/upgrade Python build dependencies.
 RUN pip install --upgrade --no-cache-dir pip wheel packaging "setuptools<70.0.0" ninja
 
-# Build megablocks, grouped-gemm, stanford-stk
+# Build grouped-gemm.
+# NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
+# See https://github.com/tgale96/grouped_gemm/pull/21
 ENV TORCH_CUDA_ARCH_LIST="8.0 9.0"
 ENV GROUPED_GEMM_CUTLASS="1"
-ARG MEGABLOCKS_VERSION="megablocks[gg] @ git+https://git@github.com/epwalsh/megablocks.git@epwalsh/deps"
-RUN pip wheel --no-build-isolation --no-cache-dir "${MEGABLOCKS_VERSION}"
+ARG GROUPED_GEMM_VERSION="grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
+RUN pip wheel --no-build-isolation --no-cache-dir "${GROUPED_GEMM_VERSION}"
 
 # Build flash-attn.
-ARG FLASH_ATTN_WHEEL=https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.2.post1/flash_attn-2.7.2.post1+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
+ARG FLASH_ATTN_WHEEL=https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
 RUN wget ${FLASH_ATTN_WHEEL}
 
 # Only keep the target wheels and dependencies with CUDA extensions.
-RUN echo "Built wheels:" \
-    && ls -lh . \
-    && ls -1 | grep -Ev 'megablocks|grouped_gemm|stanford_stk|flash_attn' | xargs rm \
-    && echo "Final wheels:" \
-    && ls -lh .
+RUN echo "Built wheels:" && ls -lh .
+    # && ls -1 | grep -Ev 'grouped_gemm|flash_attn' | xargs rm \
+    # && echo "Final wheels:" \
+    # && ls -lh .
 
 #########################################################################
 # Stable image
@@ -73,7 +74,7 @@ RUN pip install --upgrade --no-cache-dir pip wheel packaging
 
 # Install torchao.
 ARG TORCH_CUDA_VERSION
-ARG TORCHAO_VERSION="0.6.1"
+ARG TORCHAO_VERSION="0.8.0"
 RUN pip install --no-cache-dir \
     --extra-index-url https://download.pytorch.org/whl/cu${TORCH_CUDA_VERSION} \
     torchao==${TORCHAO_VERSION}
@@ -100,7 +101,7 @@ WORKDIR /app/olmo-core
 FROM stable as nightly
 
 ARG TORCH_CUDA_VERSION
-ARG TORCH_NIGHTLY_VERSION="2.6.0.dev20241209"
+ARG TORCH_NIGHTLY_VERSION="2.7.0.dev20250202"
 RUN pip install --no-cache-dir --pre \
     --index-url https://download.pytorch.org/whl/nightly/cu${TORCH_CUDA_VERSION} \
     torch==${TORCH_NIGHTLY_VERSION}+cu${TORCH_CUDA_VERSION}
