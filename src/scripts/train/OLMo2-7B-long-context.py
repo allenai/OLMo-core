@@ -44,6 +44,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             fused=True,
         ),
         compile_model=True,
+        compile_loss=True,
+        z_loss_multiplier=1e-5,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp,
             param_dtype=DType.bfloat16,
@@ -55,9 +57,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             loss_parallel=True,
         ),
         ac_config=TransformerActivationCheckpointingConfig(),
-        float8_config=Float8Config(enabled=True),
-        z_loss_multiplier=1e-5,
-        compile_loss=True,
+        float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
     )
