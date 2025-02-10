@@ -137,6 +137,7 @@ def build_common_components(
     *,
     global_batch_size: int,
     sequence_length: int = 4096,
+    include_default_evals: bool = True,
 ) -> CommonComponents:
     root_dir = get_root_dir(cluster)
 
@@ -178,7 +179,14 @@ def build_common_components(
         "config_saver": ConfigSaverCallback(),
         "profiler": ProfilerCallback(enabled=False),
         "garbage_collector": GarbageCollectorCallback(),
-        "lm_evaluator": LMEvaluatorCallbackConfig(
+        "slack_notifier": SlackNotifierCallback(name=run_name, enabled=False),
+    }
+
+    if torch.cuda.is_available():
+        callbacks["gpu_monitor"] = GPUMemoryMonitorCallback()
+
+    if include_default_evals:
+        callbacks["lm_evaluator"] = LMEvaluatorCallbackConfig(
             eval_dataset=NumpyDatasetConfig.from_data_mix(
                 DataMix.v3_small_ppl_validation,
                 name=NumpyDatasetType.padded_fsl,
@@ -188,16 +196,12 @@ def build_common_components(
                 work_dir=get_work_dir(root_dir),
             ),
             eval_interval=1000,
-        ),
-        "downstream_evaluator": DownstreamEvaluatorCallbackConfig(
+        )
+        callbacks["downstream_evaluator"] = DownstreamEvaluatorCallbackConfig(
             tasks=["hellaswag"],
             tokenizer=tokenizer_config,
             eval_interval=1000,
-        ),
-        "slack_notifier": SlackNotifierCallback(name=run_name, enabled=False),
-    }
-    if torch.cuda.is_available():
-        callbacks["gpu_monitor"] = GPUMemoryMonitorCallback()
+        )
 
     return CommonComponents(
         run_name=run_name,
@@ -223,6 +227,7 @@ def build_config(
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
     sequence_length: int = 4096,
+    include_default_evals: bool = True,
 ) -> ExperimentConfig:
     common = build_common_components(
         script,
@@ -232,6 +237,7 @@ def build_config(
         overrides,
         global_batch_size=global_batch_size,
         sequence_length=sequence_length,
+        include_default_evals=include_default_evals,
     )
 
     model = model_config_builder(common)
@@ -306,6 +312,7 @@ def main(
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
     sequence_length: int = 4096,
+    include_default_evals: bool = True,
 ):
     usage = f"""
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
@@ -346,6 +353,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         trainer_config_builder=trainer_config_builder,
         finalize_config=finalize_config,
         sequence_length=sequence_length,
+        include_default_evals=include_default_evals,
     )
 
     cmd.run(config)
