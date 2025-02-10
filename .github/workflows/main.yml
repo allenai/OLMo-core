@@ -182,6 +182,7 @@ jobs:
                   preemptible: true
                 resources:
                   gpuCount: ${{ matrix.task.gpus }}
+                hostNetworking: true
                 constraints:
                   cluster:
                     # H100 clusters
