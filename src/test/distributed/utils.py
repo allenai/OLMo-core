@@ -160,7 +160,7 @@ def run_distributed_test(
     func_args: Optional[Tuple[Any, ...]] = None,
     func_kwargs: Optional[Dict[str, Any]] = None,
     primary_addr: str = "127.0.0.1",
-    primary_port: Optional[int] = 29500,
+    primary_port: Optional[int] = None,
 ):
     """
     This runs the `func` in a simulated distributed environment.
