@@ -98,23 +98,13 @@ def init_process(
     func_args: Optional[Tuple[Any, ...]] = None,
     func_kwargs: Optional[Dict[str, Any]] = None,
     primary_addr: str = "127.0.0.1",
-    primary_port: Optional[int] = None,
+    primary_port: int = 29500,
 ):
     assert world_size > 1
 
     os.environ.setdefault(OLMO_NUM_NODES_ENV_VAR, "1")
     os.environ.setdefault(OLMO_LOCAL_WORLD_SIZE_ENV_VAR, str(world_size))
     os.environ.setdefault(OLMO_LOCAL_RANK_ENV_VAR, str(process_rank))
-
-    if primary_port is None:
-        primary_port = 29500 + random.Random().randint(0, 100)
-
-        #  attempts = 0
-        #  while port_in_use(primary_addr, primary_port):
-        #      primary_port += 1
-        #      attempts += 1
-        #      if attempts >= 10:
-        #          raise RuntimeError("failed to guess an open port")
 
     #  dist.init_process_group(
     #      backend=backend,
@@ -169,6 +159,8 @@ def run_distributed_test(
     start_method: Optional[str] = None,
     func_args: Optional[Tuple[Any, ...]] = None,
     func_kwargs: Optional[Dict[str, Any]] = None,
+    primary_addr: str = "127.0.0.1",
+    primary_port: Optional[int] = 29500,
 ):
     """
     This runs the `func` in a simulated distributed environment.
@@ -176,9 +168,28 @@ def run_distributed_test(
     if start_method is None:
         start_method = "fork" if backend == "gloo" else "spawn"
 
+    if primary_port is None:
+        primary_port = 29500 + random.Random().randint(0, 100)
+
+        attempts = 0
+        while port_in_use(primary_addr, primary_port):
+            primary_port += 1
+            attempts += 1
+            if attempts >= 10:
+                raise RuntimeError("failed to guess an open port")
+
     mp.start_processes(
         init_process,
-        args=(world_size, backend, log_from_all_ranks, func, func_args, func_kwargs),
+        args=(
+            world_size,
+            backend,
+            log_from_all_ranks,
+            func,
+            func_args,
+            func_kwargs,
+            primary_addr,
+            primary_port,
+        ),
         nprocs=world_size,
         start_method=start_method,
     )
