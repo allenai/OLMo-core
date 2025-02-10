@@ -667,7 +667,7 @@ class MoETransformer(Transformer):
             for metric_name, metric_val in (
                 cast(MoETransformerBlock, block).compute_metrics(total_bz, reset=reset).items()
             ):
-                out[f"block {block_idx}/{metric_name}"] = metric_val
+                out[f"block {int(block_idx):02d}/{metric_name}"] = metric_val
         return out
 
     def reset_auxiliary_metrics(self):
