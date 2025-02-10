@@ -154,7 +154,7 @@ class CrossEntropyLoss(nn.Module):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        input_layouts: Optional[Tuple[Placement, Placement, Placement]] = None,
+        input_layouts: Optional[Tuple[Placement, ...]] = None,
         shard_dimension: int = 1,
         output_layout: Optional[Placement] = None,
         use_local_output: bool = False,

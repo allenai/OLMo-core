@@ -328,7 +328,7 @@ class TransformerTrainModule(TrainModule):
                 )
                 self._eval_loss_fn.apply_tp(
                     tp_mesh,
-                    input_layouts=(Shard(1), Replicate(), Replicate()),
+                    input_layouts=(Shard(1), Replicate()),
                     use_local_output=True,
                 )
             tp_config.maybe_enable_async_tp(tp_mesh)
@@ -435,11 +435,7 @@ class TransformerTrainModule(TrainModule):
         # NOTE: we use the "sum" loss reduction and then divide by 'batch_num_tokens_for_loss'
         # (the total number of tokens used in the loss across the whole batch, not just the micro batch)
         # to avoid biasing the loss in the case where micro-batches might not be the same size.
-        ce_loss, z_loss = self._train_loss_fn(logits, labels)
-
-        ce_loss.div_(batch_num_tokens_for_loss)
-        if z_loss is not None:
-            z_loss.div_(batch_num_tokens_for_loss)
+        ce_loss, z_loss = self._train_loss_fn(logits, labels, batch_num_tokens_for_loss)
 
         # Get loss to optimize for.
         loss = ce_loss
