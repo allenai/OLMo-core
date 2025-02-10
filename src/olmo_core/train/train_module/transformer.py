@@ -414,7 +414,7 @@ class TransformerTrainModule(TrainModule):
         return EvalBatchSpec(
             self.rank_microbatch_size,
             max_sequence_length=self.max_sequence_length,
-            fixed_sequence_length=self.tp_enabled,
+            #  fixed_sequence_length=self.tp_enabled,
         )
 
     @property
