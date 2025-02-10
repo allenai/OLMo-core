@@ -30,7 +30,11 @@ from olmo_core.distributed.parallel import (
     get_pp_mesh,
     get_tp_mesh,
 )
-from olmo_core.distributed.utils import get_local_tensor, get_world_size
+from olmo_core.distributed.utils import (
+    get_full_tensor,
+    get_local_tensor,
+    get_world_size,
+)
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
 from olmo_core.nn.cross_entropy_loss import CrossEntropyLoss
@@ -701,6 +705,8 @@ class TransformerPipelineTrainModule(TrainModule):
             assert logits is not None
             if labels is not None:
                 assert loss is not None
+                loss = get_full_tensor(loss)
+            logits = get_full_tensor(logits)
 
         self._clear_loss_buffers()
 
