@@ -68,7 +68,7 @@ def convert_to_hf_checkpoint(
     output_path: str | Path,
     olmo_core_config: dict,
     tokenizer: GPT2Tokenizer,
-    max_sequence_length: int = -1
+    max_sequence_length: int = -1,
 ) -> None:
     """
     Convert an OLMo core checkpoint to Hugging Face format.
@@ -255,10 +255,14 @@ def main():
     experiment_config = load_config(args.checkpoint_input_dir)
 
     if args.tokenizer_name_or_path is None:
-        args.tokenizer_name_or_path = experiment_config.get("dataset", {}).get("tokenizer", {}).get("identifier", None)
+        args.tokenizer_name_or_path = (
+            experiment_config.get("dataset", {}).get("tokenizer", {}).get("identifier", None)
+        )
 
         if args.tokenizer_name_or_path is None:
-            raise ValueError("Tokenizer identifier not found in the config; please provide it manually")
+            raise ValueError(
+                "Tokenizer identifier not found in the config; please provide it manually"
+            )
 
     tokenizer_config = AutoTokenizer.from_pretrained(args.tokenizer_name_or_path)
 

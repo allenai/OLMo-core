@@ -132,7 +132,7 @@ def convert_checkpoint() -> AutoModelForCausalLM:
     save_state_dict(os.path.join(SAVE_PATH, "model_and_optim"), {"model": new_state_dict})
 
     with open(os.path.join(SAVE_PATH, "config.json"), "w") as f:
-        json.dump({'model': MODEL_CONFIG.as_dict()}, f)
+        json.dump({"model": MODEL_CONFIG.as_dict()}, f)
 
     return hf_model
 
