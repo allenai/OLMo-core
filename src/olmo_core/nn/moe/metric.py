@@ -51,7 +51,7 @@ class MoELoadImbalanceMetric(MoEMetric):
     ):
         del kwargs
         if self.batch_size_per_expert is None:
-            self.batch_size_per_expert = torch.empty_like(batch_size_per_expert)
+            self.batch_size_per_expert = torch.zeros_like(batch_size_per_expert)
         self.batch_size_per_expert += batch_size_per_expert.detach()
 
     @torch.no_grad()
