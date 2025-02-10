@@ -12,6 +12,30 @@ from olmo_core.utils import get_default_device
 from ..distributed.utils import requires_multi_gpu, run_distributed_test
 
 
+def compute_loss(
+    loss_fn: CrossEntropyLoss,
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    batch_num_tokens_for_loss: torch.Tensor,
+) -> torch.Tensor:
+    ce_loss, z_loss = loss_fn(logits, labels)
+    ce_loss = ce_loss / batch_num_tokens_for_loss
+    if z_loss is not None:
+        z_loss = z_loss / batch_num_tokens_for_loss
+
+    loss = ce_loss
+    if z_loss is not None:
+        loss += z_loss
+
+    if loss_fn.reduction != "none":
+        assert loss.shape == tuple(), f"{loss}"
+    else:
+        assert loss.shape == labels.shape
+        loss = loss.sum()
+
+    return loss
+
+
 def run_cross_entropy_loss_parallel(
     fused: bool,
     compile: bool,
@@ -47,21 +71,8 @@ def run_cross_entropy_loss_parallel(
     )
     loss_fn.apply_tp(tp_mesh, use_local_output=True)
 
-    # Get loss tensors.
-    ce_loss, z_loss = loss_fn(logits, labels)
-    ce_loss = ce_loss.div(batch_num_tokens_for_loss)
-    if z_loss is not None:
-        z_loss = z_loss.div(batch_num_tokens_for_loss)
-
-    loss = ce_loss
-    if z_loss is not None:
-        loss += z_loss
-
-    if reduction != "none":
-        assert loss.shape == tuple(), f"{loss}"
-    else:
-        assert loss.shape == labels.shape
-        loss = loss.sum()
+    # Get loss.
+    loss = compute_loss(loss_fn, logits, labels, batch_num_tokens_for_loss)
 
     # Check loss.
     torch.testing.assert_close(loss.detach(), loss)
@@ -101,21 +112,8 @@ def test_cross_entropy_loss_parallel(
     labels[3][12] = -100
     batch_num_tokens_for_loss = (labels != -100).sum()
 
-    # Get losses.
-    ce_loss, z_loss = loss_fn(logits, labels)
-    ce_loss.div_(batch_num_tokens_for_loss)
-    if z_loss is not None:
-        z_loss.div_(batch_num_tokens_for_loss)
-
-    loss = ce_loss
-    if z_loss is not None:
-        loss += z_loss
-
-    if reduction != "none":
-        assert loss.shape == tuple()
-    else:
-        assert loss.shape == labels.shape
-        loss = loss.sum()
+    # Get loss.
+    loss = compute_loss(loss_fn, logits, labels, batch_num_tokens_for_loss)
 
     # Trigger backward pass.
     loss.backward()
