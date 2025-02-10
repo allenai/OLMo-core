@@ -5,7 +5,7 @@ import torch
 from torch.distributed import init_device_mesh
 from torch.distributed.tensor import Shard, distribute_tensor
 
-from olmo_core.distributed.utils import get_world_size
+from olmo_core.distributed.utils import get_local_tensor, get_world_size
 from olmo_core.nn.cross_entropy_loss import CrossEntropyLoss
 from olmo_core.utils import get_default_device
 
@@ -71,7 +71,7 @@ def run_cross_entropy_loss_parallel(
     assert logits.grad is not None
 
     # Check gradients.
-    torch.testing.assert_close(logits.grad, grad)
+    torch.testing.assert_close(get_local_tensor(logits.grad), get_local_tensor(grad))
 
 
 @pytest.mark.parametrize(
