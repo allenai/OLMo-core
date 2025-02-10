@@ -49,9 +49,9 @@ def run_cross_entropy_loss_parallel(
 
     # Get loss tensors.
     ce_loss, z_loss = loss_fn(logits, labels)
-    ce_loss.div_(batch_num_tokens_for_loss)
+    ce_loss = ce_loss.div(batch_num_tokens_for_loss)
     if z_loss is not None:
-        z_loss.div_(batch_num_tokens_for_loss)
+        z_loss = z_loss.div(batch_num_tokens_for_loss)
 
     loss = ce_loss
     if z_loss is not None:
