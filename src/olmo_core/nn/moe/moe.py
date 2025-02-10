@@ -145,7 +145,9 @@ class MoEBase(nn.Module):
             else shared_mlp.build(d_model, hidden_size, dtype=dtype, init_device=init_device)
         )
         self.losses: List[MoELoss] = []
-        self.metrics: List[MoEMetric] = [MoELoadImbalanceMetric(num_experts=num_experts)]
+        self.metrics: List[MoEMetric] = [
+            MoELoadImbalanceMetric(num_experts=num_experts, top_k=self.router.top_k)
+        ]
         if lb_loss_weight is not None:
             self.losses.append(
                 MoELoadBalancingLoss(

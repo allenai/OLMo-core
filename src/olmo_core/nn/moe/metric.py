@@ -35,10 +35,11 @@ class MoEMetric(metaclass=ABCMeta):
 
 
 class MoELoadImbalanceMetric(MoEMetric):
-    def __init__(self, *, num_experts: int):
+    def __init__(self, *, num_experts: int, top_k: int):
         from olmo_core.train.common import ReduceType
 
         self.num_experts = num_experts
+        self.top_k = top_k
         self.batch_size_per_expert: Optional[torch.Tensor] = None
         self.reduction = ReduceType.max
 
@@ -64,7 +65,7 @@ class MoELoadImbalanceMetric(MoEMetric):
                 f"'{self.__class__.__name__}.update()' needs to be called before '.compute()'"
             )
 
-        ideal_bz_per_expert = total_bz / self.num_experts
+        ideal_bz_per_expert = total_bz * (self.top_k / self.num_experts)
         load_imbalance = (
             self.batch_size_per_expert.max() - ideal_bz_per_expert
         ) / ideal_bz_per_expert
