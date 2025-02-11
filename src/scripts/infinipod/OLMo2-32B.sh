@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -exuo pipefail
 
+COMMAND=$1
+shift
+
 BASE_RUN_NAME=$1
 shift
 
@@ -21,4 +24,4 @@ torchrun \
   --node_rank $SLURM_PROCID \
   --rdzv_backend c10d \
   --rdzv_endpoint $MASTER_ADDR:$MASTER_PORT \
-  src/scripts/train/OLMo2-32B.py $RUN_NAME ${@}
+  src/scripts/train/OLMo2-32B.py $COMMAND $RUN_NAME ${@}
