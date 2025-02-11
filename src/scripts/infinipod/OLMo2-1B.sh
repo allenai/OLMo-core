@@ -7,6 +7,9 @@ shift
 BASE_RUN_NAME=$1
 shift
 
+CLUSTER=$1
+shift
+
 # Tell OLMo all ranks DO share the same filesystem for checkpoints.
 export OLMO_SHARED_FS=1
 # # Tell OLMo all ranks do NOT share the same filesystem for checkpoints.
@@ -24,4 +27,4 @@ torchrun \
   --node_rank $SLURM_PROCID \
   --rdzv_backend c10d \
   --rdzv_endpoint $MASTER_ADDR:$MASTER_PORT \
-  src/scripts/train/OLMo2-1B.py $COMMAND $RUN_NAME --trainer.save_folder=$SAVE_FOLDER ${@}
+  src/scripts/train/OLMo2-1B.py $COMMAND $RUN_NAME $CLUSTER --trainer.save_folder=$SAVE_FOLDER ${@}
