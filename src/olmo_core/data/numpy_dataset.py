@@ -746,6 +746,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
     def _write_instance_indices(self):
         paths_needed: List[PathOrStr] = []
         for path in self.paths:
+            log.info(f"DEBUG: path is '{path}'")
             indices_path = self._get_instance_indices_path(path)
             if indices_path.is_file():
                 log.info(f"Reusing instance indices for '{path}' at:\n'{indices_path}'")
