@@ -34,7 +34,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         vocab_size=common.tokenizer.padded_vocab_size(),
         compile=compile,
         fused_ops=False,
-        use_flash=not compile,
+        use_flash=False,
         # dp_config=TransformerDataParallelConfig(
         #     name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         # ),
@@ -63,7 +63,7 @@ def build_optim_config(common: CommonComponents) -> SkipStepAdamWConfig:
             OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
         ],
         # fused=True,
-        compile=True,
+        # compile=True,
     )
 
 
