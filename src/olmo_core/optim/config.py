@@ -172,7 +172,7 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
             log.info("Compiling optimizer step...")
             optim.step = torch.compile(optim.step)
 
-        # Register hook to reset fixed fields after compiling the optimizer.
+        # Register hook to reset fixed fields after loading a checkpoint.
         def reset_fixed_fields(opt: torch.optim.Optimizer):
             for fixed_fields, group in zip(fixed_fields_per_group, opt.param_groups):
                 group.update(fixed_fields)
