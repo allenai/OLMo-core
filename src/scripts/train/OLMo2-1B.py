@@ -9,6 +9,7 @@ from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelC
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
+from olmo_core.train.checkpoint import CheckpointerConfig
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -43,6 +44,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         TrainerConfig(
             save_folder=common.save_folder,
             rank_microbatch_size=1 * 4096,
+            checkpointer=CheckpointerConfig(
+                save_thread_count=1, load_thread_count=16, throttle_uploads=True
+            ),
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
