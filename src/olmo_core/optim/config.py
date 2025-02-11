@@ -148,8 +148,8 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         optim: torch.optim.Optimizer = self.optimizer()(self.build_groups(model), **kwargs)
 
         # Set 'lr' and 'initial_lr' in each group if needed.
-        fixed_fields: List[Dict[str, Any]] = [{} for _ in optim.param_groups]
-        for i, group in enumerate(optim.param_groups):
+        fixed_fields_per_group: List[Dict[str, Any]] = [{} for _ in optim.param_groups]
+        for fixed_fields, group in zip(fixed_fields_per_group, optim.param_groups):
             lr: Optional[float] = None
             if "lr" in group:
                 lr = group["lr"]
@@ -166,7 +166,7 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
 
             for k in self.fixed_fields:
                 if k in group:
-                    fixed_fields[i][k] = group[k]
+                    fixed_fields[k] = group[k]
 
         if self.compile:
             log.info("Compiling optimizer step...")
@@ -174,8 +174,8 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
 
         # Register hook to reset fixed fields after compiling the optimizer.
         def reset_fixed_fields(opt: torch.optim.Optimizer):
-            for fields, group in zip(fixed_fields, opt.param_groups):
-                group.update(fields)
+            for fixed_fields, group in zip(fixed_fields_per_group, opt.param_groups):
+                group.update(fixed_fields)
 
         optim.register_load_state_dict_post_hook(reset_fixed_fields)
 
