@@ -45,4 +45,8 @@ export TORCH_DIST_INIT_BARRIER=1
 # Better error handling from Python
 export PYTHONFAULTHANDLER=1
 
+# Set the temp dir
+export TMPDIR=/mnt/localdisk/tmp
+mkdir -p $TMPDIR
+
 exec ${@}
