@@ -91,9 +91,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_async=True,
             ),
         )
-        .with_callback(
-            "profiler", ProfilerCallback(skip_first=3, wait=10, warmup=2, active=3, repeat=1)
-        )
+        # .with_callback(
+        #     "profiler", ProfilerCallback(skip_first=3, wait=10, warmup=2, active=3, repeat=1)
+        # )
         .with_callback(
             "comet",
             CometCallback(
