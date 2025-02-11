@@ -16,6 +16,11 @@ source /home/common/shanea/.env
 set -x
 set +a
 
+# Move AWS credentials from env to relevant files
+mkdir -p ~/.aws
+printenv AWS_CONFIG > ~/.aws/config
+printenv AWS_CREDENTIALS > ~/.aws/credentials
+
 # Set up conda
 eval "$(conda shell.bash hook)"
 conda activate $CONDA_ENV
