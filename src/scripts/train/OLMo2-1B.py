@@ -44,7 +44,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=10,
             cancel_check_interval=1,
             z_loss_multiplier=1e-5,
-            compile_loss=True,
+            compile_loss=False,
         )
         .with_callback(
             "checkpointer",
