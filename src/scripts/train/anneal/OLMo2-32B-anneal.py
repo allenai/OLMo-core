@@ -311,6 +311,7 @@ class AnnealingConfig(Config):
                     ],
                     tokenizer=tokenizer_config,
                     eval_interval=1000,
+                    enabled=False
                 ),
             ),
         ).merge(overrides)
