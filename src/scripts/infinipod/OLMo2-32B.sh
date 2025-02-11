@@ -24,4 +24,4 @@ torchrun \
   --node_rank $SLURM_PROCID \
   --rdzv_backend c10d \
   --rdzv_endpoint $MASTER_ADDR:$MASTER_PORT \
-  src/scripts/train/OLMo2-32B.py $COMMAND $RUN_NAME ${@}
+  src/scripts/train/OLMo2-32B.py $COMMAND $RUN_NAME --trainer.save_folder=$SAVE_FOLDER ${@}
