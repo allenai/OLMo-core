@@ -9,4 +9,4 @@
 #SBATCH --mem=0			# All memory on the node
 
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
-srun --mpi=pmi2 --nodes="$SLURM_NNODES" "${SCRIPT_DIR}/run_with_environment.sh" ${@}
+srun --mpi=pmi2 --nodes="$SLURM_NNODES" "src/scripts/infinipod/run_with_environment.sh" ${@}
