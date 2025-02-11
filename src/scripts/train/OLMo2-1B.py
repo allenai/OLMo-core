@@ -15,8 +15,11 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     return TransformerConfig.olmo2_1B(
         vocab_size=common.tokenizer.padded_vocab_size(),
         compile=False,
+        # dp_config=TransformerDataParallelConfig(
+        #     name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
+        # ),
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
+            name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
     )
 
