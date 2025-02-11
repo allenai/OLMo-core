@@ -15,10 +15,6 @@ shift
 # Tell OLMo all ranks do NOT share the same filesystem for checkpoints.
 unset OLMO_SHARED_FS
 
-# Debugging
-export TORCH_LOGS="+dynamo"
-export TORCHDYNAMO_VERBOSE=1
-
 # Job details
 RUN_NAME=${BASE_RUN_NAME}-$(date -u +"%Y%m%d_%H%M%S")
 SAVE_FOLDER=gs://infinipod-checkpoints/shanea/checkpoints/OLMo-small/$RUN_NAME
