@@ -17,7 +17,7 @@ unset OLMO_SHARED_FS
 
 # Job details
 RUN_NAME=${BASE_RUN_NAME}-$(date -u +"%Y%m%d_%H%M%S")
-SAVE_FOLDER=gs://infinipod-checkpoints/shanea/checkpoints/OLMo-large/$BASE_RUN_NAME
+SAVE_FOLDER=gs://infinipod-checkpoints/shanea/checkpoints/peteish32/$BASE_RUN_NAME
 mkdir -p $SAVE_FOLDER
 
 torchrun \
