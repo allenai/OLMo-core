@@ -17,7 +17,7 @@ export OLMO_SHARED_FS=1
 
 # Job details
 RUN_NAME=${BASE_RUN_NAME}-$(date -u +"%Y%m%d_%H%M%S")
-SAVE_FOLDER=/mnt/checkpoints/shanea/checkpoints/OLMo-small/$RUN_NAME
+SAVE_FOLDER=gs://infinipod-checkpoints/shanea/checkpoints/OLMo-small/$RUN_NAME
 mkdir -p $SAVE_FOLDER
 
 torchrun \
