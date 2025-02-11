@@ -50,6 +50,9 @@ def get_root_dir(cluster: str) -> str:
 
 
 def get_work_dir(root_dir: str) -> str:
+    if root_dir.startswith("/mnt/datasets"):
+        root_dir = root_dir.replace("/mnt/datasets", "/mnt/localdisk")
+
     return (
         "./dataset-cache"
         if is_url(root_dir)
