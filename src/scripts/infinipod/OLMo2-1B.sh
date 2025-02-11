@@ -10,10 +10,10 @@ shift
 CLUSTER=$1
 shift
 
-# Tell OLMo all ranks DO share the same filesystem for checkpoints.
-export OLMO_SHARED_FS=1
-# # Tell OLMo all ranks do NOT share the same filesystem for checkpoints.
-# unset OLMO_SHARED_FS
+# # Tell OLMo all ranks DO share the same filesystem for checkpoints.
+# export OLMO_SHARED_FS=1
+# Tell OLMo all ranks do NOT share the same filesystem for checkpoints.
+unset OLMO_SHARED_FS
 
 # Job details
 RUN_NAME=${BASE_RUN_NAME}-$(date -u +"%Y%m%d_%H%M%S")
