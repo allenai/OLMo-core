@@ -161,7 +161,7 @@ def build_common_components(
     dataset_config = NumpyDatasetConfig.from_data_mix(
         DataMix.OLMoE_mix_0824,
         tokenizer=tokenizer_config,
-        mix_base_dir=root_dir,
+        mix_base_dir="/mnt/datasets",
         sequence_length=4096,
         max_target_sequence_length=8192,
         min_sequence_length=256,
@@ -186,7 +186,7 @@ def build_common_components(
             eval_dataset=NumpyDatasetConfig.from_data_mix(
                 DataMix.v3_small_ppl_validation,
                 name=NumpyDatasetType.padded_fsl,
-                mix_base_dir=root_dir,
+                mix_base_dir="/mnt/datasets",
                 sequence_length=dataset_config.effective_sequence_length,
                 tokenizer=tokenizer_config,
                 work_dir=get_work_dir(root_dir),

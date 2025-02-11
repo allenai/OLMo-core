@@ -43,7 +43,7 @@ def get_root_dir(cluster: str) -> str:
     elif "augusta" in cluster:
         root_dir = "gs://ai2-llm"
     elif "infinipod" in cluster:
-        root_dir = "/mnt/datasets"
+        root_dir = "/mnt/localdisk"
     elif "local" in cluster:
         root_dir = "gs://ai2-llm"
     return root_dir
