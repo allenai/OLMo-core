@@ -73,7 +73,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/{project_name}/",
             rank_microbatch_size=2 * 4096,
-            load_path="/mnt/checkpoints/shanea/checkpoints/peteish32/step666000",
+            load_path="gs://ai2-llm/checkpoints/peteish32/step666000",
             checkpointer=CheckpointerConfig(
                 save_thread_count=1, load_thread_count=32, throttle_uploads=True
             ),
