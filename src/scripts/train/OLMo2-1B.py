@@ -14,7 +14,7 @@ from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandB
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     return TransformerConfig.olmo2_1B(
         vocab_size=common.tokenizer.padded_vocab_size(),
-        compile=True,
+        compile=False,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
