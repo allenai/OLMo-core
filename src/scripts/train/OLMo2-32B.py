@@ -3,6 +3,7 @@ Train a 32B OLMo model. Run this script without any arguments to see usage info.
 """
 
 import logging
+from math import sqrt
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
@@ -15,7 +16,7 @@ from olmo_core.nn.transformer import (
     TransformerDataParallelConfig,
 )
 from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig
-from olmo_core.train import Duration, DurationUnit, TrainerConfig
+from olmo_core.train import Duration, DurationUnit, TrainerConfig, LoadStrategy
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
@@ -44,11 +45,11 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         #     reduce_dtype=DType.float32,
         #     num_replicas=64 // 16,  # common.launch.num_nodes // 2,
         # ),
-        #ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
-        ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=[f"blocks.{i}.feed_forward" for i in range(64)],
-        ),
+        ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
+        #ac_config=TransformerActivationCheckpointingConfig(
+        #    mode=TransformerActivationCheckpointingMode.selected_modules,
+        #    modules=[f"blocks.{i}.feed_forward" for i in range(64)],
+        #),
         float8_config=Float8Config(compile=compile, enabled=False),
     )
 
@@ -56,7 +57,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 def build_optim_config(common: CommonComponents) -> SkipStepAdamWConfig:
     del common
     return SkipStepAdamWConfig(
-        lr=6e-4,
+        lr=6e-4 * sqrt(2),
         weight_decay=0.1,
         betas=(0.9, 0.95),
         group_overrides=[
@@ -68,11 +69,13 @@ def build_optim_config(common: CommonComponents) -> SkipStepAdamWConfig:
 
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
-    project_name = "peteish32"
+    project_name = "peteish32-2xbsz"
     return (
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/{project_name}/",
-            rank_microbatch_size=2 * 4096,
+            load_path=f"gs://ai2-llm/checkpoints/peteish32/step658000/",
+            load_strategy=LoadStrategy.always,
+            rank_microbatch_size=4 * 4096,
             checkpointer=CheckpointerConfig(
                 save_thread_count=1, load_thread_count=32, throttle_uploads=True
             ),
@@ -197,7 +200,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 if __name__ == "__main__":
     main(
-        global_batch_size=2048 * 4096,
+        global_batch_size=2048 * 4096 * 2,
         model_config_builder=build_model_config,
         optim_config_builder=build_optim_config,
         trainer_config_builder=build_trainer_config,
