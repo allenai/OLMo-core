@@ -35,6 +35,7 @@ def build_optim_config(common: CommonComponents) -> AdamWConfig:
 
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
+    project = "shanea-testing"
     return (
         TrainerConfig(
             save_folder=common.save_folder,
@@ -58,7 +59,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             CometCallback(
                 name=common.run_name,
                 workspace="ai2",
-                project="OLMo-core-1B",
+                project=project,
                 enabled=True,
                 cancel_check_interval=10,
             ),
@@ -68,7 +69,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=common.run_name,
                 entity="ai2-llm",
-                project="OLMo-core-1B",
+                project=project,
                 enabled=False,
                 cancel_check_interval=10,
             ),
