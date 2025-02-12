@@ -4,6 +4,10 @@ import pytest
 import torch
 import torch.nn as nn
 
+from olmo_core.distributed.checkpoint import (
+    load_model_and_optim_state,
+    save_model_and_optim_state,
+)
 from olmo_core.optim import AdamWConfig, OptimGroupOverride, SkipStepAdamWConfig
 
 
@@ -49,7 +53,7 @@ def test_adamw_config_to_optim_with_group_overrides():
 
 
 @pytest.mark.parametrize("device", DEVICES)
-def test_adamw(device: torch.device):
+def test_adamw(device: torch.device, tmp_path):
     config = AdamWConfig()
     model = MyModel().train().to(device)
     optim = config.build(model)
@@ -61,6 +65,14 @@ def test_adamw(device: torch.device):
     optim.zero_grad(set_to_none=True)
     model(torch.randint(0, 1024, (2, 8), device=device).int()).sum().backward()
     optim.step()
+
+    # Save and then restore a checkpoint, and make sure fixed fields reset.
+    for group in optim.param_groups:
+        group["initial_lr"] = 1e-8
+    save_model_and_optim_state(tmp_path, model, optim)
+    load_model_and_optim_state(tmp_path, model, optim)
+    for group in optim.param_groups:
+        assert group["initial_lr"] == config.lr
 
 
 @pytest.mark.parametrize("device", DEVICES)
