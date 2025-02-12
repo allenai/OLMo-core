@@ -19,6 +19,7 @@ unset OLMO_SHARED_FS
 export TRITON_HOME=/mnt/localdisk
 mkdir -p "$TRITON_HOME/.triton"
 chmod 777 "$TRITON_HOME/.triton"
+export TORCHINDUCTOR_FORCE_DISABLE_CACHES=1
 
 # Job details
 RUN_NAME=${BASE_RUN_NAME}-$(date -u +"%Y%m%d_%H%M%S")
