@@ -27,11 +27,7 @@ from olmo_core.internal.common import build_launch_config, get_root_dir, get_wor
 from olmo_core.io import resource_path
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import (
-    TransformerActivationCheckpointingConfig,
-    TransformerActivationCheckpointingMode,
     TransformerConfig,
-    TransformerDataParallelConfig,
-    TransformerDataParallelWrappingStrategy,
 )
 from olmo_core.optim import (
     CosWithWarmup,
@@ -59,8 +55,8 @@ from olmo_core.train.callbacks import (
     DownstreamEvaluatorCallbackConfig,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
-    GradClipperCallback,
-    SchedulerCallback,
+    # GradClipperCallback,
+    # SchedulerCallback,
 )
 from olmo_core.train.checkpoint import CheckpointerConfig
 from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
@@ -156,10 +152,9 @@ class LcContTrain(Config):
                 cluster=cluster,
                 nccl_debug=False,
             ),
-
             model = TransformerTrainModuleConfig(
                 rank_microbatch_size=1 * CONTEXT_LENGTH,
-                max_sequence_length=common.dataset.effective_sequence_length,
+                max_sequence_length=CONTEXT_LENGTH,
                 compile_model=True,
                 compile_loss=True,
                 
@@ -177,8 +172,8 @@ class LcContTrain(Config):
                 ac_config=TransformerActivationCheckpointingConfig(),
                 float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
                 max_grad_norm=1.0,
-                scheduler=CosWithWarmup(warmup_steps=2000),
-            )
+                scheduler=CosWithWarmup(warmup_steps=2000, alpha_f=0.1,),
+            ),
             # model=TransformerConfig.olmo2_7B(
             #     vocab_size=tokenizer_config.padded_vocab_size(),
             #     compile=True,
@@ -250,20 +245,20 @@ class LcContTrain(Config):
                     cancel_check_interval=10,
                 ),
             )
-            .with_callback(
-                "lr_scheduler",
-                SchedulerCallback(
-                    scheduler=CosWithWarmup(
-                        warmup_steps=2000, 
-                        alpha_f=0.1,
-                    )
-                ),
-            )
+            # .with_callback(
+            #     "lr_scheduler",
+            #     SchedulerCallback(
+            #         scheduler=CosWithWarmup(
+            #             warmup_steps=2000, 
+            #             alpha_f=0.1,
+            #         )
+            #     ),
+            # )
             .with_callback(
                 "gpu_monitor",
                 GPUMemoryMonitorCallback(),
             )
-            .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0))
+            # .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0))
             .with_callback("config_saver", ConfigSaverCallback())
             .with_callback("garbage_collector", GarbageCollectorCallback())
             .with_callback(
