@@ -43,7 +43,7 @@ from olmo_core.train import (
     Duration,
     TrainerConfig,
     prepare_training_environment,
-    teardown_training_environment,
+    teardown_training_environment, LoadStrategy,
 )
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
@@ -191,6 +191,7 @@ class AnnealingConfig(Config):
             ),
             trainer=TrainerConfig(
                 save_folder=f"gs://ai2-llm/checkpoints/peteish32-anneal/{run_name}",
+                load_strategy=LoadStrategy.always,
                 rank_microbatch_size=4 * 4096,  # NOTE: again this is specified in tokens.
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
