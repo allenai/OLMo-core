@@ -357,15 +357,14 @@ def train(config: LcContTrain):
 
     # Build components.
     model = config.model.build(
-        init_device="meta",
         device=device,
         max_seq_len=config.dataset.sequence_length,
         # mesh=world_mesh,
     )
     optim = config.optim.build(model)
     dataset = config.dataset.build()
-    data_loader = config.data_loader.build(dataset, mesh=world_mesh)
-    trainer = config.trainer.build(model, optim, data_loader, mesh=world_mesh)
+    data_loader = config.data_loader.build(dataset)
+    trainer = config.trainer.build(model, optim, data_loader)
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
