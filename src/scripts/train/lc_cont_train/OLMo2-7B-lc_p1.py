@@ -153,7 +153,7 @@ class LcContTrain(Config):
                 cluster=cluster,
                 nccl_debug=False,
             ),
-            model = TransformerTrainModuleConfig(
+            train_module = TransformerTrainModuleConfig(
                 rank_microbatch_size=1 * CONTEXT_LENGTH,
                  optim=AdamWConfig(
                     lr=3e-5,
@@ -183,12 +183,12 @@ class LcContTrain(Config):
                 max_grad_norm=1.0,
                 scheduler=CosWithWarmup(warmup_steps=2000, alpha_f=0.1,),
             ),
-            # model=TransformerConfig.olmo2_7B(
-            #     vocab_size=tokenizer_config.padded_vocab_size(),
-            #     compile=True,
+            model=TransformerConfig.olmo2_7B(
+                vocab_size=tokenizer_config.padded_vocab_size(),
+                compile=True,
             #     fused_ops=False,
             #     use_flash=True,
-            #     rope_theta = 658623,
+                rope_theta = 658623,
             #     dp_config=TransformerDataParallelConfig(
             #         name=DataParallelType.fsdp,
             #         param_dtype=DType.bfloat16,
@@ -199,7 +199,7 @@ class LcContTrain(Config):
             #         mode=TransformerActivationCheckpointingMode.selected_modules,
             #         modules=["blocks.*.feed_forward"],
             #     ),
-            # ),
+            ),
             optim=AdamWConfig(
                 lr=2e-5,
                 weight_decay=0.1,
@@ -358,6 +358,7 @@ def train(config: LcContTrain):
     # Build components.
     model = config.model.build(
         device=device,
+        model=TransformerConfig.olmo2_7B()
         # max_seq_len=config.dataset.sequence_length,
         # mesh=world_mesh,
     )
