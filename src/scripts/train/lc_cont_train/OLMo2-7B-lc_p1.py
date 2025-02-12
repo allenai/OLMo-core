@@ -353,7 +353,7 @@ def train(config: LcContTrain):
     device = get_default_device()
 
     # Build mesh, if needed.
-    world_mesh = config.model.build_mesh(device=device)
+    # world_mesh = config.model.build_mesh(device=device)
 
     # Build components.
     model = config.model.build(
