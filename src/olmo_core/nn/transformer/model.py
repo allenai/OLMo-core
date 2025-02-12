@@ -241,7 +241,7 @@ class Transformer(nn.Module):
         :param loss_parallel: Set to ``True`` if parallelizing the loss function as well.
         :param float8_enabled: Set this to ``True`` if training with float8 linear layers.
         """
-        from torch.distributed._tensor import Replicate
+        from torch.distributed.tensor import Replicate
         from torch.distributed.tensor.parallel import (
             PrepareModuleInput,
             RowwiseParallel,
