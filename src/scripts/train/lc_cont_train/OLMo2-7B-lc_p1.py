@@ -358,7 +358,7 @@ def train(config: LcContTrain):
 
     # Build components.
     model = config.model.build(
-        device=device,
+        # device=device,
         init_device="meta",
         # max_seq_len=config.dataset.sequence_length,
         # mesh=world_mesh,
