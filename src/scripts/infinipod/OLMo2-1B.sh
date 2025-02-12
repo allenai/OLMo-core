@@ -17,8 +17,8 @@ unset OLMO_SHARED_FS
 
 # Change triton locatin
 export TRITON_HOME=/mnt/localdisk
-
-whoami
+mkdir -p "$TRITON_HOME/.triton"
+chmod 777 "$TRITON_HOME/.triton"
 
 # Job details
 RUN_NAME=${BASE_RUN_NAME}-$(date -u +"%Y%m%d_%H%M%S")
