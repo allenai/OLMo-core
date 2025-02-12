@@ -16,13 +16,12 @@ shift
 unset OLMO_SHARED_FS
 
 # Change triton locatin
-export TRITON_HOME=/mnt/localdisk/.triton
-mkdir -p $TRITON_HOME
+export TRITON_HOME=/mnt/localdisk
 
 # Job details
 RUN_NAME=${BASE_RUN_NAME}-$(date -u +"%Y%m%d_%H%M%S")
 SAVE_FOLDER=gs://infinipod-checkpoints/shanea/checkpoints/OLMo-small/$BASE_RUN_NAME
-mkdir -p $SAVE_FOLDER
+# mkdir -p $SAVE_FOLDER
 
 torchrun \
   --nnodes $SLURM_NNODES \
