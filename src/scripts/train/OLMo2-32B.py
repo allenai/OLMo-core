@@ -42,7 +42,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            num_replicas=64 // 16,  # common.launch.num_nodes // 2,
+            num_replicas=8 // 2,  # common.launch.num_nodes // 2,
         ),
         ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
         # ac_config=TransformerActivationCheckpointingConfig(
