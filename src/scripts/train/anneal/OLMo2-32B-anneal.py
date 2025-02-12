@@ -141,8 +141,10 @@ class AnnealingConfig(Config):
         scheduler = CosWithWarmup(**scheduler_config)
         starting_lr = float(scheduler.get_lr(base_lr, last_pretrain_step, max_pretrain_steps))
 
+        run_name = f"peteish32-from{last_pretrain_step}-{run_name}"
+
         return AnnealingConfig(
-            run_name=f"peteish32-from{last_pretrain_step}-{run_name}",
+            run_name=run_name,
             launch=build_launch_config(
                 name=run_name,
                 root_dir=root_dir,
