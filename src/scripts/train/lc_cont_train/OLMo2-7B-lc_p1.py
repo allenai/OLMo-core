@@ -111,7 +111,8 @@ class LcContTrain(Config):
 
     run_name: str
     launch: BeakerLaunchConfig
-    model: TransformerTrainModuleConfig
+    model: TransformerConfig
+    train_module: TransformerTrainModuleConfig
     optim: OptimConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
@@ -185,7 +186,7 @@ class LcContTrain(Config):
             ),
             model=TransformerConfig.olmo2_7B(
                 vocab_size=tokenizer_config.padded_vocab_size(),
-                compile=True,
+                # compile=True,
             #     fused_ops=False,
             #     use_flash=True,
                 rope_theta = 658623,
