@@ -15,7 +15,7 @@ from olmo_core.train.checkpoint import CheckpointerConfig
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     return TransformerConfig.olmo2_1B(
         vocab_size=common.tokenizer.padded_vocab_size(),
-        compile=False,
+        compile=True,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
@@ -51,7 +51,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=10,
             cancel_check_interval=1,
             z_loss_multiplier=1e-5,
-            compile_loss=False,
+            compile_loss=True,
         )
         .with_callback(
             "checkpointer",
