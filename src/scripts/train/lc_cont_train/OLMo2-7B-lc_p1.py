@@ -14,6 +14,7 @@ import torch
 from rich import print
 
 from olmo_core.config import Config, DType
+from olmo_core.float8 import Float8Config
 from olmo_core.data import (
     DataMixBase,
     NumpyDataLoaderConfig,
@@ -154,10 +155,18 @@ class LcContTrain(Config):
             ),
             model = TransformerTrainModuleConfig(
                 rank_microbatch_size=1 * CONTEXT_LENGTH,
+                 optim=AdamWConfig(
+                    lr=3e-5,
+                    weight_decay=0.1,
+                    betas=(0.9, 0.95),
+                    group_overrides=[
+                        OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                    ],
+                    fused=True,
+                ),
                 max_sequence_length=CONTEXT_LENGTH,
                 compile_model=True,
                 compile_loss=True,
-                
                 z_loss_multiplier=1e-5,
                 dp_config=TransformerDataParallelConfig(
                     name=DataParallelType.fsdp,
@@ -213,8 +222,7 @@ class LcContTrain(Config):
                 num_workers=4,
             ),
             trainer=TrainerConfig(
-                save_folder=f"gs://ai2-llm/checkpoints/dustins/{run_name}",
-                rank_microbatch_size= 1 * CONTEXT_LENGTH,  # NOTE: again this is specified in tokens.
+                save_folder=f"oe-training-default/ai2-llm/checkpoints/dustins/{run_name}",
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
                 ),
@@ -222,10 +230,6 @@ class LcContTrain(Config):
                 load_path=load_path,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
-                z_loss_multiplier=1e-5,
-                compile_model=True,
-                compile_loss=True,
-                fused_loss=True,
                 max_duration=Duration.tokens(int(20e9 / 1000)),
             )
             .with_callback(
@@ -258,7 +262,7 @@ class LcContTrain(Config):
                 "gpu_monitor",
                 GPUMemoryMonitorCallback(),
             )
-            # .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0))
+            # .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0)
             .with_callback("config_saver", ConfigSaverCallback())
             .with_callback("garbage_collector", GarbageCollectorCallback())
             .with_callback(
