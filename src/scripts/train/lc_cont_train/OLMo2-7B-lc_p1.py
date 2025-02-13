@@ -154,36 +154,36 @@ class LcContTrain(Config):
                 cluster=cluster,
                 nccl_debug=False,
             ),
-            # train_module = TransformerTrainModuleConfig(
-            #     rank_microbatch_size=1 * CONTEXT_LENGTH,
-            #      optim=AdamWConfig(
-            #         lr=3e-5,
-            #         weight_decay=0.1,
-            #         betas=(0.9, 0.95),
-            #         group_overrides=[
-            #             OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-            #         ],
-            #         fused=True,
-            #     ),
-            #     max_sequence_length=CONTEXT_LENGTH,
-            #     compile_model=True,
-            #     compile_loss=True,
-            #     z_loss_multiplier=1e-5,
-            #     dp_config=TransformerDataParallelConfig(
-            #         name=DataParallelType.fsdp,
-            #         param_dtype=DType.bfloat16,
-            #         reduce_dtype=DType.float32,
-            #         wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
-            #     ),
-            #     tp_config=TransformerTensorParallelConfig(
-            #         degree=2,
-            #         loss_parallel=True,
-            #     ),
-            #     ac_config=TransformerActivationCheckpointingConfig(),
-            #     float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
-            #     max_grad_norm=1.0,
-            #     scheduler=CosWithWarmup(warmup_steps=2000, alpha_f=0.1,),
-            # ),
+            train_module = TransformerTrainModuleConfig(
+                rank_microbatch_size=1 * CONTEXT_LENGTH,
+                 optim=AdamWConfig(
+                    lr=3e-5,
+                    weight_decay=0.1,
+                    betas=(0.9, 0.95),
+                    group_overrides=[
+                        OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                    ],
+                    fused=True,
+                ),
+                max_sequence_length=CONTEXT_LENGTH,
+                compile_model=True,
+                compile_loss=True,
+                z_loss_multiplier=1e-5,
+                dp_config=TransformerDataParallelConfig(
+                    name=DataParallelType.fsdp,
+                    param_dtype=DType.bfloat16,
+                    reduce_dtype=DType.float32,
+                    wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
+                ),
+                # tp_config=TransformerTensorParallelConfig(
+                #     degree=2,
+                #     loss_parallel=True,
+                # ),
+                ac_config=TransformerActivationCheckpointingConfig(),
+                float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
+                max_grad_norm=1.0,
+                scheduler=CosWithWarmup(warmup_steps=2000, alpha_f=0.1,),
+            ),
             model=TransformerConfig.olmo2_7B(
                 vocab_size=tokenizer_config.padded_vocab_size(),
                 # compile=True,

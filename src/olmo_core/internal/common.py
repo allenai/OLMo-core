@@ -84,7 +84,7 @@ def build_launch_config(
         num_nodes=1,
         num_gpus=8,
         shared_filesystem=not is_url(root_dir),
-        allow_dirty=False,
+        allow_dirty=True,
         env_vars=[BeakerEnvVar(name="NCCL_DEBUG", value="INFO" if nccl_debug else "WARN")],
         env_secrets=[
             BeakerEnvSecret(name="BEAKER_TOKEN", secret=f"{beaker_user}_BEAKER_TOKEN"),
