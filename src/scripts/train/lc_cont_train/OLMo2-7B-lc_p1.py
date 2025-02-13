@@ -113,7 +113,7 @@ class LcContTrain(Config):
     launch: BeakerLaunchConfig
     model: TransformerConfig
     train_module: TransformerTrainModuleConfig
-    optim: OptimConfig
+    # optim: OptimConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
     trainer: TrainerConfig
@@ -201,15 +201,15 @@ class LcContTrain(Config):
             #         modules=["blocks.*.feed_forward"],
             #     ),
             ),
-            optim=AdamWConfig(
-                lr=2e-5,
-                weight_decay=0.1,
-                betas=(0.9, 0.95),
-                group_overrides=[
-                    OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-                ],
-                fused=True,
-            ),
+            # optim=AdamWConfig(
+            #     lr=2e-5,
+            #     weight_decay=0.1,
+            #     betas=(0.9, 0.95),
+            #     group_overrides=[
+            #         OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+            #     ],
+            #     fused=True,
+            # ),
             dataset=NumpyDatasetConfig.from_data_mix(
                 AnnealingDataMix.dolmino,
                 tokenizer=tokenizer_config,
@@ -365,8 +365,8 @@ def train(config: LcContTrain):
     )
     # optim = config.optim.build(model)
     dataset = config.dataset.build()
-    data_loader = config.data_loader.build(dataset)
     train_module = config.train_module.build(model, device)
+    data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
     trainer = config.trainer.build(train_module, data_loader)
 
     # Record the config to W&B/Comet and each checkpoint dir.
