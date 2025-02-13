@@ -25,7 +25,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         num_gpus=4,
         shared_filesystem=True,
         nfs=True,
-        allow_dirty=True,
+        allow_dirty=False,
     )
 
 

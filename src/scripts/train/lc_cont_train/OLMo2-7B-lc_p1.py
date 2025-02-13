@@ -175,10 +175,10 @@ class LcContTrain(Config):
                     reduce_dtype=DType.float32,
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
                 ),
-                # tp_config=TransformerTensorParallelConfig(
-                #     degree=2,
-                #     loss_parallel=True,
-                # ),
+                tp_config=TransformerTensorParallelConfig(
+                    degree=2,
+                    loss_parallel=True,
+                ),
                 ac_config=TransformerActivationCheckpointingConfig(),
                 float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
                 max_grad_norm=1.0,
@@ -363,10 +363,10 @@ def train(config: LcContTrain):
         # max_seq_len=config.dataset.sequence_length,
         # mesh=world_mesh,
     )
-    train_module = config.train_module.build(model, device)
     # optim = config.optim.build(model)
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(dataset)
+    train_module = config.train_module.build(model, device)
     trainer = config.trainer.build(train_module, data_loader)
 
     # Record the config to W&B/Comet and each checkpoint dir.
