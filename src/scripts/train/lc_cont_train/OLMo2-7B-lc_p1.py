@@ -366,8 +366,7 @@ def train(config: LcContTrain):
     optim = config.optim.build(model)
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(dataset)
-    print('args', model, optim, data_loader)
-    trainer = config.trainer.build(model, optim, data_loader)
+    trainer = config.trainer.build(model, data_loader)
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
