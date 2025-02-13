@@ -363,10 +363,11 @@ def train(config: LcContTrain):
         # max_seq_len=config.dataset.sequence_length,
         # mesh=world_mesh,
     )
-    optim = config.optim.build(model)
+    train_module = config.train_module.build(model, device)
+    # optim = config.optim.build(model)
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(dataset)
-    trainer = config.trainer.build(model, data_loader)
+    trainer = config.trainer.build(train_module, data_loader)
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
