@@ -4,10 +4,11 @@ Train a 3B for a first coding run. Run this script without any arguments to see 
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.internal.experiment import CommonComponents, main, build_common_components
-from olmo_core.internal.common import Duration, get_work_dir, get_root_dir
+from olmo_core.internal.experiment import CommonComponents, main, build_common_components, SubCmd, ExperimentConfig
+from olmo_core.internal.common import get_work_dir, get_root_dir
+from olmo_core.train.common import Duration
 from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
-from olmo_core.optim import AdamWConfig, OptimGroupOverride
+from olmo_core.optim import AdamWConfig, OptimGroupOverride, OptimConfig
 from olmo_core.data import (
     DataMixBase,
     NumpyDataLoaderConfig,
@@ -17,8 +18,8 @@ from olmo_core.data import (
 )
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
-
-
+from typing import Callable, Dict, List, Tuple, Optional, cast
+import sys
 
 SEQUENCE_LENGTH = 2048 
 CHINCHILLA_5X_DURATION = Duration.tokens(36072678400 * 20 * 5)
@@ -57,7 +58,7 @@ class Love2CodeDataMix(DataMixBase):
 
 def build_love2code_common(
     script: str,
-    cmd: Subcmd,
+    cmd: SubCmd,
     run_name: str,
     overrides: List[str],
     *,
@@ -68,7 +69,7 @@ def build_love2code_common(
     I took the original internal.experiment.build_common_components and ran it
     and then built the dataset config and hotswapped it. Maybe not canonical, but seems easiest?
     """
-    og_common = build_common_components(script, cmd, run_name, cluster, overrides, *, global_batch_size=global_batch_size)
+    og_common = build_common_components(script, cmd, run_name, cluster, overrides, global_batch_size=global_batch_size)
     tokenizer_config = og_common.tokenizer
     root_dir = get_root_dir(cluster)
 
