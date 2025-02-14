@@ -126,7 +126,6 @@ class LcContTrain(Config):
         script: str,
         cmd: str,
         run_name: str,
-        checkpoint: str,
         load_path: str,
         cluster: str,
         overrides: List[str],
@@ -379,7 +378,7 @@ LC extend a 7B model.
 [b magenta]dry_run:[/]     Print the config for debugging.
 
 [b]Examples[/]
-$ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/peteish32/step419000 ai2/jupiter-cirrascale-2 --launch.num_nodes=2[/]
+$ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
 """.strip()
 
     # Parse command line arguments.
@@ -387,7 +386,7 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/peteish32/step41
         rich.get_console().print(USAGE, highlight=False)
         sys.exit(1)
 
-    script, cmd, run_name, checkpoint, cluster, *overrides = sys.argv
+    script, cmd, run_name, cluster, *overrides = sys.argv
 
     # Prepare the environment for the given command.
     if cmd in ("launch", "dry_run"):
@@ -402,8 +401,7 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/peteish32/step41
         script=script,
         cmd="train",
         run_name=run_name,
-        checkpoint=checkpoint,
-        load_path=checkpoint,
+        load_path="s3://ai2-llm/checkpoints/dustins/long-contexts/OLMo-2-1124-7B-Instruct/",
         cluster=cluster,
         overrides=overrides,
     )
