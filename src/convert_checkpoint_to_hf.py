@@ -18,8 +18,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, GPT2Tokenizer, Olm
 from olmo_core.nn.transformer import Transformer
 from olmo_core.nn.transformer import TransformerConfig, TransformerBlockConfig
 from olmo_core.nn.rope import RoPELlamaScalingConfig, RoPELinearScalingConfig
-from olmo_core.distributed.checkpoint import unshard_checkpoint
-from olmo_core.utils import prepare_cli_environment
+from olmo_core.distributed.checkpoint import unshard_checkpoint, load_model_and_optim_state
+from olmo_core.utils import prepare_cli_environment, get_default_device
 
 log = logging.getLogger(__name__)
 
@@ -331,11 +331,6 @@ def main():
     validate_conversion(args.huggingface_output_dir, unsharded_dir , experiment_config)
 
 
-
-from transformers import AutoModelForCausalLM, AutoTokenizer
-import torch
-from olmo_core.utils import get_default_device
-from olmo_core.distributed.checkpoint import load_model_and_optim_state
 
 def validate_conversion(hf_model_path, olmo_checkpoint_path, olmo_config):
     """
