@@ -173,7 +173,7 @@ class LcContTrain(Config):
                 ac_config=TransformerActivationCheckpointingConfig(),
                 float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
                 max_grad_norm=1.0,
-                scheduler=CosWithWarmup(warmup_steps=2000, alpha_f=0.1),
+                scheduler=CosWithWarmup(warmup_steps=475, alpha_f=0.1),
             ),
             model=TransformerConfig.olmo2_7B(
                 vocab_size=tokenizer_config.padded_vocab_size(),
@@ -209,7 +209,7 @@ class LcContTrain(Config):
                 work_dir=get_work_dir(root_dir),
             ),
             data_loader=NumpyDataLoaderConfig(
-                global_batch_size= 16 * CONTEXT_LENGTH,  # NOTE: this is specified in TOKENS, not instances.
+                global_batch_size= 64 * CONTEXT_LENGTH,  # NOTE: this is specified in TOKENS, not instances.
                 seed=34521,  # NOTE: can update this to change data order.
                 num_workers=4,
             ),
