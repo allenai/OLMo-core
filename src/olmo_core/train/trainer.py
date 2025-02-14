@@ -55,6 +55,8 @@ log = logging.getLogger(__name__)
 
 TRAIN_CE_LOSS_METRIC = "train/CE loss"
 TRAIN_PPL_METRIC = "train/PPL"
+SEQ_LEN_METRIC = "data/sequence length"
+
 
 T = TypeVar("T")
 
@@ -975,6 +977,8 @@ class Trainer:
                 global_num_tokens := self.data_loader.global_num_tokens_in_batch(batch)
             ) is not None:
                 self.global_train_tokens_seen += global_num_tokens
+
+            self.record_metric(SEQ_LEN_METRIC, float(batch["input_ids"].shape[1]))
 
             for callback in self.callbacks.values():
                 callback.pre_step(batch)
