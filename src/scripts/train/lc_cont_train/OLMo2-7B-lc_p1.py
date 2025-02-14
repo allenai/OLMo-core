@@ -214,8 +214,8 @@ class LcContTrain(Config):
                 num_workers=4,
             ),
             trainer=TrainerConfig(
-                # save_folder=f"gs://ai2-llm/checkpoints/dustins/{run_name}",
-                save_folder=f"oe-training-default/ai2-llm/checkpoints/dustins/{run_name}",
+                save_folder=f"gs://ai2-llm/checkpoints/dustins/{run_name}",
+                # save_folder=f"oe-training-default/ai2-llm/checkpoints/dustins/{run_name}",
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
                 ),
@@ -402,7 +402,7 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         script=script,
         cmd="train",
         run_name=run_name,
-        load_path="s3://ai2-llm/checkpoints/dustins/long-contexts/OLMo-2-1124-7B-Instruct/",
+        load_path="gs://ai2-llm/checkpoints/dustins/OLMo-2-1124-7B-Instruct/",
         cluster=cluster,
         overrides=overrides,
     )
