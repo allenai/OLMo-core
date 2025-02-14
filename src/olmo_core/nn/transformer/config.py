@@ -660,7 +660,7 @@ class TransformerConfig(Config):
             layer_norm_eps=kwargs.pop("rms_norm_eps", 1e-06),
             n_kv_heads=kwargs.pop("n_kv_heads", 16),
             rope_theta=kwargs.pop("rope_theta", 100000),
-            rope_scaling=RoPELinearScalingConfig(factor=4.0,),
+            # rope_scaling=RoPELinearScalingConfig(factor=4.0),
             hidden_size_multiple_of=128,
             hidden_size_multiplier=None,
             rope_type="default",
