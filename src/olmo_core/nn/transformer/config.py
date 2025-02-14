@@ -836,3 +836,4 @@ class TransformerConfig(Config):
             **kwargs
         )
         # num_params: 3607267840
+        # num_non_embedding_params: 3481438720

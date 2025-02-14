@@ -8,7 +8,8 @@ from olmo_core.internal.experiment import CommonComponents, main, build_common_c
 from olmo_core.internal.common import get_work_dir, get_root_dir
 from olmo_core.train.common import Duration
 from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
-from olmo_core.optim import AdamWConfig, OptimGroupOverride, OptimConfig
+from olmo_core.optim import AdamWConfig, OptimGroupOverride, OptimConfig, LinearWithWarmup
+
 from olmo_core.data import (
     DataMixBase,
     NumpyDataLoaderConfig,
@@ -17,12 +18,12 @@ from olmo_core.data import (
     TokenizerName,
 )
 from olmo_core.train import TrainerConfig
-from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
+from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback, SchedulerCallback
 from typing import Callable, Dict, List, Tuple, Optional, cast
 import sys
 
 SEQUENCE_LENGTH = 2048 
-CHINCHILLA_5X_DURATION = Duration.tokens(36072678400 * 20 * 5)
+
 
 # =========================================================
 # =                 "COMMON COMPONENTS" STUFF             =
@@ -68,6 +69,8 @@ def build_love2code_common(
 
     I took the original internal.experiment.build_common_components and ran it
     and then built the dataset config and hotswapped it. Maybe not canonical, but seems easiest?
+
+    Also hotswapped the CosWithWarmup scheduler to a LinearWithWarmup
     """
     og_common = build_common_components(script, cmd, run_name, cluster, overrides, global_batch_size=global_batch_size)
     tokenizer_config = og_common.tokenizer
@@ -81,9 +84,12 @@ def build_love2code_common(
         work_dir=get_work_dir(root_dir)
         )
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=global_batch_size, seed=34521, num_workers=4)
+        global_batch_size=global_batch_size, seed=34521, num_workers=16)
 
     og_common.data_loader = data_loader_config
+
+
+    og_common.callbacks["lr_scheduler"] = SchedulerCallback(scheduler=LinearWithWarmup(warmup_steps=2000))
     return og_common
 
 
@@ -114,7 +120,7 @@ def build_optim_config(common: CommonComponents) -> AdamWConfig:
     # Note for DG/PW: Completely left unchanged from 1B training script
     del common
     return AdamWConfig(
-        lr=4e-4,
+        lr=12e-4,
         weight_decay=0.1,
         betas=(0.9, 0.95),
         group_overrides=[
@@ -126,13 +132,18 @@ def build_optim_config(common: CommonComponents) -> AdamWConfig:
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     """ Note for DG/PW: The only think I changed here was to add the max_duration in TrainerConfig """
+
+
+    num_ne_params = model_config_builder(common).num_non_embedding_params
+    CHINCHILLA_5X_DURATION = Duration(num_ne_params * 20 * 5)
+
     return (
         TrainerConfig(
             save_folder=common.save_folder,
             rank_microbatch_size=8 * 4096,
             save_overwrite=True,
             metrics_collect_interval=10,
-            cancel_check_interval=1,
+            cancel_check_interval=10,
             z_loss_multiplier=1e-5,
             compile_loss=True,
             max_duration=CHINCHILLA_5X_DURATION # <--- this line
@@ -150,7 +161,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             CometCallback(
                 name=common.run_name,
                 workspace="ai2",
-                project="OLMo-core-1B",
+                project="love2code-3B",
                 enabled=True,
                 cancel_check_interval=10,
             ),
@@ -160,7 +171,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=common.run_name,
                 entity="ai2-llm",
-                project="OLMo-core-1B",
+                project="love2code-3B",
                 enabled=False,
                 cancel_check_interval=10,
             ),
