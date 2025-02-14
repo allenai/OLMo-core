@@ -821,3 +821,18 @@ class TransformerConfig(Config):
             init_method=InitMethod.normalized,
             **kwargs,
         )
+
+
+
+    @classmethod
+    def love2code_3B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """ OLMo-core repro of GraniteCode 3B model """
+        return cls.llama_like(
+            d_model=2560,
+            hidden_size_multiplier=1.5,
+            vocab_size=vocab_size,
+            n_layers=32,
+            n_heads=32,
+            **kwargs
+        )
+        # num_params: 3607267840
