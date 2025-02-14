@@ -402,7 +402,8 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         script=script,
         cmd="train",
         run_name=run_name,
-        load_path="gs://ai2-llm/checkpoints/dustins/OLMo-2-1124-7B-Instruct/model_and_optim/",
+        # load_path="gs://ai2-llm/checkpoints/dustins/OLMo-2-1124-7B-Instruct/model_and_optim/",
+        load_path="gs://ai2-llm/checkpoints/dustins/OLMo-2-1124-7B/",
         cluster=cluster,
         overrides=overrides,
     )
