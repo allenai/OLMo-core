@@ -66,7 +66,6 @@ from olmo_core.utils import get_default_device, prepare_cli_environment, seed_al
 # schedule. I'm hard-coding this here based on the number found in the logs. It only changes
 # if batch size changes, which we're not planning on changing that over the course of the run.
 # TODO: pull this from the checkpoint when https://github.com/allenai/OLMo-core/pull/143 merges.
-MAX_PRETRAIN_STEPS = 2385
 
 
 CONTEXT_LENGTH = 4 * 16384
@@ -136,13 +135,6 @@ class LcContTrain(Config):
 
         tokenizer_config = TokenizerConfig.dolma2()
 
-        # last_pretrain_step: int
-        # if (basename := os.path.basename(checkpoint)).startswith("step"):
-        #     last_pretrain_step = int(basename.replace("step", ""))
-        # else:
-        #     last_pretrain_step = torch.load(
-        #         resource_path(f"{checkpoint}/train", "rank0.pt"), weights_only=False
-        #     )["global_step"]
 
         return LcContTrain(
             run_name=run_name,
@@ -157,7 +149,7 @@ class LcContTrain(Config):
             train_module = TransformerTrainModuleConfig(
                 rank_microbatch_size=1 * CONTEXT_LENGTH,
                  optim=AdamWConfig(
-                    lr=3e-5,
+                    lr=1e-5,
                     weight_decay=0.1,
                     betas=(0.9, 0.95),
                     group_overrides=[
@@ -182,14 +174,14 @@ class LcContTrain(Config):
                 ac_config=TransformerActivationCheckpointingConfig(),
                 float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
                 max_grad_norm=1.0,
-                scheduler=CosWithWarmup(warmup_steps=2000, alpha_f=0.1,),
+                scheduler=CosWithWarmup(warmup_steps=2000, alpha_f=0.1),
             ),
             model=TransformerConfig.olmo2_7B(
                 vocab_size=tokenizer_config.padded_vocab_size(),
                 # compile=True,
             #     fused_ops=False,
             #     use_flash=True,
-                rope_theta = 658623,
+                rope_theta = 8 * 10 **6,
             #     dp_config=TransformerDataParallelConfig(
             #         name=DataParallelType.fsdp,
             #         param_dtype=DType.bfloat16,
@@ -218,7 +210,7 @@ class LcContTrain(Config):
                 work_dir=get_work_dir(root_dir),
             ),
             data_loader=NumpyDataLoaderConfig(
-                global_batch_size= 256 * CONTEXT_LENGTH,  # NOTE: this is specified in TOKENS, not instances.
+                global_batch_size= 16 * CONTEXT_LENGTH,  # NOTE: this is specified in TOKENS, not instances.
                 seed=34521,  # NOTE: can update this to change data order.
                 num_workers=4,
             ),
@@ -231,7 +223,7 @@ class LcContTrain(Config):
                 load_path=load_path,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
-                max_duration=Duration.tokens(int(20e9 / 1000)),
+                max_duration=Duration.tokens(int(20e9 / 500)),
             )
             .with_callback(
                 "checkpointer",
@@ -358,12 +350,8 @@ def train(config: LcContTrain):
 
     # Build components.
     model = config.model.build(
-        # device=device,
         init_device="meta",
-        # max_seq_len=config.dataset.sequence_length,
-        # mesh=world_mesh,
     )
-    # optim = config.optim.build(model)
     dataset = config.dataset.build()
     train_module = config.train_module.build(model, device)
     data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
