@@ -68,7 +68,7 @@ from olmo_core.utils import get_default_device, prepare_cli_environment, seed_al
 # TODO: pull this from the checkpoint when https://github.com/allenai/OLMo-core/pull/143 merges.
 
 
-CONTEXT_LENGTH = 4096
+CONTEXT_LENGTH = 4 * 16384
 
 
 class AnnealingDataMix(DataMixBase):
@@ -146,7 +146,7 @@ class LcContTrain(Config):
                 nccl_debug=False,
             ),
             train_module = TransformerTrainModuleConfig(
-                rank_microbatch_size=2 * CONTEXT_LENGTH,
+                rank_microbatch_size=1 * CONTEXT_LENGTH,
                  optim=AdamWConfig(
                     lr=0.000207052,
                     weight_decay=0.1,
@@ -212,7 +212,7 @@ class LcContTrain(Config):
                 work_dir=get_work_dir(root_dir),
             ),
             data_loader=NumpyDataLoaderConfig(
-                global_batch_size= 1024 * CONTEXT_LENGTH,  # NOTE: this is specified in TOKENS, not instances.
+                global_batch_size= 64 * CONTEXT_LENGTH,  # NOTE: this is specified in TOKENS, not instances.
                 seed=34521,  # NOTE: can update this to change data order.
                 num_workers=4,
             ),
