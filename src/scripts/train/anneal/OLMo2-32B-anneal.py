@@ -226,7 +226,8 @@ class AnnealingConfig(Config):
                 "lr_scheduler",
                 SchedulerCallback(
                     scheduler=LinearWithWarmup(
-                        warmup_steps=0,
+                        warmup_min_lr=starting_lr,
+                        warmup_steps=50,
                         alpha_f=0.0,
                     )
                 ),
