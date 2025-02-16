@@ -1,6 +1,9 @@
 preprocessed/prolong_data/textbooks/part-0-00000.npy
 preprocessed/prolong_data/textbooks/part-2-00000.npy
 preprocessed/prolong_data/textbooks/part-1-00000.npy
+preprocessed/prolong_data/textbooks/part-0-00000.npy
+preprocessed/prolong_data/textbooks/part-2-00000.npy
+preprocessed/prolong_data/textbooks/part-1-00000.npy
 preprocessed/prolong_data/books/part-17-00000.npy
 preprocessed/prolong_data/books/part-03-00000.npy
 preprocessed/prolong_data/books/part-04-00000.npy
@@ -72,3 +75,5 @@ preprocessed/dclm/v0_rep32_ft7percentile_fw2/documents/allenai/dolma2-tokenizer/
 preprocessed/dclm/v0_rep32_ft7percentile_fw2/documents/allenai/dolma2-tokenizer/0019/part-29-00000.npy
 preprocessed/dclm/v0_rep32_ft7percentile_fw2/documents/allenai/dolma2-tokenizer/0019/part-39-00000.npy
 preprocessed/dclm/v0_rep32_ft7percentile_fw2/documents/allenai/dolma2-tokenizer/0004/part-11-00000.npy
+preprocessed/olmo-mix/danyh-compiled-v1_7/documents/wiki/allenai/dolma2-tokenizer/part-1-00000.npy
+preprocessed/olmo-mix/danyh-compiled-v1_7/documents/wiki/allenai/dolma2-tokenizer/part-0-00000.npy
