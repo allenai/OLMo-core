@@ -14,6 +14,8 @@ __all__ = [
     "RoPEType",
     "RoPEConfig",
     "RoPEScalingConfig",
+    "RoPELlamaScalingConfig",
+    "RoPELinearScalingConfig",
     "RotaryEmbeddingBase",
     "RotaryEmbedding",
     "FusedRotaryEmbedding",
@@ -39,9 +41,16 @@ class RoPEType(StrEnum):
     ➡️ :class:`ComplexRotaryEmbedding`
     """
 
-
 @dataclass
 class RoPEScalingConfig(Config):
+     def scale_inv_freq(
+        self,
+        inv_freq: torch.Tensor,
+    ) -> torch.Tensor:
+        raise NotImplementedError("Not implemented")
+    
+@dataclass
+class RoPELlamaScalingConfig(Config):
     """
     Defines how to scale RoPE to longer sequence lengths.
     """
@@ -70,7 +79,21 @@ class RoPEScalingConfig(Config):
         is_medium_freq = ~(wavelen < high_freq_wavelen) * ~(wavelen > low_freq_wavelen)
         return torch.where(is_medium_freq, smoothed_inv_freq, inv_freq)
 
+@dataclass
+class RoPELinearScalingConfig(RoPEScalingConfig):
+    """
+    Defines how to scale RoPE to longer sequence lengths.
+    """
 
+    factor: float = 4.0
+
+    def scale_inv_freq(
+        self,
+        inv_freq: torch.Tensor,
+    ) -> torch.Tensor:
+        return inv_freq / self.factor
+    
+    
 @dataclass
 class RoPEConfig(Config):
     """

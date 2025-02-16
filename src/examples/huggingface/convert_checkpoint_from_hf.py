@@ -6,7 +6,9 @@ Note that this script is architecture-dependent, meaning it may only work for OL
 HuggingFace.
 """
 
+import json
 import logging
+import os
 
 import torch
 from transformers import AutoModelForCausalLM
@@ -14,30 +16,40 @@ from transformers import AutoModelForCausalLM
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state, save_state_dict
 from olmo_core.io import clear_directory, dir_is_empty
-from olmo_core.nn.rope import RoPEScalingConfig
+from olmo_core.nn.rope import RoPELlamaScalingConfig, RoPELinearScalingConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.utils import get_default_device, prepare_cli_environment
 
 log = logging.getLogger(__name__)
 
-HF_MODEL = "allenai/OLMo-2-1124-7B"
-# HF_MODEL = "allenai/OLMo-2-1124-7B-Instruct"
-# HF_MODEL = "allenai/OLMo-2-1124-13B-Instruct"
-# HF_MODEL = "meta-llama/Llama-3.2-1B"
-# HF_MODEL = "meta-llama/Llama-3.2-8B"
+HF_MODEL = f"{os.environ['SHARE_RES_DIR']}/models/deepseek/deepseek-coder-1.3b-base"
+# HF_MODEL = "/home/zliu/shared_resources/models/llama3/hf/Llama-3.2-1B"
+# HF_MODEL = ""
 
-SAVE_PATH = f"/tmp/checkpoints/{HF_MODEL}"
-SAVE_OVERWRITE = False
+SAVE_PATH = f"{os.environ['SHARE_RES_DIR']}/models/deepseek/olmo/deepseek-coder-1.3b-base"
+# SAVE_PATH = "/home/zliu/shared_resources/models/llama3/olmo/Llama-3.2-1B"
+SAVE_OVERWRITE = True
 
-TOKENIZER_CONFIG = TokenizerConfig.from_hf(HF_MODEL)
+# TOKENIZER_CONFIG = TokenizerConfig.from_hf(HF_MODEL)
+TOKENIZER_CONFIG = TokenizerConfig.from_hf("deepseek-ai/deepseek-coder-1.3b-base")
+# TOKENIZER_CONFIG = TokenizerConfig.from_hf("meta-llama/Llama-3.2-1B")
 MODEL_CONFIG: TransformerConfig
-if HF_MODEL == "meta-llama/Llama-3.2-1B":
+if "Llama-3.2-1B" in HF_MODEL:
     MODEL_CONFIG = TransformerConfig.llama3_1B(
         TOKENIZER_CONFIG.vocab_size,
         fused_ops=False,
         use_flash=False,
-        rope_scaling=RoPEScalingConfig(),
+        rope_scaling=RoPELlamaScalingConfig(),
     )
+
+elif "deepseek-coder-1.3b-base" in HF_MODEL:
+    MODEL_CONFIG = TransformerConfig.deepseek_1B(
+        TOKENIZER_CONFIG.vocab_size,
+        fused_ops=False,
+        use_flash=False,
+        rope_scaling=RoPELinearScalingConfig(factor=4.0),
+    )
+
 elif HF_MODEL.startswith("allenai/OLMo-2-1124-7B"):
     MODEL_CONFIG = TransformerConfig.olmo2_7B(
         TOKENIZER_CONFIG.vocab_size,
@@ -103,7 +115,7 @@ def convert_checkpoint() -> AutoModelForCausalLM:
         )
 
         # Layer norms.
-        if "Llama" in HF_MODEL:
+        if "Llama" or "deepseek" in HF_MODEL:
             new_state_dict[f"blocks.{block}.feed_forward_norm.weight"] = state_dict.pop(
                 f"model.layers.{block}.post_attention_layernorm.weight"
             )
@@ -127,7 +139,10 @@ def convert_checkpoint() -> AutoModelForCausalLM:
     assert len(state_dict) == 0
 
     log.info(f"Saving converted model checkpoint '{SAVE_PATH}'...")
-    save_state_dict(SAVE_PATH, {"model": new_state_dict})
+    save_state_dict(os.path.join(SAVE_PATH, "model_and_optim"), {"model": new_state_dict})
+
+    with open(os.path.join(SAVE_PATH, "config.json"), "w") as f:
+        json.dump({"model": MODEL_CONFIG.as_dict()}, f)
 
     return hf_model
 
@@ -147,7 +162,7 @@ def validate_conversion(hf_model):
     model = MODEL_CONFIG.build(device=device, max_seq_len=131072).eval()
 
     log.info("Loading converted checkpoint for validation...")
-    load_model_and_optim_state(SAVE_PATH, model)
+    load_model_and_optim_state(os.path.join(SAVE_PATH, "model_and_optim"), model)
 
     with torch.no_grad():
         logits = model(input_ids=input_ids)
@@ -159,5 +174,7 @@ def validate_conversion(hf_model):
 
 if __name__ == "__main__":
     prepare_cli_environment()
+
+    config = MODEL_CONFIG.as_dict()
     hf_model = convert_checkpoint()
     validate_conversion(hf_model)
