@@ -394,6 +394,9 @@ class NumpyDataLoaderBase(DataLoaderBase):
 
     def get_global_indices(self) -> np.ndarray:
         if self._global_indices is not None:
+            log.info(
+                f"Rank {self.fs_local_rank} using in-memory global indices", self._global_indices
+            )
             return self._global_indices
         if not self._global_indices_file.is_file():
             raise RuntimeError("Missing global indices file, did you forget to call 'reshuffle()'?")
