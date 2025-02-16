@@ -851,7 +851,7 @@ class _IterableDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
         """
         global_indices = self.data_loader.get_global_indices()
         log.error(
-            f"Rank {self.data_loader.fs_local_rank} using in-memory global indices", global_indices
+            f"Rank {self.data_loader.fs_local_rank} using in-memory global indices {global_indices}"
         )
 
         num_threads = self.data_loader.num_threads
