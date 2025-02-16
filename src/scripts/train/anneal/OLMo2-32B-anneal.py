@@ -195,7 +195,7 @@ class AnnealingConfig(Config):
             ),
             trainer=TrainerConfig(
                 save_folder=f"gs://ai2-llm/checkpoints/peteish32-anneal/{run_name}",
-                rank_microbatch_size=4 * 4096,  # NOTE: again this is specified in tokens.
+                rank_microbatch_size=2 * 4096,  # NOTE: again this is specified in tokens.
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
                 ),
