@@ -22,11 +22,12 @@ from olmo_core.utils import get_default_device, prepare_cli_environment
 
 log = logging.getLogger(__name__)
 
-HF_MODEL = f"{os.environ['SHARE_RES_DIR']}/models/deepseek/deepseek-coder-1.3b-base"
+# HF_MODEL = f"{os.environ['SHARE_RES_DIR']}/models/deepseek/deepseek-coder-1.3b-base"
+HF_MODEL = f"/home1/09636/zyliu/scratch/base_models/deepseek/hf/deepseek-coder-1.3b-base"
 # HF_MODEL = "/home/zliu/shared_resources/models/llama3/hf/Llama-3.2-1B"
 # HF_MODEL = ""
 
-SAVE_PATH = f"{os.environ['SHARE_RES_DIR']}/models/deepseek/olmo/deepseek-coder-1.3b-base"
+SAVE_PATH = f"/home1/09636/zyliu/scratch/base_models/deepseek/olmo/deepseek-coder-1.3b-base"
 # SAVE_PATH = "/home/zliu/shared_resources/models/llama3/olmo/Llama-3.2-1B"
 SAVE_OVERWRITE = True
 

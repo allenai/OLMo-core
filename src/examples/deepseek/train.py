@@ -3,7 +3,7 @@ Example of how to train a Llama transformer language model.
 
 Launch this with torchrun:
 
-    torchrun --nproc-per-node=4 src/examples/llama/train.py run_name [OVERRIDES...]
+    torchrun --nproc-per-node=4 src/examples/deepseek/train.py run_name [OVERRIDES...]
 """
 
 import sys
@@ -17,6 +17,7 @@ from olmo_core.data import (
     NumpyDatasetType,
     TokenizerConfig,
 )
+from olmo_core.nn.rope import RoPELlamaScalingConfig, RoPELinearScalingConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
@@ -56,16 +57,17 @@ class ExperimentConfig(Config):
 
 
 def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
-    tokenizer_config = TokenizerConfig.gpt2()
+    tokenizer_config = TokenizerConfig.from_hf("deepseek-ai/deepseek-coder-1.3b-base")
 
-    model_config = TransformerConfig.llama2_271M(
-        vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
+    model_config = TransformerConfig.deepseek_1B(
+        vocab_size=tokenizer_config.vocab_size,  # a little bigger than actual vocab size to make it a multiple of 128
         compile=True,
         fused_ops=False,
         use_flash=False,
-        dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
-        ),
+        rope_scaling=RoPELinearScalingConfig(factor=4.0),
+        # dp_config=TransformerDataParallelConfig(
+        #     name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
+        # ),
     )
 
     optim_config = AdamWConfig(
@@ -76,7 +78,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     dataset_config = NumpyDatasetConfig.glob(
         "/home1/09636/zyliu/scratch/data/astro_cpt_tokenized/test/tokens/part-0-00000.npy",  # can be globs
         name=NumpyDatasetType.fsl,
-        sequence_length=1024,
+        sequence_length=8192,
         max_target_sequence_length=8192,
         #  name=NumpyDatasetType.vsl,
         #  max_sequence_length=2048,
@@ -115,8 +117,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=1000,
-                ephemeral_save_interval=100,
+                save_interval=20,
+                ephemeral_save_interval=10,
                 save_async=True,
             ),
         )
@@ -145,22 +147,22 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
                     paths=["/home1/09636/zyliu/scratch/data/astro_cpt_tokenized/test/tokens/part-0-00000.npy"],
                     metadata=[{"label": "cpt-validation"}],
                     name=NumpyDatasetType.padded_fsl,
-                    sequence_length=1024,
+                    sequence_length=8192,
                     tokenizer=tokenizer_config,
                     work_dir="/tmp/dataset-cache",
                 ),
-                eval_interval=250,
+                eval_interval=10,
                 eval_duration=Duration.steps(10),
             ),
         )
-        .with_callback(
-            "downstream_evaluator",
-            DownstreamEvaluatorCallbackConfig(
-                tasks=["hellaswag"],
-                tokenizer=tokenizer_config,
-                eval_interval=250,
-            ),
-        )
+        # .with_callback({os.environ['SHARE_RES_DIR']}/models/deepseek/deepseek-coder-1.3b-base
+        #     "downstream_evaluator",
+        #     DownstreamEvaluatorCallbackConfig(
+        #         tasks=["hellaswag"],
+        #         tokenizer=tokenizer_config,
+        #         eval_interval=250,
+        #     ),
+        # )
     )
 
     return ExperimentConfig(
