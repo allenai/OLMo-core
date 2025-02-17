@@ -15,7 +15,6 @@ from packaging.version import parse as parse_version
 
 from ..config import Config
 from ..distributed.utils import (
-    get_global_rank,
     get_local_tensor,
     get_reduce_divide_factor,
     get_world_size,
