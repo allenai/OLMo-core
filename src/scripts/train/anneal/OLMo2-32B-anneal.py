@@ -157,10 +157,16 @@ class AnnealingConfig(Config):
                 compile=True,
                 fused_ops=False,
                 use_flash=False,
+                # dp_config=TransformerDataParallelConfig(
+                #     name=DataParallelType.fsdp,
+                #     param_dtype=DType.bfloat16,
+                #     reduce_dtype=DType.float32,
+                # ),
                 dp_config=TransformerDataParallelConfig(
-                    name=DataParallelType.fsdp,
+                    name=DataParallelType.hsdp,
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
+                    num_replicas=128 // 32,  # common.launch.num_nodes // 2,
                 ),
                 #ac_config=TransformerActivationCheckpointingConfig(
                 #    mode=TransformerActivationCheckpointingMode.selected_modules,
