@@ -233,15 +233,15 @@ def reduce_metrics(
 
     all_sum_metrics.div_(divide_factor)
 
-    dist.reduce(
+    dist.all_reduce(
         all_sum_metrics,
-        get_global_rank(0, group=process_group),
+        #  get_global_rank(0, group=process_group),
         op=dist.ReduceOp.SUM,
         group=process_group,
     )
-    dist.reduce(
+    dist.all_reduce(
         all_max_metrics,
-        get_global_rank(0, group=process_group),
+        #  get_global_rank(0, group=process_group),
         op=dist.ReduceOp.MAX,
         group=process_group,
     )
