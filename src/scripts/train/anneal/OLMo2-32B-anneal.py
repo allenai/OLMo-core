@@ -185,7 +185,7 @@ class AnnealingConfig(Config):
                 compile=True,
             ),
             dataset=NumpyDatasetConfig.from_data_mix(
-                AnnealingDataMix.dolmino,
+                AnnealingDataMix.dolmino100,
                 tokenizer=tokenizer_config,
                 mix_base_dir=root_dir,
                 sequence_length=4096,
