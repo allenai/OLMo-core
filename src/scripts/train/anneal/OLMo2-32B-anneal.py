@@ -67,7 +67,9 @@ class AnnealingDataMix(DataMixBase):
     name (without the '.txt' extension) below.
     """
 
-    dolmino = "dolmino"
+    dolmino = "dolmino-100B"
+    dolmino100 = dolmino
+    dolmino300 = "dolmino-300B"
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
