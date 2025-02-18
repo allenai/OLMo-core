@@ -30,6 +30,7 @@ This major release introduces a few breaking changes. As such, we've provided an
 ### Fixed
 
 - Ensure certain optimizer param group fields are not overridden by the values in a checkpoint.
+- Fixed issue where non-zero ranks would report partially-reduced values for training metrics.
 
 ## [v1.8.0](https://github.com/allenai/OLMo-core/releases/tag/v1.8.0) - 2025-01-29
 

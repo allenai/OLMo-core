@@ -6,6 +6,7 @@ import torch
 
 from olmo_core.distributed.utils import get_world_size
 
+from ..common import ReduceType
 from ..train_module import TransformerTrainModule
 from .callback import Callback
 
@@ -91,7 +92,9 @@ class SpeedMonitorCallback(Callback):
 
     def post_step(self):
         counter = time.perf_counter()
-        self.trainer.record_metric("throughput/device/data loading (s)", self._batch_load_time)
+        self.trainer.record_metric(
+            "throughput/device/data loading (s)", self._batch_load_time, reduce_type=ReduceType.max
+        )
 
         if self._first_step:
             # Now we can start recording.
@@ -113,7 +116,9 @@ class SpeedMonitorCallback(Callback):
         data_pct = 100 * self._batch_load_time / step_time
 
         self.trainer.record_metric("throughput/total tokens", self.trainer.global_train_tokens_seen)
-        self.trainer.record_metric("throughput/device/data loading (%)", data_pct)
+        self.trainer.record_metric(
+            "throughput/device/data loading (%)", data_pct, reduce_type=ReduceType.max
+        )
         self.trainer.record_metric("throughput/device/TPS", tps)
         self.trainer.record_metric("throughput/device/TPS (actual avg)", tps_avg)
         self.trainer.record_metric("throughput/device/BPS", bps)
