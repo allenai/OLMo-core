@@ -386,6 +386,7 @@ class TransformerConfig(Config):
                 name=MoEType.default,
                 num_experts=64,
                 hidden_size=int(0.5 * d_model),
+                capacity_factor=1.05,
                 router=MoERouterConfig(top_k=8, bias=False),
                 shared_mlp=SharedMLPConfig(hidden_size=d_model * 2, bias=False),
                 lb_loss_weight=0.01,
