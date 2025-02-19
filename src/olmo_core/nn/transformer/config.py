@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from olmo_core.config import Config, DType, StrEnum
+from olmo_core.utils import ensure_multiple_of
 
 from ..attention import AttentionConfig, AttentionType
 from ..feed_forward import FeedForwardConfig, FeedForwardType
@@ -638,9 +639,7 @@ class TransformerConfig(Config):
         hidden_size = int(8 * d_model / 3)
         if hidden_size_multiplier is not None:
             hidden_size = int(hidden_size_multiplier * hidden_size)
-        hidden_size = hidden_size_multiple_of * (
-            (hidden_size + hidden_size_multiple_of - 1) // hidden_size_multiple_of
-        )
+        hidden_size = ensure_multiple_of(hidden_size, hidden_size_multiple_of)
 
         # Configure global layer norm.
         layer_norm = LayerNormConfig(
@@ -714,9 +713,7 @@ class TransformerConfig(Config):
         hidden_size = int(8 * d_model / 3)
         if hidden_size_multiplier is not None:
             hidden_size = int(hidden_size_multiplier * hidden_size)
-        hidden_size = hidden_size_multiple_of * (
-            (hidden_size + hidden_size_multiple_of - 1) // hidden_size_multiple_of
-        )
+        hidden_size = ensure_multiple_of(hidden_size, hidden_size_multiple_of)
 
         # Configure blocks.
         block = TransformerBlockConfig(

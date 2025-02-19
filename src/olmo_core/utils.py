@@ -1,6 +1,7 @@
 import dataclasses
 import gc
 import logging
+import math
 import os
 import socket
 import sys
@@ -654,3 +655,7 @@ def get_element_size(dtype: torch.dtype) -> int:
     Get the size in bytes of element of the given PyTorch dtype.
     """
     return torch._utils._element_size(dtype)  # type: ignore
+
+
+def ensure_multiple_of(x: int, of: int) -> int:
+    return of * math.ceil(x / of)

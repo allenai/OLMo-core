@@ -10,7 +10,7 @@ import torch.nn as nn
 from torch.distributed import DeviceMesh
 
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
-from olmo_core.utils import get_default_device, move_to_device
+from olmo_core.utils import ensure_multiple_of, get_default_device, move_to_device
 
 from ..buffer_cache import BufferCache
 from . import ops
@@ -226,9 +226,11 @@ class ParallelMLP(ParallelMLPBase):
             else:
                 local_batch_size = max_local_microbatch_size
 
-        local_inputs_per_expert = self.top_k * local_batch_size / self.num_experts
-        # TODO (epwalsh): should we ensure this is multiple of 8, 64, or 128?
-        return self.ep_world_size * int(self.capacity_factor * local_inputs_per_expert)
+        ideal_local_inputs_per_expert = self.top_k * local_batch_size / self.num_experts
+        allowed_local_inputs_per_expert = ensure_multiple_of(
+            int(self.capacity_factor * ideal_local_inputs_per_expert), 128
+        )
+        return self.ep_world_size * allowed_local_inputs_per_expert
 
     @torch.no_grad()
     def _get_parallel_indices_and_bins(
