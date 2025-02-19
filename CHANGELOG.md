@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Added conversion script for OLMo 2 checkpoints to Huggingface format.
+
 ### Fixed
 
 - Ensure certain optimizer param group fields are not overridden by the values in a checkpoint.
