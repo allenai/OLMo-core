@@ -309,6 +309,15 @@ class TransformerTrainModule(TrainModule):
             )
             log.info("Swapped linear layers to Float8 linear layers")
 
+        # Maybe apply activation checkpointing.
+        if ac_config is not None:
+            self.model.apply_activation_checkpointing(
+                ac_config.mode,
+                block_interval=ac_config.block_interval,
+                modules=ac_config.modules,
+            )
+            log.info(f"Applied '{ac_config.mode}' activation checkpointing to the model")
+
         # Maybe apply tensor/expert parallelism.
         self._tp_enabled = False
         if tp_config is not None and ep_config is not None:
@@ -345,15 +354,6 @@ class TransformerTrainModule(TrainModule):
             cast(MoETransformer, self.model).apply_ep(ep_mesh)
             log.info("Applied expert parallelism to the model")
             self._ep_enabled = True
-
-        # Maybe apply activation checkpointing.
-        if ac_config is not None:
-            self.model.apply_activation_checkpointing(
-                ac_config.mode,
-                block_interval=ac_config.block_interval,
-                modules=ac_config.modules,
-            )
-            log.info(f"Applied '{ac_config.mode}' activation checkpointing to the model")
 
         # Maybe compile.
         if compile_model:
