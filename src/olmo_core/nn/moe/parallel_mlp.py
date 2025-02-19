@@ -227,6 +227,7 @@ class ParallelMLP(ParallelMLPBase):
                 local_batch_size = max_local_microbatch_size
 
         local_inputs_per_expert = self.top_k * local_batch_size / self.num_experts
+        # TODO (epwalsh): should we ensure this is multiple of 8, 64, or 128?
         return self.ep_world_size * int(self.capacity_factor * local_inputs_per_expert)
 
     @torch.no_grad()
