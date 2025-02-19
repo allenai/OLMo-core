@@ -228,8 +228,8 @@ def convert_to_hf_checkpoint(
             # llama3 scaling
             rope_scaling = {
                 "rope_type": "llama3",
-                "factor": rope_config["factor"], 
-                "high_freq_factor": rope_config["high_freq_factor"], 
+                "factor": rope_config["factor"],
+                "high_freq_factor": rope_config["high_freq_factor"],
                 "low_freq_factor": rope_config["low_freq_factor"],
                 "original_max_position_embeddings": rope_config["old_context_len"]
             }
@@ -256,7 +256,7 @@ def convert_to_hf_checkpoint(
             rms_norm_eps=olmo_core_config["model"]["block"]["layer_norm"]["eps"],
             tie_word_embeddings=False,
             rope_scaling=rope_scaling,
-        )        
+        )
 
     with init_empty_weights():
         log.info("Initializing HF model with empty weights...")
@@ -296,6 +296,7 @@ def parse_args():
     parser.add_argument("-s", "--max-sequence-length", type=int, default=-1)
     return parser.parse_args()
 
+
 def main():
     args = parse_args()
     experiment_config = load_config(args.checkpoint_input_dir)
@@ -312,24 +313,22 @@ def main():
 
     tokenizer_config = AutoTokenizer.from_pretrained(args.tokenizer_name_or_path)
 
-    if args.unsharded_output_dir:
-        unsharded_dir = Path(args.unsharded_output_dir)
-    else:
-        unsharded_dir = Path(args.checkpoint_input_dir) / "unsharded"
+    with TemporaryDirectory() as _unsharded_dir:
+        if args.unsharded_output_dir:
+            log.info(f"Using provided unsharded output directory: {args.unsharded_output_dir}")
+            _unsharded_dir = args.unsharded_output_dir
 
-    if not unsharded_dir.exists():
-        unsharded_dir.mkdir(parents=True, exist_ok=True)
+        shards_dir = args.checkpoint_input_dir / "model_and_optim"
+        if shards_dir.exists() and shards_dir.is_dir():
+            logging.info(f"Unsharding checkpoint from {shards_dir} to {_unsharded_dir}")
+            (unsharded_dir := Path(_unsharded_dir)).mkdir(parents=True, exist_ok=True)
+            unshard_checkpoint(dir=shards_dir, target_dir=unsharded_dir, optim=False)
 
-    shards_dir = args.checkpoint_input_dir / "model_and_optim"
-    if shards_dir.exists() and shards_dir.is_dir():
-        logging.info(f"Unsharding checkpoint from {shards_dir} to {unsharded_dir}")
-        unshard_checkpoint(dir=shards_dir, target_dir=unsharded_dir, optim=False, save_overwrite=True)
-
-        logging.info("Copying config.json to unsharded directory")
-        shutil.copy(args.checkpoint_input_dir / "config.json", unsharded_dir / "config.json")
-    else:
-        logging.info("No sharded checkpoint found, using input directory as unsharded")
-        unsharded_dir = args.checkpoint_input_dir
+            logging.info("Copying config.json to unsharded directory")
+            shutil.copy(args.checkpoint_input_dir / "config.json", unsharded_dir / "config.json")
+        else:
+            logging.info("No sharded checkpoint found, using input directory as unsharded")
+            unsharded_dir = args.checkpoint_input_dir
 
     convert_to_hf_checkpoint(
         olmo_checkpoint_path= unsharded_dir / "model.pt", 
@@ -340,7 +339,6 @@ def main():
     )
 
     validate_conversion(args.huggingface_output_dir, unsharded_dir , experiment_config)
-
 
 
 def validate_conversion(hf_model_path, olmo_checkpoint_path, olmo_config):
@@ -363,12 +361,12 @@ def validate_conversion(hf_model_path, olmo_checkpoint_path, olmo_config):
     log.info(f"Loading OLMo model config from {config_path}")
 
     with open(config_path, "r") as f:
-        olmo_config_dict = json.load(f)["model"] 
+        olmo_config_dict = json.load(f)["model"]
     # import pdb; pdb.set_trace()
     if "rope" in olmo_config_dict["block"]["attention"] and "scaling" in olmo_config_dict["block"]["attention"]["rope"]:
         scaling_config = olmo_config_dict["block"]["attention"]["rope"]["scaling"]
         assert isinstance(scaling_config, dict)
-        
+
         if "high_freq_factor" in scaling_config:
             # llama3 scaling
             olmo_config_dict["block"]["attention"]["rope"]["scaling"] = RoPELlamaScalingConfig(**scaling_config)
@@ -381,7 +379,7 @@ def validate_conversion(hf_model_path, olmo_checkpoint_path, olmo_config):
     hf_model = AutoModelForCausalLM.from_pretrained(hf_model_path).to(device).eval()
     tokenizer = AutoTokenizer.from_pretrained(hf_model_path)
 
-    B, T = 1, 120 
+    B, T = 1, 120
     input_ids = torch.randint(0, tokenizer.vocab_size, (B, T)).to(device)
 
     with torch.no_grad():
@@ -391,7 +389,7 @@ def validate_conversion(hf_model_path, olmo_checkpoint_path, olmo_config):
 
     log.info("Loading converted checkpoint for validation...")
     load_model_and_optim_state(os.path.join(os.path.dirname(olmo_checkpoint_path), "model_and_optim"), model)
-    
+
     with torch.no_grad():
         original_logits = model(input_ids=input_ids)
 
