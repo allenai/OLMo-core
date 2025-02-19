@@ -27,6 +27,10 @@ This major release introduces a few breaking changes. As such, we've provided an
 
 ## Unreleased
 
+### Added
+
+- Added conversion script for OLMo 2 checkpoints to Huggingface format.
+
 ### Fixed
 
 - Ensure certain optimizer param group fields are not overridden by the values in a checkpoint.

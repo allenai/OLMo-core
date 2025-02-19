@@ -13,7 +13,7 @@ It would be straight forward to adapt this script to convert in the other direct
 .. seealso::
    See the `train a Llama model <llama.html>`_ example to learn how to use OLMo-core's training API to pretrain or fine-tune any Llama-like language model.
 
-.. tab:: ``src/examples/huggingface/convert_checkpoint.py``
+.. tab:: ``src/examples/huggingface/convert_checkpoint_from_hf.py``
 
-   .. literalinclude:: ../../../src/examples/huggingface/convert_checkpoint.py
+   .. literalinclude:: ../../../src/examples/huggingface/convert_checkpoint_from_hf.py
       :language: py
