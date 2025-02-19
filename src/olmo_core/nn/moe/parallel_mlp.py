@@ -228,7 +228,7 @@ class ParallelMLP(ParallelMLPBase):
 
         ideal_local_inputs_per_expert = self.top_k * local_batch_size / self.num_experts
         allowed_local_inputs_per_expert = ensure_multiple_of(
-            int(self.capacity_factor * ideal_local_inputs_per_expert), 128
+            int(self.capacity_factor * ideal_local_inputs_per_expert), 8
         )
         return self.ep_world_size * allowed_local_inputs_per_expert
 
