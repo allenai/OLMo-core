@@ -97,7 +97,7 @@ class Config:
                 else:
                     out = {k: v for k, v in iter_fields(d)}
                 if include_class_name:
-                    out[self.CLASS_NAME_FIELD] = d.__class__.__name__
+                    out[self.CLASS_NAME_FIELD] = f"{d.__class__.__module__}.{d.__class__.__name__}"
                 return out
             elif isinstance(d, dict):
                 return {k: as_dict(v) for k, v in d.items()}
@@ -207,16 +207,45 @@ class Config:
         :param data: A Python dictionary.
         :param overrides: A list of field overrides with dot notation, e.g. ``foo.bar=1``.
         """
+        from importlib import import_module
 
-        def clean_data(d: Any) -> Any:
+        def resolve_cls(cls_name: str) -> Optional[Any]:
+            if "." in cls_name:
+                *modules, cls_name = cls_name.split(".")
+                module_name = ".".join(modules)
+                module = import_module(module_name)
+                return getattr(module, cls_name)
+            else:
+                return None
+
+        def clean_data(d: Any, prefix: str) -> Any:
             if isinstance(d, dict):
-                return {k: clean_data(v) for k, v in d.items() if k != cls.CLASS_NAME_FIELD}
+                new_dict = {
+                    k: clean_data(v, f"{prefix}.{k}" if prefix else k)
+                    for k, v in d.items()
+                    if k != cls.CLASS_NAME_FIELD
+                }
+                if (cls_name := d.get(cls.CLASS_NAME_FIELD)) is not None and (
+                    cls_o := resolve_cls(cls_name)
+                ) is not None:
+                    schema = om.structured(cls_o)
+                    try:
+                        return om.to_object(om.merge(schema, new_dict))
+                    except OmegaConfBaseException as e:
+                        if prefix:
+                            msg = f"Failed to construct '{prefix}' in config"
+                        else:
+                            msg = "Error building config"
+                        raise OLMoConfigurationError(msg) from e
+                return new_dict
             elif isinstance(d, (list, tuple, set)):
-                return d.__class__((clean_data(x) for x in d))
+                return d.__class__(
+                    (clean_data(x, f"{prefix}.{i}" if prefix else str(i)) for i, x in enumerate(d))
+                )
             else:
                 return d
 
-        data = clean_data(data)
+        data = clean_data(data, "")
 
         try:
             schema = om.structured(cls)
