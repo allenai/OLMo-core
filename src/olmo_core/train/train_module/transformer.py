@@ -307,7 +307,7 @@ class TransformerTrainModule(TrainModule):
             self.float8_handler.convert_to_float8_training(
                 self.model, modules_to_ignore={"lm_head.w_out"}
             )
-            log.info("Swapped linear layers to Float8 linear layers")
+            log.info("Swapped linear layers to Float8 linear layers\n%s", self.model)
 
         # Maybe apply tensor/expert parallelism.
         self._tp_enabled = False

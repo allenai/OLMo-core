@@ -191,11 +191,17 @@ class Float8Config(Config):
         ignored_modules_found = set()
 
         def module_filter_fn(m: nn.Module, fqn: str) -> bool:
-            del m
             nonlocal ignored_modules_found
             if modules_to_ignore is not None and fqn in modules_to_ignore:
                 ignored_modules_found.add(fqn)
                 return False
+
+            # Linear layers must have all dimensions divisible by 16.
+            if isinstance(m, nn.Linear):
+                for d in m.weight.shape:
+                    if d % 16 != 0:
+                        return False
+
             return True
 
         # Mutates the model in place, replacing instances of nn.Linear with Float8Linear.
