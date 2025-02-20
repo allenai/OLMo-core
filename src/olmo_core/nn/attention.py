@@ -223,6 +223,8 @@ class Attention(nn.Module):
             assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
             self.rope = rope_class
 
+        self._cp_enabled = False
+
         self._flash_attn_func = None
         self._flash_attn_varlen_func = None
         if use_flash:
@@ -254,6 +256,12 @@ class Attention(nn.Module):
                 raise RuntimeError(
                     "flash-attn (use_flash=True) is required for intra-document masking"
                 )
+
+            if self._cp_enabled:
+                raise RuntimeError(
+                    "context parallelism does not support intra-document masking yet"
+                )
+
             # shape: (batch_size * seq_len, n_heads, head_dim)
             att = self._flash_attn_varlen_func(
                 q.view(B * T, -1, self.head_dim),
@@ -268,6 +276,9 @@ class Attention(nn.Module):
                 softmax_scale=scale,
             )
         elif self._flash_attn_func is not None:
+            if self._cp_enabled:
+                raise RuntimeError("flash-attn does not support context parallelism yet")
+
             # shape: (batch_size, seq_len, n_heads, head_dim)
             att = self._flash_attn_func(
                 q, k, v, dropout_p=self.dropout_p, causal=True, softmax_scale=scale
@@ -397,6 +408,10 @@ class Attention(nn.Module):
             device_mesh=tp_mesh,
             parallelize_plan=plan,
         )
+
+    def apply_cp(self, cp_mesh: DeviceMesh):
+        del cp_mesh
+        self._cp_enabled = True
 
 
 @beta_feature
@@ -647,6 +662,10 @@ class FusedAttention(nn.Module):
         del tp_mesh, input_layout, output_layout, use_local_output, float8_enabled
 
         raise NotImplementedError("TP is not implemented yet for the fused attention variant")
+
+    def apply_cp(self, cp_mesh: DeviceMesh):
+        del cp_mesh
+        raise NotImplementedError("CP is not implemented yet for the fused attention variant")
 
 
 def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:

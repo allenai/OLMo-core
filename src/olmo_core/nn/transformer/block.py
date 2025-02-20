@@ -159,6 +159,10 @@ class TransformerBlockBase(nn.Module):
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         raise NotImplementedError
 
+    @abstractmethod
+    def apply_cp(self, cp_mesh: DeviceMesh):
+        raise NotImplementedError
+
 
 class TransformerBlock(TransformerBlockBase):
     """
@@ -252,6 +256,9 @@ class TransformerBlock(TransformerBlockBase):
         )
 
         parallelize_module(self.dropout, device_mesh=tp_mesh, parallelize_plan=SequenceParallel())
+
+    def apply_cp(self, cp_mesh: DeviceMesh):
+        self.attention.apply_cp(cp_mesh)
 
 
 class ReorderedNormTransformerBlock(TransformerBlock):
@@ -362,6 +369,9 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         raise NotImplementedError(
             "TP is not implemented yet for the normalized transformer block variant"
         )
+
+    def apply_cp(self, cp_mesh: DeviceMesh):
+        self.attention.apply_cp(cp_mesh)
 
     @torch.no_grad()
     def normalize_matrices(self):

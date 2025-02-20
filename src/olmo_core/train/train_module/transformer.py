@@ -329,9 +329,10 @@ class TransformerTrainModule(TrainModule):
             log.info("Swapped linear layers to Float8 linear layers\n%s", self.model)
 
         self._cp_config = cp_config
-        self._cp_mesh: Optional[dist.DeviceMesh] = None
         if cp_config is not None:
-            self._cp_mesh = get_cp_mesh(self.world_mesh)
+            cp_mesh = get_cp_mesh(self.world_mesh)
+            self.model.apply_cp(cp_mesh)
+            log.info("Applied context parallelism to the model")
 
         # Maybe apply tensor/expert parallelism.
         self._tp_enabled = False
@@ -451,7 +452,7 @@ class TransformerTrainModule(TrainModule):
 
     @property
     def cp_enabled(self) -> bool:
-        return self._cp_mesh is not None
+        return self._cp_config is not None
 
     @property
     def ep_enabled(self) -> bool:
@@ -802,16 +803,23 @@ class TransformerTrainModule(TrainModule):
                 stack.enter_context(self.model.no_sync())
             if self.cp_enabled:
                 assert self._cp_config is not None
-                assert self._cp_mesh is not None
                 stack.enter_context(
                     create_context_parallel_ctx(
-                        cp_mesh=self._cp_mesh,
+                        cp_mesh=get_cp_mesh(self.world_mesh),
                         cp_buffers=[micro_batch["input_ids"], micro_batch["labels"]]
                         + [attn_buffers[bn] for bn in sorted(attn_buffers.keys())],
                         cp_seq_dims=[1, 1] + [0 for _ in attn_buffers],
                         cp_no_restore_buffers={micro_batch["input_ids"], micro_batch["labels"]},
                         cp_rotate_method=self._cp_config.rotate_method,
                     )
+                )
+
+                from torch.nn.attention import SDPBackend, sdpa_kernel
+
+                # Currently we only support these two SDP backends.
+                # TODO (xilunwu): support cuDNN backend
+                stack.enter_context(
+                    sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION])
                 )
             yield
 

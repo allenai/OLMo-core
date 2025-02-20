@@ -333,6 +333,14 @@ class Transformer(nn.Module):
                 use_local_output=not loss_parallel,
             )
 
+    def apply_cp(self, cp_mesh: DeviceMesh):
+        """
+        Apply context parallelism to the model.
+        """
+        for block in self.blocks.values():
+            block = cast(TransformerBlockBase, block)
+            block.apply_cp(cp_mesh)
+
     def apply_activation_checkpointing(
         self,
         mode: TransformerActivationCheckpointingMode,
