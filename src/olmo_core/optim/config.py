@@ -95,7 +95,6 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
                 all_params[n] = p
 
         if self.group_overrides is None:
-            log.info(f"Building {self.optimizer().__name__} optimizer with 1 param group...")
             return all_params.values()
 
         # Build groups.
@@ -171,7 +170,7 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
                     fixed_fields[k] = group[k]
 
         log.info(
-            f"Building {self.optimizer().__name__} optimizer with {len(optim.param_groups)} param groups..."
+            f"Building {self.optimizer().__name__} optimizer with {len(optim.param_groups)} param group(s)..."
         )
         for g_idx, group in enumerate(optim.param_groups):
             group_fields_list = "\n - ".join(

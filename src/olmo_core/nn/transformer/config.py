@@ -121,10 +121,10 @@ class TransformerConfig(Config):
                 for pattern in self.freeze_params:
                     if fnmatch(name, pattern):
                         param.requires_grad = False
-                        log.info(f"Param '{param}' will be frozen")
+                        log.info(f"Param '{name}' will be frozen")
                         break
                 else:
-                    log.info(f"Param '{param}' will be trainable")
+                    log.info(f"Param '{name}' will be trainable")
 
         log.info("%s", model)
         log.info(
