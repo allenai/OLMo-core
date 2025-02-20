@@ -23,7 +23,7 @@ log = logging.getLogger(__name__)
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = 4096
-    dropless = False  # TODO: ablate this
+    dropless = True  # TODO: ablate this?
     return TransformerConfig.llama_like_moe(
         vocab_size=common.tokenizer.padded_vocab_size(),
         d_model=d_model,
@@ -72,7 +72,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         # NOTE: expert parallelism requires either HSDP or tensor parallelism.
         #  ep_config=TransformerExpertParallelConfig(degree=-1),
         float8_config=Float8Config(enabled=False),
-        z_loss_multiplier=1e-5,
+        z_loss_multiplier=None,  # TODO: Z-loss on router logits, not sure if you want this
         compile_loss=True,
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
