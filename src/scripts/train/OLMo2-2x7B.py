@@ -57,9 +57,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             lr=3e-4,
             weight_decay=0.1,
             betas=(0.9, 0.95),
-            group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-            ],
+            #  group_overrides=[
+            #      OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+            #  ],
             fused=True,
         ),
         compile_model=True,
