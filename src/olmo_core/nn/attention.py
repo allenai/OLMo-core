@@ -224,6 +224,7 @@ class Attention(nn.Module):
             self.rope = rope_class
 
         self._flash_attn_func = None
+        self._flash_attn_varlen_func = None
         if use_flash:
             from flash_attn import (  # type: ignore
                 flash_attn_func,

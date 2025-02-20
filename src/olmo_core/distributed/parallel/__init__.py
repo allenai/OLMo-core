@@ -8,6 +8,7 @@ from olmo_core.distributed.utils import get_num_nodes, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device
 
+from .context_parallel import ContextParallelConfig, create_context_parallel_ctx
 from .data_parallel import DataParallelConfig, DataParallelType, DPMeshDimName
 from .expert_parallel import ExpertParallelConfig
 from .pipeline_parallel import (
@@ -25,6 +26,7 @@ __all__ = [
     "get_tp_mesh",
     "get_pp_mesh",
     "get_ep_mesh",
+    "get_cp_mesh",
     "get_dp_process_group",
     "DataParallelType",
     "DataParallelConfig",
@@ -34,6 +36,8 @@ __all__ = [
     "PipelineParallelConfig",
     "PipelineScheduleType",
     "PipelineSchedule",
+    "ContextParallelConfig",
+    "create_context_parallel_ctx",
 ]
 
 log = logging.getLogger(__name__)
@@ -74,6 +78,11 @@ class MeshDimName(StrEnum):
     Tensor parallel (TP).
     """
 
+    cp = "cp"
+    """
+    Context parallel (CP).
+    """
+
     pp = "pp"
     """
     Pipeline parallel (PP).
@@ -84,6 +93,7 @@ def build_device_mesh(
     *,
     dp: Optional[DataParallelConfig] = None,
     tp: Optional[TensorParallelConfig] = None,
+    cp: Optional[ContextParallelConfig] = None,
     pp: Optional[PipelineParallelConfig] = None,
     ep: Optional[ExpertParallelConfig] = None,
     device_type: Optional[str] = None,
@@ -98,7 +108,7 @@ def build_device_mesh(
     device_type = device_type or get_default_device().type
     dp_world_size = get_world_size()
 
-    if pp is None and tp is None and dp is None and ep is None:
+    if pp is None and tp is None and cp is None and dp is None and ep is None:
         return init_device_mesh(device_type, (dp_world_size,), mesh_dim_names=(MeshDimName.dp,))
 
     if dp is None:
@@ -112,6 +122,12 @@ def build_device_mesh(
                 f"{pp.__class__.__name__}.degree must be at least 1 and divide into the world size"
             )
         dp_world_size //= pp.degree
+    if cp is not None:
+        if cp.degree < 1 or dp_world_size % cp.degree != 0:
+            raise OLMoConfigurationError(
+                f"{tp.__class__.__name__}.degree must be at least 1 and divide into the world size"
+            )
+        dp_world_size //= cp.degree
     if tp is not None:
         if tp.degree < 1 or dp_world_size % tp.degree != 0:
             raise OLMoConfigurationError(
@@ -174,6 +190,11 @@ def build_device_mesh(
     else:
         names.append(MeshDimName.dp)
         dims.append(dp_world_size)
+
+    # Context parallel.
+    if cp is not None:
+        names.append(MeshDimName.cp)
+        dims.append(cp.degree)
 
     # And lastly tensor parallel.
     if tp is not None:
@@ -340,6 +361,24 @@ def get_tp_mesh(device_mesh: DeviceMesh, *, dim_name: str = MeshDimName.tp) -> D
     else:
         raise RuntimeError(
             f"could not determine tensor parallel sub-mesh from mesh with dimensions {device_mesh.mesh_dim_names}"
+        )
+
+
+def get_cp_mesh(device_mesh: DeviceMesh, *, dim_name: str = MeshDimName.cp) -> DeviceMesh:
+    """
+    Get the context parallel sub-mesh associated with a ``DeviceMesh`` that was potentially
+    created from :func:`build_device_mesh()`.
+
+    :param dim_name: The name of the target mesh dimension.
+    """
+    if device_mesh.mesh_dim_names is None:
+        raise RuntimeError("could not determine context parallel sub-mesh without dimension names")
+
+    if dim_name in device_mesh.mesh_dim_names:
+        return device_mesh[dim_name]
+    else:
+        raise RuntimeError(
+            f"could not determine context parallel sub-mesh from mesh with dimensions {device_mesh.mesh_dim_names}"
         )
 
 
