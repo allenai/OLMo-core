@@ -597,6 +597,8 @@ class TransformerTrainModule(TrainModule):
         del batch  # In case this helps with memory utilization.
 
         if dry_run:
+            self.model.reset_auxiliary_losses()
+            self.model.reset_auxiliary_metrics()
             return
 
         # Record loss metrics.
@@ -613,6 +615,17 @@ class TransformerTrainModule(TrainModule):
                 loss_name,
                 loss_val,
                 ReduceType.mean,
+                namespace="train",
+            )
+
+        # And additional metrics.
+        for metric_name, (metric_val, reduction) in self.model.compute_auxiliary_metrics(
+            batch_num_tokens_for_loss
+        ).items():
+            self.record_metric(
+                metric_name,
+                metric_val,
+                reduction,
                 namespace="train",
             )
 

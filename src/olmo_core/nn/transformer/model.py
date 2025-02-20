@@ -1,6 +1,6 @@
 import logging
 from functools import cached_property
-from typing import Dict, List, Optional, Sequence, Union, cast
+from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, Union, cast
 
 import torch
 import torch.nn as nn
@@ -26,6 +26,9 @@ from .block import (
     TransformerBlockConfig,
 )
 from .init import InitMethod
+
+if TYPE_CHECKING:
+    from olmo_core.train.common import ReduceType
 
 __all__ = [
     "Transformer",
@@ -147,6 +150,15 @@ class Transformer(nn.Module):
         return {}
 
     def reset_auxiliary_losses(self):
+        pass
+
+    def compute_auxiliary_metrics(
+        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
+        del total_bz, reset
+        return {}
+
+    def reset_auxiliary_metrics(self):
         pass
 
     @property
@@ -646,6 +658,21 @@ class MoETransformer(Transformer):
     def reset_auxiliary_losses(self):
         for block in self.blocks.values():
             cast(MoETransformerBlock, block).reset_losses()
+
+    def compute_auxiliary_metrics(
+        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
+        out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
+        for block_idx, block in self.blocks.items():
+            for metric_name, metric_val in (
+                cast(MoETransformerBlock, block).compute_metrics(total_bz, reset=reset).items()
+            ):
+                out[f"block {int(block_idx):02d}/{metric_name}"] = metric_val
+        return out
+
+    def reset_auxiliary_metrics(self):
+        for block in self.blocks.values():
+            cast(MoETransformerBlock, block).reset_metrics()
 
     def forward(
         self,

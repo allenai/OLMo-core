@@ -1,7 +1,7 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Dict, Optional, Union
+from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -20,6 +20,9 @@ from ..feed_forward import FeedForwardConfig
 from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
 from ..moe import MoEConfig
+
+if TYPE_CHECKING:
+    from olmo_core.train.common import ReduceType
 
 
 class TransformerBlockType(StrEnum):
@@ -375,6 +378,14 @@ class MoETransformerBlock(TransformerBlockBase):
 
     def reset_losses(self):
         self.feed_forward_moe.reset_losses()
+
+    def compute_metrics(
+        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
+        return self.feed_forward_moe.compute_metrics(total_bz, reset=reset)
+
+    def reset_metrics(self):
+        self.feed_forward_moe.reset_metrics()
 
     def forward(
         self,

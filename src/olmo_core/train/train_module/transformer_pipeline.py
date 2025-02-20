@@ -843,6 +843,9 @@ class TransformerPipelineTrainModule(TrainModule):
         self._batch_num_tokens_for_loss = None
         self._ce_batch_loss = None
         self._z_batch_loss = None
+        for model in self.model_parts:
+            model.reset_auxiliary_losses()
+            model.reset_auxiliary_metrics()
 
     def _get_state_dict(self, sd_options: dist_cp_sd.StateDictOptions) -> Dict[str, Any]:
         return {

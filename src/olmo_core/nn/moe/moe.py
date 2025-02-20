@@ -1,7 +1,7 @@
 import logging
 from abc import abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -18,10 +18,14 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from ..buffer_cache import BufferCache
 from .loss import MoELoadBalancingLoss, MoELoss, MoERouterZLoss
+from .metric import MoELoadImbalanceMetric, MoEMetric
 from .mlp import DroplessMoEMLP, MoEMLP
 from .parallel_mlp import ParallelDroplessMLP, ParallelMLP, ParallelMLPBase
 from .router import MoERouterConfig
 from .shared_mlp import SharedMLPConfig
+
+if TYPE_CHECKING:
+    from olmo_core.train.common import ReduceType
 
 __all__ = ["MoEBase", "MoE", "DroplessMoE", "MoEConfig", "MoEType"]
 
@@ -141,6 +145,9 @@ class MoEBase(nn.Module):
             else shared_mlp.build(d_model, hidden_size, dtype=dtype, init_device=init_device)
         )
         self.losses: List[MoELoss] = []
+        self.metrics: List[MoEMetric] = [
+            MoELoadImbalanceMetric(num_experts=num_experts, top_k=self.router.top_k)
+        ]
         if lb_loss_weight is not None:
             self.losses.append(
                 MoELoadBalancingLoss(
@@ -151,6 +158,10 @@ class MoEBase(nn.Module):
             )
         if z_loss_weight is not None:
             self.losses.append(MoERouterZLoss(loss_weight=z_loss_weight, num_experts=num_experts))
+
+    @property
+    def num_experts(self) -> int:
+        return self.router.num_experts
 
     def warmup_cache(self, max_local_microbatch_size: int):
         self.experts.warmup_cache(max_local_microbatch_size)
@@ -166,6 +177,18 @@ class MoEBase(nn.Module):
     def reset_losses(self):
         for loss_fn in self.losses:
             loss_fn.reset()
+
+    def compute_metrics(
+        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
+        out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
+        for metric in self.metrics:
+            out.update(metric.compute(total_bz, reset=reset))
+        return out
+
+    def reset_metrics(self):
+        for metric in self.metrics:
+            metric.reset()
 
     @abstractmethod
     def _init_parallel_mlp(
@@ -196,12 +219,24 @@ class MoEBase(nn.Module):
         if self.shared_experts is not None:
             out = self.shared_experts(x, out, self.router.top_k)
 
-        if self.training and self.losses:
+        if self.training and (self.losses or self.metrics):
             expert_logits = expert_logits.float()
+
             for loss_fn in self.losses:
                 loss_fn.update(
                     expert_logits=expert_logits,
                     expert_scores=expert_scores,
+                    expert_weights=expert_weights,
+                    expert_indices=expert_indices,
+                    batch_size_per_expert=batch_size_per_expert,
+                )
+
+            for metric in self.metrics:
+                metric.update(
+                    expert_logits=expert_logits,
+                    expert_scores=expert_scores,
+                    expert_weights=expert_weights,
+                    expert_indices=expert_indices,
                     batch_size_per_expert=batch_size_per_expert,
                 )
 
