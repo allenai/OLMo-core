@@ -119,7 +119,7 @@ def build_device_mesh(
             )
         dp_world_size //= tp.degree
     if ep is not None:
-        if ep.degree < 1 or dp_world_size % ep.degree != 0:
+        if ep.degree == 0 or dp_world_size % ep.degree != 0:
             raise OLMoConfigurationError(
                 f"{ep.__class__.__name__}.degree must be at least 1 and divide into the world size"
             )
@@ -154,7 +154,7 @@ def build_device_mesh(
             )
         shard_degree = dp_world_size // num_replicas
         if ep is not None:
-            if ep.degree != shard_degree:
+            if ep.degree >= 0 and ep.degree != shard_degree:
                 raise OLMoConfigurationError(
                     "expert parallelism + HSDP requires the same sharding degree"
                 )
@@ -164,10 +164,13 @@ def build_device_mesh(
         names.append(MeshDimName.dp_shard)
         dims.append(shard_degree)
     elif ep is not None:
+        ep_degree = ep.degree
+        if ep_degree < 0:
+            ep_degree = dp_world_size
         names.append(MeshDimName.ep_replicate)
-        dims.append(dp_world_size // ep.degree)
+        dims.append(dp_world_size // ep_degree)
         names.append(MeshDimName.ep_shard)
-        dims.append(ep.degree)
+        dims.append(ep_degree)
     else:
         names.append(MeshDimName.dp)
         dims.append(dp_world_size)
@@ -200,16 +203,20 @@ def build_expert_parallel_mesh(
     names: List[str] = []
     dims: List[int] = []
 
-    if world_size % ep_config.degree != 0:
+    ep_degree = ep_config.degree
+    if ep_degree < 0:
+        ep_degree = world_size
+
+    if world_size % ep_degree != 0:
         raise OLMoConfigurationError(
             f"Expert parallelism requires world size ({world_size}) to "
-            f"be divisible by 'degree' ({ep_config.degree})"
+            f"be divisible by 'degree' ({ep_degree})"
         )
     names.append(MeshDimName.ep_replicate)
-    dims.append(world_size // ep_config.degree)
+    dims.append(world_size // ep_degree)
 
     names.append(MeshDimName.ep_shard)
-    dims.append(ep_config.degree)
+    dims.append(ep_degree)
 
     log.info(f"Building {len(dims)}-D device mesh with dimensions:")
     for i, (name, dim) in enumerate(zip(names, dims)):

@@ -1,6 +1,7 @@
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from fnmatch import fnmatch
+from typing import List, Optional
 
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.utils import ensure_multiple_of
@@ -58,6 +59,7 @@ class TransformerConfig(Config):
     dtype: DType = DType.float32
     init_method: InitMethod = InitMethod.normal
     init_seed: int = 0
+    freeze_params: Optional[List[str]] = None
 
     def build(
         self,
@@ -114,7 +116,23 @@ class TransformerConfig(Config):
         else:
             raise NotImplementedError(self.name)
 
+        if self.freeze_params:
+            for name, param in model.named_parameters():
+                for pattern in self.freeze_params:
+                    if fnmatch(name, pattern):
+                        param.requires_grad = False
+                        log.info(f"Param '{name}' will be frozen")
+                        break
+                else:
+                    log.info(f"Param '{name}' will be trainable")
+
         log.info("%s", model)
+        log.info(
+            f"Built model with:\n"
+            f"- {model.num_params:,d} total params\n"
+            f"- {model.num_non_embedding_params:,d} non-embedding params\n"
+            f"- {model.num_trainable_params:,d} trainable params"
+        )
 
         return model
 
@@ -364,31 +382,6 @@ class TransformerConfig(Config):
                 num_experts=32,
                 hidden_size=int(0.5 * d_model),
                 router=MoERouterConfig(top_k=4, bias=False),
-                shared_mlp=SharedMLPConfig(hidden_size=d_model * 2, bias=False),
-                lb_loss_weight=0.01,
-                z_loss_weight=0.001,
-            ),
-        )
-
-    @classmethod
-    def olmoe2_large(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
-        d_model = kwargs.pop("d_model", 4096)
-        return cls.llama_like(
-            d_model=d_model,
-            vocab_size=vocab_size,
-            n_layers=kwargs.pop("n_layers", 32),
-            n_heads=kwargs.pop("n_heads", 32),
-            name=kwargs.pop("name", TransformerType.moe),
-            block_name=kwargs.pop("block_name", TransformerBlockType.moe_reordered_norm),
-            qk_norm=kwargs.pop("qk_norm", True),
-            rope_theta=kwargs.pop("rope_theta", 500_000),
-            layer_norm_eps=1e-6,
-            feed_forward_moe=MoEConfig(
-                name=MoEType.default,
-                num_experts=64,
-                hidden_size=int(0.5 * d_model),
-                capacity_factor=1.05,
-                router=MoERouterConfig(top_k=8, bias=False),
                 shared_mlp=SharedMLPConfig(hidden_size=d_model * 2, bias=False),
                 lb_loss_weight=0.01,
                 z_loss_weight=0.001,
@@ -686,6 +679,50 @@ class TransformerConfig(Config):
             block=block,
             lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
             dtype=dtype,
+            **kwargs,
+        )
+
+    @classmethod
+    def llama_like_moe(
+        cls,
+        *,
+        d_model: int,
+        vocab_size: int,
+        n_layers: int,
+        n_heads: int,
+        num_experts: int,
+        top_k: int,
+        expert_hidden_size: int,
+        shared_expert_hidden_size: Optional[int] = None,
+        dropless: bool = False,
+        capacity_factor: Optional[float] = None,
+        lb_loss_weight: float = 0.01,
+        z_loss_weight: Optional[float] = 0.001,
+        reordered_norm: bool = False,
+        **kwargs,
+    ) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=n_layers,
+            n_heads=n_heads,
+            name=TransformerType.moe,
+            block_name=TransformerBlockType.moe
+            if not reordered_norm
+            else TransformerBlockType.moe_reordered_norm,
+            qk_norm=kwargs.pop("qk_norm", reordered_norm),
+            feed_forward_moe=MoEConfig(
+                name=MoEType.default if not dropless else MoEType.dropless,
+                num_experts=num_experts,
+                hidden_size=expert_hidden_size,
+                capacity_factor=capacity_factor,
+                router=MoERouterConfig(top_k=top_k, bias=False),
+                shared_mlp=None
+                if shared_expert_hidden_size is None
+                else SharedMLPConfig(hidden_size=shared_expert_hidden_size, bias=False),
+                lb_loss_weight=lb_loss_weight,
+                z_loss_weight=z_loss_weight,
+            ),
             **kwargs,
         )
 
