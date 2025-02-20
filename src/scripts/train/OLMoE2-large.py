@@ -23,7 +23,24 @@ log = logging.getLogger(__name__)
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    return TransformerConfig.olmoe2_large(vocab_size=common.tokenizer.padded_vocab_size())
+    d_model = 4096
+    return TransformerConfig.llama_like_moe(
+        vocab_size=common.tokenizer.padded_vocab_size(),
+        d_model=d_model,
+        n_layers=32,
+        n_heads=32,
+        num_experts=64,
+        top_k=2,
+        expert_hidden_size=int(0.5 * d_model),
+        shared_expert_hidden_size=d_model * 2,
+        capacity_factor=1.05,
+        lb_loss_weight=0.01,
+        z_loss_weight=0.001,
+        reordered_norm=True,
+        qk_norm=True,
+        rope_theta=500_000,
+        layer_norm_eps=1e-6,
+    )
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:

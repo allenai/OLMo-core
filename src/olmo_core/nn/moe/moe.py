@@ -51,7 +51,7 @@ class MoEType(StrEnum):
 
 @dataclass
 class MoEConfig(Config):
-    name: MoEType = MoEType.dropless  # TODO: change to default
+    name: MoEType = MoEType.default
     """
     The name of the implementation.
     """
