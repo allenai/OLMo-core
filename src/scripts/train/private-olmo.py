@@ -1,5 +1,5 @@
 """
-Train a 2x7B OLMo2 model. Run this script without any arguments to see usage info.
+Train an Nx7B OLMo2 model. Run this script without any arguments to see usage info.
 """
 
 import logging
@@ -100,7 +100,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             CometCallback(
                 name=common.run_name,
                 workspace="ai2",
-                project="OLMoE",
+                project="private-olmo",
                 enabled=True,
                 cancel_check_interval=10,
             ),
@@ -110,7 +110,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=common.run_name,
                 entity="ai2-llm",
-                project="OLMoE",
+                project="private-olmo",
                 enabled=False,
                 cancel_check_interval=10,
             ),
@@ -120,7 +120,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 if __name__ == "__main__":
     main(
-        global_batch_size=1024 * 4096,
+        global_batch_size=128 * 4096,  # TODO: adjust as needed
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
