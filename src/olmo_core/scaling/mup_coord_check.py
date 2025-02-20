@@ -7,45 +7,45 @@ from mup.coord_check import plot_coord_data
 from torch.utils.data import DataLoader
 
 from olmo_core.nn.transformer import TransformerConfig, TransformerBlockConfig
-from olmo_core.config import ModelConfig, TrainConfig
-# from olmo.data import build_train_dataloader
-from olmo_core.data import NumpyFSLDataset, NumpyFSLDataLoader
+from olmo_core.data import NumpyFSLDataset, NumpyFSLDataLoader, DataCollator
+from olmo_core.data import TokenizerConfig
 from olmo_core.scaling.coord_check import get_coord_data
 from olmo_core.scaling.mup_utils import load_mu_model, save_base_shapes
 from olmo_core.utils import seed_all
 from olmo_core.nn.functional import cross_entropy_loss
 
+def get_dataloader(data_paths, batch_size: int):
 
-def get_dataloader(cfg: TrainConfig, batch_size: int) -> DataLoader:
-    # Set seed.
-    seed_all(cfg.seed)
+    tokenizer_config = TokenizerConfig.dolma2()
+    global_batch_size = batch_size
 
-    cfg.global_train_batch_size = batch_size
-    cfg.device_train_batch_size = batch_size // 1  # TODO: assuming single GPU for now
-    # train_loader = build_train_dataloader(cfg)
     dataset = NumpyFSLDataset(
-        *cfg.data.paths,
-        sequence_length=cfg.model.max_sequence_length,
-        pad_token_id=cfg.model.pad_token_id,
-        eos_token_id=cfg.model.eos_token_id,
-        vocab_size=cfg.model.vocab_size,
+        data_paths,
+        sequence_length=4096,
+        pad_token_id=tokenizer_config.pad_token_id,
+        eos_token_id=tokenizer_config.eos_token_id,
+        vocab_size=tokenizer_config.vocab_size,
         dtype=np.uint16,  
         metadata=None,
-        include_instance_metadata=False,  
+        include_instance_metadata=False,
+        generate_doc_lengths=False,
+        max_target_sequence_length=None  
     )
 
-    assert cfg.global_train_batch_size % dataset.sequence_length == 0, \
+    assert global_batch_size % dataset.sequence_length == 0, \
         "Global batch size must be divisible by sequence length!"
     
     train_loader = NumpyFSLDataLoader(
         dataset,
-        global_batch_size=cfg.global_train_batch_size,
-        seed=cfg.seed,
+        global_batch_size=global_batch_size,
+        seed=34521,
         shuffle=True,
-        num_workers=cfg.data.num_workers,
+        num_workers=1,
+        collator = DataCollator,
+        work_dir = dataset.work_dir
     )
 
-    return train_loader # type: ignore
+    return train_loader
 
 
 def coord_check(
@@ -63,22 +63,13 @@ def coord_check(
 ):
     def model_generator(d_model, standparam=False):
         def f():
-            config = TransformerConfig(
-                d_model=d_model,
-                vocab_size=100352,
-                n_layers=32,
-                block=TransformerBlockConfig(
-                    attention=AttentionConfig(n_heads=32),
-                    feed_forward=FeedForwardConfig(hidden_size=11008),
-                ),
-            )
+            model = load_mu_model(TokenizerConfig)
             
-            model = TransformerModel(config)  # Assuming this is how the model is initialized
-
+            # model = TransformerModel(config)  # Assuming this is how the model is initialized
             if standparam:
                 config.mup_base_shapes = None
             else:
-                assert load_base_shapes, "load_base_shapes needs to be specified for muP."
+                assert load_base_shapes, "load_base_shapes needs to be specified for mup."
                 config.mup_base_shapes = load_base_shapes
             
             model.set_base_shapes()  # Required for muP initialization

@@ -53,7 +53,6 @@ class FeedForwardConfig(Config):
     """
     bias: Optional[bool] = None
     dtype: DType = DType.float32
-    use_mup: bool = False
     mup_base_shapes: Optional[Dict[str, Any]] = None
 
     def num_params(self, d_model: int) -> int:

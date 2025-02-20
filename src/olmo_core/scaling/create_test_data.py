@@ -15,7 +15,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--vocab-size", type=int, default=50257)
     parser.add_argument("--data-size", type=int, default=2048 * 64)
-    parser.add_argument("--path", type=str, default="test_fixtures/sample-tokens.npy")
+    parser.add_argument("--path", type=str, default="sample-tokens.npy")
 
     args = parser.parse_args()
 

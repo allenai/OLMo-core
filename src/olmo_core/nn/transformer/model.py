@@ -20,6 +20,7 @@ from .init import InitMethod
 
 __all__ = [
     "Transformer",
+    "muPTransformer",
     "NormalizedTransformer",
     "TransformerDataParallelWrappingStrategy",
     "TransformerActivationCheckpointingMode",
@@ -592,7 +593,7 @@ class muPTransformer(Transformer):
         block: TransformerBlockConfig,
         lm_head: LMHeadConfig,
         dtype: torch.dtype = torch.float32,
-        init_method: InitMethod = InitMethod.normal,
+        init_method: InitMethod = InitMethod.mup,
         init_device: str = "cpu",
         init_seed: int = 0,
         mup_base_shapes: Optional[str] = None,

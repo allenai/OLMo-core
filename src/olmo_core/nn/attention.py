@@ -640,7 +640,7 @@ class FusedAttention(nn.Module):
 @beta_feature
 class muPAttention(Attention):
     """
-    A Multi-Head Self-Attention implementation with MuP scaling.
+    A Multi-Head Self-Attention implementation with muP scaling.
 
     Instead of scaling queries by `1/sqrt(d)`, we scale by `1/d` as per the muP parameterization.
 

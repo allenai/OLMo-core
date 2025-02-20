@@ -44,6 +44,11 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`NormalizedTransformerBlock`
     """
 
+    mup = "mup"
+    """
+    ➡️ :class:`muPTransformerBlock`
+    """
+
     moe = "moe"
     """
     ➡️ :class:`MoETransformerBlock`
@@ -110,6 +115,8 @@ class TransformerBlockConfig(Config):
                 return ReorderedNormTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.normalized:
                 return NormalizedTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.mup:
+                return muPTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe:
                 return MoETransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe_reordered_norm:
@@ -363,6 +370,82 @@ class NormalizedTransformerBlock(TransformerBlockBase):
 
     def _normalize_matrix(self, w: torch.Tensor, dim: int = -1):
         w.copy_(l2_normalize(w, dim=dim))
+
+
+class muPTransformerBlock(TransformerBlockBase):
+    """
+    A typical "Llama-style" transformer block for muP implementation.
+
+    :param d_model: The model dimensionality.
+    :param block_idx: The index/position of the block within the model. Ranges from 0 to ``n_layers - 1``.
+    :param attention: The attention module config.
+    :param feed_forward: The feed forward module config.
+    :param layer_norm: The layer norm config for both the attention LN and the feed forward LN.
+    :param dropout: Dropout probability.
+    :param init_device: The device used when initializing parameters.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        block_idx: int,
+        attention: AttentionConfig,
+        feed_forward: FeedForwardConfig,
+        layer_norm: LayerNormConfig,
+        dropout: float = 0.0,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.block_idx = block_idx
+        self.attention = attention.build(d_model, init_device=init_device, cache=cache)
+        self.attention_norm = layer_norm.build(d_model, init_device=init_device)
+        self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
+        self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
+        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        max_doc_len: Optional[int] = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        h = x + self.dropout(
+            self.attention(self.attention_norm(x), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
+        )
+        return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
+
+    @property
+    def tp_input_layouts(self) -> Union[Placement, Tuple[Placement, ...]]:
+        return Shard(1)
+
+    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
+        _, _, prepare_module_input = get_tp_wrappers(float8_enabled=float8_enabled)
+
+        plan = {
+            "attention_norm": SequenceParallel(),
+            "attention": prepare_module_input(
+                input_layouts=(Shard(1),),
+                desired_input_layouts=(Replicate(),),
+            ),
+            "feed_forward_norm": SequenceParallel(),
+            "feed_forward": prepare_module_input(
+                input_layouts=(Shard(1),),
+                desired_input_layouts=(Replicate(),),
+            ),
+        }
+        if isinstance(self.dropout, nn.Dropout):
+            plan["dropout"] = SequenceParallel()
+        parallelize_module(
+            module=self,
+            device_mesh=tp_mesh,
+            parallelize_plan=plan,
+        )
+
+        self.attention.apply_tp(tp_mesh, output_layouts=Shard(1), float8_enabled=float8_enabled)
+        self.feed_forward.apply_tp(tp_mesh, output_layouts=Shard(1), float8_enabled=float8_enabled)
 
 
 class MoETransformerBlock(TransformerBlockBase):

@@ -27,6 +27,7 @@ from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from .block import TransformerBlockConfig, TransformerBlockType
 from .init import InitMethod
 from .model import (
+    muPTransformer,
     NormalizedTransformer,
     Transformer,
     TransformerActivationCheckpointingMode,
@@ -210,9 +211,6 @@ class TransformerConfig(Config):
             )
 
         elif self.name == TransformerType.mup:
-            # self.block.feed_forward.set_base_shapes(self.mup_base_shapes)
-            # self.block.attention.set_base_shapes(self.mup_base_shapes)
-
             model = muPTransformer(
                 d_model=self.d_model,
                 vocab_size=self.vocab_size,
@@ -224,7 +222,6 @@ class TransformerConfig(Config):
                 init_device=init_device,
                 init_seed=self.init_seed,
             )
-
         else:
             raise NotImplementedError(self.name)
 
@@ -480,7 +477,7 @@ class TransformerConfig(Config):
         """
         return cls.llama2_7B(
             vocab_size,
-            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            block_name=kwargs.pop("block_name", TransformerBlockType.mup),
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             layer_norm_eps=1e-6,
@@ -581,7 +578,7 @@ class TransformerConfig(Config):
         """
         A 7B Llama2-like model config.
         """
-        return cls.llama_like(
+        return cls.llama_like_mup(
             d_model=4096,
             vocab_size=vocab_size,
             n_layers=kwargs.pop("n_layers", 32),
@@ -783,6 +780,97 @@ class TransformerConfig(Config):
                 dtype=dtype,
             ),
             feed_forward=FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype),
+            layer_norm=layer_norm,
+        )
+
+        return cls(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=n_layers,
+            block=block,
+            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+            dtype=dtype,
+            compile=compile,
+            **kwargs,
+        )
+
+    @classmethod
+    def llama_like_mup(
+        cls,
+        *,
+        d_model: int,
+        vocab_size: int,
+        n_layers: int,
+        n_heads: int,
+        n_kv_heads: Optional[int] = None,
+        qk_norm: bool = False,
+        layer_norm_eps: float = 1e-5,
+        rope_theta: int = 500_000,
+        rope_type: Optional[RoPEType] = None,
+        hidden_size_multiple_of: int = 256,
+        hidden_size_multiplier: Optional[float] = None,
+        fused_ops: Optional[bool] = None,
+        use_flash: Optional[bool] = None,
+        block_name: TransformerBlockType = TransformerBlockType.mup,
+        dtype: DType = DType.float32,
+        compile: bool = False,
+        rope_scaling: Optional[RoPEScalingConfig] = None,
+        **kwargs,
+    ) -> "TransformerConfig":
+        """
+        Create a Llama-like model configuration.
+
+        :param hidden_size_multiple_of: Ensure the FFN hidden size is a multiple of this value.
+        :param hidden_size_multiplier: Custom multiplier for the FFN hidden size.
+        :param fused_ops: Use fused operations where possible. Defaults to ``True`` if flash-attn is
+            installed and ``compile=False``, otherwise ``False``.
+        :param use_flash: Use flash-attn. Defaults to ``True`` if flash-attn is
+            installed and ``compile=False``, otherwise ``False``.
+        :param dtype: The default data type to use for all parameters.
+        """
+        if fused_ops is None:
+            fused_ops = False if compile else has_flash_attn()
+        if use_flash is None:
+            use_flash = False if compile else has_flash_attn()
+
+        # Resolve hidden size of FFN in blocks.
+        hidden_size = int(8 * d_model / 3)
+        if hidden_size_multiplier is not None:
+            hidden_size = int(hidden_size_multiplier * hidden_size)
+        hidden_size = hidden_size_multiple_of * (
+            (hidden_size + hidden_size_multiple_of - 1) // hidden_size_multiple_of
+        )
+
+        # Configure global layer norm.
+        layer_norm = LayerNormConfig(
+            name=LayerNormType.fused_rms if fused_ops else LayerNormType.rms,
+            eps=layer_norm_eps,
+            bias=False,
+            dtype=dtype,
+        )
+
+        # Decide on attention/rope implementations.
+        att_type = AttentionType.mup
+        if rope_type is None:
+            rope_type = RoPEType.default
+            if fused_ops and n_kv_heads is None:  # fused attention not compatible with MQA/GQA.
+                att_type = AttentionType.fused
+                rope_type = RoPEType.fused
+
+        # Configure blocks.
+        block = TransformerBlockConfig(
+            name=block_name,
+            attention=AttentionConfig(
+                name=att_type,
+                n_heads=n_heads,
+                n_kv_heads=n_kv_heads,
+                bias=False,
+                rope=RoPEConfig(name=rope_type, theta=rope_theta, scaling=rope_scaling),
+                qk_norm=layer_norm if qk_norm else None,
+                use_flash=use_flash,
+                dtype=dtype,
+            ),
+            feed_forward=FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype, name=FeedForwardType.mup),
             layer_norm=layer_norm,
         )
 
