@@ -14,6 +14,7 @@ from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
+    TransformerDataParallelWrappingStrategy,
     TransformerExpertParallelConfig,
     TransformerTrainModuleConfig,
 )
@@ -40,9 +41,13 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
+            name=DataParallelType.hsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
+            num_replicas=1,  # to enable full-way expert parallel
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
         ),
-        ep_config=TransformerExpertParallelConfig(degree=8),
+        ep_config=TransformerExpertParallelConfig(degree=-1),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         compile_loss=True,
