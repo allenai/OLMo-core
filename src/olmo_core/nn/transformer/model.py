@@ -161,6 +161,15 @@ class Transformer(nn.Module):
     def reset_auxiliary_metrics(self):
         pass
 
+    def get_attn_buffers(
+        self, max_seq_len: int, device: Optional[torch.device] = None
+    ) -> Dict[str, torch.Tensor]:
+        device = device or self.device
+        for block in self.blocks.values():
+            block = cast(TransformerBlockBase, block)
+            return block.get_attn_buffers(max_seq_len, device) or {}
+        return {}
+
     @property
     def is_moe(self) -> bool:
         return False
@@ -255,6 +264,7 @@ class Transformer(nn.Module):
         input_ids: torch.Tensor,
         doc_lens: Optional[torch.Tensor] = None,
         max_doc_lens: Optional[Sequence[int]] = None,
+        **attn_buffers,
     ) -> torch.Tensor:
         """
         Run the transformer on the token input IDs.
@@ -278,7 +288,7 @@ class Transformer(nn.Module):
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
         for block in self.blocks.values():
-            h = block(h, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
+            h = block(h, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens, **attn_buffers)
 
         return self.lm_head(h) if self.lm_head is not None else h
 
@@ -683,6 +693,7 @@ class MoETransformer(Transformer):
         input_ids: torch.Tensor,
         doc_lens: Optional[torch.Tensor] = None,
         max_doc_lens: Optional[Sequence[int]] = None,
+        **attn_buffers,
     ) -> torch.Tensor:
         max_doc_len: Optional[int] = None
         cu_doc_lens: Optional[torch.Tensor] = None
@@ -694,7 +705,7 @@ class MoETransformer(Transformer):
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
         for block in self.blocks.values():
-            h = block(h, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
+            h = block(h, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens, **attn_buffers)
 
         return self.lm_head(h) if self.lm_head is not None else h
 

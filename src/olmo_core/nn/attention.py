@@ -299,6 +299,7 @@ class Attention(nn.Module):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        **rope_buffers,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -340,7 +341,7 @@ class Attention(nn.Module):
         v = v.view(B, T, -1, self.head_dim)
 
         if self.rope is not None:
-            q, k = self.rope(q, k, head_first=False)
+            q, k = self.rope(q, k, head_first=False, **rope_buffers)
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(q, k, v, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
@@ -456,6 +457,7 @@ class NormalizedAttention(Attention):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        **rope_buffers,
     ) -> torch.Tensor:
         B, T, _ = x.shape
 
@@ -482,7 +484,7 @@ class NormalizedAttention(Attention):
         v = v.view(B, T, self.n_kv_heads, self.head_dim)
 
         if self.rope is not None:
-            q, k = self.rope(q, k, head_first=False)
+            q, k = self.rope(q, k, head_first=False, **rope_buffers)
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -588,6 +590,7 @@ class FusedAttention(nn.Module):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        **rope_buffers,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -611,7 +614,7 @@ class FusedAttention(nn.Module):
             qkv.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
 
         if self.rope is not None:
-            qkv = self.rope(qkv)
+            qkv = self.rope(qkv, **rope_buffers)
 
         if max_doc_len is not None and cu_doc_lens is not None:
             # shape: (batch_size * seq_len, n_heads, head_dim)

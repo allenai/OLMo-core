@@ -134,6 +134,7 @@ class TransformerBlockBase(nn.Module):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        **attn_buffers,
     ) -> torch.Tensor:
         """
         Run the block on the input ``x``.
@@ -146,6 +147,12 @@ class TransformerBlockBase(nn.Module):
             are documents (the first element in the tensor should always be ``0``).
             Required together with ``max_doc_len`` when using intra-document masking.
         """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_attn_buffers(
+        self, max_seq_len: int, device: torch.device
+    ) -> Optional[Dict[str, torch.Tensor]]:
         raise NotImplementedError
 
     @abstractmethod
@@ -187,14 +194,28 @@ class TransformerBlock(TransformerBlockBase):
         self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
 
+    def get_attn_buffers(
+        self, max_seq_len: int, device: torch.device
+    ) -> Optional[Dict[str, torch.Tensor]]:
+        if self.attention.rope is None:
+            return None
+        else:
+            self.attention.rope.get_buffers(max_seq_len, device)
+
     def forward(
         self,
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        **attn_buffers,
     ) -> torch.Tensor:
         h = x + self.dropout(
-            self.attention(self.attention_norm(x), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
+            self.attention(
+                self.attention_norm(x),
+                max_doc_len=max_doc_len,
+                cu_doc_lens=cu_doc_lens,
+                **attn_buffers,
+            )
         )
         return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
@@ -245,9 +266,12 @@ class ReorderedNormTransformerBlock(TransformerBlock):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        **attn_buffers,
     ) -> torch.Tensor:
         h = x + self.dropout(
-            self.attention_norm(self.attention(x, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens))
+            self.attention_norm(
+                self.attention(x, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens, **attn_buffers)
+            )
         )
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
@@ -289,6 +313,14 @@ class NormalizedTransformerBlock(TransformerBlockBase):
             * torch.ones(d_model, dtype=torch.float32, device=init_device)
         )
 
+    def get_attn_buffers(
+        self, max_seq_len: int, device: torch.device
+    ) -> Optional[Dict[str, torch.Tensor]]:
+        if self.attention.rope is None:
+            return None
+        else:
+            self.attention.rope.get_buffers(max_seq_len, device)
+
     def reset_parameters(self):
         nn.init.ones_(self.attn_alpha)
         self.attn_alpha.mul_(self.attn_alpha_init_scaling)
@@ -300,11 +332,16 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        **attn_buffers,
     ) -> torch.Tensor:
         h = l2_normalize(
             torch.lerp(
                 x,
-                l2_normalize(self.attention(x, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)),
+                l2_normalize(
+                    self.attention(
+                        x, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens, **attn_buffers
+                    )
+                ),
                 (
                     self.attn_alpha * (self.attn_alpha_init_value / self.attn_alpha_init_scaling)
                 ).abs(),
@@ -371,6 +408,14 @@ class MoETransformerBlock(TransformerBlockBase):
         self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
 
+    def get_attn_buffers(
+        self, max_seq_len: int, device: torch.device
+    ) -> Optional[Dict[str, torch.Tensor]]:
+        if self.attention.rope is None:
+            return None
+        else:
+            self.attention.rope.get_buffers(max_seq_len, device)
+
     def compute_losses(
         self, total_bz: Union[int, torch.Tensor], reset: bool = True
     ) -> Dict[str, torch.Tensor]:
@@ -392,6 +437,7 @@ class MoETransformerBlock(TransformerBlockBase):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        **attn_buffers,
     ) -> torch.Tensor:
         """
         Run the block on the input ``x``.
@@ -399,7 +445,12 @@ class MoETransformerBlock(TransformerBlockBase):
         Parameters are the same as :meth:`TransformerBlock.forward()`.
         """
         h = x + self.dropout(
-            self.attention(self.attention_norm(x), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
+            self.attention(
+                self.attention_norm(x),
+                max_doc_len=max_doc_len,
+                cu_doc_lens=cu_doc_lens,
+                **attn_buffers,
+            )
         )
         return h + self.dropout(self.feed_forward_moe(self.feed_forward_norm(h)))
 
@@ -454,8 +505,11 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        **attn_buffers,
     ) -> torch.Tensor:
         h = x + self.dropout(
-            self.attention_norm(self.attention(x, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens))
+            self.attention_norm(
+                self.attention(x, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens, **attn_buffers)
+            )
         )
         return h + self.dropout(self.feed_forward_norm(self.feed_forward_moe(h)))
