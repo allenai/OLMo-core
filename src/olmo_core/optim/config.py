@@ -89,13 +89,14 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
             match any parameter.
         """
-        if self.group_overrides is None:
-            log.info(f"Building {self.optimizer().__name__} optimizer with 1 param group...")
-            return model.parameters()
-
         all_params: Dict[str, torch.Tensor] = OrderedDict()
         for n, p in model.named_parameters():
-            all_params[n] = p
+            if p.requires_grad:
+                all_params[n] = p
+
+        if self.group_overrides is None:
+            log.info(f"Building {self.optimizer().__name__} optimizer with 1 param group...")
+            return all_params.values()
 
         # Build groups.
         param_groups: List[Dict[str, Any]] = []

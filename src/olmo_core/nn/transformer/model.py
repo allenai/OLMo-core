@@ -511,6 +511,10 @@ class Transformer(nn.Module):
     def num_params(self) -> int:
         return sum(p.numel() for p in self.parameters())
 
+    @property
+    def num_trainable_params(self) -> int:
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
     @cached_property
     def num_non_embedding_params(self) -> int:
         return self.num_params - self.embeddings.weight.numel()

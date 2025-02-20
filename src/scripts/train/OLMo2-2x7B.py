@@ -29,7 +29,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         d_model=d_model,
         n_layers=32,
         n_heads=32,
-        num_experts=2,
+        num_experts=2,  # NOTE: if increasing this you may need to enable EP or TP
         top_k=1,
         expert_hidden_size=11008,
         dropless=dropless,
@@ -40,6 +40,12 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         qk_norm=True,
         rope_theta=500_000,
         layer_norm_eps=1e-6,
+        freeze_params=[
+            "embeddings.*",
+            "blocks.*.attention*",
+            "blocks.*.feed_forward_norm.*",  # TODO: not sure if you want this frozen
+            "lm_head.*",
+        ],
     )
 
 
@@ -63,6 +69,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
         ),
+        # NOTE: expert parallelism requires either HSDP or tensor parallelism.
         #  ep_config=TransformerExpertParallelConfig(degree=-1),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,

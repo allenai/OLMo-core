@@ -1,6 +1,7 @@
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from fnmatch import fnmatch
+from typing import List, Optional
 
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.utils import ensure_multiple_of
@@ -58,6 +59,7 @@ class TransformerConfig(Config):
     dtype: DType = DType.float32
     init_method: InitMethod = InitMethod.normal
     init_seed: int = 0
+    freeze_params: Optional[List[str]] = None
 
     def build(
         self,
@@ -114,7 +116,23 @@ class TransformerConfig(Config):
         else:
             raise NotImplementedError(self.name)
 
+        if self.freeze_params:
+            for name, param in model.named_parameters():
+                for pattern in self.freeze_params:
+                    if fnmatch(name, pattern):
+                        param.requires_grad = False
+                        log.info(f"Param '{param}' will be frozen")
+                        break
+                else:
+                    log.info(f"Param '{param}' will be trainable")
+
         log.info("%s", model)
+        log.info(
+            f"Built model with:\n"
+            f"- {model.num_params:,d} total params\n"
+            f"- {model.num_non_embedding_params:,d} non-embedding params\n"
+            f"- {model.num_trainable_params:,d} trainable params"
+        )
 
         return model
 
