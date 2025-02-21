@@ -204,7 +204,7 @@ class TransformerBlock(TransformerBlockBase):
         if self.attention.rope is None:
             return None
         else:
-            self.attention.rope.get_buffers(max_seq_len, device)
+            return self.attention.rope.get_buffers(max_seq_len, device)
 
     def forward(
         self,
@@ -326,7 +326,7 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         if self.attention.rope is None:
             return None
         else:
-            self.attention.rope.get_buffers(max_seq_len, device)
+            return self.attention.rope.get_buffers(max_seq_len, device)
 
     def reset_parameters(self):
         nn.init.ones_(self.attn_alpha)
@@ -424,7 +424,7 @@ class MoETransformerBlock(TransformerBlockBase):
         if self.attention.rope is None:
             return None
         else:
-            self.attention.rope.get_buffers(max_seq_len, device)
+            return self.attention.rope.get_buffers(max_seq_len, device)
 
     def compute_losses(
         self, total_bz: Union[int, torch.Tensor], reset: bool = True
