@@ -38,7 +38,7 @@ class ContextParallelConfig(Config):
     rotate_method: RingAttentionRotateMethod = RingAttentionRotateMethod.alltoall
     """
     The rotation method for ring attention. Use :func:`set_ring_attention_rotate_method`
-    to set it.
+    to set it for PyTorch's built-in SDPA function.
     """
 
 
@@ -55,6 +55,9 @@ def context_parallel_manager(
 ) -> Generator[None, None, None]:
     """
     A context manager for enabling context parallelism.
+
+    This will modify the given buffers in-place by splitting on the sequence dimension and
+    monkey-patch PyTorch's SDPA function with a version that implements ring attention.
     """
     from torch.distributed.tensor.experimental import context_parallel
     from torch.nn.attention import SDPBackend, sdpa_kernel
@@ -93,7 +96,7 @@ def context_parallel_enabled() -> bool:
 
 def set_ring_attention_rotate_method(rotate_method: RingAttentionRotateMethod):
     """
-    Set the ring attention rotation method.
+    Set the ring attention rotation method for PyTorch's SDPA function.
     """
     from torch.distributed.tensor.experimental._attention import set_rotate_method
 

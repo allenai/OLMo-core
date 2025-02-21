@@ -469,7 +469,9 @@ class Transformer(nn.Module):
                 use_local_output=not loss_parallel,
             )
 
-    def apply_cp(self, cp_mesh: DeviceMesh, rotate_method: RingAttentionRotateMethod):
+    def apply_cp(
+        self, cp_mesh: DeviceMesh, rotate_method: Optional[RingAttentionRotateMethod] = None
+    ):
         """
         Prepare the model for context-parallelism (CP).
 
@@ -480,7 +482,8 @@ class Transformer(nn.Module):
         :param cp_mesh: The CP device mesh.
         :param rotate_method: The ring attention rotation method.
         """
-        set_ring_attention_rotate_method(rotate_method)
+        if rotate_method is not None:
+            set_ring_attention_rotate_method(rotate_method)
         self._cp_mesh = cp_mesh
 
     def apply_activation_checkpointing(
