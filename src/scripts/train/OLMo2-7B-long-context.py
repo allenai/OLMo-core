@@ -14,9 +14,9 @@ from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
-    TransformerTensorParallelConfig,
     TransformerTrainModuleConfig,
 )
 
@@ -52,12 +52,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
         ),
-        tp_config=TransformerTensorParallelConfig(
-            degree=2,
-            loss_parallel=True,
-        ),
+        cp_config=TransformerContextParallelConfig(degree=2),
         ac_config=TransformerActivationCheckpointingConfig(),
-        float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
+        float8_config=Float8Config(enabled=True),  # TODO (epwalsh): broken with TP
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
     )
