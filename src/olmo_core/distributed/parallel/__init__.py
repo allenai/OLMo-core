@@ -10,8 +10,10 @@ from olmo_core.utils import get_default_device
 
 from .context_parallel import (
     ContextParallelConfig,
+    RingAttentionRotateMethod,
     context_parallel_enabled,
     context_parallel_manager,
+    set_ring_attention_rotate_method,
 )
 from .data_parallel import DataParallelConfig, DataParallelType, DPMeshDimName
 from .expert_parallel import ExpertParallelConfig
@@ -41,8 +43,10 @@ __all__ = [
     "PipelineScheduleType",
     "PipelineSchedule",
     "ContextParallelConfig",
+    "RingAttentionRotateMethod",
     "context_parallel_manager",
     "context_parallel_enabled",
+    "set_ring_attention_rotate_method",
 ]
 
 log = logging.getLogger(__name__)

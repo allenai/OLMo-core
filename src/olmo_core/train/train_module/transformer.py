@@ -13,7 +13,7 @@ from torch.distributed.tensor import DTensor, Replicate, Shard
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 
-from olmo_core.config import Config, DType, StrEnum
+from olmo_core.config import Config, DType
 from olmo_core.data.utils import get_labels, split_batch
 from olmo_core.distributed.checkpoint import _swap_param_keys
 from olmo_core.distributed.parallel import (
@@ -78,18 +78,11 @@ class TransformerTensorParallelConfig(TensorParallelConfig):
     loss_parallel: bool = True
 
 
-class RingAttentionRotateMethod(StrEnum):
-    allgather = "allgather"
-    alltoall = "alltoall"
-
-
 @dataclass
 class TransformerContextParallelConfig(ContextParallelConfig):
     """
     Transformer-specific context parallel config.
     """
-
-    rotate_method: RingAttentionRotateMethod = RingAttentionRotateMethod.alltoall
 
 
 @dataclass
@@ -231,6 +224,7 @@ class TransformerTrainModule(TrainModule):
     :param float8_config: Float8 configuration for the model.
     :param dp_config: Data parallel configuration for the model.
     :param tp_config: Tensor parallel configuration for the model.
+    :param cp_config: Context parallel configuration for the model.
     :param ac_config: Activation checkpointing configuration for the model.
     :param compile_loss: Compile the loss function. This can provide a small speedup while also
         reducing GPU memory usage, especially when using Z-loss.

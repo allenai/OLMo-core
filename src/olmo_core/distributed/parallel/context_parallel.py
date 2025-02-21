@@ -5,7 +5,23 @@ from typing import Generator, List, Set
 import torch
 from torch.distributed import DeviceMesh
 
-from olmo_core.config import Config
+from olmo_core.config import Config, StrEnum
+
+
+class RingAttentionRotateMethod(StrEnum):
+    """
+    Ring attention rotation method.
+    """
+
+    allgather = "allgather"
+    """
+    All-gather.
+    """
+
+    alltoall = "alltoall"
+    """
+    All-to-all.
+    """
 
 
 @dataclass
@@ -17,6 +33,12 @@ class ContextParallelConfig(Config):
     degree: int
     """
     The CP degree.
+    """
+
+    rotate_method: RingAttentionRotateMethod = RingAttentionRotateMethod.alltoall
+    """
+    The rotation method for ring attention. Use :func:`set_ring_attention_rotate_method`
+    to set it.
     """
 
 
@@ -67,3 +89,12 @@ def context_parallel_enabled() -> bool:
     Indicates if context parallelism is currently enabled with :func:`context_parallel_manager()`.
     """
     return _CONTEXT_PARALLEL_ENABLED
+
+
+def set_ring_attention_rotate_method(rotate_method: RingAttentionRotateMethod):
+    """
+    Set the ring attention rotation method.
+    """
+    from torch.distributed.tensor.experimental._attention import set_rotate_method
+
+    set_rotate_method(rotate_method)

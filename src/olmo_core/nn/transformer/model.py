@@ -21,7 +21,11 @@ from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_modul
 
 from olmo_core.config import StrEnum
 from olmo_core.data.utils import get_cumulative_document_lengths
-from olmo_core.distributed.parallel.context_parallel import context_parallel_manager
+from olmo_core.distributed.parallel.context_parallel import (
+    RingAttentionRotateMethod,
+    context_parallel_manager,
+    set_ring_attention_rotate_method,
+)
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device, mark_dynamic
@@ -285,6 +289,10 @@ class Transformer(nn.Module):
         """
         Run the transformer on the token input IDs.
 
+        .. important::
+            If running with context-parallelism, the forward and backward pass should
+            be run within the context manager :meth:`context_parallelism()`.
+
         :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
         :param doc_lens: Document lengths to use in attention for intra-document masking.
             Shape ``(batch_size, max_docs)``.
@@ -346,9 +354,20 @@ class Transformer(nn.Module):
     ) -> Generator[None, None, None]:
         """
         A context manager for running the model's forward and backward pass with context parallelism.
-        You must pass all of the inputs for both the model and the loss function here in order
-        for this method to prepare those inputs by sharding them in-place on the sequence dimension.
-        Then call the model and loss function as normal with the same inputs.
+
+        .. important::
+            You must pass all of the inputs for both the model and the loss function here in order
+            for this method to prepare those inputs by sharding them in-place on the sequence dimension.
+            Then call the model and loss function as normal with the same inputs.
+
+        .. important::
+            You must call :meth:`apply_cp()` before using this context manager.
+
+        :param input_ids: The input IDs that will be passed to :meth:`forward()`.
+        :param doc_lens: The doc lens that will be passed to :meth:`forward()`.
+        :param max_doc_lens: The max doc lens that will be passed to :meth:`forward()`.
+        :param labels: The labels that will be used to compute the loss. Like the other inputs these
+            will be sharded in-place.
         """
         if self._cp_mesh is None:
             raise RuntimeError(
@@ -450,17 +469,18 @@ class Transformer(nn.Module):
                 use_local_output=not loss_parallel,
             )
 
-    def apply_cp(self, cp_mesh: DeviceMesh, rotate_method: str):
+    def apply_cp(self, cp_mesh: DeviceMesh, rotate_method: RingAttentionRotateMethod):
         """
         Prepare the model for context-parallelism (CP).
 
         .. important::
             To run with CP you must also run the model's forward and backward pass inside of the
             context manager :meth:`context_parallelism()`.
-        """
-        from torch.distributed.tensor.experimental._attention import set_rotate_method
 
-        set_rotate_method(rotate_method)
+        :param cp_mesh: The CP device mesh.
+        :param rotate_method: The ring attention rotation method.
+        """
+        set_ring_attention_rotate_method(rotate_method)
         self._cp_mesh = cp_mesh
 
     def apply_activation_checkpointing(
