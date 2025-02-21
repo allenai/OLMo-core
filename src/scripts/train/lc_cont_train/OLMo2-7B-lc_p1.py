@@ -179,7 +179,7 @@ class LcContTrain(Config):
                 vocab_size=tokenizer_config.padded_vocab_size(),
                 # compile=True,
             #     fused_ops=False,
-            #     use_flash=True,
+                use_flash=True,
                 rope_theta = 8 * 10 **6,
             #     dp_config=TransformerDataParallelConfig(
             #         name=DataParallelType.fsdp,
@@ -205,6 +205,7 @@ class LcContTrain(Config):
                 AnnealingDataMix.prolong_p1,
                 tokenizer=tokenizer_config,
                 mix_base_dir=root_dir,
+                generate_doc_lengths=True,
                 sequence_length=CONTEXT_LENGTH,
                 work_dir=get_work_dir(root_dir),
             ),
