@@ -823,8 +823,7 @@ class TransformerTrainModule(TrainModule):
 
                 from torch.nn.attention import SDPBackend, sdpa_kernel
 
-                # Currently we only support these two SDP backends.
-                # TODO (xilunwu): support cuDNN backend
+                # Currently ring attention only supports these two SDP backends.
                 stack.enter_context(
                     sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION])
                 )
