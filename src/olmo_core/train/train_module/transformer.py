@@ -327,6 +327,7 @@ class TransformerTrainModule(TrainModule):
             )
             log.info("Swapped linear layers to Float8 linear layers\n%s", self.model)
 
+        # Maybe apply context parallelism.
         self._cp_config = cp_config
         if cp_config is not None:
             cp_mesh = get_cp_mesh(self.world_mesh)
@@ -675,15 +676,15 @@ class TransformerTrainModule(TrainModule):
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        batch = move_to_device(batch, self.device)
-
-        self.model.eval()
-
         if self.cp_enabled:
             raise RuntimeError(
                 f"{self.__class__.__name__}.eval_batch() does not support context parallelism yet, "
                 "please disable in-loop evals"
             )
+
+        batch = move_to_device(batch, self.device)
+
+        self.model.eval()
 
         with self._eval_batch_context():
             logits = self.model_forward(batch)
