@@ -54,7 +54,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ),
         cp_config=TransformerContextParallelConfig(degree=8),
         ac_config=TransformerActivationCheckpointingConfig(),
-        float8_config=Float8Config(enabled=True),  # TODO (epwalsh): broken with TP
+        float8_config=Float8Config(enabled=True),
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
     )
