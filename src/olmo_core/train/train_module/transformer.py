@@ -805,9 +805,10 @@ class TransformerTrainModule(TrainModule):
         **attn_buffers,
     ) -> Generator[None, None, None]:
         with contextlib.ExitStack() as stack:
+            # For DDP, only sync gradients on the final micro batch.
             if isinstance(self.model, DDP) and micro_batch_idx != num_micro_batches - 1:
-                # For DDP, only sync gradients on the final micro batch.
                 stack.enter_context(self.model.no_sync())
+
             if self.cp_enabled:
                 assert self._cp_config is not None
                 stack.enter_context(
@@ -819,13 +820,6 @@ class TransformerTrainModule(TrainModule):
                         cp_no_restore_buffers={micro_batch["input_ids"], micro_batch["labels"]},
                         cp_rotate_method=self._cp_config.rotate_method,
                     )
-                )
-
-                from torch.nn.attention import SDPBackend, sdpa_kernel
-
-                # Currently ring attention only supports these two SDP backends.
-                stack.enter_context(
-                    sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION])
                 )
             yield
 

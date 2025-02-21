@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import parallelize_module
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from ..config import Config, DType, StrEnum
 from ..distributed.parallel.tensor_parallel import SequenceParallel
@@ -224,6 +225,12 @@ class Attention(nn.Module):
             self.rope = rope_class
 
         self._cp_enabled = False
+        self._sdp_backends = [
+            SDPBackend.FLASH_ATTENTION,
+            SDPBackend.EFFICIENT_ATTENTION,
+            SDPBackend.CUDNN_ATTENTION,
+            SDPBackend.MATH,
+        ]
 
         self._flash_attn_func = None
         self._flash_attn_varlen_func = None
@@ -235,6 +242,10 @@ class Attention(nn.Module):
 
             self._flash_attn_func = flash_attn_func
             self._flash_attn_varlen_func = flash_attn_varlen_func
+
+    @property
+    def cp_enabled(self) -> bool:
+        return self._cp_enabled
 
     def sdpa(
         self,
@@ -257,7 +268,7 @@ class Attention(nn.Module):
                     "flash-attn (use_flash=True) is required for intra-document masking"
                 )
 
-            if self._cp_enabled:
+            if self.cp_enabled:
                 raise RuntimeError(
                     "context parallelism does not support intra-document masking yet"
                 )
@@ -276,7 +287,7 @@ class Attention(nn.Module):
                 softmax_scale=scale,
             )
         elif self._flash_attn_func is not None:
-            if self._cp_enabled:
+            if self.cp_enabled:
                 raise RuntimeError("flash-attn does not support context parallelism yet")
 
             # shape: (batch_size, seq_len, n_heads, head_dim)
@@ -298,9 +309,11 @@ class Attention(nn.Module):
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
             # shape: (batch_size, n_heads, seq_len, head_dim)
-            att = F.scaled_dot_product_attention(
-                q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
-            )
+            with sdpa_kernel(self._sdp_backends):
+                att = F.scaled_dot_product_attention(
+                    q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
+                )
+
             # shape: (batch_size, seq_len, n_heads, head_dim)
             att = att.transpose(1, 2).contiguous()
 
@@ -412,6 +425,11 @@ class Attention(nn.Module):
     def apply_cp(self, cp_mesh: DeviceMesh):
         del cp_mesh
         self._cp_enabled = True
+        # Currently ring attention only supports these two SDP backends.
+        self._sdp_backends = [
+            SDPBackend.FLASH_ATTENTION,
+            SDPBackend.EFFICIENT_ATTENTION,
+        ]
 
 
 @beta_feature
