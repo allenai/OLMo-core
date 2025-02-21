@@ -1,7 +1,7 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -117,6 +117,13 @@ class RoPEConfig(Config):
             ) from e
 
 
+@dataclass
+class RoPEBuffers:
+    pos_sin: Optional[torch.Tensor] = None
+    pos_cos: Optional[torch.Tensor] = None
+    freqs_cis: Optional[torch.Tensor] = None
+
+
 class RotaryEmbeddingBase(nn.Module):
     """
     Base class for RoPE implementations.
@@ -146,7 +153,7 @@ class RotaryEmbeddingBase(nn.Module):
         raise NotImplementedError
 
     @abstractmethod
-    def get_buffers(self, max_seq_len: int, device: torch.device) -> Dict[str, torch.Tensor]:
+    def get_buffers(self, max_seq_len: int, device: torch.device) -> RoPEBuffers:
         """
         Get the cached buffers.
         """
@@ -170,9 +177,9 @@ class RotaryEmbedding(RotaryEmbeddingBase):
     def warmup_cache(self, max_seq_len: int, device: torch.device):
         self._get_rotary_embedding(max_seq_len, device)
 
-    def get_buffers(self, max_seq_len: int, device: torch.device) -> Dict[str, torch.Tensor]:
+    def get_buffers(self, max_seq_len: int, device: torch.device) -> RoPEBuffers:
         pos_sin, pos_cos = self._get_rotary_embedding(max_seq_len, device)
-        return {"pos_sin": pos_sin, "pos_cos": pos_cos}
+        return RoPEBuffers(pos_sin=pos_sin, pos_cos=pos_cos)
 
     def _get_rotary_embedding(
         self, seq_len: int, device: torch.device
@@ -226,6 +233,7 @@ class RotaryEmbedding(RotaryEmbeddingBase):
         head_first: bool = True,
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Apply RoPE to query (``q``) and key (``k``) matrices.
@@ -239,6 +247,9 @@ class RotaryEmbedding(RotaryEmbeddingBase):
 
         :returns: The query and key matrices after RoPE has been applied.
         """
+        if freqs_cis is not None:
+            raise RuntimeError(f"'freqs_cis' is invalid for {self.__class__.__name__}")
+
         if head_first:
             q_len = q.size(2)
             k_len = k.size(2)
@@ -315,9 +326,9 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
     def warmup_cache(self, max_seq_len: int, device: torch.device):
         self._get_rotary_embedding(max_seq_len, device)
 
-    def get_buffers(self, max_seq_len: int, device: torch.device) -> Dict[str, torch.Tensor]:
+    def get_buffers(self, max_seq_len: int, device: torch.device) -> RoPEBuffers:
         pos_sin, pos_cos = self._get_rotary_embedding(max_seq_len, device)
-        return {"pos_sin": pos_sin, "pos_cos": pos_cos}
+        return RoPEBuffers(pos_sin=pos_sin, pos_cos=pos_cos)
 
     def _get_rotary_embedding(
         self, seq_len: int, device: torch.device
@@ -355,6 +366,7 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
         qkv: torch.Tensor,
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply RoPE to ``qkv``.
@@ -366,6 +378,9 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
         :param qkv: The query, key, and value matrix of shape
             ``(batch_size, seq_len, 3, n_heads, head_size)``.
         """
+        if freqs_cis is not None:
+            raise RuntimeError(f"'freqs_cis' is invalid for {self.__class__.__name__}")
+
         if self.full_precision:
             qkv_ = qkv.float()
         else:
@@ -407,9 +422,9 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
     def warmup_cache(self, max_seq_len: int, device: torch.device):
         self._get_rotary_embedding(max_seq_len, device)
 
-    def get_buffers(self, max_seq_len: int, device: torch.device) -> Dict[str, torch.Tensor]:
+    def get_buffers(self, max_seq_len: int, device: torch.device) -> RoPEBuffers:
         freqs_cis = self._get_rotary_embedding(max_seq_len, device)
-        return {"freqs_cis": freqs_cis}
+        return RoPEBuffers(freqs_cis=freqs_cis)
 
     def _get_rotary_embedding(self, seq_len: int, device: torch.device) -> torch.Tensor:
         if (freqs_cis := self._cache.get("rope_freqs_cis")) is not None and freqs_cis.shape[
@@ -444,6 +459,8 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
         q: torch.Tensor,
         k: torch.Tensor,
         head_first: bool = True,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -458,6 +475,9 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
 
         :returns: The query and key matrices after RoPE has been applied.
         """
+        if pos_sin is not None or pos_cos is not None:
+            raise RuntimeError(f"'pos_sin' and 'pos_cos' are invalid for {self.__class__.__name__}")
+
         if head_first:
             q_len = q.size(2)
             k_len = k.size(2)

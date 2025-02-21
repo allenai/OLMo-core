@@ -8,9 +8,9 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import parallelize_module
-from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from ..config import Config, DType, StrEnum
+from ..distributed.parallel.context_parallel import context_parallel_enabled
 from ..distributed.parallel.tensor_parallel import SequenceParallel
 from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
@@ -224,14 +224,6 @@ class Attention(nn.Module):
             assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
             self.rope = rope_class
 
-        self._cp_enabled = False
-        self._sdp_backends = [
-            SDPBackend.FLASH_ATTENTION,
-            SDPBackend.EFFICIENT_ATTENTION,
-            SDPBackend.CUDNN_ATTENTION,
-            SDPBackend.MATH,
-        ]
-
         self._flash_attn_func = None
         self._flash_attn_varlen_func = None
         if use_flash:
@@ -245,7 +237,7 @@ class Attention(nn.Module):
 
     @property
     def cp_enabled(self) -> bool:
-        return self._cp_enabled
+        return context_parallel_enabled()
 
     def sdpa(
         self,
@@ -309,10 +301,9 @@ class Attention(nn.Module):
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
             # shape: (batch_size, n_heads, seq_len, head_dim)
-            with sdpa_kernel(self._sdp_backends):
-                att = F.scaled_dot_product_attention(
-                    q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
-                )
+            att = F.scaled_dot_product_attention(
+                q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
+            )
 
             # shape: (batch_size, seq_len, n_heads, head_dim)
             att = att.transpose(1, 2).contiguous()
@@ -324,7 +315,9 @@ class Attention(nn.Module):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
-        **rope_buffers,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -366,7 +359,9 @@ class Attention(nn.Module):
         v = v.view(B, T, -1, self.head_dim)
 
         if self.rope is not None:
-            q, k = self.rope(q, k, head_first=False, **rope_buffers)
+            q, k = self.rope(
+                q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
+            )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(q, k, v, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
@@ -421,15 +416,6 @@ class Attention(nn.Module):
             device_mesh=tp_mesh,
             parallelize_plan=plan,
         )
-
-    def apply_cp(self, cp_mesh: DeviceMesh):
-        del cp_mesh
-        self._cp_enabled = True
-        # Currently ring attention only supports these two SDP backends.
-        self._sdp_backends = [
-            SDPBackend.FLASH_ATTENTION,
-            SDPBackend.EFFICIENT_ATTENTION,
-        ]
 
 
 @beta_feature
@@ -491,7 +477,9 @@ class NormalizedAttention(Attention):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
-        **rope_buffers,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         B, T, _ = x.shape
 
@@ -518,7 +506,9 @@ class NormalizedAttention(Attention):
         v = v.view(B, T, self.n_kv_heads, self.head_dim)
 
         if self.rope is not None:
-            q, k = self.rope(q, k, head_first=False, **rope_buffers)
+            q, k = self.rope(
+                q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
+            )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -624,7 +614,9 @@ class FusedAttention(nn.Module):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
-        **rope_buffers,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -648,7 +640,7 @@ class FusedAttention(nn.Module):
             qkv.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
 
         if self.rope is not None:
-            qkv = self.rope(qkv, **rope_buffers)
+            qkv = self.rope(qkv, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis)
 
         if max_doc_len is not None and cu_doc_lens is not None:
             # shape: (batch_size * seq_len, n_heads, head_dim)

@@ -8,7 +8,11 @@ from olmo_core.distributed.utils import get_num_nodes, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device
 
-from .context_parallel import ContextParallelConfig, create_context_parallel_ctx
+from .context_parallel import (
+    ContextParallelConfig,
+    context_parallel_enabled,
+    context_parallel_manager,
+)
 from .data_parallel import DataParallelConfig, DataParallelType, DPMeshDimName
 from .expert_parallel import ExpertParallelConfig
 from .pipeline_parallel import (
@@ -37,7 +41,8 @@ __all__ = [
     "PipelineScheduleType",
     "PipelineSchedule",
     "ContextParallelConfig",
-    "create_context_parallel_ctx",
+    "context_parallel_manager",
+    "context_parallel_enabled",
 ]
 
 log = logging.getLogger(__name__)

@@ -134,7 +134,9 @@ class TransformerBlockBase(nn.Module):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
-        **attn_buffers,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Run the block on the input ``x``.
@@ -150,17 +152,7 @@ class TransformerBlockBase(nn.Module):
         raise NotImplementedError
 
     @abstractmethod
-    def get_attn_buffers(
-        self, max_seq_len: int, device: torch.device
-    ) -> Optional[Dict[str, torch.Tensor]]:
-        raise NotImplementedError
-
-    @abstractmethod
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
-        raise NotImplementedError
-
-    @abstractmethod
-    def apply_cp(self, cp_mesh: DeviceMesh):
         raise NotImplementedError
 
 
@@ -198,27 +190,23 @@ class TransformerBlock(TransformerBlockBase):
         self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
 
-    def get_attn_buffers(
-        self, max_seq_len: int, device: torch.device
-    ) -> Optional[Dict[str, torch.Tensor]]:
-        if self.attention.rope is None:
-            return None
-        else:
-            return self.attention.rope.get_buffers(max_seq_len, device)
-
     def forward(
         self,
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
-        **attn_buffers,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         h = x + self.dropout(
             self.attention(
                 self.attention_norm(x),
                 max_doc_len=max_doc_len,
                 cu_doc_lens=cu_doc_lens,
-                **attn_buffers,
+                pos_sin=pos_sin,
+                pos_cos=pos_cos,
+                freqs_cis=freqs_cis,
             )
         )
         return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
@@ -257,9 +245,6 @@ class TransformerBlock(TransformerBlockBase):
 
         parallelize_module(self.dropout, device_mesh=tp_mesh, parallelize_plan=SequenceParallel())
 
-    def apply_cp(self, cp_mesh: DeviceMesh):
-        self.attention.apply_cp(cp_mesh)
-
 
 class ReorderedNormTransformerBlock(TransformerBlock):
     """
@@ -273,11 +258,20 @@ class ReorderedNormTransformerBlock(TransformerBlock):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
-        **attn_buffers,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         h = x + self.dropout(
             self.attention_norm(
-                self.attention(x, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens, **attn_buffers)
+                self.attention(
+                    x,
+                    max_doc_len=max_doc_len,
+                    cu_doc_lens=cu_doc_lens,
+                    pos_sin=pos_sin,
+                    pos_cos=pos_cos,
+                    freqs_cis=freqs_cis,
+                )
             )
         )
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
@@ -320,14 +314,6 @@ class NormalizedTransformerBlock(TransformerBlockBase):
             * torch.ones(d_model, dtype=torch.float32, device=init_device)
         )
 
-    def get_attn_buffers(
-        self, max_seq_len: int, device: torch.device
-    ) -> Optional[Dict[str, torch.Tensor]]:
-        if self.attention.rope is None:
-            return None
-        else:
-            return self.attention.rope.get_buffers(max_seq_len, device)
-
     def reset_parameters(self):
         nn.init.ones_(self.attn_alpha)
         self.attn_alpha.mul_(self.attn_alpha_init_scaling)
@@ -339,14 +325,21 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
-        **attn_buffers,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         h = l2_normalize(
             torch.lerp(
                 x,
                 l2_normalize(
                     self.attention(
-                        x, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens, **attn_buffers
+                        x,
+                        max_doc_len=max_doc_len,
+                        cu_doc_lens=cu_doc_lens,
+                        pos_sin=pos_sin,
+                        pos_cos=pos_cos,
+                        freqs_cis=freqs_cis,
                     )
                 ),
                 (
@@ -369,9 +362,6 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         raise NotImplementedError(
             "TP is not implemented yet for the normalized transformer block variant"
         )
-
-    def apply_cp(self, cp_mesh: DeviceMesh):
-        self.attention.apply_cp(cp_mesh)
 
     @torch.no_grad()
     def normalize_matrices(self):
@@ -418,14 +408,6 @@ class MoETransformerBlock(TransformerBlockBase):
         self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
 
-    def get_attn_buffers(
-        self, max_seq_len: int, device: torch.device
-    ) -> Optional[Dict[str, torch.Tensor]]:
-        if self.attention.rope is None:
-            return None
-        else:
-            return self.attention.rope.get_buffers(max_seq_len, device)
-
     def compute_losses(
         self, total_bz: Union[int, torch.Tensor], reset: bool = True
     ) -> Dict[str, torch.Tensor]:
@@ -447,7 +429,9 @@ class MoETransformerBlock(TransformerBlockBase):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
-        **attn_buffers,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Run the block on the input ``x``.
@@ -459,7 +443,9 @@ class MoETransformerBlock(TransformerBlockBase):
                 self.attention_norm(x),
                 max_doc_len=max_doc_len,
                 cu_doc_lens=cu_doc_lens,
-                **attn_buffers,
+                pos_sin=pos_sin,
+                pos_cos=pos_cos,
+                freqs_cis=freqs_cis,
             )
         )
         return h + self.dropout(self.feed_forward_moe(self.feed_forward_norm(h)))
@@ -515,11 +501,20 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
-        **attn_buffers,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         h = x + self.dropout(
             self.attention_norm(
-                self.attention(x, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens, **attn_buffers)
+                self.attention(
+                    x,
+                    max_doc_len=max_doc_len,
+                    cu_doc_lens=cu_doc_lens,
+                    pos_sin=pos_sin,
+                    pos_cos=pos_cos,
+                    freqs_cis=freqs_cis,
+                )
             )
         )
         return h + self.dropout(self.feed_forward_norm(self.feed_forward_moe(h)))

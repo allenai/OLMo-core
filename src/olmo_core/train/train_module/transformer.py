@@ -23,7 +23,6 @@ from olmo_core.distributed.parallel import (
     ExpertParallelConfig,
     TensorParallelConfig,
     build_device_mesh,
-    create_context_parallel_ctx,
     get_cp_mesh,
     get_dp_mesh,
     get_dp_process_group,
@@ -331,7 +330,7 @@ class TransformerTrainModule(TrainModule):
         self._cp_config = cp_config
         if cp_config is not None:
             cp_mesh = get_cp_mesh(self.world_mesh)
-            self.model.apply_cp(cp_mesh)
+            self.model.apply_cp(cp_mesh, cp_config.rotate_method)
             log.info("Applied context parallelism to the model")
 
         # Maybe apply tensor/expert parallelism.
@@ -461,6 +460,11 @@ class TransformerTrainModule(TrainModule):
     def loss_fn(
         self, logits: torch.Tensor, labels: torch.Tensor, batch_num_tokens_for_loss: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        if self._train_loss_fn.compile_enabled:
+            # Mark inputs dynamic for torch.compile to avoid unnecessary recompilation.
+            mark_dynamic(logits, (0, 1))
+            mark_dynamic(labels, (0, 1))
+
         # NOTE: we use the "sum" loss reduction and then divide by 'batch_num_tokens_for_loss'
         # (the total number of tokens used in the loss across the whole batch, not just the micro batch)
         # to avoid biasing the loss in the case where micro-batches might not be the same size.
@@ -478,6 +482,10 @@ class TransformerTrainModule(TrainModule):
         )
 
     def eval_loss_fn(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        if self._eval_loss_fn.compile_enabled:
+            # Mark inputs dynamic for torch.compile to avoid unnecessary recompilation.
+            mark_dynamic(logits, (0, 1))
+            mark_dynamic(labels, (0, 1))
         ce_loss, _ = self._eval_loss_fn(logits, labels)
         return ce_loss.view(logits.shape[0], -1)
 
@@ -592,14 +600,9 @@ class TransformerTrainModule(TrainModule):
 
         # Train one micro-batch at a time.
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
-            attn_buffers = self.model.get_attn_buffers(
-                micro_batch["input_ids"].shape[1], self.device
-            )
-            with self._train_microbatch_context(
-                micro_batch_idx, num_micro_batches, micro_batch, **attn_buffers
-            ):
+            with self._train_microbatch_context(micro_batch_idx, num_micro_batches, micro_batch):
                 # Run forward pass.
-                logits = self.model_forward(micro_batch, **attn_buffers)
+                logits = self.model_forward(micro_batch)
 
                 # Get loss to optimize for, and the separate detached CE and Z loss values.
                 loss, ce_loss, z_loss = self.loss_fn(
@@ -673,7 +676,6 @@ class TransformerTrainModule(TrainModule):
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         batch = move_to_device(batch, self.device)
-        attn_buffers = self.model.get_attn_buffers(batch["input_ids"].shape[1], self.device)
 
         self.model.eval()
 
@@ -684,7 +686,7 @@ class TransformerTrainModule(TrainModule):
             )
 
         with self._eval_batch_context():
-            logits = self.model_forward(batch, **attn_buffers)
+            logits = self.model_forward(batch)
             loss: Optional[torch.Tensor] = None
             if labels is not None:
                 loss = self.eval_loss_fn(logits, labels)
@@ -764,21 +766,10 @@ class TransformerTrainModule(TrainModule):
     def zero_grads(self):
         self.optim.zero_grad(set_to_none=True)
 
-    def model_forward(self, batch: Dict[str, Any], **attn_buffers) -> torch.Tensor:
+    def model_forward(self, batch: Dict[str, Any]) -> torch.Tensor:
         """
         Run a forward pass on a micro-batch, returning the logits.
         """
-        # NOTE: Input sizes might be dynamic, e.g. when training with variable sequence lengths
-        # or during an eval loop, so we mark them as dynamic for torch.compile up-front to avoid
-        # recompiling later.
-        # In theory this could harm performance a bit when input sizes are actually static
-        # but so far I haven't noticed any dip in throughput with the models I've tested.
-        mark_dynamic(batch["input_ids"], (0, 1))
-        if "doc_lens" in batch:
-            mark_dynamic(batch["doc_lens"], (0, 1))
-        for b in attn_buffers.values():
-            mark_dynamic(b, 0)
-
         with self._model_forward_context():
             # Run model forward, get logits.
             # shape: (batch_size, seq_len, vocab_size)
@@ -788,7 +779,6 @@ class TransformerTrainModule(TrainModule):
                 #  attention_bias=micro_batch.get("attention_bias"),
                 doc_lens=batch.get("doc_lens"),
                 max_doc_lens=batch.get("max_doc_lens"),
-                **attn_buffers,
             )
 
             return logits
@@ -802,7 +792,6 @@ class TransformerTrainModule(TrainModule):
         micro_batch_idx: int,
         num_micro_batches: int,
         micro_batch: Dict[str, Any],
-        **attn_buffers,
     ) -> Generator[None, None, None]:
         with contextlib.ExitStack() as stack:
             # For DDP, only sync gradients on the final micro batch.
@@ -810,15 +799,12 @@ class TransformerTrainModule(TrainModule):
                 stack.enter_context(self.model.no_sync())
 
             if self.cp_enabled:
-                assert self._cp_config is not None
                 stack.enter_context(
-                    create_context_parallel_ctx(
-                        cp_mesh=get_cp_mesh(self.world_mesh),
-                        cp_buffers=[micro_batch["input_ids"], micro_batch["labels"]]
-                        + [attn_buffers[bn] for bn in sorted(attn_buffers.keys())],
-                        cp_seq_dims=[1, 1] + [0 for _ in attn_buffers],
-                        cp_no_restore_buffers={micro_batch["input_ids"], micro_batch["labels"]},
-                        cp_rotate_method=self._cp_config.rotate_method,
+                    self.model.context_parallelism(
+                        input_ids=micro_batch["input_ids"],
+                        doc_lens=micro_batch.get("doc_lens"),
+                        max_doc_lens=micro_batch.get("max_doc_lens"),
+                        labels=micro_batch["labels"],
                     )
                 )
             yield
