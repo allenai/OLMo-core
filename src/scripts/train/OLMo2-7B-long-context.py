@@ -52,7 +52,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
         ),
-        cp_config=TransformerContextParallelConfig(degree=2),
+        cp_config=TransformerContextParallelConfig(degree=8),
         ac_config=TransformerActivationCheckpointingConfig(),
         float8_config=Float8Config(enabled=True),  # TODO (epwalsh): broken with TP
         max_grad_norm=1.0,
