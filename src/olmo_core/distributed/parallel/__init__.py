@@ -125,7 +125,7 @@ def build_device_mesh(
     if cp is not None:
         if cp.degree < 1 or dp_world_size % cp.degree != 0:
             raise OLMoConfigurationError(
-                f"{tp.__class__.__name__}.degree must be at least 1 and divide into the world size"
+                f"{cp.__class__.__name__}.degree must be at least 1 and divide into the world size"
             )
         dp_world_size //= cp.degree
     if tp is not None:
