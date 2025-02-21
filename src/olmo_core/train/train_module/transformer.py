@@ -595,7 +595,9 @@ class TransformerTrainModule(TrainModule):
             attn_buffers = self.model.get_attn_buffers(
                 micro_batch["input_ids"].shape[1], self.device
             )
-            with self._train_microbatch_context(micro_batch_idx, num_micro_batches, micro_batch):
+            with self._train_microbatch_context(
+                micro_batch_idx, num_micro_batches, micro_batch, **attn_buffers
+            ):
                 # Run forward pass.
                 logits = self.model_forward(micro_batch, **attn_buffers)
 
