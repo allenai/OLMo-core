@@ -165,7 +165,7 @@ def _get_coord_data(
 
 
 def get_coord_data(
-    models, dataloader, optimizer="sgd", lr=None, mup=True, filter_trainable_by_name=None, **kwargs
+    models, dataloader, optimizer="adamw", lr=None, mup=True, filter_trainable_by_name=None, **kwargs
 ):
     """Get coord data for coord check.
 

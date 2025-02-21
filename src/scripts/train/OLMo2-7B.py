@@ -29,6 +29,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),
+        use_mup = True
     )
 
 

@@ -611,9 +611,6 @@ class muPTransformer(Transformer):
         )
         self.mup_base_shapes = mup_base_shapes
 
-        if self.mup_base_shapes:
-            self.set_base_shapes()
-
     @property
     def device(self) -> torch.device:
         for p in self.parameters():
@@ -621,98 +618,17 @@ class muPTransformer(Transformer):
                 return p.device
         return get_default_device()
 
-    @torch.no_grad()
+    @torch.no_grad()    
     def init_weights(
         self,
         *,
         max_seq_len: Optional[int] = None,
         device: Optional[torch.device] = None,
     ) -> torch.Generator:
-        """
-        Initialize model weights using muP initialization.
-
-        - Applies `set_base_shapes()` before initialization.
-        - Uses `mup.init.normal_` for weight initialization.
-        """
         device = device or self.device
-        generator = torch.Generator(device).manual_seed(self.init_seed)
-
-        if not self.mup_base_shapes:
-            raise ValueError("mup_base_shapes must be provided for muP initialization.")
-        
-        from mup import set_base_shapes, init
+        from mup import set_base_shapes
         set_base_shapes(self, self.mup_base_shapes, rescale_params=True)
-
-        if self.embeddings is not None:
-            self.init_method.init_embeddings(
-                self.embeddings, d_model=self.d_model, generator=generator
-            )
-
-        for module in self.modules():
-            if hasattr(module, "reset_parameters"):
-                module.reset_parameters()
-
-        for block in self.blocks:
-            # This might fail if it's wrapped.
-            #  assert isinstance(block, TransformerBlock)
-            block = cast(TransformerBlock, block)
-            att = block.attention
-
-            # Attention weights.
-            self.init_method.init_attention(
-                att,
-                d_model=self.d_model,
-                block_idx=block.block_idx,
-                num_blocks=len(self.blocks),
-                generator=generator,
-            )
-
-            # Feed-forward weights.
-            if hasattr(block, "feed_forward"):
-                self.init_method.init_feed_forward(
-                    block.feed_forward,
-                    d_model=self.d_model,
-                    block_idx=block.block_idx,
-                    num_blocks=len(self.blocks),
-                    generator=generator,
-                )
-            else:
-                self.init_method.init_feed_forward_moe(
-                    block.feed_forward_moe,
-                    d_model=self.d_model,
-                    block_idx=block.block_idx,
-                    num_blocks=len(self.blocks),
-                    generator=generator,
-                )
-
-            # Warm up RoPE cache.
-            if max_seq_len is not None and att.rope is not None:
-                att.rope.warmup_cache(max_seq_len, device)
-
-        if self.lm_head is not None:
-            self.init_method.init_final_w_out(
-                self.lm_head.w_out, d_model=self.d_model, generator=generator
-            )
-
-        return generator
-    
-    # def init_weights(
-    #     self,
-    #     *,
-    #     max_seq_len: Optional[int] = None,
-    #     device: Optional[torch.device] = None,
-    # ) -> torch.Generator:
-    #     """
-    #     Initialize model weights with muP scaling.
-    #     """
-    #     device = device or self.device
-    #     generator = torch.Generator(device).manual_seed(self.init_seed)
-
-    #     from mup import set_base_shapes
-
-    #     set_base_shapes(self, self.mup_base_shapes, rescale_params=True)
-
-    #     return super().init_weights(max_seq_len=max_seq_len, device=device)
+        return super().init_weights(max_seq_len=max_seq_len, device=device)
 
     def forward(
         self,

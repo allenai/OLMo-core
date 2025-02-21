@@ -2,13 +2,17 @@ import argparse
 import os
 import numpy as np
 from typing import List, Optional
+from olmo_core.config import DType
 
 from mup.coord_check import plot_coord_data
-from torch.utils.data import DataLoader
 
-from olmo_core.nn.transformer import TransformerConfig, TransformerBlockConfig
-from olmo_core.data import NumpyFSLDataset, NumpyFSLDataLoader, DataCollator
-from olmo_core.data import TokenizerConfig
+from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.data import TokenizerConfig, NumpyFSLDataset, NumpyFSLDataLoader, DataCollator
+from olmo_core.nn.transformer import (
+    TransformerConfig,
+    TransformerDataParallelConfig,
+    TransformerDataParallelWrappingStrategy,
+)
 from olmo_core.scaling.coord_check import get_coord_data
 from olmo_core.scaling.mup_utils import load_mu_model, save_base_shapes
 from olmo_core.utils import seed_all
@@ -25,7 +29,7 @@ def get_dataloader(data_paths, batch_size: int):
         pad_token_id=tokenizer_config.pad_token_id,
         eos_token_id=tokenizer_config.eos_token_id,
         vocab_size=tokenizer_config.vocab_size,
-        dtype=np.uint16,  
+        dtype=np.uint32,  
         metadata=None,
         include_instance_metadata=False,
         generate_doc_lengths=False,
@@ -63,40 +67,52 @@ def coord_check(
 ):
     def model_generator(d_model, standparam=False):
         def f():
-            model = load_mu_model(TokenizerConfig)
-            
-            # model = TransformerModel(config)  # Assuming this is how the model is initialized
+            config = TransformerConfig.olmo2_7B(
+                vocab_size=TokenizerConfig.dolma2().padded_vocab_size(),
+                compile=True,
+                d_model=d_model,
+                dp_config=TransformerDataParallelConfig(
+                    name=DataParallelType.hsdp,
+                    param_dtype=DType.bfloat16,
+                    reduce_dtype=DType.float32,
+                    wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+                ),
+                use_mup=not standparam
+            )
             if standparam:
                 config.mup_base_shapes = None
             else:
                 assert load_base_shapes, "load_base_shapes needs to be specified for mup."
-                config.mup_base_shapes = load_base_shapes
+                # config.mup_base_shapes = load_base_shapes
+
+            model = load_mu_model(config)
             
-            model.set_base_shapes()  # Required for muP initialization
-            model.reset_parameters()  # Ensures correct muP init
+            # model.set_base_shapes()  # Required for muP initialization
+            # model.reset_parameters()  # Ensures correct muP init
 
             return model
         return f
 
-    train_config = TrainConfig.load(config_path)
-    optimizer = train_config.optimizer.name.replace("mu", "")
-    lr = train_config.optimizer.learning_rate
-
+    # train_config = TrainConfig.load(config_path)
+    optimizer = "adam"
+    optimizer = optimizer.replace("mu", "")
+    # lr = train_config.optimizer.learning_rate
+    
     models = {width: model_generator(width, standparam=not mup) for width in widths}
 
-    data_loader = get_dataloader(train_config, batch_size=batch_size)
+    data_loader = get_dataloader(data_paths='sample-tokens.npy', batch_size=batch_size)
 
     df = get_coord_data(
         models,
         data_loader,
         mup=mup,
-        lr=lr,
+        # lr=lr,
         optimizer=optimizer,
         nseeds=nseeds,
         nsteps=nsteps,
         lossfn=cross_entropy_loss,
         cuda=cuda,
-        compute_z_loss=train_config.softmax_auxiliary_loss,
+        compute_z_loss=True,
         show_progress=True,
     )
 
