@@ -502,6 +502,11 @@ class TransformerPipelineTrainModule(TrainModule):
     def loss_fn(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         assert self._batch_num_tokens_for_loss is not None
 
+        if self._train_loss_fn.compile_enabled:
+            # Mark inputs dynamic for torch.compile to avoid unnecessary recompilation.
+            mark_dynamic(logits, (0, 1))
+            mark_dynamic(labels, (0, 1))
+
         # NOTE: we use the "sum" loss reduction and then divide by 'batch_num_tokens_for_loss'
         # (the total number of tokens used in the loss across the whole batch, not just the micro batch)
         # to avoid biasing the loss in the case where micro-batches might not be the same size.
@@ -526,6 +531,10 @@ class TransformerPipelineTrainModule(TrainModule):
         return loss
 
     def eval_loss_fn(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        if self._eval_loss_fn.compile_enabled:
+            # Mark inputs dynamic for torch.compile to avoid unnecessary recompilation.
+            mark_dynamic(logits, (0, 1))
+            mark_dynamic(labels, (0, 1))
         ce_loss, _ = self._eval_loss_fn(logits, labels)
         return ce_loss.view(logits.shape[0], -1)
 
@@ -792,21 +801,6 @@ class TransformerPipelineTrainModule(TrainModule):
         """
         Run a forward pass on a micro-batch, returning the logits and potentially the loss.
         """
-        attn_buffers = self.model_parts[0].get_attn_buffers(
-            batch["input_ids"].shape[1], self.device
-        )
-
-        # NOTE: Input sizes might be dynamic, e.g. when training with variable sequence lengths
-        # or during an eval loop, so we mark them as dynamic for torch.compile up-front to avoid
-        # recompiling later.
-        # In theory this could harm performance a bit when input sizes are actually static
-        # but so far I haven't noticed any dip in throughput with the models I've tested.
-        mark_dynamic(batch["input_ids"], (0, 1))
-        if "doc_lens" in batch:
-            mark_dynamic(batch["doc_lens"], (0, 1))
-        for b in attn_buffers.values():
-            mark_dynamic(b, 0)
-
         with self._model_forward_context():
             schedule = self.train_pp_schedule if training else self.eval_pp_schedule
             # shape: (batch_size, seq_len, vocab_size), (1,)
@@ -817,7 +811,6 @@ class TransformerPipelineTrainModule(TrainModule):
                 target=labels,
                 doc_lens=batch.get("doc_lens"),
                 max_doc_lens=batch.get("max_doc_lens"),
-                **attn_buffers,
             )
             if schedule.is_last_stage:
                 assert logits is not None
