@@ -573,7 +573,7 @@ class TransformerTrainModule(TrainModule):
         batch_num_tokens_for_loss = (batch["labels"] != self.label_ignore_index).sum()
         if self.cp_enabled:
             assert self._cp_config is not None
-            batch_num_tokens_for_loss = batch_num_tokens_for_loss // self._cp_config.degree
+            batch_num_tokens_for_loss = batch_num_tokens_for_loss / self._cp_config.degree
 
         # Batch losses to record.
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
@@ -676,8 +676,10 @@ class TransformerTrainModule(TrainModule):
         self.model.eval()
 
         if self.cp_enabled:
-            # TODO: (epwalsh) Need to reconstruct logits and reduce loss
-            raise NotImplementedError
+            raise RuntimeError(
+                f"{self.__class__.__name__}.eval_batch() does not support context parallelism yet, "
+                "please disable in-loop evals"
+            )
 
         with self._eval_batch_context():
             logits = self.model_forward(batch, **attn_buffers)
