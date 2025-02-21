@@ -37,6 +37,7 @@ from olmo_core.distributed.utils import (
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
+from olmo_core.nn.attention import RingAttentionRotateMethod
 from olmo_core.nn.cross_entropy_loss import CrossEntropyLoss
 from olmo_core.nn.transformer import (
     MoETransformer,
@@ -82,6 +83,11 @@ class TransformerTensorParallelConfig(TensorParallelConfig):
 class TransformerContextParallelConfig(ContextParallelConfig):
     """
     Transformer-specific context parallel config.
+    """
+
+    rotate_method: Optional[RingAttentionRotateMethod] = None
+    """
+    The ring attention rotation method.
     """
 
 
@@ -325,7 +331,7 @@ class TransformerTrainModule(TrainModule):
         self._cp_config = cp_config
         if cp_config is not None:
             cp_mesh = get_cp_mesh(self.world_mesh)
-            self.model.apply_cp(cp_mesh, cp_config.rotate_method)
+            self.model.apply_cp(cp_mesh, rotate_method=cp_config.rotate_method)
             log.info("Applied context parallelism to the model")
 
         # Maybe apply tensor/expert parallelism.

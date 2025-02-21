@@ -5,23 +5,7 @@ from typing import Generator, List, Set
 import torch
 from torch.distributed import DeviceMesh
 
-from olmo_core.config import Config, StrEnum
-
-
-class RingAttentionRotateMethod(StrEnum):
-    """
-    Ring attention rotation method.
-    """
-
-    allgather = "allgather"
-    """
-    All-gather.
-    """
-
-    alltoall = "alltoall"
-    """
-    All-to-all.
-    """
+from olmo_core.config import Config
 
 
 @dataclass
@@ -33,12 +17,6 @@ class ContextParallelConfig(Config):
     degree: int
     """
     The CP degree.
-    """
-
-    rotate_method: RingAttentionRotateMethod = RingAttentionRotateMethod.alltoall
-    """
-    The rotation method for ring attention. Use :func:`set_ring_attention_rotate_method`
-    to set it for PyTorch's built-in SDPA function.
     """
 
 
@@ -65,7 +43,7 @@ def context_parallel_manager(
     global _CONTEXT_PARALLEL_ENABLED
 
     with contextlib.ExitStack() as stack:
-        # Currently ring attention only supports these two SDP backends.
+        # Currently only these two PyTorch SDP backends support ring attention.
         stack.enter_context(
             sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION])
         )
@@ -92,12 +70,3 @@ def context_parallel_enabled() -> bool:
     Indicates if context parallelism is currently enabled with :func:`context_parallel_manager()`.
     """
     return _CONTEXT_PARALLEL_ENABLED
-
-
-def set_ring_attention_rotate_method(rotate_method: RingAttentionRotateMethod):
-    """
-    Set the ring attention rotation method for PyTorch's SDPA function.
-    """
-    from torch.distributed.tensor.experimental._attention import set_rotate_method
-
-    set_rotate_method(rotate_method)

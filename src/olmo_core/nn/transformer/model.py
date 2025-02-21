@@ -21,15 +21,17 @@ from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_modul
 
 from olmo_core.config import StrEnum
 from olmo_core.data.utils import get_cumulative_document_lengths
-from olmo_core.distributed.parallel.context_parallel import (
-    RingAttentionRotateMethod,
-    context_parallel_manager,
-    set_ring_attention_rotate_method,
-)
+from olmo_core.distributed.parallel.context_parallel import context_parallel_manager
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device, mark_dynamic
 
+from ..attention import (
+    Attention,
+    AttentionBase,
+    FusedAttention,
+    RingAttentionRotateMethod,
+)
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..lm_head import LMHeadConfig
@@ -237,7 +239,7 @@ class Transformer(nn.Module):
             # This might fail if it's wrapped.
             #  assert isinstance(block, TransformerBlock)
             block = cast(TransformerBlock, block)
-            att = block.attention
+            att = cast(Union[Attention, FusedAttention], block.attention)
 
             # Attention weights.
             self.init_method.init_attention(
@@ -482,9 +484,9 @@ class Transformer(nn.Module):
         :param cp_mesh: The CP device mesh.
         :param rotate_method: The ring attention rotation method.
         """
-        if rotate_method is not None:
-            set_ring_attention_rotate_method(rotate_method)
         self._cp_mesh = cp_mesh
+        for block in self.blocks.values():
+            cast(AttentionBase, block.attention).apply_cp(cp_mesh, rotate_method=rotate_method)
 
     def apply_activation_checkpointing(
         self,

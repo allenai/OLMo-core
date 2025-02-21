@@ -5,9 +5,9 @@ import torch.nn as nn
 
 from olmo_core.config import StrEnum
 
-from ..attention import Attention, FusedAttention
+from ..attention import Attention, AttentionBase, FusedAttention
 from ..feed_forward import FeedForward
-from ..moe import MoEBase, MoELinearRouter
+from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP
 
 
 class InitMethod(StrEnum):
@@ -65,7 +65,7 @@ class InitMethod(StrEnum):
 
     def init_attention(
         self,
-        m: Union[Attention, FusedAttention],
+        m: AttentionBase,
         *,
         d_model: int,
         block_idx: int,
@@ -142,11 +142,26 @@ class InitMethod(StrEnum):
 
         self._init_linear(cast(MoELinearRouter, m.router).w_score, std=0.02, generator=generator)
         nn.init.trunc_normal_(
-            m.experts.mlp.w1, mean=0.0, std=0.02, a=-3 * std, b=3 * std, generator=generator
+            cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w1,
+            mean=0.0,
+            std=0.02,
+            a=-3 * std,
+            b=3 * std,
+            generator=generator,
         )
         nn.init.trunc_normal_(
-            m.experts.mlp.w2, mean=0.0, std=std, a=-3 * std, b=3 * std, generator=generator
+            cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w2,
+            mean=0.0,
+            std=std,
+            a=-3 * std,
+            b=3 * std,
+            generator=generator,
         )
         nn.init.trunc_normal_(
-            m.experts.mlp.w3, mean=0.0, std=std, a=-3 * std, b=3 * std, generator=generator
+            cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w3,
+            mean=0.0,
+            std=std,
+            a=-3 * std,
+            b=3 * std,
+            generator=generator,
         )

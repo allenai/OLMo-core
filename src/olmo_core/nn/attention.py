@@ -1,4 +1,5 @@
 import math
+from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Optional, Union
 
@@ -25,7 +26,14 @@ from .rope import (
 )
 from .utils import get_tp_wrappers
 
-__all__ = ["AttentionType", "AttentionConfig", "Attention", "FusedAttention", "NormalizedAttention"]
+__all__ = [
+    "AttentionType",
+    "AttentionConfig",
+    "Attention",
+    "FusedAttention",
+    "NormalizedAttention",
+    "RingAttentionRotateMethod",
+]
 
 
 class AttentionType(StrEnum):
@@ -44,6 +52,22 @@ class AttentionType(StrEnum):
     normalized = "normalized"
     """
     ➡️ :class:`NormalizedAttention`
+    """
+
+
+class RingAttentionRotateMethod(StrEnum):
+    """
+    Ring attention rotation method.
+    """
+
+    allgather = "allgather"
+    """
+    All-gather.
+    """
+
+    alltoall = "alltoall"
+    """
+    All-to-all.
     """
 
 
@@ -115,7 +139,7 @@ class AttentionConfig(Config):
         *,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
-    ) -> Union["Attention", "FusedAttention"]:
+    ) -> "AttentionBase":
         """
         Build the corresponding attention module.
 
@@ -147,7 +171,30 @@ class AttentionConfig(Config):
             ) from e
 
 
-class Attention(nn.Module):
+class AttentionBase(nn.Module):
+    """
+    Base class for attention modules.
+    """
+
+    @abstractmethod
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        input_layout: Optional[Placement] = None,
+        output_layout: Optional[Placement] = None,
+        use_local_output: bool = True,
+        float8_enabled: bool = False,
+    ):
+        raise NotImplementedError
+
+    @abstractmethod
+    def apply_cp(
+        self, cp_mesh: DeviceMesh, rotate_method: Optional[RingAttentionRotateMethod] = None
+    ):
+        raise NotImplementedError
+
+
+class Attention(AttentionBase):
     """
     An implementation of multi-head self-attention with support for multi-query (MQA)
     and grouped-query (GQA) attention.
@@ -419,6 +466,18 @@ class Attention(nn.Module):
             parallelize_plan=plan,
         )
 
+    def apply_cp(
+        self, cp_mesh: DeviceMesh, rotate_method: Optional[RingAttentionRotateMethod] = None
+    ):
+        del cp_mesh
+
+        if rotate_method is not None:
+            from torch.distributed.tensor.experimental._attention import (
+                set_rotate_method,
+            )
+
+            set_rotate_method(rotate_method)
+
 
 @beta_feature
 class NormalizedAttention(Attention):
@@ -550,7 +609,7 @@ class NormalizedAttention(Attention):
         w.copy_(l2_normalize(w, dim=dim))
 
 
-class FusedAttention(nn.Module):
+class FusedAttention(AttentionBase):
     """
     An "fused" implementation of multi-head self-attention.
 
@@ -675,8 +734,10 @@ class FusedAttention(nn.Module):
 
         raise NotImplementedError("TP is not implemented yet for the fused attention variant")
 
-    def apply_cp(self, cp_mesh: DeviceMesh):
-        del cp_mesh
+    def apply_cp(
+        self, cp_mesh: DeviceMesh, rotate_method: Optional[RingAttentionRotateMethod] = None
+    ):
+        del cp_mesh, rotate_method
         raise NotImplementedError("CP is not implemented yet for the fused attention variant")
 
 

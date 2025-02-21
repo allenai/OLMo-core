@@ -374,7 +374,7 @@ class TransformerPipelineTrainModule(TrainModule):
         if cp_config is not None:
             cp_mesh = get_cp_mesh(self.world_mesh)
             for model in self.model_parts:
-                model.apply_cp(cp_mesh, cp_config.rotate_method)
+                model.apply_cp(cp_mesh, rotate_method=cp_config.rotate_method)
             log.info("Applied context parallelism to the model")
 
         # Maybe apply tensor parallelism.
