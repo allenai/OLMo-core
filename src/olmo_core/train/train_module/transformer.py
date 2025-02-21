@@ -571,6 +571,9 @@ class TransformerTrainModule(TrainModule):
 
         # Calculate how many tokens are going to be used in the loss.
         batch_num_tokens_for_loss = (batch["labels"] != self.label_ignore_index).sum()
+        if self.cp_enabled:
+            assert self._cp_config is not None
+            batch_num_tokens_for_loss = batch_num_tokens_for_loss // self._cp_config.degree
 
         # Batch losses to record.
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
