@@ -21,7 +21,6 @@ from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_modul
 
 from olmo_core.config import StrEnum
 from olmo_core.data.utils import get_cumulative_document_lengths
-from olmo_core.distributed.parallel.context_parallel import context_parallel_manager
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device, mark_dynamic
@@ -31,6 +30,7 @@ from ..attention import (
     AttentionBase,
     FusedAttention,
     RingAttentionRotateMethod,
+    torch_ring_sdpa_manager,
 )
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
@@ -414,7 +414,7 @@ class Transformer(nn.Module):
 
         with contextlib.ExitStack() as stack:
             stack.enter_context(
-                context_parallel_manager(
+                torch_ring_sdpa_manager(
                     cp_mesh=self._cp_mesh,
                     cp_buffers=cp_buffers,
                     cp_seq_dims=cp_seq_dims,

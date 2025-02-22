@@ -1,7 +1,8 @@
+import contextlib
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Generator, List, Optional, Set, Union
 
 import torch
 import torch.nn as nn
@@ -11,7 +12,6 @@ from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import parallelize_module
 
 from ..config import Config, DType, StrEnum
-from ..distributed.parallel.context_parallel import context_parallel_enabled
 from ..distributed.parallel.tensor_parallel import SequenceParallel
 from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
@@ -33,6 +33,7 @@ __all__ = [
     "FusedAttention",
     "NormalizedAttention",
     "RingAttentionRotateMethod",
+    "torch_ring_sdpa_manager",
 ]
 
 
@@ -69,6 +70,52 @@ class RingAttentionRotateMethod(StrEnum):
     """
     All-to-all.
     """
+
+
+_RING_ATTENTION_ENABLED = False
+
+
+@contextlib.contextmanager
+def torch_ring_sdpa_manager(
+    cp_mesh: DeviceMesh,
+    *,
+    cp_buffers: List[torch.Tensor],
+    cp_seq_dims: List[int],
+    cp_no_restore_buffers: Set[torch.Tensor],
+) -> Generator[None, None, None]:
+    """
+    A context manager for enabling ring attention with PyTorch's built-in SDPA and splitting input
+    buffers in-place on their sequence dimension.
+
+    .. note::
+        This will monkey-patch PyTorch's SDPA function with a version that implements ring attention.
+    """
+    from torch.distributed.tensor.experimental import context_parallel
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+
+    global _RING_ATTENTION_ENABLED
+
+    with contextlib.ExitStack() as stack:
+        # Currently only these two PyTorch SDP backends support ring attention.
+        stack.enter_context(
+            sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION])
+        )
+
+        # Patch SDPA and shard these buffers on their sequence dimension.
+        stack.enter_context(
+            context_parallel(
+                cp_mesh,
+                buffers=cp_buffers,
+                buffer_seq_dims=cp_seq_dims,
+                no_restore_buffers=cp_no_restore_buffers,
+            )
+        )
+
+        try:
+            _RING_ATTENTION_ENABLED = True
+            yield
+        finally:
+            _RING_ATTENTION_ENABLED = False
 
 
 @dataclass
@@ -271,6 +318,8 @@ class Attention(AttentionBase):
             assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
             self.rope = rope_class
 
+        self._cp_enabled = False
+
         self._flash_attn_func = None
         self._flash_attn_varlen_func = None
         if use_flash:
@@ -284,7 +333,7 @@ class Attention(AttentionBase):
 
     @property
     def cp_enabled(self) -> bool:
-        return context_parallel_enabled()
+        return self._cp_enabled
 
     def sdpa(
         self,
@@ -335,6 +384,11 @@ class Attention(AttentionBase):
             )
         else:
             # Fall back to PyTorch's SDPA...
+            if self.cp_enabled and not _RING_ATTENTION_ENABLED:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' must be run within the context manager "
+                    f"'{torch_ring_sdpa_manager.__name__}()' when using PyTorch's built-in SDPA function"
+                )
 
             # PyTorch's SDPA doesn't support GQA, so we have to do this.
             # shape: (batch_size, n_heads, seq_len, head_dim)
@@ -469,6 +523,13 @@ class Attention(AttentionBase):
     def apply_cp(
         self, cp_mesh: DeviceMesh, rotate_method: Optional[RingAttentionRotateMethod] = None
     ):
+        """
+        Prepare the module for context-parallelism (ring attention).
+
+        .. important::
+            If using PyTorch's built-in SDPA (no flash-attn) you must run this module
+            within the context manager :func:`torch_ring_sdpa_manager()`.
+        """
         del cp_mesh
 
         if rotate_method is not None:
@@ -477,6 +538,8 @@ class Attention(AttentionBase):
             )
 
             set_rotate_method(rotate_method)
+
+        self._cp_enabled = True
 
 
 @beta_feature
