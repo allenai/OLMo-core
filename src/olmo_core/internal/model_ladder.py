@@ -39,6 +39,7 @@ class LadderRunConfig(Config):
 class SubCmd(StrEnum):
     launch = "launch"
     train = "train"
+    train_single = "train_single"
     dry_run = "dry_run"
 
     def prepare_environment(self):
@@ -46,6 +47,8 @@ class SubCmd(StrEnum):
             prepare_cli_environment()
         elif self == SubCmd.train:
             prepare_training_environment()
+        elif self == SubCmd.train_single:
+            prepare_training_environment(backend=None)
         else:
             raise NotImplementedError(self)
 
@@ -57,7 +60,21 @@ class SubCmd(StrEnum):
             config.launch.launch(follow=True)
         elif self == SubCmd.dry_run:
             pass
-        elif self == SubCmd.train:
+        elif self in (SubCmd.train, SubCmd.train_single):
+            if self == SubCmd.train_single:
+                if config.model.dp_config is not None:
+                    log.warning(
+                        "dp_config is set to %s, but you can't use data parallelism when running on a single node. Disabling.",
+                        config.model.dp_config,
+                    )
+                    config.model.dp_config = None
+                if config.model.tp_config is not None:
+                    log.warning(
+                        "tp_config is set to %s, but you can't use tensor parallelism when running on a single node. Disabling.",
+                        config.model.dp_config,
+                    )
+                    config.model.tp_config = None
+
             try:
                 # Set RNG states on all devices.
                 seed_all(config.ladder.init_seed)
@@ -69,7 +86,7 @@ class SubCmd(StrEnum):
 
                 # Build components.
                 model = config.model.build(
-                    init_device="meta",
+                    init_device="meta" if self == SubCmd.train else str(device),
                     device=device,
                     max_seq_len=config.dataset.sequence_length,
                     mesh=world_mesh,
@@ -122,6 +139,8 @@ def build_config(
     trainer = ladder.get_trainer_config(
         size=size, run_duration=run_duration, gpu_type=gpu_type, dp_world_size=dp_world_size
     )
+    if gpu_type in ("cpu", "mps"):
+        del trainer.callbacks["gpu_monitor"]
 
     return LadderRunConfig(
         launch=launch,
@@ -142,6 +161,7 @@ def main(ladder_builder: Callable[[str], ModelLadder]):
 [b magenta]launch:[/]      Launch the script on Beaker with the [b magenta]train[/] subcommand.
 [b magenta]train:[/]       Run the trainer. You usually shouldn't invoke the script with this subcommand directly.
              Instead use [b magenta]launch[/] or run it with torchrun.
+[b magenta]train_single:[/]       Run the trainer on a single device (GPU, CPU, MPS). num_nodes is ignored.
 [b magenta]dry_run:[/]     Pretty print the config to run and exit.
 
 [b]Examples[/]
