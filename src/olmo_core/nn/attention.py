@@ -31,6 +31,7 @@ from .utils import get_tp_wrappers
 __all__ = [
     "AttentionType",
     "AttentionConfig",
+    "AttentionBase",
     "Attention",
     "FusedAttention",
     "NormalizedAttention",
@@ -295,21 +296,34 @@ class Attention(AttentionBase):
                 )
 
             # shape: (batch_size * seq_len, n_heads, head_dim)
-            att = self._flash_attn_varlen_func(
-                q.view(B * T, -1, self.head_dim),
-                k.view(B * T, -1, self.head_dim),
-                v.view(B * T, -1, self.head_dim),
-                cu_doc_lens,
-                cu_doc_lens,
-                max_doc_len,
-                max_doc_len,
-                dropout_p=self.dropout_p,
-                causal=True,
-                softmax_scale=scale,
-            )
+            if self.cp_enabled:
+                # NOTE: different API
+                att = self._flash_attn_varlen_func(  # type: ignore
+                    q.view(B * T, -1, self.head_dim),
+                    k.view(B * T, -1, self.head_dim),
+                    v.view(B * T, -1, self.head_dim),
+                    cu_doc_lens,
+                    max_doc_len,
+                    dropout_p=self.dropout_p,
+                    causal=True,
+                    softmax_scale=scale,
+                )
+            else:
+                att = self._flash_attn_varlen_func(
+                    q.view(B * T, -1, self.head_dim),
+                    k.view(B * T, -1, self.head_dim),
+                    v.view(B * T, -1, self.head_dim),
+                    cu_doc_lens,
+                    cu_doc_lens,
+                    max_doc_len,
+                    max_doc_len,
+                    dropout_p=self.dropout_p,  # type: ignore
+                    softmax_scale=scale,  # type: ignore
+                    causal=True,  # type: ignore
+                )
         elif self._flash_attn_func is not None:
             # shape: (batch_size, seq_len, n_heads, head_dim)
-            att = self._flash_attn_func(
+            att = self._flash_attn_func(  # type: ignore
                 q, k, v, dropout_p=self.dropout_p, causal=True, softmax_scale=scale
             )
         else:
@@ -741,7 +755,7 @@ class FusedAttention(AttentionBase):
             att = self._flash_attn_qkvpacked_func(qkv, dropout_p=self.dropout_p, causal=True)
 
         # shape: (batch_size, seq_len, d_model)
-        att = att.view(B, T, -1)
+        att = att.view(B, T, -1)  # type: ignore
 
         # shape: (batch_size, seq_len, d_model)
         return self.w_out(att)
