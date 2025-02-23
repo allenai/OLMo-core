@@ -10,7 +10,6 @@ from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_modul
 
 from olmo_core.config import StrEnum
 from olmo_core.distributed.parallel.context_parallel import (
-    ContextParallelLoadBalancer,
     ContextParallelLoadBalancerType,
 )
 from olmo_core.doc_utils import beta_feature
@@ -140,11 +139,6 @@ class Transformer(nn.Module):
         self.init_seed = init_seed
 
         self._cache = cache
-
-        self._cp_enabled = False
-        self._cp_mesh: Optional[DeviceMesh] = None
-        self._cp_load_balancer: Optional[ContextParallelLoadBalancer] = None
-
         self._compile_enabled = False
 
         # Cache the value of these properties up-front in case the parameters are removed
@@ -187,10 +181,6 @@ class Transformer(nn.Module):
     @property
     def compile_enabled(self) -> bool:
         return self._compile_enabled
-
-    @property
-    def cp_enabled(self) -> bool:
-        return self._cp_enabled
 
     def get_rope_buffers(
         self, seq_len: int, device: Optional[torch.device] = None
@@ -293,10 +283,6 @@ class Transformer(nn.Module):
         """
         Run the transformer on the token input IDs.
 
-        .. important::
-            If running with context-parallelism, the forward and backward pass should
-            be run within the context manager :meth:`context_parallelism()`.
-
         :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
         :param cu_doc_lens: Cumulative Document lengths to use in attention for intra-document masking.
             Shape ``(batch_size, max_docs+1)``.
@@ -385,9 +371,6 @@ class Transformer(nn.Module):
         """
         for block in self.blocks.values():
             cast(AttentionBase, block.attention).apply_cp(cp_mesh, load_balancer=load_balancer)
-        self._cp_enabled = True
-        self._cp_mesh = cp_mesh
-        self._cp_load_balancer = load_balancer.build(cp_mesh)
 
     def apply_activation_checkpointing(
         self,
