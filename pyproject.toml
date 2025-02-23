@@ -23,6 +23,7 @@ dependencies = [
     "safetensors",
     "importlib_resources",
     "ai2-olmo-eval==0.6.1",
+    "ring-flash-attn",
 ]
 
 [project.urls]
