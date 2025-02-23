@@ -1,17 +1,6 @@
-import contextlib
 import logging
 from functools import cached_property
-from typing import (
-    TYPE_CHECKING,
-    Dict,
-    Generator,
-    List,
-    Optional,
-    Sequence,
-    Tuple,
-    Union,
-    cast,
-)
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union, cast
 
 import torch
 import torch.nn as nn
@@ -20,18 +9,15 @@ from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
 from olmo_core.config import StrEnum
-from olmo_core.data.utils import get_cumulative_document_lengths
+from olmo_core.distributed.parallel.context_parallel import (
+    ContextParallelLoadBalancer,
+    ContextParallelLoadBalancerType,
+)
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device, mark_dynamic
 
-from ..attention import (
-    Attention,
-    AttentionBase,
-    FusedAttention,
-    RingAttentionRotateMethod,
-    torch_ring_sdpa_manager,
-)
+from ..attention import Attention, AttentionBase, FusedAttention
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..lm_head import LMHeadConfig
@@ -154,9 +140,11 @@ class Transformer(nn.Module):
         self.init_seed = init_seed
 
         self._cache = cache
-        self._cp_mesh: Optional[DeviceMesh] = None
-        self._cp_rope_buffers: Optional[RoPEBuffers] = None
+
         self._cp_enabled = False
+        self._cp_mesh: Optional[DeviceMesh] = None
+        self._cp_load_balancer: Optional[ContextParallelLoadBalancer] = None
+
         self._compile_enabled = False
 
         # Cache the value of these properties up-front in case the parameters are removed
@@ -203,6 +191,17 @@ class Transformer(nn.Module):
     @property
     def cp_enabled(self) -> bool:
         return self._cp_enabled
+
+    def get_rope_buffers(
+        self, seq_len: int, device: Optional[torch.device] = None
+    ) -> Optional[RoPEBuffers]:
+        if device is None:
+            device = self.device
+        for block in self.blocks.values():
+            rope = cast(Optional[RotaryEmbeddingBase], block.attention.rope)  # type: ignore
+            if rope is not None:
+                return rope.get_buffers(seq_len, device)
+        return None
 
     @torch.no_grad()
     def init_weights(
@@ -285,8 +284,11 @@ class Transformer(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,
-        doc_lens: Optional[torch.Tensor] = None,
-        max_doc_lens: Optional[Sequence[int]] = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Run the transformer on the token input IDs.
@@ -296,28 +298,16 @@ class Transformer(nn.Module):
             be run within the context manager :meth:`context_parallelism()`.
 
         :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
-        :param doc_lens: Document lengths to use in attention for intra-document masking.
-            Shape ``(batch_size, max_docs)``.
-            Required together with ``max_doc_lens`` when using intra-document masking.
-        :param max_doc_lens: Maximum document length for each instance in the batch.
-            Required together with ``doc_lens`` when using intra-document masking.
+        :param cu_doc_lens: Cumulative Document lengths to use in attention for intra-document masking.
+            Shape ``(batch_size, max_docs+1)``.
+            Required together with ``max_doc_len`` when using intra-document masking.
+        :param max_doc_lens: Maximum document length over all instances in the batch.
+            Required together with ``cu_doc_lens`` when using intra-document masking.
 
         :returns: The output logits.
         """
-        # Prepare doc lens.
-        max_doc_len: Optional[int] = None
-        cu_doc_lens: Optional[torch.Tensor] = None
-        if doc_lens is not None and max_doc_lens is not None:
-            max_doc_len = max(max_doc_lens)
-            cu_doc_lens = get_cumulative_document_lengths(doc_lens)
-            if self.compile_enabled:
-                mark_dynamic(cu_doc_lens, (0, 1))
-
-        # Get sharded RoPE buffers if running with context parallelism.
-        rope_buffers: Optional[RoPEBuffers] = None
-        if self.cp_enabled:
-            assert self._cp_rope_buffers is not None
-            rope_buffers = self._cp_rope_buffers
+        if cu_doc_lens is not None and self.compile_enabled:
+            mark_dynamic(cu_doc_lens, (0, 1))
 
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
@@ -332,9 +322,9 @@ class Transformer(nn.Module):
                 h,
                 max_doc_len=max_doc_len,
                 cu_doc_lens=cu_doc_lens,
-                pos_sin=None if rope_buffers is None else rope_buffers.pos_sin,
-                pos_cos=None if rope_buffers is None else rope_buffers.pos_cos,
-                freqs_cis=None if rope_buffers is None else rope_buffers.freqs_cis,
+                pos_sin=pos_sin,
+                pos_cos=pos_cos,
+                freqs_cis=freqs_cis,
             )
 
         # Get final logits but again pass-through in case of pipeline parallelism.
@@ -344,91 +334,6 @@ class Transformer(nn.Module):
             return self.lm_head(h)
         else:
             return h
-
-    @contextlib.contextmanager
-    def context_parallelism(
-        self,
-        *,
-        input_ids: torch.Tensor,
-        doc_lens: Optional[torch.Tensor] = None,
-        max_doc_lens: Optional[Sequence[int]] = None,
-        labels: Optional[torch.Tensor] = None,
-    ) -> Generator[None, None, None]:
-        """
-        A context manager for running the model's forward and backward pass with context parallelism.
-
-        .. important::
-            You must pass all of the inputs for both the model and the loss function here in order
-            for this method to prepare those inputs by sharding them in-place on the sequence dimension.
-            Then call the model and loss function as normal with the same inputs.
-
-        .. important::
-            You must call :meth:`apply_cp()` before using this context manager.
-
-        :param input_ids: The input IDs that will be passed to :meth:`forward()`.
-        :param doc_lens: The doc lens that will be passed to :meth:`forward()`.
-        :param max_doc_lens: The max doc lens that will be passed to :meth:`forward()`.
-        :param labels: The labels that will be used to compute the loss. Like the other inputs these
-            will be sharded in-place.
-        """
-        if self._cp_mesh is None:
-            raise RuntimeError(
-                f"{self.__class__.__name__}.apply_cp() must be called before using the context_parallelism() manager."
-            )
-
-        cp_buffers = [input_ids]
-        cp_seq_dims = [1]
-        cp_no_restore_buffers = {input_ids}
-
-        if doc_lens is not None or max_doc_lens is not None:
-            raise RuntimeError("context parallelism does not support intra-document masking yet")
-
-        # Even though we don't use 'labels' in the model's forward pass they still
-        # need to be sharded in the same way for the loss function.
-        if labels is not None:
-            cp_buffers.append(labels)
-            cp_seq_dims.append(1)
-            cp_no_restore_buffers.add(labels)
-
-        # RoPE buffers.
-        rope_buffers: RoPEBuffers
-        for block in self.blocks.values():
-            rope = cast(Optional[RotaryEmbeddingBase], block.attention.rope)  # type: ignore
-            if rope is not None:
-                rope_buffers = rope.get_buffers(input_ids.shape[1], input_ids.device)
-                break
-        else:
-            rope_buffers = RoPEBuffers()
-
-        if rope_buffers.pos_sin is not None:
-            cp_buffers.append(rope_buffers.pos_sin)
-            cp_seq_dims.append(0)
-
-        if rope_buffers.pos_cos is not None:
-            cp_buffers.append(rope_buffers.pos_cos)
-            cp_seq_dims.append(0)
-
-        if rope_buffers.freqs_cis is not None:
-            cp_buffers.append(rope_buffers.freqs_cis)
-            cp_seq_dims.append(0)
-
-        with contextlib.ExitStack() as stack:
-            stack.enter_context(
-                torch_ring_sdpa_manager(
-                    cp_mesh=self._cp_mesh,
-                    cp_buffers=cp_buffers,
-                    cp_seq_dims=cp_seq_dims,
-                    cp_no_restore_buffers=cp_no_restore_buffers,
-                )
-            )
-
-            try:
-                self._cp_enabled = True
-                self._cp_rope_buffers = rope_buffers
-                yield
-            finally:
-                self._cp_enabled = False
-                self._cp_rope_buffers = None
 
     def apply_tp(
         self,
@@ -471,22 +376,18 @@ class Transformer(nn.Module):
                 use_local_output=not loss_parallel,
             )
 
-    def apply_cp(
-        self, cp_mesh: DeviceMesh, rotate_method: Optional[RingAttentionRotateMethod] = None
-    ):
+    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: ContextParallelLoadBalancerType):
         """
         Prepare the model for context-parallelism (CP).
 
-        .. important::
-            To run with CP you must also run the model's forward and backward pass inside of the
-            context manager :meth:`context_parallelism()`.
-
         :param cp_mesh: The CP device mesh.
-        :param rotate_method: The ring attention rotation method.
+        :param load_balancer: The load balancing method.
         """
-        self._cp_mesh = cp_mesh
         for block in self.blocks.values():
-            cast(AttentionBase, block.attention).apply_cp(cp_mesh, rotate_method=rotate_method)
+            cast(AttentionBase, block.attention).apply_cp(cp_mesh, load_balancer=load_balancer)
+        self._cp_enabled = True
+        self._cp_mesh = cp_mesh
+        self._cp_load_balancer = load_balancer.build(cp_mesh)
 
     def apply_activation_checkpointing(
         self,

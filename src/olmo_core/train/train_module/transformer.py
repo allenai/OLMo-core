@@ -1,6 +1,7 @@
 import contextlib
 import logging
 from dataclasses import dataclass, replace
+from functools import partial
 from typing import Any, Dict, Generator, List, Optional, Tuple, cast
 
 import torch
@@ -14,17 +15,22 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 
 from olmo_core.config import Config, DType
-from olmo_core.data.utils import get_labels, split_batch
+from olmo_core.data.utils import (
+    get_cumulative_document_lengths,
+    get_labels,
+    split_batch,
+)
 from olmo_core.distributed.checkpoint import _swap_param_keys
 from olmo_core.distributed.parallel import (
     ContextParallelConfig,
+    ContextParallelLoadBalancer,
     DataParallelConfig,
     DataParallelType,
     ExpertParallelConfig,
     TensorParallelConfig,
     build_device_mesh,
     get_cp_mesh,
-    get_dp_mesh,
+    get_dp_model_mesh,
     get_dp_process_group,
     get_ep_mesh,
     get_tp_mesh,
@@ -37,7 +43,6 @@ from olmo_core.distributed.utils import (
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
-from olmo_core.nn.attention import RingAttentionRotateMethod
 from olmo_core.nn.cross_entropy_loss import CrossEntropyLoss
 from olmo_core.nn.transformer import (
     MoETransformer,
@@ -83,11 +88,6 @@ class TransformerTensorParallelConfig(TensorParallelConfig):
 class TransformerContextParallelConfig(ContextParallelConfig):
     """
     Transformer-specific context parallel config.
-    """
-
-    rotate_method: Optional[RingAttentionRotateMethod] = None
-    """
-    The ring attention rotation method.
     """
 
 
@@ -329,9 +329,11 @@ class TransformerTrainModule(TrainModule):
 
         # Maybe apply context parallelism.
         self._cp_config = cp_config
+        self._cp_load_balancer: Optional[ContextParallelLoadBalancer] = None
         if cp_config is not None:
             cp_mesh = get_cp_mesh(self.world_mesh)
-            self.model.apply_cp(cp_mesh, rotate_method=cp_config.rotate_method)
+            self._cp_load_balancer = cp_config.load_balancer.build(cp_mesh)
+            self.model.apply_cp(cp_mesh, load_balancer=cp_config.load_balancer)
             log.info("Applied context parallelism to the model")
 
         # Maybe apply tensor/expert parallelism.
@@ -391,7 +393,7 @@ class TransformerTrainModule(TrainModule):
         # Maybe shard/replicate according to data parallel config.
         self._dp_config = dp_config
         if dp_config is not None:
-            dp_mesh = get_dp_mesh(self.world_mesh)
+            dp_mesh = get_dp_model_mesh(self.world_mesh)
             if dp_config.name in (DataParallelType.fsdp, DataParallelType.hsdp):
                 self.model.apply_fsdp(
                     dp_mesh=dp_mesh,
@@ -565,8 +567,10 @@ class TransformerTrainModule(TrainModule):
         # Set model to train mode if it isn't already.
         self.model.train()
 
-        # Move tensors to the right device.
-        batch = move_to_device(batch, self.device)
+        # Move tensors to the target device right away unless training with context parallelism,
+        # in which case we keep on CPU for now since the CP load balancer may require data on CPU.
+        if not self.cp_enabled:
+            batch = move_to_device(batch, self.device)
 
         # Generate labels.
         if "labels" not in batch:
@@ -579,7 +583,9 @@ class TransformerTrainModule(TrainModule):
             )
 
         # Calculate how many tokens are going to be used in the loss.
-        batch_num_tokens_for_loss = (batch["labels"] != self.label_ignore_index).sum()
+        batch_num_tokens_for_loss = move_to_device(
+            (batch["labels"] != self.label_ignore_index).sum(), self.device
+        )
         if self.cp_enabled:
             assert self._cp_config is not None
             batch_num_tokens_for_loss = batch_num_tokens_for_loss / self._cp_config.degree
@@ -601,14 +607,15 @@ class TransformerTrainModule(TrainModule):
 
         # Train one micro-batch at a time.
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
-            with self._train_microbatch_context(micro_batch_idx, num_micro_batches, micro_batch):
+            with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
+                micro_batch, labels = self._prepare_batch(micro_batch)
+                assert labels is not None
+
                 # Run forward pass.
                 logits = self.model_forward(micro_batch)
 
                 # Get loss to optimize for, and the separate detached CE and Z loss values.
-                loss, ce_loss, z_loss = self.loss_fn(
-                    logits, micro_batch["labels"], batch_num_tokens_for_loss
-                )
+                loss, ce_loss, z_loss = self.loss_fn(logits, labels, batch_num_tokens_for_loss)
                 del logits
 
                 # Update total batch CE and Z loss.
@@ -682,7 +689,7 @@ class TransformerTrainModule(TrainModule):
                 "please disable in-loop evals"
             )
 
-        batch = move_to_device(batch, self.device)
+        batch, labels = self._prepare_batch(batch, labels)
 
         self.model.eval()
 
@@ -772,42 +779,27 @@ class TransformerTrainModule(TrainModule):
         Run a forward pass on a micro-batch, returning the logits.
         """
         with self._model_forward_context():
-            # Run model forward, get logits.
             # shape: (batch_size, seq_len, vocab_size)
-            logits = self.model(
+            return self.model(
                 input_ids=batch["input_ids"],
-                #  attention_mask=micro_batch.get("attention_mask"),
-                #  attention_bias=micro_batch.get("attention_bias"),
-                doc_lens=batch.get("doc_lens"),
-                max_doc_lens=batch.get("max_doc_lens"),
+                max_doc_len=batch.get("max_doc_len"),
+                cu_doc_lens=batch.get("cu_doc_lens"),
+                pos_sin=batch.get("pos_sin"),
+                pos_cos=batch.get("pos_cos"),
+                freqs_cis=batch.get("freqs_cis"),
             )
-
-            return logits
 
     def num_flops_per_token(self, seq_len: int) -> int:
         return self.model.num_flops_per_token(seq_len)
 
     @contextlib.contextmanager
     def _train_microbatch_context(
-        self,
-        micro_batch_idx: int,
-        num_micro_batches: int,
-        micro_batch: Dict[str, Any],
+        self, micro_batch_idx: int, num_micro_batches: int
     ) -> Generator[None, None, None]:
         with contextlib.ExitStack() as stack:
             # For DDP, only sync gradients on the final micro batch.
             if isinstance(self.model, DDP) and micro_batch_idx != num_micro_batches - 1:
                 stack.enter_context(self.model.no_sync())
-
-            if self.cp_enabled:
-                stack.enter_context(
-                    self.model.context_parallelism(
-                        input_ids=micro_batch["input_ids"],
-                        doc_lens=micro_batch.get("doc_lens"),
-                        max_doc_lens=micro_batch.get("max_doc_lens"),
-                        labels=micro_batch["labels"],
-                    )
-                )
             yield
 
     @contextlib.contextmanager
@@ -859,3 +851,44 @@ class TransformerTrainModule(TrainModule):
 
         torch.nn.utils.clip_grads_with_norm_(parameters, max_grad_norm, total_norm, foreach=foreach)
         return total_norm
+
+    def _prepare_batch(
+        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
+    ) -> Tuple[Dict[str, Any], Optional[torch.Tensor]]:
+        # Prepare document length inputs.
+        max_doc_len: Optional[int] = None
+        cu_doc_lens: Optional[torch.Tensor] = None
+        if (doc_lens := batch.pop("doc_lens", None)) is not None and (
+            max_doc_lens := batch.pop("max_doc_lens", None)
+        ) is not None:
+            max_doc_len = max(max_doc_lens)
+            cu_doc_lens = get_cumulative_document_lengths(doc_lens)
+            batch["max_doc_len"] = max_doc_len
+            batch["cu_doc_lens"] = cu_doc_lens
+
+        # Prepare labels.
+        if labels is None:
+            labels = batch.pop("labels", None)
+        else:
+            batch.pop("labels", None)
+
+        # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
+        if self.cp_enabled:
+            assert self._cp_load_balancer is not None
+            shard_it = partial(self._cp_load_balancer.shard, cu_doc_lens=cu_doc_lens)
+            total_seq_len = batch["input_ids"].shape[1]
+
+            batch["input_ids"] = shard_it(batch["input_ids"], 1)
+            if labels is not None:
+                labels = shard_it(labels, 1)
+
+            rope_buffers = self.model.get_rope_buffers(total_seq_len, self.device)
+            if rope_buffers is not None:
+                if rope_buffers.pos_sin is not None:
+                    batch["pos_sin"] = shard_it(rope_buffers.pos_sin, 0)
+                if rope_buffers.pos_cos is not None:
+                    batch["pos_cos"] = shard_it(rope_buffers.pos_cos, 0)
+                if rope_buffers.freqs_cis is not None:
+                    batch["freqs_cis"] = shard_it(rope_buffers.freqs_cis, 0)
+
+        return move_to_device(batch, self.device), move_to_device(labels, self.device)

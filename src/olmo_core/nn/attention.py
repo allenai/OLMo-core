@@ -1,10 +1,11 @@
-import contextlib
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Generator, List, Optional, Set, Union
+from functools import partial
+from typing import Optional, Union
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
@@ -12,6 +13,7 @@ from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import parallelize_module
 
 from ..config import Config, DType, StrEnum
+from ..distributed.parallel.context_parallel import ContextParallelLoadBalancerType
 from ..distributed.parallel.tensor_parallel import SequenceParallel
 from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
@@ -32,8 +34,6 @@ __all__ = [
     "Attention",
     "FusedAttention",
     "NormalizedAttention",
-    "RingAttentionRotateMethod",
-    "torch_ring_sdpa_manager",
 ]
 
 
@@ -54,68 +54,6 @@ class AttentionType(StrEnum):
     """
     ➡️ :class:`NormalizedAttention`
     """
-
-
-class RingAttentionRotateMethod(StrEnum):
-    """
-    Ring attention rotation method.
-    """
-
-    allgather = "allgather"
-    """
-    All-gather.
-    """
-
-    alltoall = "alltoall"
-    """
-    All-to-all.
-    """
-
-
-_RING_ATTENTION_ENABLED = False
-
-
-@contextlib.contextmanager
-def torch_ring_sdpa_manager(
-    cp_mesh: DeviceMesh,
-    *,
-    cp_buffers: List[torch.Tensor],
-    cp_seq_dims: List[int],
-    cp_no_restore_buffers: Set[torch.Tensor],
-) -> Generator[None, None, None]:
-    """
-    A context manager for enabling ring attention with PyTorch's built-in SDPA and splitting input
-    buffers in-place on their sequence dimension.
-
-    .. note::
-        This will monkey-patch PyTorch's SDPA function with a version that implements ring attention.
-    """
-    from torch.distributed.tensor.experimental import context_parallel
-    from torch.nn.attention import SDPBackend, sdpa_kernel
-
-    global _RING_ATTENTION_ENABLED
-
-    with contextlib.ExitStack() as stack:
-        # Currently only these two PyTorch SDP backends support ring attention.
-        stack.enter_context(
-            sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION])
-        )
-
-        # Patch SDPA and shard these buffers on their sequence dimension.
-        stack.enter_context(
-            context_parallel(
-                cp_mesh,
-                buffers=cp_buffers,
-                buffer_seq_dims=cp_seq_dims,
-                no_restore_buffers=cp_no_restore_buffers,
-            )
-        )
-
-        try:
-            _RING_ATTENTION_ENABLED = True
-            yield
-        finally:
-            _RING_ATTENTION_ENABLED = False
 
 
 @dataclass
@@ -235,9 +173,7 @@ class AttentionBase(nn.Module):
         raise NotImplementedError
 
     @abstractmethod
-    def apply_cp(
-        self, cp_mesh: DeviceMesh, rotate_method: Optional[RingAttentionRotateMethod] = None
-    ):
+    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: ContextParallelLoadBalancerType):
         raise NotImplementedError
 
 
@@ -318,8 +254,6 @@ class Attention(AttentionBase):
             assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
             self.rope = rope_class
 
-        self._cp_enabled = False
-
         self._flash_attn_func = None
         self._flash_attn_varlen_func = None
         if use_flash:
@@ -330,6 +264,10 @@ class Attention(AttentionBase):
 
             self._flash_attn_func = flash_attn_func
             self._flash_attn_varlen_func = flash_attn_varlen_func
+
+        self._cp_pg: Optional[dist.ProcessGroup] = None
+        self._cp_enabled = False
+        self._cp_load_balancer: Optional[ContextParallelLoadBalancerType] = None
 
     @property
     def cp_enabled(self) -> bool:
@@ -356,11 +294,6 @@ class Attention(AttentionBase):
                     "flash-attn (use_flash=True) is required for intra-document masking"
                 )
 
-            if self.cp_enabled:
-                raise RuntimeError(
-                    "context parallelism does not support intra-document masking yet"
-                )
-
             # shape: (batch_size * seq_len, n_heads, head_dim)
             att = self._flash_attn_varlen_func(
                 q.view(B * T, -1, self.head_dim),
@@ -375,19 +308,15 @@ class Attention(AttentionBase):
                 softmax_scale=scale,
             )
         elif self._flash_attn_func is not None:
-            if self.cp_enabled:
-                raise RuntimeError("flash-attn does not support context parallelism yet")
-
             # shape: (batch_size, seq_len, n_heads, head_dim)
             att = self._flash_attn_func(
                 q, k, v, dropout_p=self.dropout_p, causal=True, softmax_scale=scale
             )
         else:
             # Fall back to PyTorch's SDPA...
-            if self.cp_enabled and not _RING_ATTENTION_ENABLED:
+            if self.cp_enabled:
                 raise RuntimeError(
-                    f"'{self.__class__.__name__}' must be run within the context manager "
-                    f"'{torch_ring_sdpa_manager.__name__}()' when using PyTorch's built-in SDPA function"
+                    f"'{self.__class__.__name__}' requires flash-attn (use_flash=True) for context parallelism"
                 )
 
             # PyTorch's SDPA doesn't support GQA, so we have to do this.
@@ -462,6 +391,12 @@ class Attention(AttentionBase):
         v = v.view(B, T, -1, self.head_dim)
 
         if self.rope is not None:
+            if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
+                raise RuntimeError(
+                    "RoPE buffers must be passed through to attention after being properly "
+                    "sharded by the context parallel load balancer"
+                )
+
             q, k = self.rope(
                 q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
             )
@@ -520,26 +455,34 @@ class Attention(AttentionBase):
             parallelize_plan=plan,
         )
 
-    def apply_cp(
-        self, cp_mesh: DeviceMesh, rotate_method: Optional[RingAttentionRotateMethod] = None
-    ):
+    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: ContextParallelLoadBalancerType):
         """
         Prepare the module for context-parallelism (ring attention).
 
         .. important::
-            If using PyTorch's built-in SDPA (no flash-attn) you must run this module
-            within the context manager :func:`torch_ring_sdpa_manager()`.
+            This requires flash-attn and ring-flash-attn.
         """
-        del cp_mesh
-
-        if rotate_method is not None:
-            from torch.distributed.tensor.experimental._attention import (
-                set_rotate_method,
+        if self._flash_attn_func is None or self._flash_attn_varlen_func is None:
+            raise RuntimeError(
+                f"'{self.__class__.__name__}' requires flash-attn (use_flash=True) for context parallelism"
             )
 
-            set_rotate_method(rotate_method)
+        cp_pg = cp_mesh.get_group()
 
+        if load_balancer == ContextParallelLoadBalancerType.zig_zag:
+            from ring_flash_attn import (  # type: ignore
+                zigzag_ring_flash_attn_func,
+                zigzag_ring_flash_attn_varlen_func,
+            )
+
+            self._flash_attn_func = partial(zigzag_ring_flash_attn_func, group=cp_pg)
+            self._flash_attn_varlen_func = partial(zigzag_ring_flash_attn_varlen_func, group=cp_pg)
+        else:
+            raise NotImplementedError(load_balancer)
+
+        self._cp_pg = cp_pg
         self._cp_enabled = True
+        self._cp_load_balancer = load_balancer
 
 
 @beta_feature
@@ -630,6 +573,11 @@ class NormalizedAttention(Attention):
         v = v.view(B, T, self.n_kv_heads, self.head_dim)
 
         if self.rope is not None:
+            if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
+                raise RuntimeError(
+                    "RoPE buffers must be passed through to attention after being properly "
+                    "sharded by the context parallel load balancer"
+                )
             q, k = self.rope(
                 q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
             )
@@ -733,6 +681,14 @@ class FusedAttention(AttentionBase):
         self._flash_attn_qkvpacked_func = flash_attn_qkvpacked_func
         self._flash_attn_varlen_qkvpacked_func = flash_attn_varlen_qkvpacked_func
 
+        self._cp_pg: Optional[dist.ProcessGroup] = None
+        self._cp_enabled = False
+        self._cp_load_balancer: Optional[ContextParallelLoadBalancerType] = None
+
+    @property
+    def cp_enabled(self) -> bool:
+        return self._cp_enabled
+
     def forward(
         self,
         x: torch.Tensor,
@@ -764,6 +720,11 @@ class FusedAttention(AttentionBase):
             qkv.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
 
         if self.rope is not None:
+            if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
+                raise RuntimeError(
+                    "RoPE buffers must be passed through to attention after being properly "
+                    "sharded by the context parallel load balancer"
+                )
             qkv = self.rope(qkv, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis)
 
         if max_doc_len is not None and cu_doc_lens is not None:
@@ -797,11 +758,27 @@ class FusedAttention(AttentionBase):
 
         raise NotImplementedError("TP is not implemented yet for the fused attention variant")
 
-    def apply_cp(
-        self, cp_mesh: DeviceMesh, rotate_method: Optional[RingAttentionRotateMethod] = None
-    ):
-        del cp_mesh, rotate_method
-        raise NotImplementedError("CP is not implemented yet for the fused attention variant")
+    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: ContextParallelLoadBalancerType):
+        cp_pg = cp_mesh.get_group()
+
+        if load_balancer == ContextParallelLoadBalancerType.zig_zag:
+            from ring_flash_attn import (  # type: ignore
+                zigzag_ring_flash_attn_qkvpacked_func,
+                zigzag_ring_flash_attn_varlen_qkvpacked_func,
+            )
+
+            self._flash_attn_qkvpacked_func = partial(
+                zigzag_ring_flash_attn_qkvpacked_func, group=cp_pg
+            )
+            self._flash_attn_varlen_qkvpacked_func = partial(
+                zigzag_ring_flash_attn_varlen_qkvpacked_func, group=cp_pg
+            )
+        else:
+            raise NotImplementedError(load_balancer)
+
+        self._cp_pg = cp_pg
+        self._cp_enabled = True
+        self._cp_load_balancer = load_balancer
 
 
 def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
