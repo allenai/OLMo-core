@@ -106,6 +106,9 @@ def build_launch_config(
             #  "pip install 'ai2-olmo-eval @ git+https://git@github.com/allenai/OLMo-in-loop-evals.git@epwalsh/debug'",
             "pip install -e '.[all]'",
             "pip install --upgrade beaker-py",
+            # Need ring-flash-attn for context parallelism, and it unfortunately it imports transformers
+            # so we need transformers as well.
+            "pip install ring-flash-attn transformers",
             # Quickly try a new version of PyTorch like this
             #  "pip install --upgrade --pre torch==2.6.0.dev20241112+cu121 --index-url https://download.pytorch.org/whl/nightly/cu121",
             "pip freeze",
