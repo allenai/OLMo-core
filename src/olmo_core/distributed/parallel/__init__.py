@@ -27,13 +27,14 @@ __all__ = [
     "build_device_mesh",
     "build_expert_parallel_mesh",
     "MeshDimName",
-    "get_dp_mesh",
     "get_dp_model_mesh",
+    "get_dp_mesh",
     "get_tp_mesh",
     "get_pp_mesh",
     "get_ep_mesh",
     "get_cp_mesh",
     "get_dp_process_group",
+    "get_device_mesh_info",
     "DataParallelType",
     "DataParallelConfig",
     "DPMeshDimName",
@@ -197,14 +198,24 @@ def build_device_mesh(
         names.append(MeshDimName.tp)
         dims.append(tp.degree)
 
-    log.info(f"Building {len(dims)}-D device mesh with dimensions:")
-    for i, (name, dim) in enumerate(zip(names, dims)):
-        log.info(f" > dimension {i}, size={dim}, name={name}")
-
     mesh = init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))
+    log.info(f"Built {get_device_mesh_info(mesh)}")
+
     # Ensure data parallel process group is created here.
     get_dp_process_group(mesh)
+
     return mesh
+
+
+def get_device_mesh_info(device_mesh: DeviceMesh) -> str:
+    shape: str
+    if device_mesh.mesh_dim_names is not None:
+        shape = ", ".join(
+            f"{dim_name}={d}" for dim_name, d in zip(device_mesh.mesh_dim_names, device_mesh.shape)
+        )
+    else:
+        shape = ", ".join(f"{d}" for d in device_mesh.shape)
+    return f"{device_mesh.ndim}D device mesh with shape ({shape})"
 
 
 def build_expert_parallel_mesh(
@@ -242,49 +253,6 @@ def build_expert_parallel_mesh(
     return init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))
 
 
-def get_dp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
-    """
-    Get the data parallel sub-mesh associated with a ``DeviceMesh`` that was potentially
-    created from :func:`build_device_mesh()`.
-    """
-    if (dim_names := device_mesh.mesh_dim_names) is None:
-        raise RuntimeError("could not determine DP sub-mesh without dimension names")
-
-    # Expert parallel dims get flattened into DP dimension.
-    if MeshDimName.ep_replicate in dim_names and MeshDimName.ep_shard in dim_names:
-        device_mesh, dim_names = _flatten_dims(
-            device_mesh,
-            MeshDimName.ep_replicate,
-            MeshDimName.ep_shard,
-            name=MeshDimName.dp,
-        )
-
-    # Flattened context parallel dimensions should not be in this mesh since ranks within the
-    # same CP group should receive the same data instances.
-    if MeshDimName.dp_cp in dim_names or MeshDimName.dp_shard_cp in dim_names:
-        raise RuntimeError("'get_dp_mesh' should be called on the original world mesh")
-
-    dp_dim_names = tuple(name for name in dim_names if name.startswith("dp"))
-    return device_mesh[dp_dim_names]
-
-
-def _flatten_dims(
-    device_mesh: DeviceMesh, *dims: str, name: str
-) -> Tuple[DeviceMesh, Tuple[str, ...]]:
-    log.info(f"Flattening mesh dimensions {dims} into {name}")
-    assert (names := device_mesh.mesh_dim_names) is not None
-    out_names = []
-    for n in names:
-        if n in dims:
-            if name not in out_names:
-                out_names.append(name)
-        else:
-            out_names.append(n)
-    device_mesh[dims]._flatten(mesh_dim_name=name)
-    new_names = tuple(out_names)
-    return device_mesh[new_names], new_names
-
-
 def _get_model_mesh(device_mesh: DeviceMesh) -> Tuple[DeviceMesh, Tuple[str, ...]]:
     if (dim_names := device_mesh.mesh_dim_names) is None:
         raise RuntimeError("could not determine DP model sub-mesh without dimension names")
@@ -314,18 +282,55 @@ def _get_model_mesh(device_mesh: DeviceMesh) -> Tuple[DeviceMesh, Tuple[str, ...
 
 def get_dp_model_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     """
-    Get the right sub-mesh for a data parallel model wrapper like FSDP or DDP.
-    In most cases this returns the same things as :func:`get_dp_mesh()`.
+    Get the right sub-mesh for a data parallel model wrapper like FSDP or DDP from a ``DeviceMesh``
+    created by :func:`build_device_mesh()`.
+
+    .. important::
+        You should use :func:`get_dp_mesh()` instead for getting the sub-mesh to assign ranks
+        to data loading workers. In many cases these two functions will return the same result,
+        but there are cases where they could be different.
     """
     device_mesh, dim_names = _get_model_mesh(device_mesh)
     dp_dim_names = tuple(name for name in dim_names if name.startswith("dp"))
     return device_mesh[dp_dim_names]
 
 
+def get_dp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
+    """
+    Get the data parallel sub-mesh associated from a ``DeviceMesh`` created by :func:`build_device_mesh()`.
+
+    .. important::
+        This is the mesh that should be used to assign ranks to data loading workers,
+        however you should use :func:`get_dp_model_mesh()` to get the mesh for DDP/FSDP.
+    """
+    if (dim_names := device_mesh.mesh_dim_names) is None:
+        raise RuntimeError("could not determine DP sub-mesh without dimension names")
+
+    # Expert parallel dims get flattened into DP dimension.
+    if MeshDimName.ep_replicate in dim_names and MeshDimName.ep_shard in dim_names:
+        device_mesh, dim_names = _flatten_dims(
+            device_mesh,
+            MeshDimName.ep_replicate,
+            MeshDimName.ep_shard,
+            name=MeshDimName.dp,
+        )
+
+    # Flattened context parallel dimensions should not be in this mesh since ranks within the
+    # same CP group should receive the same data instances.
+    if MeshDimName.dp_cp in dim_names or MeshDimName.dp_shard_cp in dim_names:
+        raise RuntimeError("'get_dp_mesh' should be called on the original world mesh")
+
+    dp_dim_names = tuple(name for name in dim_names if name.startswith("dp"))
+    return device_mesh[dp_dim_names]
+
+
 def get_dp_process_group(device_mesh: DeviceMesh) -> ProcessGroup:
     """
-    Get the data parallel process group associated with a ``DeviceMesh`` that was potentially
+    Get the data parallel process group associated with a ``DeviceMesh``
     created from :func:`build_device_mesh()`.
+
+    Like :func:`get_dp_mesh()`, this should be used for data loading, but not necessarily for
+    data parallel model wrappers.
     """
     dp_mesh = get_dp_mesh(device_mesh)
     if len(dp_mesh.shape) > 1:
@@ -360,7 +365,7 @@ def get_ep_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
 
 def get_tp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     """
-    Get the tensor parallel sub-mesh associated with a ``DeviceMesh`` that was potentially
+    Get the tensor parallel sub-mesh associated with a ``DeviceMesh``
     created from :func:`build_device_mesh()`.
     """
     device_mesh, dim_names = _get_model_mesh(device_mesh)
@@ -375,7 +380,7 @@ def get_tp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
 
 def get_cp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     """
-    Get the context parallel sub-mesh associated with a ``DeviceMesh`` that was potentially
+    Get the context parallel sub-mesh associated with a ``DeviceMesh``
     created from :func:`build_device_mesh()`.
     """
     if device_mesh.mesh_dim_names is None:
@@ -391,7 +396,7 @@ def get_cp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
 
 def get_pp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     """
-    Get the tensor parallel sub-mesh associated with a ``DeviceMesh`` that was potentially
+    Get the tensor parallel sub-mesh associated with a ``DeviceMesh``
     created from :func:`build_device_mesh()`.
     """
     if device_mesh.mesh_dim_names is None:
@@ -403,3 +408,20 @@ def get_pp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
         raise RuntimeError(
             f"could not determine pipeline parallel sub-mesh from mesh with dimensions {device_mesh.mesh_dim_names}"
         )
+
+
+def _flatten_dims(
+    device_mesh: DeviceMesh, *dims: str, name: str
+) -> Tuple[DeviceMesh, Tuple[str, ...]]:
+    log.info(f"Flattening mesh dimensions {dims} into {name}")
+    assert (names := device_mesh.mesh_dim_names) is not None
+    out_names = []
+    for n in names:
+        if n in dims:
+            if name not in out_names:
+                out_names.append(name)
+        else:
+            out_names.append(n)
+    device_mesh[dims]._flatten(mesh_dim_name=name)
+    new_names = tuple(out_names)
+    return device_mesh[new_names], new_names

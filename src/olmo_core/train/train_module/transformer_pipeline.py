@@ -26,6 +26,7 @@ from olmo_core.distributed.parallel import (
     PipelineSchedule,
     build_device_mesh,
     get_cp_mesh,
+    get_device_mesh_info,
     get_dp_model_mesh,
     get_dp_process_group,
     get_pp_mesh,
@@ -361,6 +362,7 @@ class TransformerPipelineTrainModule(TrainModule):
         stages, model_parts = pp_config.split_model(model, pp_mesh=pp_mesh, device=self.device)
         self._pp_stages = stages
         self.model_parts = model_parts
+        log.info(f"Applied pipeline parallelism to the model with {get_device_mesh_info(pp_mesh)}")
 
         # Maybe convert linear layers to FP8 linear.
         if self.float8_handler is not None and self.float8_handler.enabled:
@@ -378,7 +380,9 @@ class TransformerPipelineTrainModule(TrainModule):
             self._cp_load_balancer = cp_config.load_balancer.build(cp_mesh)
             for model in self.model_parts:
                 model.apply_cp(cp_mesh, load_balancer=cp_config.load_balancer)
-            log.info("Applied context parallelism to the model")
+            log.info(
+                f"Applied context parallelism to the model with {get_device_mesh_info(cp_mesh)}"
+            )
 
         # Maybe apply tensor parallelism.
         if tp_config is not None:
@@ -400,7 +404,8 @@ class TransformerPipelineTrainModule(TrainModule):
                 )
             tp_config.maybe_enable_async_tp(tp_mesh)
             log.info(
-                f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model"
+                f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model "
+                f"with {get_device_mesh_info(tp_mesh)}"
             )
 
         # Maybe apply activation checkpointing.
@@ -437,11 +442,11 @@ class TransformerPipelineTrainModule(TrainModule):
                         wrapping_strategy=dp_config.wrapping_strategy,
                         pp_enabled=True,
                     )
-                log.info("Applied FSDP to the model")
+                log.info(f"Applied FSDP to the model with {get_device_mesh_info(dp_mesh)}")
             elif dp_config.name == DataParallelType.ddp:
                 for model in self.model_parts:
                     model.apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model)
-                log.info("Applied DDP to the model")
+                log.info(f"Applied DDP to the model with {get_device_mesh_info(dp_mesh)}")
             else:
                 raise NotImplementedError(dp_config.name)
 

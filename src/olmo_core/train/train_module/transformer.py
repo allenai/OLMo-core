@@ -30,6 +30,7 @@ from olmo_core.distributed.parallel import (
     TensorParallelConfig,
     build_device_mesh,
     get_cp_mesh,
+    get_device_mesh_info,
     get_dp_model_mesh,
     get_dp_process_group,
     get_ep_mesh,
@@ -334,7 +335,9 @@ class TransformerTrainModule(TrainModule):
             cp_mesh = get_cp_mesh(self.world_mesh)
             self._cp_load_balancer = cp_config.load_balancer.build(cp_mesh)
             self.model.apply_cp(cp_mesh, load_balancer=cp_config.load_balancer)
-            log.info("Applied context parallelism to the model")
+            log.info(
+                f"Applied context parallelism to the model with {get_device_mesh_info(cp_mesh)}"
+            )
 
         # Maybe apply tensor/expert parallelism.
         self._tp_enabled = False
@@ -360,7 +363,8 @@ class TransformerTrainModule(TrainModule):
                 )
             tp_config.maybe_enable_async_tp(tp_mesh)
             log.info(
-                f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model"
+                f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model "
+                f"with {get_device_mesh_info(tp_mesh)}"
             )
             self._tp_enabled = True
 
@@ -370,7 +374,9 @@ class TransformerTrainModule(TrainModule):
                 raise OLMoConfigurationError("Expert parallelism is only valid for MoE models")
             ep_mesh = get_ep_mesh(self.world_mesh)
             cast(MoETransformer, self.model).apply_ep(ep_mesh)
-            log.info("Applied expert parallelism to the model")
+            log.info(
+                f"Applied expert parallelism to the model with {get_device_mesh_info(ep_mesh)}"
+            )
             self._ep_enabled = True
 
         # Maybe apply activation checkpointing.
@@ -404,10 +410,10 @@ class TransformerTrainModule(TrainModule):
                     wrapping_strategy=dp_config.wrapping_strategy,
                     pp_enabled=False,
                 )
-                log.info("Applied FSDP to the model")
+                log.info(f"Applied FSDP to the model with {get_device_mesh_info(dp_mesh)}")
             elif dp_config.name == DataParallelType.ddp:
                 self.model.apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model)
-                log.info("Applied DDP to the model")
+                log.info(f"Applied DDP to the model with {get_device_mesh_info(dp_mesh)}")
             else:
                 raise NotImplementedError(dp_config.name)
 
