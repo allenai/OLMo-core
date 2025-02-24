@@ -171,6 +171,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} 1B 1xC ai2/pluto-cirrascale --launch.n
 
     # Build run config.
     config = build_config(ladder, script, size, run_duration, cmd, cluster, overrides)
+    config.data_loader.num_workers = 16
 
     # monkey patch the launch command
     script, command, size, run_duration, cluster, *overrides = config.launch.cmd
