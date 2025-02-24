@@ -285,7 +285,7 @@ def build_expert_parallel_mesh(
     mesh = init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))
     log.info(f"Built {get_device_mesh_info(mesh)}")
 
-    return mesh[MeshDimName.ep_shard]
+    return mesh
 
 
 def _get_model_mesh(device_mesh: DeviceMesh) -> Tuple[DeviceMesh, Tuple[str, ...]]:
