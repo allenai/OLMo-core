@@ -954,7 +954,8 @@ class TransformerPipelineTrainModule(TrainModule):
                 labels = shard_it(labels, 1)
 
             for model in self.model_parts:
-                rope_buffers = model.get_rope_buffers(total_seq_len, self.device)
+                # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
+                rope_buffers = model.get_rope_buffers(total_seq_len, torch.device("cpu"))
                 if rope_buffers is not None:
                     if rope_buffers.pos_sin is not None:
                         batch["pos_sin"] = shard_it(rope_buffers.pos_sin, 0)
