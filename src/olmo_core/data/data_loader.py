@@ -970,8 +970,7 @@ class NumpyDataLoaderConfig(Config):
 
         :param dataset: The dataset.
         :param mesh: An optional ``DeviceMesh`` that defines the data parallel dimensions. Ideally
-            you should create this mesh using :func:`~olmo_core.distributed.parallel.build_device_mesh()`
-            or equivalently :meth:`olmo_core.nn.transformer.TransformerConfig.build_mesh()`.
+            you should create this mesh using :func:`~olmo_core.distributed.parallel.build_world_mesh()`.
             Alternatively you can pass the ``dp_process_group`` instead.
         :param dp_process_group: The data parallel process group.
         """

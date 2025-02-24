@@ -24,7 +24,7 @@ from olmo_core.distributed.parallel import (
     DataParallelType,
     PipelineParallelConfig,
     PipelineSchedule,
-    build_device_mesh,
+    build_world_mesh,
     get_cp_mesh,
     get_device_mesh_info,
     get_dp_model_mesh,
@@ -323,7 +323,7 @@ class TransformerPipelineTrainModule(TrainModule):
             )
 
         self.device = device or get_default_device()
-        self.world_mesh = build_device_mesh(
+        self.world_mesh = build_world_mesh(
             dp=dp_config, tp=tp_config, cp=cp_config, pp=pp_config, device_type=self.device.type
         )
         log.info(f"Data parallel world size = {get_world_size(self.dp_process_group):,d}")
