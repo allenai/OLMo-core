@@ -324,7 +324,7 @@ class BeakerLaunchConfig(Config):
             *self.setup_steps,
         ]
 
-        if torchrun:
+        if torchrun and self.num_nodes > 1:
             if any(["augusta" in cluster for cluster in self.clusters]):
                 entrypoint_script.append(
                     "export BEAKER_REPLICA_RANK=$("
