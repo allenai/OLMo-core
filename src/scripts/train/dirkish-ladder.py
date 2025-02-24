@@ -172,6 +172,11 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} 1B 1xC ai2/pluto-cirrascale --launch.n
 
     # Build run config.
     config = build_config(ladder, script, size, run_duration, cmd, cluster, overrides)
+
+    # monkey patch the cmd
+    script, cmd, size, run_duration, cluster, *overrides = config.launch.cmd
+    config.launch.cmd = [script, cmd, name, size, run_duration, cluster, *overrides]
+
     config.ladder.validate()
 
     # Run the cmd.
