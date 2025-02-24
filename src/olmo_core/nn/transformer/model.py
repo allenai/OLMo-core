@@ -497,11 +497,11 @@ class Transformer(nn.Module):
             # all-gathers, which can be expensive and non-overlapped
             reshard_after_forward = False if pp_enabled else True
 
-            if self.is_moe:
-                block = cast(MoETransformerBlock, block)
-                block.feed_forward_moe.prepare_experts_for_fsdp(
-                    reshard_after_forward=reshard_after_forward, **fsdp_config
-                )
+            #  if self.is_moe:
+            #      block = cast(MoETransformerBlock, block)
+            #      block.feed_forward_moe.prepare_experts_for_fsdp(
+            #          reshard_after_forward=reshard_after_forward, **fsdp_config
+            #      )
 
             if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
                 if hasattr(block, "feed_forward"):
