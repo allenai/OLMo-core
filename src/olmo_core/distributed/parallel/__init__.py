@@ -268,11 +268,10 @@ def build_expert_parallel_mesh(
     names.append(MeshDimName.ep_shard)
     dims.append(ep_degree)
 
-    log.info(f"Building {len(dims)}-D device mesh with dimensions:")
-    for i, (name, dim) in enumerate(zip(names, dims)):
-        log.info(f" > dimension {i}, size={dim}, name={name}")
+    mesh = init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))
+    log.info(f"Built {get_device_mesh_info(mesh)}")
 
-    return init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))
+    return mesh[MeshDimName.ep_shard]
 
 
 def _get_model_mesh(device_mesh: DeviceMesh) -> Tuple[DeviceMesh, Tuple[str, ...]]:
@@ -377,16 +376,10 @@ def get_ep_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     if device_mesh.mesh_dim_names is None:
         raise RuntimeError("could not determine expert parallel sub-mesh without dimension names")
 
-    if (
-        MeshDimName.ep_replicate in device_mesh.mesh_dim_names
-        and MeshDimName.ep_shard in device_mesh.mesh_dim_names
-    ):
-        return device_mesh[MeshDimName.ep_replicate, MeshDimName.ep_shard]
-    elif (
-        MeshDimName.dp_replicate in device_mesh.mesh_dim_names
-        and MeshDimName.dp_shard in device_mesh.mesh_dim_names
-    ):
-        return device_mesh[MeshDimName.dp_replicate, MeshDimName.dp_shard]
+    if MeshDimName.ep_shard in device_mesh.mesh_dim_names:
+        return device_mesh[MeshDimName.ep_shard]
+    elif MeshDimName.dp_shard in device_mesh.mesh_dim_names:
+        return device_mesh[MeshDimName.dp_shard]
     else:
         raise RuntimeError(
             f"could not determine expert parallel sub-mesh from mesh with dimensions {device_mesh.mesh_dim_names}"

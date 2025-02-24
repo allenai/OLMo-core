@@ -62,51 +62,38 @@ class MoEMLPBase(nn.Module):
         """
         Apply expert parallelism.
 
-        :param ep_mesh: A 2D device mesh.
+        :param ep_mesh: A 1D device mesh to shard experts over.
         """
-        self._shard_experts(ep_mesh, "ep")
+        if ep_mesh.ndim != 1:
+            raise RuntimeError("expert parallel mesh must be 1 dimensional")
+        self._shard_experts(ep_mesh)
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         """
         Apply expert parallelism.
 
-        :param tp_mesh: A 1D device mesh.
+        :param tp_mesh: A 1D device mesh to shard experts over.
         """
         del float8_enabled  # TODO
-        self._shard_experts(tp_mesh, "tp")
+        if tp_mesh.ndim != 1:
+            raise RuntimeError("tensor parallel mesh must be 1 dimensional")
+        self._shard_experts(tp_mesh)
 
-    def _shard_experts(self, mesh: DeviceMesh, flavor: Literal["tp", "ep"]):
-        if flavor == "ep":
-            if mesh.ndim != 2:
-                raise RuntimeError("expert parallel mesh must be 2 dimensional")
-        elif flavor == "tp":
-            if mesh.ndim != 1:
-                raise RuntimeError("tensor parallel mesh must be 1 dimensional")
-        else:
-            raise ValueError(flavor)
-
-        if not mesh.mesh_dim_names:
-            raise RuntimeError("expert parallel mesh must have named dimensions")
-
-        shard_dim_name = mesh.mesh_dim_names[-1]
-        log.info(f"Splitting experts over mesh dimension '{shard_dim_name}'...")
-
-        self.mesh = mesh
-        self.ep_pg = mesh[shard_dim_name].get_group()
-        num_shards = mesh[shard_dim_name].size()
-
+    def _shard_experts(self, mesh: DeviceMesh):
+        num_shards = mesh.size()
         if self.num_experts % num_shards != 0:
             raise OLMoConfigurationError(
                 f"'num_experts' ({self.num_experts}) must be divisible by the expert parallel shard degree ({num_shards})."
             )
 
+        self.ep_pg = mesh.get_group()
         self.num_local_experts = self.num_experts // num_shards
         self.gradient_scale = 1.0 / num_shards
 
         placements: List[Placement] = [Shard(0)]
-        self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, mesh[shard_dim_name], placements)))  # type: ignore
-        self.register_parameter("w2", nn.Parameter(distribute_tensor(self.w2, mesh[shard_dim_name], placements)))  # type: ignore
-        self.register_parameter("w3", nn.Parameter(distribute_tensor(self.w3, mesh[shard_dim_name], placements)))  # type: ignore
+        self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, mesh, placements)))  # type: ignore
+        self.register_parameter("w2", nn.Parameter(distribute_tensor(self.w2, mesh, placements)))  # type: ignore
+        self.register_parameter("w3", nn.Parameter(distribute_tensor(self.w3, mesh, placements)))  # type: ignore
 
     def prepare_experts_for_fsdp(
         self,
@@ -124,7 +111,7 @@ class MoEMLPBase(nn.Module):
         from torch.distributed._composable.fsdp import fully_shard
         from torch.distributed._composable.replicate import replicate
 
-        if mesh is None or self.mesh is None or mesh != self.mesh:
+        if mesh is None or self.ep_pg is None:
             return
 
         if mesh.ndim != 2:
