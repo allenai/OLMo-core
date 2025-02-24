@@ -9,8 +9,9 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Shard, distribute_tensor
 
-from ...distributed.utils import get_local_tensor
-from ...exceptions import OLMoConfigurationError
+from olmo_core.distributed.parallel import get_device_mesh_info
+from olmo_core.distributed.utils import get_local_tensor
+from olmo_core.exceptions import OLMoConfigurationError
 
 __all__ = ["MoEMLP", "DroplessMoEMLP"]
 
@@ -86,6 +87,7 @@ class MoEMLPBase(nn.Module):
                 f"'num_experts' ({self.num_experts}) must be divisible by the expert parallel shard degree ({num_shards})."
             )
 
+        self.mesh = mesh
         self.ep_pg = mesh.get_group()
         self.num_local_experts = self.num_experts // num_shards
         self.gradient_scale = 1.0 / num_shards
@@ -98,7 +100,7 @@ class MoEMLPBase(nn.Module):
     def prepare_experts_for_fsdp(
         self,
         *,
-        mesh: Optional[DeviceMesh] = None,
+        mesh: DeviceMesh,
         strategy: Literal["replicate", "shard"] = "shard",
         **kwargs,
     ):
@@ -111,22 +113,23 @@ class MoEMLPBase(nn.Module):
         from torch.distributed._composable.fsdp import fully_shard
         from torch.distributed._composable.replicate import replicate
 
-        if mesh is None or self.ep_pg is None:
+        # If expert/tensor parallel is not enabled then we don't need to do anything special here.
+        if self.ep_pg is None:
             return
 
-        if mesh.ndim != 2:
-            raise RuntimeError("expected a 2D mesh!")
-        if mesh.mesh_dim_names is None:
+        if (dim_names := mesh.mesh_dim_names) is None:
             raise RuntimeError("mesh must have named dimensions!")
 
-        dim_name = mesh.mesh_dim_names[0]
+        if mesh.ndim == 2 and mesh[dim_names[-1]] == self.mesh:
+            mesh = mesh[dim_names[-1]]
+
         if strategy == "shard":
-            log.info(f"Sharding local experts over mesh dimension '{dim_name}'...")
-            fully_shard(self, mesh=mesh[dim_name], **kwargs)
+            log.info(f"Sharding local experts over {get_device_mesh_info(mesh)}...")
+            fully_shard(self, mesh=mesh, **kwargs)
         elif strategy == "replicate":
             # TODO: this doesn't work yet.
-            log.info(f"Replicating local experts over mesh dimension '{dim_name}'...")
-            replicate(self, device_mesh=mesh[dim_name])
+            log.info(f"Replicating local experts {get_device_mesh_info(mesh)}...")
+            replicate(self, device_mesh=mesh)
         else:
             raise ValueError(strategy)
 
