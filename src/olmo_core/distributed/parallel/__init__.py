@@ -215,6 +215,8 @@ def get_device_mesh_info(device_mesh: DeviceMesh) -> str:
         )
     else:
         shape = ", ".join(f"{d}" for d in device_mesh.shape)
+    if device_mesh.ndim == 1:
+        shape += ","
     return f"{device_mesh.ndim}D device mesh with shape ({shape})"
 
 
