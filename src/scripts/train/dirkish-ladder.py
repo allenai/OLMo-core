@@ -107,6 +107,7 @@ class DirkishModelLadder(ModelLadder):
             tokenizer=self.tokenizer,
             eval_interval=1000,
         )
+        config.callbacks['checkpointer'].ephemeral_save_interval = 1000
 
         # Set a modified cosine schedule with decay to 0 at the end
         config.callbacks['lr_scheduler'] = SchedulerCallback(
