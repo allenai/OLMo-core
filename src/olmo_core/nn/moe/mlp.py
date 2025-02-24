@@ -121,7 +121,7 @@ class MoEMLPBase(nn.Module):
             raise RuntimeError("mesh must have named dimensions!")
 
         if mesh.ndim == 2 and mesh[dim_names[-1]] == self.mesh:
-            mesh = mesh[dim_names[-1]]
+            mesh = mesh[dim_names[0]]
 
         if strategy == "shard":
             log.info(f"Sharding local experts over {get_device_mesh_info(mesh)}...")
