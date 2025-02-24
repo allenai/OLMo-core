@@ -149,6 +149,7 @@ def build_world_mesh(
             "Data parallel config is required in addition to expert/tensor/context/pipeline parallel configs"
         )
 
+    # Validate parallelism degrees while adjust the DP degree.
     if pp is not None:
         if pp.degree < 1 or dp_world_size % pp.degree != 0:
             raise OLMoConfigurationError(
@@ -179,9 +180,11 @@ def build_world_mesh(
         # With HSDP we just reuse the 'dp_shard' dimension for expert sharding.
         if dp.name != DataParallelType.hsdp:
             dp_world_size //= ep.degree
-            #  raise OLMoConfigurationError(
-            #      "expert parallelism can currently only be used with HSDP data parallelism"
-            #  )
+
+            # TODO: remove this restriction once DTensor supports cross-mesh operations.
+            raise OLMoConfigurationError(
+                "expert parallelism can currently only be used with HSDP data parallelism"
+            )
 
     # Build up mesh dimensions.
     names: List[str] = []
