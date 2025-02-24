@@ -106,7 +106,7 @@ class DirkishModelLadder(ModelLadder):
                 "mmlu_other_mc_5shot",
             ],
             tokenizer=self.tokenizer,
-            eval_interval=2,
+            eval_interval=1000,
         )
 
         # Set a modified cosine schedule with decay to 0 at the end
