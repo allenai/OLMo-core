@@ -85,7 +85,6 @@ class DirkishModelLadder(ModelLadder):
             gpu_type=gpu_type,
             dp_world_size=dp_world_size)
 
-        # Need no in-loop evals
         config.callbacks['lm_evaluator'].enabled = False
         config.callbacks['downstream_evaluator'] = DownstreamEvaluatorCallbackConfig(
             tasks=[
