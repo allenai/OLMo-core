@@ -30,9 +30,9 @@ __all__ = [
     "get_dp_model_mesh",
     "get_dp_mesh",
     "get_tp_mesh",
+    "get_cp_mesh",
     "get_pp_mesh",
     "get_ep_mesh",
-    "get_cp_mesh",
     "get_dp_process_group",
     "get_device_mesh_info",
     "DataParallelType",
@@ -55,6 +55,7 @@ log = logging.getLogger(__name__)
 class MeshDimName(StrEnum):
     """
     ``DeviceMesh`` dimensions names for different forms of parallelism.
+    This are the dimension names that you will find in the mesh created by :func:`build_device_mesh()`.
     """
 
     dp = "dp"
@@ -105,10 +106,32 @@ def build_device_mesh(
 ) -> DeviceMesh:
     """
     Build a ``DeviceMesh`` suitable for the given parallel strategies.
-    The resulting dimension names will be defined in :class:`MeshDimName`.
+
+    .. seealso::
+        Pass the mesh created by this function to any of the ``get_*_mesh()`` functions in
+        this module to get the right sub-mesh for a any given parallel strategy.
+
+        - :func:`get_dp_model_mesh()`
+        - :func:`get_dp_mesh()`
+        - :func:`get_tp_mesh()`
+        - :func:`get_cp_mesh()`
+        - :func:`get_pp_mesh()`
+        - :func:`get_ep_mesh()`
 
     .. important::
         A data parallel config is required if any other parallel config is set.
+
+    .. important::
+        Not all parallel strategies are compatible with each other.
+
+    :param dp: Data parallel config.
+    :param tp: Tensor parallel config.
+    :param cp: Context parallel config.
+    :param pp: Pipeline parallel config.
+    :param ep: Expert parallel config.
+    :param device_type: The device type.
+
+    :returns: The world mesh with a shape compatible with the given parallel configs.
     """
     device_type = device_type or get_default_device().type
     dp_world_size = get_world_size()
@@ -223,9 +246,6 @@ def get_device_mesh_info(device_mesh: DeviceMesh) -> str:
 def build_expert_parallel_mesh(
     ep_config: ExpertParallelConfig, device_type: Optional[str] = None
 ) -> DeviceMesh:
-    """
-    Build a device mesh for expert parallelism.
-    """
     device_type = device_type or get_default_device().type
     world_size = get_world_size()
 
@@ -291,6 +311,8 @@ def get_dp_model_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
         You should use :func:`get_dp_mesh()` instead for getting the sub-mesh to assign ranks
         to data loading workers. In many cases these two functions will return the same result,
         but there are cases where they could be different.
+
+    :param device_mesh: The world mesh created by :func:`build_device_mesh()`.
     """
     device_mesh, dim_names = _get_model_mesh(device_mesh)
     dp_dim_names = tuple(name for name in dim_names if name.startswith("dp"))
@@ -304,6 +326,8 @@ def get_dp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     .. important::
         This is the mesh that should be used to assign ranks to data loading workers,
         however you should use :func:`get_dp_model_mesh()` to get the mesh for DDP/FSDP.
+
+    :param device_mesh: The world mesh created by :func:`build_device_mesh()`.
     """
     if (dim_names := device_mesh.mesh_dim_names) is None:
         raise RuntimeError("could not determine DP sub-mesh without dimension names")
@@ -333,6 +357,8 @@ def get_dp_process_group(device_mesh: DeviceMesh) -> ProcessGroup:
 
     Like :func:`get_dp_mesh()`, this should be used for data loading, but not necessarily for
     data parallel model wrappers.
+
+    :param device_mesh: The world mesh created by :func:`build_device_mesh()`.
     """
     dp_mesh = get_dp_mesh(device_mesh)
     if len(dp_mesh.shape) > 1:
@@ -345,6 +371,8 @@ def get_ep_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     """
     Get the expert parallel sub-mesh associated with a ``DeviceMesh`` that was potentially
     created from :func:`build_device_mesh()`.
+
+    :param device_mesh: The world mesh created by :func:`build_device_mesh()`.
     """
     if device_mesh.mesh_dim_names is None:
         raise RuntimeError("could not determine expert parallel sub-mesh without dimension names")
@@ -369,6 +397,8 @@ def get_tp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     """
     Get the tensor parallel sub-mesh associated with a ``DeviceMesh``
     created from :func:`build_device_mesh()`.
+
+    :param device_mesh: The world mesh created by :func:`build_device_mesh()`.
     """
     device_mesh, dim_names = _get_model_mesh(device_mesh)
 
@@ -384,6 +414,8 @@ def get_cp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     """
     Get the context parallel sub-mesh associated with a ``DeviceMesh``
     created from :func:`build_device_mesh()`.
+
+    :param device_mesh: The world mesh created by :func:`build_device_mesh()`.
     """
     if device_mesh.mesh_dim_names is None:
         raise RuntimeError("could not determine context parallel sub-mesh without dimension names")
@@ -400,6 +432,8 @@ def get_pp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     """
     Get the tensor parallel sub-mesh associated with a ``DeviceMesh``
     created from :func:`build_device_mesh()`.
+
+    :param device_mesh: The world mesh created by :func:`build_device_mesh()`.
     """
     if device_mesh.mesh_dim_names is None:
         raise RuntimeError("could not determine pipeline parallel sub-mesh without dimension names")
