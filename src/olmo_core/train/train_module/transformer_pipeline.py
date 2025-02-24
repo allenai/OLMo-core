@@ -40,7 +40,7 @@ from olmo_core.distributed.utils import (
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
 from olmo_core.nn.cross_entropy_loss import CrossEntropyLoss
-from olmo_core.nn.transformer import NormalizedTransformer, Transformer
+from olmo_core.nn.transformer import MoETransformer, NormalizedTransformer, Transformer
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, mark_dynamic, move_to_device
@@ -432,12 +432,20 @@ class TransformerPipelineTrainModule(TrainModule):
         if dp_config is not None:
             dp_mesh = get_dp_model_mesh(self.world_mesh)
             if dp_config.name in (DataParallelType.fsdp, DataParallelType.hsdp):
+                param_dtype = (
+                    dp_config.param_dtype.as_pt() if dp_config.param_dtype is not None else None
+                )
                 for model in self.model_parts:
+                    if model.is_moe:
+                        cast(MoETransformer, model).prepare_experts_for_fsdp(
+                            self.world_mesh,
+                            param_dtype=param_dtype,
+                            reduce_dtype=dp_config.reduce_dtype.as_pt(),
+                            pp_enabled=True,
+                        )
                     model.apply_fsdp(
                         dp_mesh=dp_mesh,
-                        param_dtype=dp_config.param_dtype.as_pt()
-                        if dp_config.param_dtype is not None
-                        else None,
+                        param_dtype=param_dtype,
                         reduce_dtype=dp_config.reduce_dtype.as_pt(),
                         wrapping_strategy=dp_config.wrapping_strategy,
                         pp_enabled=True,
@@ -445,6 +453,8 @@ class TransformerPipelineTrainModule(TrainModule):
                 log.info(f"Applied FSDP to the model with {get_device_mesh_info(dp_mesh)}")
             elif dp_config.name == DataParallelType.ddp:
                 for model in self.model_parts:
+                    if model.is_moe:
+                        cast(MoETransformer, model).prepare_experts_for_ddp(self.world_mesh)
                     model.apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model)
                 log.info(f"Applied DDP to the model with {get_device_mesh_info(dp_mesh)}")
             else:

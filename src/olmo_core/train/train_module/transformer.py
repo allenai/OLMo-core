@@ -421,9 +421,7 @@ class TransformerTrainModule(TrainModule):
                 log.info(f"Applied FSDP to the model with {get_device_mesh_info(dp_mesh)}")
             elif dp_config.name == DataParallelType.ddp:
                 if self.model.is_moe:
-                    cast(MoETransformer, self.model).prepare_experts_for_ddp(
-                        self.world_mesh,
-                    )
+                    cast(MoETransformer, self.model).prepare_experts_for_ddp(self.world_mesh)
                 self.model.apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model)
                 log.info(f"Applied DDP to the model with {get_device_mesh_info(dp_mesh)}")
             else:
