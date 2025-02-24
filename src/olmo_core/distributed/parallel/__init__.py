@@ -396,7 +396,9 @@ def get_ep_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     if device_mesh.mesh_dim_names is None:
         raise RuntimeError("could not determine expert parallel sub-mesh without dimension names")
 
-    if MeshDimName.ep_shard in device_mesh.mesh_dim_names:
+    if MeshDimName.ep in device_mesh.mesh_dim_names:
+        return device_mesh[MeshDimName.ep]
+    elif MeshDimName.ep_shard in device_mesh.mesh_dim_names:
         return device_mesh[MeshDimName.ep_shard]
     elif MeshDimName.dp_shard in device_mesh.mesh_dim_names:
         return device_mesh[MeshDimName.dp_shard]
