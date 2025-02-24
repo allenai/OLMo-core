@@ -344,8 +344,6 @@ class Attention(AttentionBase):
             #        (batch_size, n_kv_heads, seq_len, head_dim)
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
-            # NOTE: make sure not to import and call 'scaled_dot_product_attention' directly
-            # as context parallelism currently relies on monkey-patching this function.
             # shape: (batch_size, n_heads, seq_len, head_dim)
             att = F.scaled_dot_product_attention(
                 q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale

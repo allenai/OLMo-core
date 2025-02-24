@@ -81,7 +81,10 @@ class ContextParallelZigZagLoadBalancer(ContextParallelLoadBalancer):
         if cu_doc_lens is not None:
             if cu_doc_lens.device.type != "cpu":
                 raise RuntimeError("expected 'cu_doc_lens' to be on CPU")
-
+            if cu_doc_lens.ndim != 1:
+                raise RuntimeError("expected 'cu_doc_lens' to be a 1D tensor")
+            if cu_doc_lens[0] != 0:
+                raise RuntimeError("expected 'cu_doc_lens' to start with a 0")
             if not torch.all(cu_doc_lens % (2 * self.cp_world_size) == 0):
                 raise RuntimeError(
                     f"document lengths must all be divisible by 2 x CP degree ({2 * self.cp_world_size})"
@@ -90,14 +93,17 @@ class ContextParallelZigZagLoadBalancer(ContextParallelLoadBalancer):
             local_values = []
             for i in range(len(cu_doc_lens) - 1):
                 start, end = cu_doc_lens[i], cu_doc_lens[i + 1]
-                local_value = x[start:end].chunk(2 * self.cp_world_size, dim=0)
+                # NOTE: Since 'torch.slice' is not available from the Python API, we just call
+                # the JIT op directly.
+                x_doc_slice = torch.ops.aten.slice(x, dim=seq_dim, start=start, end=end)  # type: ignore
+                x_chunks = x_doc_slice.chunk(2 * self.cp_world_size, dim=seq_dim)
                 local_values.extend(
                     [
-                        local_value[self.cp_rank].detach().clone(),
-                        local_value[2 * self.cp_world_size - 1 - self.cp_rank].detach().clone(),
+                        x_chunks[self.cp_rank],
+                        x_chunks[2 * self.cp_world_size - 1 - self.cp_rank],
                     ]
                 )
-            return torch.cat(local_values, dim=0).contiguous()
+            return torch.cat(local_values, dim=seq_dim).contiguous()
         else:
             if x.shape[seq_dim] % self.cp_world_size != 0:
                 raise RuntimeError(
