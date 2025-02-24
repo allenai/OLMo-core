@@ -88,11 +88,16 @@ class MeshDimName(StrEnum):
     Pipeline parallel (PP).
     """
 
+    ep = "ep"
+    """
+    Expert parallel (EP).
+    """
+
     ep_replicate = "ep_replicate"
     ep_shard = "ep_shard"
 
+    dp_ep = "dp_ep"
     dp_cp = "dp_cp"
-    dp_shard_cp = "dp_shard_cp"
 
 
 def build_world_mesh(
@@ -167,18 +172,16 @@ def build_world_mesh(
             raise OLMoConfigurationError(
                 f"{ep.__class__.__name__}.degree must be at least 1 and divide into the world size"
             )
-        if dp.name != DataParallelType.hsdp:
-            raise OLMoConfigurationError(
-                "expert parallelism can currently only be used with HSDP data parallelism"
-            )
         if tp is not None:
             raise OLMoConfigurationError(
                 "expert parallelism is mutually exclusive with tensor parallism"
             )
-        if pp is not None:
-            raise NotImplementedError(
-                "expert parallelism + pipeline parallelism is not implemented yet"
-            )
+        # With HSDP we just reuse the 'dp_shard' dimension for expert sharding.
+        if dp.name != DataParallelType.hsdp:
+            dp_world_size //= ep.degree
+            #  raise OLMoConfigurationError(
+            #      "expert parallelism can currently only be used with HSDP data parallelism"
+            #  )
 
     # Build up mesh dimensions.
     names: List[str] = []
@@ -197,19 +200,27 @@ def build_world_mesh(
                 f"HSDP requires DP world size ({dp_world_size}) to be divisible by 'num_replicas' ({num_replicas})"
             )
         shard_degree = dp_world_size // num_replicas
-        if ep is not None:
-            if ep.degree >= 0 and ep.degree != shard_degree:
-                raise OLMoConfigurationError(
-                    "expert parallelism + HSDP requires the same sharding degree"
-                )
 
         names.append(MeshDimName.dp_replicate)
         dims.append(num_replicas)
         names.append(MeshDimName.dp_shard)
         dims.append(shard_degree)
+
+        # Expert parallel.
+        if ep is not None:
+            # We just reuse the 'dp_shard' dimension for expert sharding.
+            if ep.degree >= 0 and ep.degree != shard_degree:
+                raise OLMoConfigurationError(
+                    "expert parallelism + HSDP requires the same sharding degree"
+                )
     else:
         names.append(MeshDimName.dp)
         dims.append(dp_world_size)
+
+        # Expert parallel.
+        if ep is not None:
+            names.append(MeshDimName.ep)
+            dims.append(ep.degree)
 
     # Context parallel.
     if cp is not None:
@@ -278,24 +289,25 @@ def _get_model_mesh(device_mesh: DeviceMesh) -> Tuple[DeviceMesh, Tuple[str, ...
     if (dim_names := device_mesh.mesh_dim_names) is None:
         raise RuntimeError("could not determine DP model sub-mesh without dimension names")
 
-    # Expert parallel dims get flattened into DP dimension.
-    if MeshDimName.ep_replicate in dim_names and MeshDimName.ep_shard in dim_names:
+    # Expert parallel dims get flattened into a DP dimension.
+    if MeshDimName.dp in dim_names and MeshDimName.ep in dim_names:
+        device_mesh, dim_names = _flatten_dims(
+            device_mesh,
+            MeshDimName.dp,
+            MeshDimName.ep,
+            name=MeshDimName.dp_ep,
+        )
+    elif MeshDimName.ep_replicate in dim_names and MeshDimName.ep_shard in dim_names:
         device_mesh, dim_names = _flatten_dims(
             device_mesh, MeshDimName.ep_replicate, MeshDimName.ep_shard, name=MeshDimName.dp
         )
 
     # Context parallel dimension gets flattened into the adjacent DP dimension.
-    if MeshDimName.dp in dim_names and MeshDimName.cp in dim_names:
+    if MeshDimName.cp in dim_names:
+        last_dp_dim = dim_names[dim_names.index(MeshDimName.cp) - 1]
+        assert last_dp_dim.startswith("dp")
         device_mesh, dim_names = _flatten_dims(
-            device_mesh, MeshDimName.dp, MeshDimName.cp, name=MeshDimName.dp_cp
-        )
-    elif (
-        MeshDimName.dp_replicate in dim_names
-        and MeshDimName.dp_shard in dim_names
-        and MeshDimName.cp in dim_names
-    ):
-        device_mesh, dim_names = _flatten_dims(
-            device_mesh, MeshDimName.dp_shard, MeshDimName.cp, name=MeshDimName.dp_shard_cp
+            device_mesh, last_dp_dim, MeshDimName.cp, name=MeshDimName.dp_cp
         )
 
     return device_mesh, dim_names
@@ -331,8 +343,16 @@ def get_dp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     if (dim_names := device_mesh.mesh_dim_names) is None:
         raise RuntimeError("could not determine DP sub-mesh without dimension names")
 
-    # Expert parallel dims get flattened into DP dimension.
-    if MeshDimName.ep_replicate in dim_names and MeshDimName.ep_shard in dim_names:
+    # Expert parallel dims get flattened into DP dimension since ranks within each EP group
+    # should receive different data instances.
+    if MeshDimName.dp in dim_names and MeshDimName.ep in dim_names:
+        device_mesh, dim_names = _flatten_dims(
+            device_mesh,
+            MeshDimName.dp,
+            MeshDimName.ep,
+            name=MeshDimName.dp_ep,
+        )
+    elif MeshDimName.ep_replicate in dim_names and MeshDimName.ep_shard in dim_names:
         device_mesh, dim_names = _flatten_dims(
             device_mesh,
             MeshDimName.ep_replicate,
@@ -342,7 +362,7 @@ def get_dp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
 
     # Flattened context parallel dimensions should not be in this mesh since ranks within the
     # same CP group should receive the same data instances.
-    if MeshDimName.dp_cp in dim_names or MeshDimName.dp_shard_cp in dim_names:
+    if MeshDimName.dp_cp in dim_names:
         raise RuntimeError("'get_dp_mesh' should be called on the original world mesh")
 
     dp_dim_names = tuple(name for name in dim_names if name.startswith("dp"))

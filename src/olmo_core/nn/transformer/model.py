@@ -118,6 +118,7 @@ class Transformer(nn.Module):
         self.vocab_size = vocab_size
         self.n_layers = n_layers
         self.n_attn_heads = block.attention.n_heads
+        self.dtype = dtype
 
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.blocks = nn.ModuleDict()
@@ -476,19 +477,16 @@ class Transformer(nn.Module):
             Usually this does not need to be called directly, as :meth:`TransformerConfig.build()`
             will call it for you.
 
-        :param dp_mesh: The data parallel device mesh.
+        :param dp_mesh: The model data parallel device mesh.
         :param param_dtype: The data type to materialize params in. Defaults to the current param dtype.
         :param reduce_dtype: The data type for gradient reduction.
         :pp_enabled: If pipeline parallelism is also enabled.
         :wrapping_strategy: The wrapping strategy.
         """
-        # Adapted from
-        # https://github.com/pytorch/torchtitan/blob/90c889e972b56b9faadebbb78fc985dedc537ed9/torchtitan/parallelisms/parallelize_llama.py#L289
-
         from torch.distributed._composable.fsdp import MixedPrecisionPolicy, fully_shard
 
         mp_policy = MixedPrecisionPolicy(
-            param_dtype=param_dtype or self.embeddings.weight.dtype, reduce_dtype=reduce_dtype
+            param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
         )
         fsdp_config = dict(mesh=dp_mesh, mp_policy=mp_policy)
 
@@ -496,12 +494,6 @@ class Transformer(nn.Module):
             # For PP, do not reshard after forward to avoid per-microbatch
             # all-gathers, which can be expensive and non-overlapped
             reshard_after_forward = False if pp_enabled else True
-
-            if self.is_moe:
-                block = cast(MoETransformerBlock, block)
-                block.feed_forward_moe.prepare_experts_for_fsdp(
-                    reshard_after_forward=reshard_after_forward, **fsdp_config
-                )
 
             if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
                 if hasattr(block, "feed_forward"):
@@ -732,3 +724,27 @@ class MoETransformer(Transformer):
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         for block in self.blocks.values():
             cast(MoETransformerBlock, block).apply_ep(ep_mesh, **kwargs)
+
+    def prepare_experts_for_fsdp(
+        self,
+        world_mesh: DeviceMesh,
+        param_dtype: Optional[torch.dtype] = None,
+        reduce_dtype: torch.dtype = torch.float32,
+        pp_enabled: bool = False,
+    ):
+        from torch.distributed._composable.fsdp import MixedPrecisionPolicy
+
+        for block in self.blocks.values():
+            cast(MoETransformerBlock, block).feed_forward_moe.prepare_experts_for_fsdp(
+                world_mesh=world_mesh,
+                mp_policy=MixedPrecisionPolicy(
+                    param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
+                ),
+                reshard_after_forward=not pp_enabled,
+            )
+
+    def prepare_experts_for_ddp(self, world_mesh: DeviceMesh):
+        for block in self.blocks.values():
+            cast(MoETransformerBlock, block).feed_forward_moe.prepare_experts_for_ddp(
+                world_mesh=world_mesh,
+            )

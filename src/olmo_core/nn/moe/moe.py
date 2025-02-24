@@ -254,6 +254,12 @@ class MoEBase(nn.Module):
         """
         self.experts.prepare_experts_for_fsdp(**kwargs)
 
+    def prepare_experts_for_ddp(self, **kwargs):
+        """
+        Should be called before wrapping this module with DDP2.
+        """
+        self.experts.prepare_experts_for_ddp(**kwargs)
+
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,

@@ -401,17 +401,29 @@ class TransformerTrainModule(TrainModule):
         if dp_config is not None:
             dp_mesh = get_dp_model_mesh(self.world_mesh)
             if dp_config.name in (DataParallelType.fsdp, DataParallelType.hsdp):
+                param_dtype = (
+                    dp_config.param_dtype.as_pt() if dp_config.param_dtype is not None else None
+                )
+                if self.model.is_moe:
+                    cast(MoETransformer, self.model).prepare_experts_for_fsdp(
+                        self.world_mesh,
+                        param_dtype=param_dtype,
+                        reduce_dtype=dp_config.reduce_dtype.as_pt(),
+                        pp_enabled=False,
+                    )
                 self.model.apply_fsdp(
                     dp_mesh=dp_mesh,
-                    param_dtype=dp_config.param_dtype.as_pt()
-                    if dp_config.param_dtype is not None
-                    else None,
+                    param_dtype=param_dtype,
                     reduce_dtype=dp_config.reduce_dtype.as_pt(),
                     wrapping_strategy=dp_config.wrapping_strategy,
                     pp_enabled=False,
                 )
                 log.info(f"Applied FSDP to the model with {get_device_mesh_info(dp_mesh)}")
             elif dp_config.name == DataParallelType.ddp:
+                if self.model.is_moe:
+                    cast(MoETransformer, self.model).prepare_experts_for_ddp(
+                        self.world_mesh,
+                    )
                 self.model.apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model)
                 log.info(f"Applied DDP to the model with {get_device_mesh_info(dp_mesh)}")
             else:
