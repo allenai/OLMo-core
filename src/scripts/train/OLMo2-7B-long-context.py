@@ -12,7 +12,7 @@ from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
-from olmo_core.train.train_module import (  # TransformerActivationCheckpointingConfig,
+from olmo_core.train.train_module import (
     TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -55,7 +55,6 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
         ),
         cp_config=TransformerContextParallelConfig(degree=8),
-        #  ac_config=TransformerActivationCheckpointingConfig(),
         float8_config=Float8Config(enabled=True),
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),

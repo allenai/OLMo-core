@@ -394,6 +394,11 @@ def filter_warnings():
     )
     warnings.filterwarnings(
         action="ignore",
+        category=UserWarning,
+        message="TORCH_NCCL_AVOID_RECORD_STREAMS=1 has no effect .*",
+    )
+    warnings.filterwarnings(
+        action="ignore",
         category=FutureWarning,
         message="You are using `torch.load` with `weights_only=False`.*",
     )
