@@ -488,7 +488,19 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             generator=rng,
             device=device,
         )
-        return {"input_ids": input_ids}
+        out = {"input_ids": input_ids}
+        if isinstance(self.dataset, NumpyFSLDataset) and self.dataset._generate_doc_lengths:
+            splits = torch.randint(
+                2,
+                self.dataset.max_sequence_length - 2,
+                (num_instances,),
+                generator=rng,
+                device=device,
+            )
+            out["doc_lens"] = torch.stack(
+                [splits, self.dataset.max_sequence_length - splits], dim=1
+            )
+        return out
 
     def _iter_batches(self) -> Iterable[Dict[str, Any]]:
         return torch.utils.data.DataLoader(
