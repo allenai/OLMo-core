@@ -10,6 +10,7 @@ import uuid
 import warnings
 from contextlib import contextmanager
 from datetime import datetime
+from functools import lru_cache
 from itertools import cycle, islice
 from queue import Queue
 from threading import Thread
@@ -664,3 +665,8 @@ def get_element_size(dtype: torch.dtype) -> int:
 
 def ensure_multiple_of(x: int, of: int) -> int:
     return of * math.ceil(x / of)
+
+
+@lru_cache(maxsize=128)
+def log_once(logger: logging.Logger, msg: str, *args, level: int = logging.INFO, **kwargs):
+    logger.log(level, msg, *args, **kwargs)

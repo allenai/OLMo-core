@@ -53,7 +53,13 @@ from olmo_core.nn.transformer import (
 )
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
-from olmo_core.utils import gc_cuda, get_default_device, mark_dynamic, move_to_device
+from olmo_core.utils import (
+    gc_cuda,
+    get_default_device,
+    log_once,
+    mark_dynamic,
+    move_to_device,
+)
 
 from ..common import ReduceType
 from .train_module import EvalBatchSpec, TrainModule
@@ -875,6 +881,7 @@ class TransformerTrainModule(TrainModule):
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
             batch["max_doc_len"] = max_doc_len
             batch["cu_doc_lens"] = cu_doc_lens
+            log_once(log, "intra-document masking enabled")
 
         # Prepare labels.
         if labels is None:
