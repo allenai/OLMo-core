@@ -677,11 +677,6 @@ class TransformerPipelineTrainModule(TrainModule):
         for model in self.model_parts:
             model.train()
 
-        # Move tensors to the target device right away unless training with context parallelism,
-        # in which case we keep on CPU for now since the CP load balancer may require data on CPU.
-        if not self.cp_enabled:
-            batch = move_to_device(batch, self.device)
-
         # Generate labels.
         labels = batch.get("labels", get_labels(batch, label_ignore_index=self.label_ignore_index))
 

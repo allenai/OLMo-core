@@ -582,11 +582,6 @@ class TransformerTrainModule(TrainModule):
         # Set model to train mode if it isn't already.
         self.model.train()
 
-        # Move tensors to the target device right away unless training with context parallelism,
-        # in which case we keep on CPU for now since the CP load balancer may require data on CPU.
-        if not self.cp_enabled:
-            batch = move_to_device(batch, self.device)
-
         # Generate labels.
         if "labels" not in batch:
             batch["labels"] = get_labels(batch, label_ignore_index=self.label_ignore_index)
