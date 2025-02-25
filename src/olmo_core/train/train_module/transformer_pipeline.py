@@ -990,6 +990,12 @@ class TransformerPipelineTrainModule(TrainModule):
                 pad_values.append(self.label_ignore_index)
 
             if cu_doc_lens is not None:
+                # Can only shard properly here if 'input_ids' is flat, i.e. a single instance.
+                if (n_instances := batch["input_ids"].shape[0]) != 1:
+                    raise RuntimeError(
+                        f"Rank micro-batches must consist of a single instance when using "
+                        f"context parallelism with intra-document masking (got {n_instances} instances)"
+                    )
                 inputs, cu_doc_lens = self._cp_load_balancer.batch_shard_by_document(
                     inputs=inputs,
                     seq_dims=seq_dims,
