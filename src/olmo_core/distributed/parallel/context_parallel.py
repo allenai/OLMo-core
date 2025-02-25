@@ -69,6 +69,7 @@ class ContextParallelLoadBalancer(metaclass=ABCMeta):
         inputs: List[torch.Tensor],
         seq_dims: List[int],
         pad_values: Optional[List[Union[int, float]]] = None,
+        length_multiple: Optional[int] = None,
     ) -> List[torch.Tensor]:
         """
         Shard inputs on their sequence dimension, optionally adding padding if needed.
@@ -85,6 +86,7 @@ class ContextParallelLoadBalancer(metaclass=ABCMeta):
         seq_dims: List[int],
         cu_doc_lens: torch.Tensor,
         pad_values: Optional[List[Union[int, float]]] = None,
+        length_multiple: Optional[int] = None,
     ) -> Tuple[List[torch.Tensor], torch.Tensor]:
         """
         Shard inputs by document on their sequence dimension, optionally adding padding if needed.
@@ -105,11 +107,20 @@ class ContextParallelZigZagLoadBalancer(ContextParallelLoadBalancer):
         inputs: List[torch.Tensor],
         seq_dims: List[int],
         pad_values: Optional[List[Union[int, float]]] = None,
+        length_multiple: Optional[int] = None,
     ) -> List[torch.Tensor]:
         assert len(inputs) == len(seq_dims)
         assert len(set(x.shape[seq_dim] for x, seq_dim in zip(inputs, seq_dims))) == 1
         if pad_values is not None:
             assert len(inputs) == len(pad_values)
+
+        if length_multiple is None:
+            length_multiple = 2 * self.cp_world_size
+        elif length_multiple % (2 * self.cp_world_size) != 0:
+            raise RuntimeError(
+                f"length multiple ({length_multiple}) must be divisible by "
+                f"2 x CP degree ({2 * self.cp_world_size})"
+            )
 
         out = []
         for x, seq_dim, pad_value in zip(
@@ -117,14 +128,14 @@ class ContextParallelZigZagLoadBalancer(ContextParallelLoadBalancer):
             seq_dims,
             pad_values or [None for _ in range(len(inputs))],  # type: ignore
         ):
-            if x.shape[seq_dim] % (2 * self.cp_world_size) != 0:
+            if x.shape[seq_dim] % length_multiple != 0:
                 if pad_value is None:
                     raise RuntimeError(
                         f"sequence dimension size ({x.shape[seq_dim]}) must be divisible by "
-                        f"2 x CP degree ({2 * self.cp_world_size}), otherwise provide a padding value"
+                        f"{length_multiple}, otherwise provide a padding value"
                     )
                 else:
-                    x, _ = self.pad(x, seq_dim, pad_value)
+                    x, _ = self.pad(x, seq_dim, pad_value, length_multiple=length_multiple)
 
             x_chunks = x.chunk(2 * self.cp_world_size, dim=seq_dim)
             local_value = torch.cat(
@@ -142,6 +153,7 @@ class ContextParallelZigZagLoadBalancer(ContextParallelLoadBalancer):
         seq_dims: List[int],
         cu_doc_lens: torch.Tensor,
         pad_values: Optional[List[Union[int, float]]] = None,
+        length_multiple: Optional[int] = None,
     ) -> Tuple[List[torch.Tensor], torch.Tensor]:
         assert len(inputs) == len(seq_dims)
         assert len(set(x.shape[seq_dim] for x, seq_dim in zip(inputs, seq_dims))) == 1
@@ -157,6 +169,7 @@ class ContextParallelZigZagLoadBalancer(ContextParallelLoadBalancer):
 
         out = []
         padding_added = [0 for _ in range(len(cu_doc_lens) - 1)]
+        final_padding: Optional[int] = None if length_multiple is None else 0
         for x, seq_dim, pad_value in zip(
             inputs,
             seq_dims,
@@ -186,6 +199,15 @@ class ContextParallelZigZagLoadBalancer(ContextParallelLoadBalancer):
                     ]
                 )
             local_value = torch.cat(local_values, dim=seq_dim).contiguous()
+            if length_multiple is not None and local_value.shape[seq_dim] % length_multiple != 0:
+                if pad_value is None:
+                    raise RuntimeError(
+                        "You must provide a 'pad_value' when 'length_multiple' is specified!"
+                    )
+                else:
+                    local_value, final_padding = self.pad(
+                        local_value, seq_dim, pad_value, length_multiple=length_multiple
+                    )
             out.append(local_value)
 
         if pad_values is not None:
@@ -198,15 +220,25 @@ class ContextParallelZigZagLoadBalancer(ContextParallelLoadBalancer):
                 ]
             )
             cu_doc_lens = cu_doc_lens + cumulative_padding
+            if final_padding is not None:
+                cu_doc_lens = torch.cat(
+                    [cu_doc_lens, (cu_doc_lens[-1] + final_padding).unsqueeze(0)]
+                )
 
         local_cu_doc_lens = cu_doc_lens // self.cp_world_size
 
         return out, local_cu_doc_lens
 
     def pad(
-        self, x: torch.Tensor, seq_dim: int, value: Union[int, float]
+        self,
+        x: torch.Tensor,
+        seq_dim: int,
+        value: Union[int, float],
+        length_multiple: Optional[int] = None,
     ) -> Tuple[torch.Tensor, int]:
-        pad_to = ensure_multiple_of(x.shape[seq_dim], 2 * self.cp_world_size)
+        if length_multiple is None:
+            length_multiple = 2 * self.cp_world_size
+        pad_to = ensure_multiple_of(x.shape[seq_dim], length_multiple)
         padding_to_add = pad_to - x.shape[seq_dim]
         padding = (0, 0) * (x.ndim - seq_dim - 1) + (0, padding_to_add)
         return F.pad(x, padding, value=value), padding_to_add

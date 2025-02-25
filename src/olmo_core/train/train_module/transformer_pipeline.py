@@ -997,7 +997,11 @@ class TransformerPipelineTrainModule(TrainModule):
                 pad_values.append(self.label_ignore_index)
 
             if cu_doc_lens is not None:
-                # Can only shard properly here if 'input_ids' is flat, i.e. a single instance.
+                # NOTE: Can only shard properly here if 'input_ids' is flat, i.e. a single instance.
+                # TODO: (epwalsh) We could just flatten all of the inputs here, but then we risk going
+                # beyond the model's maximum sequence length, which might be okay at least
+                # with relative positional encodings, but then again if you're resorting to context
+                # parallelism you can probably only fit a single instance at a time anyway.
                 if (n_instances := batch["input_ids"].shape[0]) != 1:
                     raise RuntimeError(
                         f"Rank micro-batches must consist of a single instance when using "
@@ -1008,6 +1012,7 @@ class TransformerPipelineTrainModule(TrainModule):
                     seq_dims=seq_dims,
                     cu_doc_lens=cu_doc_lens,
                     pad_values=pad_values,
+                    length_multiple=16,
                 )
                 max_doc_len = (cu_doc_lens[1:] - cu_doc_lens[:-1]).max().item()  # type: ignore
                 batch["max_doc_len"] = max_doc_len
