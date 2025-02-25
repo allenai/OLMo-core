@@ -23,7 +23,8 @@ log = logging.getLogger(__name__)
 
 
 CONTEXT_LENGTH = 4 * 16_384
-# 64K length, 32 GPUs -> 2,750 TPS
+INTRA_DOCUMENT_MASKING = True
+# 64K length, 32 GPUs, no intra-doc masking -> 2,750 TPS
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -55,7 +56,10 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
         ),
         cp_config=TransformerContextParallelConfig(degree=8),
-        float8_config=Float8Config(enabled=True),
+        # NOTE: can't use FP8 with intra-document masking at the moment due to the dynamic
+        # padding from the CP load balancer, which results in sizes that may not be multiples
+        # of 16.
+        float8_config=Float8Config(enabled=not INTRA_DOCUMENT_MASKING),
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
     )
@@ -108,5 +112,5 @@ if __name__ == "__main__":
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         include_default_evals=False,
-        intra_document_masking=True,
+        intra_document_masking=INTRA_DOCUMENT_MASKING,
     )
