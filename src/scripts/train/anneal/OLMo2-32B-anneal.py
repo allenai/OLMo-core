@@ -42,9 +42,10 @@ from olmo_core.optim import (
 )
 from olmo_core.train import (
     Duration,
+    LoadStrategy,
     TrainerConfig,
     prepare_training_environment,
-    teardown_training_environment, LoadStrategy,
+    teardown_training_environment,
 )
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
@@ -174,11 +175,13 @@ class AnnealingConfig(Config):
                     reduce_dtype=DType.float32,
                     num_replicas=128 // 32,  # common.launch.num_nodes // 2,
                 ),
-                #ac_config=TransformerActivationCheckpointingConfig(
+                # ac_config=TransformerActivationCheckpointingConfig(
                 #    mode=TransformerActivationCheckpointingMode.selected_modules,
                 #    modules=["blocks.*.feed_forward"],
-                #),
-                ac_config=TransformerActivationCheckpointingConfig(mode=TransformerActivationCheckpointingMode.full)
+                # ),
+                ac_config=TransformerActivationCheckpointingConfig(
+                    mode=TransformerActivationCheckpointingMode.full
+                ),
             ),
             optim=SkipStepAdamWConfig(
                 lr=starting_lr,
@@ -326,7 +329,7 @@ class AnnealingConfig(Config):
                     ],
                     tokenizer=tokenizer_config,
                     eval_interval=1000,
-                    enabled=False
+                    enabled=False,
                 ),
             ),
         ).merge(overrides)
@@ -345,7 +348,7 @@ def train(checkpoint: str, config: AnnealingConfig):
     model = config.model.build(
         init_device="meta",
         device=device,
-        max_seq_len=config.dataset.sequence_length,
+        max_seq_len=config.dataset.effective_sequence_length,
         mesh=world_mesh,
     )
     optim = config.optim.build(model)
