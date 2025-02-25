@@ -138,6 +138,7 @@ def build_common_components(
     global_batch_size: int,
     sequence_length: int = 4096,
     include_default_evals: bool = True,
+    intra_document_masking: bool = False,
 ) -> CommonComponents:
     root_dir = get_root_dir(cluster)
 
@@ -169,6 +170,7 @@ def build_common_components(
             name=VSLCurriculumType.grow_p2, num_cycles=8, balanced=False
         ),
         work_dir=get_work_dir(root_dir),
+        generate_doc_lengths=intra_document_masking,
     )
 
     data_loader_config = NumpyDataLoaderConfig(
@@ -228,6 +230,7 @@ def build_config(
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
     sequence_length: int = 4096,
     include_default_evals: bool = True,
+    intra_document_masking: bool = False,
 ) -> ExperimentConfig:
     common = build_common_components(
         script,
@@ -238,6 +241,7 @@ def build_config(
         global_batch_size=global_batch_size,
         sequence_length=sequence_length,
         include_default_evals=include_default_evals,
+        intra_document_masking=intra_document_masking,
     )
 
     model = model_config_builder(common)
@@ -313,6 +317,7 @@ def main(
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
     sequence_length: int = 4096,
     include_default_evals: bool = True,
+    intra_document_masking: bool = False,
 ):
     usage = f"""
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
@@ -354,6 +359,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         finalize_config=finalize_config,
         sequence_length=sequence_length,
         include_default_evals=include_default_evals,
+        intra_document_masking=intra_document_masking,
     )
 
     cmd.run(config)
