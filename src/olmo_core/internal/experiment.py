@@ -295,7 +295,7 @@ def train(config: ExperimentConfig):
     model = config.model.build(
         init_device="meta",
         device=device,
-        max_seq_len=config.dataset.sequence_length,
+        max_seq_len=config.dataset.effective_sequence_length,
         mesh=world_mesh,
     )
     optim = config.optim.build(model)
