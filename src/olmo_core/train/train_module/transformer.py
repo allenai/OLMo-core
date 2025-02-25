@@ -1,8 +1,7 @@
 import contextlib
 import logging
 from dataclasses import dataclass, replace
-from functools import partial
-from typing import Any, Dict, Generator, List, Optional, Tuple, cast
+from typing import Any, Dict, Generator, List, Optional, Tuple, Union, cast
 
 import torch
 import torch.distributed as dist
@@ -891,21 +890,58 @@ class TransformerTrainModule(TrainModule):
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if self.cp_enabled:
             assert self._cp_load_balancer is not None
-            shard_it = partial(self._cp_load_balancer.shard, cu_doc_lens=cu_doc_lens)
             total_seq_len = batch["input_ids"].shape[1]
 
-            batch["input_ids"] = shard_it(batch["input_ids"], 1)
-            if labels is not None:
-                labels = shard_it(labels, 1)
+            inputs = [batch["input_ids"]]
+            seq_dims = [1]
+            pad_values: List[Union[int, float]] = [0]
+            keys = ["input_ids"]
 
             # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
             rope_buffers = self.model.get_rope_buffers(total_seq_len, torch.device("cpu"))
             if rope_buffers is not None:
                 if rope_buffers.pos_sin is not None:
-                    batch["pos_sin"] = shard_it(rope_buffers.pos_sin, 0)
+                    inputs.append(rope_buffers.pos_sin)
+                    seq_dims.append(0)
+                    pad_values.append(0.0)
+                    keys.append("pos_sin")
                 if rope_buffers.pos_cos is not None:
-                    batch["pos_cos"] = shard_it(rope_buffers.pos_cos, 0)
+                    inputs.append(rope_buffers.pos_cos)
+                    seq_dims.append(0)
+                    pad_values.append(0.0)
+                    keys.append("pos_cos")
                 if rope_buffers.freqs_cis is not None:
-                    batch["freqs_cis"] = shard_it(rope_buffers.freqs_cis, 0)
+                    inputs.append(rope_buffers.freqs_cis)
+                    seq_dims.append(0)
+                    pad_values.append(0.0)
+                    keys.append("freqs_cis")
+
+            if labels is not None:
+                inputs.append(labels)
+                seq_dims.append(1)
+                pad_values.append(self.label_ignore_index)
+
+            if cu_doc_lens is not None:
+                inputs, cu_doc_lens = self._cp_load_balancer.batch_shard_by_document(
+                    inputs=inputs,
+                    seq_dims=seq_dims,
+                    cu_doc_lens=cu_doc_lens,
+                    pad_values=pad_values,
+                )
+                max_doc_len = (cu_doc_lens[1:] - cu_doc_lens[:-1]).max().item()  # type: ignore
+                batch["max_doc_len"] = max_doc_len
+                batch["cu_doc_lens"] = cu_doc_lens
+            else:
+                inputs = self._cp_load_balancer.batch_shard(
+                    inputs=inputs,
+                    seq_dims=seq_dims,
+                    pad_values=pad_values,
+                )
+
+            for key, value in zip(keys, inputs):
+                batch[key] = value
+
+            if labels is not None:
+                labels = inputs[-1]
 
         return move_to_device(batch, self.device), move_to_device(labels, self.device)

@@ -5,15 +5,25 @@ from olmo_core.distributed.parallel.context_parallel import (
 )
 
 
-def test_zig_zag_load_balancer():
+def _get_lb(rank: int, world_size: int) -> ContextParallelZigZagLoadBalancer:
+    return ContextParallelZigZagLoadBalancer(cp_rank=rank, cp_world_size=world_size)
+
+
+def test_zig_zag_load_balancer_padding():
+    x, padding_added = _get_lb(0, 4).pad(torch.tensor([0, 1, 2, 3, 4, 5]).unsqueeze(0), 1, -1)
+    assert x.tolist() == [[0, 1, 2, 3, 4, 5, -1, -1]]
+    assert padding_added == 2
+
+
+def test_zig_zag_load_balancer_shard():
     x = torch.tensor([0, 1, 2, 3, 4, 5, 6, 7]).unsqueeze(0)
-    assert ContextParallelZigZagLoadBalancer(cp_rank=0, cp_world_size=4).shard(x, 1).tolist() == [
+    assert _get_lb(0, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [
         [
             0,
             7,
         ]
     ]
-    assert ContextParallelZigZagLoadBalancer(cp_rank=3, cp_world_size=4).shard(x, 1).tolist() == [
+    assert _get_lb(3, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [
         [
             3,
             4,
@@ -21,12 +31,29 @@ def test_zig_zag_load_balancer():
     ]
 
 
-def test_zig_zag_load_balancer_with_cu_doc_lens():
+def test_zig_zag_load_balancer_shard_with_padding():
+    x = torch.tensor([0, 1, 2, 3, 4, 5]).unsqueeze(0)
+    assert _get_lb(0, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[0].tolist() == [
+        [
+            0,
+            -1,
+        ]
+    ]
+    assert _get_lb(3, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[0].tolist() == [
+        [
+            3,
+            4,
+        ]
+    ]
+
+
+def test_zig_zag_load_balancer_shard_by_document():
     x = torch.tensor(list(range(12))).unsqueeze(0)
     cu_doc_lens = torch.tensor([0, 8, 12])
-    assert ContextParallelZigZagLoadBalancer(cp_rank=0, cp_world_size=2).shard(
-        x, 1, cu_doc_lens=cu_doc_lens
-    ).tolist() == [
+
+    assert _get_lb(0, 2).batch_shard_by_document(inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens)[
+        0
+    ][0].tolist() == [
         [
             0,
             1,
@@ -36,9 +63,10 @@ def test_zig_zag_load_balancer_with_cu_doc_lens():
             11,
         ]
     ]
-    assert ContextParallelZigZagLoadBalancer(cp_rank=1, cp_world_size=2).shard(
-        x, 1, cu_doc_lens=cu_doc_lens
-    ).tolist() == [
+
+    assert _get_lb(1, 2).batch_shard_by_document(inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens)[
+        0
+    ][0].tolist() == [
         [
             2,
             3,
@@ -46,5 +74,28 @@ def test_zig_zag_load_balancer_with_cu_doc_lens():
             5,
             9,
             10,
+        ]
+    ]
+
+
+def test_zig_zag_load_balancer_shard_by_document_with_padding():
+    x = torch.tensor(list(range(12))).unsqueeze(0)
+    cu_doc_lens = torch.tensor([0, 7, 10])
+
+    res, new_doc_lens = _get_lb(0, 2).batch_shard_by_document(
+        inputs=[x],
+        seq_dims=[1],
+        cu_doc_lens=cu_doc_lens,
+        pad_values=[-1],
+    )
+    assert new_doc_lens.tolist() == [0, 8, 12]
+    assert res[0].tolist() == [
+        [
+            0,
+            1,
+            6,
+            -1,
+            7,
+            -1,
         ]
     ]
