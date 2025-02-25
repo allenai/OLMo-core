@@ -22,8 +22,7 @@ from olmo_core.train.train_module import (
 log = logging.getLogger(__name__)
 
 
-CONTEXT_LENGTH = 2 * 16_384
-#  CONTEXT_LENGTH = 4 * 16_384
+CONTEXT_LENGTH = 4 * 16_384
 # 64K length, 32 GPUs -> 2,750 TPS
 
 
