@@ -220,12 +220,12 @@ class ContextParallelZigZagLoadBalancer(ContextParallelLoadBalancer):
                 ]
             )
             cu_doc_lens = cu_doc_lens + cumulative_padding
-            if final_padding is not None:
-                cu_doc_lens = torch.cat(
-                    [cu_doc_lens, (cu_doc_lens[-1] + final_padding).unsqueeze(0)]
-                )
 
         local_cu_doc_lens = cu_doc_lens // self.cp_world_size
+        if final_padding is not None:
+            local_cu_doc_lens = torch.cat(
+                [local_cu_doc_lens, (local_cu_doc_lens[-1] + final_padding).unsqueeze(0)]
+            )
 
         return out, local_cu_doc_lens
 
