@@ -11,6 +11,7 @@ from typing import List, Tuple, cast
 
 import rich
 import torch
+from omegaconf import OmegaConf
 from rich import print
 
 from olmo_core.config import Config, DType
@@ -69,6 +70,7 @@ class AnnealingDataMix(DataMixBase):
 
     dolmino100 = "dolmino100"
     dolmino300 = "dolmino300"
+    jallyrun = "jallyrun"
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
@@ -87,6 +89,9 @@ class AnnealingDataMix(DataMixBase):
                 labels.append(line.split("/")[1])
 
         return paths, labels
+
+
+OmegaConf.register_new_resolver("AnnealingDataMix", lambda mix: getattr(AnnealingDataMix, mix))
 
 
 @dataclass
@@ -185,7 +190,7 @@ class AnnealingConfig(Config):
                 compile=True,
             ),
             dataset=NumpyDatasetConfig.from_data_mix(
-                AnnealingDataMix.dolmino300,
+                AnnealingDataMix.dolmino100,
                 tokenizer=tokenizer_config,
                 mix_base_dir=root_dir,
                 sequence_length=4096,
