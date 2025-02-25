@@ -88,7 +88,7 @@ def test_zig_zag_load_balancer_shard_by_document_with_padding():
         cu_doc_lens=cu_doc_lens,
         pad_values=[-1],
     )
-    assert new_doc_lens.tolist() == [0, 8, 12]
+    assert new_doc_lens.tolist() == [0, 4, 6]
     assert res[0].tolist() == [
         [
             0,

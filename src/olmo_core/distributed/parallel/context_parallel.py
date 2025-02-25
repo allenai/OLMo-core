@@ -199,7 +199,9 @@ class ContextParallelZigZagLoadBalancer(ContextParallelLoadBalancer):
             )
             cu_doc_lens = cu_doc_lens + cumulative_padding
 
-        return out, cu_doc_lens
+        local_cu_doc_lens = cu_doc_lens // self.cp_world_size
+
+        return out, local_cu_doc_lens
 
     def pad(
         self, x: torch.Tensor, seq_dim: int, value: Union[int, float]
