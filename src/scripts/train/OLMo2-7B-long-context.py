@@ -58,10 +58,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
         ),
         cp_config=TransformerContextParallelConfig(degree=8),
-        # NOTE: can't use FP8 with intra-document masking at the moment due to the dynamic
-        # padding from the CP load balancer, which results in sizes that may not be multiples
-        # of 16.
-        float8_config=Float8Config(enabled=True),
+        float8_config=Float8Config(enabled=False),
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
     )
