@@ -500,7 +500,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             out["doc_lens"] = torch.stack(
                 [splits, self.dataset.max_sequence_length - splits], dim=1
             )
-            out["max_doc_len"] = torch.max(out["doc_lens"], dim=-1).values.tolist()
+            out["max_doc_lens"] = torch.max(out["doc_lens"], dim=-1).values.tolist()
         return out
 
     def _iter_batches(self) -> Iterable[Dict[str, Any]]:
