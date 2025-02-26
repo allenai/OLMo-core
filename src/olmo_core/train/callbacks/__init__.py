@@ -2,6 +2,7 @@
 Trainer :class:`Callback` implementations.
 """
 
+from .beaker import BeakerCallback
 from .callback import Callback, CallbackConfig
 from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy
 from .comet import CometCallback, CometNotificationSetting
@@ -40,6 +41,7 @@ __all__ = [
     "SequenceLengthSchedulerCallback",
     "SpeedMonitorCallback",
     "WandBCallback",
+    "BeakerCallback",
 ]
 
 __doc__ += "\n"
