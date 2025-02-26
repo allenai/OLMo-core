@@ -57,7 +57,11 @@ class BeakerCallback(Callback):
             from beaker import Beaker
 
             self.client = Beaker.from_env()
+            log.info(
+                f"Running in Beaker experiment {self.client.experiment.url(self.experiment_id)}"
+            )
 
+            # Try to get W&B/Comet URL of experiment.
             for callback in self.trainer.callbacks.values():
                 if isinstance(callback, WandBCallback) and callback.enabled:
                     if (url := callback.run.get_url()) is not None:
@@ -68,44 +72,47 @@ class BeakerCallback(Callback):
                         self._url = url
                     break
 
+            self._update()
+
     def post_step(self):
         update_interval = self.update_interval or self.trainer.metrics_collect_interval
         if self.enabled and get_rank() == 0 and self.step % update_interval == 0:
-            self.trainer.thread_pool.submit(
-                self._set_description,
-                step=self.step,
-                max_steps=self.trainer.max_steps,
-                msg=self.description,
-            )
+            self._update()
 
     def post_train(self):
         if self.enabled and get_rank() == 0:
-            self.trainer.thread_pool.submit(
-                self._set_description,
-                step=self.step,
-                max_steps=self.trainer.max_steps,
-                msg=self.description,
-            )
+            self._update()
 
-    def _set_description(self, *, step: int, max_steps: Optional[int], msg: Optional[str]):
+    def _update(self):
+        self.trainer.thread_pool.submit(
+            self._set_description,
+            step=self.step,
+            max_steps=self.trainer.max_steps,
+        )
+
+    def _set_description(self, *, step: Optional[int], max_steps: Optional[int]):
         from beaker import BeakerError, HTTPError
         from requests.exceptions import RequestException
 
         assert self.experiment_id is not None
-        progress: str
-        if max_steps is not None:
-            perc = max(100, int(100 * step / max_steps))
-            progress = f"{perc}%, {step}/{max_steps}"
-        else:
-            progress = f"{step}/??"
 
-        description = f"[{progress}]"
-        if msg is not None:
-            description = f"{description} {msg}"
+        description = ""
+        if step is not None:
+            progress: str
+            if max_steps is not None:
+                perc = min(100, int(100 * step / max_steps))
+                progress = f"{perc}%, {step:,d}/{max_steps:,d}"
+            else:
+                progress = f"{step}/??"
+            description = f"[{progress}] "
+
+        if self.description is not None:
+            description = f"{description}{self.description} "
+
         if self._url is not None:
-            description = f"{description} {self._url}"
+            description = f"{description}{self._url} "
 
         try:
-            self.client.experiment.set_description(self.experiment_id, description)
+            self.client.experiment.set_description(self.experiment_id, description.strip())
         except (RequestException, BeakerError, HTTPError) as e:
             log.warning(f"Failed to update Beaker experiment description: {e}")
