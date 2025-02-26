@@ -40,7 +40,7 @@ from olmo_core.train import (
     Duration,
     TrainerConfig,
     prepare_training_environment,
-    teardown_training_environment,
+    teardown_training_environment, LoadStrategy,
 )
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
@@ -221,6 +221,7 @@ class LcContTrain(Config):
                 ),
                 save_overwrite=True,
                 load_path=load_path,
+                load_strategy=LoadStrategy.always,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
                 max_duration=Duration.tokens(int(20e9)),
