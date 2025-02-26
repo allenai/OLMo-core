@@ -7,6 +7,7 @@ import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
+from torch.distributed import DeviceMesh
 from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.tensor import DTensor, Replicate, Shard
@@ -39,6 +40,7 @@ from olmo_core.distributed.utils import (
     get_full_tensor,
     get_local_tensor,
     get_world_size,
+    is_distributed,
 )
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
@@ -297,9 +299,21 @@ class TransformerTrainModule(TrainModule):
             )
 
         self.device = device or get_default_device()
-        self.world_mesh = build_world_mesh(
-            dp=dp_config, tp=tp_config, cp=cp_config, ep=ep_config, device_type=self.device.type
-        )
+        self.world_mesh: Optional[DeviceMesh] = None
+        if is_distributed():
+            self.world_mesh = build_world_mesh(
+                dp=dp_config, tp=tp_config, cp=cp_config, ep=ep_config, device_type=self.device.type
+            )
+        elif (
+            dp_config is not None
+            or tp_config is not None
+            or ep_config is not None
+            or cp_config is not None
+        ):
+            raise OLMoConfigurationError(
+                "Training parallelism configs are only valid for distributed training"
+            )
+
         log.info(f"Data parallel world size = {get_world_size(self.dp_process_group):,d}")
 
         self.label_ignore_index = label_ignore_index
@@ -337,6 +351,7 @@ class TransformerTrainModule(TrainModule):
         self._cp_config = cp_config
         self._cp_load_balancer: Optional[ContextParallelLoadBalancer] = None
         if cp_config is not None:
+            assert self.world_mesh is not None
             cp_mesh = get_cp_mesh(self.world_mesh)
             self._cp_load_balancer = cp_config.load_balancer.build(cp_mesh)
             self.model.apply_cp(cp_mesh, load_balancer=cp_config.load_balancer)
@@ -349,6 +364,7 @@ class TransformerTrainModule(TrainModule):
         if tp_config is not None and ep_config is not None:
             raise NotImplementedError("TP + EP is not implemented yet")
         if tp_config is not None:
+            assert self.world_mesh is not None
             tp_mesh = get_tp_mesh(self.world_mesh)
             self.model.apply_tp(
                 tp_mesh,
@@ -375,6 +391,7 @@ class TransformerTrainModule(TrainModule):
 
         self._ep_enabled = False
         if ep_config is not None:
+            assert self.world_mesh is not None
             if not self.model.is_moe:
                 raise OLMoConfigurationError("Expert parallelism is only valid for MoE models")
             ep_mesh = get_ep_mesh(self.world_mesh)
@@ -404,6 +421,7 @@ class TransformerTrainModule(TrainModule):
         # Maybe shard/replicate according to data parallel config.
         self._dp_config = dp_config
         if dp_config is not None:
+            assert self.world_mesh is not None
             dp_mesh = get_dp_model_mesh(self.world_mesh)
             if dp_config.name in (DataParallelType.fsdp, DataParallelType.hsdp):
                 param_dtype = (
@@ -459,7 +477,7 @@ class TransformerTrainModule(TrainModule):
 
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
-        return get_dp_process_group(self.world_mesh)
+        return None if self.world_mesh is None else get_dp_process_group(self.world_mesh)
 
     @property
     def eval_batch_spec(self) -> EvalBatchSpec:
