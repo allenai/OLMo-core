@@ -171,7 +171,7 @@ class LcContTrain(Config):
                     loss_parallel=True,
                 ),
                 ac_config=None,
-                float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
+                float8_config=Float8Config(enabled=False),
                 max_grad_norm=1.0,
                 scheduler=CosWithWarmup(warmup_steps=475, alpha_f=0.1),
             ),
@@ -244,15 +244,6 @@ class LcContTrain(Config):
                     cancel_check_interval=10,
                 ),
             )
-            # .with_callback(
-            #     "lr_scheduler",
-            #     SchedulerCallback(
-            #         scheduler=CosWithWarmup(
-            #             warmup_steps=2000, 
-            #             alpha_f=0.1,
-            #         )
-            #     ),
-            # )
             .with_callback(
                 "gpu_monitor",
                 GPUMemoryMonitorCallback(),
@@ -260,84 +251,6 @@ class LcContTrain(Config):
             # .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0)
             .with_callback("config_saver", ConfigSaverCallback())
             .with_callback("garbage_collector", GarbageCollectorCallback())
-            # .with_callback(
-            #     "downstream_evaluator",
-            #     DownstreamEvaluatorCallbackConfig(
-            #         tasks=[
-            #             # MMLU for backwards compatibility
-            #             "mmlu_stem_mc_5shot",
-            #             "mmlu_humanities_mc_5shot",
-            #             "mmlu_social_sciences_mc_5shot",
-            #             "mmlu_other_mc_5shot",
-            #             # MMLU test
-            #             "mmlu_stem_mc_5shot_test",
-            #             "mmlu_humanities_mc_5shot_test",
-            #             "mmlu_social_sciences_mc_5shot_test",
-            #             "mmlu_other_mc_5shot_test",
-            #             ## Core 12 tasks for backwards compatibility
-            #             # "arc_challenge",
-            #             # "arc_easy",
-            #             # "basic_arithmetic",
-            #             # "boolq",
-            #             # "commonsense_qa",
-            #             # "copa",
-            #             # "hellaswag",
-            #             # "openbook_qa",
-            #             # "piqa",
-            #             # "sciq",
-            #             # "social_iqa",
-            #             # "winogrande",
-            #             ## Core 12 tasks 5-shot
-            #             # "arc_challenge_rc_5shot",
-            #             # "arc_easy_rc_5shot",
-            #             ## "basic_arithmetic_rc_5shot",  # doesn't exist
-            #             ## "boolq_rc_5shot",  # we don't like it
-            #             # "csqa_rc_5shot",
-            #             ## "copa_rc_5shot",  # doesn't exist
-            #             # "hellaswag_rc_5shot",
-            #             # "openbookqa_rc_5shot",
-            #             # "piqa_rc_5shot",
-            #             ## "sciq_rc_5shot",  # doesn't exist
-            #             # "socialiqa_rc_5shot",
-            #             # "winogrande_rc_5shot",
-            #             ## New in-loop evals
-            #             # "arc_challenge_val_rc_5shot",
-            #             # "arc_challenge_val_mc_5shot",
-            #             "arc_challenge_test_rc_5shot",
-            #             # "arc_challenge_test_mc_5shot",
-            #             # "arc_easy_val_rc_5shot",
-            #             # "arc_easy_val_mc_5shot",
-            #             "arc_easy_test_rc_5shot",
-            #             # "arc_easy_test_mc_5shot",
-            #             # "boolq_val_rc_5shot",
-            #             # "boolq_val_mc_5shot",
-            #             "csqa_val_rc_5shot",
-            #             # "csqa_val_mc_5shot",
-            #             "hellaswag_val_rc_5shot",
-            #             # "hellaswag_val_mc_5shot",
-            #             # "openbookqa_val_rc_5shot",
-            #             # "openbookqa_val_mc_5shot",
-            #             "openbookqa_test_rc_5shot",
-            #             # "openbookqa_test_mc_5shot",
-            #             "piqa_val_rc_5shot",
-            #             # "piqa_val_mc_5shot",
-            #             "socialiqa_val_rc_5shot",
-            #             # "socialiqa_val_mc_5shot",
-            #             # "winogrande_val_rc_5shot",
-            #             # "winogrande_val_mc_5shot",
-            #             # "mmlu_stem_val_rc_5shot",
-            #             # "mmlu_stem_val_mc_5shot",
-            #             # "mmlu_humanities_val_rc_5shot",
-            #             # "mmlu_humanities_val_mc_5shot",
-            #             # "mmlu_social_sciences_val_rc_5shot",
-            #             # "mmlu_social_sciences_val_mc_5shot",
-            #             # "mmlu_other_val_rc_5shot",
-            #             # "mmlu_other_val_mc_5shot",
-            #         ],
-            #         tokenizer=tokenizer_config,
-            #         eval_interval=1000,
-            #     ),
-            # ),
         ).merge(overrides)
 
 
