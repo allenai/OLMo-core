@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, Optional
 
@@ -33,6 +34,7 @@ class BeakerCallback(Callback):
 
     _client = None
     _url = None
+    _last_update: Optional[float] = None
 
     @property
     def client(self) -> "Beaker":
@@ -77,7 +79,9 @@ class BeakerCallback(Callback):
     def post_step(self):
         update_interval = self.update_interval or self.trainer.metrics_collect_interval
         if self.enabled and get_rank() == 0 and self.step % update_interval == 0:
-            self._update()
+            # Make sure we don't update too frequently.
+            if self._last_update is None or (time.monotonic() - self._last_update) > 10:
+                self._update()
 
     def post_train(self):
         if self.enabled and get_rank() == 0:
@@ -89,6 +93,7 @@ class BeakerCallback(Callback):
             step=self.step,
             max_steps=self.trainer.max_steps,
         )
+        self._last_update = time.monotonic()
 
     def _set_description(self, *, step: Optional[int], max_steps: Optional[int]):
         from beaker import BeakerError, HTTPError
