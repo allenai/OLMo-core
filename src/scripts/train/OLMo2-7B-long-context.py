@@ -14,16 +14,16 @@ from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
-    TransformerTensorParallelConfig,
     TransformerTrainModuleConfig,
 )
 
 log = logging.getLogger(__name__)
 
 
-CONTEXT_LENGTH = 4 * 16_384
+CONTEXT_LENGTH = 8 * 16_384
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -35,7 +35,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         rank_microbatch_size=1 * CONTEXT_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=AdamWConfig(
-            lr=3e-5,
+            lr=1e-5,
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
@@ -52,12 +52,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
         ),
-        tp_config=TransformerTensorParallelConfig(
-            degree=2,
-            loss_parallel=True,
-        ),
+        cp_config=TransformerContextParallelConfig(degree=8),
         ac_config=TransformerActivationCheckpointingConfig(),
-        float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
+        float8_config=Float8Config(enabled=True),
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
     )

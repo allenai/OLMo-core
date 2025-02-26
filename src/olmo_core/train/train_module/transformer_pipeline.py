@@ -14,7 +14,6 @@ from torch.distributed import DeviceMesh
 from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.pipelining import PipelineStage
 from torch.distributed.tensor import DTensor, Replicate, Shard
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 
 from olmo_core.config import Config, DType
@@ -25,6 +24,7 @@ from olmo_core.distributed.parallel import (
     PipelineParallelConfig,
     PipelineSchedule,
     build_device_mesh,
+    get_cp_mesh,
     get_dp_mesh,
     get_dp_process_group,
     get_pp_mesh,
@@ -47,6 +47,7 @@ from ..common import ReduceType
 from .train_module import EvalBatchSizeUnit, EvalBatchSpec, TrainModule
 from .transformer import (
     TransformerActivationCheckpointingConfig,
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerTensorParallelConfig,
 )
@@ -191,6 +192,7 @@ class TransformerPipelineTrainModuleConfig(Config):
     float8_config: Optional[Float8Config] = None
     dp_config: Optional[TransformerDataParallelConfig] = None
     tp_config: Optional[TransformerTensorParallelConfig] = None
+    cp_config: Optional[TransformerContextParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
 
     # Loss function settings.
@@ -257,6 +259,7 @@ class TransformerPipelineTrainModule(TrainModule):
     :param float8_config: Float8 configuration for the model.
     :param dp_config: Data parallel configuration for the model.
     :param tp_config: Tensor parallel configuration for the model.
+    :param cp_config: Context parallel configuration for the model.
     :param pp_config: Pipeline parallel configuration for the model.
     :param ac_config: Activation checkpointing configuration for the model.
     :param compile_loss: Compile the loss function. This can provide a small speedup while also
@@ -294,6 +297,7 @@ class TransformerPipelineTrainModule(TrainModule):
         float8_config: Optional[Float8Config] = None,
         dp_config: Optional[TransformerDataParallelConfig] = None,
         tp_config: Optional[TransformerTensorParallelConfig] = None,
+        cp_config: Optional[TransformerContextParallelConfig] = None,
         ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
         compile_loss: bool = False,
         fused_loss: bool = False,
@@ -318,7 +322,7 @@ class TransformerPipelineTrainModule(TrainModule):
 
         self.device = device or get_default_device()
         self.world_mesh = build_device_mesh(
-            dp=dp_config, tp=tp_config, pp=pp_config, device_type=self.device.type
+            dp=dp_config, tp=tp_config, cp=cp_config, pp=pp_config, device_type=self.device.type
         )
         log.info(f"Data parallel world size = {get_world_size(self.dp_process_group):,d}")
 
@@ -364,6 +368,14 @@ class TransformerPipelineTrainModule(TrainModule):
                     model, modules_to_ignore={"lm_head.w_out"}
                 )
             log.info("Swapped linear layers to Float8 linear layers")
+
+        # Maybe apply context parallelism.
+        self._cp_config = cp_config
+        if cp_config is not None:
+            cp_mesh = get_cp_mesh(self.world_mesh)
+            for model in self.model_parts:
+                model.apply_cp(cp_mesh, rotate_method=cp_config.rotate_method)
+            log.info("Applied context parallelism to the model")
 
         # Maybe apply tensor parallelism.
         if tp_config is not None:
@@ -488,6 +500,10 @@ class TransformerPipelineTrainModule(TrainModule):
         )
 
     @property
+    def cp_enabled(self) -> bool:
+        return self._cp_config is not None
+
+    @property
     def train_pp_schedule(self) -> PipelineSchedule:
         self.trainer  # make sure trainer has been attached before trying to access this
         assert self._train_pp_schedule is not None
@@ -501,6 +517,11 @@ class TransformerPipelineTrainModule(TrainModule):
 
     def loss_fn(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         assert self._batch_num_tokens_for_loss is not None
+
+        if self._train_loss_fn.compile_enabled:
+            # Mark inputs dynamic for torch.compile to avoid unnecessary recompilation.
+            mark_dynamic(logits, (0, 1))
+            mark_dynamic(labels, (0, 1))
 
         # NOTE: we use the "sum" loss reduction and then divide by 'batch_num_tokens_for_loss'
         # (the total number of tokens used in the loss across the whole batch, not just the micro batch)
@@ -526,6 +547,10 @@ class TransformerPipelineTrainModule(TrainModule):
         return loss
 
     def eval_loss_fn(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        if self._eval_loss_fn.compile_enabled:
+            # Mark inputs dynamic for torch.compile to avoid unnecessary recompilation.
+            mark_dynamic(logits, (0, 1))
+            mark_dynamic(labels, (0, 1))
         ce_loss, _ = self._eval_loss_fn(logits, labels)
         return ce_loss.view(logits.shape[0], -1)
 
@@ -649,12 +674,16 @@ class TransformerPipelineTrainModule(TrainModule):
 
         # Calculate how many tokens are going to be used in the loss.
         self._batch_num_tokens_for_loss = (batch["labels"] != self.label_ignore_index).sum()
+        if self.cp_enabled:
+            assert self._cp_config is not None
+            self._batch_num_tokens_for_loss = (
+                self._batch_num_tokens_for_loss / self._cp_config.degree
+            )
 
         # Run pipeline schedule.
-        logits, loss = self.model_forward(batch, labels=batch["labels"])
-        del logits, loss  # pipeline schedule has already handled backward pass
-
-        del batch  # In case this helps with memory utilization.
+        with self._train_batch_context(batch):
+            logits, loss = self.model_forward(batch, labels=batch["labels"])
+        del batch, logits, loss  # pipeline schedule has already handled backward pass
 
         if dry_run:
             self._clear_loss_buffers()
@@ -691,6 +720,12 @@ class TransformerPipelineTrainModule(TrainModule):
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+        if self.cp_enabled:
+            raise RuntimeError(
+                f"{self.__class__.__name__}.eval_batch() does not support context parallelism yet, "
+                "please disable in-loop evals"
+            )
+
         batch = move_to_device(batch, self.device)
 
         for model in self.model_parts:
@@ -793,15 +828,6 @@ class TransformerPipelineTrainModule(TrainModule):
         Run a forward pass on a micro-batch, returning the logits and potentially the loss.
         """
         with self._model_forward_context():
-            # NOTE: Input sizes might be dynamic, e.g. when training with variable sequence lengths
-            # or during an eval loop, so we mark them as dynamic for torch.compile up-front to avoid
-            # recompiling later.
-            # In theory this could harm performance a bit when input sizes are actually static
-            # but so far I haven't noticed any dip in throughput with the models I've tested.
-            mark_dynamic(batch["input_ids"], (0, 1))
-            if "doc_lens" in batch:
-                mark_dynamic(batch["doc_lens"], (0, 1))
-
             schedule = self.train_pp_schedule if training else self.eval_pp_schedule
             # shape: (batch_size, seq_len, vocab_size), (1,)
             logits, loss = schedule.step(
@@ -822,14 +848,18 @@ class TransformerPipelineTrainModule(TrainModule):
         return self.model_parts[0].num_flops_per_token(seq_len)
 
     @contextlib.contextmanager
-    def _train_microbatch_context(
-        self, micro_batch_idx: int, num_micro_batches: int
-    ) -> Generator[None, None, None]:
+    def _train_batch_context(self, batch: Dict[str, Any]) -> Generator[None, None, None]:
         with contextlib.ExitStack() as stack:
             for model in self.model_parts:
-                if isinstance(model, DDP) and micro_batch_idx != num_micro_batches - 1:
-                    # For DDP, only sync gradients on the final micro batch.
-                    stack.enter_context(model.no_sync())
+                if self.cp_enabled:
+                    stack.enter_context(
+                        model.context_parallelism(
+                            input_ids=batch["input_ids"],
+                            doc_lens=batch.get("doc_lens"),
+                            max_doc_lens=batch.get("max_doc_lens"),
+                            labels=batch["labels"],
+                        )
+                    )
             yield
 
     @contextlib.contextmanager

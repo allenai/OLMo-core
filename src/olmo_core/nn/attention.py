@@ -1,6 +1,8 @@
+import contextlib
 import math
+from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Generator, List, Optional, Set, Union
 
 import torch
 import torch.nn as nn
@@ -24,7 +26,15 @@ from .rope import (
 )
 from .utils import get_tp_wrappers
 
-__all__ = ["AttentionType", "AttentionConfig", "Attention", "FusedAttention", "NormalizedAttention"]
+__all__ = [
+    "AttentionType",
+    "AttentionConfig",
+    "Attention",
+    "FusedAttention",
+    "NormalizedAttention",
+    "RingAttentionRotateMethod",
+    "torch_ring_sdpa_manager",
+]
 
 
 class AttentionType(StrEnum):
@@ -44,6 +54,68 @@ class AttentionType(StrEnum):
     """
     ➡️ :class:`NormalizedAttention`
     """
+
+
+class RingAttentionRotateMethod(StrEnum):
+    """
+    Ring attention rotation method.
+    """
+
+    allgather = "allgather"
+    """
+    All-gather.
+    """
+
+    alltoall = "alltoall"
+    """
+    All-to-all.
+    """
+
+
+_RING_ATTENTION_ENABLED = False
+
+
+@contextlib.contextmanager
+def torch_ring_sdpa_manager(
+    cp_mesh: DeviceMesh,
+    *,
+    cp_buffers: List[torch.Tensor],
+    cp_seq_dims: List[int],
+    cp_no_restore_buffers: Set[torch.Tensor],
+) -> Generator[None, None, None]:
+    """
+    A context manager for enabling ring attention with PyTorch's built-in SDPA and splitting input
+    buffers in-place on their sequence dimension.
+
+    .. note::
+        This will monkey-patch PyTorch's SDPA function with a version that implements ring attention.
+    """
+    from torch.distributed.tensor.experimental import context_parallel
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+
+    global _RING_ATTENTION_ENABLED
+
+    with contextlib.ExitStack() as stack:
+        # Currently only these two PyTorch SDP backends support ring attention.
+        stack.enter_context(
+            sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION])
+        )
+
+        # Patch SDPA and shard these buffers on their sequence dimension.
+        stack.enter_context(
+            context_parallel(
+                cp_mesh,
+                buffers=cp_buffers,
+                buffer_seq_dims=cp_seq_dims,
+                no_restore_buffers=cp_no_restore_buffers,
+            )
+        )
+
+        try:
+            _RING_ATTENTION_ENABLED = True
+            yield
+        finally:
+            _RING_ATTENTION_ENABLED = False
 
 
 @dataclass
@@ -114,7 +186,7 @@ class AttentionConfig(Config):
         *,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
-    ) -> Union["Attention", "FusedAttention"]:
+    ) -> "AttentionBase":
         """
         Build the corresponding attention module.
 
@@ -146,7 +218,30 @@ class AttentionConfig(Config):
             ) from e
 
 
-class Attention(nn.Module):
+class AttentionBase(nn.Module):
+    """
+    Base class for attention modules.
+    """
+
+    @abstractmethod
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        input_layout: Optional[Placement] = None,
+        output_layout: Optional[Placement] = None,
+        use_local_output: bool = True,
+        float8_enabled: bool = False,
+    ):
+        raise NotImplementedError
+
+    @abstractmethod
+    def apply_cp(
+        self, cp_mesh: DeviceMesh, rotate_method: Optional[RingAttentionRotateMethod] = None
+    ):
+        raise NotImplementedError
+
+
+class Attention(AttentionBase):
     """
     An implementation of multi-head self-attention with support for multi-query (MQA)
     and grouped-query (GQA) attention.
@@ -223,7 +318,10 @@ class Attention(nn.Module):
             assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
             self.rope = rope_class
 
+        self._cp_enabled = False
+
         self._flash_attn_func = None
+        self._flash_attn_varlen_func = None
         if use_flash:
             from flash_attn import (  # type: ignore
                 flash_attn_func,
@@ -232,6 +330,10 @@ class Attention(nn.Module):
 
             self._flash_attn_func = flash_attn_func
             self._flash_attn_varlen_func = flash_attn_varlen_func
+
+    @property
+    def cp_enabled(self) -> bool:
+        return self._cp_enabled
 
     def sdpa(
         self,
@@ -253,6 +355,12 @@ class Attention(nn.Module):
                 raise RuntimeError(
                     "flash-attn (use_flash=True) is required for intra-document masking"
                 )
+
+            if self.cp_enabled:
+                raise RuntimeError(
+                    "context parallelism does not support intra-document masking yet"
+                )
+
             # shape: (batch_size * seq_len, n_heads, head_dim)
             att = self._flash_attn_varlen_func(
                 q.view(B * T, -1, self.head_dim),
@@ -267,12 +375,20 @@ class Attention(nn.Module):
                 softmax_scale=scale,
             )
         elif self._flash_attn_func is not None:
+            if self.cp_enabled:
+                raise RuntimeError("flash-attn does not support context parallelism yet")
+
             # shape: (batch_size, seq_len, n_heads, head_dim)
             att = self._flash_attn_func(
                 q, k, v, dropout_p=self.dropout_p, causal=True, softmax_scale=scale
             )
         else:
             # Fall back to PyTorch's SDPA...
+            if self.cp_enabled and not _RING_ATTENTION_ENABLED:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' must be run within the context manager "
+                    f"'{torch_ring_sdpa_manager.__name__}()' when using PyTorch's built-in SDPA function"
+                )
 
             # PyTorch's SDPA doesn't support GQA, so we have to do this.
             # shape: (batch_size, n_heads, seq_len, head_dim)
@@ -285,10 +401,13 @@ class Attention(nn.Module):
             #        (batch_size, n_kv_heads, seq_len, head_dim)
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
+            # NOTE: make sure not to import and call 'scaled_dot_product_attention' directly
+            # as context parallelism currently relies on monkey-patching this function.
             # shape: (batch_size, n_heads, seq_len, head_dim)
             att = F.scaled_dot_product_attention(
                 q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
             )
+
             # shape: (batch_size, seq_len, n_heads, head_dim)
             att = att.transpose(1, 2).contiguous()
 
@@ -299,6 +418,9 @@ class Attention(nn.Module):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -340,7 +462,9 @@ class Attention(nn.Module):
         v = v.view(B, T, -1, self.head_dim)
 
         if self.rope is not None:
-            q, k = self.rope(q, k, head_first=False)
+            q, k = self.rope(
+                q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
+            )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(q, k, v, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
@@ -395,6 +519,27 @@ class Attention(nn.Module):
             device_mesh=tp_mesh,
             parallelize_plan=plan,
         )
+
+    def apply_cp(
+        self, cp_mesh: DeviceMesh, rotate_method: Optional[RingAttentionRotateMethod] = None
+    ):
+        """
+        Prepare the module for context-parallelism (ring attention).
+
+        .. important::
+            If using PyTorch's built-in SDPA (no flash-attn) you must run this module
+            within the context manager :func:`torch_ring_sdpa_manager()`.
+        """
+        del cp_mesh
+
+        if rotate_method is not None:
+            from torch.distributed.tensor.experimental._attention import (
+                set_rotate_method,
+            )
+
+            set_rotate_method(rotate_method)
+
+        self._cp_enabled = True
 
 
 @beta_feature
@@ -456,6 +601,9 @@ class NormalizedAttention(Attention):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         B, T, _ = x.shape
 
@@ -482,7 +630,9 @@ class NormalizedAttention(Attention):
         v = v.view(B, T, self.n_kv_heads, self.head_dim)
 
         if self.rope is not None:
-            q, k = self.rope(q, k, head_first=False)
+            q, k = self.rope(
+                q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
+            )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -522,7 +672,7 @@ class NormalizedAttention(Attention):
         w.copy_(l2_normalize(w, dim=dim))
 
 
-class FusedAttention(nn.Module):
+class FusedAttention(AttentionBase):
     """
     An "fused" implementation of multi-head self-attention.
 
@@ -588,6 +738,9 @@ class FusedAttention(nn.Module):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -611,7 +764,7 @@ class FusedAttention(nn.Module):
             qkv.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
 
         if self.rope is not None:
-            qkv = self.rope(qkv)
+            qkv = self.rope(qkv, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis)
 
         if max_doc_len is not None and cu_doc_lens is not None:
             # shape: (batch_size * seq_len, n_heads, head_dim)
@@ -643,6 +796,12 @@ class FusedAttention(nn.Module):
         del tp_mesh, input_layout, output_layout, use_local_output, float8_enabled
 
         raise NotImplementedError("TP is not implemented yet for the fused attention variant")
+
+    def apply_cp(
+        self, cp_mesh: DeviceMesh, rotate_method: Optional[RingAttentionRotateMethod] = None
+    ):
+        del cp_mesh, rotate_method
+        raise NotImplementedError("CP is not implemented yet for the fused attention variant")
 
 
 def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:

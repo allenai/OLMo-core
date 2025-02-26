@@ -1,6 +1,17 @@
+import contextlib
 import logging
 from functools import cached_property
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Dict,
+    Generator,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+    cast,
+)
 
 import torch
 import torch.nn as nn
@@ -12,11 +23,19 @@ from olmo_core.config import StrEnum
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.utils import get_default_device
+from olmo_core.utils import get_default_device, mark_dynamic
 
+from ..attention import (
+    Attention,
+    AttentionBase,
+    FusedAttention,
+    RingAttentionRotateMethod,
+    torch_ring_sdpa_manager,
+)
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..lm_head import LMHeadConfig
+from ..rope import RoPEBuffers, RotaryEmbeddingBase
 from ..utils import selective_checkpointing_context_fn
 from .block import (
     MoETransformerBlock,
@@ -133,7 +152,12 @@ class Transformer(nn.Module):
         self.init_device = init_device
         self.init_method = InitMethod(init_method)
         self.init_seed = init_seed
+
         self._cache = cache
+        self._cp_mesh: Optional[DeviceMesh] = None
+        self._cp_rope_buffers: Optional[RoPEBuffers] = None
+        self._cp_enabled = False
+        self._compile_enabled = False
 
         # Cache the value of these properties up-front in case the parameters are removed
         # later, like for pipeline parallelism.
@@ -172,6 +196,14 @@ class Transformer(nn.Module):
                 return p.device
         return get_default_device()
 
+    @property
+    def compile_enabled(self) -> bool:
+        return self._compile_enabled
+
+    @property
+    def cp_enabled(self) -> bool:
+        return self._cp_enabled
+
     @torch.no_grad()
     def init_weights(
         self,
@@ -207,7 +239,7 @@ class Transformer(nn.Module):
             # This might fail if it's wrapped.
             #  assert isinstance(block, TransformerBlock)
             block = cast(TransformerBlock, block)
-            att = block.attention
+            att = cast(Union[Attention, FusedAttention], block.attention)
 
             # Attention weights.
             self.init_method.init_attention(
@@ -259,6 +291,10 @@ class Transformer(nn.Module):
         """
         Run the transformer on the token input IDs.
 
+        .. important::
+            If running with context-parallelism, the forward and backward pass should
+            be run within the context manager :meth:`context_parallelism()`.
+
         :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
         :param doc_lens: Document lengths to use in attention for intra-document masking.
             Shape ``(batch_size, max_docs)``.
@@ -268,19 +304,131 @@ class Transformer(nn.Module):
 
         :returns: The output logits.
         """
+        # Prepare doc lens.
         max_doc_len: Optional[int] = None
         cu_doc_lens: Optional[torch.Tensor] = None
         if doc_lens is not None and max_doc_lens is not None:
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
+            if self.compile_enabled:
+                mark_dynamic(cu_doc_lens, (0, 1))
 
-        # passthrough for non-existent layers, allows easy pipeline parallel configuration
+        # Get sharded RoPE buffers if running with context parallelism.
+        rope_buffers: Optional[RoPEBuffers] = None
+        if self.cp_enabled:
+            assert self._cp_rope_buffers is not None
+            rope_buffers = self._cp_rope_buffers
+
+        # Get embeddings but pass-through for non-existent layers to allow easy
+        # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
+        # Run each block.
         for block in self.blocks.values():
-            h = block(h, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
+            # Mark sizes as dynamic for torch.compile().
+            if self.compile_enabled:
+                mark_dynamic(h, (0, 1))
+            h = block(
+                h,
+                max_doc_len=max_doc_len,
+                cu_doc_lens=cu_doc_lens,
+                pos_sin=None if rope_buffers is None else rope_buffers.pos_sin,
+                pos_cos=None if rope_buffers is None else rope_buffers.pos_cos,
+                freqs_cis=None if rope_buffers is None else rope_buffers.freqs_cis,
+            )
 
-        return self.lm_head(h) if self.lm_head is not None else h
+        # Get final logits but again pass-through in case of pipeline parallelism.
+        if self.lm_head is not None:
+            if self.compile_enabled:
+                mark_dynamic(h, (0, 1))
+            return self.lm_head(h)
+        else:
+            return h
+
+    @contextlib.contextmanager
+    def context_parallelism(
+        self,
+        *,
+        input_ids: torch.Tensor,
+        doc_lens: Optional[torch.Tensor] = None,
+        max_doc_lens: Optional[Sequence[int]] = None,
+        labels: Optional[torch.Tensor] = None,
+    ) -> Generator[None, None, None]:
+        """
+        A context manager for running the model's forward and backward pass with context parallelism.
+
+        .. important::
+            You must pass all of the inputs for both the model and the loss function here in order
+            for this method to prepare those inputs by sharding them in-place on the sequence dimension.
+            Then call the model and loss function as normal with the same inputs.
+
+        .. important::
+            You must call :meth:`apply_cp()` before using this context manager.
+
+        :param input_ids: The input IDs that will be passed to :meth:`forward()`.
+        :param doc_lens: The doc lens that will be passed to :meth:`forward()`.
+        :param max_doc_lens: The max doc lens that will be passed to :meth:`forward()`.
+        :param labels: The labels that will be used to compute the loss. Like the other inputs these
+            will be sharded in-place.
+        """
+        if self._cp_mesh is None:
+            raise RuntimeError(
+                f"{self.__class__.__name__}.apply_cp() must be called before using the context_parallelism() manager."
+            )
+
+        cp_buffers = [input_ids]
+        cp_seq_dims = [1]
+        cp_no_restore_buffers = {input_ids}
+
+        if doc_lens is not None or max_doc_lens is not None:
+            raise RuntimeError("context parallelism does not support intra-document masking yet")
+
+        # Even though we don't use 'labels' in the model's forward pass they still
+        # need to be sharded in the same way for the loss function.
+        if labels is not None:
+            cp_buffers.append(labels)
+            cp_seq_dims.append(1)
+            cp_no_restore_buffers.add(labels)
+
+        # RoPE buffers.
+        rope_buffers: RoPEBuffers
+        for block in self.blocks.values():
+            rope = cast(Optional[RotaryEmbeddingBase], block.attention.rope)  # type: ignore
+            if rope is not None:
+                rope_buffers = rope.get_buffers(input_ids.shape[1], input_ids.device)
+                break
+        else:
+            rope_buffers = RoPEBuffers()
+
+        if rope_buffers.pos_sin is not None:
+            cp_buffers.append(rope_buffers.pos_sin)
+            cp_seq_dims.append(0)
+
+        if rope_buffers.pos_cos is not None:
+            cp_buffers.append(rope_buffers.pos_cos)
+            cp_seq_dims.append(0)
+
+        if rope_buffers.freqs_cis is not None:
+            cp_buffers.append(rope_buffers.freqs_cis)
+            cp_seq_dims.append(0)
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                torch_ring_sdpa_manager(
+                    cp_mesh=self._cp_mesh,
+                    cp_buffers=cp_buffers,
+                    cp_seq_dims=cp_seq_dims,
+                    cp_no_restore_buffers=cp_no_restore_buffers,
+                )
+            )
+
+            try:
+                self._cp_enabled = True
+                self._cp_rope_buffers = rope_buffers
+                yield
+            finally:
+                self._cp_enabled = False
+                self._cp_rope_buffers = None
 
     def apply_tp(
         self,
@@ -322,6 +470,23 @@ class Transformer(nn.Module):
                 output_layout=Shard(1) if loss_parallel else Replicate(),
                 use_local_output=not loss_parallel,
             )
+
+    def apply_cp(
+        self, cp_mesh: DeviceMesh, rotate_method: Optional[RingAttentionRotateMethod] = None
+    ):
+        """
+        Prepare the model for context-parallelism (CP).
+
+        .. important::
+            To run with CP you must also run the model's forward and backward pass inside of the
+            context manager :meth:`context_parallelism()`.
+
+        :param cp_mesh: The CP device mesh.
+        :param rotate_method: The ring attention rotation method.
+        """
+        self._cp_mesh = cp_mesh
+        for block in self.blocks.values():
+            cast(AttentionBase, block.attention).apply_cp(cp_mesh, rotate_method=rotate_method)
 
     def apply_activation_checkpointing(
         self,
@@ -409,6 +574,8 @@ class Transformer(nn.Module):
 
         if self.lm_head is not None:
             self.register_module("lm_head", torch.compile(self.lm_head, fullgraph=False))  # type: ignore
+
+        self._compile_enabled = True
 
     def apply_fsdp(
         self,
@@ -677,26 +844,6 @@ class MoETransformer(Transformer):
     def reset_auxiliary_metrics(self):
         for block in self.blocks.values():
             cast(MoETransformerBlock, block).reset_metrics()
-
-    def forward(
-        self,
-        input_ids: torch.Tensor,
-        doc_lens: Optional[torch.Tensor] = None,
-        max_doc_lens: Optional[Sequence[int]] = None,
-    ) -> torch.Tensor:
-        max_doc_len: Optional[int] = None
-        cu_doc_lens: Optional[torch.Tensor] = None
-        if doc_lens is not None and max_doc_lens is not None:
-            max_doc_len = max(max_doc_lens)
-            cu_doc_lens = get_cumulative_document_lengths(doc_lens)
-
-        # passthrough for non-existent layers, allows easy pipeline parallel configuration
-        h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
-
-        for block in self.blocks.values():
-            h = block(h, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
-
-        return self.lm_head(h) if self.lm_head is not None else h
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         for block in self.blocks.values():
