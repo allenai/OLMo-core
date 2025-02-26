@@ -28,7 +28,7 @@ from olmo_core.internal.common import build_launch_config, get_root_dir, get_wor
 from olmo_core.io import resource_path
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import (
-    TransformerConfig,
+    TransformerConfig, TransformerActivationCheckpointingMode,
 )
 from olmo_core.optim import (
     CosWithWarmup,
@@ -134,6 +134,23 @@ class LcContTrain(Config):
         load_path = root_dir + "/" + load_path
 
         tokenizer_config = TokenizerConfig.dolma2()
+        model = TransformerConfig.olmo2_7B(
+            vocab_size=tokenizer_config.padded_vocab_size(),
+            # compile=True,
+            #     fused_ops=False,
+            use_flash=True,
+            rope_theta = 8 * 10**6,
+            #     dp_config=TransformerDataParallelConfig(
+            #         name=DataParallelType.fsdp,
+            #         param_dtype=DType.bfloat16,
+            #         reduce_dtype=DType.float32,
+            #         wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
+            #     ),
+            #     ac_config=TransformerActivationCheckpointingConfig(
+            #         mode=TransformerActivationCheckpointingMode.selected_modules,
+            #         modules=["blocks.*.feed_forward"],
+            #     ),
+        )
 
         return LcContTrain(
             run_name=run_name,
@@ -167,28 +184,15 @@ class LcContTrain(Config):
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
                 ),
                 tp_config=None,
-                ac_config=None,
+                ac_config=TransformerActivationCheckpointingConfig(
+                    mode=TransformerActivationCheckpointingMode.selected_modules,
+                    modules=[f"blocks.{i}.feed_forward" for i in range(model.n_layers)],
+                ),
                 float8_config=Float8Config(enabled=False),
                 max_grad_norm=1.0,
                 scheduler=CosWithWarmup(warmup_steps=475, alpha_f=0.1),
             ),
-            model=TransformerConfig.olmo2_7B(
-                vocab_size=tokenizer_config.padded_vocab_size(),
-                # compile=True,
-            #     fused_ops=False,
-                use_flash=True,
-                rope_theta = 8 * 10**6,
-            #     dp_config=TransformerDataParallelConfig(
-            #         name=DataParallelType.fsdp,
-            #         param_dtype=DType.bfloat16,
-            #         reduce_dtype=DType.float32,
-            #         wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
-            #     ),
-            #     ac_config=TransformerActivationCheckpointingConfig(
-            #         mode=TransformerActivationCheckpointingMode.selected_modules,
-            #         modules=["blocks.*.feed_forward"],
-            #     ),
-            ),
+            model=model,
             # optim=AdamWConfig(
             #     lr=2e-5,
             #     weight_decay=0.1,
