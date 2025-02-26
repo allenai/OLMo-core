@@ -107,7 +107,7 @@ class BeakerCallback(Callback):
             description = f"[{progress}] "
 
         if self.description is not None:
-            description = f"{description}{self.description} "
+            description = f"{description}{self.description}\n"
 
         if self._url is not None:
             description = f"{description}{self._url} "
