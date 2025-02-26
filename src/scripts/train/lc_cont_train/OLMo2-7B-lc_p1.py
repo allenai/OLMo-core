@@ -170,7 +170,7 @@ class LcContTrain(Config):
                     degree=2,
                     loss_parallel=True,
                 ),
-                ac_config=TransformerActivationCheckpointingConfig(),
+                ac_config=None,
                 float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
                 max_grad_norm=1.0,
                 scheduler=CosWithWarmup(warmup_steps=475, alpha_f=0.1),
