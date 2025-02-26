@@ -1,8 +1,10 @@
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from fnmatch import fnmatch
+from typing import List, Optional
 
 from olmo_core.config import Config, DType, StrEnum
+from olmo_core.utils import ensure_multiple_of
 
 from ..attention import AttentionConfig, AttentionType
 from ..feed_forward import FeedForwardConfig, FeedForwardType
@@ -57,6 +59,7 @@ class TransformerConfig(Config):
     dtype: DType = DType.float32
     init_method: InitMethod = InitMethod.normal
     init_seed: int = 0
+    freeze_params: Optional[List[str]] = None
 
     def build(
         self,
@@ -113,7 +116,23 @@ class TransformerConfig(Config):
         else:
             raise NotImplementedError(self.name)
 
+        if self.freeze_params:
+            for name, param in model.named_parameters():
+                for pattern in self.freeze_params:
+                    if fnmatch(name, pattern):
+                        param.requires_grad = False
+                        log.info(f"Param '{name}' will be frozen")
+                        break
+                else:
+                    log.info(f"Param '{name}' will be trainable")
+
         log.info("%s", model)
+        log.info(
+            f"Built model with:\n"
+            f"- {model.num_params:,d} total params\n"
+            f"- {model.num_non_embedding_params:,d} non-embedding params\n"
+            f"- {model.num_trainable_params:,d} trainable params"
+        )
 
         return model
 
@@ -613,9 +632,7 @@ class TransformerConfig(Config):
         hidden_size = int(8 * d_model / 3)
         if hidden_size_multiplier is not None:
             hidden_size = int(hidden_size_multiplier * hidden_size)
-        hidden_size = hidden_size_multiple_of * (
-            (hidden_size + hidden_size_multiple_of - 1) // hidden_size_multiple_of
-        )
+        hidden_size = ensure_multiple_of(hidden_size, hidden_size_multiple_of)
 
         # Configure global layer norm.
         layer_norm = LayerNormConfig(
@@ -666,6 +683,50 @@ class TransformerConfig(Config):
         )
 
     @classmethod
+    def llama_like_moe(
+        cls,
+        *,
+        d_model: int,
+        vocab_size: int,
+        n_layers: int,
+        n_heads: int,
+        num_experts: int,
+        top_k: int,
+        expert_hidden_size: int,
+        shared_expert_hidden_size: Optional[int] = None,
+        dropless: bool = False,
+        capacity_factor: Optional[float] = None,
+        lb_loss_weight: float = 0.01,
+        z_loss_weight: Optional[float] = 0.001,
+        reordered_norm: bool = False,
+        **kwargs,
+    ) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=n_layers,
+            n_heads=n_heads,
+            name=TransformerType.moe,
+            block_name=TransformerBlockType.moe
+            if not reordered_norm
+            else TransformerBlockType.moe_reordered_norm,
+            qk_norm=kwargs.pop("qk_norm", reordered_norm),
+            feed_forward_moe=MoEConfig(
+                name=MoEType.default if not dropless else MoEType.dropless,
+                num_experts=num_experts,
+                hidden_size=expert_hidden_size,
+                capacity_factor=capacity_factor,
+                router=MoERouterConfig(top_k=top_k, bias=False),
+                shared_mlp=None
+                if shared_expert_hidden_size is None
+                else SharedMLPConfig(hidden_size=shared_expert_hidden_size, bias=False),
+                lb_loss_weight=lb_loss_weight,
+                z_loss_weight=z_loss_weight,
+            ),
+            **kwargs,
+        )
+
+    @classmethod
     def ngpt_like(
         cls,
         *,
@@ -689,9 +750,7 @@ class TransformerConfig(Config):
         hidden_size = int(8 * d_model / 3)
         if hidden_size_multiplier is not None:
             hidden_size = int(hidden_size_multiplier * hidden_size)
-        hidden_size = hidden_size_multiple_of * (
-            (hidden_size + hidden_size_multiple_of - 1) // hidden_size_multiple_of
-        )
+        hidden_size = ensure_multiple_of(hidden_size, hidden_size_multiple_of)
 
         # Configure blocks.
         block = TransformerBlockConfig(

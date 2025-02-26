@@ -13,6 +13,8 @@ class MoELoss(metaclass=ABCMeta):
         *,
         expert_logits: torch.Tensor,
         expert_scores: torch.Tensor,
+        expert_weights: torch.Tensor,
+        expert_indices: torch.Tensor,
         batch_size_per_expert: torch.Tensor,
         **kwargs,
     ):

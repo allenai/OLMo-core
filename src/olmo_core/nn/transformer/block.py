@@ -1,7 +1,7 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Dict, Optional, Union
+from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -20,6 +20,9 @@ from ..feed_forward import FeedForwardConfig
 from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
 from ..moe import MoEConfig
+
+if TYPE_CHECKING:
+    from olmo_core.train.common import ReduceType
 
 
 class TransformerBlockType(StrEnum):
@@ -131,6 +134,9 @@ class TransformerBlockBase(nn.Module):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Run the block on the input ``x``.
@@ -189,9 +195,19 @@ class TransformerBlock(TransformerBlockBase):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         h = x + self.dropout(
-            self.attention(self.attention_norm(x), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
+            self.attention(
+                self.attention_norm(x),
+                max_doc_len=max_doc_len,
+                cu_doc_lens=cu_doc_lens,
+                pos_sin=pos_sin,
+                pos_cos=pos_cos,
+                freqs_cis=freqs_cis,
+            )
         )
         return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
@@ -242,9 +258,21 @@ class ReorderedNormTransformerBlock(TransformerBlock):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         h = x + self.dropout(
-            self.attention_norm(self.attention(x, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens))
+            self.attention_norm(
+                self.attention(
+                    x,
+                    max_doc_len=max_doc_len,
+                    cu_doc_lens=cu_doc_lens,
+                    pos_sin=pos_sin,
+                    pos_cos=pos_cos,
+                    freqs_cis=freqs_cis,
+                )
+            )
         )
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
@@ -297,11 +325,23 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         h = l2_normalize(
             torch.lerp(
                 x,
-                l2_normalize(self.attention(x, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)),
+                l2_normalize(
+                    self.attention(
+                        x,
+                        max_doc_len=max_doc_len,
+                        cu_doc_lens=cu_doc_lens,
+                        pos_sin=pos_sin,
+                        pos_cos=pos_cos,
+                        freqs_cis=freqs_cis,
+                    )
+                ),
                 (
                     self.attn_alpha * (self.attn_alpha_init_value / self.attn_alpha_init_scaling)
                 ).abs(),
@@ -376,11 +416,22 @@ class MoETransformerBlock(TransformerBlockBase):
     def reset_losses(self):
         self.feed_forward_moe.reset_losses()
 
+    def compute_metrics(
+        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
+        return self.feed_forward_moe.compute_metrics(total_bz, reset=reset)
+
+    def reset_metrics(self):
+        self.feed_forward_moe.reset_metrics()
+
     def forward(
         self,
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Run the block on the input ``x``.
@@ -388,7 +439,14 @@ class MoETransformerBlock(TransformerBlockBase):
         Parameters are the same as :meth:`TransformerBlock.forward()`.
         """
         h = x + self.dropout(
-            self.attention(self.attention_norm(x), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
+            self.attention(
+                self.attention_norm(x),
+                max_doc_len=max_doc_len,
+                cu_doc_lens=cu_doc_lens,
+                pos_sin=pos_sin,
+                pos_cos=pos_cos,
+                freqs_cis=freqs_cis,
+            )
         )
         return h + self.dropout(self.feed_forward_moe(self.feed_forward_norm(h)))
 
@@ -443,8 +501,20 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         h = x + self.dropout(
-            self.attention_norm(self.attention(x, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens))
+            self.attention_norm(
+                self.attention(
+                    x,
+                    max_doc_len=max_doc_len,
+                    cu_doc_lens=cu_doc_lens,
+                    pos_sin=pos_sin,
+                    pos_cos=pos_cos,
+                    freqs_cis=freqs_cis,
+                )
+            )
         )
         return h + self.dropout(self.feed_forward_norm(self.feed_forward_moe(h)))

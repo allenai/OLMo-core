@@ -7,8 +7,10 @@ from .train_module import (
 from .transformer import (
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
+    TransformerExpertParallelConfig,
     TransformerTensorParallelConfig,
     TransformerTrainModule,
     TransformerTrainModuleConfig,
@@ -32,6 +34,8 @@ __all__ = [
     "TransformerActivationCheckpointingMode",
     "TransformerDataParallelConfig",
     "TransformerDataParallelWrappingStrategy",
+    "TransformerExpertParallelConfig",
     "TransformerPipelineParallelConfig",
     "TransformerTensorParallelConfig",
+    "TransformerContextParallelConfig",
 ]

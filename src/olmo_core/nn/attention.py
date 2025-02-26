@@ -1,8 +1,11 @@
 import math
+from abc import abstractmethod
 from dataclasses import dataclass
+from functools import partial
 from typing import Optional, Union
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
@@ -10,6 +13,7 @@ from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import parallelize_module
 
 from ..config import Config, DType, StrEnum
+from ..distributed.parallel.context_parallel import ContextParallelLoadBalancerType
 from ..distributed.parallel.tensor_parallel import SequenceParallel
 from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
@@ -24,7 +28,14 @@ from .rope import (
 )
 from .utils import get_tp_wrappers
 
-__all__ = ["AttentionType", "AttentionConfig", "Attention", "FusedAttention", "NormalizedAttention"]
+__all__ = [
+    "AttentionType",
+    "AttentionConfig",
+    "AttentionBase",
+    "Attention",
+    "FusedAttention",
+    "NormalizedAttention",
+]
 
 
 class AttentionType(StrEnum):
@@ -114,7 +125,7 @@ class AttentionConfig(Config):
         *,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
-    ) -> Union["Attention", "FusedAttention"]:
+    ) -> "AttentionBase":
         """
         Build the corresponding attention module.
 
@@ -146,7 +157,28 @@ class AttentionConfig(Config):
             ) from e
 
 
-class Attention(nn.Module):
+class AttentionBase(nn.Module):
+    """
+    Base class for attention modules.
+    """
+
+    @abstractmethod
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        input_layout: Optional[Placement] = None,
+        output_layout: Optional[Placement] = None,
+        use_local_output: bool = True,
+        float8_enabled: bool = False,
+    ):
+        raise NotImplementedError
+
+    @abstractmethod
+    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: ContextParallelLoadBalancerType):
+        raise NotImplementedError
+
+
+class Attention(AttentionBase):
     """
     An implementation of multi-head self-attention with support for multi-query (MQA)
     and grouped-query (GQA) attention.
@@ -224,6 +256,7 @@ class Attention(nn.Module):
             self.rope = rope_class
 
         self._flash_attn_func = None
+        self._flash_attn_varlen_func = None
         if use_flash:
             from flash_attn import (  # type: ignore
                 flash_attn_func,
@@ -232,6 +265,14 @@ class Attention(nn.Module):
 
             self._flash_attn_func = flash_attn_func
             self._flash_attn_varlen_func = flash_attn_varlen_func
+
+        self._cp_pg: Optional[dist.ProcessGroup] = None
+        self._cp_enabled = False
+        self._cp_load_balancer: Optional[ContextParallelLoadBalancerType] = None
+
+    @property
+    def cp_enabled(self) -> bool:
+        return self._cp_enabled
 
     def sdpa(
         self,
@@ -253,26 +294,44 @@ class Attention(nn.Module):
                 raise RuntimeError(
                     "flash-attn (use_flash=True) is required for intra-document masking"
                 )
+
             # shape: (batch_size * seq_len, n_heads, head_dim)
-            att = self._flash_attn_varlen_func(
-                q.view(B * T, -1, self.head_dim),
-                k.view(B * T, -1, self.head_dim),
-                v.view(B * T, -1, self.head_dim),
-                cu_doc_lens,
-                cu_doc_lens,
-                max_doc_len,
-                max_doc_len,
-                dropout_p=self.dropout_p,
-                causal=True,
-                softmax_scale=scale,
-            )
+            if self.cp_enabled:
+                # NOTE: different API
+                att = self._flash_attn_varlen_func(  # type: ignore
+                    q.view(B * T, -1, self.head_dim),
+                    k.view(B * T, -1, self.head_dim),
+                    v.view(B * T, -1, self.head_dim),
+                    cu_doc_lens,
+                    max_doc_len,
+                    dropout_p=self.dropout_p,
+                    causal=True,
+                    softmax_scale=scale,
+                )
+            else:
+                att = self._flash_attn_varlen_func(
+                    q.view(B * T, -1, self.head_dim),
+                    k.view(B * T, -1, self.head_dim),
+                    v.view(B * T, -1, self.head_dim),
+                    cu_doc_lens,
+                    cu_doc_lens,
+                    max_doc_len,
+                    max_doc_len,
+                    dropout_p=self.dropout_p,  # type: ignore
+                    softmax_scale=scale,  # type: ignore
+                    causal=True,  # type: ignore
+                )
         elif self._flash_attn_func is not None:
             # shape: (batch_size, seq_len, n_heads, head_dim)
-            att = self._flash_attn_func(
+            att = self._flash_attn_func(  # type: ignore
                 q, k, v, dropout_p=self.dropout_p, causal=True, softmax_scale=scale
             )
         else:
             # Fall back to PyTorch's SDPA...
+            if self.cp_enabled:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' requires flash-attn (use_flash=True) for context parallelism"
+                )
 
             # PyTorch's SDPA doesn't support GQA, so we have to do this.
             # shape: (batch_size, n_heads, seq_len, head_dim)
@@ -289,6 +348,7 @@ class Attention(nn.Module):
             att = F.scaled_dot_product_attention(
                 q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
             )
+
             # shape: (batch_size, seq_len, n_heads, head_dim)
             att = att.transpose(1, 2).contiguous()
 
@@ -299,6 +359,9 @@ class Attention(nn.Module):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -340,7 +403,15 @@ class Attention(nn.Module):
         v = v.view(B, T, -1, self.head_dim)
 
         if self.rope is not None:
-            q, k = self.rope(q, k, head_first=False)
+            if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
+                raise RuntimeError(
+                    "RoPE buffers must be passed through to attention after being properly "
+                    "sharded by the context parallel load balancer"
+                )
+
+            q, k = self.rope(
+                q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
+            )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(q, k, v, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
@@ -395,6 +466,37 @@ class Attention(nn.Module):
             device_mesh=tp_mesh,
             parallelize_plan=plan,
         )
+
+    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: ContextParallelLoadBalancerType):
+        """
+        Prepare the module for context-parallelism (ring attention).
+
+        .. important::
+            This requires flash-attn and ring-flash-attn.
+        """
+        if self._flash_attn_func is None or self._flash_attn_varlen_func is None:
+            raise RuntimeError(
+                f"'{self.__class__.__name__}' requires flash-attn (use_flash=True) for context parallelism"
+            )
+
+        cp_pg = cp_mesh.get_group()
+
+        if load_balancer == ContextParallelLoadBalancerType.zig_zag:
+            from ring_flash_attn import (  # type: ignore
+                zigzag_ring_flash_attn_func,
+                zigzag_ring_flash_attn_varlen_func,
+            )
+
+            self._flash_attn_func = partial(zigzag_ring_flash_attn_func, group=cp_pg)
+            self._flash_attn_varlen_func = partial(
+                torch._dynamo.disable(zigzag_ring_flash_attn_varlen_func), group=cp_pg
+            )
+        else:
+            raise NotImplementedError(load_balancer)
+
+        self._cp_pg = cp_pg
+        self._cp_enabled = True
+        self._cp_load_balancer = load_balancer
 
 
 @beta_feature
@@ -456,6 +558,9 @@ class NormalizedAttention(Attention):
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         B, T, _ = x.shape
 
@@ -482,7 +587,14 @@ class NormalizedAttention(Attention):
         v = v.view(B, T, self.n_kv_heads, self.head_dim)
 
         if self.rope is not None:
-            q, k = self.rope(q, k, head_first=False)
+            if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
+                raise RuntimeError(
+                    "RoPE buffers must be passed through to attention after being properly "
+                    "sharded by the context parallel load balancer"
+                )
+            q, k = self.rope(
+                q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
+            )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -522,7 +634,7 @@ class NormalizedAttention(Attention):
         w.copy_(l2_normalize(w, dim=dim))
 
 
-class FusedAttention(nn.Module):
+class FusedAttention(AttentionBase):
     """
     An "fused" implementation of multi-head self-attention.
 
@@ -583,11 +695,22 @@ class FusedAttention(nn.Module):
         self._flash_attn_qkvpacked_func = flash_attn_qkvpacked_func
         self._flash_attn_varlen_qkvpacked_func = flash_attn_varlen_qkvpacked_func
 
+        self._cp_pg: Optional[dist.ProcessGroup] = None
+        self._cp_enabled = False
+        self._cp_load_balancer: Optional[ContextParallelLoadBalancerType] = None
+
+    @property
+    def cp_enabled(self) -> bool:
+        return self._cp_enabled
+
     def forward(
         self,
         x: torch.Tensor,
         max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -611,7 +734,12 @@ class FusedAttention(nn.Module):
             qkv.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
 
         if self.rope is not None:
-            qkv = self.rope(qkv)
+            if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
+                raise RuntimeError(
+                    "RoPE buffers must be passed through to attention after being properly "
+                    "sharded by the context parallel load balancer"
+                )
+            qkv = self.rope(qkv, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis)
 
         if max_doc_len is not None and cu_doc_lens is not None:
             # shape: (batch_size * seq_len, n_heads, head_dim)
@@ -627,7 +755,7 @@ class FusedAttention(nn.Module):
             att = self._flash_attn_qkvpacked_func(qkv, dropout_p=self.dropout_p, causal=True)
 
         # shape: (batch_size, seq_len, d_model)
-        att = att.view(B, T, -1)
+        att = att.view(B, T, -1)  # type: ignore
 
         # shape: (batch_size, seq_len, d_model)
         return self.w_out(att)
@@ -643,6 +771,28 @@ class FusedAttention(nn.Module):
         del tp_mesh, input_layout, output_layout, use_local_output, float8_enabled
 
         raise NotImplementedError("TP is not implemented yet for the fused attention variant")
+
+    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: ContextParallelLoadBalancerType):
+        cp_pg = cp_mesh.get_group()
+
+        if load_balancer == ContextParallelLoadBalancerType.zig_zag:
+            from ring_flash_attn import (  # type: ignore
+                zigzag_ring_flash_attn_qkvpacked_func,
+                zigzag_ring_flash_attn_varlen_qkvpacked_func,
+            )
+
+            self._flash_attn_qkvpacked_func = partial(
+                zigzag_ring_flash_attn_qkvpacked_func, group=cp_pg
+            )
+            self._flash_attn_varlen_qkvpacked_func = partial(
+                torch._dynamo.disable(zigzag_ring_flash_attn_varlen_qkvpacked_func), group=cp_pg
+            )
+        else:
+            raise NotImplementedError(load_balancer)
+
+        self._cp_pg = cp_pg
+        self._cp_enabled = True
+        self._cp_load_balancer = load_balancer
 
 
 def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:

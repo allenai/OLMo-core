@@ -1,6 +1,7 @@
 import dataclasses
 import gc
 import logging
+import math
 import os
 import socket
 import sys
@@ -9,6 +10,7 @@ import uuid
 import warnings
 from contextlib import contextmanager
 from datetime import datetime
+from functools import lru_cache
 from itertools import cycle, islice
 from queue import Queue
 from threading import Thread
@@ -393,6 +395,11 @@ def filter_warnings():
     )
     warnings.filterwarnings(
         action="ignore",
+        category=UserWarning,
+        message="TORCH_NCCL_AVOID_RECORD_STREAMS=1 has no effect .*",
+    )
+    warnings.filterwarnings(
+        action="ignore",
         category=FutureWarning,
         message="You are using `torch.load` with `weights_only=False`.*",
     )
@@ -654,3 +661,12 @@ def get_element_size(dtype: torch.dtype) -> int:
     Get the size in bytes of element of the given PyTorch dtype.
     """
     return torch._utils._element_size(dtype)  # type: ignore
+
+
+def ensure_multiple_of(x: int, of: int) -> int:
+    return of * math.ceil(x / of)
+
+
+@lru_cache(maxsize=128)
+def log_once(logger: logging.Logger, msg: str, *args, level: int = logging.INFO, **kwargs):
+    logger.log(level, msg, *args, **kwargs)

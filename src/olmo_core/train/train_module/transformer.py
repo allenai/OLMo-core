@@ -1,7 +1,7 @@
 import contextlib
 import logging
 from dataclasses import dataclass, replace
-from typing import Any, Dict, Generator, List, Optional, Tuple, cast
+from typing import Any, Dict, Generator, List, Optional, Tuple, Union, cast
 
 import torch
 import torch.distributed as dist
@@ -14,15 +14,23 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 
 from olmo_core.config import Config, DType
-from olmo_core.data.utils import get_labels, split_batch
+from olmo_core.data.utils import (
+    get_cumulative_document_lengths,
+    get_labels,
+    split_batch,
+)
 from olmo_core.distributed.checkpoint import _swap_param_keys
 from olmo_core.distributed.parallel import (
+    ContextParallelConfig,
+    ContextParallelLoadBalancer,
     DataParallelConfig,
     DataParallelType,
     ExpertParallelConfig,
     TensorParallelConfig,
-    build_device_mesh,
-    get_dp_mesh,
+    build_world_mesh,
+    get_cp_mesh,
+    get_device_mesh_info,
+    get_dp_model_mesh,
     get_dp_process_group,
     get_ep_mesh,
     get_tp_mesh,
@@ -45,7 +53,13 @@ from olmo_core.nn.transformer import (
 )
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
-from olmo_core.utils import gc_cuda, get_default_device, mark_dynamic, move_to_device
+from olmo_core.utils import (
+    gc_cuda,
+    get_default_device,
+    log_once,
+    mark_dynamic,
+    move_to_device,
+)
 
 from ..common import ReduceType
 from .train_module import EvalBatchSpec, TrainModule
@@ -74,6 +88,13 @@ class TransformerTensorParallelConfig(TensorParallelConfig):
     """
 
     loss_parallel: bool = True
+
+
+@dataclass
+class TransformerContextParallelConfig(ContextParallelConfig):
+    """
+    Transformer-specific context parallel config.
+    """
 
 
 @dataclass
@@ -147,6 +168,7 @@ class TransformerTrainModuleConfig(Config):
     float8_config: Optional[Float8Config] = None
     dp_config: Optional[TransformerDataParallelConfig] = None
     tp_config: Optional[TransformerTensorParallelConfig] = None
+    cp_config: Optional[TransformerContextParallelConfig] = None
     ep_config: Optional[TransformerExpertParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
 
@@ -214,6 +236,7 @@ class TransformerTrainModule(TrainModule):
     :param float8_config: Float8 configuration for the model.
     :param dp_config: Data parallel configuration for the model.
     :param tp_config: Tensor parallel configuration for the model.
+    :param cp_config: Context parallel configuration for the model.
     :param ac_config: Activation checkpointing configuration for the model.
     :param compile_loss: Compile the loss function. This can provide a small speedup while also
         reducing GPU memory usage, especially when using Z-loss.
@@ -249,6 +272,7 @@ class TransformerTrainModule(TrainModule):
         float8_config: Optional[Float8Config] = None,
         dp_config: Optional[TransformerDataParallelConfig] = None,
         tp_config: Optional[TransformerTensorParallelConfig] = None,
+        cp_config: Optional[TransformerContextParallelConfig] = None,
         ep_config: Optional[TransformerExpertParallelConfig] = None,
         ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
         compile_loss: bool = False,
@@ -273,8 +297,8 @@ class TransformerTrainModule(TrainModule):
             )
 
         self.device = device or get_default_device()
-        self.world_mesh = build_device_mesh(
-            dp=dp_config, tp=tp_config, ep=ep_config, device_type=self.device.type
+        self.world_mesh = build_world_mesh(
+            dp=dp_config, tp=tp_config, cp=cp_config, ep=ep_config, device_type=self.device.type
         )
         log.info(f"Data parallel world size = {get_world_size(self.dp_process_group):,d}")
 
@@ -307,7 +331,18 @@ class TransformerTrainModule(TrainModule):
             self.float8_handler.convert_to_float8_training(
                 self.model, modules_to_ignore={"lm_head.w_out"}
             )
-            log.info("Swapped linear layers to Float8 linear layers")
+            log.info("Swapped linear layers to Float8 linear layers\n%s", self.model)
+
+        # Maybe apply context parallelism.
+        self._cp_config = cp_config
+        self._cp_load_balancer: Optional[ContextParallelLoadBalancer] = None
+        if cp_config is not None:
+            cp_mesh = get_cp_mesh(self.world_mesh)
+            self._cp_load_balancer = cp_config.load_balancer.build(cp_mesh)
+            self.model.apply_cp(cp_mesh, load_balancer=cp_config.load_balancer)
+            log.info(
+                f"Applied context parallelism to the model with {get_device_mesh_info(cp_mesh)}"
+            )
 
         # Maybe apply tensor/expert parallelism.
         self._tp_enabled = False
@@ -333,7 +368,8 @@ class TransformerTrainModule(TrainModule):
                 )
             tp_config.maybe_enable_async_tp(tp_mesh)
             log.info(
-                f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model"
+                f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model "
+                f"with {get_device_mesh_info(tp_mesh)}"
             )
             self._tp_enabled = True
 
@@ -343,7 +379,9 @@ class TransformerTrainModule(TrainModule):
                 raise OLMoConfigurationError("Expert parallelism is only valid for MoE models")
             ep_mesh = get_ep_mesh(self.world_mesh)
             cast(MoETransformer, self.model).apply_ep(ep_mesh)
-            log.info("Applied expert parallelism to the model")
+            log.info(
+                f"Applied expert parallelism to the model with {get_device_mesh_info(ep_mesh)}"
+            )
             self._ep_enabled = True
 
         # Maybe apply activation checkpointing.
@@ -366,21 +404,31 @@ class TransformerTrainModule(TrainModule):
         # Maybe shard/replicate according to data parallel config.
         self._dp_config = dp_config
         if dp_config is not None:
-            dp_mesh = get_dp_mesh(self.world_mesh)
+            dp_mesh = get_dp_model_mesh(self.world_mesh)
             if dp_config.name in (DataParallelType.fsdp, DataParallelType.hsdp):
+                param_dtype = (
+                    dp_config.param_dtype.as_pt() if dp_config.param_dtype is not None else None
+                )
+                if self.model.is_moe:
+                    cast(MoETransformer, self.model).prepare_experts_for_fsdp(
+                        self.world_mesh,
+                        param_dtype=param_dtype,
+                        reduce_dtype=dp_config.reduce_dtype.as_pt(),
+                        pp_enabled=False,
+                    )
                 self.model.apply_fsdp(
                     dp_mesh=dp_mesh,
-                    param_dtype=dp_config.param_dtype.as_pt()
-                    if dp_config.param_dtype is not None
-                    else None,
+                    param_dtype=param_dtype,
                     reduce_dtype=dp_config.reduce_dtype.as_pt(),
                     wrapping_strategy=dp_config.wrapping_strategy,
                     pp_enabled=False,
                 )
-                log.info("Applied FSDP to the model")
+                log.info(f"Applied FSDP to the model with {get_device_mesh_info(dp_mesh)}")
             elif dp_config.name == DataParallelType.ddp:
+                if self.model.is_moe:
+                    cast(MoETransformer, self.model).prepare_experts_for_ddp(self.world_mesh)
                 self.model.apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model)
-                log.info("Applied DDP to the model")
+                log.info(f"Applied DDP to the model with {get_device_mesh_info(dp_mesh)}")
             else:
                 raise NotImplementedError(dp_config.name)
 
@@ -426,12 +474,21 @@ class TransformerTrainModule(TrainModule):
         return self._tp_enabled
 
     @property
+    def cp_enabled(self) -> bool:
+        return self._cp_config is not None
+
+    @property
     def ep_enabled(self) -> bool:
         return self._ep_enabled
 
     def loss_fn(
         self, logits: torch.Tensor, labels: torch.Tensor, batch_num_tokens_for_loss: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        if self._train_loss_fn.compile_enabled:
+            # Mark inputs dynamic for torch.compile to avoid unnecessary recompilation.
+            mark_dynamic(logits, (0, 1))
+            mark_dynamic(labels, (0, 1))
+
         # NOTE: we use the "sum" loss reduction and then divide by 'batch_num_tokens_for_loss'
         # (the total number of tokens used in the loss across the whole batch, not just the micro batch)
         # to avoid biasing the loss in the case where micro-batches might not be the same size.
@@ -449,6 +506,10 @@ class TransformerTrainModule(TrainModule):
         )
 
     def eval_loss_fn(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        if self._eval_loss_fn.compile_enabled:
+            # Mark inputs dynamic for torch.compile to avoid unnecessary recompilation.
+            mark_dynamic(logits, (0, 1))
+            mark_dynamic(labels, (0, 1))
         ce_loss, _ = self._eval_loss_fn(logits, labels)
         return ce_loss.view(logits.shape[0], -1)
 
@@ -527,9 +588,6 @@ class TransformerTrainModule(TrainModule):
         # Set model to train mode if it isn't already.
         self.model.train()
 
-        # Move tensors to the right device.
-        batch = move_to_device(batch, self.device)
-
         # Generate labels.
         if "labels" not in batch:
             batch["labels"] = get_labels(batch, label_ignore_index=self.label_ignore_index)
@@ -541,7 +599,12 @@ class TransformerTrainModule(TrainModule):
             )
 
         # Calculate how many tokens are going to be used in the loss.
-        batch_num_tokens_for_loss = (batch["labels"] != self.label_ignore_index).sum()
+        batch_num_tokens_for_loss = move_to_device(
+            (batch["labels"] != self.label_ignore_index).sum(), self.device
+        )
+        if self.cp_enabled:
+            assert self._cp_config is not None
+            batch_num_tokens_for_loss = batch_num_tokens_for_loss / self._cp_config.degree
 
         # Batch losses to record.
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
@@ -561,13 +624,14 @@ class TransformerTrainModule(TrainModule):
         # Train one micro-batch at a time.
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
             with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
+                micro_batch, labels = self._prepare_batch(micro_batch)
+                assert labels is not None
+
                 # Run forward pass.
                 logits = self.model_forward(micro_batch)
 
                 # Get loss to optimize for, and the separate detached CE and Z loss values.
-                loss, ce_loss, z_loss = self.loss_fn(
-                    logits, micro_batch["labels"], batch_num_tokens_for_loss
-                )
+                loss, ce_loss, z_loss = self.loss_fn(logits, labels, batch_num_tokens_for_loss)
                 del logits
 
                 # Update total batch CE and Z loss.
@@ -597,6 +661,8 @@ class TransformerTrainModule(TrainModule):
         del batch  # In case this helps with memory utilization.
 
         if dry_run:
+            self.model.reset_auxiliary_losses()
+            self.model.reset_auxiliary_metrics()
             return
 
         # Record loss metrics.
@@ -616,17 +682,34 @@ class TransformerTrainModule(TrainModule):
                 namespace="train",
             )
 
+        # And additional metrics.
+        for metric_name, (metric_val, reduction) in self.model.compute_auxiliary_metrics(
+            batch_num_tokens_for_loss
+        ).items():
+            self.record_metric(
+                metric_name,
+                metric_val,
+                reduction,
+                namespace="train",
+            )
+
         if isinstance(self.optim, SkipStepOptimizer):
             self.optim.latest_loss = ce_batch_loss
 
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        batch = move_to_device(batch, self.device)
+        if self.cp_enabled:
+            raise RuntimeError(
+                f"{self.__class__.__name__}.eval_batch() does not support context parallelism yet, "
+                "please disable in-loop evals"
+            )
+
+        batch, labels = self._prepare_batch(batch, labels)
 
         self.model.eval()
 
-        with torch.no_grad():
+        with self._eval_batch_context():
             logits = self.model_forward(batch)
             loss: Optional[torch.Tensor] = None
             if labels is not None:
@@ -712,26 +795,15 @@ class TransformerTrainModule(TrainModule):
         Run a forward pass on a micro-batch, returning the logits.
         """
         with self._model_forward_context():
-            # NOTE: Input sizes might be dynamic, e.g. when training with variable sequence lengths
-            # or during an eval loop, so we mark them as dynamic for torch.compile up-front to avoid
-            # recompiling later.
-            # In theory this could harm performance a bit when input sizes are actually static
-            # but so far I haven't noticed any dip in throughput with the models I've tested.
-            mark_dynamic(batch["input_ids"], (0, 1))
-            if "doc_lens" in batch:
-                mark_dynamic(batch["doc_lens"], (0, 1))
-
-            # Run model forward, get logits.
             # shape: (batch_size, seq_len, vocab_size)
-            logits = self.model(
+            return self.model(
                 input_ids=batch["input_ids"],
-                #  attention_mask=micro_batch.get("attention_mask"),
-                #  attention_bias=micro_batch.get("attention_bias"),
-                doc_lens=batch.get("doc_lens"),
-                max_doc_lens=batch.get("max_doc_lens"),
+                max_doc_len=batch.get("max_doc_len"),
+                cu_doc_lens=batch.get("cu_doc_lens"),
+                pos_sin=batch.get("pos_sin"),
+                pos_cos=batch.get("pos_cos"),
+                freqs_cis=batch.get("freqs_cis"),
             )
-
-            return logits
 
     def num_flops_per_token(self, seq_len: int) -> int:
         return self.model.num_flops_per_token(seq_len)
@@ -741,9 +813,15 @@ class TransformerTrainModule(TrainModule):
         self, micro_batch_idx: int, num_micro_batches: int
     ) -> Generator[None, None, None]:
         with contextlib.ExitStack() as stack:
+            # For DDP, only sync gradients on the final micro batch.
             if isinstance(self.model, DDP) and micro_batch_idx != num_micro_batches - 1:
-                # For DDP, only sync gradients on the final micro batch.
                 stack.enter_context(self.model.no_sync())
+            yield
+
+    @contextlib.contextmanager
+    def _eval_batch_context(self) -> Generator[None, None, None]:
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(torch.no_grad())
             yield
 
     @contextlib.contextmanager
@@ -789,3 +867,94 @@ class TransformerTrainModule(TrainModule):
 
         torch.nn.utils.clip_grads_with_norm_(parameters, max_grad_norm, total_norm, foreach=foreach)
         return total_norm
+
+    def _prepare_batch(
+        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
+    ) -> Tuple[Dict[str, Any], Optional[torch.Tensor]]:
+        # Prepare document length inputs.
+        max_doc_len: Optional[int] = None
+        cu_doc_lens: Optional[torch.Tensor] = None
+        if (doc_lens := batch.pop("doc_lens", None)) is not None and (
+            max_doc_lens := batch.pop("max_doc_lens", None)
+        ) is not None:
+            max_doc_len = max(max_doc_lens)
+            cu_doc_lens = get_cumulative_document_lengths(doc_lens)
+            batch["max_doc_len"] = max_doc_len
+            batch["cu_doc_lens"] = cu_doc_lens
+            log_once(log, "intra-document masking enabled")
+
+        # Prepare labels.
+        if labels is None:
+            labels = batch.pop("labels", None)
+        else:
+            batch.pop("labels", None)
+
+        # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
+        if self.cp_enabled:
+            assert self._cp_load_balancer is not None
+            total_seq_len = batch["input_ids"].shape[1]
+
+            inputs = [batch["input_ids"]]
+            seq_dims = [1]
+            pad_values: List[Union[int, float]] = [0]
+            keys = ["input_ids"]
+
+            # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
+            rope_buffers = self.model.get_rope_buffers(total_seq_len, torch.device("cpu"))
+            if rope_buffers is not None:
+                if rope_buffers.pos_sin is not None:
+                    inputs.append(rope_buffers.pos_sin)
+                    seq_dims.append(0)
+                    pad_values.append(0.0)
+                    keys.append("pos_sin")
+                if rope_buffers.pos_cos is not None:
+                    inputs.append(rope_buffers.pos_cos)
+                    seq_dims.append(0)
+                    pad_values.append(0.0)
+                    keys.append("pos_cos")
+                if rope_buffers.freqs_cis is not None:
+                    inputs.append(rope_buffers.freqs_cis)
+                    seq_dims.append(0)
+                    pad_values.append(0.0)
+                    keys.append("freqs_cis")
+
+            if labels is not None:
+                inputs.append(labels)
+                seq_dims.append(1)
+                pad_values.append(self.label_ignore_index)
+
+            if cu_doc_lens is not None:
+                # NOTE: Can only shard properly here if 'input_ids' is flat, i.e. a single instance.
+                # TODO: (epwalsh) We could just flatten all of the inputs here, but then we risk going
+                # beyond the model's maximum sequence length, which might be okay at least
+                # with relative positional encodings, but then again if you're resorting to context
+                # parallelism you can probably only fit a single instance at a time anyway.
+                if (n_instances := batch["input_ids"].shape[0]) != 1:
+                    raise RuntimeError(
+                        f"Rank micro-batches must consist of a single instance when using "
+                        f"context parallelism with intra-document masking (got {n_instances} instances)"
+                    )
+                inputs, cu_doc_lens = self._cp_load_balancer.batch_shard_by_document(
+                    inputs=inputs,
+                    seq_dims=seq_dims,
+                    cu_doc_lens=cu_doc_lens,
+                    pad_values=pad_values,
+                    length_multiple=16,
+                )
+                max_doc_len = (cu_doc_lens[1:] - cu_doc_lens[:-1]).max().item()  # type: ignore
+                batch["max_doc_len"] = max_doc_len
+                batch["cu_doc_lens"] = cu_doc_lens
+            else:
+                inputs = self._cp_load_balancer.batch_shard(
+                    inputs=inputs,
+                    seq_dims=seq_dims,
+                    pad_values=pad_values,
+                )
+
+            for key, value in zip(keys, inputs):
+                batch[key] = value
+
+            if labels is not None:
+                labels = inputs[-1]
+
+        return move_to_device(batch, self.device), move_to_device(labels, self.device)

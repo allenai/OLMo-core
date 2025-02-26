@@ -10,6 +10,6 @@ Then you can install OLMo-core from `PyPI <https://pypi.org/project/ai2-olmo-cor
 
 There are a number of optional dependencies that must be installed to use certain functionality as well, including:
 
-- `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ for flash attention and certain other fused operations.
+- `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ and `ring-flash-attn <https://github.com/zhuzilin/ring-flash-attention>`_.
 - `torchao <https://github.com/pytorch/ao>`_ for float8 training (see :mod:`olmo_core.float8`).
 - `grouped_gemm <https://github.com/tgale96/grouped_gemm>`_ for dropless mixture-of-experts (MoE) models (see :mod:`olmo_core.nn.moe`).

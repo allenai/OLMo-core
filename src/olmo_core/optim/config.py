@@ -3,7 +3,19 @@ from abc import ABCMeta, abstractmethod
 from collections import OrderedDict
 from dataclasses import dataclass
 from fnmatch import fnmatch
-from typing import Any, Dict, Generic, Iterable, List, Optional, Type, TypeVar, Union
+from typing import (
+    Any,
+    Dict,
+    Generic,
+    Iterable,
+    List,
+    Optional,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+    cast,
+)
 
 import torch
 import torch.nn as nn
@@ -57,6 +69,12 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         due to the LR being restored to a float instead of a tensor.
     """
 
+    fixed_fields: Tuple[str, ...] = ("initial_lr",)
+    """
+    These are fields that should not be overridden by the value in a checkpoint after
+    loading optimizer state.
+    """
+
     @property
     def device(self) -> torch.device:
         return get_default_device()
@@ -71,13 +89,13 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
             match any parameter.
         """
-        if self.group_overrides is None:
-            log.info(f"Building {self.optimizer().__name__} optimizer with 1 param group...")
-            return model.parameters()
-
         all_params: Dict[str, torch.Tensor] = OrderedDict()
         for n, p in model.named_parameters():
-            all_params[n] = p
+            if p.requires_grad:
+                all_params[n] = p
+
+        if self.group_overrides is None:
+            return all_params.values()
 
         # Build groups.
         param_groups: List[Dict[str, Any]] = []
@@ -124,11 +142,15 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         kwargs = self.as_dict()
         kwargs.pop("group_overrides")
         kwargs.pop("compile")
+        kwargs.pop("fixed_fields")
 
-        optim = self.optimizer()(self.build_groups(model, strict=strict), **kwargs)
+        optim: torch.optim.Optimizer = self.optimizer()(
+            self.build_groups(model, strict=strict), **kwargs
+        )
 
         # Set 'lr' and 'initial_lr' in each group if needed.
-        for group in optim.param_groups:
+        fixed_fields_per_group: List[Dict[str, Any]] = [{} for _ in optim.param_groups]
+        for fixed_fields, group in zip(fixed_fields_per_group, optim.param_groups):
             lr: Optional[float] = None
             if "lr" in group:
                 lr = group["lr"]
@@ -143,8 +165,12 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
                     group["lr"] = lr
                 group.setdefault("initial_lr", lr)
 
+            for k in self.fixed_fields:
+                if k in group:
+                    fixed_fields[k] = group[k]
+
         log.info(
-            f"Building {self.optimizer().__name__} optimizer with {len(optim.param_groups)} param groups..."
+            f"Building {self.optimizer().__name__} optimizer with {len(optim.param_groups)} param group(s)..."
         )
         for g_idx, group in enumerate(optim.param_groups):
             group_fields_list = "\n - ".join(
@@ -161,4 +187,11 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
             log.info("Compiling optimizer step...")
             optim.step = torch.compile(optim.step)
 
-        return optim
+        # Register hook to reset fixed fields after loading a checkpoint.
+        def reset_fixed_fields(opt: torch.optim.Optimizer):
+            for fixed_fields, group in zip(fixed_fields_per_group, opt.param_groups):
+                group.update(fixed_fields)
+
+        optim.register_load_state_dict_post_hook(reset_fixed_fields)
+
+        return cast(Opt, optim)
