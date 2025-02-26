@@ -26,10 +26,10 @@ class BeakerCallback(Callback):
     """
 
     priority: ClassVar[int] = min(CometCallback.priority - 1, WandBCallback.priority - 1)
-    enabled: bool = True
     experiment_id: Optional[str] = None
     update_interval: Optional[int] = None
     description: Optional[str] = None
+    enabled: Optional[bool] = None
 
     _client = None
     _url = None
@@ -41,6 +41,10 @@ class BeakerCallback(Callback):
     @client.setter
     def client(self, client: "Beaker"):
         self._client = client
+
+    def post_attach(self):
+        if self.enabled is None and BEAKER_EXPERIMENT_ID_ENV_VAR in os.environ:
+            self.enabled = True
 
     def pre_train(self):
         if self.enabled and get_rank() == 0:
@@ -104,4 +108,4 @@ class BeakerCallback(Callback):
         try:
             self.client.experiment.set_description(self.experiment_id, description)
         except (RequestException, BeakerError, HTTPError) as e:
-            log.warning(f"Failed to communicate with Beaker server: {e}")
+            log.warning(f"Failed to update Beaker experiment description: {e}")
