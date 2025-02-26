@@ -627,7 +627,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                         )
                         futures.append(future)
 
-                concurrent.futures.wait(futures, return_when="ALL_COMPLETED")
+                concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
 
                 # Log results.
                 for path, future in zip([item[0] for item in paths_needed], futures):
@@ -790,7 +790,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                     )
                     futures.append(future)
 
-                concurrent.futures.wait(futures, return_when="ALL_COMPLETED")
+                concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
 
                 # Log results.
                 for path, future in zip(paths_needed, futures):
@@ -1308,7 +1308,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                     )
                     futures.append(future)
 
-                concurrent.futures.wait(futures, return_when="ALL_COMPLETED")
+                concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
 
                 # Log results.
                 for path, future in zip(paths_needed, futures):
