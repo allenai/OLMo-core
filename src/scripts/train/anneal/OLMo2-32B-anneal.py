@@ -11,7 +11,6 @@ from typing import List, Tuple, cast
 
 import rich
 import torch
-from omegaconf import OmegaConf
 from rich import print
 
 from olmo_core.config import Config, DType
@@ -90,9 +89,6 @@ class AnnealingDataMix(DataMixBase):
                 labels.append(line.split("/")[1])
 
         return paths, labels
-
-
-OmegaConf.register_new_resolver("AnnealingDataMix", lambda mix: getattr(AnnealingDataMix, mix))
 
 
 @dataclass
