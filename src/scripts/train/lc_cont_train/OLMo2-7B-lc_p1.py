@@ -166,10 +166,7 @@ class LcContTrain(Config):
                     reduce_dtype=DType.float32,
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
                 ),
-                tp_config=TransformerTensorParallelConfig(
-                    degree=2,
-                    loss_parallel=True,
-                ),
+                tp_config=None,
                 ac_config=None,
                 float8_config=Float8Config(enabled=False),
                 max_grad_norm=1.0,
