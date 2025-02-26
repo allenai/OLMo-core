@@ -150,7 +150,7 @@ class AnnealingConfig(Config):
 
         run_name = f"peteish32-from{last_pretrain_step}-{run_name}"
 
-        return AnnealingConfig(
+        config = AnnealingConfig(
             run_name=run_name,
             launch=build_launch_config(
                 name=run_name,
@@ -333,6 +333,10 @@ class AnnealingConfig(Config):
                 ),
             ),
         ).merge(overrides)
+
+        # Make sure this is an 'AnnealingDataMix' instance.
+        config.dataset.mix = AnnealingDataMix(config.dataset.mix)
+        return config
 
 
 def train(checkpoint: str, config: AnnealingConfig):
