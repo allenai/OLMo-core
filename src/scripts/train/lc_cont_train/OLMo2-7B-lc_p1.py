@@ -233,6 +233,7 @@ class LcContTrain(Config):
                 CheckpointerCallback(
                     save_interval=1000,
                     save_async=True,
+                    ephemeral_save_interval=100,
                 ),
             )
             .with_callback(
