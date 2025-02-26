@@ -103,7 +103,7 @@ class BeakerCallback(Callback):
                 perc = min(100, int(100 * step / max_steps))
                 progress = f"{perc}%, {step:,d}/{max_steps:,d}"
             else:
-                progress = f"{step}/??"
+                progress = f"{step:,d}/??"
             description = f"[{progress}] "
 
         if self.description is not None:
