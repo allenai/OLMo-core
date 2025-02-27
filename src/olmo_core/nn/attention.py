@@ -17,17 +17,7 @@ from ..distributed.parallel.tensor_parallel import SequenceParallel
 from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
-from .functional import (
-    flash_attn,
-    flash_attn_qkvpacked,
-    flash_attn_varlen,
-    flash_attn_varlen_qkvpacked,
-    l2_normalize,
-    zigzag_ring_flash_attn,
-    zigzag_ring_flash_attn_qkvpacked,
-    zigzag_ring_flash_attn_varlen,
-    zigzag_ring_flash_attn_varlen_qkvpacked,
-)
+from .functional import flash_funcs, l2_normalize
 from .layer_norm import LayerNorm, LayerNormConfig
 from .rope import (
     ComplexRotaryEmbedding,
@@ -292,7 +282,7 @@ class Attention(AttentionBase):
             assert self._cp_pg is not None
             if max_doc_len is not None and cu_doc_lens is not None:
                 # shape: (batch_size * seq_len, n_heads, head_dim)
-                att = zigzag_ring_flash_attn_varlen(
+                att = flash_funcs.zigzag_ring_flash_attn_varlen(
                     q.view(B * T, -1, self.head_dim),
                     k.view(B * T, -1, self.head_dim),
                     v.view(B * T, -1, self.head_dim),
@@ -305,7 +295,7 @@ class Attention(AttentionBase):
                 )
             elif self.use_flash:
                 # shape: (batch_size, seq_len, n_heads, head_dim)
-                att = zigzag_ring_flash_attn(
+                att = flash_funcs.zigzag_ring_flash_attn(
                     q,
                     k,
                     v,
@@ -321,7 +311,7 @@ class Attention(AttentionBase):
         else:
             if max_doc_len is not None and cu_doc_lens is not None:
                 # shape: (batch_size * seq_len, n_heads, head_dim)
-                att = flash_attn_varlen(
+                att = flash_funcs.flash_attn_varlen(
                     q.view(B * T, -1, self.head_dim),
                     k.view(B * T, -1, self.head_dim),
                     v.view(B * T, -1, self.head_dim),
@@ -333,7 +323,7 @@ class Attention(AttentionBase):
                 )
             elif self.use_flash:
                 # shape: (batch_size, seq_len, n_heads, head_dim)
-                att = flash_attn(
+                att = flash_funcs.flash_attn(
                     q, k, v, dropout_p=self.dropout_p, causal=True, softmax_scale=scale
                 )
             else:
@@ -726,7 +716,7 @@ class FusedAttention(AttentionBase):
             assert self._cp_pg is not None
             if max_doc_len is not None and cu_doc_lens is not None:
                 # shape: (batch_size * seq_len, n_heads, head_dim)
-                att = zigzag_ring_flash_attn_varlen_qkvpacked(
+                att = flash_funcs.zigzag_ring_flash_attn_varlen_qkvpacked(
                     qkv.view(B * T, 3, self.n_heads, self.head_dim),
                     cu_doc_lens,
                     max_doc_len,
@@ -736,13 +726,13 @@ class FusedAttention(AttentionBase):
                 )
             else:
                 # shape: (batch_size, seq_len, n_heads, head_dim)
-                att = zigzag_ring_flash_attn_qkvpacked(
+                att = flash_funcs.zigzag_ring_flash_attn_qkvpacked(
                     qkv, dropout_p=self.dropout_p, causal=True, group=self._cp_pg
                 )
         else:
             if max_doc_len is not None and cu_doc_lens is not None:
                 # shape: (batch_size * seq_len, n_heads, head_dim)
-                att = flash_attn_varlen_qkvpacked(
+                att = flash_funcs.flash_attn_varlen_qkvpacked(
                     qkv.view(B * T, 3, self.n_heads, self.head_dim),
                     cu_doc_lens,
                     max_doc_len,
@@ -751,7 +741,7 @@ class FusedAttention(AttentionBase):
                 )
             else:
                 # shape: (batch_size, seq_len, n_heads, head_dim)
-                att = flash_attn_qkvpacked(qkv, dropout_p=self.dropout_p, causal=True)
+                att = flash_funcs.flash_attn_qkvpacked(qkv, dropout_p=self.dropout_p, causal=True)
 
         # shape: (batch_size, seq_len, d_model)
         att = att.view(B, T, -1)  # type: ignore

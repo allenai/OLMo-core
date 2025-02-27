@@ -83,11 +83,14 @@ def flash_attn_qkvpacked(
     qkv: torch.Tensor,
     *,
     dropout_p: float = 0.0,
+    softmax_scale: Optional[float] = None,
     causal: bool = False,
 ) -> torch.Tensor:
     if _flash_attn_qkvpacked_func is None:
         raise RuntimeError("flash-attn is required!")
-    return _flash_attn_qkvpacked_func(qkv, dropout_p=dropout_p, causal=causal)
+    return _flash_attn_qkvpacked_func(
+        qkv, dropout_p=dropout_p, softmax_scale=softmax_scale, causal=causal
+    )
 
 
 def flash_attn_varlen_qkvpacked(
@@ -96,6 +99,7 @@ def flash_attn_varlen_qkvpacked(
     max_seqlen: int,
     *,
     dropout_p: float = 0.0,
+    softmax_scale: Optional[float] = None,
     causal: bool = False,
 ) -> torch.Tensor:
     if _flash_attn_varlen_qkvpacked_func is None:
@@ -105,6 +109,7 @@ def flash_attn_varlen_qkvpacked(
         cu_seqlens,
         max_seqlen,
         dropout_p=dropout_p,
+        softmax_scale=softmax_scale,
         causal=causal,
     )
 
@@ -138,6 +143,7 @@ def zigzag_ring_flash_attn_qkvpacked(
     *,
     group: dist.ProcessGroup,
     dropout_p: float = 0.0,
+    softmax_scale: Optional[float] = None,
     causal: bool = False,
 ) -> torch.Tensor:
     if _zigzag_ring_flash_attn_qkvpacked_func is None:
@@ -146,6 +152,7 @@ def zigzag_ring_flash_attn_qkvpacked(
         qkv,
         dropout_p=dropout_p,
         causal=causal,
+        softmax_scale=softmax_scale,
         group=group,
     )
     return out  # type: ignore
@@ -188,6 +195,7 @@ def zigzag_ring_flash_attn_varlen_qkvpacked(
     *,
     group: dist.ProcessGroup,
     dropout_p: float = 0.0,
+    softmax_scale: Optional[float] = None,
     causal: bool = False,
 ) -> torch.Tensor:
     if _zigzag_ring_flash_attn_varlen_qkvpacked_func is None:
@@ -197,6 +205,7 @@ def zigzag_ring_flash_attn_varlen_qkvpacked(
         cu_seqlens,
         max_seqlen,
         dropout_p=dropout_p,
+        softmax_scale=softmax_scale,
         causal=causal,
         group=group,
     )

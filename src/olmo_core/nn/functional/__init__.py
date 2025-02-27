@@ -5,7 +5,7 @@ Common ``nn`` function implementations.
 import torch
 
 from .cross_entropy_loss import *
-from .flash_attention import (
+from .flash_funcs import (
     flash_attn,
     flash_attn_qkvpacked,
     flash_attn_varlen,
