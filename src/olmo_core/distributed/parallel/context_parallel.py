@@ -288,6 +288,8 @@ class ContextParallelLlama3LoadBalancer(ContextParallelLoadBalancer):
             raise RuntimeError(f"ring-flash-attn is required for {self.__class__.__name__}") from e
 
         assert len(inputs) == len(seq_dims)
+        if pad_values is not None:
+            assert len(inputs) == len(pad_values)
 
         if cu_doc_lens.device.type != "cpu":
             raise RuntimeError("expected 'cu_doc_lens' to be on CPU")
@@ -296,29 +298,45 @@ class ContextParallelLlama3LoadBalancer(ContextParallelLoadBalancer):
         if cu_doc_lens[0] != 0:
             raise RuntimeError("expected 'cu_doc_lens' to start with a 0")
 
+        if length_multiple is None:
+            length_multiple = self.cp_world_size
+        else:
+            length_multiple = length_multiple * self.cp_world_size
+
         total_length = int(cu_doc_lens[-1])
-        # TODO: (epwalsh) wouldn't be too hard to add padding, only need to add to the global.
-        # inputs, not the document-level inputs.
-        del pad_values
-        if total_length % self.cp_world_size != 0:
-            raise RuntimeError(
-                f"total sequence length ({total_length}) must be divisible by the "
-                f"CP world size ({self.cp_world_size})"
+        padding_to_add = total_length - ensure_multiple_of(total_length, length_multiple)
+        local_length = (total_length + padding_to_add) // self.cp_world_size
+
+        if padding_to_add > 0:
+            if pad_values is None:
+                raise RuntimeError("'pad_values' is required since padding is needed")
+
+            cu_doc_lens = torch.cat(
+                [
+                    cu_doc_lens,
+                    torch.tensor(
+                        [total_length + padding_to_add],
+                        dtype=cu_doc_lens.dtype,
+                        device=cu_doc_lens.device,
+                    ),
+                ]
             )
-        if length_multiple is not None and total_length % length_multiple != 0:
-            raise RuntimeError(
-                f"total sequence length ({total_length}) must be divisible by the provided "
-                f"length multiple ({length_multiple}) since padding is not implemented yet"
-            )
-        local_length = total_length // self.cp_world_size
 
         out = []
-        for x, seq_dim in zip(inputs, seq_dims):
+        for x, seq_dim, pad_value in zip(
+            inputs,
+            seq_dims,
+            pad_values or [None for _ in range(len(inputs))],  # type: ignore
+        ):
             if x.shape[seq_dim] != total_length:
                 raise RuntimeError(
                     f"expected input to be have size {total_length} on the sequence dimension "
                     f"but got {x.shape[seq_dim]}"
                 )
+
+            if padding_to_add > 0:
+                assert pad_value is not None
+                x = self.pad(x, seq_dim, padding_to_add, pad_value)
 
             # NOTE: Since 'torch.slice' is not available from the Python API we just call
             # the JIT op directly.
@@ -355,12 +373,8 @@ class ContextParallelLlama3LoadBalancer(ContextParallelLoadBalancer):
         self,
         x: torch.Tensor,
         seq_dim: int,
+        padding_to_add: int,
         value: Union[int, float],
-        length_multiple: Optional[int] = None,
     ) -> Tuple[torch.Tensor, int]:
-        if length_multiple is None:
-            length_multiple = 2 * self.cp_world_size
-        pad_to = ensure_multiple_of(x.shape[seq_dim], length_multiple)
-        padding_to_add = pad_to - x.shape[seq_dim]
         padding = (0, 0) * (x.ndim - seq_dim - 1) + (0, padding_to_add)
         return F.pad(x, padding, value=value), padding_to_add
