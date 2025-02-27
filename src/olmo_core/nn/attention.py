@@ -1,7 +1,6 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from functools import partial
 from typing import Optional, Union
 
 import torch
@@ -256,7 +255,9 @@ class Attention(AttentionBase):
             self.rope = rope_class
 
         self._flash_attn_func = None
+        self._ring_flash_attn_func = None
         self._flash_attn_varlen_func = None
+        self._ring_flash_attn_varlen_func = None
         if use_flash:
             from flash_attn import (  # type: ignore
                 flash_attn_func,
@@ -289,16 +290,14 @@ class Attention(AttentionBase):
         # using tensor parallelism.
 
         att: torch.Tensor
-        if max_doc_len is not None and cu_doc_lens is not None:
-            if self._flash_attn_varlen_func is None:
-                raise RuntimeError(
-                    "flash-attn (use_flash=True) is required for intra-document masking"
-                )
-
-            # shape: (batch_size * seq_len, n_heads, head_dim)
-            if self.cp_enabled:
-                # NOTE: different API
-                att = self._flash_attn_varlen_func(  # type: ignore
+        if self.cp_enabled:
+            if max_doc_len is not None and cu_doc_lens is not None:
+                if self._ring_flash_attn_varlen_func is None:
+                    raise RuntimeError(
+                        "flash-attn (use_flash=True) is required for intra-document masking"
+                    )
+                # shape: (batch_size * seq_len, n_heads, head_dim)
+                att = self._ring_flash_attn_varlen_func(  # type: ignore
                     q.view(B * T, -1, self.head_dim),
                     k.view(B * T, -1, self.head_dim),
                     v.view(B * T, -1, self.head_dim),
@@ -307,8 +306,29 @@ class Attention(AttentionBase):
                     dropout_p=self.dropout_p,
                     causal=True,
                     softmax_scale=scale,
+                    group=self._cp_pg,
+                )
+            elif self._ring_flash_attn_func is not None:
+                # shape: (batch_size, seq_len, n_heads, head_dim)
+                att = self._ring_flash_attn_func(  # type: ignore
+                    q,
+                    k,
+                    v,
+                    dropout_p=self.dropout_p,
+                    causal=True,
+                    softmax_scale=scale,
+                    group=self._cp_pg,
                 )
             else:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' requires flash-attn for context parallelism"
+                )
+        else:
+            if max_doc_len is not None and cu_doc_lens is not None:
+                if self._flash_attn_varlen_func is None:
+                    raise RuntimeError(
+                        "flash-attn (use_flash=True) is required for intra-document masking"
+                    )
                 att = self._flash_attn_varlen_func(
                     q.view(B * T, -1, self.head_dim),
                     k.view(B * T, -1, self.head_dim),
@@ -321,36 +341,32 @@ class Attention(AttentionBase):
                     softmax_scale=scale,  # type: ignore
                     causal=True,  # type: ignore
                 )
-        elif self._flash_attn_func is not None:
-            # shape: (batch_size, seq_len, n_heads, head_dim)
-            att = self._flash_attn_func(  # type: ignore
-                q, k, v, dropout_p=self.dropout_p, causal=True, softmax_scale=scale
-            )
-        else:
-            # Fall back to PyTorch's SDPA...
-            if self.cp_enabled:
-                raise RuntimeError(
-                    f"'{self.__class__.__name__}' requires flash-attn (use_flash=True) for context parallelism"
+            elif self._flash_attn_func is not None:
+                # shape: (batch_size, seq_len, n_heads, head_dim)
+                att = self._flash_attn_func(  # type: ignore
+                    q, k, v, dropout_p=self.dropout_p, causal=True, softmax_scale=scale
+                )
+            else:
+                # Fall back to PyTorch's SDPA...
+
+                # PyTorch's SDPA doesn't support GQA, so we have to do this.
+                # shape: (batch_size, n_heads, seq_len, head_dim)
+                k = repeat_kv(k, self.n_rep)
+                v = repeat_kv(v, self.n_rep)
+
+                # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
+                # shape: (batch_size, n_heads, seq_len, head_dim),
+                #        (batch_size, n_kv_heads, seq_len, head_dim),
+                #        (batch_size, n_kv_heads, seq_len, head_dim)
+                q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+
+                # shape: (batch_size, n_heads, seq_len, head_dim)
+                att = F.scaled_dot_product_attention(
+                    q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
                 )
 
-            # PyTorch's SDPA doesn't support GQA, so we have to do this.
-            # shape: (batch_size, n_heads, seq_len, head_dim)
-            k = repeat_kv(k, self.n_rep)
-            v = repeat_kv(v, self.n_rep)
-
-            # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
-            # shape: (batch_size, n_heads, seq_len, head_dim),
-            #        (batch_size, n_kv_heads, seq_len, head_dim),
-            #        (batch_size, n_kv_heads, seq_len, head_dim)
-            q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
-
-            # shape: (batch_size, n_heads, seq_len, head_dim)
-            att = F.scaled_dot_product_attention(
-                q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
-            )
-
-            # shape: (batch_size, seq_len, n_heads, head_dim)
-            att = att.transpose(1, 2).contiguous()
+                # shape: (batch_size, seq_len, n_heads, head_dim)
+                att = att.transpose(1, 2).contiguous()
 
         return att
 
@@ -487,10 +503,9 @@ class Attention(AttentionBase):
                 zigzag_ring_flash_attn_varlen_func,
             )
 
-            self._flash_attn_func = partial(zigzag_ring_flash_attn_func, group=cp_pg)
-            self._flash_attn_varlen_func = partial(
-                torch._dynamo.disable(zigzag_ring_flash_attn_varlen_func), group=cp_pg
-            )
+            self._ring_flash_attn_func = zigzag_ring_flash_attn_func
+            self._ring_flash_attn_varlen_func = zigzag_ring_flash_attn_varlen_func
+            torch._dynamo.disable(self._ring_flash_attn_varlen_func)
         else:
             raise NotImplementedError(load_balancer)
 
@@ -694,6 +709,8 @@ class FusedAttention(AttentionBase):
 
         self._flash_attn_qkvpacked_func = flash_attn_qkvpacked_func
         self._flash_attn_varlen_qkvpacked_func = flash_attn_varlen_qkvpacked_func
+        self._ring_flash_attn_qkvpacked_func = None
+        self._ring_flash_attn_varlen_qkvpacked_func = None
 
         self._cp_pg: Optional[dist.ProcessGroup] = None
         self._cp_enabled = False
@@ -741,18 +758,37 @@ class FusedAttention(AttentionBase):
                 )
             qkv = self.rope(qkv, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis)
 
-        if max_doc_len is not None and cu_doc_lens is not None:
-            # shape: (batch_size * seq_len, n_heads, head_dim)
-            att = self._flash_attn_varlen_qkvpacked_func(
-                qkv.view(B * T, 3, self.n_heads, self.head_dim),
-                cu_doc_lens,
-                max_doc_len,
-                dropout_p=self.dropout_p,
-                causal=True,
-            )
+        if self.cp_enabled:
+            if max_doc_len is not None and cu_doc_lens is not None:
+                assert self._ring_flash_attn_varlen_qkvpacked_func is not None
+                # shape: (batch_size * seq_len, n_heads, head_dim)
+                att = self._flash_attn_varlen_qkvpacked_func(
+                    qkv.view(B * T, 3, self.n_heads, self.head_dim),
+                    cu_doc_lens,
+                    max_doc_len,
+                    dropout_p=self.dropout_p,
+                    causal=True,
+                    group=self._cp_pg,
+                )
+            else:
+                assert self._ring_flash_attn_qkvpacked_func is not None
+                # shape: (batch_size, seq_len, n_heads, head_dim)
+                att = self._flash_attn_qkvpacked_func(
+                    qkv, dropout_p=self.dropout_p, causal=True, group=self._cp_pg
+                )
         else:
-            # shape: (batch_size, seq_len, n_heads, head_dim)
-            att = self._flash_attn_qkvpacked_func(qkv, dropout_p=self.dropout_p, causal=True)
+            if max_doc_len is not None and cu_doc_lens is not None:
+                # shape: (batch_size * seq_len, n_heads, head_dim)
+                att = self._flash_attn_varlen_qkvpacked_func(
+                    qkv.view(B * T, 3, self.n_heads, self.head_dim),
+                    cu_doc_lens,
+                    max_doc_len,
+                    dropout_p=self.dropout_p,
+                    causal=True,
+                )
+            else:
+                # shape: (batch_size, seq_len, n_heads, head_dim)
+                att = self._flash_attn_qkvpacked_func(qkv, dropout_p=self.dropout_p, causal=True)
 
         # shape: (batch_size, seq_len, d_model)
         att = att.view(B, T, -1)  # type: ignore
@@ -781,12 +817,11 @@ class FusedAttention(AttentionBase):
                 zigzag_ring_flash_attn_varlen_qkvpacked_func,
             )
 
-            self._flash_attn_qkvpacked_func = partial(
-                zigzag_ring_flash_attn_qkvpacked_func, group=cp_pg
+            self._ring_flash_attn_qkvpacked_func = zigzag_ring_flash_attn_qkvpacked_func
+            self._ring_flash_attn_varlen_qkvpacked_func = (
+                zigzag_ring_flash_attn_varlen_qkvpacked_func
             )
-            self._flash_attn_varlen_qkvpacked_func = partial(
-                torch._dynamo.disable(zigzag_ring_flash_attn_varlen_qkvpacked_func), group=cp_pg
-            )
+            torch._dynamo.disable(self._ring_flash_attn_varlen_qkvpacked_func)
         else:
             raise NotImplementedError(load_balancer)
 
