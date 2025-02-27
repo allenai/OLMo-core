@@ -442,7 +442,7 @@ def segment_documents_into_instances(
         rng = get_rng(seed)
         indices = rng.choice(indices.reshape(-1, 2), size=max_instances).reshape(-1)
 
-    if not indices:
+    if indices.size == 0:
         raise RuntimeError(f"Failed to produce any documents from '{path}'")
 
     with memmap_to_write(target, dtype=indices_dtype, shape=(indices.size,)) as indices_mmap:
