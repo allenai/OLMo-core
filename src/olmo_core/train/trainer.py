@@ -4,6 +4,7 @@ import signal
 from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import (
     Any,
@@ -47,7 +48,7 @@ from .callbacks import (
     SpeedMonitorCallback,
 )
 from .checkpoint import Checkpointer
-from .common import Duration, DurationUnit, LoadStrategy, ReduceType
+from .common import Duration, DurationUnit, LoadStrategy, ReduceType, TrainingProgress
 from .train_module import TrainModule
 from .utils import EnvRngStates, move_metrics, reduce_metrics
 
@@ -389,15 +390,18 @@ class Trainer:
         """
         The maximum number of steps to train for, as determined by :data:`max_duration`.
         """
-        if self.max_duration.unit == DurationUnit.steps:
-            return self.max_duration.value
-        elif self.max_duration.unit == DurationUnit.epochs:
+        return self._get_max_steps(self.max_duration)
+
+    def _get_max_steps(self, duration: Duration) -> int:
+        if duration.unit == DurationUnit.steps:
+            return duration.value
+        elif duration.unit == DurationUnit.epochs:
             if self.data_loader.total_batches is None:
                 raise RuntimeError(
                     "the number of steps cannot be determined from an 'epochs' duration since "
                     "the data loader's number of batches is unknown"
                 )
-            max_epochs = self.max_duration.value
+            max_epochs = duration.value
             complete_epochs_remaining = max(max_epochs - self.epoch, 0)
             steps_remaining_this_epoch = max(
                 self.data_loader.total_batches - self.data_loader.batches_processed, 0
@@ -407,9 +411,9 @@ class Trainer:
                 + steps_remaining_this_epoch
             )
             return self.global_step + steps_remaining
-        elif self.max_duration.unit == DurationUnit.tokens:
+        elif duration.unit == DurationUnit.tokens:
             # Need to account for a change in batch size.
-            max_tokens = self.max_duration.value
+            max_tokens = duration.value
             tokens_remaining = max(max_tokens - self.global_train_tokens_seen, 0)
             steps_remaining = math.ceil(tokens_remaining / self.tokens_per_batch)
             return self.global_step + steps_remaining
@@ -452,6 +456,35 @@ class Trainer:
         If a checkpoint has been loaded.
         """
         return self._checkpoint_loaded
+
+    @property
+    def training_progress(self) -> TrainingProgress:
+        # Calculate total steps.
+        total_steps = max(
+            self._get_max_steps(self.hard_stop) if self.hard_stop is not None else self.max_steps,
+            self.global_step,
+        )
+
+        # Get current speed in batches per second.
+        bps: Optional[float] = None
+        for callback in self.callbacks.values():
+            if isinstance(callback, SpeedMonitorCallback):
+                bps = callback.bps_avg
+                break
+
+        # Estimate the remaining time.
+        time_remaining: Optional[timedelta] = None
+        if bps is not None and (steps_remaining := (total_steps - self.global_step)) > 0:
+            seconds_remaining = steps_remaining / bps
+            # Round to nearest minute.
+            minutes_remaining = 1 + (seconds_remaining // 60)
+            time_remaining = timedelta(minutes=minutes_remaining)
+
+        return TrainingProgress(
+            current_step=self.global_step,
+            total_steps=total_steps,
+            time_remaining=time_remaining,
+        )
 
     def cancel_run(self, reason: str):
         """

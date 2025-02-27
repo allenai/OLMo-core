@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from typing import Dict, List, Optional
 
-from olmo_core.utils import format_float
+from olmo_core.utils import format_float, format_timedelta
 
 from .callback import Callback
 
@@ -58,7 +58,7 @@ class ConsoleLoggerCallback(Callback):
         if not self._should_log_metrics(step):
             return
 
-        prefix = self._get_progress_marker(step)
+        prefix = self._get_progress_marker(step, include_eta=True)
         log.info(
             f"{prefix}\n"
             + "\n".join(
@@ -70,8 +70,11 @@ class ConsoleLoggerCallback(Callback):
             )
         )
 
-    def _get_progress_marker(self, step: int) -> str:
-        return f"[step={step}/{self.trainer.max_steps},epoch={self.trainer.epoch}]"
+    def _get_progress_marker(self, step: int, include_eta: bool = False) -> str:
+        if include_eta and (eta := self.trainer.training_progress.time_remaining) is not None:
+            return f"[step={step}/{self.trainer.max_steps},epoch={self.trainer.epoch},eta={format_timedelta(eta)}]"
+        else:
+            return f"[step={step}/{self.trainer.max_steps},epoch={self.trainer.epoch}]"
 
     def _should_log_metrics(self, step: int) -> bool:
         metrics_log_interval = self.metrics_log_interval or self.log_interval

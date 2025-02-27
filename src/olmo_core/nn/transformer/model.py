@@ -294,7 +294,13 @@ class Transformer(nn.Module):
         :returns: The output logits.
         """
         if cu_doc_lens is not None and self.compile_enabled:
-            mark_dynamic(cu_doc_lens, (0, 1))
+            mark_dynamic(cu_doc_lens, 0)
+        if pos_sin is not None and self.compile_enabled:
+            mark_dynamic(pos_sin, 0)
+        if pos_cos is not None and self.compile_enabled:
+            mark_dynamic(pos_cos, 0)
+        if freqs_cis is not None and self.compile_enabled:
+            mark_dynamic(freqs_cis, 0)
 
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.

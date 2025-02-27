@@ -397,6 +397,9 @@ def bucket_documents(
             indices.append(start_idx + x)
             start_idx += x
 
+    if not indices:
+        raise RuntimeError(f"Failed to produce any bucketed documents from '{path}'")
+
     with memmap_to_write(target, dtype=indices_dtype, shape=(len(indices),)) as indices_mmap:
         indices_mmap[:] = indices
 
@@ -438,6 +441,9 @@ def segment_documents_into_instances(
         max_instances, seed = sample
         rng = get_rng(seed)
         indices = rng.choice(indices.reshape(-1, 2), size=max_instances).reshape(-1)
+
+    if indices.size == 0:
+        raise RuntimeError(f"Failed to produce any documents from '{path}'")
 
     with memmap_to_write(target, dtype=indices_dtype, shape=(indices.size,)) as indices_mmap:
         indices_mmap[:] = indices
