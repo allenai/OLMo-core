@@ -9,7 +9,7 @@ import time
 import uuid
 import warnings
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from itertools import cycle, islice
 from queue import Queue
 from threading import Thread
@@ -609,6 +609,29 @@ def format_float(value: float) -> str:
         return f"{value:.3f}"
     else:
         return f"{value:.4f}"
+
+
+def format_timedelta(td: timedelta) -> str:
+    breakdown = []
+    if td.days > 0:
+        breakdown.append(f"{td.days}d")
+
+    hours = td.seconds // 3600
+    if hours > 0:
+        breakdown.append(f"{hours}h")
+
+    minutes = (td.seconds % 3600) // 60
+    if minutes > 0:
+        breakdown.append(f"{minutes}m")
+
+    seconds = td.seconds % 60
+    if seconds > 0:
+        breakdown.append(f"{seconds}s")
+
+    if breakdown:
+        return ", ".join(breakdown)
+    else:
+        return "0s"
 
 
 def flatten_dict(d: Dict[str, Any]) -> Dict[str, Any]:

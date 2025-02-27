@@ -36,6 +36,11 @@ class SpeedMonitorCallback(Callback):
     _step_tokens: int = 0
     _step_seq_len: int = 0
     _parallel_degree: int = 1
+    _bps_avg: Optional[float] = None
+
+    @property
+    def bps_avg(self) -> Optional[float]:
+        return self._bps_avg
 
     def _get_num_flops_per_token(self, seq_len: int) -> Optional[int]:
         if self.num_flops_per_token is not None:
@@ -114,6 +119,8 @@ class SpeedMonitorCallback(Callback):
         bps = 1 / step_time
         bps_avg = self._total_steps / total_time
         data_pct = 100 * self._batch_load_time / step_time
+
+        self._bps_avg = bps_avg
 
         self.trainer.record_metric("throughput/total tokens", self.trainer.global_train_tokens_seen)
         self.trainer.record_metric(

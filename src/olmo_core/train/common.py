@@ -1,10 +1,12 @@
 from dataclasses import dataclass
-from typing import Any, Dict, Tuple
+from datetime import timedelta
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 
 from ..config import StrEnum
 from ..data.utils import get_labels
+from ..utils import format_timedelta
 
 
 class DurationUnit(StrEnum):
@@ -138,3 +140,28 @@ def get_inputs_for_loss(
     return reshape_inputs_for_loss(
         logits, batch.get("labels", get_labels(batch, label_ignore_index=label_ignore_index))
     )
+
+
+@dataclass
+class TrainingProgress:
+    current_step: int
+    """
+    The current training step.
+    """
+    total_steps: int
+    """
+    The step that training will stop at.
+    """
+    time_remaining: Optional[timedelta] = None
+    """
+    Estimated time remaining.
+    """
+
+    def __str__(self) -> str:
+        progress_perc = min(100, int(100 * self.current_step / self.total_steps))
+        progress_str = (
+            f"{progress_perc}% complete (step {self.current_step:,d}/{self.total_steps:,d})"
+        )
+        if self.time_remaining is not None:
+            progress_str += f", eta {format_timedelta(self.time_remaining)}"
+        return progress_str
