@@ -17,7 +17,13 @@ from ..distributed.parallel.tensor_parallel import SequenceParallel
 from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
-from .functional import l2_normalize
+from .functional import (
+    flash_attn,
+    flash_attn_varlen,
+    l2_normalize,
+    zigzag_ring_flash_attn,
+    zigzag_ring_flash_attn_varlen,
+)
 from .layer_norm import LayerNorm, LayerNormConfig
 from .rope import (
     ComplexRotaryEmbedding,
@@ -254,19 +260,7 @@ class Attention(AttentionBase):
             assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
             self.rope = rope_class
 
-        self._flash_attn_func = None
-        self._ring_flash_attn_func = None
-        self._flash_attn_varlen_func = None
-        self._ring_flash_attn_varlen_func = None
-        if use_flash:
-            from flash_attn import (  # type: ignore
-                flash_attn_func,
-                flash_attn_varlen_func,
-            )
-
-            self._flash_attn_func = flash_attn_func
-            self._flash_attn_varlen_func = flash_attn_varlen_func
-
+        self.use_flash = use_flash
         self._cp_pg: Optional[dist.ProcessGroup] = None
         self._cp_enabled = False
         self._cp_load_balancer: Optional[ContextParallelLoadBalancerType] = None
@@ -291,13 +285,10 @@ class Attention(AttentionBase):
 
         att: torch.Tensor
         if self.cp_enabled:
+            assert self._cp_pg is not None
             if max_doc_len is not None and cu_doc_lens is not None:
-                if self._ring_flash_attn_varlen_func is None:
-                    raise RuntimeError(
-                        "flash-attn (use_flash=True) is required for intra-document masking"
-                    )
                 # shape: (batch_size * seq_len, n_heads, head_dim)
-                att = self._ring_flash_attn_varlen_func(  # type: ignore
+                att = zigzag_ring_flash_attn_varlen(
                     q.view(B * T, -1, self.head_dim),
                     k.view(B * T, -1, self.head_dim),
                     v.view(B * T, -1, self.head_dim),
@@ -308,9 +299,9 @@ class Attention(AttentionBase):
                     softmax_scale=scale,
                     group=self._cp_pg,
                 )
-            elif self._ring_flash_attn_func is not None:
+            elif self.use_flash:
                 # shape: (batch_size, seq_len, n_heads, head_dim)
-                att = self._ring_flash_attn_func(  # type: ignore
+                att = zigzag_ring_flash_attn(
                     q,
                     k,
                     v,
@@ -321,29 +312,23 @@ class Attention(AttentionBase):
                 )
             else:
                 raise RuntimeError(
-                    f"'{self.__class__.__name__}' requires flash-attn for context parallelism"
+                    f"'{self.__class__.__name__}' requires flash (use_flash=True) for context parallelism"
                 )
         else:
             if max_doc_len is not None and cu_doc_lens is not None:
-                if self._flash_attn_varlen_func is None:
-                    raise RuntimeError(
-                        "flash-attn (use_flash=True) is required for intra-document masking"
-                    )
-                att = self._flash_attn_varlen_func(
+                att = flash_attn_varlen(
                     q.view(B * T, -1, self.head_dim),
                     k.view(B * T, -1, self.head_dim),
                     v.view(B * T, -1, self.head_dim),
                     cu_doc_lens,
-                    cu_doc_lens,
                     max_doc_len,
-                    max_doc_len,
-                    dropout_p=self.dropout_p,  # type: ignore
-                    softmax_scale=scale,  # type: ignore
-                    causal=True,  # type: ignore
+                    dropout_p=self.dropout_p,
+                    softmax_scale=scale,
+                    causal=True,
                 )
-            elif self._flash_attn_func is not None:
+            elif self.use_flash:
                 # shape: (batch_size, seq_len, n_heads, head_dim)
-                att = self._flash_attn_func(  # type: ignore
+                att = flash_attn(
                     q, k, v, dropout_p=self.dropout_p, causal=True, softmax_scale=scale
                 )
             else:
@@ -490,27 +475,10 @@ class Attention(AttentionBase):
         .. important::
             This requires flash-attn and ring-flash-attn.
         """
-        if self._flash_attn_func is None or self._flash_attn_varlen_func is None:
-            raise RuntimeError(
-                f"'{self.__class__.__name__}' requires flash-attn (use_flash=True) for context parallelism"
-            )
-
-        cp_pg = cp_mesh.get_group()
-
-        if load_balancer == ContextParallelLoadBalancerType.zig_zag:
-            from ring_flash_attn import (  # type: ignore
-                zigzag_ring_flash_attn_func,
-                zigzag_ring_flash_attn_varlen_func,
-            )
-
-            self._ring_flash_attn_func = zigzag_ring_flash_attn_func
-            self._ring_flash_attn_varlen_func = torch._dynamo.disable(
-                zigzag_ring_flash_attn_varlen_func
-            )
-        else:
+        if load_balancer != ContextParallelLoadBalancerType.zig_zag:
             raise NotImplementedError(load_balancer)
 
-        self._cp_pg = cp_pg
+        self._cp_pg = cp_mesh.get_group()
         self._cp_enabled = True
         self._cp_load_balancer = load_balancer
 
