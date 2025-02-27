@@ -17,7 +17,13 @@ from ..distributed.parallel.tensor_parallel import SequenceParallel
 from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
-from .functional import flash_funcs, l2_normalize
+from .functional import (
+    dispatch_flash_attn,
+    dispatch_flash_attn_qkvpacked,
+    dispatch_ring_flash_attn,
+    dispatch_ring_flash_attn_qkvpacked,
+    l2_normalize,
+)
 from .layer_norm import LayerNorm, LayerNormConfig
 from .rope import (
     ComplexRotaryEmbedding,
@@ -272,81 +278,58 @@ class Attention(AttentionBase):
         cu_doc_lens: Optional[torch.Tensor] = None,
         scale: Optional[float] = None,
     ) -> torch.Tensor:
-        B, T, *_ = q.shape
-
-        # NOTE: use -1 instead of `n_heads` / `n_kv_heads` to infer actual local size when
-        # using tensor parallelism.
-
         att: torch.Tensor
         if self.cp_enabled:
-            assert self._cp_pg is not None
-            if max_doc_len is not None and cu_doc_lens is not None:
-                # shape: (batch_size * seq_len, n_heads, head_dim)
-                att = flash_funcs.zigzag_ring_flash_attn_varlen(
-                    q.view(B * T, -1, self.head_dim),
-                    k.view(B * T, -1, self.head_dim),
-                    v.view(B * T, -1, self.head_dim),
-                    cu_doc_lens,
-                    max_doc_len,
-                    dropout_p=self.dropout_p,
-                    causal=True,
-                    softmax_scale=scale,
-                    group=self._cp_pg,
-                )
-            elif self.use_flash:
-                # shape: (batch_size, seq_len, n_heads, head_dim)
-                att = flash_funcs.zigzag_ring_flash_attn(
+            assert self._cp_pg is not None and self._cp_load_balancer is not None
+            if self.use_flash:
+                att = dispatch_ring_flash_attn(
                     q,
                     k,
                     v,
+                    cu_seqlens=cu_doc_lens,
+                    max_seqlen=max_doc_len,
+                    group=self._cp_pg,
+                    strategy=self._cp_load_balancer,
                     dropout_p=self.dropout_p,
                     causal=True,
                     softmax_scale=scale,
-                    group=self._cp_pg,
                 )
             else:
                 raise RuntimeError(
                     f"'{self.__class__.__name__}' requires flash (use_flash=True) for context parallelism"
                 )
+        elif self.use_flash:
+            att = dispatch_flash_attn(
+                q,
+                k,
+                v,
+                cu_seqlens=cu_doc_lens,
+                max_seqlen=max_doc_len,
+                dropout_p=self.dropout_p,
+                softmax_scale=scale,
+                causal=True,
+            )
         else:
-            if max_doc_len is not None and cu_doc_lens is not None:
-                # shape: (batch_size * seq_len, n_heads, head_dim)
-                att = flash_funcs.flash_attn_varlen(
-                    q.view(B * T, -1, self.head_dim),
-                    k.view(B * T, -1, self.head_dim),
-                    v.view(B * T, -1, self.head_dim),
-                    cu_doc_lens,
-                    max_doc_len,
-                    dropout_p=self.dropout_p,
-                    softmax_scale=scale,
-                    causal=True,
-                )
-            elif self.use_flash:
-                # shape: (batch_size, seq_len, n_heads, head_dim)
-                att = flash_funcs.flash_attn(
-                    q, k, v, dropout_p=self.dropout_p, causal=True, softmax_scale=scale
-                )
-            else:
-                # Fall back to PyTorch's SDPA...
+            # Fall back to PyTorch's SDPA...
 
-                # PyTorch's SDPA doesn't support GQA, so we have to do this.
-                # shape: (batch_size, n_heads, seq_len, head_dim)
-                k = repeat_kv(k, self.n_rep)
-                v = repeat_kv(v, self.n_rep)
+            # PyTorch's SDPA doesn't support GQA, so we have to do this.
+            # shape: (batch_size, n_heads, seq_len, head_dim)
+            k = repeat_kv(k, self.n_rep)
+            v = repeat_kv(v, self.n_rep)
 
-                # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
-                # shape: (batch_size, n_heads, seq_len, head_dim),
-                #        (batch_size, n_kv_heads, seq_len, head_dim),
-                #        (batch_size, n_kv_heads, seq_len, head_dim)
-                q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+            # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
+            # shape: (batch_size, n_heads, seq_len, head_dim),
+            #        (batch_size, n_kv_heads, seq_len, head_dim),
+            #        (batch_size, n_kv_heads, seq_len, head_dim)
+            q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
-                # shape: (batch_size, n_heads, seq_len, head_dim)
-                att = F.scaled_dot_product_attention(
-                    q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
-                )
+            # shape: (batch_size, n_heads, seq_len, head_dim)
+            att = F.scaled_dot_product_attention(
+                q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
+            )
 
-                # shape: (batch_size, seq_len, n_heads, head_dim)
-                att = att.transpose(1, 2).contiguous()
+            # shape: (batch_size, seq_len, n_heads, head_dim)
+            att = att.transpose(1, 2).contiguous()
 
         return att
 
@@ -470,12 +453,9 @@ class Attention(AttentionBase):
         .. important::
             This requires flash-attn and ring-flash-attn.
         """
-        if load_balancer != ContextParallelLoadBalancerType.zig_zag:
-            raise NotImplementedError(load_balancer)
-
         self._cp_pg = cp_mesh.get_group()
-        self._cp_enabled = True
         self._cp_load_balancer = load_balancer
+        self._cp_enabled = True
 
 
 @beta_feature
@@ -713,35 +693,24 @@ class FusedAttention(AttentionBase):
             qkv = self.rope(qkv, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis)
 
         if self.cp_enabled:
-            assert self._cp_pg is not None
-            if max_doc_len is not None and cu_doc_lens is not None:
-                # shape: (batch_size * seq_len, n_heads, head_dim)
-                att = flash_funcs.zigzag_ring_flash_attn_varlen_qkvpacked(
-                    qkv.view(B * T, 3, self.n_heads, self.head_dim),
-                    cu_doc_lens,
-                    max_doc_len,
-                    dropout_p=self.dropout_p,
-                    causal=True,
-                    group=self._cp_pg,
-                )
-            else:
-                # shape: (batch_size, seq_len, n_heads, head_dim)
-                att = flash_funcs.zigzag_ring_flash_attn_qkvpacked(
-                    qkv, dropout_p=self.dropout_p, causal=True, group=self._cp_pg
-                )
+            assert self._cp_pg is not None and self._cp_load_balancer is not None
+            att = dispatch_ring_flash_attn_qkvpacked(
+                qkv,
+                cu_seqlens=cu_doc_lens,
+                max_seqlen=max_doc_len,
+                group=self._cp_pg,
+                strategy=self._cp_load_balancer,
+                dropout_p=self.dropout_p,
+                causal=True,
+            )
         else:
-            if max_doc_len is not None and cu_doc_lens is not None:
-                # shape: (batch_size * seq_len, n_heads, head_dim)
-                att = flash_funcs.flash_attn_varlen_qkvpacked(
-                    qkv.view(B * T, 3, self.n_heads, self.head_dim),
-                    cu_doc_lens,
-                    max_doc_len,
-                    dropout_p=self.dropout_p,
-                    causal=True,
-                )
-            else:
-                # shape: (batch_size, seq_len, n_heads, head_dim)
-                att = flash_funcs.flash_attn_qkvpacked(qkv, dropout_p=self.dropout_p, causal=True)
+            att = dispatch_flash_attn_qkvpacked(
+                qkv,
+                cu_seqlens=cu_doc_lens,
+                max_seqlen=max_doc_len,
+                dropout_p=self.dropout_p,
+                causal=True,
+            )
 
         # shape: (batch_size, seq_len, d_model)
         att = att.view(B, T, -1)  # type: ignore
@@ -762,12 +731,9 @@ class FusedAttention(AttentionBase):
         raise NotImplementedError("TP is not implemented yet for the fused attention variant")
 
     def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: ContextParallelLoadBalancerType):
-        if load_balancer != ContextParallelLoadBalancerType.zig_zag:
-            raise NotImplementedError(load_balancer)
-
         self._cp_pg = cp_mesh.get_group()
-        self._cp_enabled = True
         self._cp_load_balancer = load_balancer
+        self._cp_enabled = True
 
 
 def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
