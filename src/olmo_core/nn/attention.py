@@ -280,6 +280,7 @@ class Attention(AttentionBase):
         max_doc_len: Optional[int] = None,
         max_doc_len_q: Optional[int] = None,
         max_doc_len_k: Optional[int] = None,
+        local_k_slice: Optional[slice] = None,
         scale: Optional[float] = None,
     ) -> torch.Tensor:
         att: torch.Tensor
@@ -301,6 +302,8 @@ class Attention(AttentionBase):
                 max_seqlen=max_doc_len,
                 max_seqlen_q=max_doc_len_q,
                 max_seqlen_k=max_doc_len_k,
+                heads_k_stride=1,  # TODO: should this ever not be 1?
+                local_k_slice=local_k_slice,
                 dropout_p=self.dropout_p,
                 causal=True,
                 softmax_scale=scale,
@@ -367,6 +370,7 @@ class Attention(AttentionBase):
         max_doc_len: Optional[int] = None,
         max_doc_len_q: Optional[int] = None,
         max_doc_len_k: Optional[int] = None,
+        local_k_slice: Optional[slice] = None,
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
@@ -432,6 +436,7 @@ class Attention(AttentionBase):
             max_doc_len=max_doc_len,
             max_doc_len_q=max_doc_len_q,
             max_doc_len_k=max_doc_len_k,
+            local_k_slice=local_k_slice,
         )
 
         # shape: (batch_size, seq_len, d_model)
@@ -560,6 +565,7 @@ class NormalizedAttention(Attention):
         max_doc_len: Optional[int] = None,
         max_doc_len_q: Optional[int] = None,
         max_doc_len_k: Optional[int] = None,
+        local_k_slice: Optional[slice] = None,
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
@@ -609,6 +615,7 @@ class NormalizedAttention(Attention):
             max_doc_len=max_doc_len,
             max_doc_len_q=max_doc_len_q,
             max_doc_len_k=max_doc_len_k,
+            local_k_slice=local_k_slice,
             scale=self.sqrt_head_dim,
         )
 

@@ -82,12 +82,13 @@ def test_zig_zag_load_balancer_shard_by_document_with_padding():
     x = torch.tensor(list(range(12))).unsqueeze(0)
     cu_doc_lens = torch.tensor([0, 7, 10])
 
-    res, new_doc_lens = _get_lb(0, 2).batch_shard_by_document(
+    res, opts = _get_lb(0, 2).batch_shard_by_document(
         inputs=[x],
         seq_dims=[1],
         cu_doc_lens=cu_doc_lens,
         pad_values=[-1],
     )
+    new_doc_lens = opts["cu_doc_lens"]
     assert new_doc_lens.tolist() == [0, 4, 6]
     assert res[0].tolist() == [
         [

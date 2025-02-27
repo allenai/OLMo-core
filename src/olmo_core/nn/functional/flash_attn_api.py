@@ -119,6 +119,8 @@ def dispatch_ring_flash_attn(
     max_seqlen: Optional[int] = None,
     max_seqlen_q: Optional[int] = None,
     max_seqlen_k: Optional[int] = None,
+    heads_k_stride: Optional[int] = None,
+    local_k_slice: Optional[slice] = None,
     dropout_p: float = 0.0,
     softmax_scale: Optional[float] = None,
     causal: bool = False,
@@ -132,6 +134,11 @@ def dispatch_ring_flash_attn(
                 f"{strategy} load balancing strategy requires unified QK doc lengths"
             )
 
+        if local_k_slice is not None:
+            raise RuntimeError(
+                f"'local_k_slice' are invalid for {strategy} load balancing strategy"
+            )
+
         if cu_seqlens is not None and max_seqlen is not None:
             out = ring_flash_attn.zigzag_ring_flash_attn_varlen_func(
                 _flatten_batch_dim(q),
@@ -140,8 +147,8 @@ def dispatch_ring_flash_attn(
                 cu_seqlens,
                 max_seqlen,
                 dropout_p=dropout_p,
-                causal=causal,
                 softmax_scale=softmax_scale,
+                causal=causal,
                 group=group,
             )
         else:
@@ -150,10 +157,41 @@ def dispatch_ring_flash_attn(
                 k,
                 v,
                 dropout_p=dropout_p,
-                causal=causal,
                 softmax_scale=softmax_scale,
+                causal=causal,
                 group=group,
             )
+    elif strategy == ContextParallelLoadBalancerType.llama3:
+        if any(x is not None for x in (cu_seqlens, max_seqlen)):
+            raise RuntimeError(
+                f"{strategy} load balancing strategy requires seperate QK doc lengths"
+            )
+
+        if (
+            cu_seqlens_q is None
+            or cu_seqlens_k is None
+            or max_seqlen_q is None
+            or max_seqlen_k is None
+            or heads_k_stride is None
+            or local_k_slice is None
+        ):
+            raise RuntimeError(f"missing required arguments for {strategy} load balancing strategy")
+
+        out = ring_flash_attn.llama3_flash_attn_varlen_func(
+            _flatten_batch_dim(q),
+            _flatten_batch_dim(k),
+            _flatten_batch_dim(v),
+            cu_seqlens_q,
+            cu_seqlens_k,
+            max_seqlen_q,
+            max_seqlen_k,
+            heads_k_stride,
+            local_k_slice,
+            dropout_p=dropout_p,
+            softmax_scale=softmax_scale,
+            causal=causal,
+            group=group,
+        )
     else:
         raise NotImplementedError(strategy)
 

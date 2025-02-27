@@ -966,16 +966,14 @@ def prepare_batch(
                     f"Rank micro-batches must consist of a single instance when using "
                     f"context parallelism with intra-document masking (got {B} instances)"
                 )
-            inputs, cu_doc_lens = cp_load_balancer.batch_shard_by_document(
+            inputs, additional_inputs = cp_load_balancer.batch_shard_by_document(
                 inputs=inputs,
                 seq_dims=seq_dims,
                 cu_doc_lens=cu_doc_lens,
                 pad_values=pad_values,
                 length_multiple=16,
             )
-            max_doc_len = (cu_doc_lens[1:] - cu_doc_lens[:-1]).max().item()  # type: ignore
-            out_batch["max_doc_len"] = max_doc_len
-            out_batch["cu_doc_lens"] = cu_doc_lens
+            out_batch.update(additional_inputs)
         else:
             inputs = cp_load_balancer.batch_shard(
                 inputs=inputs,
