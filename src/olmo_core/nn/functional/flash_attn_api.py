@@ -29,7 +29,11 @@ def dispatch_flash_attn(
     v: torch.Tensor,
     *,
     cu_seqlens: Optional[torch.Tensor] = None,
+    cu_seqlens_q: Optional[torch.Tensor] = None,
+    cu_seqlens_k: Optional[torch.Tensor] = None,
     max_seqlen: Optional[int] = None,
+    max_seqlen_q: Optional[int] = None,
+    max_seqlen_k: Optional[int] = None,
     dropout_p: float = 0.0,
     softmax_scale: Optional[float] = None,
     causal: bool = False,
@@ -37,15 +41,28 @@ def dispatch_flash_attn(
     if flash_attn is None:
         raise RuntimeError("flash-attn is required!")
 
-    if cu_seqlens is not None and max_seqlen is not None:
+    if cu_seqlens is not None:
+        if cu_seqlens_q is None:
+            cu_seqlens_q = cu_seqlens
+        if cu_seqlens_k is None:
+            cu_seqlens_k = cu_seqlens
+    if max_seqlen is not None:
+        if max_seqlen_q is None:
+            max_seqlen_q = max_seqlen
+        if max_seqlen_k is None:
+            max_seqlen_k = max_seqlen
+
+    varlen = all(x is not None for x in (cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k))
+
+    if varlen:
         return flash_attn.flash_attn_varlen_func(
             _flatten_batch_dim(q),
             _flatten_batch_dim(k),
             _flatten_batch_dim(v),
-            cu_seqlens,
-            cu_seqlens,
-            max_seqlen,
-            max_seqlen,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            max_seqlen_q,
+            max_seqlen_k,
             dropout_p=dropout_p,
             softmax_scale=softmax_scale,
             causal=causal,
@@ -97,7 +114,11 @@ def dispatch_ring_flash_attn(
     group: dist.ProcessGroup,
     strategy: ContextParallelLoadBalancerType,
     cu_seqlens: Optional[torch.Tensor] = None,
-    max_seqlen: Optional[int],
+    cu_seqlens_q: Optional[torch.Tensor] = None,
+    cu_seqlens_k: Optional[torch.Tensor] = None,
+    max_seqlen: Optional[int] = None,
+    max_seqlen_q: Optional[int] = None,
+    max_seqlen_k: Optional[int] = None,
     dropout_p: float = 0.0,
     softmax_scale: Optional[float] = None,
     causal: bool = False,
@@ -106,6 +127,11 @@ def dispatch_ring_flash_attn(
         raise RuntimeError("flash-attn and ring-flash-attn are required!")
 
     if strategy == ContextParallelLoadBalancerType.zig_zag:
+        if any(x is not None for x in (cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k)):
+            raise RuntimeError(
+                f"{strategy} load balancing strategy requires unified QK doc lengths"
+            )
+
         if cu_seqlens is not None and max_seqlen is not None:
             out = ring_flash_attn.zigzag_ring_flash_attn_varlen_func(
                 _flatten_batch_dim(q),

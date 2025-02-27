@@ -274,8 +274,12 @@ class Attention(AttentionBase):
         q: torch.Tensor,
         k: torch.Tensor,
         v: torch.Tensor,
-        max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens_q: Optional[torch.Tensor] = None,
+        cu_doc_lens_k: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        max_doc_len_q: Optional[int] = None,
+        max_doc_len_k: Optional[int] = None,
         scale: Optional[float] = None,
     ) -> torch.Tensor:
         att: torch.Tensor
@@ -290,7 +294,11 @@ class Attention(AttentionBase):
                 k,
                 v,
                 cu_seqlens=cu_doc_lens,
+                cu_seqlens_q=cu_doc_lens_q,
+                cu_seqlens_k=cu_doc_lens_k,
                 max_seqlen=max_doc_len,
+                max_seqlen_q=max_doc_len_q,
+                max_seqlen_k=max_doc_len_k,
                 group=self._cp_pg,
                 strategy=self._cp_load_balancer,
                 dropout_p=self.dropout_p,
@@ -303,13 +311,32 @@ class Attention(AttentionBase):
                 k,
                 v,
                 cu_seqlens=cu_doc_lens,
+                cu_seqlens_q=cu_doc_lens_q,
+                cu_seqlens_k=cu_doc_lens_k,
                 max_seqlen=max_doc_len,
+                max_seqlen_q=max_doc_len_q,
+                max_seqlen_k=max_doc_len_k,
                 dropout_p=self.dropout_p,
                 softmax_scale=scale,
                 causal=True,
             )
         else:
             # Fall back to PyTorch's SDPA...
+            if any(
+                opt is not None
+                for opt in (
+                    cu_doc_lens,
+                    cu_doc_lens_q,
+                    cu_doc_lens_k,
+                    max_doc_len,
+                    max_doc_len_q,
+                    max_doc_len_k,
+                )
+            ):
+                raise RuntimeError(
+                    f"{self.__class__.__name__} requires flash-attn (use_flash=True) for intra-document masking"
+                )
+
             # NOTE: PyTorch's SDPA doesn't support GQA, so we have to do this.
             # shape: (batch_size, n_heads, seq_len, head_dim)
             k = repeat_kv(k, self.n_rep)
@@ -334,8 +361,12 @@ class Attention(AttentionBase):
     def forward(
         self,
         x: torch.Tensor,
-        max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens_q: Optional[torch.Tensor] = None,
+        cu_doc_lens_k: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        max_doc_len_q: Optional[int] = None,
+        max_doc_len_k: Optional[int] = None,
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
@@ -344,12 +375,12 @@ class Attention(AttentionBase):
         Apply attention to the input.
 
         :param x: The input of shape ``(batch_size, seq_len, d_model)``.
-        :param max_doc_len: The maximum document length in the input ``x``.
-            Required together with ``cu_doc_lens`` when using intra-document masking.
         :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D
             :class:`torch.int32` tensor that should always have one more element than there
             are documents (the first element in the tensor should always be ``0``).
             Required together with ``max_doc_len`` when using intra-document masking.
+        :param max_doc_len: The maximum document length in the input ``x``.
+            Required together with ``cu_doc_lens`` when using intra-document masking.
 
         :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
         """
@@ -391,7 +422,17 @@ class Attention(AttentionBase):
             )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
-        att = self.sdpa(q, k, v, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
+        att = self.sdpa(
+            q,
+            k,
+            v,
+            cu_doc_lens=cu_doc_lens,
+            cu_doc_lens_q=cu_doc_lens_q,
+            cu_doc_lens_k=cu_doc_lens_k,
+            max_doc_len=max_doc_len,
+            max_doc_len_q=max_doc_len_q,
+            max_doc_len_k=max_doc_len_k,
+        )
 
         # shape: (batch_size, seq_len, d_model)
         att = att.view(B, T, -1)
