@@ -10,6 +10,7 @@ import uuid
 import warnings
 from contextlib import contextmanager
 from datetime import datetime, timedelta
+from functools import lru_cache
 from itertools import cycle, islice
 from queue import Queue
 from threading import Thread
@@ -112,11 +113,14 @@ def move_to_device(o: T, device: torch.device, non_blocking: Optional[bool] = No
         return o
 
 
-def mark_dynamic(x: torch.Tensor, dim: Union[int, Sequence[int]]):
+def mark_dynamic(x: torch.Tensor, dim: Union[int, Sequence[int]], strict: bool = True):
     """
     Mark a tensor as having dynamic sizes for ``torch.compile()``.
     """
-    torch._dynamo.mark_dynamic(x, dim)
+    if strict:
+        torch._dynamo.mark_dynamic(x, dim)
+    else:
+        torch._dynamo.maybe_mark_dynamic(x, dim)
 
 
 def get_default_device() -> torch.device:
@@ -391,6 +395,11 @@ def filter_warnings():
         category=UserWarning,
         message="Synchronization debug mode is a prototype feature.*",
         module="torch.cuda",
+    )
+    warnings.filterwarnings(
+        action="ignore",
+        category=UserWarning,
+        message="TORCH_NCCL_AVOID_RECORD_STREAMS=1 has no effect .*",
     )
     warnings.filterwarnings(
         action="ignore",
@@ -682,3 +691,8 @@ def get_element_size(dtype: torch.dtype) -> int:
 
 def ensure_multiple_of(x: int, of: int) -> int:
     return of * math.ceil(x / of)
+
+
+@lru_cache(maxsize=128)
+def log_once(logger: logging.Logger, msg: str, *args, level: int = logging.INFO, **kwargs):
+    logger.log(level, msg, *args, **kwargs)

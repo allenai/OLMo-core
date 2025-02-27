@@ -13,10 +13,9 @@ from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
-    TransformerActivationCheckpointingConfig,
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
-    TransformerTensorParallelConfig,
     TransformerTrainModuleConfig,
 )
 
@@ -24,10 +23,16 @@ log = logging.getLogger(__name__)
 
 
 CONTEXT_LENGTH = 4 * 16_384
+INTRA_DOCUMENT_MASKING = True
+# 64K length, 32 GPUs, FP8, no intra-doc masking -> 2,750 TPS
+# 64K length, 32 GPUs, no FP8, intra-doc masking -> 3,250 TPS
+# 64K length, 32 GPUs, FP8, intra-doc masking    -> 3,500 TPS
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    return TransformerConfig.olmo2_7B(vocab_size=common.tokenizer.padded_vocab_size())
+    return TransformerConfig.olmo2_7B(
+        vocab_size=common.tokenizer.padded_vocab_size(), use_flash=True
+    )
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
@@ -35,7 +40,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         rank_microbatch_size=1 * CONTEXT_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=AdamWConfig(
-            lr=3e-5,
+            lr=1e-5,
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
@@ -52,12 +57,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
         ),
-        tp_config=TransformerTensorParallelConfig(
-            degree=2,
-            loss_parallel=True,
-        ),
-        ac_config=TransformerActivationCheckpointingConfig(),
-        float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
+        cp_config=TransformerContextParallelConfig(degree=8),
+        float8_config=Float8Config(enabled=False),
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
     )
@@ -110,4 +111,5 @@ if __name__ == "__main__":
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         include_default_evals=False,
+        intra_document_masking=INTRA_DOCUMENT_MASKING,
     )

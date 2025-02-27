@@ -1,6 +1,6 @@
 import logging
 from functools import cached_property
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, Union, cast
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union, cast
 
 import torch
 import torch.nn as nn
@@ -9,14 +9,18 @@ from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
 from olmo_core.config import StrEnum
-from olmo_core.data.utils import get_cumulative_document_lengths
+from olmo_core.distributed.parallel.context_parallel import (
+    ContextParallelLoadBalancerType,
+)
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.utils import get_default_device
+from olmo_core.utils import get_default_device, mark_dynamic
 
+from ..attention import Attention, AttentionBase, FusedAttention
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..lm_head import LMHeadConfig
+from ..rope import RoPEBuffers, RotaryEmbeddingBase
 from ..utils import selective_checkpointing_context_fn
 from .block import (
     MoETransformerBlock,
@@ -114,6 +118,7 @@ class Transformer(nn.Module):
         self.vocab_size = vocab_size
         self.n_layers = n_layers
         self.n_attn_heads = block.attention.n_heads
+        self.dtype = dtype
 
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.blocks = nn.ModuleDict()
@@ -133,7 +138,9 @@ class Transformer(nn.Module):
         self.init_device = init_device
         self.init_method = InitMethod(init_method)
         self.init_seed = init_seed
+
         self._cache = cache
+        self._compile_enabled = False
 
         # Cache the value of these properties up-front in case the parameters are removed
         # later, like for pipeline parallelism.
@@ -172,6 +179,21 @@ class Transformer(nn.Module):
                 return p.device
         return get_default_device()
 
+    @property
+    def compile_enabled(self) -> bool:
+        return self._compile_enabled
+
+    def get_rope_buffers(
+        self, seq_len: int, device: Optional[torch.device] = None
+    ) -> Optional[RoPEBuffers]:
+        if device is None:
+            device = self.device
+        for block in self.blocks.values():
+            rope = cast(Optional[RotaryEmbeddingBase], block.attention.rope)  # type: ignore
+            if rope is not None:
+                return rope.get_buffers(seq_len, device)
+        return None
+
     @torch.no_grad()
     def init_weights(
         self,
@@ -207,7 +229,7 @@ class Transformer(nn.Module):
             # This might fail if it's wrapped.
             #  assert isinstance(block, TransformerBlock)
             block = cast(TransformerBlock, block)
-            att = block.attention
+            att = cast(Union[Attention, FusedAttention], block.attention)
 
             # Attention weights.
             self.init_method.init_attention(
@@ -250,37 +272,32 @@ class Transformer(nn.Module):
 
         return generator
 
-    def forward(
-        self,
-        input_ids: torch.Tensor,
-        doc_lens: Optional[torch.Tensor] = None,
-        max_doc_lens: Optional[Sequence[int]] = None,
-    ) -> torch.Tensor:
+    def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
         """
         Run the transformer on the token input IDs.
 
         :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
-        :param doc_lens: Document lengths to use in attention for intra-document masking.
-            Shape ``(batch_size, max_docs)``.
-            Required together with ``max_doc_lens`` when using intra-document masking.
-        :param max_doc_lens: Maximum document length for each instance in the batch.
-            Required together with ``doc_lens`` when using intra-document masking.
 
         :returns: The output logits.
         """
-        max_doc_len: Optional[int] = None
-        cu_doc_lens: Optional[torch.Tensor] = None
-        if doc_lens is not None and max_doc_lens is not None:
-            max_doc_len = max(max_doc_lens)
-            cu_doc_lens = get_cumulative_document_lengths(doc_lens)
-
-        # passthrough for non-existent layers, allows easy pipeline parallel configuration
+        # Get embeddings but pass-through for non-existent layers to allow easy
+        # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
+        # Run each block.
         for block in self.blocks.values():
-            h = block(h, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
+            # Mark sizes as dynamic for torch.compile().
+            if self.compile_enabled:
+                mark_dynamic(h, (0, 1))
+            h = block(h, **kwargs)
 
-        return self.lm_head(h) if self.lm_head is not None else h
+        # Get final logits but again pass-through in case of pipeline parallelism.
+        if self.lm_head is not None:
+            if self.compile_enabled:
+                mark_dynamic(h, (0, 1))
+            return self.lm_head(h)
+        else:
+            return h
 
     def apply_tp(
         self,
@@ -322,6 +339,16 @@ class Transformer(nn.Module):
                 output_layout=Shard(1) if loss_parallel else Replicate(),
                 use_local_output=not loss_parallel,
             )
+
+    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: ContextParallelLoadBalancerType):
+        """
+        Prepare the model for context-parallelism (CP).
+
+        :param cp_mesh: The CP device mesh.
+        :param load_balancer: The load balancing method.
+        """
+        for block in self.blocks.values():
+            cast(AttentionBase, block.attention).apply_cp(cp_mesh, load_balancer=load_balancer)
 
     def apply_activation_checkpointing(
         self,
@@ -410,6 +437,8 @@ class Transformer(nn.Module):
         if self.lm_head is not None:
             self.register_module("lm_head", torch.compile(self.lm_head, fullgraph=False))  # type: ignore
 
+        self._compile_enabled = True
+
     def apply_fsdp(
         self,
         dp_mesh: Optional[DeviceMesh] = None,
@@ -425,19 +454,16 @@ class Transformer(nn.Module):
             Usually this does not need to be called directly, as :meth:`TransformerConfig.build()`
             will call it for you.
 
-        :param dp_mesh: The data parallel device mesh.
+        :param dp_mesh: The model data parallel device mesh.
         :param param_dtype: The data type to materialize params in. Defaults to the current param dtype.
         :param reduce_dtype: The data type for gradient reduction.
         :pp_enabled: If pipeline parallelism is also enabled.
         :wrapping_strategy: The wrapping strategy.
         """
-        # Adapted from
-        # https://github.com/pytorch/torchtitan/blob/90c889e972b56b9faadebbb78fc985dedc537ed9/torchtitan/parallelisms/parallelize_llama.py#L289
-
         from torch.distributed._composable.fsdp import MixedPrecisionPolicy, fully_shard
 
         mp_policy = MixedPrecisionPolicy(
-            param_dtype=param_dtype or self.embeddings.weight.dtype, reduce_dtype=reduce_dtype
+            param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
         )
         fsdp_config = dict(mesh=dp_mesh, mp_policy=mp_policy)
 
@@ -445,12 +471,6 @@ class Transformer(nn.Module):
             # For PP, do not reshard after forward to avoid per-microbatch
             # all-gathers, which can be expensive and non-overlapped
             reshard_after_forward = False if pp_enabled else True
-
-            if self.is_moe:
-                block = cast(MoETransformerBlock, block)
-                block.feed_forward_moe.prepare_experts_for_fsdp(
-                    reshard_after_forward=reshard_after_forward, **fsdp_config
-                )
 
             if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
                 if hasattr(block, "feed_forward"):
@@ -678,26 +698,30 @@ class MoETransformer(Transformer):
         for block in self.blocks.values():
             cast(MoETransformerBlock, block).reset_metrics()
 
-    def forward(
-        self,
-        input_ids: torch.Tensor,
-        doc_lens: Optional[torch.Tensor] = None,
-        max_doc_lens: Optional[Sequence[int]] = None,
-    ) -> torch.Tensor:
-        max_doc_len: Optional[int] = None
-        cu_doc_lens: Optional[torch.Tensor] = None
-        if doc_lens is not None and max_doc_lens is not None:
-            max_doc_len = max(max_doc_lens)
-            cu_doc_lens = get_cumulative_document_lengths(doc_lens)
-
-        # passthrough for non-existent layers, allows easy pipeline parallel configuration
-        h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
-
-        for block in self.blocks.values():
-            h = block(h, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
-
-        return self.lm_head(h) if self.lm_head is not None else h
-
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         for block in self.blocks.values():
             cast(MoETransformerBlock, block).apply_ep(ep_mesh, **kwargs)
+
+    def prepare_experts_for_fsdp(
+        self,
+        world_mesh: DeviceMesh,
+        param_dtype: Optional[torch.dtype] = None,
+        reduce_dtype: torch.dtype = torch.float32,
+        pp_enabled: bool = False,
+    ):
+        from torch.distributed._composable.fsdp import MixedPrecisionPolicy
+
+        for block in self.blocks.values():
+            cast(MoETransformerBlock, block).feed_forward_moe.prepare_experts_for_fsdp(
+                world_mesh=world_mesh,
+                mp_policy=MixedPrecisionPolicy(
+                    param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
+                ),
+                reshard_after_forward=not pp_enabled,
+            )
+
+    def prepare_experts_for_ddp(self, world_mesh: DeviceMesh):
+        for block in self.blocks.values():
+            cast(MoETransformerBlock, block).feed_forward_moe.prepare_experts_for_ddp(
+                world_mesh=world_mesh,
+            )

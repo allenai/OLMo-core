@@ -4,6 +4,7 @@ import torch.distributed as dist
 from olmo_core.distributed.parallel import (
     ExpertParallelConfig,
     build_expert_parallel_mesh,
+    get_ep_mesh,
 )
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.nn.moe.mlp import DroplessMoEMLP, MoEMLP
@@ -36,7 +37,8 @@ def test_dropless_mlp():
 
 
 def run_mlp_with_expert_parallelism():
-    ep_mesh = build_expert_parallel_mesh(ExpertParallelConfig(degree=dist.get_world_size()))
+    world_mesh = build_expert_parallel_mesh(ExpertParallelConfig(degree=dist.get_world_size()))
+    ep_mesh = get_ep_mesh(world_mesh)
 
     mlp = MoEMLP(
         d_model=128,
@@ -61,7 +63,8 @@ def test_mlp_with_expert_parallelism():
 
 
 def run_dropless_mlp_with_expert_parallelism():
-    ep_mesh = build_expert_parallel_mesh(ExpertParallelConfig(degree=dist.get_world_size()))
+    world_mesh = build_expert_parallel_mesh(ExpertParallelConfig(degree=dist.get_world_size()))
+    ep_mesh = get_ep_mesh(world_mesh)
 
     mlp = DroplessMoEMLP(
         d_model=128,
