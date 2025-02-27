@@ -113,11 +113,14 @@ def move_to_device(o: T, device: torch.device, non_blocking: Optional[bool] = No
         return o
 
 
-def mark_dynamic(x: torch.Tensor, dim: Union[int, Sequence[int]]):
+def mark_dynamic(x: torch.Tensor, dim: Union[int, Sequence[int]], strict: bool = True):
     """
     Mark a tensor as having dynamic sizes for ``torch.compile()``.
     """
-    torch._dynamo.mark_dynamic(x, dim)
+    if strict:
+        torch._dynamo.mark_dynamic(x, dim)
+    else:
+        torch._dynamo.maybe_mark_dynamic(x, dim)
 
 
 def get_default_device() -> torch.device:
