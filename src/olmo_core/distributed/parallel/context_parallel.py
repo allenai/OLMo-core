@@ -320,9 +320,14 @@ class ContextParallelLlama3LoadBalancer(ContextParallelLoadBalancer):
                     f"but got {x.shape[seq_dim]}"
                 )
 
-            local_value = x[
-                self.cp_rank * local_length : (self.cp_rank + 1) * local_length
-            ].contiguous()
+            # NOTE: Since 'torch.slice' is not available from the Python API we just call
+            # the JIT op directly.
+            local_value = torch.ops.aten.slice(  # type: ignore
+                x,
+                dim=seq_dim,
+                start=self.cp_rank * local_length,
+                end=(self.cp_rank + 1) * local_length,
+            ).contiguous()
             out.append(local_value)
 
         (
