@@ -293,14 +293,14 @@ class Attention(AttentionBase):
                 q,
                 k,
                 v,
+                group=self._cp_pg,
+                strategy=self._cp_load_balancer,
                 cu_seqlens=cu_doc_lens,
                 cu_seqlens_q=cu_doc_lens_q,
                 cu_seqlens_k=cu_doc_lens_k,
                 max_seqlen=max_doc_len,
                 max_seqlen_q=max_doc_len_q,
                 max_seqlen_k=max_doc_len_k,
-                group=self._cp_pg,
-                strategy=self._cp_load_balancer,
                 dropout_p=self.dropout_p,
                 causal=True,
                 softmax_scale=scale,
@@ -554,8 +554,12 @@ class NormalizedAttention(Attention):
     def forward(
         self,
         x: torch.Tensor,
-        max_doc_len: Optional[int] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens_q: Optional[torch.Tensor] = None,
+        cu_doc_lens_k: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        max_doc_len_q: Optional[int] = None,
+        max_doc_len_k: Optional[int] = None,
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
@@ -596,7 +600,16 @@ class NormalizedAttention(Attention):
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
-            q, k, v, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens, scale=self.sqrt_head_dim
+            q,
+            k,
+            v,
+            cu_doc_lens=cu_doc_lens,
+            cu_doc_lens_q=cu_doc_lens_q,
+            cu_doc_lens_k=cu_doc_lens_k,
+            max_doc_len=max_doc_len,
+            max_doc_len_q=max_doc_len_q,
+            max_doc_len_k=max_doc_len_k,
+            scale=self.sqrt_head_dim,
         )
 
         # shape: (batch_size, seq_len, d_model)
@@ -735,10 +748,10 @@ class FusedAttention(AttentionBase):
             assert self._cp_pg is not None and self._cp_load_balancer is not None
             att = dispatch_ring_flash_attn_qkvpacked(
                 qkv,
-                cu_seqlens=cu_doc_lens,
-                max_seqlen=max_doc_len,
                 group=self._cp_pg,
                 strategy=self._cp_load_balancer,
+                cu_seqlens=cu_doc_lens,
+                max_seqlen=max_doc_len,
                 dropout_p=self.dropout_p,
                 causal=True,
             )
