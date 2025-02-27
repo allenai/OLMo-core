@@ -1,6 +1,6 @@
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -22,6 +22,11 @@ class ContextParallelLoadBalancerType(StrEnum):
     ➡️ :class:`ContextParallelZigZagLoadBalancer`
     """
 
+    llama3 = "llama3"
+    """
+    ➡️ :class:`ContextParallelLlama3LoadBalancer`
+    """
+
     def build(self, cp_mesh: DeviceMesh) -> "ContextParallelLoadBalancer":
         """
         Build the load balancer.
@@ -31,6 +36,8 @@ class ContextParallelLoadBalancerType(StrEnum):
         cp_world_size = get_world_size(pg)
         if self == self.zig_zag:
             return ContextParallelZigZagLoadBalancer(cp_rank=cp_rank, cp_world_size=cp_world_size)
+        elif self == self.llama3:
+            return ContextParallelLlama3LoadBalancer(cp_rank=cp_rank, cp_world_size=cp_world_size)
         else:
             raise NotImplementedError(self)
 
@@ -87,11 +94,12 @@ class ContextParallelLoadBalancer(metaclass=ABCMeta):
         cu_doc_lens: torch.Tensor,
         pad_values: Optional[List[Union[int, float]]] = None,
         length_multiple: Optional[int] = None,
-    ) -> Tuple[List[torch.Tensor], torch.Tensor]:
+    ) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
         """
         Shard inputs by document on their sequence dimension, optionally adding padding if needed.
 
-        :returns: The local shards of the inputs and the new cumulative document lengths after padding.
+        :returns: The local shards of the inputs and any other additional inputs required for the
+            corresponding ring attention implementation.
         """
         raise NotImplementedError
 
@@ -154,7 +162,7 @@ class ContextParallelZigZagLoadBalancer(ContextParallelLoadBalancer):
         cu_doc_lens: torch.Tensor,
         pad_values: Optional[List[Union[int, float]]] = None,
         length_multiple: Optional[int] = None,
-    ) -> Tuple[List[torch.Tensor], torch.Tensor]:
+    ) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
         assert len(inputs) == len(seq_dims)
         assert len(set(x.shape[seq_dim] for x, seq_dim in zip(inputs, seq_dims))) == 1
         if pad_values is not None:
@@ -227,7 +235,121 @@ class ContextParallelZigZagLoadBalancer(ContextParallelLoadBalancer):
                 [local_cu_doc_lens, (local_cu_doc_lens[-1] + final_padding).unsqueeze(0)]
             )
 
-        return out, local_cu_doc_lens
+        local_max_doc_len = (local_cu_doc_lens[1:] - local_cu_doc_lens[:-1]).max().item()
+
+        return out, dict(cu_doc_lens=local_cu_doc_lens, max_doc_len=local_max_doc_len)
+
+    def pad(
+        self,
+        x: torch.Tensor,
+        seq_dim: int,
+        value: Union[int, float],
+        length_multiple: Optional[int] = None,
+    ) -> Tuple[torch.Tensor, int]:
+        if length_multiple is None:
+            length_multiple = 2 * self.cp_world_size
+        pad_to = ensure_multiple_of(x.shape[seq_dim], length_multiple)
+        padding_to_add = pad_to - x.shape[seq_dim]
+        padding = (0, 0) * (x.ndim - seq_dim - 1) + (0, padding_to_add)
+        return F.pad(x, padding, value=value), padding_to_add
+
+
+class ContextParallelLlama3LoadBalancer(ContextParallelLoadBalancer):
+    """
+    Implements Llama3's load-balancing strategy.
+    """
+
+    def batch_shard(
+        self,
+        *,
+        inputs: List[torch.Tensor],
+        seq_dims: List[int],
+        pad_values: Optional[List[Union[int, float]]] = None,
+        length_multiple: Optional[int] = None,
+    ) -> List[torch.Tensor]:
+        del inputs, seq_dims, pad_values, length_multiple
+        raise NotImplementedError(
+            f"{self.__class__.__name__} should only be used with intra-document masking. "
+            "Please use the 'batch_shard_by_document()' instead."
+        )
+
+    def batch_shard_by_document(
+        self,
+        *,
+        inputs: List[torch.Tensor],
+        seq_dims: List[int],
+        cu_doc_lens: torch.Tensor,
+        pad_values: Optional[List[Union[int, float]]] = None,
+        length_multiple: Optional[int] = None,
+    ) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
+        try:
+            from ring_flash_attn import llama3_flash_attn_prepare_cu_seqlens
+        except ImportError as e:
+            raise RuntimeError(f"ring-flash-attn is required for {self.__class__.__name__}") from e
+
+        assert len(inputs) == len(seq_dims)
+
+        if cu_doc_lens.device.type != "cpu":
+            raise RuntimeError("expected 'cu_doc_lens' to be on CPU")
+        if cu_doc_lens.ndim != 1:
+            raise RuntimeError("expected 'cu_doc_lens' to be a 1D tensor")
+        if cu_doc_lens[0] != 0:
+            raise RuntimeError("expected 'cu_doc_lens' to start with a 0")
+
+        total_length = int(cu_doc_lens[-1])
+        # TODO: (epwalsh) wouldn't be too hard to add padding, only need to add to the global.
+        # inputs, not the document-level inputs.
+        del pad_values
+        if total_length % self.cp_world_size != 0:
+            raise RuntimeError(
+                f"total sequence length ({total_length}) must be divisible by the "
+                f"CP world size ({self.cp_world_size})"
+            )
+        if length_multiple is not None and total_length % length_multiple != 0:
+            raise RuntimeError(
+                f"total sequence length ({total_length}) must be divisible by the provided "
+                f"length multiple ({length_multiple}) since padding is not implemented yet"
+            )
+        local_length = total_length // self.cp_world_size
+
+        out = []
+        for x, seq_dim in zip(inputs, seq_dims):
+            if x.shape[seq_dim] != total_length:
+                raise RuntimeError(
+                    f"expected input to be have size {total_length} on the sequence dimension "
+                    f"but got {x.shape[seq_dim]}"
+                )
+
+            # NOTE: Since 'torch.slice' is not available from the Python API we just call
+            # the JIT op directly.
+            local_value = torch.ops.aten.slice(  # type: ignore
+                x,
+                dim=seq_dim,
+                start=self.cp_rank * local_length,
+                end=(self.cp_rank + 1) * local_length,
+            ).contiguous()
+            out.append(local_value)
+
+        (
+            cu_doc_lens_q,
+            cu_doc_lens_k,
+            max_doc_len_q,
+            max_doc_len_k,
+            local_k_slice,
+        ) = llama3_flash_attn_prepare_cu_seqlens(
+            cu_doc_lens,
+            causal=True,
+            rank=self.cp_rank,
+            world_size=self.cp_world_size,
+        )
+
+        return out, dict(
+            cu_doc_lens_q=cu_doc_lens_q,
+            cu_doc_lens_k=cu_doc_lens_k,
+            max_doc_len_q=max_doc_len_q,
+            max_doc_len_k=max_doc_len_k,
+            local_k_slice=local_k_slice,
+        )
 
     def pad(
         self,

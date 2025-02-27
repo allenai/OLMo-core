@@ -10,6 +10,7 @@ from olmo_core.utils import get_default_device
 
 from .context_parallel import (
     ContextParallelConfig,
+    ContextParallelLlama3LoadBalancer,
     ContextParallelLoadBalancer,
     ContextParallelLoadBalancerType,
     ContextParallelZigZagLoadBalancer,
@@ -47,6 +48,7 @@ __all__ = [
     "ContextParallelLoadBalancerType",
     "ContextParallelLoadBalancer",
     "ContextParallelZigZagLoadBalancer",
+    "ContextParallelLlama3LoadBalancer",
 ]
 
 log = logging.getLogger(__name__)

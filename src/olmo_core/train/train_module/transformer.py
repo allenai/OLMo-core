@@ -814,14 +814,7 @@ class TransformerTrainModule(TrainModule):
         """
         with self._model_forward_context():
             # shape: (batch_size, seq_len, vocab_size)
-            return self.model(
-                input_ids=batch["input_ids"],
-                max_doc_len=batch.get("max_doc_len"),
-                cu_doc_lens=batch.get("cu_doc_lens"),
-                pos_sin=batch.get("pos_sin"),
-                pos_cos=batch.get("pos_cos"),
-                freqs_cis=batch.get("freqs_cis"),
-            )
+            return self.model(**batch)
 
     def num_flops_per_token(self, seq_len: int) -> int:
         return self.model.num_flops_per_token(seq_len)
@@ -889,36 +882,56 @@ class TransformerTrainModule(TrainModule):
     def _prepare_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Tuple[Dict[str, Any], Optional[torch.Tensor]]:
-        # Prepare document length inputs.
-        max_doc_len: Optional[int] = None
-        cu_doc_lens: Optional[torch.Tensor] = None
-        if (doc_lens := batch.pop("doc_lens", None)) is not None and (
-            max_doc_lens := batch.pop("max_doc_lens", None)
-        ) is not None:
-            max_doc_len = max(max_doc_lens)
-            cu_doc_lens = get_cumulative_document_lengths(doc_lens)
-            batch["max_doc_len"] = max_doc_len
-            batch["cu_doc_lens"] = cu_doc_lens
-            log_once(log, "intra-document masking enabled")
+        return prepare_batch(
+            [self.model],
+            batch,
+            labels,
+            device=self.device,
+            label_ignore_index=self.label_ignore_index,
+            cp_load_balancer=self._cp_load_balancer,
+        )
 
-        # Prepare labels.
-        if labels is None:
-            labels = batch.pop("labels", None)
-        else:
-            batch.pop("labels", None)
 
-        # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
-        if self.cp_enabled:
-            assert self._cp_load_balancer is not None
-            total_seq_len = batch["input_ids"].shape[1]
+def prepare_batch(
+    model_parts: List[Transformer],
+    batch: Dict[str, Any],
+    labels: Optional[torch.Tensor] = None,
+    *,
+    device: torch.device,
+    label_ignore_index: int,
+    cp_load_balancer: Optional[ContextParallelLoadBalancer],
+) -> Tuple[Dict[str, Any], Optional[torch.Tensor]]:
+    B, S = batch["input_ids"].shape
+    out_batch: Dict[str, Any] = {}
 
-            inputs = [batch["input_ids"]]
-            seq_dims = [1]
-            pad_values: List[Union[int, float]] = [0]
-            keys = ["input_ids"]
+    # Prepare document length inputs.
+    max_doc_len: Optional[int] = None
+    cu_doc_lens: Optional[torch.Tensor] = None
+    if (doc_lens := batch.pop("doc_lens", None)) is not None and (
+        max_doc_lens := batch.pop("max_doc_lens", None)
+    ) is not None:
+        max_doc_len = max(max_doc_lens)
+        cu_doc_lens = get_cumulative_document_lengths(doc_lens)
+        out_batch["max_doc_len"] = max_doc_len
+        out_batch["cu_doc_lens"] = cu_doc_lens
+        log_once(log, "intra-document masking enabled")
 
-            # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
-            rope_buffers = self.model.get_rope_buffers(total_seq_len, torch.device("cpu"))
+    # Prepare labels.
+    if labels is None:
+        labels = batch.pop("labels", None)
+    else:
+        batch.pop("labels", None)
+
+    # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
+    if cp_load_balancer is not None:
+        inputs = [batch["input_ids"]]
+        seq_dims = [1]
+        pad_values: List[Union[int, float]] = [0]
+        keys = ["input_ids"]
+
+        # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
+        for model in model_parts:
+            rope_buffers = model.get_rope_buffers(S, torch.device("cpu"))
             if rope_buffers is not None:
                 if rope_buffers.pos_sin is not None:
                     inputs.append(rope_buffers.pos_sin)
@@ -935,46 +948,46 @@ class TransformerTrainModule(TrainModule):
                     seq_dims.append(0)
                     pad_values.append(0.0)
                     keys.append("freqs_cis")
+                break
 
-            if labels is not None:
-                inputs.append(labels)
-                seq_dims.append(1)
-                pad_values.append(self.label_ignore_index)
+        if labels is not None:
+            inputs.append(labels)
+            seq_dims.append(1)
+            pad_values.append(label_ignore_index)
 
-            if cu_doc_lens is not None:
-                # NOTE: Can only shard properly here if 'input_ids' is flat, i.e. a single instance.
-                # TODO: (epwalsh) We could just flatten all of the inputs here, but then we risk going
-                # beyond the model's maximum sequence length, which might be okay at least
-                # with relative positional encodings, but then again if you're resorting to context
-                # parallelism you can probably only fit a single instance at a time anyway.
-                if (n_instances := batch["input_ids"].shape[0]) != 1:
-                    raise RuntimeError(
-                        f"Rank micro-batches must consist of a single instance when using "
-                        f"context parallelism with intra-document masking (got {n_instances} instances)"
-                    )
-                log.info(f"*** cu_doc_lens before: {cu_doc_lens}")
-                inputs, cu_doc_lens = self._cp_load_balancer.batch_shard_by_document(
-                    inputs=inputs,
-                    seq_dims=seq_dims,
-                    cu_doc_lens=cu_doc_lens,
-                    pad_values=pad_values,
-                    length_multiple=16,
+        if cu_doc_lens is not None:
+            # NOTE: Can only shard properly here if 'input_ids' is flat, i.e. a single instance.
+            # TODO: (epwalsh) We could just flatten all of the inputs here, but then we risk going
+            # beyond the model's maximum sequence length, which might be okay at least
+            # with relative positional encodings, but then again if you're resorting to context
+            # parallelism you can probably only fit a single instance at a time anyway.
+            if B != 1:
+                raise RuntimeError(
+                    f"Rank micro-batches must consist of a single instance when using "
+                    f"context parallelism with intra-document masking (got {B} instances)"
                 )
-                log.info(f"*** cu_doc_lens after: {cu_doc_lens}")
-                max_doc_len = (cu_doc_lens[1:] - cu_doc_lens[:-1]).max().item()  # type: ignore
-                batch["max_doc_len"] = max_doc_len
-                batch["cu_doc_lens"] = cu_doc_lens
-            else:
-                inputs = self._cp_load_balancer.batch_shard(
-                    inputs=inputs,
-                    seq_dims=seq_dims,
-                    pad_values=pad_values,
-                )
+            inputs, additional_inputs = cp_load_balancer.batch_shard_by_document(
+                inputs=inputs,
+                seq_dims=seq_dims,
+                cu_doc_lens=cu_doc_lens,
+                pad_values=pad_values,
+                length_multiple=16,
+            )
+            # These will get updated or replaced with something else in 'additional_inputs'.
+            del out_batch["cu_doc_lens"]
+            del out_batch["max_doc_len"]
+            out_batch.update(additional_inputs)
+        else:
+            inputs = cp_load_balancer.batch_shard(
+                inputs=inputs,
+                seq_dims=seq_dims,
+                pad_values=pad_values,
+            )
 
-            for key, value in zip(keys, inputs):
-                batch[key] = value
+        for key, value in zip(keys, inputs):
+            out_batch[key] = value
 
-            if labels is not None:
-                labels = inputs[-1]
+        if labels is not None:
+            labels = inputs[-1]
 
-        return move_to_device(batch, self.device), move_to_device(labels, self.device)
+    return move_to_device(out_batch, device), move_to_device(labels, device)
