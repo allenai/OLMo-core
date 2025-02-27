@@ -504,8 +504,9 @@ class Attention(AttentionBase):
             )
 
             self._ring_flash_attn_func = zigzag_ring_flash_attn_func
-            self._ring_flash_attn_varlen_func = zigzag_ring_flash_attn_varlen_func
-            torch._dynamo.disable(self._ring_flash_attn_varlen_func)
+            self._ring_flash_attn_varlen_func = torch._dynamo.disable(
+                zigzag_ring_flash_attn_varlen_func
+            )
         else:
             raise NotImplementedError(load_balancer)
 
@@ -818,10 +819,9 @@ class FusedAttention(AttentionBase):
             )
 
             self._ring_flash_attn_qkvpacked_func = zigzag_ring_flash_attn_qkvpacked_func
-            self._ring_flash_attn_varlen_qkvpacked_func = (
+            self._ring_flash_attn_varlen_qkvpacked_func = torch._dynamo.disable(
                 zigzag_ring_flash_attn_varlen_qkvpacked_func
             )
-            torch._dynamo.disable(self._ring_flash_attn_varlen_qkvpacked_func)
         else:
             raise NotImplementedError(load_balancer)
 
