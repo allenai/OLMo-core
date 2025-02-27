@@ -222,6 +222,8 @@ def build_config(
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
     optim_config_builder: Callable[[CommonComponents], OptimConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
+    dataset_config_builder: Callable[[CommonComponents], NumpyDatasetConfig] | None = None,
+    data_loader_config_builder: Callable[[CommonComponents], NumpyDataLoaderConfig] | None = None,
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
 ) -> ExperimentConfig:
     common = build_common_components(
@@ -243,13 +245,25 @@ def build_config(
         if name not in trainer.callbacks:
             trainer.add_callback(name, cb)
 
+    # allow the dataset to be overridden
+    dataset = (
+        dataset_config_builder(common) if dataset_config_builder is not None else common.dataset
+    )
+
+    # allow the data loader to be overridden
+    data_loader = (
+        data_loader_config_builder(common)
+        if data_loader_config_builder is not None
+        else common.data_loader
+    )
+
     config = ExperimentConfig(
         run_name=run_name,
         launch=common.launch,
         model=model,
         optim=optim_config_builder(common),
-        dataset=common.dataset,
-        data_loader=common.data_loader,
+        dataset=dataset,
+        data_loader=data_loader,
         trainer=trainer,
     )
 
@@ -321,6 +335,8 @@ def main(
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
     optim_config_builder: Callable[[CommonComponents], OptimConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
+    dataset_config_builder: Callable[[CommonComponents], NumpyDatasetConfig] | None = None,
+    data_loader_config_builder: Callable[[CommonComponents], NumpyDataLoaderConfig] | None = None,
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
 ):
     usage = f"""
@@ -360,6 +376,8 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         model_config_builder=model_config_builder,
         optim_config_builder=optim_config_builder,
         trainer_config_builder=trainer_config_builder,
+        dataset_config_builder=dataset_config_builder,
+        data_loader_config_builder=data_loader_config_builder,
         finalize_config=finalize_config,
     )
 
