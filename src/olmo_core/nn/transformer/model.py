@@ -272,36 +272,14 @@ class Transformer(nn.Module):
 
         return generator
 
-    def forward(
-        self,
-        input_ids: torch.Tensor,
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        max_doc_len: Optional[int] = None,
-        pos_sin: Optional[torch.Tensor] = None,
-        pos_cos: Optional[torch.Tensor] = None,
-        freqs_cis: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+    def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
         """
         Run the transformer on the token input IDs.
 
         :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
-        :param cu_doc_lens: Cumulative Document lengths to use in attention for intra-document masking.
-            Shape ``(batch_size, max_docs+1)``.
-            Required together with ``max_doc_len`` when using intra-document masking.
-        :param max_doc_lens: Maximum document length over all instances in the batch.
-            Required together with ``cu_doc_lens`` when using intra-document masking.
 
         :returns: The output logits.
         """
-        if cu_doc_lens is not None and self.compile_enabled:
-            mark_dynamic(cu_doc_lens, 0)
-        if pos_sin is not None and self.compile_enabled:
-            mark_dynamic(pos_sin, 0, strict=False)
-        if pos_cos is not None and self.compile_enabled:
-            mark_dynamic(pos_cos, 0, strict=False)
-        if freqs_cis is not None and self.compile_enabled:
-            mark_dynamic(freqs_cis, 0, strict=False)
-
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
@@ -311,14 +289,7 @@ class Transformer(nn.Module):
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1))
-            h = block(
-                h,
-                max_doc_len=max_doc_len,
-                cu_doc_lens=cu_doc_lens,
-                pos_sin=pos_sin,
-                pos_cos=pos_cos,
-                freqs_cis=freqs_cis,
-            )
+            h = block(h, **kwargs)
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:

@@ -129,25 +129,11 @@ class TransformerBlockBase(nn.Module):
     """
 
     @abstractmethod
-    def forward(
-        self,
-        x: torch.Tensor,
-        max_doc_len: Optional[int] = None,
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        pos_sin: Optional[torch.Tensor] = None,
-        pos_cos: Optional[torch.Tensor] = None,
-        freqs_cis: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         """
         Run the block on the input ``x``.
 
         :param x: The input of shape ``(batch_size, seq_len, d_model)``.
-        :param max_doc_len: The maximum document length in the input ``x``.
-            Required together with ``cu_doc_lens`` when using intra-document masking.
-        :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D
-            :class:`torch.int32` tensor that should always have one more element than there
-            are documents (the first element in the tensor should always be ``0``).
-            Required together with ``max_doc_len`` when using intra-document masking.
         """
         raise NotImplementedError
 
@@ -190,25 +176,8 @@ class TransformerBlock(TransformerBlockBase):
         self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        max_doc_len: Optional[int] = None,
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        pos_sin: Optional[torch.Tensor] = None,
-        pos_cos: Optional[torch.Tensor] = None,
-        freqs_cis: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        h = x + self.dropout(
-            self.attention(
-                self.attention_norm(x),
-                max_doc_len=max_doc_len,
-                cu_doc_lens=cu_doc_lens,
-                pos_sin=pos_sin,
-                pos_cos=pos_cos,
-                freqs_cis=freqs_cis,
-            )
-        )
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
         return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
@@ -253,27 +222,8 @@ class ReorderedNormTransformerBlock(TransformerBlock):
     of the feed-forward instead of the input.
     """
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        max_doc_len: Optional[int] = None,
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        pos_sin: Optional[torch.Tensor] = None,
-        pos_cos: Optional[torch.Tensor] = None,
-        freqs_cis: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        h = x + self.dropout(
-            self.attention_norm(
-                self.attention(
-                    x,
-                    max_doc_len=max_doc_len,
-                    cu_doc_lens=cu_doc_lens,
-                    pos_sin=pos_sin,
-                    pos_cos=pos_cos,
-                    freqs_cis=freqs_cis,
-                )
-            )
-        )
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
 
@@ -320,28 +270,11 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         nn.init.ones_(self.mlp_alpha)
         self.mlp_alpha.mul_(self.mlp_alpha_init_scaling)
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        max_doc_len: Optional[int] = None,
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        pos_sin: Optional[torch.Tensor] = None,
-        pos_cos: Optional[torch.Tensor] = None,
-        freqs_cis: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         h = l2_normalize(
             torch.lerp(
                 x,
-                l2_normalize(
-                    self.attention(
-                        x,
-                        max_doc_len=max_doc_len,
-                        cu_doc_lens=cu_doc_lens,
-                        pos_sin=pos_sin,
-                        pos_cos=pos_cos,
-                        freqs_cis=freqs_cis,
-                    )
-                ),
+                l2_normalize(self.attention(x, **kwargs)),
                 (
                     self.attn_alpha * (self.attn_alpha_init_value / self.attn_alpha_init_scaling)
                 ).abs(),
@@ -424,30 +357,13 @@ class MoETransformerBlock(TransformerBlockBase):
     def reset_metrics(self):
         self.feed_forward_moe.reset_metrics()
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        max_doc_len: Optional[int] = None,
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        pos_sin: Optional[torch.Tensor] = None,
-        pos_cos: Optional[torch.Tensor] = None,
-        freqs_cis: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         """
         Run the block on the input ``x``.
 
         Parameters are the same as :meth:`TransformerBlock.forward()`.
         """
-        h = x + self.dropout(
-            self.attention(
-                self.attention_norm(x),
-                max_doc_len=max_doc_len,
-                cu_doc_lens=cu_doc_lens,
-                pos_sin=pos_sin,
-                pos_cos=pos_cos,
-                freqs_cis=freqs_cis,
-            )
-        )
+        h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
         return h + self.dropout(self.feed_forward_moe(self.feed_forward_norm(h)))
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
@@ -496,25 +412,6 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
     output of the feed-forward MoE instead of the input.
     """
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        max_doc_len: Optional[int] = None,
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        pos_sin: Optional[torch.Tensor] = None,
-        pos_cos: Optional[torch.Tensor] = None,
-        freqs_cis: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        h = x + self.dropout(
-            self.attention_norm(
-                self.attention(
-                    x,
-                    max_doc_len=max_doc_len,
-                    cu_doc_lens=cu_doc_lens,
-                    pos_sin=pos_sin,
-                    pos_cos=pos_cos,
-                    freqs_cis=freqs_cis,
-                )
-            )
-        )
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
         return h + self.dropout(self.feed_forward_norm(self.feed_forward_moe(h)))
