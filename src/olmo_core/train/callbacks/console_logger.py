@@ -72,8 +72,10 @@ class ConsoleLoggerCallback(Callback):
 
     def _get_progress_marker(self, step: int, include_eta: bool = False) -> str:
         if include_eta and (eta := self.trainer.training_progress.time_remaining) is not None:
-            eta = format_timedelta(eta).replace(", ", "")
-            return f"[step={step}/{self.trainer.max_steps},epoch={self.trainer.epoch},eta={eta}]"
+            eta_str = format_timedelta(eta).replace(", ", "")
+            return (
+                f"[step={step}/{self.trainer.max_steps},epoch={self.trainer.epoch},eta={eta_str}]"
+            )
         else:
             return f"[step={step}/{self.trainer.max_steps},epoch={self.trainer.epoch}]"
 
