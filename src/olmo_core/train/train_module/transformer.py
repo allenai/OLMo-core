@@ -973,6 +973,9 @@ def prepare_batch(
                 pad_values=pad_values,
                 length_multiple=16,
             )
+            # These will get updated or replaced with something else in 'additional_inputs'.
+            del out_batch["cu_doc_lens"]
+            del out_batch["max_doc_len"]
             out_batch.update(additional_inputs)
         else:
             inputs = cp_load_balancer.batch_shard(
