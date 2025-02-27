@@ -25,6 +25,7 @@ from olmo_core.train import (
     teardown_training_environment,
 )
 from olmo_core.train.callbacks import (
+    BeakerCallback,
     Callback,
     CometCallback,
     ConfigSaverCallback,
@@ -182,6 +183,7 @@ def build_common_components(
         "profiler": ProfilerCallback(enabled=False),
         "garbage_collector": GarbageCollectorCallback(),
         "slack_notifier": SlackNotifierCallback(name=run_name, enabled=False),
+        "beaker": BeakerCallback(),
     }
 
     if torch.cuda.is_available():
