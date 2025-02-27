@@ -952,6 +952,7 @@ class TransformerTrainModule(TrainModule):
                         f"Rank micro-batches must consist of a single instance when using "
                         f"context parallelism with intra-document masking (got {n_instances} instances)"
                     )
+                log.info(f"*** cu_doc_lens before: {cu_doc_lens}")
                 inputs, cu_doc_lens = self._cp_load_balancer.batch_shard_by_document(
                     inputs=inputs,
                     seq_dims=seq_dims,
@@ -959,6 +960,7 @@ class TransformerTrainModule(TrainModule):
                     pad_values=pad_values,
                     length_multiple=16,
                 )
+                log.info(f"*** cu_doc_lens after: {cu_doc_lens}")
                 max_doc_len = (cu_doc_lens[1:] - cu_doc_lens[:-1]).max().item()  # type: ignore
                 batch["max_doc_len"] = max_doc_len
                 batch["cu_doc_lens"] = cu_doc_lens
