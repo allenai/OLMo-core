@@ -19,10 +19,14 @@ from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
 from .functional import (
     flash_attn,
+    flash_attn_qkvpacked,
     flash_attn_varlen,
+    flash_attn_varlen_qkvpacked,
     l2_normalize,
     zigzag_ring_flash_attn,
+    zigzag_ring_flash_attn_qkvpacked,
     zigzag_ring_flash_attn_varlen,
+    zigzag_ring_flash_attn_varlen_qkvpacked,
 )
 from .layer_norm import LayerNorm, LayerNormConfig
 from .rope import (
@@ -316,6 +320,7 @@ class Attention(AttentionBase):
                 )
         else:
             if max_doc_len is not None and cu_doc_lens is not None:
+                # shape: (batch_size * seq_len, n_heads, head_dim)
                 att = flash_attn_varlen(
                     q.view(B * T, -1, self.head_dim),
                     k.view(B * T, -1, self.head_dim),
@@ -655,11 +660,6 @@ class FusedAttention(AttentionBase):
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
-        from flash_attn import (  # type: ignore
-            flash_attn_qkvpacked_func,
-            flash_attn_varlen_qkvpacked_func,
-        )
-
         super().__init__()
 
         self.n_heads = n_heads
@@ -675,11 +675,6 @@ class FusedAttention(AttentionBase):
             rope_class = rope.build(self.head_dim, cache=cache)
             assert isinstance(rope_class, FusedRotaryEmbedding)
             self.rope = rope_class
-
-        self._flash_attn_qkvpacked_func = flash_attn_qkvpacked_func
-        self._flash_attn_varlen_qkvpacked_func = flash_attn_varlen_qkvpacked_func
-        self._ring_flash_attn_qkvpacked_func = None
-        self._ring_flash_attn_varlen_qkvpacked_func = None
 
         self._cp_pg: Optional[dist.ProcessGroup] = None
         self._cp_enabled = False
@@ -728,10 +723,10 @@ class FusedAttention(AttentionBase):
             qkv = self.rope(qkv, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis)
 
         if self.cp_enabled:
+            assert self._cp_pg is not None
             if max_doc_len is not None and cu_doc_lens is not None:
-                assert self._ring_flash_attn_varlen_qkvpacked_func is not None
                 # shape: (batch_size * seq_len, n_heads, head_dim)
-                att = self._flash_attn_varlen_qkvpacked_func(
+                att = zigzag_ring_flash_attn_varlen_qkvpacked(
                     qkv.view(B * T, 3, self.n_heads, self.head_dim),
                     cu_doc_lens,
                     max_doc_len,
@@ -740,15 +735,14 @@ class FusedAttention(AttentionBase):
                     group=self._cp_pg,
                 )
             else:
-                assert self._ring_flash_attn_qkvpacked_func is not None
                 # shape: (batch_size, seq_len, n_heads, head_dim)
-                att = self._flash_attn_qkvpacked_func(
+                att = zigzag_ring_flash_attn_qkvpacked(
                     qkv, dropout_p=self.dropout_p, causal=True, group=self._cp_pg
                 )
         else:
             if max_doc_len is not None and cu_doc_lens is not None:
                 # shape: (batch_size * seq_len, n_heads, head_dim)
-                att = self._flash_attn_varlen_qkvpacked_func(
+                att = flash_attn_varlen_qkvpacked(
                     qkv.view(B * T, 3, self.n_heads, self.head_dim),
                     cu_doc_lens,
                     max_doc_len,
@@ -757,7 +751,7 @@ class FusedAttention(AttentionBase):
                 )
             else:
                 # shape: (batch_size, seq_len, n_heads, head_dim)
-                att = self._flash_attn_qkvpacked_func(qkv, dropout_p=self.dropout_p, causal=True)
+                att = flash_attn_qkvpacked(qkv, dropout_p=self.dropout_p, causal=True)
 
         # shape: (batch_size, seq_len, d_model)
         att = att.view(B, T, -1)  # type: ignore
@@ -778,22 +772,10 @@ class FusedAttention(AttentionBase):
         raise NotImplementedError("TP is not implemented yet for the fused attention variant")
 
     def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: ContextParallelLoadBalancerType):
-        cp_pg = cp_mesh.get_group()
-
-        if load_balancer == ContextParallelLoadBalancerType.zig_zag:
-            from ring_flash_attn import (  # type: ignore
-                zigzag_ring_flash_attn_qkvpacked_func,
-                zigzag_ring_flash_attn_varlen_qkvpacked_func,
-            )
-
-            self._ring_flash_attn_qkvpacked_func = zigzag_ring_flash_attn_qkvpacked_func
-            self._ring_flash_attn_varlen_qkvpacked_func = torch._dynamo.disable(
-                zigzag_ring_flash_attn_varlen_qkvpacked_func
-            )
-        else:
+        if load_balancer != ContextParallelLoadBalancerType.zig_zag:
             raise NotImplementedError(load_balancer)
 
-        self._cp_pg = cp_pg
+        self._cp_pg = cp_mesh.get_group()
         self._cp_enabled = True
         self._cp_load_balancer = load_balancer
 
