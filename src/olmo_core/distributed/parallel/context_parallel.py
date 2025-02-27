@@ -296,16 +296,19 @@ class ContextParallelLlama3LoadBalancer(ContextParallelLoadBalancer):
         if cu_doc_lens[0] != 0:
             raise RuntimeError("expected 'cu_doc_lens' to start with a 0")
 
-        if pad_values is not None or length_multiple is not None:
-            # TODO: (epwalsh) wouldn't be too hard to add padding, only need to add to the global.
-            # inputs, not the document-level inputs.
-            raise NotImplementedError(f"padding is not implemented for {self.__class__.__name__}")
-
         total_length = int(cu_doc_lens[-1])
+        # TODO: (epwalsh) wouldn't be too hard to add padding, only need to add to the global.
+        # inputs, not the document-level inputs.
+        del pad_values
         if total_length % self.cp_world_size != 0:
             raise RuntimeError(
                 f"total sequence length ({total_length}) must be divisible by the "
                 f"CP world size ({self.cp_world_size})"
+            )
+        if length_multiple is not None and total_length % length_multiple != 0:
+            raise RuntimeError(
+                f"total sequence length ({total_length}) must be divisible by the provided "
+                f"length multiple ({length_multiple}) since padding is not implemented yet"
             )
         local_length = total_length // self.cp_world_size
 
