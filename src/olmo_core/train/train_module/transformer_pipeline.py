@@ -847,15 +847,7 @@ class TransformerPipelineTrainModule(TrainModule):
         with self._model_forward_context():
             schedule = self.train_pp_schedule if training else self.eval_pp_schedule
             # shape: (batch_size, seq_len, vocab_size), (1,)
-            logits, loss = schedule.step(
-                input_ids=batch["input_ids"],
-                target=labels,
-                doc_lens=batch.get("doc_lens"),
-                max_doc_lens=batch.get("max_doc_lens"),
-                pos_sin=batch.get("pos_sin"),
-                pos_cos=batch.get("pos_cos"),
-                freqs_cis=batch.get("freqs_cis"),
-            )
+            logits, loss = schedule.step(**batch, target=labels)
             if schedule.is_last_stage:
                 assert logits is not None
             if not training and logits is not None and labels is not None and loss is None:
