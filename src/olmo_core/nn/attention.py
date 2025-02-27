@@ -281,23 +281,22 @@ class Attention(AttentionBase):
         att: torch.Tensor
         if self.cp_enabled:
             assert self._cp_pg is not None and self._cp_load_balancer is not None
-            if self.use_flash:
-                att = dispatch_ring_flash_attn(
-                    q,
-                    k,
-                    v,
-                    cu_seqlens=cu_doc_lens,
-                    max_seqlen=max_doc_len,
-                    group=self._cp_pg,
-                    strategy=self._cp_load_balancer,
-                    dropout_p=self.dropout_p,
-                    causal=True,
-                    softmax_scale=scale,
-                )
-            else:
+            if not self.use_flash:
                 raise RuntimeError(
                     f"'{self.__class__.__name__}' requires flash (use_flash=True) for context parallelism"
                 )
+            att = dispatch_ring_flash_attn(
+                q,
+                k,
+                v,
+                cu_seqlens=cu_doc_lens,
+                max_seqlen=max_doc_len,
+                group=self._cp_pg,
+                strategy=self._cp_load_balancer,
+                dropout_p=self.dropout_p,
+                causal=True,
+                softmax_scale=scale,
+            )
         elif self.use_flash:
             att = dispatch_flash_attn(
                 q,
@@ -311,8 +310,7 @@ class Attention(AttentionBase):
             )
         else:
             # Fall back to PyTorch's SDPA...
-
-            # PyTorch's SDPA doesn't support GQA, so we have to do this.
+            # NOTE: PyTorch's SDPA doesn't support GQA, so we have to do this.
             # shape: (batch_size, n_heads, seq_len, head_dim)
             k = repeat_kv(k, self.n_rep)
             v = repeat_kv(v, self.n_rep)
