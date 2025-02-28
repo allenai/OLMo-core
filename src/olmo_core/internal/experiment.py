@@ -9,6 +9,7 @@ from rich import print
 from olmo_core.config import Config, StrEnum
 from olmo_core.data import (
     DataMix,
+    InstanceFilterConfig,
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
     NumpyDatasetType,
@@ -140,6 +141,7 @@ def build_common_components(
     sequence_length: int = 4096,
     include_default_evals: bool = True,
     intra_document_masking: bool = False,
+    include_instance_filter: bool = False,
 ) -> CommonComponents:
     root_dir = get_root_dir(cluster)
 
@@ -172,6 +174,13 @@ def build_common_components(
         ),
         work_dir=get_work_dir(root_dir),
         generate_doc_lengths=intra_document_masking,
+        instance_filter_config=None
+        if not include_instance_filter
+        else InstanceFilterConfig(
+            repetition_max_period=13,
+            repetition_min_period=1,
+            repetition_max_count=32,
+        ),
     )
 
     data_loader_config = NumpyDataLoaderConfig(
@@ -233,6 +242,7 @@ def build_config(
     sequence_length: int = 4096,
     include_default_evals: bool = True,
     intra_document_masking: bool = False,
+    include_instance_filter: bool = False,
 ) -> ExperimentConfig:
     common = build_common_components(
         script,
@@ -244,6 +254,7 @@ def build_config(
         sequence_length=sequence_length,
         include_default_evals=include_default_evals,
         intra_document_masking=intra_document_masking,
+        include_instance_filter=include_instance_filter,
     )
 
     model = model_config_builder(common)
@@ -320,6 +331,7 @@ def main(
     sequence_length: int = 4096,
     include_default_evals: bool = True,
     intra_document_masking: bool = False,
+    include_instance_filter: bool = False,
 ):
     usage = f"""
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
@@ -362,6 +374,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         sequence_length=sequence_length,
         include_default_evals=include_default_evals,
         intra_document_masking=intra_document_masking,
+        include_instance_filter=include_instance_filter,
     )
 
     cmd.run(config)

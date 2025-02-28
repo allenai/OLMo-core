@@ -4,7 +4,7 @@ import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from itertools import chain
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, cast
 
 import numpy as np
 from rich.console import Console
@@ -41,7 +41,7 @@ class SourceMixtureConfig(Config):
     """
     The target ratio of the source in the mixture.
     """
-    paths: List[PathOrStr]
+    paths: List[str]
     """
     A list of paths to the source data.
     """
@@ -106,7 +106,7 @@ class SourceTokenDetails:
 
 @dataclass
 class SourcePathTokens:
-    path: PathOrStr
+    path: str
     tokens: int
 
 
@@ -218,7 +218,8 @@ class SourceMixtureDatasetConfig(Config):
         for source_config in self.source_configs:
             log.info(f"Counting tokens for source: {source_config.source_name}")
             available_tokens_by_source[source_config.source_name] = self._count_tokens_for_paths(
-                paths=source_config.paths, source=source_config.source_name
+                paths=cast(List[PathOrStr], source_config.paths),
+                source=source_config.source_name,
             )
 
         tokens_details_by_source: List[SourceTokenDetails] = []

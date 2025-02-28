@@ -41,12 +41,12 @@ def get_fsl_mixture(
         source_configs=[
             SourceMixtureConfig(
                 source_name="mmap1",
-                paths=[i[0] for i in mmap1],
+                paths=[str(i[0]) for i in mmap1],
                 target_ratio=0.8,
             ),
             SourceMixtureConfig(
                 source_name="mmap2",
-                paths=[i[0] for i in mmap2],
+                paths=[str(i[0]) for i in mmap2],
                 target_ratio=0.2,
             ),
         ],
