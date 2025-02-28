@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Added `instance_filter_config` field to `NumpyDatasetConfig`.
+- Added conversion script for OLMo 2 checkpoints to Huggingface format.
+- Added `BeakerCallback`.
+
 ### Fixed
 
 - Ensure certain optimizer param group fields are not overridden by the values in a checkpoint.
+- Fixed issue where non-zero ranks would report partially-reduced values for training metrics.
 
 ## [v1.8.0](https://github.com/allenai/OLMo-core/releases/tag/v1.8.0) - 2025-01-29
 
