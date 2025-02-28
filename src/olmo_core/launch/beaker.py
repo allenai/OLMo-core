@@ -10,9 +10,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Set, Tuple
 
-from beaker import (Beaker, Dataset, DatasetConflict, DatasetNotFound,
-                    Experiment, ExperimentSpec, Job, Priority, RetrySpec,
-                    TaskResources, TaskSpec)
+from beaker import (
+    Beaker,
+    Dataset,
+    DatasetConflict,
+    DatasetNotFound,
+    Experiment,
+    ExperimentSpec,
+    Job,
+    Priority,
+    RetrySpec,
+    TaskResources,
+    TaskSpec,
+)
 from rich.prompt import Confirm
 
 from ..config import Config, StrEnum
