@@ -1174,8 +1174,6 @@ class Trainer:
         if (instance_mask := batch.get("instance_mask")) is not None and not dry_run:
             masked = (~instance_mask).float()
             self.record_metric("train/masked instances (%)", masked.mean(), ReduceType.mean)
-            # TODO: remove this before merging
-            self.record_metric("train/masked instances (rank 0 count)", masked.sum(), None)
 
         # Zero-gradients.
         self.optim.zero_grad(set_to_none=True)

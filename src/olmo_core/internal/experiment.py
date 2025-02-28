@@ -140,6 +140,7 @@ def build_common_components(
     overrides: List[str],
     *,
     global_batch_size: int,
+    include_instance_filter: bool = False,
 ) -> CommonComponents:
     root_dir = get_root_dir(cluster)
 
@@ -171,7 +172,9 @@ def build_common_components(
             name=VSLCurriculumType.grow_p2, num_cycles=8, balanced=False
         ),
         work_dir=get_work_dir(root_dir),
-        instance_filter_config=InstanceFilterConfig(
+        instance_filter_config=None
+        if not include_instance_filter
+        else InstanceFilterConfig(
             repetition_max_period=13,
             repetition_min_period=1,
             repetition_max_count=32,
@@ -227,9 +230,16 @@ def build_config(
     optim_config_builder: Callable[[CommonComponents], OptimConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
+    include_instance_filter: bool = False,
 ) -> ExperimentConfig:
     common = build_common_components(
-        script, cmd, run_name, cluster, overrides, global_batch_size=global_batch_size
+        script,
+        cmd,
+        run_name,
+        cluster,
+        overrides,
+        global_batch_size=global_batch_size,
+        include_instance_filter=include_instance_filter,
     )
 
     model = model_config_builder(common)
@@ -326,6 +336,7 @@ def main(
     optim_config_builder: Callable[[CommonComponents], OptimConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
+    include_instance_filter: bool = False,
 ):
     usage = f"""
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
@@ -365,6 +376,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         optim_config_builder=optim_config_builder,
         trainer_config_builder=trainer_config_builder,
         finalize_config=finalize_config,
+        include_instance_filter=include_instance_filter,
     )
 
     cmd.run(config)
