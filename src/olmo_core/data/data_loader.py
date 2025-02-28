@@ -129,7 +129,9 @@ class DataLoaderBase(ABC):
         if self.total_batches is not None:
             return self.total_batches
         else:
-            raise TypeError("data loader length (number of batches) is unknown")
+            raise TypeError(
+                f"total length (number of batches) is unknown for {self.__class__.__name__}"
+            )
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         """
@@ -138,6 +140,13 @@ class DataLoaderBase(ABC):
         for batch in self._iter_batches():
             self.batches_processed += 1
             yield batch
+
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        """
+        Get a single batch if possible, otherwise :class:`TypeError` is raised.
+        """
+        del index
+        raise TypeError(f"__getitem__ is not implemented for {self.__class__.__name__}")
 
     @property
     def rank_batch_size(self) -> int:
@@ -604,8 +613,30 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
         indices = indices[: self.total_size]
         return indices
 
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        # NOTE: Make sure the logic here matches that in '_get_local_instance_indices()'
+
+        # NOTE: 'indices' are global instance indices.
+        indices = self.get_global_indices()
+
+        # Slice up by batch.
+        assert isinstance(self.dataset, NumpyFSLDataset)
+        instances_per_batch = self.global_batch_size // self.dataset.sequence_length
+        # shape: (global num batches, global num instances per batch)
+        indices = indices.reshape(-1, instances_per_batch)
+
+        # Slice batches into micro batches for the local DP rank.
+        if self.dp_world_size > 1:
+            indices = indices[:, self.dp_rank :: self.dp_world_size]
+
+        # Get instances for the batch.
+        instances = [self._get_dataset_item(int(idx)) for idx in indices[index]]
+
+        return self.collator(instances)
+
     def _get_local_instance_indices(self, indices: np.ndarray) -> Iterable[int]:
         # NOTE: 'indices' are global instance indices.
+        # Make sure the logic here matches that in '__getitem__()'
 
         # Slice up by batch.
         assert isinstance(self.dataset, NumpyFSLDataset)
@@ -795,6 +826,20 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
             )
         else:
             return np.arange(self.total_batches, dtype=np.uint32)
+
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        # NOTE: Make sure the logic here matches that in '_get_local_instance_indices()'
+
+        # NOTE: 'indices' are global *batch* indices.
+        indices = self.get_global_indices()
+
+        # Map to instance indices.
+        instance_indices = self._batch_index_to_local_instance_indices(indices[index])
+
+        # Get instances for the batch.
+        instances = [self._get_dataset_item(int(idx)) for idx in instance_indices]
+
+        return self.collator(instances)
 
     def _get_local_instance_indices(self, indices: np.ndarray) -> Iterable[int]:
         # NOTE: 'indices' are *batch* indices at this point.
