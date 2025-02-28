@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `instance_filter_config` field to `NumpyDatasetConfig`.
 - Added conversion script for OLMo 2 checkpoints to Huggingface format.
 - Added `BeakerCallback`.
 

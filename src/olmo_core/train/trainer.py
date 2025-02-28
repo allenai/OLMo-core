@@ -1172,7 +1172,8 @@ class Trainer:
     def _train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         # Record how many instances are going to be skipped (masked out).
         if (instance_mask := batch.get("instance_mask")) is not None and not dry_run:
-            self.record_metric("train/masked instances", (~instance_mask).sum(), ReduceType.sum)
+            masked = (~instance_mask).float()
+            self.record_metric("train/masked instances (%)", masked.mean(), ReduceType.mean)
 
         # Zero-gradients.
         self.optim.zero_grad(set_to_none=True)
