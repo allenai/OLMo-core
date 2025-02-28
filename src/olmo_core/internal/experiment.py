@@ -28,6 +28,7 @@ from olmo_core.train import (
     teardown_training_environment,
 )
 from olmo_core.train.callbacks import (
+    BeakerCallback,
     Callback,
     CometCallback,
     ConfigSaverCallback,
@@ -203,6 +204,7 @@ def build_common_components(
             eval_interval=1000,
         ),
         "slack_notifier": SlackNotifierCallback(name=run_name, enabled=False),
+        "beaker": BeakerCallback(),
     }
     if torch.cuda.is_available():
         callbacks["gpu_monitor"] = GPUMemoryMonitorCallback()
@@ -311,7 +313,7 @@ def train(config: ExperimentConfig):
     model = config.model.build(
         init_device="meta",
         device=device,
-        max_seq_len=config.dataset.sequence_length,
+        max_seq_len=config.dataset.effective_sequence_length,
         mesh=world_mesh,
     )
     optim = config.optim.build(model)

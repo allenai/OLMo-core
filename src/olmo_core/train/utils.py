@@ -15,7 +15,6 @@ from packaging.version import parse as parse_version
 
 from ..config import Config
 from ..distributed.utils import (
-    get_global_rank,
     get_local_tensor,
     get_reduce_divide_factor,
     get_world_size,
@@ -233,15 +232,15 @@ def reduce_metrics(
 
     all_sum_metrics.div_(divide_factor)
 
-    dist.reduce(
+    dist.all_reduce(
         all_sum_metrics,
-        get_global_rank(0, group=process_group),
+        #  get_global_rank(0, group=process_group),
         op=dist.ReduceOp.SUM,
         group=process_group,
     )
-    dist.reduce(
+    dist.all_reduce(
         all_max_metrics,
-        get_global_rank(0, group=process_group),
+        #  get_global_rank(0, group=process_group),
         op=dist.ReduceOp.MAX,
         group=process_group,
     )
