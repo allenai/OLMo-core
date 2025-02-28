@@ -299,7 +299,7 @@ def test_dataset_mixture_build_duplicate_paths(tmp_path: Path):
         sequence_length=1024,
     )
 
-    expected = [sources["1"][0][0]] + [item[0] for item in list(chain(*sources.values()))]
+    expected = [str(sources["1"][0][0])] + [str(item[0]) for item in list(chain(*sources.values()))]
     mixture = config.build()
     index = mixture.to_index()
     paths = mixture.to_paths()
