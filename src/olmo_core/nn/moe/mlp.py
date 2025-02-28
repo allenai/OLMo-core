@@ -58,7 +58,7 @@ class MoEMLPBase(nn.Module):
         self.gradient_scale: Optional[float] = None
         self.num_local_experts = num_experts
         self.hidden_sharding_degree = 1
-        self.mesh: Optional[DeviceMesh] = None
+        self.ep_mesh: Optional[DeviceMesh] = None
         self.ep_pg: Optional[dist.ProcessGroup] = None
 
     def scale_grad(self, w: torch.Tensor) -> torch.Tensor:
