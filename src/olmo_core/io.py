@@ -228,7 +228,7 @@ def copy_dir(
 
     with ThreadPoolExecutor(max_workers=num_threads) as executor:
         if not quiet:
-            log.info("Collecting source files to copy...")
+            log.info(f"Collecting source files from '{source}' to copy to '{target}'...")
 
         futures = []
         for source_path in list_directory(source, recurse=True, include_dirs=False):
@@ -244,7 +244,7 @@ def copy_dir(
 
         deque(
             track(
-                as_completed(futures),
+                (f.result() for f in as_completed(futures)),
                 description="Copying source files...",
                 disable=quiet,
                 total=len(futures),
