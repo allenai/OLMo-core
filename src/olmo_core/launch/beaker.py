@@ -10,19 +10,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Set, Tuple
 
-from beaker import (
-    Beaker,
-    Dataset,
-    DatasetConflict,
-    DatasetNotFound,
-    Experiment,
-    ExperimentSpec,
-    Job,
-    Priority,
-    RetrySpec,
-    TaskResources,
-    TaskSpec,
-)
+from beaker import (Beaker, Dataset, DatasetConflict, DatasetNotFound,
+                    Experiment, ExperimentSpec, Job, Priority, RetrySpec,
+                    TaskResources, TaskSpec)
 from rich.prompt import Confirm
 
 from ..config import Config, StrEnum
@@ -153,6 +143,11 @@ class BeakerLaunchConfig(Config):
     num_gpus: int = 8
     """
     The number of GPUs to use per node.
+    """
+
+    shared_memory: str = "10GiB"
+    """
+    The amount of shared memory to use.
     """
 
     clusters: List[str] = field(default_factory=lambda: ["ai2/jupiter-cirrascale-2"])
@@ -363,7 +358,7 @@ class BeakerLaunchConfig(Config):
                 propagate_failure=False if self.num_nodes > 1 else None,
                 propagate_preemption=True if self.num_nodes > 1 else None,
                 synchronized_start_timeout="90m" if self.num_nodes > 1 else None,
-                resources=TaskResources(gpu_count=self.num_gpus, shared_memory="10GiB"),
+                resources=TaskResources(gpu_count=self.num_gpus, shared_memory=self.shared_memory),
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
             .with_constraint(cluster=self.clusters)
