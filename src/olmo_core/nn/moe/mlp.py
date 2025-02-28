@@ -13,6 +13,13 @@ from olmo_core.distributed.parallel import get_device_mesh_info
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.exceptions import OLMoConfigurationError
 
+try:
+    import grouped_gemm  # type: ignore
+
+    gmm = torch._dynamo.disable(grouped_gemm.ops.gmm)
+except ImportError:
+    gmm = None
+
 __all__ = ["MoEMLP", "DroplessMoEMLP"]
 
 
@@ -255,13 +262,8 @@ class DroplessMoEMLP(MoEMLPBase):
             ),
         )
 
-        self._gmm = None
-
-        try:
-            import grouped_gemm  # type: ignore
-
-            self._gmm = grouped_gemm.ops.gmm
-        except ImportError:
+        self._gmm = gmm
+        if self._gmm is None:
             warnings.warn(
                 "Grouped GEMM not available, so the MoE will be substantially slower. "
                 "Please install the 'grouped_gemm' package if possible.\n"
@@ -272,7 +274,7 @@ class DroplessMoEMLP(MoEMLPBase):
         self, x: torch.Tensor, w: torch.Tensor, batch_sizes: torch.Tensor, trans_b: bool = False
     ) -> torch.Tensor:
         if self._gmm is not None:
-            return self._gmm(x, w, batch_sizes, trans_b=trans_b)
+            return self._gmm(x, w, batch_sizes, trans_b=trans_b)  # type: ignore
         else:
             out = []
             start = 0
