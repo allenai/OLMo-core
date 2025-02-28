@@ -2,27 +2,42 @@
 Train a 3B for a first coding run. Run this script without any arguments to see usage info.
 """
 
-from olmo_core.config import DType
-from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.internal.experiment import CommonComponents, main, build_common_components, SubCmd, ExperimentConfig
-from olmo_core.internal.common import get_work_dir, get_root_dir
-from olmo_core.train.common import Duration
-from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
-from olmo_core.optim import AdamWConfig, OptimGroupOverride, OptimConfig, LinearWithWarmup
+import sys
+from typing import Callable, List, Optional, Tuple
 
+from olmo_core.config import DType
 from olmo_core.data import (
     DataMixBase,
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
-    TokenizerConfig,
     TokenizerName,
 )
+from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.internal.common import get_root_dir, get_work_dir
+from olmo_core.internal.experiment import (
+    CommonComponents,
+    ExperimentConfig,
+    SubCmd,
+    build_common_components,
+    main,
+)
+from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
+from olmo_core.optim import (
+    AdamWConfig,
+    LinearWithWarmup,
+    OptimConfig,
+    OptimGroupOverride,
+)
 from olmo_core.train import TrainerConfig
-from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback, SchedulerCallback
-from typing import Callable, Dict, List, Tuple, Optional, cast
-import sys
+from olmo_core.train.callbacks import (
+    CheckpointerCallback,
+    CometCallback,
+    SchedulerCallback,
+    WandBCallback,
+)
+from olmo_core.train.common import Duration
 
-SEQUENCE_LENGTH = 2048 
+SEQUENCE_LENGTH = 2048
 
 
 # =========================================================
@@ -31,13 +46,14 @@ SEQUENCE_LENGTH = 2048
 
 
 class Love2CodeDataMix(DataMixBase):
-    """ Defines love2code mix. To create a new mix, make a new file in this folder
+    """Defines love2code mix. To create a new mix, make a new file in this folder
         and its name (without the '.txt' extension) below.
 
     NOTE FOR DG/PW: I based this off of the OLMo2-32B-anneal.py AnnealingDataMix class
     """
 
-    love2code_mix = 'love2code_data_XB.txt'
+    love2code_mix = "love2code_data_XB.txt"
+
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
             base_dir = base_dir + "/"
@@ -54,25 +70,22 @@ class Love2CodeDataMix(DataMixBase):
                 paths.append(f"{base_dir}{line}")
                 labels.append(line.split("/")[1])
 
-        return paths, labels    
+        return paths, labels
 
 
 def build_love2code_common(
-    script: str,
-    cmd: SubCmd,
-    run_name: str,
-    overrides: List[str],
-    *,
-    global_batch_size: int
+    script: str, cmd: SubCmd, run_name: str, overrides: List[str], *, global_batch_size: int
 ) -> CommonComponents:
-    """ Note for DG/PW: 
+    """Note for DG/PW:
 
     I took the original internal.experiment.build_common_components and ran it
     and then built the dataset config and hotswapped it. Maybe not canonical, but seems easiest?
 
     Also hotswapped the CosWithWarmup scheduler to a LinearWithWarmup
     """
-    og_common = build_common_components(script, cmd, run_name, cluster, overrides, global_batch_size=global_batch_size)
+    og_common = build_common_components(
+        script, cmd, run_name, cluster, overrides, global_batch_size=global_batch_size
+    )
     tokenizer_config = og_common.tokenizer
     root_dir = get_root_dir(cluster)
 
@@ -81,15 +94,17 @@ def build_love2code_common(
         tokenizer=tokenizer,
         mix_base_dir=root_dir,
         sequence_length=SEQUENCE_LENGTH,
-        work_dir=get_work_dir(root_dir)
-        )
+        work_dir=get_work_dir(root_dir),
+    )
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=global_batch_size, seed=34521, num_workers=16)
+        global_batch_size=global_batch_size, seed=34521, num_workers=16
+    )
 
     og_common.data_loader = data_loader_config
 
-
-    og_common.callbacks["lr_scheduler"] = SchedulerCallback(scheduler=LinearWithWarmup(warmup_steps=2000))
+    og_common.callbacks["lr_scheduler"] = SchedulerCallback(
+        scheduler=LinearWithWarmup(warmup_steps=2000)
+    )
     return og_common
 
 
@@ -110,10 +125,10 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         ),
     )
 
+
 # =========================================================
 # =                      TRAINING STUFF                   =
 # =========================================================
-
 
 
 def build_optim_config(common: CommonComponents) -> AdamWConfig:
@@ -131,8 +146,7 @@ def build_optim_config(common: CommonComponents) -> AdamWConfig:
 
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
-    """ Note for DG/PW: The only think I changed here was to add the max_duration in TrainerConfig """
-
+    """Note for DG/PW: The only think I changed here was to add the max_duration in TrainerConfig"""
 
     num_ne_params = model_config_builder(common).num_non_embedding_params
     CHINCHILLA_5X_DURATION = Duration(num_ne_params * 20 * 5)
@@ -146,7 +160,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             cancel_check_interval=10,
             z_loss_multiplier=1e-5,
             compile_loss=True,
-            max_duration=CHINCHILLA_5X_DURATION # <--- this line
+            max_duration=CHINCHILLA_5X_DURATION,  # <--- this line
         )
         .with_callback(
             "checkpointer",
@@ -183,6 +197,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 # =                    FULL CONFIG BUILDER                    =
 # =============================================================
 
+
 def build_config(
     script: str,
     cmd: SubCmd,
@@ -196,10 +211,10 @@ def build_config(
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
 ) -> ExperimentConfig:
-    """ The only change here is that I used my custom CommonComponents
-        with the correct love2code dataset 
+    """The only change here is that I used my custom CommonComponents
+    with the correct love2code dataset
     """
-    common = build_love2code_common( # <--- this line
+    common = build_love2code_common(  # <--- this line
         script, cmd, run_name, cluster, overrides, global_batch_size=global_batch_size
     )
 
@@ -248,6 +263,7 @@ def build_config(
 """ Completely unchanged from internal.experiment.main
     (but implicitly uses the `build_config` call I defined just above)
 """
+
 
 def main(
     *,
@@ -298,9 +314,6 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
     )
 
     cmd.run(config)
-
-
-
 
 
 if __name__ == "__main__":

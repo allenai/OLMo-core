@@ -3,14 +3,26 @@ Train a 1B OLMo model. Run this script without any arguments to see usage info.
 """
 
 from olmo_core.config import DType
+from olmo_core.data import (
+    DataMix,
+    NumpyDatasetConfig,
+    NumpyDatasetType,
+    VSLCurriculumConfig,
+    VSLCurriculumType,
+)
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.internal.common import get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
 from olmo_core.train import TrainerConfig
-from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback, LMEvaluatorCallbackConfig
-from olmo_core.data import DataMix, NumpyDatasetConfig, NumpyDatasetType, VSLCurriculumConfig, VSLCurriculumType
-from olmo_core.internal.common import get_root_dir, get_work_dir
+from olmo_core.train.callbacks import (
+    CheckpointerCallback,
+    CometCallback,
+    LMEvaluatorCallbackConfig,
+    WandBCallback,
+)
+
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     return TransformerConfig.olmo2_1B(
@@ -36,11 +48,11 @@ def build_optim_config(common: CommonComponents) -> AdamWConfig:
 
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
-    #print("COMMON LAUNCH", common.launch, '\n\n', dir(common.launch), '\n\n', common.launch.clusters[0])
+    # print("COMMON LAUNCH", common.launch, '\n\n', dir(common.launch), '\n\n', common.launch.clusters[0])
     root_dir = get_root_dir(common.launch.clusters[0])
     # MJ: Change the CommonComponents dataset
     dataset_config = NumpyDatasetConfig.from_data_mix(
-        #DataMix.OLMoE_mix_0824,
+        # DataMix.OLMoE_mix_0824,
         DataMix.OLMo2_subsample_4pct,
         tokenizer=common.tokenizer,
         mix_base_dir=root_dir,
@@ -55,16 +67,16 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     )
 
     lm_evaluator = LMEvaluatorCallbackConfig(
-            eval_dataset=NumpyDatasetConfig.from_data_mix(
-                DataMix.v3_small_ppl_validation,
-                name=NumpyDatasetType.padded_fsl,
-                mix_base_dir=root_dir,
-                sequence_length=dataset_config.effective_sequence_length,
-                tokenizer=common.tokenizer,
-                work_dir=get_work_dir(root_dir),
-            ),
-            eval_interval=1000,
-        )    
+        eval_dataset=NumpyDatasetConfig.from_data_mix(
+            DataMix.v3_small_ppl_validation,
+            name=NumpyDatasetType.padded_fsl,
+            mix_base_dir=root_dir,
+            sequence_length=dataset_config.effective_sequence_length,
+            tokenizer=common.tokenizer,
+            work_dir=get_work_dir(root_dir),
+        ),
+        eval_interval=1000,
+    )
 
     common.dataset = dataset_config
     common.callbacks["lm_evaluator"] = lm_evaluator
