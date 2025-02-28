@@ -29,6 +29,7 @@ This major release introduces a few breaking changes. As such, we've provided an
 
 ### Added
 
+- Added `instance_filter_config` field to `NumpyDatasetConfig`.
 - Added conversion script for OLMo 2 checkpoints to Huggingface format.
 - Added `BeakerCallback`.
 
