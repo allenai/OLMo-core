@@ -500,15 +500,28 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         return {"input_ids": input_ids}
 
     def _iter_batches(self) -> Iterable[Dict[str, Any]]:
-        return torch.utils.data.DataLoader(
-            _IterableDatasetWrapper(self),
-            batch_size=None,
-            num_workers=self.num_workers,
-            pin_memory=self.target_device_type == "cuda" and self.num_workers > 0,
-            prefetch_factor=self.prefetch_factor,
-            persistent_workers=False,
-            timeout=0,
-        )
+        current_global_batch_size = self.global_batch_size
+
+        def _build_batch_iterator():
+            return iter(
+                torch.utils.data.DataLoader(
+                    _IterableDatasetWrapper(self),
+                    batch_size=None,
+                    num_workers=self.num_workers,
+                    pin_memory=self.target_device_type == "cuda" and self.num_workers > 0,
+                    prefetch_factor=self.prefetch_factor,
+                    persistent_workers=False,
+                    timeout=0,
+                ),
+            )
+
+        batch_iterator = _build_batch_iterator()
+        while (batch := next(batch_iterator, None)) is not None:
+            yield batch
+
+            # If batch size has changed, re-initialize the workers.
+            if current_global_batch_size != self.global_batch_size:
+                batch_iterator = _build_batch_iterator()
 
     def _get_dataset_item(self, idx: int) -> Dict[str, Any]:
         item = self.dataset[idx]
