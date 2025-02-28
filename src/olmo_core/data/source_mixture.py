@@ -41,7 +41,7 @@ class SourceMixtureConfig(Config):
     """
     The target ratio of the source in the mixture.
     """
-    paths: List[PathOrStr]
+    paths: List[str]
     """
     A list of paths to the source data.
     """
@@ -106,7 +106,7 @@ class SourceTokenDetails:
 
 @dataclass
 class SourcePathTokens:
-    path: PathOrStr
+    path: str
     tokens: int
 
 
