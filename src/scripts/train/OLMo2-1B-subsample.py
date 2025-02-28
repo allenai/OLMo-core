@@ -10,7 +10,7 @@ from olmo_core.optim import AdamWConfig, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback, LMEvaluatorCallbackConfig
 from olmo_core.data import DataMix, NumpyDatasetConfig, NumpyDatasetType, VSLCurriculumConfig, VSLCurriculumType
-from .common import get_root_dir, get_work_dir
+from olmo_core.internal.common import get_root_dir, get_work_dir
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     return TransformerConfig.olmo2_1B(
@@ -36,13 +36,14 @@ def build_optim_config(common: CommonComponents) -> AdamWConfig:
 
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
-
+    #print("COMMON LAUNCH", common.launch, '\n\n', dir(common.launch), '\n\n', common.launch.clusters[0])
+    root_dir = get_root_dir(common.launch.clusters[0])
     # MJ: Change the CommonComponents dataset
     dataset_config = NumpyDatasetConfig.from_data_mix(
         #DataMix.OLMoE_mix_0824,
-        DataMix.OLMo2_subsample_4pct
+        DataMix.OLMo2_subsample_4pct,
         tokenizer=common.tokenizer,
-        mix_base_dir=get_root_dir(),
+        mix_base_dir=root_dir,
         sequence_length=4096,
         max_target_sequence_length=8192,
         min_sequence_length=256,
@@ -57,7 +58,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             eval_dataset=NumpyDatasetConfig.from_data_mix(
                 DataMix.v3_small_ppl_validation,
                 name=NumpyDatasetType.padded_fsl,
-                mix_base_dir=get_root_dir(),
+                mix_base_dir=root_dir,
                 sequence_length=dataset_config.effective_sequence_length,
                 tokenizer=common.tokenizer,
                 work_dir=get_work_dir(root_dir),
