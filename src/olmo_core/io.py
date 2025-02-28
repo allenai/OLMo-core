@@ -20,6 +20,7 @@ import requests
 import torch
 from cached_path import cached_path
 from cached_path.schemes import S3Client, SchemeClient, add_scheme_client
+from rich.progress import track
 
 from .aliases import PathOrStr
 from .exceptions import OLMoEnvironmentError, OLMoNetworkError
@@ -204,6 +205,7 @@ def copy_dir(
     target: PathOrStr,
     save_overwrite: bool = False,
     num_threads: Optional[int] = None,
+    quiet: bool = False,
 ):
     """
     Copy a directory from ``source`` to ``target``.
@@ -225,6 +227,9 @@ def copy_dir(
         num_threads = get_default_thread_count()
 
     with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        if not quiet:
+            log.info("Collecting source files to copy...")
+
         futures = []
         for source_path in list_directory(source, recurse=True, include_dirs=False):
             assert source_path.startswith(source)
@@ -233,7 +238,19 @@ def copy_dir(
             futures.append(
                 executor.submit(copy_file, source_path, target_path, save_overwrite=save_overwrite)
             )
-        deque(as_completed(futures), maxlen=0)
+
+        if not quiet:
+            log.info(f"Collected {len(futures)} source files to copy")
+
+        deque(
+            track(
+                as_completed(futures),
+                description="Copying source files...",
+                disable=quiet,
+                total=len(futures),
+            ),
+            maxlen=0,
+        )
 
 
 def dir_is_empty(dir: PathOrStr) -> bool:
