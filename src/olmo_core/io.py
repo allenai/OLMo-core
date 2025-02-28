@@ -139,7 +139,7 @@ def get_bytes_range(path: PathOrStr, bytes_start: int, num_bytes: int) -> bytes:
             return f.read(num_bytes)
 
 
-def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
+def upload(source: PathOrStr, target: str, save_overwrite: bool = False, quiet: bool = False):
     """
     Upload source file to a target location on GCS or S3.
 
@@ -152,7 +152,8 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
     source = Path(normalize_path(source))
     assert source.is_file()
     num_bytes = get_file_size(source)
-    log.info(f"Uploading {_format_bytes(num_bytes)} from '{source}' to '{target}'...")
+    if not quiet:
+        log.info(f"Uploading {_format_bytes(num_bytes)} from '{source}' to '{target}'...")
     parsed = urlparse(target)
     if parsed.scheme == "gs":
         _gcs_upload(source, parsed.netloc, parsed.path.strip("/"), save_overwrite=save_overwrite)
@@ -166,9 +167,13 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
         )
     else:
         raise NotImplementedError(f"Upload not implemented for '{parsed.scheme}' scheme")
+    if not quiet:
+        log.info(f"Uploaded {_format_bytes(num_bytes)} to '{target}'")
 
 
-def copy_file(source: PathOrStr, target: PathOrStr, save_overwrite: bool = False):
+def copy_file(
+    source: PathOrStr, target: PathOrStr, save_overwrite: bool = False, quiet: bool = False
+):
     """
     Copy a file from ``source`` to ``target``.
 
@@ -183,7 +188,7 @@ def copy_file(source: PathOrStr, target: PathOrStr, save_overwrite: bool = False
     target = normalize_path(target)
     local_source = cached_path(source, quiet=True)
     if is_url(target):
-        upload(local_source, target, save_overwrite=save_overwrite)
+        upload(local_source, target, save_overwrite=save_overwrite, quiet=quiet)
     else:
         target = Path(target)
         if file_exists(target):
@@ -236,7 +241,9 @@ def copy_dir(
             relative_source_path = source_path.replace(source, "", 1).lstrip("/")
             target_path = join_path(target, relative_source_path)
             futures.append(
-                executor.submit(copy_file, source_path, target_path, save_overwrite=save_overwrite)
+                executor.submit(
+                    copy_file, source_path, target_path, save_overwrite=save_overwrite, quiet=True
+                )
             )
 
         if not quiet:
