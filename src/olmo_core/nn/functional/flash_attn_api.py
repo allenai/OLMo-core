@@ -135,9 +135,7 @@ def dispatch_ring_flash_attn(
             )
 
         if local_k_slice is not None:
-            raise RuntimeError(
-                f"'local_k_slice' are invalid for {strategy} load balancing strategy"
-            )
+            raise RuntimeError(f"'local_k_slice' is invalid for {strategy} load balancing strategy")
 
         if cu_seqlens is not None and max_seqlen is not None:
             out = ring_flash_attn.zigzag_ring_flash_attn_varlen_func(
@@ -175,7 +173,11 @@ def dispatch_ring_flash_attn(
             or heads_k_stride is None
             or local_k_slice is None
         ):
-            raise RuntimeError(f"missing required arguments for {strategy} load balancing strategy")
+            raise RuntimeError(
+                f"{strategy} load balancing strategy is only implemented for 'varlen' variant.\n"
+                "The following arguments are required: 'cu_seqlens_(q|k)', 'max_seqlen_(q|k)', "
+                "'heads_k_stride', and 'local_k_slice'."
+            )
 
         out = ring_flash_attn.llama3_flash_attn_varlen_func(
             _flatten_batch_dim(q),
