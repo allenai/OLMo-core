@@ -175,10 +175,7 @@ class LcContTrain(Config):
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
                 ),
                 tp_config=None,
-                ac_config=TransformerActivationCheckpointingConfig(
-                    mode=TransformerActivationCheckpointingMode.selected_modules,
-                    modules=[f"blocks.{i}.feed_forward" for i in range(model.n_layers)],
-                ),
+                ac_config=TransformerActivationCheckpointingConfig(),
                 float8_config=Float8Config(enabled=False),
                 max_grad_norm=1.0,
                 scheduler=CosWithWarmup(warmup_steps=475, alpha_f=0.1),
