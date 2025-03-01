@@ -112,18 +112,19 @@ def build_world_mesh(
     device_type: Optional[str] = None,
 ) -> DeviceMesh:
     """
-    Build a ``DeviceMesh`` suitable for the given parallel strategies.
+    Build a :class:`~torch.distributed.device_mesh.DeviceMesh` suitable for the given parallel strategies.
 
     .. seealso::
         Pass the mesh created by this function to any of the ``get_*_mesh()`` functions in
         this module to get the right sub-mesh for a any given parallel strategy.
 
-        - :func:`get_dp_model_mesh()`
-        - :func:`get_dp_mesh()`
-        - :func:`get_tp_mesh()`
-        - :func:`get_cp_mesh()`
-        - :func:`get_pp_mesh()`
-        - :func:`get_ep_mesh()`
+        - :func:`get_dp_model_mesh()` gives you the 1 or 2D sub-mesh suitable for data parallel *model*
+          wrappers like FSDP(2) or DDP.
+        - :func:`get_dp_mesh()` gives you the 1D sub-mesh suitable for configuring *data loaders*.
+        - :func:`get_tp_mesh()` gives you the 1D sub-mesh for tensor parallelism.
+        - :func:`get_cp_mesh()` gives you the 1D sub-mesh for context parallelism.
+        - :func:`get_pp_mesh()` gives you the 1D sub-mesh for pipeline parallelism.
+        - :func:`get_ep_mesh()` gives you the 1D sub-mesh for expert parallelism.
 
     .. important::
         A data parallel config is required if any other parallel config is set.
