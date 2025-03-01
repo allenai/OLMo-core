@@ -72,7 +72,7 @@ def coord_check(
                 compile=True,
                 d_model=d_model,
                 dp_config=TransformerDataParallelConfig(
-                    name=DataParallelType.hsdp,
+                    name=DataParallelType.fsdp,
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
@@ -130,7 +130,7 @@ def coord_check(
             df,
             legend=legend,
             save_to=os.path.join(output_dir, f"{prm}_olmo_{optimizer}_coord.png"),
-            suptitle=f"{prm} Transformer {optimizer} lr={lr} nseeds={nseeds}",
+            suptitle=f"{prm} Transformer {optimizer} nseeds={nseeds}",
             face_color="xkcd:light grey" if not mup else None,
         )
 
@@ -175,7 +175,7 @@ if __name__ == "__main__":
     print(args)
 
     if args.save_base_shapes:
-        save_base_shapes(args.config_path, args.save_base_shapes)
+        save_base_shapes(args.save_base_shapes)
         print("done and exit")
         import sys
 

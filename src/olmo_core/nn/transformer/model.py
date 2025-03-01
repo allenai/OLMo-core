@@ -627,8 +627,12 @@ class muPTransformer(Transformer):
     ) -> torch.Generator:
         device = device or self.device
         from mup import set_base_shapes
+        # set_base_shapes(self, self.mup_base_shapes, rescale_params=True)
+        # return super().init_weights(max_seq_len=max_seq_len, device=device)
+        generator = super().init_weights(max_seq_len=max_seq_len, device=device)
         set_base_shapes(self, self.mup_base_shapes, rescale_params=True)
-        return super().init_weights(max_seq_len=max_seq_len, device=device)
+        return generator
+
 
     def forward(
         self,

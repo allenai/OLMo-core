@@ -578,8 +578,9 @@ class TransformerConfig(Config):
         """
         A 7B Llama2-like model config.
         """
+        d_model = kwargs.pop("d_model", 4096)
         return cls.llama_like_mup(
-            d_model=4096,
+            d_model=d_model,
             vocab_size=vocab_size,
             n_layers=kwargs.pop("n_layers", 32),
             n_heads=kwargs.pop("n_heads", 32),
