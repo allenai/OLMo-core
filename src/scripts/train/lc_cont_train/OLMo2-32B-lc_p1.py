@@ -202,7 +202,7 @@ class LcContTrain(Config):
                 work_dir=get_work_dir(root_dir),
             ),
             data_loader=NumpyDataLoaderConfig(
-                global_batch_size= 64 * CONTEXT_LENGTH,  # NOTE: this is specified in TOKENS, not instances.
+                global_batch_size= 128 * CONTEXT_LENGTH,  # NOTE: this is specified in TOKENS, not instances.
                 seed=34521,  # NOTE: can update this to change data order.
                 num_workers=8,
             ),
