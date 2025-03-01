@@ -188,10 +188,14 @@ def convert_to_hf_checkpoint(
     ) != "rms":
         raise ValueError(f"Only RMSNorm is supported, found {k}")
 
-    max_sequence_length = min(
-        int(olmo_core_config.get("dataset", {}).get("sequence_length", max_sequence_length)),
-        tokenizer.model_max_length,
-    )
+    if max_sequence_length <= 0:
+        dataset_config = olmo_core_config["dataset"]
+        if "max_sequence_length" in dataset_config:
+            max_sequence_length = int(dataset_config["max_sequence_length"])
+        elif "sequence_length" in dataset_config:
+            max_sequence_length = int(dataset_config["sequence_length"])
+        else:
+            max_sequence_length = tokenizer.model_max_length
 
     if max_sequence_length <= 0:
         raise ValueError(f"Missing or invalid sequence length: {max_sequence_length}")
