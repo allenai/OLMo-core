@@ -836,11 +836,13 @@ class VSLCurriculum:
             num_natural_batches = natural_batches_per_bucket[i][1]
             if num_batches != num_natural_batches:
                 log.info(
-                    f"- bucket {i}: sequence length {seq_len}, using {num_batches:,d} batches out of "
-                    f"{num_natural_batches:,d} total"
+                    f"- bucket {i}:   sequence length {seq_len:>6d} => {num_batches:>6d} batches "
+                    f"used ({num_natural_batches:d} total)"
                 )
             else:
-                log.info(f"- bucket {i}: sequence length {seq_len}, {num_batches:,d} batches")
+                log.info(
+                    f"- bucket {i}:   sequence length {seq_len:>6d} => {num_batches:>6d} batches"
+                )
 
     @property
     @abstractmethod
