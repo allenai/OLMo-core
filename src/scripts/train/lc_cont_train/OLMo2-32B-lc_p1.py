@@ -309,7 +309,7 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         script=script,
         cmd="train",
         run_name=run_name,
-        load_path="checkpoints/peteish32-anneal/peteish32-from716000-peteish32-from716000-100Banneal-soup/step11921-olmocore",
+        load_path="checkpoints/peteish32-anneal/peteish32-from716000-peteish32-from716000-100Banneal-soup/step11921-olmocore/model_and_optim",
         cluster=cluster,
         overrides=overrides,
     )
