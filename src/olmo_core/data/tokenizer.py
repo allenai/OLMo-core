@@ -119,6 +119,29 @@ class TokenizerConfig(Config):
         with cached_path(f"hf://{identifier}/config.json").open() as f:
             config = json.load(f)
 
+        # with open(identifier, "r") as f:
+        #    config = json.load(f)
+
+        return cls(
+            vocab_size=config["vocab_size"],
+            eos_token_id=config["eos_token_id"],
+            pad_token_id=config.get("pad_token_id", config["eos_token_id"]),
+            bos_token_id=config.get("bos_token_id"),
+            identifier=identifier,
+        )
+
+    @classmethod
+    def from_file(cls, identifier: str) -> "TokenizerConfig":
+        """
+        Initialize a tokenizer config from a model on HuggingFace.
+
+        :param identifier: The HF model identifier, e.g. "meta-llama/Llama-3.2-1B".
+        """
+        import json
+
+        with open(identifier, "r") as f:
+            config = json.load(f)
+
         return cls(
             vocab_size=config["vocab_size"],
             eos_token_id=config["eos_token_id"],

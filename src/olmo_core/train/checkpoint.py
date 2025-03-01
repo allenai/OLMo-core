@@ -113,7 +113,8 @@ class Checkpointer:
                 optim,
                 process_group=self.process_group,
                 save_overwrite=self.save_overwrite,
-                thread_count=self.save_thread_count,
+                # thread_count=self.save_thread_count,
+                thread_count=2,
                 throttle_uploads=self.throttle_uploads,
             )
 

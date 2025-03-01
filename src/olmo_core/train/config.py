@@ -42,7 +42,7 @@ class TrainerConfig(Config):
 
     device: Optional[str] = None
     save_overwrite: bool = False
-    max_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
+    max_duration: Duration = field(default_factory=lambda: Duration.epochs(2))
     cancel_check_interval: int = 25
     hard_stop: Optional[Duration] = None
     metrics_collect_interval: int = 5
