@@ -3,14 +3,11 @@ This script can be used to launch phase of continued long-context training on Be
 Run the script without any arguments to see usage info.
 """
 
-import json
-import os
 import sys
 from dataclasses import dataclass
 from typing import List, Tuple, cast
 
 import rich
-import torch
 from rich import print
 
 from olmo_core.config import Config, DType
@@ -25,14 +22,12 @@ from olmo_core.data import (
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
-from olmo_core.io import resource_path
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import (
     TransformerConfig, TransformerActivationCheckpointingMode,
 )
 from olmo_core.optim import (
     CosWithWarmup,
-    OptimConfig,
     OptimGroupOverride,
     AdamWConfig,
 )
@@ -46,18 +41,14 @@ from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
-    TransformerTensorParallelConfig,
     TransformerTrainModuleConfig,
 )
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
     WandBCallback, 
     ConfigSaverCallback,
-    DownstreamEvaluatorCallbackConfig,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
-    # GradClipperCallback,
-    # SchedulerCallback,
 )
 from olmo_core.train.checkpoint import CheckpointerConfig
 from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
@@ -216,7 +207,6 @@ class LcContTrain(Config):
                 num_workers=4,
             ),
             trainer=TrainerConfig(
-                # save_folder=f"gs://ai2-llm/checkpoints/dustins/{run_name}",
                 save_folder=f"{root_dir}/checkpoints/dustins/{run_name}",
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
