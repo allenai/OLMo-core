@@ -923,7 +923,9 @@ def prepare_batch(
         batch.pop("labels", None)
 
     # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
-    if cp_load_balancer is not None:
+    if cp_load_balancer is None:
+        out_batch["input_ids"] = batch["input_ids"]
+    else:
         inputs = [batch["input_ids"]]
         seq_dims = [1]
         pad_values: List[Union[int, float]] = [0]
