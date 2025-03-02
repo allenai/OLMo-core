@@ -23,7 +23,6 @@ from olmo_core.data.utils import (
 from olmo_core.distributed.checkpoint import _swap_param_keys
 from olmo_core.distributed.parallel import (
     ContextParallelConfig,
-    ContextParallelLoadBalancer,
     DataParallelConfig,
     DataParallelType,
     ExpertParallelConfig,
@@ -45,6 +44,10 @@ from olmo_core.distributed.utils import (
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
+from olmo_core.nn.attention import (
+    RingAttentionLoadBalancer,
+    RingAttentionLoadBalancerType,
+)
 from olmo_core.nn.cross_entropy_loss import CrossEntropyLoss
 from olmo_core.nn.transformer import (
     MoETransformer,
@@ -96,6 +99,11 @@ class TransformerTensorParallelConfig(TensorParallelConfig):
 class TransformerContextParallelConfig(ContextParallelConfig):
     """
     Transformer-specific context parallel config.
+    """
+
+    load_balancer: RingAttentionLoadBalancerType = RingAttentionLoadBalancerType.zig_zag
+    """
+    The type of load balancer to use for ring attention.
     """
 
 
@@ -349,7 +357,7 @@ class TransformerTrainModule(TrainModule):
 
         # Maybe apply context parallelism.
         self._cp_config = cp_config
-        self._cp_load_balancer: Optional[ContextParallelLoadBalancer] = None
+        self._cp_load_balancer: Optional[RingAttentionLoadBalancer] = None
         if cp_config is not None:
             assert self.world_mesh is not None
             cp_mesh = get_cp_mesh(self.world_mesh)
@@ -899,7 +907,7 @@ def prepare_batch(
     *,
     device: torch.device,
     label_ignore_index: int,
-    cp_load_balancer: Optional[ContextParallelLoadBalancer],
+    cp_load_balancer: Optional[RingAttentionLoadBalancer],
 ) -> Tuple[Dict[str, Any], Optional[torch.Tensor]]:
     B, S = batch["input_ids"].shape
     out_batch: Dict[str, Any] = {}

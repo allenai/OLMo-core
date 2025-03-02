@@ -3,9 +3,7 @@ from typing import Optional
 import torch
 import torch.distributed as dist
 
-from olmo_core.distributed.parallel.context_parallel import (
-    ContextParallelLoadBalancerType,
-)
+from ..attention import RingAttentionLoadBalancerType
 
 try:
     import flash_attn  # type: ignore
@@ -112,7 +110,7 @@ def dispatch_ring_flash_attn(
     v: torch.Tensor,
     *,
     group: dist.ProcessGroup,
-    strategy: ContextParallelLoadBalancerType,
+    strategy: RingAttentionLoadBalancerType,
     cu_seqlens: Optional[torch.Tensor] = None,
     cu_seqlens_q: Optional[torch.Tensor] = None,
     cu_seqlens_k: Optional[torch.Tensor] = None,
@@ -128,7 +126,7 @@ def dispatch_ring_flash_attn(
     if ring_flash_attn is None:
         raise RuntimeError("flash-attn and ring-flash-attn are required!")
 
-    if strategy == ContextParallelLoadBalancerType.zig_zag:
+    if strategy == RingAttentionLoadBalancerType.zig_zag:
         if any(x is not None for x in (cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k)):
             raise RuntimeError(
                 f"{strategy} load balancing strategy requires unified QK doc lengths"
@@ -159,7 +157,7 @@ def dispatch_ring_flash_attn(
                 causal=causal,
                 group=group,
             )
-    elif strategy == ContextParallelLoadBalancerType.llama3:
+    elif strategy == RingAttentionLoadBalancerType.llama3:
         if any(x is not None for x in (cu_seqlens, max_seqlen)):
             raise RuntimeError(
                 f"{strategy} load balancing strategy requires seperate QK doc lengths"
@@ -205,7 +203,7 @@ def dispatch_ring_flash_attn_qkvpacked(
     qkv: torch.Tensor,
     *,
     group: dist.ProcessGroup,
-    strategy: ContextParallelLoadBalancerType,
+    strategy: RingAttentionLoadBalancerType,
     cu_seqlens: Optional[torch.Tensor] = None,
     max_seqlen: Optional[int],
     dropout_p: float = 0.0,
@@ -215,7 +213,7 @@ def dispatch_ring_flash_attn_qkvpacked(
     if ring_flash_attn is None:
         raise RuntimeError("flash-attn and ring-flash-attn are required!")
 
-    if strategy == ContextParallelLoadBalancerType.zig_zag:
+    if strategy == RingAttentionLoadBalancerType.zig_zag:
         if cu_seqlens is not None and max_seqlen is not None:
             out = ring_flash_attn.zigzag_ring_flash_attn_varlen_qkvpacked_func(
                 _flatten_batch_dim(qkv),

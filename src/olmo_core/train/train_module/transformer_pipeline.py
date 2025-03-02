@@ -20,7 +20,6 @@ from olmo_core.config import Config, DType
 from olmo_core.data.utils import get_labels
 from olmo_core.distributed.checkpoint import _swap_param_keys
 from olmo_core.distributed.parallel import (
-    ContextParallelLoadBalancer,
     DataParallelType,
     PipelineParallelConfig,
     PipelineSchedule,
@@ -39,6 +38,7 @@ from olmo_core.distributed.utils import (
 )
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
+from olmo_core.nn.attention import RingAttentionLoadBalancer
 from olmo_core.nn.cross_entropy_loss import CrossEntropyLoss
 from olmo_core.nn.transformer import MoETransformer, NormalizedTransformer, Transformer
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
@@ -375,7 +375,7 @@ class TransformerPipelineTrainModule(TrainModule):
 
         # Maybe apply context parallelism.
         self._cp_config = cp_config
-        self._cp_load_balancer: Optional[ContextParallelLoadBalancer] = None
+        self._cp_load_balancer: Optional[RingAttentionLoadBalancer] = None
         if cp_config is not None:
             cp_mesh = get_cp_mesh(self.world_mesh)
             self._cp_load_balancer = cp_config.load_balancer.build(cp_mesh)

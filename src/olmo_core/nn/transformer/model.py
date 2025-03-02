@@ -9,14 +9,16 @@ from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
 from olmo_core.config import StrEnum
-from olmo_core.distributed.parallel.context_parallel import (
-    ContextParallelLoadBalancerType,
-)
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device, mark_dynamic
 
-from ..attention import Attention, AttentionBase, FusedAttention
+from ..attention import (
+    Attention,
+    AttentionBase,
+    FusedAttention,
+    RingAttentionLoadBalancerType,
+)
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..lm_head import LMHeadConfig
@@ -308,10 +310,6 @@ class Transformer(nn.Module):
         """
         Apply tensor parallelism to the model.
 
-        .. warning::
-            Usually this does not need to be called directly, as :meth:`TransformerConfig.build()`
-            will call it for you.
-
         :param loss_parallel: Set to ``True`` if parallelizing the loss function as well.
         :param float8_enabled: Set this to ``True`` if training with float8 linear layers.
         """
@@ -340,9 +338,14 @@ class Transformer(nn.Module):
                 use_local_output=not loss_parallel,
             )
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: ContextParallelLoadBalancerType):
+    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
         """
         Prepare the model for context-parallelism (CP).
+
+        .. important::
+            Unlike with tensor parallelism (:meth:`apply_tp`) the model won't automatically shard
+            the inputs. It expects the inputs to already have been sharded on the sequence
+            dimension by the corresponding :class:`~olmo_core.nn.attention.RingAttentionLoadBalancer`.
 
         :param cp_mesh: The CP device mesh.
         :param load_balancer: The load balancing method.
@@ -358,10 +361,6 @@ class Transformer(nn.Module):
     ):
         """
         Apply activation checkpointing to the model.
-
-        .. warning::
-            Usually this does not need to be called directly, as :meth:`TransformerConfig.build()`
-            will call it for you.
 
         :param mode: Determines how to apply activation checkpointing.
         :param block_interval: Required when :data:`mode` is "selected_blocks". Determines
@@ -424,11 +423,8 @@ class Transformer(nn.Module):
         due to repeated structure.
 
         .. warning::
-            Usually this does not need to be called directly, as :meth:`TransformerConfig.build()`
-            will call it for you.
-
-            If you do use this directly note that it must be called after
-            :meth:`apply_activation_checkpointing()` but before :meth:`apply_fsdp()` or :meth:`apply_ddp()`.
+            This must be called after :meth:`apply_activation_checkpointing()` but
+            before :meth:`apply_fsdp()` or :meth:`apply_ddp()`.
         """
         for block_id, block in self.blocks.named_children():
             block = torch.compile(block, fullgraph=False)
@@ -451,8 +447,8 @@ class Transformer(nn.Module):
         Apply FSDP(2) to the model.
 
         .. warning::
-            Usually this does not need to be called directly, as :meth:`TransformerConfig.build()`
-            will call it for you.
+            This should generally be called last if using any other parallelism strategies or optimizations
+            like :meth:`apply_compile()`.
 
         :param dp_mesh: The model data parallel device mesh.
         :param param_dtype: The data type to materialize params in. Defaults to the current param dtype.
@@ -510,10 +506,6 @@ class Transformer(nn.Module):
     ):
         """
         Apply DDP to the model.
-
-        .. warning::
-            Usually this does not need to be called directly, as :meth:`TransformerConfig.build()`
-            will call it for you.
         """
         from torch.distributed._composable.replicate import replicate
 
