@@ -106,6 +106,14 @@ class TransformerContextParallelConfig(ContextParallelConfig):
     The type of load balancer to use for ring attention.
     """
 
+    @classmethod
+    def zig_zag(cls, degree: int) -> "TransformerContextParallelConfig":
+        return cls(degree=degree, load_balancer=RingAttentionLoadBalancerType.zig_zag)
+
+    @classmethod
+    def llama3(cls, degree: int) -> "TransformerContextParallelConfig":
+        return cls(degree=degree, load_balancer=RingAttentionLoadBalancerType.llama3)
+
 
 @dataclass
 class TransformerExpertParallelConfig(ExpertParallelConfig):
