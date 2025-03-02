@@ -1,11 +1,18 @@
-from typing import Tuple
+from typing import Literal, Optional, Tuple
 
 import torch
 import torch.distributed as dist
 import triton  # type: ignore
 import triton.language as tl  # type: ignore
 
-__all__ = ["fused_cross_entropy_loss"]
+try:
+    from liger_kernel.ops.fused_linear_cross_entropy import (  # type: ignore
+        LigerFusedLinearCrossEntropyFunction,
+    )
+except ImportError:
+    LigerFusedLinearCrossEntropyFunction = None
+
+__all__ = ["fused_cross_entropy_loss", "fused_linear_cross_entropy_loss"]
 
 
 def fused_cross_entropy_loss(
@@ -18,23 +25,6 @@ def fused_cross_entropy_loss(
     inplace_backward: bool = False,
     process_group=None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Arguments:
-        logits: (batch, vocab_size)
-        labels: (batch,)
-        label_smoothing: float
-        logit_scale: float. Multiply logits by this scale before calculating the loss.
-        lse_square_scale: float. If > 0, we add lse_square_scale * lse(logits) ^ 2 to the loss.
-            This is also referred to as "z-loss".
-        ignore_index: int. If labels == ignore_index, the loss is set to 0.0.
-        inplace_backward: bool. If True, we do the backward pass in-place by modifying the logits.
-            This saves memory.
-        process_group: if not None, we're doing Tensor Parallel: each process is responsible for
-            one part of the vocab. The loss will be aggregated across processes.
-    Returns:
-        losses: (batch,), float
-        z_losses: (batch,), float
-    """
     return CrossEntropyLoss.apply(  # type: ignore
         logits,
         labels,
@@ -44,6 +34,36 @@ def fused_cross_entropy_loss(
         ignore_index,
         inplace_backward,
         process_group,
+    )
+
+
+def fused_linear_cross_entropy_loss(
+    _input: torch.Tensor,
+    weight: torch.Tensor,
+    labels: torch.Tensor,
+    bias: Optional[torch.Tensor] = None,
+    ce_weight: Optional[torch.Tensor] = None,
+    ignore_index: int = -100,
+    lse_square_scale: float = 0.0,
+    label_smoothing: float = 0.0,
+    reduction: Literal["mean", "sum", "none"] = "mean",
+    softcap: Optional[float] = None,
+    return_z_loss: bool = False,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    if LigerFusedLinearCrossEntropyFunction is None:
+        raise RuntimeError("'fused_linear_cross_entropy_loss' requires liger-kernel")
+    return LigerFusedLinearCrossEntropyFunction.apply(
+        _input,
+        weight,
+        labels,
+        bias,
+        ce_weight,
+        ignore_index,
+        lse_square_scale,
+        label_smoothing,
+        reduction,
+        softcap,
+        return_z_loss,
     )
 
 
