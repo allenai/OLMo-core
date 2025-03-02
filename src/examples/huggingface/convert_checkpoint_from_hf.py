@@ -22,10 +22,15 @@ from olmo_core.utils import get_default_device, prepare_cli_environment
 
 log = logging.getLogger(__name__)
 
-HF_MODEL = f"{os.environ['SHARE_RES_DIR']}/models/deepseek/deepseek-coder-1.3b-base"
+HF_MODEL = "allenai/OLMo-2-1124-7B"
+# HF_MODEL = "allenai/OLMo-2-1124-7B-Instruct"
+# HF_MODEL = "allenai/OLMo-2-1124-13B-Instruct"
+# HF_MODEL = "meta-llama/Llama-3.2-1B"
+# HF_MODEL = "meta-llama/Llama-3.2-8B"
+# HF_MODEL = "deepseek-ai/deepseek-coder-1.3b-base"
 
-SAVE_PATH = f"{os.environ['SHARE_RES_DIR']}/models/deepseek/olmo/deepseek-coder-1.3b-base"
-SAVE_OVERWRITE = True
+SAVE_PATH = f"/tmp/checkpoints/{HF_MODEL}"
+SAVE_OVERWRITE = False
 
 TOKENIZER_CONFIG = TokenizerConfig.from_hf(HF_MODEL)
 
@@ -38,7 +43,7 @@ if "Llama-3.2-1B" in HF_MODEL:
         rope_scaling=RoPELlamaScalingConfig(),
     )
 
-elif "deepseek-coder-1.3b-base" in HF_MODEL:
+elif HF_MODEL.startswith("deepseek-coder-1.3b-base"):
     MODEL_CONFIG = TransformerConfig.deepseek_1B(
         TOKENIZER_CONFIG.vocab_size,
         fused_ops=False,

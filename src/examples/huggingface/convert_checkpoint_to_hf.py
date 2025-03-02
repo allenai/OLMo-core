@@ -222,8 +222,7 @@ def convert_to_hf_checkpoint(
             tie_word_embeddings=False,
         )
     else:
-        # Extract RoPE scaling config
-        # from pdb import set_trace; set_trace()
+
         rope_config = olmo_core_config["model"]["block"]["attention"]["rope"].get("scaling", None)
 
         if rope_config is None:
@@ -366,7 +365,7 @@ def validate_conversion(hf_model_path, olmo_checkpoint_path, olmo_config):
 
     with open(config_path, "r") as f:
         olmo_config_dict = json.load(f)["model"]
-    # import pdb; pdb.set_trace()
+
     if "rope" in olmo_config_dict["block"]["attention"] and "scaling" in olmo_config_dict["block"]["attention"]["rope"]:
         scaling_config = olmo_config_dict["block"]["attention"]["rope"]["scaling"]
         assert isinstance(scaling_config, dict)
