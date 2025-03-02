@@ -234,28 +234,13 @@ def build_config(
     cluster: str,
     overrides: List[str],
     *,
-    global_batch_size: int,
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
     train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
-    sequence_length: int = 4096,
-    include_default_evals: bool = True,
-    intra_document_masking: bool = False,
-    include_instance_filter: bool = False,
+    **kwargs,
 ) -> ExperimentConfig:
-    common = build_common_components(
-        script,
-        cmd,
-        run_name,
-        cluster,
-        overrides,
-        global_batch_size=global_batch_size,
-        sequence_length=sequence_length,
-        include_default_evals=include_default_evals,
-        intra_document_masking=intra_document_masking,
-        include_instance_filter=include_instance_filter,
-    )
+    common = build_common_components(script, cmd, run_name, cluster, overrides, **kwargs)
 
     model = model_config_builder(common)
 
