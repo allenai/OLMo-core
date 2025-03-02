@@ -1,6 +1,6 @@
 import logging
 import warnings
-from typing import Any, Callable, List, Literal, Optional
+from typing import Any, Callable, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -9,8 +9,16 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Shard, distribute_tensor
 
-from ...distributed.utils import get_local_tensor
-from ...exceptions import OLMoConfigurationError
+from olmo_core.distributed.parallel import get_device_mesh_info
+from olmo_core.distributed.utils import get_local_tensor
+from olmo_core.exceptions import OLMoConfigurationError
+
+try:
+    import grouped_gemm  # type: ignore
+
+    gmm = torch._dynamo.disable(grouped_gemm.ops.gmm)
+except ImportError:
+    gmm = None
 
 __all__ = ["MoEMLP", "DroplessMoEMLP"]
 
@@ -50,7 +58,7 @@ class MoEMLPBase(nn.Module):
         self.gradient_scale: Optional[float] = None
         self.num_local_experts = num_experts
         self.hidden_sharding_degree = 1
-        self.mesh: Optional[DeviceMesh] = None
+        self.ep_mesh: Optional[DeviceMesh] = None
         self.ep_pg: Optional[dist.ProcessGroup] = None
 
     def scale_grad(self, w: torch.Tensor) -> torch.Tensor:
@@ -62,86 +70,85 @@ class MoEMLPBase(nn.Module):
         """
         Apply expert parallelism.
 
-        :param ep_mesh: A 2D device mesh.
+        :param ep_mesh: A 1D device mesh to shard experts over.
         """
-        self._shard_experts(ep_mesh, "ep")
+        if ep_mesh.ndim != 1:
+            raise RuntimeError("expert parallel mesh must be 1 dimensional")
+        self._shard_experts(ep_mesh)
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         """
         Apply expert parallelism.
 
-        :param tp_mesh: A 1D device mesh.
+        :param tp_mesh: A 1D device mesh to shard experts over.
         """
         del float8_enabled  # TODO
-        self._shard_experts(tp_mesh, "tp")
+        if tp_mesh.ndim != 1:
+            raise RuntimeError("tensor parallel mesh must be 1 dimensional")
+        self._shard_experts(tp_mesh)
 
-    def _shard_experts(self, mesh: DeviceMesh, flavor: Literal["tp", "ep"]):
-        if flavor == "ep":
-            if mesh.ndim != 2:
-                raise RuntimeError("expert parallel mesh must be 2 dimensional")
-        elif flavor == "tp":
-            if mesh.ndim != 1:
-                raise RuntimeError("tensor parallel mesh must be 1 dimensional")
-        else:
-            raise ValueError(flavor)
-
-        if not mesh.mesh_dim_names:
-            raise RuntimeError("expert parallel mesh must have named dimensions")
-
-        shard_dim_name = mesh.mesh_dim_names[-1]
-        log.info(f"Splitting experts over mesh dimension '{shard_dim_name}'...")
-
-        self.mesh = mesh
-        self.ep_pg = mesh[shard_dim_name].get_group()
-        num_shards = mesh[shard_dim_name].size()
-
+    def _shard_experts(self, mesh: DeviceMesh):
+        num_shards = mesh.size()
         if self.num_experts % num_shards != 0:
             raise OLMoConfigurationError(
                 f"'num_experts' ({self.num_experts}) must be divisible by the expert parallel shard degree ({num_shards})."
             )
 
+        self.ep_mesh = mesh
+        self.ep_pg = mesh.get_group()
         self.num_local_experts = self.num_experts // num_shards
         self.gradient_scale = 1.0 / num_shards
 
         placements: List[Placement] = [Shard(0)]
-        self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, mesh[shard_dim_name], placements)))  # type: ignore
-        self.register_parameter("w2", nn.Parameter(distribute_tensor(self.w2, mesh[shard_dim_name], placements)))  # type: ignore
-        self.register_parameter("w3", nn.Parameter(distribute_tensor(self.w3, mesh[shard_dim_name], placements)))  # type: ignore
+        self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, mesh, placements)))  # type: ignore
+        self.register_parameter("w2", nn.Parameter(distribute_tensor(self.w2, mesh, placements)))  # type: ignore
+        self.register_parameter("w3", nn.Parameter(distribute_tensor(self.w3, mesh, placements)))  # type: ignore
 
-    def prepare_experts_for_fsdp(
-        self,
-        *,
-        mesh: Optional[DeviceMesh] = None,
-        strategy: Literal["replicate", "shard"] = "shard",
-        **kwargs,
-    ):
+    def prepare_experts_for_fsdp(self, *, world_mesh: DeviceMesh, **kwargs):
         """
         Should be called before wrapping this module, or a parent module, with FSDP2.
-
-        If expert parallelism is enabled over the same mesh, this will shard the local experts
-        over the appropriate mesh dimension. Otherwise this is a no-op.
         """
         from torch.distributed._composable.fsdp import fully_shard
-        from torch.distributed._composable.replicate import replicate
 
-        if mesh is None or self.mesh is None or mesh != self.mesh:
+        # If expert/tensor parallel is not enabled then we don't need to do anything special here.
+        if self.ep_mesh is None:
             return
 
-        if mesh.ndim != 2:
-            raise RuntimeError("expected a 2D mesh!")
-        if mesh.mesh_dim_names is None:
+        if self.ep_mesh.mesh_dim_names is None:
             raise RuntimeError("mesh must have named dimensions!")
 
-        dim_name = mesh.mesh_dim_names[0]
-        if strategy == "shard":
-            log.info(f"Sharding local experts over mesh dimension '{dim_name}'...")
-            fully_shard(self, mesh=mesh[dim_name], **kwargs)
-        elif strategy == "replicate":
-            # TODO: this doesn't work yet.
-            log.info(f"Replicating local experts over mesh dimension '{dim_name}'...")
-            replicate(self, device_mesh=mesh[dim_name])
-        else:
-            raise ValueError(strategy)
+        if (dim_names := world_mesh.mesh_dim_names) is None:
+            raise RuntimeError("mesh must have named dimensions!")
+
+        # Shard local experts over the adjacent DP dimension.
+        dim_name = dim_names[dim_names.index(self.ep_mesh.mesh_dim_names[0]) - 1]
+        mesh = world_mesh[dim_name]
+
+        log.info(f"Sharding local experts over {get_device_mesh_info(mesh)}...")
+        fully_shard(self, mesh=mesh, **kwargs)
+
+    def prepare_experts_for_ddp(self, *, world_mesh: DeviceMesh):
+        """
+        Should be called before wrapping this module, or a parent module, with FSDP2.
+        """
+        from torch.distributed._composable.replicate import replicate
+
+        # If expert/tensor parallel is not enabled then we don't need to do anything special here.
+        if self.ep_mesh is None:
+            return
+
+        if self.ep_mesh.mesh_dim_names is None:
+            raise RuntimeError("mesh must have named dimensions!")
+
+        if (dim_names := world_mesh.mesh_dim_names) is None:
+            raise RuntimeError("mesh must have named dimensions!")
+
+        # Replicate local experts over the adjacent DP dimension.
+        dim_name = dim_names[dim_names.index(self.ep_mesh.mesh_dim_names[0]) - 1]
+        mesh = world_mesh[dim_name]
+
+        log.info(f"Replicating local experts {get_device_mesh_info(mesh)}...")
+        replicate(self, device_mesh=mesh)
 
 
 class MoEMLP(MoEMLPBase):
@@ -255,13 +262,8 @@ class DroplessMoEMLP(MoEMLPBase):
             ),
         )
 
-        self._gmm = None
-
-        try:
-            import grouped_gemm  # type: ignore
-
-            self._gmm = grouped_gemm.ops.gmm
-        except ImportError:
+        self._gmm = gmm
+        if self._gmm is None:
             warnings.warn(
                 "Grouped GEMM not available, so the MoE will be substantially slower. "
                 "Please install the 'grouped_gemm' package if possible.\n"
@@ -272,7 +274,7 @@ class DroplessMoEMLP(MoEMLPBase):
         self, x: torch.Tensor, w: torch.Tensor, batch_sizes: torch.Tensor, trans_b: bool = False
     ) -> torch.Tensor:
         if self._gmm is not None:
-            return self._gmm(x, w, batch_sizes, trans_b=trans_b)
+            return self._gmm(x, w, batch_sizes, trans_b=trans_b)  # type: ignore
         else:
             out = []
             start = 0

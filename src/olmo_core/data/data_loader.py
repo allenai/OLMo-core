@@ -497,7 +497,20 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             generator=rng,
             device=device,
         )
-        return {"input_ids": input_ids}
+        out: Dict[str, Any] = {"input_ids": input_ids}
+        if isinstance(self.dataset, NumpyFSLDataset) and self.dataset._generate_doc_lengths:
+            splits = torch.randint(
+                2,
+                self.dataset.max_sequence_length - 2,
+                (num_instances,),
+                generator=rng,
+                device=device,
+            )
+            out["doc_lens"] = torch.stack(
+                [splits, self.dataset.max_sequence_length - splits], dim=1
+            )
+            out["max_doc_lens"] = torch.max(out["doc_lens"], dim=-1).values.tolist()
+        return out
 
     def _iter_batches(self) -> Iterable[Dict[str, Any]]:
         current_global_batch_size = self.global_batch_size
@@ -1028,8 +1041,7 @@ class NumpyDataLoaderConfig(Config):
 
         :param dataset: The dataset.
         :param mesh: An optional ``DeviceMesh`` that defines the data parallel dimensions. Ideally
-            you should create this mesh using :func:`~olmo_core.distributed.parallel.build_device_mesh()`
-            or equivalently :meth:`olmo_core.nn.transformer.TransformerConfig.build_mesh()`.
+            you should create this mesh using :func:`~olmo_core.distributed.parallel.build_world_mesh()`.
             Alternatively you can pass the ``dp_process_group`` instead.
         :param dp_process_group: The data parallel process group.
         """

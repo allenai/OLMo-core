@@ -140,6 +140,7 @@ def build_common_components(
     global_batch_size: int,
     sequence_length: int = 4096,
     include_default_evals: bool = True,
+    intra_document_masking: bool = False,
     include_instance_filter: bool = False,
 ) -> CommonComponents:
     root_dir = get_root_dir(cluster)
@@ -172,6 +173,7 @@ def build_common_components(
             name=VSLCurriculumType.grow_p2, num_cycles=8, balanced=False
         ),
         work_dir=get_work_dir(root_dir),
+        generate_doc_lengths=intra_document_masking,
         instance_filter_config=None
         if not include_instance_filter
         else InstanceFilterConfig(
@@ -239,6 +241,7 @@ def build_config(
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
     sequence_length: int = 4096,
     include_default_evals: bool = True,
+    intra_document_masking: bool = False,
     include_instance_filter: bool = False,
 ) -> ExperimentConfig:
     common = build_common_components(
@@ -250,6 +253,7 @@ def build_config(
         global_batch_size=global_batch_size,
         sequence_length=sequence_length,
         include_default_evals=include_default_evals,
+        intra_document_masking=intra_document_masking,
         include_instance_filter=include_instance_filter,
     )
 
@@ -326,6 +330,7 @@ def main(
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
     sequence_length: int = 4096,
     include_default_evals: bool = True,
+    intra_document_masking: bool = False,
     include_instance_filter: bool = False,
 ):
     usage = f"""
@@ -368,6 +373,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         finalize_config=finalize_config,
         sequence_length=sequence_length,
         include_default_evals=include_default_evals,
+        intra_document_masking=intra_document_masking,
         include_instance_filter=include_instance_filter,
     )
 

@@ -14,6 +14,7 @@ from olmo_core.distributed.checkpoint import (
 from olmo_core.distributed.parallel import (
     ExpertParallelConfig,
     build_expert_parallel_mesh,
+    get_ep_mesh,
 )
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.nn.moe import (
@@ -97,7 +98,8 @@ def run_moe_with_expert_parallelism(
 ):
     seed_all(42)
 
-    ep_mesh = build_expert_parallel_mesh(ExpertParallelConfig(degree=dist.get_world_size()))
+    world_mesh = build_expert_parallel_mesh(ExpertParallelConfig(degree=dist.get_world_size()))
+    ep_mesh = get_ep_mesh(world_mesh)
 
     moe = config.build(d_model=d_model, init_device="meta")
     moe.apply_ep(ep_mesh)
@@ -110,7 +112,7 @@ def run_moe_with_expert_parallelism(
     batch = get_local_tensor(
         distribute_tensor(
             batch.to(device=get_default_device()),
-            device_mesh=ep_mesh,
+            device_mesh=world_mesh,
             placements=(
                 Replicate(),
                 Shard(0),
@@ -121,7 +123,7 @@ def run_moe_with_expert_parallelism(
     expected_output = get_local_tensor(
         distribute_tensor(
             expected_output.to(device=get_default_device()),
-            device_mesh=ep_mesh,
+            device_mesh=world_mesh,
             placements=(
                 Replicate(),
                 Shard(0),

@@ -6,7 +6,11 @@ import torch
 
 from .cross_entropy_loss import *
 
-__all__ = ["cross_entropy_loss", "fused_cross_entropy_loss", "l2_normalize"]
+__all__ = [
+    "cross_entropy_loss",
+    "fused_cross_entropy_loss",
+    "l2_normalize",
+]
 
 
 def l2_normalize(x: torch.Tensor, dim: int = -1) -> torch.Tensor:
