@@ -1,4 +1,3 @@
-import functools
 from typing import Any, List, Optional, Tuple, Union
 
 import torch
@@ -21,38 +20,9 @@ def _cast(x, dtype):
     return x
 
 
-def autocast_fwd(fwd):
-    """
-    Wrap a custom autograd forward function to ensure it always uses the autocast dtype.
-    """
-
-    @functools.wraps(fwd)
-    def decorate_fwd(*args, **kwargs):
-        if torch.is_autocast_enabled():
-            with torch.autocast(device_type="cuda", enabled=False):
-                dtype = torch.get_autocast_gpu_dtype()
-                return fwd(*_cast(args, dtype), **_cast(kwargs, dtype))
-        return fwd(*args, **kwargs)
-
-    return decorate_fwd
-
-
-def autocast_bwd(bwd):
-    """
-    Wrap a custom autograd backward function to ensure it always uses the autocast dtype.
-    """
-
-    @functools.wraps(bwd)
-    def decorate_bwd(*args, **kwargs):
-        with torch.autocast(device_type="cuda", enabled=False):
-            return bwd(*args, **kwargs)
-
-    return decorate_bwd
-
-
 class GatherOp(torch.autograd.Function):
     @staticmethod
-    @autocast_fwd
+    @torch.amp.custom_fwd(device_type="cuda")
     def forward(
         ctx: Any,
         x: torch.Tensor,
@@ -68,7 +38,7 @@ class GatherOp(torch.autograd.Function):
         return kernels.gather(x, indices, bin_ids, None, bins, top_k)
 
     @staticmethod
-    @autocast_bwd
+    @torch.amp.custom_bwd(device_type="cuda")
     def backward(ctx: Any, grad: torch.Tensor):
         from . import kernels
 
@@ -90,7 +60,7 @@ def gather(
 
 class ScatterOp(torch.autograd.Function):
     @staticmethod
-    @autocast_fwd
+    @torch.amp.custom_fwd(device_type="cuda")
     def forward(
         ctx: Any,
         x: torch.Tensor,
@@ -109,7 +79,7 @@ class ScatterOp(torch.autograd.Function):
         return kernels.scatter(x, indices, bin_ids, weights, bins, top_k)
 
     @staticmethod
-    @autocast_bwd
+    @torch.amp.custom_bwd(device_type="cuda")
     def backward(ctx: Any, grad: torch.Tensor):
         from . import kernels
 
@@ -155,7 +125,7 @@ def scatter(
 
 class BinnedGatherOp(torch.autograd.Function):
     @staticmethod
-    @autocast_fwd
+    @torch.amp.custom_fwd(device_type="cuda")
     def forward(
         ctx: Any,
         x: torch.Tensor,
@@ -171,7 +141,7 @@ class BinnedGatherOp(torch.autograd.Function):
         return kernels.binned_gather(x, indices, None, bins, bin_size, top_k)
 
     @staticmethod
-    @autocast_bwd
+    @torch.amp.custom_bwd(device_type="cuda")
     def backward(ctx: Any, grad: torch.Tensor):
         from . import kernels
 
@@ -189,7 +159,7 @@ def binned_gather(
 
 class BinnedScatterOp(torch.autograd.Function):
     @staticmethod
-    @autocast_fwd
+    @torch.amp.custom_fwd(device_type="cuda")
     def forward(
         ctx: Any,
         x: torch.Tensor,
@@ -210,7 +180,7 @@ class BinnedScatterOp(torch.autograd.Function):
         return kernels.binned_scatter(x, indices, weights, bins, top_k)
 
     @staticmethod
-    @autocast_bwd
+    @torch.amp.custom_bwd(device_type="cuda")
     def backward(ctx: Any, grad: torch.Tensor):
         from . import kernels
 

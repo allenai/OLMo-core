@@ -1,8 +1,3 @@
-# Adapted from https://github.com/Dao-AILab/flash-attention/blob/main/flash_attn/ops/triton/cross_entropy.py
-# to make this function available when flash-attn can't be installed properly.
-
-# Copyright (c) 2023, Tri Dao.
-
 from typing import Tuple
 
 import torch
@@ -10,7 +5,49 @@ import torch.distributed as dist
 import triton  # type: ignore
 import triton.language as tl  # type: ignore
 
+__all__ = ["fused_cross_entropy_loss"]
 
+
+def fused_cross_entropy_loss(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    label_smoothing: float = 0.0,
+    logit_scale: float = 1.0,
+    lse_square_scale: float = 0.0,
+    ignore_index=-100,
+    inplace_backward: bool = False,
+    process_group=None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Arguments:
+        logits: (batch, vocab_size)
+        labels: (batch,)
+        label_smoothing: float
+        logit_scale: float. Multiply logits by this scale before calculating the loss.
+        lse_square_scale: float. If > 0, we add lse_square_scale * lse(logits) ^ 2 to the loss.
+            This is also referred to as "z-loss".
+        ignore_index: int. If labels == ignore_index, the loss is set to 0.0.
+        inplace_backward: bool. If True, we do the backward pass in-place by modifying the logits.
+            This saves memory.
+        process_group: if not None, we're doing Tensor Parallel: each process is responsible for
+            one part of the vocab. The loss will be aggregated across processes.
+    Returns:
+        losses: (batch,), float
+        z_losses: (batch,), float
+    """
+    return CrossEntropyLoss.apply(  # type: ignore
+        logits,
+        labels,
+        label_smoothing,
+        logit_scale,
+        lse_square_scale,
+        ignore_index,
+        inplace_backward,
+        process_group,
+    )
+
+
+# Adapted from https://github.com/Dao-AILab/flash-attention/blob/main/flash_attn/ops/triton/cross_entropy.py
 @triton.heuristics(
     {
         "HAS_SMOOTHING": lambda args: args["smoothing"] > 0.0,
@@ -87,6 +124,7 @@ def cross_entropy_fwd_kernel(
         tl.store(z_loss_ptr + row_idx, z_loss)
 
 
+# Adapted from https://github.com/Dao-AILab/flash-attention/blob/main/flash_attn/ops/triton/cross_entropy.py
 @triton.heuristics(
     {
         "HAS_SMOOTHING": lambda args: args["smoothing"] > 0.0,
@@ -141,6 +179,7 @@ def cross_entropy_bwd_kernel(
     tl.store(dlogits_ptr + col_offsets, (dloss * logit_scale) * probs, mask=col_offsets < n_cols)
 
 
+# Adapted from https://github.com/Dao-AILab/flash-attention/blob/main/flash_attn/ops/triton/cross_entropy.py
 class CrossEntropyLoss(torch.autograd.Function):
     @staticmethod
     def forward(
@@ -269,42 +308,3 @@ class CrossEntropyLoss(torch.autograd.Function):
                 num_warps=num_warps,
             )
         return dlogits, None, None, None, None, None, None, None, None
-
-
-def cross_entropy_loss(
-    logits: torch.Tensor,
-    labels: torch.Tensor,
-    label_smoothing: float = 0.0,
-    logit_scale: float = 1.0,
-    lse_square_scale: float = 0.0,
-    ignore_index=-100,
-    inplace_backward: bool = False,
-    process_group=None,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Arguments:
-        logits: (batch, vocab_size)
-        labels: (batch,)
-        label_smoothing: float
-        logit_scale: float. Multiply logits by this scale before calculating the loss.
-        lse_square_scale: float. If > 0, we add lse_square_scale * lse(logits) ^ 2 to the loss.
-            This is also referred to as "z-loss".
-        ignore_index: int. If labels == ignore_index, the loss is set to 0.0.
-        inplace_backward: bool. If True, we do the backward pass in-place by modifying the logits.
-            This saves memory.
-        process_group: if not None, we're doing Tensor Parallel: each process is responsible for
-            one part of the vocab. The loss will be aggregated across processes.
-    Returns:
-        losses: (batch,), float
-        z_losses: (batch,), float
-    """
-    return CrossEntropyLoss.apply(  # type: ignore
-        logits,
-        labels,
-        label_smoothing,
-        logit_scale,
-        lse_square_scale,
-        ignore_index,
-        inplace_backward,
-        process_group,
-    )
