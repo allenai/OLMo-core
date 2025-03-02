@@ -3,7 +3,7 @@ from typing import Optional
 import torch
 import torch.distributed as dist
 
-from ..attention import RingAttentionLoadBalancerType
+from .ring import RingAttentionLoadBalancerType
 
 try:
     import flash_attn  # type: ignore
@@ -110,7 +110,7 @@ def dispatch_ring_flash_attn(
     v: torch.Tensor,
     *,
     group: dist.ProcessGroup,
-    strategy: RingAttentionLoadBalancerType,
+    strategy: "RingAttentionLoadBalancerType",
     cu_seqlens: Optional[torch.Tensor] = None,
     cu_seqlens_q: Optional[torch.Tensor] = None,
     cu_seqlens_k: Optional[torch.Tensor] = None,
