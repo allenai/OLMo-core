@@ -505,7 +505,10 @@ class Attention(AttentionBase):
         Prepare the module for context-parallelism (ring attention).
 
         .. important::
-            This requires flash-attn and ring-flash-attn.
+            This requires flash-attn and ring-flash-attn (``use_flash=True``).
+
+        :param cp_mesh: The context parallel device sub-mesh.
+        :param load_balancer: The load balancer type.
         """
         self._cp_pg = cp_mesh.get_group()
         self._cp_load_balancer = load_balancer
