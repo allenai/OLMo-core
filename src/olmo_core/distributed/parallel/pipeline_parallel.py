@@ -100,7 +100,7 @@ class PipelineSchedule:
         stages: List[PipelineStage],
         pp_mesh: DeviceMesh,
         schedule_name: PipelineScheduleType,
-        loss_fn: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
+        loss_fn: Optional[Callable[[Any, torch.Tensor], torch.Tensor]] = None,
         n_microbatches: Optional[int] = None,
     ):
         self.model_parts = model_parts
