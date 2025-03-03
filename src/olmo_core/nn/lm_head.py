@@ -321,8 +321,8 @@ class LMHead(nn.Module):
                     Shard(1) if self.norm is not None else Replicate(),
                     Shard(1),
                 ),
-                input_kwarg_layouts={"loss_div_factor": Replicate()},
-                desired_input_kwarg_layouts={"loss_div_factor": Replicate()},
+                #  input_kwarg_layouts={"loss_div_factor": Replicate()},
+                #  desired_input_kwarg_layouts={"loss_div_factor": Replicate()},
             ),
         )
 
