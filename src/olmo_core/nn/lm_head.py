@@ -293,6 +293,7 @@ class LMHead(nn.Module):
             # Wrap with DTensor and finish the reduction.
             assert self._tp_mesh is not None
             loss = DTensor.from_local(loss.unsqueeze(0), self._tp_mesh, (Shard(0),))
+            loss = loss.redistribute(placements=(Replicate(),))
 
             if loss_reduction == "sum":
                 loss = loss.sum()
