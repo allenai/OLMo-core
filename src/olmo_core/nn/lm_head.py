@@ -298,7 +298,6 @@ class LMHead(nn.Module):
             assert self._tp_mesh is not None
             loss = DTensor.from_local(loss.unsqueeze(0), self._tp_mesh, (Shard(0),))
             loss = loss.redistribute(placements=(Replicate(),))
-            log.info(f"pre-reduce loss: {loss}")
 
             if loss_reduction == "sum":
                 loss = loss.sum()
@@ -306,12 +305,9 @@ class LMHead(nn.Module):
                 loss = loss.mean()
             else:
                 raise NotImplementedError(loss_reduction)
-            log.info(f"post-reduce loss: {loss}")
 
         if loss_div_factor is not None:
             loss = loss / loss_div_factor
-
-        log.info(f"post-normalized loss: {loss}")
 
         return loss
 
@@ -346,6 +342,8 @@ class LMHead(nn.Module):
             device_mesh=tp_mesh,
             parallelize_plan=ColwiseParallel(output_layouts=Shard(1), use_local_output=False),
         )
+
+        self._tp_mesh = tp_mesh
 
 
 @beta_feature
