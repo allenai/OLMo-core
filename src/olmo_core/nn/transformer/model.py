@@ -412,13 +412,13 @@ class Transformer(nn.Module):
         for block in self.blocks.values():
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
-                mark_dynamic(h, (0, 1))
+                mark_dynamic(h, (0, 1), strict=False)
             h = block(h, **kwargs)
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:
             if self.compile_enabled:
-                mark_dynamic(h, (0, 1))
+                mark_dynamic(h, (0, 1), strict=False)
                 if labels is not None:
                     mark_dynamic(labels, (0, 1), strict=False)
             return self.lm_head(
