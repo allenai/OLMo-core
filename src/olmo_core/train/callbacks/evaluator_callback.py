@@ -19,7 +19,12 @@ from olmo_core.eval import Evaluator
 from olmo_core.eval.lm_evaluator import LMEvaluator
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.lm_head import LMOutputWithLoss
-from olmo_core.utils import cuda_sync_debug_mode, format_float, get_default_device
+from olmo_core.utils import (
+    cuda_sync_debug_mode,
+    format_float,
+    get_default_device,
+    move_to_device,
+)
 
 from ..common import Duration
 from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TransformerTrainModule
@@ -86,6 +91,7 @@ class EvaluatorCallback(Callback):
                 eval_step += 1
                 eval_tokens += batch["input_ids"].numel() * dp_world_size
 
+                batch = move_to_device(batch, get_default_device())
                 with torch.no_grad():
                     # Run forward pass, get logits and un-reduced CE loss.
                     labels = get_labels(batch)
