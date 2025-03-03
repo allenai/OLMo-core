@@ -834,17 +834,25 @@ class TransformerPipelineTrainModule(TrainModule):
         """
         Run a forward pass on a micro-batch, returning the logits and potentially the loss.
         """
-        for model in self.model_parts:
-            model.save_kwargs_for_forward(kwargs)
+        #  for model in self.model_parts:
+        #      model.save_kwargs_for_forward(kwargs)
 
         with self._model_forward_context():
             schedule = self.train_pp_schedule if training else self.eval_pp_schedule
-            output, _ = schedule.step(
-                input_ids,
-                labels=labels,
-                target=labels if training else None,
-                **kwargs,
-            )
+
+            if schedule.is_first_stage:
+                output, _ = schedule.step(
+                    input_ids,
+                    labels=labels,
+                    target=labels if training else None,
+                    **kwargs,
+                )
+            else:
+                output, _ = schedule.step(
+                    labels=labels,
+                    target=labels if training else None,
+                    **kwargs,
+                )
 
             if schedule.is_last_stage:
                 assert output is not None
