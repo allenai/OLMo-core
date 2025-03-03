@@ -820,5 +820,5 @@ class TransformerTrainModule(TrainModule):
         input_ids = batch.pop("input_ids")
         labels = labels if labels is not None else batch.pop("labels", None)
         if "doc_lens" in batch and "max_doc_lens" in batch:
-            log_once("intra-document masking enabled")
+            log_once(log, "intra-document masking enabled")
         return input_ids, labels, batch
