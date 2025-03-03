@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass
-from typing import Optional
+from typing import Literal, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -14,13 +14,20 @@ from torch.distributed.tensor.parallel import (
 )
 from torch.distributed.tensor.placement_types import Placement
 
-from ..config import Config, DType, StrEnum
-from ..doc_utils import beta_feature
-from ..exceptions import OLMoConfigurationError
-from .functional import l2_normalize
+from olmo_core.config import Config, DType, StrEnum
+from olmo_core.distributed.utils import get_local_tensor
+from olmo_core.doc_utils import beta_feature
+from olmo_core.exceptions import OLMoConfigurationError
+
+from .functional import (
+    cross_entropy_loss,
+    fused_cross_entropy_loss,
+    fused_linear_cross_entropy_loss,
+    l2_normalize,
+)
 from .layer_norm import LayerNormConfig
 
-__all__ = ["LMHeadType", "LMHeadConfig", "LMHead", "NormalizedLMHead"]
+__all__ = ["LMHeadType", "LMLossImplementation", "LMHeadConfig", "LMHead", "NormalizedLMHead"]
 
 
 class LMHeadType(StrEnum):
@@ -39,6 +46,28 @@ class LMHeadType(StrEnum):
     """
 
 
+class LMLossImplementation(StrEnum):
+    """
+    An enumeration of the different loss implementations.
+    """
+
+    default = "default"
+    """
+    Uses native PyTorch's operations.
+    """
+
+    fused = "fused"
+    """
+    Uses a fused triton implementation.
+    """
+
+    fused_linear = "fused_linear"
+    """
+    A low-memory triton implementation from Liger-Kernel that fused the linear logits projection
+    with the loss computation.
+    """
+
+
 @dataclass
 class LMHeadConfig(Config):
     """
@@ -54,6 +83,7 @@ class LMHeadConfig(Config):
     layer_norm: Optional[LayerNormConfig] = None
     bias: Optional[bool] = None
     dtype: DType = DType.float32
+    loss_implementation: LMLossImplementation = LMLossImplementation.default
 
     def num_params(self, d_model: int, vocab_size: int) -> int:
         """
@@ -118,19 +148,96 @@ class LMHead(nn.Module):
         dtype: torch.dtype = torch.float32,
         bias: bool = True,
         init_device: str = "cpu",
+        loss_implementation: LMLossImplementation = LMLossImplementation.default,
     ):
         super().__init__()
         self.norm = (
             None if layer_norm is None else layer_norm.build(d_model, init_device=init_device)
         )
         self.w_out = nn.Linear(d_model, vocab_size, bias=bias, dtype=dtype, device=init_device)
+        self._d_model = d_model
+        self._vocab_size = vocab_size
+        self._loss_implementation = loss_implementation
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    @property
+    def d_model(self) -> int:
+        return self._d_model
+
+    @property
+    def vocab_size(self) -> int:
+        return self._vocab_size
+
+    @property
+    def loss_implementation(self) -> LMLossImplementation:
+        return self._loss_implementation
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        *,
+        ignore_index: int = -100,
+        reduction: Literal["mean", "sum", "none"] = "mean",
+        z_loss_multiplier: Optional[float] = None,
+        div_factor: Optional[torch.Tensor] = None,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, Optional[torch.Tensor]]]:
         """
-        Apply the LM head to the hidden state ``x``, returning the logits.
+        Apply the LM head to the hidden state ``x``., returning the logits if ``labels`` is ``None``,
+
+        :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
         h = self.norm(x) if self.norm is not None else x
-        return self.w_out(h)
+
+        if labels is None:
+            return self.w_out(h)
+
+        ce_loss: torch.Tensor
+        z_loss: Optional[torch.Tensor]
+        if self.loss_implementation == LMLossImplementation.default:
+            ce_loss, z_loss = cross_entropy_loss(
+                get_local_tensor(self.w_out(h)).view(-1, self.vocab_size),
+                get_local_tensor(labels).view(-1),
+                ignore_index=ignore_index,
+                reduction=reduction,
+                compute_z_loss=z_loss_multiplier is not None,
+                z_loss_multiplier=z_loss_multiplier or 1e-4,
+            )
+        elif self.loss_implementation == LMLossImplementation.fused:
+            ce_loss, z_loss = fused_cross_entropy_loss(
+                get_local_tensor(self.w_out(h)).view(-1, self.vocab_size),
+                get_local_tensor(labels).view(-1),
+                ignore_index=ignore_index,
+                reduction=reduction,
+                compute_z_loss=z_loss_multiplier is not None,
+                z_loss_multiplier=z_loss_multiplier or 1e-4,
+            )
+        elif self.loss_implementation == LMLossImplementation.fused_linear:
+            ce_loss, z_loss = fused_linear_cross_entropy_loss(
+                get_local_tensor(h).view(-1, self.d_model),
+                get_local_tensor(self.w_out.weight),
+                get_local_tensor(labels).view(-1),
+                bias=get_local_tensor(self.w_out.bias) if self.w_out.bias is not None else None,
+                ignore_index=ignore_index,
+                reduction=reduction,
+                compute_z_loss=z_loss_multiplier is not None,
+                z_loss_multiplier=z_loss_multiplier or 1e-4,
+            )
+        else:
+            raise NotImplementedError(
+                f"'{self.loss_implementation}' loss implementation is not supported by {self.__class__.__name__}"
+            )
+
+        if reduction == "none":
+            ce_loss = ce_loss.view(labels.shape)
+            if z_loss is not None:
+                z_loss = z_loss.view(labels.shape)
+
+        if div_factor is not None:
+            ce_loss = ce_loss / div_factor
+            if z_loss is not None:
+                z_loss = z_loss / div_factor
+
+        return ce_loss, z_loss
 
     def apply_tp(
         self,
@@ -178,6 +285,7 @@ class NormalizedLMHead(LMHead):
         vocab_size: int,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
+        loss_implementation: LMLossImplementation = LMLossImplementation.default,
     ):
         super().__init__(
             d_model=d_model,
@@ -186,6 +294,7 @@ class NormalizedLMHead(LMHead):
             bias=False,
             dtype=dtype,
             init_device=init_device,
+            loss_implementation=loss_implementation,
         )
         self.sz_init_value = 1.0
         self.sz_init_scaling = 1.0 / math.sqrt(d_model)
@@ -200,9 +309,57 @@ class NormalizedLMHead(LMHead):
         nn.init.ones_(self.sz)
         self.sz.mul_(self.sz_init_scaling)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        *,
+        ignore_index: int = -100,
+        reduction: Literal["mean", "sum", "none"] = "mean",
+        z_loss_multiplier: Optional[float] = None,
+        div_factor: Optional[torch.Tensor] = None,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, Optional[torch.Tensor]]]:
         sz = self.sz * (self.sz_init_value / self.sz_init_scaling)
-        return sz * self.w_out(x)
+        logits = sz * self.w_out(x)
+        if labels is None:
+            return logits
+
+        ce_loss: torch.Tensor
+        z_loss: Optional[torch.Tensor]
+        if self.loss_implementation == LMLossImplementation.default:
+            ce_loss, z_loss = cross_entropy_loss(
+                get_local_tensor(logits).view(-1, self.vocab_size),
+                get_local_tensor(labels).view(-1),
+                ignore_index=ignore_index,
+                reduction=reduction,
+                compute_z_loss=z_loss_multiplier is not None,
+                z_loss_multiplier=z_loss_multiplier or 1e-4,
+            )
+        elif self.loss_implementation == LMLossImplementation.fused:
+            ce_loss, z_loss = fused_cross_entropy_loss(
+                get_local_tensor(logits).view(-1, self.vocab_size),
+                get_local_tensor(labels).view(-1),
+                ignore_index=ignore_index,
+                reduction=reduction,
+                compute_z_loss=z_loss_multiplier is not None,
+                z_loss_multiplier=z_loss_multiplier or 1e-4,
+            )
+        else:
+            raise NotImplementedError(
+                f"'{self.loss_implementation}' loss implementation is not supported by {self.__class__.__name__}"
+            )
+
+        if reduction == "none":
+            ce_loss = ce_loss.view(labels.shape)
+            if z_loss is not None:
+                z_loss = z_loss.view(labels.shape)
+
+        if div_factor is not None:
+            ce_loss = ce_loss / div_factor
+            if z_loss is not None:
+                z_loss = z_loss / div_factor
+
+        return ce_loss, z_loss
 
     def apply_tp(
         self,

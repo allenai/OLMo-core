@@ -1,18 +1,11 @@
-from typing import Literal, Optional, Tuple
+from typing import Tuple
 
 import torch
 import torch.distributed as dist
 import triton  # type: ignore
 import triton.language as tl  # type: ignore
 
-try:
-    from liger_kernel.ops.fused_linear_cross_entropy import (  # type: ignore
-        LigerFusedLinearCrossEntropyFunction,
-    )
-except ImportError:
-    LigerFusedLinearCrossEntropyFunction = None
-
-__all__ = ["fused_cross_entropy_loss", "fused_linear_cross_entropy_loss"]
+__all__ = ["fused_cross_entropy_loss"]
 
 
 def fused_cross_entropy_loss(
@@ -34,36 +27,6 @@ def fused_cross_entropy_loss(
         ignore_index,
         inplace_backward,
         process_group,
-    )
-
-
-def fused_linear_cross_entropy_loss(
-    _input: torch.Tensor,
-    weight: torch.Tensor,
-    labels: torch.Tensor,
-    bias: Optional[torch.Tensor] = None,
-    ce_weight: Optional[torch.Tensor] = None,
-    ignore_index: int = -100,
-    lse_square_scale: float = 0.0,
-    label_smoothing: float = 0.0,
-    reduction: Literal["mean", "sum", "none"] = "mean",
-    softcap: Optional[float] = None,
-    return_z_loss: bool = False,
-) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-    if LigerFusedLinearCrossEntropyFunction is None:
-        raise RuntimeError("'fused_linear_cross_entropy_loss' requires liger-kernel")
-    return LigerFusedLinearCrossEntropyFunction.apply(
-        _input,
-        weight,
-        labels,
-        bias,
-        ce_weight,
-        ignore_index,
-        lse_square_scale,
-        label_smoothing,
-        reduction,
-        softcap,
-        return_z_loss,
     )
 
 
