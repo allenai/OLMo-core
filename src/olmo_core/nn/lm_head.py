@@ -322,6 +322,7 @@ class LMHead(nn.Module):
                     Shard(1),
                 ),
                 input_kwarg_layouts={"loss_div_factor": Replicate()},
+                desired_input_kwarg_layouts={"loss_div_factor": Replicate()},
             ),
         )
 
