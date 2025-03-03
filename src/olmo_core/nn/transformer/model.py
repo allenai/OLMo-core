@@ -301,7 +301,7 @@ class Transformer(nn.Module):
             max_doc_lens := kwargs.pop("max_doc_lens", None)
         ) is not None:
             max_doc_len = max(max_doc_lens)
-            cu_doc_lens = get_cumulative_document_lengths(unhide_from_torch(doc_lens))
+            cu_doc_lens = get_cumulative_document_lengths(doc_lens)
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
@@ -620,7 +620,12 @@ class Transformer(nn.Module):
             fully_shard(self.lm_head, reshard_after_forward=False, **fsdp_config)
 
         fully_shard(self, reshard_after_forward=not pp_enabled, **fsdp_config)
+        # Some inputs need to be on CPU initially, but FSDP will move everything to model's
+        # device if we don't hide it.
         self.register_forward_pre_hook(_hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True)
+        self.register_forward_pre_hook(
+            _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
+        )
 
     def apply_ddp(
         self,
@@ -642,7 +647,12 @@ class Transformer(nn.Module):
                 torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
 
         replicate(self, device_mesh=dp_mesh, bucket_cap_mb=100)
+        # Some inputs need to be on CPU initially, but DDP will move everything to model's
+        # device if we don't hide it.
         self.register_forward_pre_hook(_hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True)
+        self.register_forward_pre_hook(
+            _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
+        )
 
     @cached_property
     def num_params(self) -> int:
@@ -846,4 +856,11 @@ def _hide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[str
     del m
     if (doc_lens := kwargs.get("doc_lens")) is not None:
         kwargs["doc_lens"] = hide_from_torch(doc_lens)
+    return (args, kwargs)
+
+
+def _unhide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
+    del m
+    if (doc_lens := kwargs.get("doc_lens")) is not None:
+        kwargs["doc_lens"] = unhide_from_torch(doc_lens)
     return (args, kwargs)
