@@ -283,7 +283,7 @@ class Transformer(nn.Module):
 
         return generator
 
-    def _hide_cpu_inputs_from_torch(self, *args, **kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
+    def _hide_cpu_inputs_from_torch(self, args, kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
         if (doc_lens := kwargs.get("doc_lens")) is not None:
             kwargs["doc_lens"] = hide_from_torch(doc_lens)
         return (args, kwargs)
