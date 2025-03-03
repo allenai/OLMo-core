@@ -385,6 +385,8 @@ class Transformer(nn.Module):
         self,
         input_ids: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
+        _kwargs_dump: Optional[Dict[str, Any]] = None,  # for pipelining
+        *,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
@@ -399,6 +401,12 @@ class Transformer(nn.Module):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
+        if _kwargs_dump is not None:
+            ignore_index = _kwargs_dump["ignore_index"]
+            loss_reduction = _kwargs_dump["loss_reduction"]
+            z_loss_multiplier = _kwargs_dump["z_loss_multiplier"]
+            loss_div_factor = _kwargs_dump["loss_div_factor"]
+            return_logits = _kwargs_dump["return_logits"]
         input_ids, labels, kwargs = self._prepare_inputs(
             input_ids, labels, ignore_index=ignore_index, **kwargs
         )
@@ -431,7 +439,15 @@ class Transformer(nn.Module):
                 return_logits=return_logits,
             )
         else:
-            return h
+            kwargs_dump = dict(
+                ignore_index=ignore_index,
+                loss_reduction=loss_reduction,
+                z_loss_multiplier=z_loss_multiplier,
+                loss_div_factor=loss_div_factor,
+                return_logits=return_logits,
+                **kwargs,
+            )
+            return h, labels, kwargs_dump  # type: ignore[return-type]
 
     def apply_tp(
         self,
