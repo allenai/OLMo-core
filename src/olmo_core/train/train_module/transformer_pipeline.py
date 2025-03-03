@@ -837,8 +837,8 @@ class TransformerPipelineTrainModule(TrainModule):
         with self._model_forward_context():
             schedule = self.train_pp_schedule if training else self.eval_pp_schedule
             output, _ = schedule.step(
-                input_ids=input_ids,
-                labels=labels,
+                input_ids,
+                labels,
                 target=labels if training else None,
                 **kwargs,
             )
