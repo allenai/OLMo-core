@@ -366,15 +366,16 @@ class Transformer(nn.Module):
                 )
 
             for key, value in zip(keys, inputs):
-                out_kwargs[key] = value
+                if key not in ("input_ids", "labels"):
+                    out_kwargs[key] = move_to_device(value, self.device)
 
-            input_ids = out_kwargs.pop("input_ids")
-            labels = out_kwargs.pop("labels")
+        if (loss_div_factor := kwargs.get("loss_div_factor")) is not None:
+            out_kwargs["loss_div_factor"] = move_to_device(loss_div_factor, self.device)
 
         return (
             move_to_device(input_ids, self.device),
             move_to_device(labels, self.device),
-            move_to_device(out_kwargs, self.device),
+            out_kwargs,
         )
 
     def forward(
