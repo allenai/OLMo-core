@@ -15,11 +15,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 
 from olmo_core.config import Config, DType
-from olmo_core.data.utils import (
-    get_cumulative_document_lengths,
-    get_labels,
-    split_batch,
-)
+from olmo_core.data.utils import get_labels, split_batch
 from olmo_core.distributed.checkpoint import _swap_param_keys
 from olmo_core.distributed.parallel import (
     ContextParallelConfig,
@@ -39,10 +35,7 @@ from olmo_core.distributed.utils import get_local_tensor, get_world_size, is_dis
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
-from olmo_core.nn.attention import (
-    RingAttentionLoadBalancer,
-    RingAttentionLoadBalancerType,
-)
+from olmo_core.nn.attention import RingAttentionLoadBalancerType
 from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.transformer import (
     MoETransformer,
@@ -325,11 +318,9 @@ class TransformerTrainModule(TrainModule):
 
         # Maybe apply context parallelism.
         self._cp_config = cp_config
-        self._cp_load_balancer: Optional[RingAttentionLoadBalancer] = None
         if cp_config is not None:
             assert self.world_mesh is not None
             cp_mesh = get_cp_mesh(self.world_mesh)
-            self._cp_load_balancer = cp_config.load_balancer.build(cp_mesh)
             self.model.apply_cp(cp_mesh, load_balancer=cp_config.load_balancer)
             log.info(
                 f"Applied context parallelism to the model with {get_device_mesh_info(cp_mesh)}"
@@ -571,18 +562,18 @@ class TransformerTrainModule(TrainModule):
         # Train one micro-batch at a time.
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
             with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
-                micro_batch, labels = self._prepare_batch(micro_batch)
-                assert labels is not None
+                input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
 
                 # Run forward pass, get losses.
                 _, ce_loss, z_loss = self.model_forward(
-                    micro_batch,
+                    input_ids,
                     labels=labels,
                     ignore_index=self.label_ignore_index,
                     loss_reduction="sum",
                     z_loss_multiplier=self.z_loss_multiplier,
                     loss_div_factor=batch_num_tokens_for_loss,
                     return_logits=False,
+                    **model_kwargs,
                 )
 
                 # Get loss to optimize for.
@@ -666,17 +657,18 @@ class TransformerTrainModule(TrainModule):
                 "please disable in-loop evals"
             )
 
-        batch, labels = self._prepare_batch(batch, labels)
+        input_ids, labels, model_kwargs = self._prepare_batch(batch, labels)
 
         self.model.eval()
 
         with self._eval_batch_context():
             return self.model_forward(
-                batch,
+                input_ids,
                 labels=labels,
                 ignore_index=self.label_ignore_index,
                 loss_reduction="none",
                 z_loss_multiplier=self.z_loss_multiplier,
+                **model_kwargs,
             )
 
     def optim_step(self):
@@ -751,13 +743,13 @@ class TransformerTrainModule(TrainModule):
         self.optim.zero_grad(set_to_none=True)
 
     def model_forward(
-        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None, **kwargs
+        self, input_ids: torch.Tensor, labels: Optional[torch.Tensor] = None, **kwargs
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
         Run a forward pass on a micro-batch, returning the logits.
         """
         with self._model_forward_context():
-            return self.model(**batch, labels=labels, **kwargs)
+            return self.model(input_ids, labels=labels, **kwargs)
 
     def num_flops_per_token(self, seq_len: int) -> int:
         return self.model.num_flops_per_token(seq_len)
@@ -824,115 +816,9 @@ class TransformerTrainModule(TrainModule):
 
     def _prepare_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
-    ) -> Tuple[Dict[str, Any], Optional[torch.Tensor]]:
-        return prepare_batch(
-            [self.model],
-            batch,
-            labels,
-            device=self.device,
-            label_ignore_index=self.label_ignore_index,
-            cp_load_balancer=self._cp_load_balancer,
-        )
-
-
-def prepare_batch(
-    model_parts: List[Transformer],
-    batch: Dict[str, Any],
-    labels: Optional[torch.Tensor] = None,
-    *,
-    device: torch.device,
-    label_ignore_index: int,
-    cp_load_balancer: Optional[RingAttentionLoadBalancer],
-) -> Tuple[Dict[str, Any], Optional[torch.Tensor]]:
-    B, S = batch["input_ids"].shape
-    out_batch: Dict[str, Any] = {}
-
-    # Prepare document length inputs.
-    max_doc_len: Optional[int] = None
-    cu_doc_lens: Optional[torch.Tensor] = None
-    if (doc_lens := batch.pop("doc_lens", None)) is not None and (
-        max_doc_lens := batch.pop("max_doc_lens", None)
-    ) is not None:
-        max_doc_len = max(max_doc_lens)
-        cu_doc_lens = get_cumulative_document_lengths(doc_lens)
-        out_batch["max_doc_len"] = max_doc_len
-        out_batch["cu_doc_lens"] = cu_doc_lens
-        log_once(log, "intra-document masking enabled")
-
-    # Prepare labels.
-    if labels is None:
-        labels = batch.pop("labels", None)
-    else:
-        batch.pop("labels", None)
-
-    # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
-    if cp_load_balancer is None:
-        out_batch["input_ids"] = batch["input_ids"]
-    else:
-        inputs = [batch["input_ids"]]
-        seq_dims = [1]
-        pad_values: List[Union[int, float]] = [0]
-        keys = ["input_ids"]
-
-        # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
-        for model in model_parts:
-            rope_buffers = model.get_rope_buffers(S, torch.device("cpu"))
-            if rope_buffers is not None:
-                if rope_buffers.pos_sin is not None:
-                    inputs.append(rope_buffers.pos_sin)
-                    seq_dims.append(0)
-                    pad_values.append(0.0)
-                    keys.append("pos_sin")
-                if rope_buffers.pos_cos is not None:
-                    inputs.append(rope_buffers.pos_cos)
-                    seq_dims.append(0)
-                    pad_values.append(0.0)
-                    keys.append("pos_cos")
-                if rope_buffers.freqs_cis is not None:
-                    inputs.append(rope_buffers.freqs_cis)
-                    seq_dims.append(0)
-                    pad_values.append(0.0)
-                    keys.append("freqs_cis")
-                break
-
-        if labels is not None:
-            inputs.append(labels)
-            seq_dims.append(1)
-            pad_values.append(label_ignore_index)
-
-        if cu_doc_lens is not None:
-            # NOTE: Can only shard properly here if 'input_ids' is flat, i.e. a single instance.
-            # TODO: (epwalsh) We could just flatten all of the inputs here, but then we risk going
-            # beyond the model's maximum sequence length, which might be okay at least
-            # with relative positional encodings, but then again if you're resorting to context
-            # parallelism you can probably only fit a single instance at a time anyway.
-            if B != 1:
-                raise RuntimeError(
-                    f"Rank micro-batches must consist of a single instance when using "
-                    f"context parallelism with intra-document masking (got {B} instances)"
-                )
-            inputs, additional_inputs = cp_load_balancer.batch_shard_by_document(
-                inputs=inputs,
-                seq_dims=seq_dims,
-                cu_doc_lens=cu_doc_lens,
-                pad_values=pad_values,
-                length_multiple=16,
-            )
-            # These will get updated or replaced with something else in 'additional_inputs'.
-            del out_batch["cu_doc_lens"]
-            del out_batch["max_doc_len"]
-            out_batch.update(additional_inputs)
-        else:
-            inputs = cp_load_balancer.batch_shard(
-                inputs=inputs,
-                seq_dims=seq_dims,
-                pad_values=pad_values,
-            )
-
-        for key, value in zip(keys, inputs):
-            out_batch[key] = value
-
-        if labels is not None:
-            labels = inputs[-1]
-
-    return move_to_device(out_batch, device), move_to_device(labels, device)
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
+        input_ids = batch.pop("input_ids")
+        labels = labels if labels is not None else batch.pop("labels", None)
+        if "doc_lens" in batch and "max_doc_lens" in batch:
+            log_once("intra-document masking enabled")
+        return input_ids, labels, batch

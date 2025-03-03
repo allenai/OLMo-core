@@ -1,6 +1,6 @@
 import logging
 from functools import cached_property
-from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
 import torch
 import torch.nn as nn
@@ -9,14 +9,16 @@ from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
 from olmo_core.config import StrEnum
+from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.utils import get_default_device, mark_dynamic
+from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 
 from ..attention import (
     Attention,
     AttentionBase,
     FusedAttention,
+    RingAttentionLoadBalancer,
     RingAttentionLoadBalancerType,
 )
 from ..buffer_cache import BufferCache
@@ -143,6 +145,8 @@ class Transformer(nn.Module):
 
         self._cache = cache
         self._compile_enabled = False
+        self._device: Optional[torch.device] = None
+        self._cp_load_balancer: Optional[RingAttentionLoadBalancer] = None
 
         # Cache the value of these properties up-front in case the parameters are removed
         # later, like for pipeline parallelism.
@@ -176,10 +180,14 @@ class Transformer(nn.Module):
 
     @property
     def device(self) -> torch.device:
-        for p in self.parameters():
-            if p.numel() > 0:
-                return p.device
-        return get_default_device()
+        if self._device is None:
+            for p in self.parameters():
+                if p.numel() > 0:
+                    self._device = p.device
+                    break
+            else:
+                self._device = get_default_device()
+        return self._device
 
     @property
     def compile_enabled(self) -> bool:
@@ -274,6 +282,101 @@ class Transformer(nn.Module):
 
         return generator
 
+    def _prepare_inputs(
+        self,
+        input_ids: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        *,
+        ignore_index: int,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
+        B, S = input_ids.shape
+        out_kwargs: Dict[str, Any] = {}
+
+        # Prepare document length inputs.
+        max_doc_len: Optional[int] = None
+        cu_doc_lens: Optional[torch.Tensor] = None
+        if (doc_lens := kwargs.pop("doc_lens", None)) is not None and (
+            max_doc_lens := kwargs.pop("max_doc_lens", None)
+        ) is not None:
+            max_doc_len = max(max_doc_lens)
+            cu_doc_lens = get_cumulative_document_lengths(doc_lens)
+            out_kwargs["max_doc_len"] = max_doc_len
+            out_kwargs["cu_doc_lens"] = cu_doc_lens
+
+        # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
+        if (cp_load_balancer := self._cp_load_balancer) is not None:
+            inputs = [input_ids]
+            seq_dims = [1]
+            pad_values: List[Union[int, float]] = [0]
+            keys = ["input_ids"]
+
+            # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
+            rope_buffers = self.get_rope_buffers(S, torch.device("cpu"))
+            if rope_buffers is not None:
+                if rope_buffers.pos_sin is not None:
+                    inputs.append(rope_buffers.pos_sin)
+                    seq_dims.append(0)
+                    pad_values.append(0.0)
+                    keys.append("pos_sin")
+                if rope_buffers.pos_cos is not None:
+                    inputs.append(rope_buffers.pos_cos)
+                    seq_dims.append(0)
+                    pad_values.append(0.0)
+                    keys.append("pos_cos")
+                if rope_buffers.freqs_cis is not None:
+                    inputs.append(rope_buffers.freqs_cis)
+                    seq_dims.append(0)
+                    pad_values.append(0.0)
+                    keys.append("freqs_cis")
+
+            if labels is not None:
+                inputs.append(labels)
+                seq_dims.append(1)
+                pad_values.append(ignore_index)
+                keys.append("labels")
+
+            if cu_doc_lens is not None:
+                # NOTE: Can only shard properly here if 'input_ids' is flat, i.e. a single instance.
+                # TODO: (epwalsh) We could just flatten all of the inputs here, but then we risk going
+                # beyond the model's maximum sequence length, which might be okay at least
+                # with relative positional encodings, but then again if you're resorting to context
+                # parallelism you can probably only fit a single instance at a time anyway.
+                if B != 1:
+                    raise RuntimeError(
+                        f"Rank micro-batches must consist of a single instance when using "
+                        f"context parallelism with intra-document masking (got {B} instances)"
+                    )
+                inputs, additional_inputs = cp_load_balancer.batch_shard_by_document(
+                    inputs=inputs,
+                    seq_dims=seq_dims,
+                    cu_doc_lens=cu_doc_lens,
+                    pad_values=pad_values,
+                    length_multiple=16,
+                )
+                # These will get updated or replaced with something else in 'additional_inputs'.
+                del out_kwargs["cu_doc_lens"]
+                del out_kwargs["max_doc_len"]
+                out_kwargs.update(additional_inputs)
+            else:
+                inputs = cp_load_balancer.batch_shard(
+                    inputs=inputs,
+                    seq_dims=seq_dims,
+                    pad_values=pad_values,
+                )
+
+            for key, value in zip(keys, inputs):
+                out_kwargs[key] = value
+
+            input_ids = out_kwargs.pop("input_ids")
+            labels = out_kwargs.pop("labels")
+
+        return (
+            move_to_device(input_ids, self.device),
+            move_to_device(labels, self.device),
+            move_to_device(out_kwargs, self.device),
+        )
+
     def forward(
         self,
         input_ids: torch.Tensor,
@@ -292,6 +395,10 @@ class Transformer(nn.Module):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
+        input_ids, labels, kwargs = self._prepare_inputs(
+            input_ids, labels, ignore_index=ignore_index, **kwargs
+        )
+
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
@@ -357,14 +464,10 @@ class Transformer(nn.Module):
         """
         Prepare the model for context-parallelism (CP).
 
-        .. important::
-            Unlike with tensor parallelism (:meth:`apply_tp`) the model won't automatically shard
-            the inputs. It expects the inputs to already have been sharded on the sequence
-            dimension by the corresponding :class:`~olmo_core.nn.attention.RingAttentionLoadBalancer`.
-
         :param cp_mesh: The CP device mesh.
         :param load_balancer: The load balancing method.
         """
+        self._cp_load_balancer = load_balancer.build(cp_mesh)
         for block in self.blocks.values():
             cast(AttentionBase, block.attention).apply_cp(cp_mesh, load_balancer=load_balancer)
 
