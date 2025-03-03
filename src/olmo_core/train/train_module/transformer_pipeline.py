@@ -839,7 +839,7 @@ class TransformerPipelineTrainModule(TrainModule):
             output, _ = schedule.step(
                 input_ids=input_ids,
                 labels=labels,
-                target=None if not training else labels,
+                target=labels if training else None,
                 **kwargs,
             )
 
