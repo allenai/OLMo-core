@@ -60,6 +60,7 @@ except ImportError:
     pass
 
 
+@torch._dynamo.disable()
 def fused_cross_entropy_loss(
     logits,
     labels,
@@ -133,6 +134,7 @@ except ImportError:
     pass
 
 
+@torch._dynamo.disable()
 def fused_linear_cross_entropy_loss(
     _input: torch.Tensor,
     weight: torch.Tensor,
