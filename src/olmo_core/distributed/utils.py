@@ -6,7 +6,7 @@ import logging
 import math
 import os
 from datetime import timedelta
-from typing import Callable, List, Optional, TypeVar, cast
+from typing import Callable, List, Optional, TypeVar, Union, cast
 
 import torch
 import torch.distributed as dist
@@ -462,3 +462,19 @@ def do_n_at_a_time(
             result = f()
         barrier(process_group)
     return cast(T, result)
+
+
+class _HiddenTensor:
+    def __init__(self, x: torch.Tensor):
+        self.x = x
+
+
+def hide_from_torch(x: torch.Tensor) -> _HiddenTensor:
+    return _HiddenTensor(x)
+
+
+def unhide_from_torch(x: Union[torch.Tensor, _HiddenTensor]) -> torch.Tensor:
+    if isinstance(x, _HiddenTensor):
+        return x.x
+    else:
+        return x

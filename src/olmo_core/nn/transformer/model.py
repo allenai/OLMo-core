@@ -10,6 +10,7 @@ from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_modul
 
 from olmo_core.config import StrEnum
 from olmo_core.data.utils import get_cumulative_document_lengths
+from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
@@ -282,6 +283,11 @@ class Transformer(nn.Module):
 
         return generator
 
+    def _hide_cpu_inputs_from_torch(self, *args, **kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
+        if (doc_lens := kwargs.get("doc_lens")) is not None:
+            kwargs["doc_lens"] = hide_from_torch(doc_lens)
+        return (args, kwargs)
+
     def _prepare_inputs(
         self,
         input_ids: torch.Tensor,
@@ -300,7 +306,7 @@ class Transformer(nn.Module):
             max_doc_lens := kwargs.pop("max_doc_lens", None)
         ) is not None:
             max_doc_len = max(max_doc_lens)
-            cu_doc_lens = get_cumulative_document_lengths(doc_lens)
+            cu_doc_lens = get_cumulative_document_lengths(unhide_from_torch(doc_lens))
             out_kwargs["max_doc_len"] = max_doc_len
             out_kwargs["cu_doc_lens"] = cu_doc_lens
 
@@ -616,6 +622,9 @@ class Transformer(nn.Module):
             fully_shard(self.lm_head, reshard_after_forward=False, **fsdp_config)
 
         fully_shard(self, reshard_after_forward=not pp_enabled, **fsdp_config)
+        self.register_forward_pre_hook(
+            self._hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True
+        )
 
     def apply_ddp(
         self,
@@ -637,6 +646,9 @@ class Transformer(nn.Module):
                 torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
 
         replicate(self, device_mesh=dp_mesh, bucket_cap_mb=100)
+        self.register_forward_pre_hook(
+            self._hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True
+        )
 
     @cached_property
     def num_params(self) -> int:
