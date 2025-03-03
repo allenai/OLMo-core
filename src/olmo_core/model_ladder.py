@@ -304,7 +304,6 @@ class ModelLadder(Config, metaclass=ABCMeta):
             rank_microbatch_size=rank_mbz,
             max_sequence_length=self.sequence_length,
             optim=self.get_optim_config(size=size),
-            compile_loss=True,
             max_grad_norm=1.0,
             scheduler=CosWithWarmup(warmup_steps=2000),
         )

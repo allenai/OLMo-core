@@ -1,6 +1,6 @@
 import logging
 from functools import cached_property
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Tuple, Union, cast
 
 import torch
 import torch.nn as nn
@@ -21,7 +21,7 @@ from ..attention import (
 )
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
-from ..lm_head import LMHeadConfig
+from ..lm_head import LMHeadConfig, LMOutputWithLoss
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
 from ..utils import selective_checkpointing_context_fn
 from .block import (
@@ -274,13 +274,23 @@ class Transformer(nn.Module):
 
         return generator
 
-    def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        ignore_index: int = -100,
+        loss_reduction: Literal["mean", "sum", "none"] = "mean",
+        z_loss_multiplier: Optional[float] = None,
+        loss_div_factor: Optional[torch.Tensor] = None,
+        return_logits: Optional[bool] = None,
+        **kwargs,
+    ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
         Run the transformer on the token input IDs.
 
         :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
 
-        :returns: The output logits.
+        :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
@@ -297,14 +307,23 @@ class Transformer(nn.Module):
         if self.lm_head is not None:
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1))
-            return self.lm_head(h)
+                if labels is not None:
+                    mark_dynamic(labels, (0, 1))
+            return self.lm_head(
+                h,
+                labels,
+                ignore_index=ignore_index,
+                loss_reduction=loss_reduction,
+                z_loss_multiplier=z_loss_multiplier,
+                loss_div_factor=loss_div_factor,
+                return_logits=return_logits,
+            )
         else:
             return h
 
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        loss_parallel: bool = False,
         float8_enabled: bool = False,
     ):
         """
@@ -332,11 +351,7 @@ class Transformer(nn.Module):
             block.apply_tp(tp_mesh, float8_enabled=float8_enabled)
 
         if self.lm_head is not None:
-            self.lm_head.apply_tp(
-                tp_mesh,
-                output_layout=Shard(1) if loss_parallel else Replicate(),
-                use_local_output=not loss_parallel,
-            )
+            self.lm_head.apply_tp(tp_mesh, input_layouts=(Shard(1), Replicate()))
 
     def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
         """
@@ -624,11 +639,9 @@ class NormalizedTransformer(Transformer):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        loss_parallel: bool = False,
         float8_enabled: bool = False,
-        async_tp: bool = False,
     ):
-        del tp_mesh, loss_parallel, float8_enabled, async_tp
+        del tp_mesh, float8_enabled
 
         raise NotImplementedError(
             "TP is not implemented yet for the normalized transformer variant"

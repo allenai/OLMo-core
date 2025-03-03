@@ -83,7 +83,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
-        compile_loss=True,
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=0),
     )

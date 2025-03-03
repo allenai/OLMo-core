@@ -1,6 +1,6 @@
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
 import torch
 import torch.distributed as dist
@@ -158,15 +158,9 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def eval_batch(
-        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
-    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    def eval_batch(self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None) -> Any:
         """
-        Run a forward pass on a eval batch, returning the logits and optionally the unreduced
-        cross-entropy loss if ``labels`` are provided.
-
-        .. important::
-            The logits may be none on some ranks in certain settings, like pipeline parallelism.
+        Run a forward pass on a eval batch.
         """
         raise NotImplementedError
 
@@ -340,9 +334,7 @@ class BasicTrainModule(TrainModule):
         # Record loss metrics.
         self.record_ce_loss(ce_batch_loss, ReduceType.mean)
 
-    def eval_batch(
-        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
-    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    def eval_batch(self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None) -> Any:
         self.model.eval()
         batch = move_to_device(batch, self.trainer.device)
         with torch.no_grad():

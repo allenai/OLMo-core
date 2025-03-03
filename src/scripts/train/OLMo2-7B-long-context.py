@@ -49,7 +49,6 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             fused=True,
         ),
         compile_model=True,
-        compile_loss=True,
         z_loss_multiplier=1e-5,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp,
