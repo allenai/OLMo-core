@@ -420,7 +420,7 @@ class Transformer(nn.Module):
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1))
                 if labels is not None:
-                    mark_dynamic(labels, (0, 1))
+                    mark_dynamic(labels, (0, 1), strict=False)
             return self.lm_head(
                 h,
                 labels,
