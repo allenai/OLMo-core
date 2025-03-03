@@ -355,10 +355,8 @@ class Transformer(nn.Module):
                     pad_values=pad_values,
                     length_multiple=16,
                 )
-                # These will get updated or replaced with something else in 'additional_inputs'.
-                del out_kwargs["cu_doc_lens"]
-                del out_kwargs["max_doc_len"]
-                out_kwargs.update(additional_inputs)
+                for key, value in additional_inputs.items():
+                    out_kwargs[key] = move_to_device(value, self.device)
             else:
                 inputs = cp_load_balancer.batch_shard(
                     inputs=inputs,
