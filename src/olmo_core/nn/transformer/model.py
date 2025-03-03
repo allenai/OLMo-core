@@ -440,7 +440,7 @@ class Transformer(nn.Module):
             return h
 
     def save_kwargs_for_forward(self, kwargs_dump: Dict[str, Any]):
-        def kwargs_saver(_, *args, **kwargs):
+        def kwargs_saver(_, args, kwargs):
             kwargs.update(kwargs_dump)
             return (args, kwargs)
 
