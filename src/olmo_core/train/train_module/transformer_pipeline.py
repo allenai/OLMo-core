@@ -13,7 +13,7 @@ import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.pipelining import PipelineStage
-from torch.distributed.tensor import DTensor, Replicate, Shard
+from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
 from olmo_core.config import Config, DType
@@ -43,7 +43,13 @@ from olmo_core.nn.cross_entropy_loss import CrossEntropyLoss
 from olmo_core.nn.transformer import MoETransformer, NormalizedTransformer, Transformer
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
-from olmo_core.utils import gc_cuda, get_default_device, mark_dynamic, move_to_device
+from olmo_core.utils import (
+    gc_cuda,
+    get_default_device,
+    log_once,
+    mark_dynamic,
+    move_to_device,
+)
 
 from ..common import ReduceType
 from .train_module import EvalBatchSizeUnit, EvalBatchSpec, TrainModule
@@ -52,7 +58,6 @@ from .transformer import (
     TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerTensorParallelConfig,
-    prepare_batch,
 )
 
 log = logging.getLogger(__name__)
@@ -392,16 +397,6 @@ class TransformerPipelineTrainModule(TrainModule):
                 model.apply_tp(
                     tp_mesh,
                     float8_enabled=float8_enabled,
-                    loss_parallel=tp_config.loss_parallel,
-                )
-            if tp_config.loss_parallel:
-                self._train_loss_fn.apply_tp(
-                    tp_mesh,
-                    input_layouts=(Shard(1), Replicate(), Replicate()),
-                    use_local_output=True,
-                )
-                self._eval_loss_fn.apply_tp(
-                    tp_mesh, input_layouts=(Shard(1), Replicate()), use_local_output=True
                 )
             tp_config.maybe_enable_async_tp(tp_mesh)
             log.info(
@@ -698,9 +693,8 @@ class TransformerPipelineTrainModule(TrainModule):
             )
 
         # Run pipeline schedule.
-        batch, labels = self._prepare_batch(batch, labels)
-        logits, loss = self.model_forward(batch, labels=labels)
-        del batch, logits, loss  # pipeline schedule has already handled backward pass
+        input_ids, labels, model_kwargs = self._prepare_batch(batch, labels)
+        self.model_forward(input_ids, labels, **model_kwargs)
 
         if dry_run:
             self._clear_loss_buffers()
@@ -743,13 +737,15 @@ class TransformerPipelineTrainModule(TrainModule):
                 "please disable in-loop evals"
             )
 
-        batch, labels = self._prepare_batch(batch, labels)
+        input_ids, labels, model_kwargs = self._prepare_batch(batch, labels)
 
         for model in self.model_parts:
             model.eval()
 
         with torch.no_grad():
-            logits, loss = self.model_forward(batch, labels=labels, training=False)
+            logits, loss = self.model_forward(
+                input_ids, labels=labels, training=False, **model_kwargs
+            )
 
         if self.eval_pp_schedule.is_last_stage:
             assert logits is not None
@@ -839,7 +835,11 @@ class TransformerPipelineTrainModule(TrainModule):
             optim.zero_grad(set_to_none=True)
 
     def model_forward(
-        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None, training: bool = True
+        self,
+        input_ids: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        training: bool = True,
+        **kwargs,
     ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         Run a forward pass on a micro-batch, returning the logits and potentially the loss.
@@ -847,7 +847,7 @@ class TransformerPipelineTrainModule(TrainModule):
         with self._model_forward_context():
             schedule = self.train_pp_schedule if training else self.eval_pp_schedule
             # shape: (batch_size, seq_len, vocab_size), (1,)
-            logits, loss = schedule.step(**batch, target=labels)
+            logits, loss = schedule.step(input_ids=input_ids, target=labels, **kwargs)
             if schedule.is_last_stage:
                 assert logits is not None
             if not training and logits is not None and labels is not None and loss is None:
@@ -928,12 +928,9 @@ class TransformerPipelineTrainModule(TrainModule):
 
     def _prepare_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
-    ) -> Tuple[Dict[str, Any], Optional[torch.Tensor]]:
-        return prepare_batch(
-            self.model_parts,
-            batch,
-            labels,
-            device=self.device,
-            label_ignore_index=self.label_ignore_index,
-            cp_load_balancer=self._cp_load_balancer,
-        )
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
+        input_ids = batch.pop("input_ids")
+        labels = labels if labels is not None else batch.pop("labels", None)
+        if "doc_lens" in batch and "max_doc_lens" in batch:
+            log_once("intra-document masking enabled")
+        return input_ids, labels, batch
