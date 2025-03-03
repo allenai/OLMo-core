@@ -148,6 +148,7 @@ class Transformer(nn.Module):
         self._compile_enabled = False
         self._device: Optional[torch.device] = None
         self._cp_load_balancer: Optional[RingAttentionLoadBalancer] = None
+        self._kwargs_saver_handle = None
 
         # Cache the value of these properties up-front in case the parameters are removed
         # later, like for pipeline parallelism.
@@ -385,7 +386,6 @@ class Transformer(nn.Module):
         self,
         input_ids: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
-        _kwargs_dump: Optional[Dict[str, Any]] = None,  # for pipelining
         *,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
@@ -401,12 +401,10 @@ class Transformer(nn.Module):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
-        if _kwargs_dump is not None:
-            ignore_index = _kwargs_dump["ignore_index"]
-            loss_reduction = _kwargs_dump["loss_reduction"]
-            z_loss_multiplier = _kwargs_dump["z_loss_multiplier"]
-            loss_div_factor = _kwargs_dump["loss_div_factor"]
-            return_logits = _kwargs_dump["return_logits"]
+        if self._kwargs_saver_handle is not None:
+            self._kwargs_saver_handle.remove()
+            self._kwargs_saver_handle = None
+
         input_ids, labels, kwargs = self._prepare_inputs(
             input_ids, labels, ignore_index=ignore_index, **kwargs
         )
@@ -439,15 +437,16 @@ class Transformer(nn.Module):
                 return_logits=return_logits,
             )
         else:
-            kwargs_dump = dict(
-                ignore_index=ignore_index,
-                loss_reduction=loss_reduction,
-                z_loss_multiplier=z_loss_multiplier,
-                loss_div_factor=loss_div_factor,
-                return_logits=return_logits,
-                **kwargs,
-            )
-            return h, labels, kwargs_dump  # type: ignore[return-type]
+            return h, labels  # type: ignore[return-type]
+
+    def save_kwargs_for_forward(self, kwargs_dump: Dict[str, Any]):
+        def kwargs_saver(_, *args, **kwargs):
+            kwargs.update(kwargs_dump)
+            return (args, kwargs)
+
+        self._kwargs_saver_handle = self.register_forward_pre_hook(
+            kwargs_saver, prepend=False, with_kwargs=True
+        )
 
     def apply_tp(
         self,
