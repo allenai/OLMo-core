@@ -302,8 +302,6 @@ class Transformer(nn.Module):
         ) is not None:
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(unhide_from_torch(doc_lens))
-            out_kwargs["max_doc_len"] = max_doc_len
-            out_kwargs["cu_doc_lens"] = cu_doc_lens
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
@@ -372,6 +370,8 @@ class Transformer(nn.Module):
         else:
             input_ids = move_to_device(input_ids, self.device)
             labels = move_to_device(labels, self.device)
+            out_kwargs["max_doc_len"] = max_doc_len
+            out_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
 
         if (loss_div_factor := kwargs.get("loss_div_factor")) is not None:
             out_kwargs["loss_div_factor"] = move_to_device(loss_div_factor, self.device)
