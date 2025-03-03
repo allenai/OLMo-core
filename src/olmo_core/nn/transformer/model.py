@@ -437,7 +437,7 @@ class Transformer(nn.Module):
                 return_logits=return_logits,
             )
         else:
-            return h, labels  # type: ignore[return-type]
+            return h
 
     def save_kwargs_for_forward(self, kwargs_dump: Dict[str, Any]):
         def kwargs_saver(_, *args, **kwargs):

@@ -841,7 +841,7 @@ class TransformerPipelineTrainModule(TrainModule):
             schedule = self.train_pp_schedule if training else self.eval_pp_schedule
             output, _ = schedule.step(
                 input_ids,
-                labels,
+                labels=labels,
                 target=labels if training else None,
                 **kwargs,
             )
