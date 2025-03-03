@@ -201,7 +201,7 @@ class LMHead(nn.Module):
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
-        loss_div_factor: Optional[torch.Tensor] = None,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
@@ -283,7 +283,7 @@ class LMHead(nn.Module):
         B: int,
         *,
         loss_reduction: str,
-        loss_div_factor: Optional[torch.Tensor] = None,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     ) -> torch.Tensor:
         if loss_reduction == "none":
             # Reshape to `(B, S)`
@@ -389,7 +389,7 @@ class NormalizedLMHead(LMHead):
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
-        loss_div_factor: Optional[torch.Tensor] = None,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         B = x.shape[0]

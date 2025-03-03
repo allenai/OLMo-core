@@ -654,9 +654,9 @@ class TransformerPipelineTrainModule(TrainModule):
             )
 
         # Calculate how many tokens are going to be used in the loss.
-        batch_num_tokens_for_loss = move_to_device(
-            (labels != self.label_ignore_index).sum(), self.device
-        )
+        # NOTE: this needs to be a float, not a tensor, so the pipeline schedule doesn't try
+        # to shard it.
+        batch_num_tokens_for_loss = (labels != self.label_ignore_index).sum().item()
         if self.cp_enabled:
             assert self._cp_config is not None
             batch_num_tokens_for_loss = batch_num_tokens_for_loss / self._cp_config.degree

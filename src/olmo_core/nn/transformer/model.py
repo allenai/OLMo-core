@@ -386,7 +386,7 @@ class Transformer(nn.Module):
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
-        loss_div_factor: Optional[torch.Tensor] = None,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
         **kwargs,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
