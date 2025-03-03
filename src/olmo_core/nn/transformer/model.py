@@ -291,7 +291,9 @@ class Transformer(nn.Module):
         ignore_index: int,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
-        B, S = input_ids.shape
+        # NOTE: with pipeline parallelism input_ids might actually be an intermediate output,
+        # so we have to be careful here.
+        B, S = input_ids.shape[:2]
         out_kwargs: Dict[str, Any] = {}
 
         # Prepare document length inputs.
