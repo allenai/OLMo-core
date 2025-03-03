@@ -646,6 +646,10 @@ class TransformerTrainModule(TrainModule):
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
+        # TODO: (epwalsh) Currently all of our evaluators require the full logits locally,
+        # but when we're using CP/TP we usually can't materialize the full logits locally (due to OOMs).
+        # However we could at least support in-loop PPL evals with a little work in the evaluator
+        # code to handle the sharded logits.
         if self.cp_enabled:
             raise RuntimeError(
                 f"{self.__class__.__name__}.eval_batch() does not support context parallelism yet, "
@@ -667,7 +671,6 @@ class TransformerTrainModule(TrainModule):
                 labels=labels,
                 ignore_index=self.label_ignore_index,
                 loss_reduction="none",
-                z_loss_multiplier=self.z_loss_multiplier,
                 **model_kwargs,
             )
 

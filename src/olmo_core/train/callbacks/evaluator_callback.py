@@ -18,15 +18,11 @@ from olmo_core.distributed.utils import get_rank, get_world_size, is_distributed
 from olmo_core.eval import Evaluator
 from olmo_core.eval.lm_evaluator import LMEvaluator
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.utils import (
-    cuda_sync_debug_mode,
-    format_float,
-    get_default_device,
-    move_to_device,
-)
+from olmo_core.nn.lm_head import LMOutputWithLoss
+from olmo_core.utils import cuda_sync_debug_mode, format_float, get_default_device
 
 from ..common import Duration
-from ..train_module import EvalBatchSizeUnit, EvalBatchSpec
+from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TransformerTrainModule
 from .callback import Callback, CallbackConfig
 
 if TYPE_CHECKING:
@@ -40,7 +36,8 @@ log = logging.getLogger(__name__)
 @dataclass
 class EvaluatorCallback(Callback):
     """
-    Runs in-loop evaluations periodically during training.
+    Runs in-loop evaluations for a :class:`~olmo_core.train.train_module.TransformerTrainModule`
+    periodically during training.
     """
 
     evaluators: List[Evaluator] = field(default_factory=list)
@@ -63,6 +60,12 @@ class EvaluatorCallback(Callback):
     How often to log eval progress to the console during an eval loop.
     """
 
+    def post_attach(self):
+        if not isinstance(self.trainer.train_module, TransformerTrainModule):
+            raise OLMoConfigurationError(
+                f"'{self.__class__.__name__}' only suports the '{TransformerTrainModule.__name__}' train module"
+            )
+
     def post_step(self):
         if self.step <= 1 or self.step % self.eval_interval != 0:
             return
@@ -83,11 +86,12 @@ class EvaluatorCallback(Callback):
                 eval_step += 1
                 eval_tokens += batch["input_ids"].numel() * dp_world_size
 
-                batch = move_to_device(batch, self.trainer.device)
                 with torch.no_grad():
                     # Run forward pass, get logits and un-reduced CE loss.
                     labels = get_labels(batch)
-                    logits, ce_loss = self.trainer.train_module.eval_batch(batch, labels=labels)
+                    output = self.trainer.train_module.eval_batch(batch, labels=labels)
+                    assert isinstance(output, LMOutputWithLoss)
+                    logits, ce_loss, _ = output
 
                     # NOTE: might have host-device syncs here but that's okay.
                     with cuda_sync_debug_mode(0):

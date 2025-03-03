@@ -205,9 +205,9 @@ class LMHead(nn.Module):
         return_logits: Optional[bool] = None,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
-        Apply the LM head to the hidden state ``x``., returning the logits if ``labels`` is ``None``,
+        Apply the LM head to the hidden state ``x`` with shape ``(B, S, D)``..
 
-        :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
+        :returns: The logits if ``labels`` is ``None`` or a named tuple which will include the loss(es).
         """
         B = x.shape[0]
 
@@ -325,8 +325,6 @@ class LMHead(nn.Module):
                     Shard(1) if self.norm is not None else Replicate(),
                     Shard(1),
                 ),
-                #  input_kwarg_layouts={"loss_div_factor": Replicate()},
-                #  desired_input_kwarg_layouts={"loss_div_factor": Replicate()},
             ),
         )
 
