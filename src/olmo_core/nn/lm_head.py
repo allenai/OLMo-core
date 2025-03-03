@@ -263,17 +263,24 @@ class LMHead(nn.Module):
                 f"'return_logits=True' is not compatible '{self.loss_implementation}' loss implementation"
             )
 
-        if loss_div_factor is not None:
-            ce_loss = ce_loss / loss_div_factor
-            ce_loss = self._finalize_loss(ce_loss, B, loss_reduction=loss_reduction)
-
-            if z_loss is not None:
-                z_loss = z_loss / loss_div_factor
-                z_loss = self._finalize_loss(z_loss, B, loss_reduction=loss_reduction)
+        ce_loss = self._finalize_loss(
+            ce_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
+        )
+        if z_loss is not None:
+            z_loss = self._finalize_loss(
+                z_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
+            )
 
         return LMOutputWithLoss(logits=logits, ce_loss=ce_loss, z_loss=z_loss)
 
-    def _finalize_loss(self, loss: torch.Tensor, B: int, *, loss_reduction: str) -> torch.Tensor:
+    def _finalize_loss(
+        self,
+        loss: torch.Tensor,
+        B: int,
+        *,
+        loss_reduction: str,
+        loss_div_factor: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         if loss_reduction == "none":
             # Reshape to `(B, S)`
             loss = loss.view(B, -1)
@@ -293,6 +300,9 @@ class LMHead(nn.Module):
                 loss = loss.mean()
             else:
                 raise NotImplementedError(loss_reduction)
+
+        if loss_div_factor is not None:
+            loss = loss / loss_div_factor
 
         return loss
 
@@ -416,18 +426,13 @@ class NormalizedLMHead(LMHead):
                 f"'return_logits=True' is not compatible '{self.loss_implementation}' loss implementation"
             )
 
-        if loss_reduction == "none":
-            ce_loss = ce_loss.view(labels.shape)
-            if z_loss is not None:
-                z_loss = z_loss.view(labels.shape)
-
-        if loss_div_factor is not None:
-            ce_loss = ce_loss / loss_div_factor
-            ce_loss = self._finalize_loss(ce_loss, B, loss_reduction=loss_reduction)
-
-            if z_loss is not None:
-                z_loss = z_loss / loss_div_factor
-                z_loss = self._finalize_loss(z_loss, B, loss_reduction=loss_reduction)
+        ce_loss = self._finalize_loss(
+            ce_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
+        )
+        if z_loss is not None:
+            z_loss = self._finalize_loss(
+                z_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
+            )
 
         return LMOutputWithLoss(logits=logits, ce_loss=ce_loss, z_loss=z_loss)
 

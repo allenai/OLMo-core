@@ -373,9 +373,6 @@ class Transformer(nn.Module):
             out_kwargs["max_doc_len"] = max_doc_len
             out_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
 
-        if (loss_div_factor := kwargs.get("loss_div_factor")) is not None:
-            out_kwargs["loss_div_factor"] = move_to_device(loss_div_factor, self.device)
-
         return (
             input_ids,
             labels,
@@ -403,6 +400,7 @@ class Transformer(nn.Module):
         input_ids, labels, kwargs = self._prepare_inputs(
             input_ids, labels, ignore_index=ignore_index, **kwargs
         )
+        loss_div_factor = move_to_device(loss_div_factor, self.device)
 
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
