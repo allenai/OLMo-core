@@ -846,8 +846,8 @@ class TransformerPipelineTrainModule(TrainModule):
             schedule = self.train_pp_schedule if training else self.eval_pp_schedule
 
             output, _ = schedule.step(
-                input_ids,
-                target=labels if training else None,
+                move_to_device(input_ids, self.device),
+                target=move_to_device(labels if training else None, self.device),
             )
 
             if schedule.is_last_stage:
