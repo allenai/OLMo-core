@@ -11,6 +11,7 @@ from typing import (
     Callable,
     Dict,
     Generator,
+    Iterable,
     Optional,
     Tuple,
     Type,
@@ -44,6 +45,7 @@ from .callbacks import (
     Callback,
     CheckpointerCallback,
     ConsoleLoggerCallback,
+    EvaluatorCallback,
     GarbageCollectorCallback,
     SpeedMonitorCallback,
 )
@@ -221,6 +223,22 @@ class Trainer:
     Do collective bookkeeping operations like reducing metrics asynchronously.
     This requires a separate CPU-only backend, and will default to ``True`` if one is available.
     """
+
+    # Benchmarking
+
+    no_checkpoints: bool = False
+    """
+    Set this to ``True`` to disable automatic saving/loading of checkpoints altogether.
+    This is useful for benchmarking.
+    """
+
+    no_evals: bool = False
+    """
+    Set this to ``True`` to disable evaluator callbacks.
+    This is useful for benchmarking.
+    """
+
+    # Internal bookkeeping
 
     _metrics: Dict[int, Dict[str, torch.Tensor]] = field(default_factory=OrderedDict)
     _metrics_reduce_type: Dict[str, Optional[ReduceType]] = field(default_factory=dict)
@@ -465,7 +483,7 @@ class Trainer:
 
         # Get current speed in batches per second.
         bps: Optional[float] = None
-        for callback in self.callbacks.values():
+        for callback in self._iter_callbacks():
             if isinstance(callback, SpeedMonitorCallback):
                 bps = callback.bps_avg
                 break
@@ -511,7 +529,11 @@ class Trainer:
         self._canceling_rank = None
 
         # Maybe load a checkpoint.
-        if not self.checkpoint_loaded and self.load_strategy != LoadStrategy.never:
+        if (
+            not self.no_checkpoints
+            and not self.checkpoint_loaded
+            and self.load_strategy != LoadStrategy.never
+        ):
             # Try loading from the save folder first.
             self.maybe_load_checkpoint(self.save_folder)
 
@@ -544,7 +566,7 @@ class Trainer:
 
         log.info(f"Training for {self.max_steps:,d} steps")
 
-        for callback in self.callbacks.values():
+        for callback in self._iter_callbacks():
             callback.pre_train()
 
         barrier()
@@ -561,7 +583,7 @@ class Trainer:
                 self._fit_epoch()
         except BaseException as exc:
             log.error(f"Training failed due to:\n{exc}")
-            for callback in self.callbacks.values():
+            for callback in self._iter_callbacks():
                 callback.on_error(exc)
             raise
         finally:
@@ -569,7 +591,7 @@ class Trainer:
             signal.signal(signal.SIGTERM, og_sigterm_handler)
             signal.signal(signal.SIGINT, og_sigint_handler)
 
-        for callback in self.callbacks.values():
+        for callback in self._iter_callbacks():
             callback.post_train()
 
         # Wait for any bookkeeping tasks to finish.
@@ -668,7 +690,7 @@ class Trainer:
         if trainer_state is not None:
             self.load_state_dict(cast(TrainerStateDict, trainer_state))
 
-        for callback in self.callbacks.values():
+        for callback in self._iter_callbacks():
             callback.post_checkpoint_loaded(dir)
 
         self._checkpoint_loaded = True
@@ -709,7 +731,7 @@ class Trainer:
         path = join_path(self.save_folder, dirname)
         log.info(f"Saving checkpoint for step {self.global_step} to '{path}'...")
         self.checkpointer.save(path, self.train_module, cast(Dict[str, Any], self.state_dict()))
-        for callback in self.callbacks.values():
+        for callback in self._iter_callbacks():
             callback.post_checkpoint_saved(path)
         log.info("Checkpoint saved")
         return path
@@ -732,7 +754,7 @@ class Trainer:
 
         def callback(future: Future):
             future.result()  # ensure it finished successfully
-            for callback in self.callbacks.values():
+            for callback in self._iter_callbacks():
                 callback.post_checkpoint_saved(path)
             log.info(f"Checkpoint for step {step} saved successfully")
 
@@ -863,6 +885,14 @@ class Trainer:
             )
         )
 
+    def _iter_callbacks(self) -> Iterable[Callback]:
+        callbacks: Iterable[Callback] = self.callbacks.values()
+        if self.no_checkpoints:
+            callbacks = filter(lambda cb: not isinstance(cb, CheckpointerCallback), callbacks)
+        if self.no_evals:
+            callbacks = filter(lambda cb: not isinstance(cb, EvaluatorCallback), callbacks)
+        return callbacks
+
     def _duration_due(self, duration: Duration) -> bool:
         return duration.due(
             step=self.global_step, tokens=self.global_train_tokens_seen, epoch=self.epoch
@@ -964,14 +994,14 @@ class Trainer:
                     raise RuntimeError(f"{ce_loss} loss encountered at step {step}")
                 if ce_loss < 10:
                     metrics[step][TRAIN_PPL_METRIC] = math.exp(ce_loss)
-            for callback in self.callbacks.values():
+            for callback in self._iter_callbacks():
                 callback.log_metrics(step, metrics[step])
 
     def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:
         data_iterator = iter(self.data_loader)
 
         while True:
-            for callback in self.callbacks.values():
+            for callback in self._iter_callbacks():
                 callback.pre_load_batch()
 
             try:
@@ -995,7 +1025,7 @@ class Trainer:
 
         log.info(f"Starting epoch {self.epoch}...")
 
-        for callback in self.callbacks.values():
+        for callback in self._iter_callbacks():
             callback.pre_epoch()
 
         self.train_module.zero_grads()
@@ -1009,21 +1039,21 @@ class Trainer:
             ) is not None:
                 self.global_train_tokens_seen += global_num_tokens
 
-            for callback in self.callbacks.values():
+            for callback in self._iter_callbacks():
                 callback.pre_step(batch)
 
             self.train_module.train_batch(batch)
 
-            for callback in self.callbacks.values():
+            for callback in self._iter_callbacks():
                 callback.pre_optim_step()
 
             self.train_module.optim_step()
             self.train_module.zero_grads()
 
-            for callback in self.callbacks.values():
+            for callback in self._iter_callbacks():
                 callback.post_train_batch()
 
-            for callback in self.callbacks.values():
+            for callback in self._iter_callbacks():
                 callback.post_step()
 
             if first_batch or self.global_step % self.metrics_collect_interval == 0:
@@ -1044,7 +1074,7 @@ class Trainer:
 
         log.info("Epoch complete")
 
-        for callback in self.callbacks.values():
+        for callback in self._iter_callbacks():
             callback.post_epoch()
 
         # Bookkeeping
