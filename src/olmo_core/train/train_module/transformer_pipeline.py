@@ -751,7 +751,7 @@ class TransformerPipelineTrainModule(TrainModule):
 
         # Don't want the pipeline schedule to mess with kwargs, so we inject them with a hook.
         def kwargs_saver(_, args_, kwargs_):
-            kwargs_.update(kwargs, labels=labels)
+            kwargs_.update(kwargs)
             return (args_, kwargs_)
 
         # We also don't want the pipeline schedule to save the logits from every stage because
@@ -793,6 +793,7 @@ class TransformerPipelineTrainModule(TrainModule):
         with self._model_forward_context():
             output, _ = self.train_pp_schedule.step(
                 input_ids,
+                labels,
                 target=labels,
             )
 
