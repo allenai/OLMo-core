@@ -164,7 +164,7 @@ def run_tensor_parallel_transformer(checkpoint_dir, outputs_path, architecture: 
     )
 
     model = config.build()
-    model.apply_tp(mesh["tp"])
+    model.apply_tp(mesh["tp"], with_labels=False)
     model.init_weights(device=device, max_seq_len=512)
     load_model_and_optim_state(checkpoint_dir, model)
 

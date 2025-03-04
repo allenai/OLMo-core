@@ -288,13 +288,29 @@ class Transformer(nn.Module):
         input_ids: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
         *,
-        ignore_index: int,
+        ignore_index: int = -100,
+        loss_reduction: Literal["mean", "sum", "none"] = "mean",
+        z_loss_multiplier: Optional[float] = None,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        return_logits: Optional[bool] = None,
         **kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any], Dict[str, Any]]:
         # NOTE: with pipeline parallelism input_ids might actually be an intermediate output,
         # so we have to be careful here.
         B, S = input_ids.shape[:2]
-        out_kwargs: Dict[str, Any] = {}
+
+        block_kwargs: Dict[str, Any] = {}
+
+        lm_head_kwargs: Dict[str, Any] = dict(
+            ignore_index=ignore_index,
+            loss_reduction=loss_reduction,
+            z_loss_multiplier=z_loss_multiplier,
+            return_logits=return_logits,
+        )
+        if loss_div_factor is not None:
+            lm_head_kwargs["loss_div_factor"] = move_to_device(loss_div_factor, self.device)
+        if labels is not None:
+            lm_head_kwargs["labels"] = move_to_device(labels, self.device)
 
         # Prepare document length inputs.
         max_doc_len: Optional[int] = None
@@ -356,7 +372,7 @@ class Transformer(nn.Module):
                     length_multiple=16,
                 )
                 for key, value in additional_inputs.items():
-                    out_kwargs[key] = move_to_device(value, self.device)
+                    block_kwargs[key] = move_to_device(value, self.device)
             else:
                 inputs = cp_load_balancer.batch_shard(
                     inputs=inputs,
@@ -365,20 +381,21 @@ class Transformer(nn.Module):
                 )
 
             for key, value in zip(keys, inputs):
-                out_kwargs[key] = move_to_device(value, self.device)
+                block_kwargs[key] = move_to_device(value, self.device)
 
-            input_ids = out_kwargs.pop("input_ids")
-            labels = out_kwargs.pop("labels", None)
+            input_ids = block_kwargs.pop("input_ids")
+            labels = block_kwargs.pop("labels", None)
         else:
             input_ids = move_to_device(input_ids, self.device)
             labels = move_to_device(labels, self.device)
-            out_kwargs["max_doc_len"] = max_doc_len
-            out_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
+            block_kwargs["max_doc_len"] = max_doc_len
+            block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
 
         return (
             input_ids,
             labels,
-            out_kwargs,
+            block_kwargs,
+            lm_head_kwargs,
         )
 
     def forward(
@@ -400,10 +417,16 @@ class Transformer(nn.Module):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
-        input_ids, labels, kwargs = self._prepare_inputs(
-            input_ids, labels, ignore_index=ignore_index, **kwargs
+        input_ids, labels, block_kwargs, lm_head_kwargs = self._prepare_inputs(
+            input_ids,
+            labels,
+            ignore_index=ignore_index,
+            loss_reduction=loss_reduction,
+            z_loss_multiplier=z_loss_multiplier,
+            loss_div_factor=loss_div_factor,
+            return_logits=return_logits,
+            **kwargs,
         )
-        loss_div_factor = move_to_device(loss_div_factor, self.device)
 
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
@@ -414,7 +437,7 @@ class Transformer(nn.Module):
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
-            h = block(h, **kwargs)
+            h = block(h, **block_kwargs)
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:
@@ -422,15 +445,7 @@ class Transformer(nn.Module):
                 mark_dynamic(h, (0, 1), strict=False)
                 if labels is not None:
                     mark_dynamic(labels, (0, 1), strict=False)
-            return self.lm_head(
-                h,
-                labels=labels,
-                ignore_index=ignore_index,
-                loss_reduction=loss_reduction,
-                z_loss_multiplier=z_loss_multiplier,
-                loss_div_factor=loss_div_factor,
-                return_logits=return_logits,
-            )
+            return self.lm_head(h, **lm_head_kwargs)
         else:
             return h
 
@@ -444,6 +459,7 @@ class Transformer(nn.Module):
 
         :param loss_parallel: Set to ``True`` if parallelizing the loss function as well.
         :param float8_enabled: Set this to ``True`` if training with float8 linear layers.
+        :param with_labels: Should be set to ``True`` if
         """
         if self.embeddings is not None:
             parallelize_module(
