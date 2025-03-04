@@ -67,7 +67,6 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ep_config=TransformerExpertParallelConfig(degree=-1),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
-        compile_loss=True,
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
     )

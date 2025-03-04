@@ -42,7 +42,6 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
         z_loss_multiplier=1e-5,
-        compile_loss=True,
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
     )

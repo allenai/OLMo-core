@@ -9,6 +9,7 @@ from .cross_entropy_loss import *
 __all__ = [
     "cross_entropy_loss",
     "fused_cross_entropy_loss",
+    "fused_linear_cross_entropy_loss",
     "l2_normalize",
 ]
 

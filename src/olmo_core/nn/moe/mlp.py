@@ -16,7 +16,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 try:
     import grouped_gemm  # type: ignore
 
-    gmm = torch._dynamo.disable(grouped_gemm.ops.gmm)
+    gmm = grouped_gemm.ops.gmm
 except ImportError:
     gmm = None
 
@@ -270,6 +270,7 @@ class DroplessMoEMLP(MoEMLPBase):
                 "https://github.com/tgale96/grouped_gemm"
             )
 
+    @torch._dynamo.disable()
     def gmm(
         self, x: torch.Tensor, w: torch.Tensor, batch_sizes: torch.Tensor, trans_b: bool = False
     ) -> torch.Tensor:

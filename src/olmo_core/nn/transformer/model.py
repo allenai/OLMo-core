@@ -1,6 +1,6 @@
 import logging
 from functools import cached_property
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
 import torch
 import torch.nn as nn
@@ -9,19 +9,22 @@ from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
 from olmo_core.config import StrEnum
+from olmo_core.data.utils import get_cumulative_document_lengths
+from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.utils import get_default_device, mark_dynamic
+from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 
 from ..attention import (
     Attention,
     AttentionBase,
     FusedAttention,
+    RingAttentionLoadBalancer,
     RingAttentionLoadBalancerType,
 )
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
-from ..lm_head import LMHeadConfig
+from ..lm_head import LMHeadConfig, LMOutputWithLoss
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
 from ..utils import selective_checkpointing_context_fn
 from .block import (
@@ -143,6 +146,8 @@ class Transformer(nn.Module):
 
         self._cache = cache
         self._compile_enabled = False
+        self._device: Optional[torch.device] = None
+        self._cp_load_balancer: Optional[RingAttentionLoadBalancer] = None
 
         # Cache the value of these properties up-front in case the parameters are removed
         # later, like for pipeline parallelism.
@@ -176,10 +181,14 @@ class Transformer(nn.Module):
 
     @property
     def device(self) -> torch.device:
-        for p in self.parameters():
-            if p.numel() > 0:
-                return p.device
-        return get_default_device()
+        if self._device is None:
+            for p in self.parameters():
+                if p.numel() > 0:
+                    self._device = p.device
+                    break
+            else:
+                self._device = get_default_device()
+        return self._device
 
     @property
     def compile_enabled(self) -> bool:
@@ -274,14 +283,151 @@ class Transformer(nn.Module):
 
         return generator
 
-    def forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
+    def _prepare_inputs(
+        self,
+        input_ids: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        *,
+        ignore_index: int = -100,
+        loss_reduction: Literal["mean", "sum", "none"] = "mean",
+        z_loss_multiplier: Optional[float] = None,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        return_logits: Optional[bool] = None,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any], Dict[str, Any]]:
+        # NOTE: with pipeline parallelism input_ids might actually be an intermediate output,
+        # so we have to be careful here.
+        B, S = input_ids.shape[:2]
+
+        block_kwargs: Dict[str, Any] = {}
+
+        lm_head_kwargs: Dict[str, Any] = dict(
+            ignore_index=ignore_index,
+            loss_reduction=loss_reduction,
+            z_loss_multiplier=z_loss_multiplier,
+            return_logits=return_logits,
+        )
+        if loss_div_factor is not None:
+            lm_head_kwargs["loss_div_factor"] = move_to_device(loss_div_factor, self.device)
+        if labels is not None:
+            lm_head_kwargs["labels"] = move_to_device(labels, self.device)
+
+        # Prepare document length inputs.
+        max_doc_len: Optional[int] = None
+        cu_doc_lens: Optional[torch.Tensor] = None
+        if (doc_lens := kwargs.pop("doc_lens", None)) is not None and (
+            max_doc_lens := kwargs.pop("max_doc_lens", None)
+        ) is not None:
+            max_doc_len = max(max_doc_lens)
+            cu_doc_lens = get_cumulative_document_lengths(doc_lens)
+
+        # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
+        if (cp_load_balancer := self._cp_load_balancer) is not None:
+            inputs = [input_ids]
+            seq_dims = [1]
+            pad_values: List[Union[int, float]] = [0]
+            keys = ["input_ids"]
+
+            # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
+            rope_buffers = self.get_rope_buffers(S, torch.device("cpu"))
+            if rope_buffers is not None:
+                if rope_buffers.pos_sin is not None:
+                    inputs.append(rope_buffers.pos_sin)
+                    seq_dims.append(0)
+                    pad_values.append(0.0)
+                    keys.append("pos_sin")
+                if rope_buffers.pos_cos is not None:
+                    inputs.append(rope_buffers.pos_cos)
+                    seq_dims.append(0)
+                    pad_values.append(0.0)
+                    keys.append("pos_cos")
+                if rope_buffers.freqs_cis is not None:
+                    inputs.append(rope_buffers.freqs_cis)
+                    seq_dims.append(0)
+                    pad_values.append(0.0)
+                    keys.append("freqs_cis")
+
+            if labels is not None:
+                inputs.append(labels)
+                seq_dims.append(1)
+                pad_values.append(ignore_index)
+                keys.append("labels")
+
+            if cu_doc_lens is not None:
+                # NOTE: Can only shard properly here if 'input_ids' is flat, i.e. a single instance.
+                # TODO: (epwalsh) We could just flatten all of the inputs here, but then we risk going
+                # beyond the model's maximum sequence length, which might be okay at least
+                # with relative positional encodings, but then again if you're resorting to context
+                # parallelism you can probably only fit a single instance at a time anyway.
+                if B != 1:
+                    raise RuntimeError(
+                        f"Rank micro-batches must consist of a single instance when using "
+                        f"context parallelism with intra-document masking (got {B} instances)"
+                    )
+                inputs, additional_inputs = cp_load_balancer.batch_shard_by_document(
+                    inputs=inputs,
+                    seq_dims=seq_dims,
+                    cu_doc_lens=cu_doc_lens,
+                    pad_values=pad_values,
+                    length_multiple=16,
+                )
+                for key, value in additional_inputs.items():
+                    block_kwargs[key] = move_to_device(value, self.device)
+            else:
+                inputs = cp_load_balancer.batch_shard(
+                    inputs=inputs,
+                    seq_dims=seq_dims,
+                    pad_values=pad_values,
+                )
+
+            for key, value in zip(keys, inputs):
+                block_kwargs[key] = move_to_device(value, self.device)
+
+            input_ids = block_kwargs.pop("input_ids")
+            labels = block_kwargs.pop("labels", None)
+        else:
+            input_ids = move_to_device(input_ids, self.device)
+            labels = move_to_device(labels, self.device)
+            block_kwargs["max_doc_len"] = max_doc_len
+            block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
+
+        return (
+            input_ids,
+            labels,
+            block_kwargs,
+            lm_head_kwargs,
+        )
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        *,
+        ignore_index: int = -100,
+        loss_reduction: Literal["mean", "sum", "none"] = "mean",
+        z_loss_multiplier: Optional[float] = None,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        return_logits: Optional[bool] = None,
+        **kwargs,
+    ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
         Run the transformer on the token input IDs.
 
         :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
 
-        :returns: The output logits.
+        :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
+        input_ids, labels, block_kwargs, lm_head_kwargs = self._prepare_inputs(
+            input_ids,
+            labels,
+            ignore_index=ignore_index,
+            loss_reduction=loss_reduction,
+            z_loss_multiplier=z_loss_multiplier,
+            loss_div_factor=loss_div_factor,
+            return_logits=return_logits,
+            **kwargs,
+        )
+
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
@@ -290,21 +436,22 @@ class Transformer(nn.Module):
         for block in self.blocks.values():
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
-                mark_dynamic(h, (0, 1))
-            h = block(h, **kwargs)
+                mark_dynamic(h, (0, 1), strict=False)
+            h = block(h, **block_kwargs)
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:
             if self.compile_enabled:
-                mark_dynamic(h, (0, 1))
-            return self.lm_head(h)
+                mark_dynamic(h, (0, 1), strict=False)
+                if labels is not None:
+                    mark_dynamic(labels, (0, 1), strict=False)
+            return self.lm_head(h, **lm_head_kwargs)
         else:
             return h
 
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        loss_parallel: bool = False,
         float8_enabled: bool = False,
     ):
         """
@@ -312,6 +459,7 @@ class Transformer(nn.Module):
 
         :param loss_parallel: Set to ``True`` if parallelizing the loss function as well.
         :param float8_enabled: Set this to ``True`` if training with float8 linear layers.
+        :param with_labels: Should be set to ``True`` if
         """
         if self.embeddings is not None:
             parallelize_module(
@@ -332,24 +480,16 @@ class Transformer(nn.Module):
             block.apply_tp(tp_mesh, float8_enabled=float8_enabled)
 
         if self.lm_head is not None:
-            self.lm_head.apply_tp(
-                tp_mesh,
-                output_layout=Shard(1) if loss_parallel else Replicate(),
-                use_local_output=not loss_parallel,
-            )
+            self.lm_head.apply_tp(tp_mesh, input_layouts=(Shard(1), Replicate()))
 
     def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
         """
         Prepare the model for context-parallelism (CP).
 
-        .. important::
-            Unlike with tensor parallelism (:meth:`apply_tp`) the model won't automatically shard
-            the inputs. It expects the inputs to already have been sharded on the sequence
-            dimension by the corresponding :class:`~olmo_core.nn.attention.RingAttentionLoadBalancer`.
-
         :param cp_mesh: The CP device mesh.
         :param load_balancer: The load balancing method.
         """
+        self._cp_load_balancer = load_balancer.build(cp_mesh)
         for block in self.blocks.values():
             cast(AttentionBase, block.attention).apply_cp(cp_mesh, load_balancer=load_balancer)
 
@@ -497,6 +637,12 @@ class Transformer(nn.Module):
             fully_shard(self.lm_head, reshard_after_forward=False, **fsdp_config)
 
         fully_shard(self, reshard_after_forward=not pp_enabled, **fsdp_config)
+        # Some inputs need to be on CPU initially, but FSDP will move everything to model's
+        # device if we don't hide it.
+        self.register_forward_pre_hook(_hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True)
+        self.register_forward_pre_hook(
+            _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
+        )
 
     def apply_ddp(
         self,
@@ -518,6 +664,12 @@ class Transformer(nn.Module):
                 torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
 
         replicate(self, device_mesh=dp_mesh, bucket_cap_mb=100)
+        # Some inputs need to be on CPU initially, but DDP will move everything to model's
+        # device if we don't hide it.
+        self.register_forward_pre_hook(_hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True)
+        self.register_forward_pre_hook(
+            _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
+        )
 
     @cached_property
     def num_params(self) -> int:
@@ -624,11 +776,9 @@ class NormalizedTransformer(Transformer):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        loss_parallel: bool = False,
         float8_enabled: bool = False,
-        async_tp: bool = False,
     ):
-        del tp_mesh, loss_parallel, float8_enabled, async_tp
+        del tp_mesh, float8_enabled
 
         raise NotImplementedError(
             "TP is not implemented yet for the normalized transformer variant"
@@ -717,3 +867,17 @@ class MoETransformer(Transformer):
             cast(MoETransformerBlock, block).feed_forward_moe.prepare_experts_for_ddp(
                 world_mesh=world_mesh,
             )
+
+
+def _hide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
+    del m
+    if (doc_lens := kwargs.get("doc_lens")) is not None:
+        kwargs["doc_lens"] = hide_from_torch(doc_lens)
+    return (args, kwargs)
+
+
+def _unhide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
+    del m
+    if (doc_lens := kwargs.get("doc_lens")) is not None:
+        kwargs["doc_lens"] = unhide_from_torch(doc_lens)
+    return (args, kwargs)
