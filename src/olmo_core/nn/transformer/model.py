@@ -148,7 +148,6 @@ class Transformer(nn.Module):
         self._compile_enabled = False
         self._device: Optional[torch.device] = None
         self._cp_load_balancer: Optional[RingAttentionLoadBalancer] = None
-        self._kwargs_saver_handle = None
 
         # Cache the value of these properties up-front in case the parameters are removed
         # later, like for pipeline parallelism.
@@ -294,6 +293,9 @@ class Transformer(nn.Module):
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
         # NOTE: with pipeline parallelism input_ids might actually be an intermediate output,
         # so we have to be careful here.
+        if isinstance(input_ids, tuple):
+            input_ids, labels = input_ids
+
         B, S = input_ids.shape[:2]
         out_kwargs: Dict[str, Any] = {}
 
@@ -401,10 +403,6 @@ class Transformer(nn.Module):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
-        if self._kwargs_saver_handle is not None:
-            self._kwargs_saver_handle.remove()
-            self._kwargs_saver_handle = None
-
         input_ids, labels, kwargs = self._prepare_inputs(
             input_ids, labels, ignore_index=ignore_index, **kwargs
         )
@@ -437,16 +435,7 @@ class Transformer(nn.Module):
                 return_logits=return_logits,
             )
         else:
-            return h
-
-    def save_kwargs_for_forward(self, **kwargs: Dict[str, Any]):
-        def kwargs_saver(_, args, kwargs_):
-            kwargs_.update(kwargs)
-            return (args, kwargs_)
-
-        self._kwargs_saver_handle = self.register_forward_pre_hook(
-            kwargs_saver, prepend=False, with_kwargs=True
-        )
+            return h, labels  # type: ignore[return-type]
 
     def apply_tp(
         self,
