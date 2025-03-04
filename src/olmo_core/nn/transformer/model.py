@@ -293,9 +293,6 @@ class Transformer(nn.Module):
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
         # NOTE: with pipeline parallelism input_ids might actually be an intermediate output,
         # so we have to be careful here.
-        if isinstance(input_ids, tuple):
-            input_ids, labels = input_ids
-
         B, S = input_ids.shape[:2]
         out_kwargs: Dict[str, Any] = {}
 
@@ -435,7 +432,7 @@ class Transformer(nn.Module):
                 return_logits=return_logits,
             )
         else:
-            return h, labels  # type: ignore[return-type]
+            return h
 
     def apply_tp(
         self,

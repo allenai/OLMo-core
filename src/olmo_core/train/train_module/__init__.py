@@ -15,11 +15,6 @@ from .transformer import (
     TransformerTrainModule,
     TransformerTrainModuleConfig,
 )
-from .transformer_pipeline import (
-    TransformerPipelineParallelConfig,
-    TransformerPipelineTrainModule,
-    TransformerPipelineTrainModuleConfig,
-)
 
 __all__ = [
     "TrainModule",
@@ -28,14 +23,11 @@ __all__ = [
     "BasicTrainModule",
     "TransformerTrainModule",
     "TransformerTrainModuleConfig",
-    "TransformerPipelineTrainModule",
-    "TransformerPipelineTrainModuleConfig",
     "TransformerActivationCheckpointingConfig",
     "TransformerActivationCheckpointingMode",
     "TransformerDataParallelConfig",
     "TransformerDataParallelWrappingStrategy",
     "TransformerExpertParallelConfig",
-    "TransformerPipelineParallelConfig",
     "TransformerTensorParallelConfig",
     "TransformerContextParallelConfig",
 ]
