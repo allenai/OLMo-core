@@ -196,8 +196,8 @@ class LMHead(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        labels: Optional[torch.Tensor] = None,
         *,
+        labels: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
@@ -362,17 +362,16 @@ class LMHead(nn.Module):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        input_layouts: Optional[Tuple[Placement, ...]] = None,
+        input_layouts: Optional[Tuple[Placement, Placement]] = None,
     ):
         parallelize_module(
             module=self,
             device_mesh=tp_mesh,
             parallelize_plan=PrepareModuleInput(
-                input_layouts=input_layouts,
-                desired_input_layouts=(  # type: ignore
-                    Shard(1) if self.norm is not None else Replicate(),
-                    Shard(1),
-                ),
+                input_layouts=None if input_layouts is None else input_layouts[0],
+                desired_input_layouts=Shard(1) if self.norm is not None else Replicate(),
+                input_kwarg_layouts=None if input_layouts is None else {"labels": input_layouts[1]},
+                desired_input_kwarg_layouts={"labels": Shard(1)},
             ),
         )
 
@@ -432,8 +431,8 @@ class NormalizedLMHead(LMHead):
     def forward(
         self,
         x: torch.Tensor,
-        labels: Optional[torch.Tensor] = None,
         *,
+        labels: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,

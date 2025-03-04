@@ -424,7 +424,7 @@ class Transformer(nn.Module):
                     mark_dynamic(labels, (0, 1), strict=False)
             return self.lm_head(
                 h,
-                labels,
+                labels=labels,
                 ignore_index=ignore_index,
                 loss_reduction=loss_reduction,
                 z_loss_multiplier=z_loss_multiplier,
