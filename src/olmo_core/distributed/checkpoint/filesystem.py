@@ -106,15 +106,17 @@ def _write_items(
             for write_item in items:
                 offset = tmp_file.tell()
                 data = planner.resolve_data(write_item)
-                if isinstance(data, torch.Tensor):
-                    data = data.cpu()
-                    if data.storage().size() != data.numel():
-                        data = data.clone()
-                    torch.save(data, tmp_file)
-                else:
+
+                if write_item.type == WriteItemType.BYTE_IO:
+                    assert isinstance(data, io.BytesIO)
                     tmp_file.write(data.getbuffer())
+                else:
+                    assert isinstance(data, torch.Tensor)
+                    data = data.cpu()  # should already be on CPU, but just in case
+                    torch.save(data, tmp_file)
 
                 length = tmp_file.tell() - offset
+
                 results.append(
                     WriteResult(
                         index=write_item.index,
