@@ -435,7 +435,7 @@ class Transformer(nn.Module):
                 return_logits=return_logits,
             )
         else:
-            return h
+            return h, labels  # type: ignore[return-type]
 
     def apply_tp(
         self,

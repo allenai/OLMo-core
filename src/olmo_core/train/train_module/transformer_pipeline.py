@@ -522,7 +522,7 @@ class TransformerPipelineTrainModule(TrainModule):
 
         # Determine the number of micro-batches.
         rank_batch_size = self.trainer.global_batch_size // dp_ws
-        num_micro_batches = rank_batch_size // self.rank_microbatch_size
+        num_microbatches = rank_batch_size // self.rank_microbatch_size
 
         self._train_pp_schedule = PipelineSchedule(
             model_parts=self.model_parts,  # type: ignore[arg-type]
@@ -530,7 +530,7 @@ class TransformerPipelineTrainModule(TrainModule):
             pp_mesh=pp_mesh,
             schedule_name=self._pp_config.schedule,
             loss_fn=self.loss_fn,
-            n_microbatches=num_micro_batches,
+            num_microbatches=num_microbatches,
         )
 
     def state_dict(self) -> Dict[str, Any]:

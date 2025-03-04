@@ -101,7 +101,7 @@ class PipelineSchedule:
         pp_mesh: DeviceMesh,
         schedule_name: PipelineScheduleType,
         loss_fn: Optional[Callable[[Any, torch.Tensor], torch.Tensor]] = None,
-        n_microbatches: Optional[int] = None,
+        num_microbatches: Optional[int] = None,
     ):
         self.model_parts = model_parts
         self.stages = stages
@@ -113,8 +113,8 @@ class PipelineSchedule:
         except ValueError as e:
             raise OLMoConfigurationError(f"Invalid pipeline schedule name '{schedule_name}'") from e
 
-        if n_microbatches is None:
-            n_microbatches = pp_mesh.size()
+        if num_microbatches is None:
+            num_microbatches = pp_mesh.size()
 
         schedule: _PipelineSchedule
         if issubclass(schedule_class, PipelineScheduleSingle):
@@ -123,18 +123,19 @@ class PipelineSchedule:
                     f"Expected a single stage for '{schedule_name}' pipeline schedule"
                 )
             schedule = schedule_class(
-                stages[0], n_microbatches=n_microbatches, loss_fn=self.loss_fn
+                stages[0], n_microbatches=num_microbatches, loss_fn=self.loss_fn
             )
         elif issubclass(schedule_class, PipelineScheduleMulti):
             schedule = schedule_class(
                 stages,  # type: ignore[arg-type]
-                n_microbatches=n_microbatches,
+                n_microbatches=num_microbatches,
                 loss_fn=self.loss_fn,
             )
         else:
             raise NotImplementedError(schedule_class)
 
         self.base_schedule = schedule
+        self.num_microbatches = num_microbatches
 
     @property
     def is_first_stage(self) -> bool:
@@ -155,8 +156,8 @@ class PipelineSchedule:
             return None, None
         elif self.is_last_stage:
             losses: Optional[List[torch.Tensor]] = [] if self.loss_fn is not None else None
-            output = self.base_schedule.step(*args, target=target, losses=losses, **kwargs)
+            output = self.base_schedule.step(target=target, losses=losses)
             return output, None if losses is None else torch.stack(losses)
         else:
-            self.base_schedule.step(*args, **kwargs)
+            self.base_schedule.step()
             return None, None
