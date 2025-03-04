@@ -32,6 +32,7 @@ from olmo_core.distributed.parallel import (
     get_tp_mesh,
 )
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
+from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
 from olmo_core.nn.attention import RingAttentionLoadBalancer
@@ -53,6 +54,7 @@ from .transformer import (
 log = logging.getLogger(__name__)
 
 
+@beta_feature
 @dataclass
 class TransformerPipelineParallelConfig(PipelineParallelConfig):
     """
@@ -165,6 +167,7 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
         return stages, models
 
 
+@beta_feature
 @dataclass
 class TransformerPipelineTrainModuleConfig(Config):
     """
@@ -233,6 +236,7 @@ class TransformerPipelineTrainModuleConfig(Config):
         )
 
 
+@beta_feature
 class TransformerPipelineTrainModule(TrainModule):
     """
     A pipeline-parallel :class:`TrainModule` for most :class:`~olmo_core.nn.transformer.Transformer` model
