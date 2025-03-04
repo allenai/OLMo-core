@@ -14,7 +14,7 @@ requires-python = ">=3.9"
 license = { file = "LICENSE" }
 dependencies = [
     "numpy<2.0",
-    "torch>=2.5.1",
+    "torch>=2.6.0",
     "cached-path>=1.6.6",
     "requests",
     "packaging",
