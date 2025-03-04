@@ -9,7 +9,7 @@ from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
-from olmo_core.distributed.utils import get_world_size
+from olmo_core.distributed.utils import get_full_tensor, get_world_size
 from olmo_core.nn.layer_norm import LayerNorm
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.utils import get_default_device
@@ -174,7 +174,7 @@ def run_tensor_parallel_transformer(checkpoint_dir, outputs_path, architecture: 
     loss.backward()
 
     og_logits = torch.load(outputs_path, map_location=device)
-    torch.testing.assert_close(og_logits, logits)
+    torch.testing.assert_close(og_logits, get_full_tensor(logits))
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
