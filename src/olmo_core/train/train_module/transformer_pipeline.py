@@ -793,7 +793,6 @@ class TransformerPipelineTrainModule(TrainModule):
         with self._model_forward_context():
             output, _ = self.train_pp_schedule.step(
                 input_ids,
-                labels,
                 target=labels,
             )
 
