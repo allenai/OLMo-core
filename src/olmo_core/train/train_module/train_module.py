@@ -158,7 +158,7 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def eval_batch(self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None) -> Any:
+    def eval_batch(self, batch: Dict[str, Any], labels: Optional[Any] = None) -> Any:
         """
         Run a forward pass on a eval batch.
         """
