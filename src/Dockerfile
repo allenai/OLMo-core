@@ -88,7 +88,7 @@ COPY pyproject.toml .
 COPY src/olmo_core/__init__.py src/olmo_core/__init__.py
 COPY src/olmo_core/version.py src/olmo_core/version.py
 RUN pip install --no-cache-dir '.[all]' && \
-    pip install --no-cache-dir ring-flash-attn transformers liger-kernel && \
+    pip install --no-cache-dir ring-flash-attn==0.1.4 liger-kernel==0.5.4 transformers && \
     pip uninstall -y ai2-olmo-core && \
     rm -rf *
 
