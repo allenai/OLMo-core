@@ -155,7 +155,7 @@ class PipelineSchedule:
             return None, None
         elif self.is_last_stage:
             losses: Optional[List[torch.Tensor]] = [] if self.loss_fn is not None else None
-            output = self.base_schedule.step(*args, target=target, losses=losses, **kwargs)
+            output = self.base_schedule.step(target=target, losses=losses)
             return output, None if losses is None else torch.stack(losses)
         else:
             self.base_schedule.step(*args, **kwargs)

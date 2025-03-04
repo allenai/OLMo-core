@@ -31,11 +31,7 @@ from olmo_core.distributed.parallel import (
     get_pp_mesh,
     get_tp_mesh,
 )
-from olmo_core.distributed.utils import (
-    get_full_tensor,
-    get_local_tensor,
-    get_world_size,
-)
+from olmo_core.distributed.utils import get_local_tensor, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
 from olmo_core.nn.attention import RingAttentionLoadBalancer
@@ -471,6 +467,7 @@ class TransformerPipelineTrainModule(TrainModule):
                     "Pipeline parallelism with MoE's is currently not supported"
                 )
 
+        self._batch_num_tokens_for_loss: Optional[float] = None
         self._ce_batch_loss: Optional[torch.Tensor] = None
         self._z_batch_loss: Optional[torch.Tensor] = None
 
@@ -512,10 +509,23 @@ class TransformerPipelineTrainModule(TrainModule):
         assert self._eval_pp_schedule is not None
         return self._eval_pp_schedule
 
-    def loss_fn(self, output: LMOutputWithLoss, labels: torch.Tensor) -> torch.Tensor:
-        del labels
+    def loss_fn(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        assert self._batch_num_tokens_for_loss is not None
 
-        _, ce_loss, z_loss = output
+        for model in self.model_parts:
+            if model.lm_head is not None:
+                _, ce_loss, z_loss = model.lm_head.compute_loss(
+                    logits,
+                    labels,
+                    ignore_index=self.label_ignore_index,
+                    loss_reduction="sum",
+                    z_loss_multiplier=self.z_loss_multiplier,
+                    loss_div_factor=self._batch_num_tokens_for_loss,
+                    return_logits=False,
+                )
+                break
+        else:
+            raise RuntimeError("'lm_head' is missing")
 
         # Get loss to optimize for.
         loss = ce_loss
@@ -535,9 +545,18 @@ class TransformerPipelineTrainModule(TrainModule):
 
         return loss
 
-    def eval_loss_fn(self, output: LMOutputWithLoss, labels: torch.Tensor) -> torch.Tensor:
-        del labels
-        return output.ce_loss
+    def eval_loss_fn(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        for model in self.model_parts:
+            if model.lm_head is not None:
+                _, ce_loss, _ = model.lm_head.compute_loss(
+                    logits,
+                    labels,
+                    ignore_index=self.label_ignore_index,
+                    loss_reduction="none",
+                    return_logits=False,
+                )
+                return ce_loss
+        raise RuntimeError("'lm_head' is missing")
 
     def on_attach(self):
         # Validate batch size.
@@ -654,25 +673,14 @@ class TransformerPipelineTrainModule(TrainModule):
             )
 
         # Calculate how many tokens are going to be used in the loss.
-        # NOTE: this needs to be a float, not a tensor, so the pipeline schedule doesn't try
-        # to shard it.
-        batch_num_tokens_for_loss = (labels != self.label_ignore_index).sum().item()
+        self._batch_num_tokens_for_loss = (labels != self.label_ignore_index).sum().item()
         if self.cp_enabled:
             assert self._cp_config is not None
-            batch_num_tokens_for_loss = batch_num_tokens_for_loss / self._cp_config.degree
+            self._batch_num_tokens_for_loss /= self._cp_config.degree
 
         # Run pipeline schedule.
         input_ids, labels, model_kwargs = self._prepare_batch(batch, labels)
-        self.model_forward(
-            input_ids,
-            labels,
-            ignore_index=self.label_ignore_index,
-            loss_reduction="sum",
-            z_loss_multiplier=self.z_loss_multiplier,
-            loss_div_factor=batch_num_tokens_for_loss,
-            return_logits=False,
-            **model_kwargs,
-        )
+        self.model_forward(input_ids, labels, **model_kwargs)
 
         if dry_run:
             self._clear_loss_buffers()
@@ -726,27 +734,24 @@ class TransformerPipelineTrainModule(TrainModule):
             model.eval()
 
         with torch.no_grad():
-            output = self.model_forward(
+            logits = self.model_forward(
                 input_ids,
-                labels=labels,
+                labels,
                 training=False,
                 ignore_index=self.label_ignore_index,
                 loss_reduction="none",
                 **model_kwargs,
             )
 
-        if self.eval_pp_schedule.is_last_stage:
-            assert output is not None
-            if isinstance(output, LMOutputWithLoss):
-                output = LMOutputWithLoss(
-                    *(get_full_tensor(t) if t is not None else None for t in output)  # type: ignore
-                )
-            else:
-                output = get_full_tensor(output)
-
         self._clear_loss_buffers()
 
-        return output
+        if self.eval_pp_schedule.is_last_stage:
+            assert logits is not None
+            if labels is not None:
+                ce_loss = self.eval_loss_fn(logits, labels)
+                return LMOutputWithLoss(logits, ce_loss, None)
+
+        return logits
 
     def optim_step(self):
         # Maybe clip gradients.
@@ -830,29 +835,20 @@ class TransformerPipelineTrainModule(TrainModule):
         labels: Optional[torch.Tensor] = None,
         training: bool = True,
         **kwargs,
-    ) -> Union[torch.Tensor, LMOutputWithLoss, None]:
+    ) -> Optional[torch.Tensor]:
         """
         Run a forward pass on a micro-batch, returning the logits and potentially the loss.
         """
-        #  for model in self.model_parts:
-        #      model.save_kwargs_for_forward(kwargs)
+        for model in self.model_parts:
+            model.save_kwargs_for_forward(**kwargs)
 
         with self._model_forward_context():
             schedule = self.train_pp_schedule if training else self.eval_pp_schedule
 
-            if schedule.is_first_stage:
-                output, _ = schedule.step(
-                    input_ids,
-                    labels=labels,
-                    target=labels if training else None,
-                    **kwargs,
-                )
-            else:
-                output, _ = schedule.step(
-                    labels=labels,
-                    target=labels if training else None,
-                    **kwargs,
-                )
+            output, _ = schedule.step(
+                input_ids,
+                target=labels if training else None,
+            )
 
             if schedule.is_last_stage:
                 assert output is not None
@@ -870,6 +866,7 @@ class TransformerPipelineTrainModule(TrainModule):
             yield
 
     def _clear_loss_buffers(self):
+        self._batch_num_tokens_for_loss = None
         self._ce_batch_loss = None
         self._z_batch_loss = None
         for model in self.model_parts:
