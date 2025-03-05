@@ -432,6 +432,11 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
 
 
 class MoEParallelTransformerBlock(MoETransformerBlock):
+    """
+    Like :class:`MoETransformerBlock` except that the attention and MLP are done in parallel
+    like PaLM instead of in sequence.
+    """
+
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         return (
             x
@@ -441,6 +446,11 @@ class MoEParallelTransformerBlock(MoETransformerBlock):
 
 
 class MoEParallelReorderedNormTransformerBlock(MoETransformerBlock):
+    """
+    Like :class:`MoEReorderedNormTransformerBlock` except that the attention and MLP are done in parallel
+    like PaLM instead of in sequence.
+    """
+
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         return (
             x
