@@ -609,15 +609,23 @@ class Transformer(nn.Module):
             reshard_after_forward = False if pp_enabled else True
 
             if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
-                if hasattr(block, "feed_forward"):
+                if self.is_moe:
+                    block = cast(MoETransformerBlock, block)
+                    if block.feed_forward_moe.shared_mlp is not None:
+                        fully_shard(
+                            block.feed_forward_moe.shared_mlp,
+                            reshard_after_forward=reshard_after_forward,
+                            **fsdp_config,
+                        )
                     fully_shard(
-                        block.feed_forward,  # type: ignore
+                        block.feed_forward_moe,
                         reshard_after_forward=reshard_after_forward,
                         **fsdp_config,
                     )
                 else:
+                    assert block.feed_forward is not None
                     fully_shard(
-                        block.feed_forward_moe,  # type: ignore
+                        block.feed_forward,  # type: ignore
                         reshard_after_forward=reshard_after_forward,
                         **fsdp_config,
                     )
