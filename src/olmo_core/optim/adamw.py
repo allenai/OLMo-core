@@ -1,9 +1,10 @@
 from dataclasses import dataclass
-from typing import Optional, Tuple, Type
+from typing import Optional, Tuple, Type, Union
 
 import torch
 import torch.nn as nn
 
+from ..config import DType
 from .config import OptimConfig
 from .skip_step_optimizer import SkipStepOptimizer
 
@@ -29,7 +30,7 @@ def adamw_step(
     p.mul_(1 - step_factor * (lr * weight_decay))
 
     # Decay the first and second moment running average coefficient.
-    exp_avg.lerp_(p.grad, step_factor * (1 - beta1))
+    exp_avg.lerp_(p.grad.type_as(exp_avg), (step_factor * (1 - beta1)).type_as(exp_avg))
     exp_avg_sq.mul_(1 - step_factor * (1 - beta2))
     exp_avg_sq.add_(step_factor * p.grad * p.grad, alpha=1 - beta2)
 
@@ -61,6 +62,7 @@ class SkipStepAdamW(SkipStepOptimizer):
         fused: Optional[bool] = None,
         rolling_interval_length: int = 128,
         sigma_factor: int = 6,
+        dtype: Optional[Union[torch.dtype, DType]] = None,
     ) -> None:
         assert lr > 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
@@ -73,6 +75,9 @@ class SkipStepAdamW(SkipStepOptimizer):
             rolling_interval_length=rolling_interval_length,
             sigma_factor=sigma_factor,
         )
+        if isinstance(dtype, DType):
+            dtype = dtype.as_pt()
+        self.dtype = dtype
         self._step_skipped: Optional[torch.Tensor] = None
 
     @property
@@ -98,8 +103,8 @@ class SkipStepAdamW(SkipStepOptimizer):
                 state = self.state[p]
                 if len(state) == 0:
                     state["step"] = torch.tensor(0.0, dtype=torch.float32, device=p.device)
-                    state["exp_avg"] = torch.zeros_like(p)
-                    state["exp_avg_sq"] = torch.zeros_like(p)
+                    state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
+                    state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
 
                 adamw_step(
                     p,
@@ -144,6 +149,7 @@ class SkipStepAdamWConfig(OptimConfig):
     weight_decay: float = 1e-2
     rolling_interval_length: int = 128
     sigma_factor: int = 6
+    dtype: Optional[DType] = None
 
     @classmethod
     def optimizer(cls) -> Type[SkipStepAdamW]:

@@ -55,6 +55,7 @@ This major release introduces a few breaking changes. As such, we've provided an
 - Added support for logging rich Table objects as text in source mixture datasets.
 - Added `unshard_strategy` parameter to `unshard_checkpoint()` function in `olmo_core.distributed.checkpoint`.
 - Added function `load_keys()` to `olmo_core.distributed.checkpoint`.
+- Added support for low precision optim state in `SkipStepAdamW`.
 
 ### Changed
 
