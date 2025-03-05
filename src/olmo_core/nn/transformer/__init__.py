@@ -1,4 +1,6 @@
 from .block import (
+    MoEParallelReorderedNormTransformerBlock,
+    MoEParallelTransformerBlock,
     MoEReorderedNormTransformerBlock,
     MoETransformerBlock,
     NormalizedTransformerBlock,
@@ -32,6 +34,8 @@ __all__ = [
     "NormalizedTransformerBlock",
     "MoETransformerBlock",
     "MoEReorderedNormTransformerBlock",
+    "MoEParallelTransformerBlock",
+    "MoEParallelReorderedNormTransformerBlock",
     "TransformerDataParallelWrappingStrategy",
     "TransformerActivationCheckpointingMode",
     "InitMethod",
