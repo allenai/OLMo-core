@@ -26,7 +26,7 @@ from olmo_core.train.train_module import (
 
 log = logging.getLogger(__name__)
 
-SKIP_STEP_BF16_OPTIM = True
+SKIP_STEP_BF16_OPTIM = False
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
