@@ -82,6 +82,7 @@ class SkipStepOptimizer(Optimizer):
         while len(self._grad_norms) > self.rolling_interval_length + 1:
             self._grad_norms.pop(0)
 
+    @torch._dynamo.disable()
     def get_step_factor(self) -> torch.Tensor:
         """
         Returns a float tensor which will be `1.0` if the optimizer should proceed with the step
