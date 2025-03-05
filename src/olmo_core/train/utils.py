@@ -241,8 +241,6 @@ def reduce_metrics(
         group=process_group,
     )
 
-    all_sum_metrics.mul_(divide_factor)
-
     # Transfer to CPU all at once (if not already on CPU).
     all_sum_metrics = all_sum_metrics.cpu()
     all_max_metrics = all_max_metrics.cpu()
@@ -253,6 +251,7 @@ def reduce_metrics(
         step_max_metric_names = max_metric_names[i]
         step_max_metric_items = all_max_metrics[i].tolist()
         for name, item in zip(step_sum_metric_names, step_sum_metric_items):
+            item = item * divide_factor
             reduce_type = metrics_reduce_type[name]
             if reduce_type == ReduceType.mean:
                 item = item / world_size
