@@ -435,8 +435,8 @@ class MoEParallelTransformerBlock(MoETransformerBlock):
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         return (
             x
-            + self.dropout(self.attention(self.attention_norm(x), **kwargs))
             + self.dropout(self.feed_forward_moe(self.feed_forward_norm(x)))
+            + self.dropout(self.attention(self.attention_norm(x), **kwargs))
         )
 
 
@@ -444,6 +444,6 @@ class MoEParallelReorderedNormTransformerBlock(MoETransformerBlock):
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         return (
             x
-            + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
             + self.dropout(self.feed_forward_norm(self.feed_forward_moe(x)))
+            + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
         )
