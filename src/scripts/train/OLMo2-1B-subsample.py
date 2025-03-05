@@ -37,7 +37,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 def build_optim_config(common: CommonComponents) -> AdamWConfig:
     del common
     return AdamWConfig(
-        lr=4e-4,
+        lr=1.8e-3,
         weight_decay=0.1,
         betas=(0.9, 0.95),
         group_overrides=[
