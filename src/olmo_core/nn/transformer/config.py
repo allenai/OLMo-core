@@ -10,7 +10,7 @@ from ..attention import AttentionConfig, AttentionType
 from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
-from ..moe import MoEConfig, MoERouterConfig, MoEType, SharedMLPConfig
+from ..moe import MoEConfig, MoERouterConfig, MoEType
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from .block import TransformerBlockConfig, TransformerBlockType
 from .init import InitMethod
@@ -382,7 +382,7 @@ class TransformerConfig(Config):
                 num_experts=32,
                 hidden_size=int(0.5 * d_model),
                 router=MoERouterConfig(top_k=4, bias=False),
-                shared_mlp=SharedMLPConfig(hidden_size=d_model * 2, bias=False),
+                shared_mlp=FeedForwardConfig(hidden_size=d_model * 2, bias=False),
                 lb_loss_weight=0.01,
                 z_loss_weight=0.001,
             ),
@@ -719,7 +719,7 @@ class TransformerConfig(Config):
                 router=MoERouterConfig(top_k=top_k, bias=False),
                 shared_mlp=None
                 if shared_expert_hidden_size is None
-                else SharedMLPConfig(hidden_size=shared_expert_hidden_size, bias=False),
+                else FeedForwardConfig(hidden_size=shared_expert_hidden_size, bias=False),
                 lb_loss_weight=lb_loss_weight,
                 z_loss_weight=z_loss_weight,
             ),

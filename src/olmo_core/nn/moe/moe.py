@@ -17,12 +17,12 @@ from olmo_core.config import Config, DType, StrEnum
 from olmo_core.exceptions import OLMoConfigurationError
 
 from ..buffer_cache import BufferCache
+from ..feed_forward import FeedForwardConfig
 from .loss import MoELoadBalancingLoss, MoELoss, MoERouterZLoss
 from .metric import MoELoadImbalanceMetric, MoEMetric
 from .mlp import DroplessMoEMLP, MoEMLP
 from .parallel_mlp import ParallelDroplessMLP, ParallelMLP, ParallelMLPBase
 from .router import MoERouterConfig
-from .shared_mlp import SharedMLPConfig
 
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
@@ -59,7 +59,7 @@ class MoEConfig(Config):
     hidden_size: int = 256
     capacity_factor: Optional[float] = None
     router: MoERouterConfig = field(default_factory=MoERouterConfig)
-    shared_mlp: Optional[SharedMLPConfig] = None
+    shared_mlp: Optional[FeedForwardConfig] = None
     lb_loss_weight: Optional[float] = 1.0
     z_loss_weight: Optional[float] = None
     dtype: DType = DType.float32
@@ -69,7 +69,7 @@ class MoEConfig(Config):
         num_params += self.router.num_params(d_model, self.num_experts)
         num_params += 3 * d_model * self.hidden_size * self.num_experts
         if self.shared_mlp is not None:
-            num_params += self.shared_mlp.num_params(d_model, self.hidden_size)
+            num_params += self.shared_mlp.num_params(d_model)
         return num_params
 
     def num_active_params(self, d_model: int) -> int:
@@ -120,7 +120,7 @@ class MoEBase(nn.Module):
         num_experts: int,
         hidden_size: int,
         router: MoERouterConfig,
-        shared_mlp: Optional[SharedMLPConfig] = None,
+        shared_mlp: Optional[FeedForwardConfig] = None,
         init_device: str = "cpu",
         lb_loss_weight: Optional[float] = None,
         z_loss_weight: Optional[float] = None,
@@ -139,10 +139,10 @@ class MoEBase(nn.Module):
             cache=cache,
             **kwargs,
         )
-        self.shared_experts = (
+        self.shared_mlp = (
             None
             if shared_mlp is None
-            else shared_mlp.build(d_model, hidden_size, dtype=dtype, init_device=init_device)
+            else shared_mlp.build(d_model, dtype=dtype, init_device=init_device)
         )
         self.losses: List[MoELoss] = []
         self.metrics: List[MoEMetric] = [
@@ -162,6 +162,10 @@ class MoEBase(nn.Module):
     @property
     def num_experts(self) -> int:
         return self.router.num_experts
+
+    @property
+    def top_k(self) -> int:
+        return self.router.top_k
 
     def warmup_cache(self, max_local_microbatch_size: int):
         self.experts.warmup_cache(max_local_microbatch_size)
@@ -214,10 +218,14 @@ class MoEBase(nn.Module):
         """
         expert_logits, expert_scores, expert_weights, expert_indices = self.router(x)
 
-        out, batch_size_per_expert = self.experts(x, expert_weights, expert_indices)
+        shared_out: Optional[torch.Tensor] = None
+        if self.shared_mlp is not None:
+            shared_out = self.shared_mlp(x)
 
-        if self.shared_experts is not None:
-            out = self.shared_experts(x, out, self.router.top_k)
+        out, batch_size_per_expert = self.experts(x, expert_weights, expert_indices)
+        if shared_out is not None:
+            shared_out = shared_out / (self.top_k + 1)
+            out = shared_out.add(out, alpha=self.top_k / (self.top_k + 1))
 
         if self.training and (self.losses or self.metrics):
             expert_logits = expert_logits.float()
@@ -284,9 +292,15 @@ class MoEBase(nn.Module):
         # Expert parallel
         self.experts.apply_tp(tp_mesh, float8_enabled=float8_enabled)
 
-        # Sequence parallel
-        if self.shared_experts is not None:
-            self.shared_experts.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+        # Model parallel
+        if self.shared_mlp is not None:
+            self.shared_mlp.apply_tp(
+                tp_mesh,
+                input_layout=Shard(1),
+                output_layout=Shard(1),
+                use_local_output=True,
+                float8_enabled=float8_enabled,
+            )
 
         parallelize_module(
             self,
@@ -311,7 +325,7 @@ class MoE(MoEBase):
         num_experts: int,
         hidden_size: int,
         router: MoERouterConfig,
-        shared_mlp: Optional[SharedMLPConfig] = None,
+        shared_mlp: Optional[FeedForwardConfig] = None,
         capacity_factor: float = 1.2,
         init_device: str = "cpu",
         lb_loss_weight: Optional[float] = None,

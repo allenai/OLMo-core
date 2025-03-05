@@ -17,13 +17,8 @@ from olmo_core.distributed.parallel import (
     get_ep_mesh,
 )
 from olmo_core.distributed.utils import get_local_tensor
-from olmo_core.nn.moe import (
-    MoEBase,
-    MoEConfig,
-    MoERouterConfig,
-    MoEType,
-    SharedMLPConfig,
-)
+from olmo_core.nn.feed_forward import FeedForwardConfig
+from olmo_core.nn.moe import MoEBase, MoEConfig, MoERouterConfig, MoEType
 from olmo_core.utils import get_default_device, seed_all
 
 from ...distributed.utils import requires_multi_gpu, run_distributed_test
@@ -48,7 +43,7 @@ def test_moe(moe_type: MoEType, shared: bool, dtype: torch.dtype):
         num_experts=4,
         hidden_size=256,
         router=MoERouterConfig(top_k=1),
-        shared_mlp=None if not shared else SharedMLPConfig(),
+        shared_mlp=None if not shared else FeedForwardConfig(hidden_size=256),
         z_loss_weight=0.1,
         dtype=DType.from_pt(dtype),
     )

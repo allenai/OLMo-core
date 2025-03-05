@@ -46,7 +46,7 @@ class FeedForwardConfig(Config):
     The name of the implementation.
     """
     bias: Optional[bool] = None
-    dtype: DType = DType.float32
+    dtype: Optional[DType] = None
 
     def num_params(self, d_model: int) -> int:
         """
@@ -68,7 +68,9 @@ class FeedForwardConfig(Config):
 
         return params
 
-    def build(self, d_model: int, *, init_device: str = "cpu") -> "FeedForward":
+    def build(
+        self, d_model: int, *, dtype: Optional[torch.dtype] = None, init_device: str = "cpu"
+    ) -> "FeedForward":
         """
         Build the corresponding feed-forward module.
 
@@ -77,7 +79,11 @@ class FeedForwardConfig(Config):
         """
         kwargs = self.as_dict(exclude_none=True)
         kwargs.pop("name")
-        kwargs.update(d_model=d_model, init_device=init_device, dtype=kwargs.pop("dtype").as_pt())
+        kwargs.update(d_model=d_model, init_device=init_device)
+        if self.dtype is not None:
+            kwargs["dtype"] = self.dtype.as_pt()
+        elif dtype is not None:
+            kwargs["dtype"] = dtype
 
         try:
             if self.name == FeedForwardType.default:
