@@ -55,6 +55,16 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`MoEReorderedNormTransformerBlock`
     """
 
+    moe_parallel = "moe_parallel"
+    """
+    ➡️ :class:`MoEParallelTransformerBlock`
+    """
+
+    moe_parallel_reordered_norm = "moe_parallel_reordered_norm"
+    """
+    ➡️ :class:`MoEParallelReorderedNormTransformerBlock`
+    """
+
 
 @dataclass
 class TransformerBlockConfig(Config):
@@ -115,6 +125,10 @@ class TransformerBlockConfig(Config):
                 return MoETransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe_reordered_norm:
                 return MoEReorderedNormTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.moe_parallel:
+                return MoEParallelTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.moe_parallel_reordered_norm:
+                return MoEParallelReorderedNormTransformerBlock(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
@@ -415,3 +429,21 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
         return h + self.dropout(self.feed_forward_norm(self.feed_forward_moe(h)))
+
+
+class MoEParallelTransformerBlock(MoETransformerBlock):
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        return (
+            x
+            + self.dropout(self.attention(self.attention_norm(x), **kwargs))
+            + self.dropout(self.feed_forward_moe(self.feed_forward_norm(x)))
+        )
+
+
+class MoEParallelReorderedNormTransformerBlock(MoETransformerBlock):
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        return (
+            x
+            + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+            + self.dropout(self.feed_forward_norm(self.feed_forward_moe(x)))
+        )
