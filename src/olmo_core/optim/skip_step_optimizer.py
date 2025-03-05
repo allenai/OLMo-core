@@ -92,7 +92,7 @@ class SkipStepOptimizer(Optimizer):
         without a host-device sync.
         """
         if len(self._losses) < max(2, self.rolling_interval_length // 2):
-            return torch.tensor(1.0).to(device=self.device, non_blocking=True)
+            return torch.tensor(1.0, device=self.device)
 
         loss_std, loss_mean = torch.std_mean(torch.stack(self._losses[:-1]))
         assert self.latest_loss is not None
