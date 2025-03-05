@@ -95,8 +95,10 @@ class DataLoaderBase(ABC):
         self.collator = collator
         self.work_dir = work_dir
         self.global_batch_size = global_batch_size
+        assert dp_rank < dp_world_size
         self.dp_world_size = dp_world_size
         self.dp_rank = dp_rank
+
         self.fs_local_rank = fs_local_rank
 
         self.batches_processed = 0
@@ -432,7 +434,8 @@ class NumpyDataLoaderBase(DataLoaderBase):
         self.build_and_save_global_indices(in_memory=in_memory)
 
     def get_mock_batch(self) -> Dict[str, Any]:
-        rng = torch.Generator()
+        device = torch.device("cpu")
+        rng = torch.Generator(device=device)
         rng.manual_seed(self.seed + self.dp_rank)
         num_instances = self.rank_batch_size // self.dataset.max_sequence_length
         input_ids = torch.randint(
@@ -440,19 +443,33 @@ class NumpyDataLoaderBase(DataLoaderBase):
             self.dataset.vocab_size,
             (num_instances, self.dataset.max_sequence_length),
             generator=rng,
+            device=device,
         )
         return {"input_ids": input_ids}
 
     def _iter_batches(self) -> Iterable[Dict[str, Any]]:
-        return torch.utils.data.DataLoader(
-            _IterableDatasetWrapper(self),
-            batch_size=None,
-            num_workers=self.num_workers,
-            pin_memory=self.target_device_type == "cuda" and self.num_workers > 0,
-            prefetch_factor=self.prefetch_factor,
-            persistent_workers=False,
-            timeout=0,
-        )
+        current_global_batch_size = self.global_batch_size
+
+        def _build_batch_iterator():
+            return iter(
+                torch.utils.data.DataLoader(
+                    _IterableDatasetWrapper(self),
+                    batch_size=None,
+                    num_workers=self.num_workers,
+                    pin_memory=self.target_device_type == "cuda" and self.num_workers > 0,
+                    prefetch_factor=self.prefetch_factor,
+                    persistent_workers=False,
+                    timeout=0,
+                ),
+            )
+
+        batch_iterator = _build_batch_iterator()
+        while (batch := next(batch_iterator, None)) is not None:
+            yield batch
+
+            # If batch size has changed, re-initialize the workers.
+            if current_global_batch_size != self.global_batch_size:
+                batch_iterator = _build_batch_iterator()
 
     def _get_dataset_item(self, idx: int) -> Dict[str, Any]:
         item = self.dataset[idx]

@@ -2,12 +2,15 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from olmo_core.distributed.utils import get_rank
 from olmo_core.exceptions import OLMoEnvironmentError
 
 from .callback import Callback
+
+if TYPE_CHECKING:
+    from wandb.sdk.wandb_run import Run
 
 log = logging.getLogger(__name__)
 
@@ -94,7 +97,7 @@ class WandBCallback(Callback):
         return self._wandb
 
     @property
-    def run(self):
+    def run(self) -> "Run":
         return self.wandb.run
 
     @property

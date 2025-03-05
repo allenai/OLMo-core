@@ -43,12 +43,13 @@ import logging
 from datetime import timedelta
 from typing import Optional
 
+import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
 from ..distributed.utils import init_distributed, is_distributed
 from ..io import add_cached_path_clients
-from ..utils import LogFilterType, prepare_cli_environment, seed_all
+from ..utils import LogFilterType, get_default_device, prepare_cli_environment, seed_all
 from .checkpoint import Checkpointer, CheckpointerConfig
 from .common import Duration, DurationUnit, LoadStrategy, ReduceType
 from .config import TrainerConfig
@@ -117,6 +118,8 @@ def prepare_training_environment(
     # Initialize process group.
     if backend is not None:
         init_distributed(backend=backend, timeout=timeout)
+    else:
+        torch.set_default_device(get_default_device())
 
     # Configure logging, warning filters, exception hooks, and other CLI settings.
     prepare_cli_environment(log_filter_type=log_filter_type)

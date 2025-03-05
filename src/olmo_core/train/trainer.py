@@ -75,6 +75,7 @@ T = TypeVar("T")
 class TrainerStateDict(TypedDict):
     global_step: int
     global_train_tokens_seen: int
+    max_steps: int
     data_loader: Dict[str, Any]
     epoch: int
     world_size: int
@@ -382,7 +383,12 @@ class Trainer:
         else:
             self._loss_fn = cross_entropy_loss
         if self.compile_loss:
-            self._loss_fn = torch.compile(self._loss_fn)
+            if torch.cuda.is_available():
+                self._loss_fn = torch.compile(self._loss_fn)
+            else:
+                log.warning(
+                    "compile_loss was set to True, but CUDA is not available. Compiling only works with CUDA. Ignoring."
+                )
 
     @property
     def global_batch_size(self) -> int:
@@ -619,6 +625,7 @@ class Trainer:
         return {
             "global_step": self.global_step,
             "global_train_tokens_seen": self.global_train_tokens_seen,
+            "max_steps": self.max_steps,
             "data_loader": self.data_loader.state_dict(),
             "epoch": self.epoch,
             "world_size": get_world_size(),  # global world size here on purpose
@@ -1165,7 +1172,8 @@ class Trainer:
     def _train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         # Record how many instances are going to be skipped (masked out).
         if (instance_mask := batch.get("instance_mask")) is not None and not dry_run:
-            self.record_metric("train/masked instances", (~instance_mask).sum(), ReduceType.sum)
+            masked = (~instance_mask).float()
+            self.record_metric("train/masked instances (%)", masked.mean(), ReduceType.mean)
 
         # Zero-gradients.
         self.optim.zero_grad(set_to_none=True)
@@ -1324,7 +1332,8 @@ class Trainer:
 
             if first_batch or self.global_step % self.metrics_collect_interval == 0:
                 self._log_metrics()
-                torch.cuda.set_sync_debug_mode("warn")
+                if torch.cuda.is_available():
+                    torch.cuda.set_sync_debug_mode("warn")
 
             first_batch = False
 

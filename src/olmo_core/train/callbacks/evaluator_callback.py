@@ -1,4 +1,5 @@
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -66,6 +67,7 @@ class EvaluatorCallback(Callback):
 
         for evaluator in self.evaluators:
             log.info(f"Running {evaluator.name} evals...")
+            start_time = time.monotonic()
             evaluator.reset_metrics()
             eval_step = 0
             eval_tokens = 0
@@ -101,7 +103,10 @@ class EvaluatorCallback(Callback):
                 for name, value in evaluator.compute_metrics().items():
                     metrics.append(f"    {name}={format_float(value.item())}")
                     self.trainer.record_metric(f"eval/{evaluator.name}/{name}", value)
-            log.info("Eval metrics:\n" + "\n".join(metrics))
+            log.info(
+                f"Finished {evaluator.name} evals in {time.monotonic() - start_time:.1f} seconds. Metrics:\n"
+                + "\n".join(metrics)
+            )
 
         # Restore model to train mode.
         self.trainer.model.train()

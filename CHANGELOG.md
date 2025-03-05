@@ -9,16 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `instance_filter_config` field to `NumpyDatasetConfig`.
+- Added conversion script for OLMo 2 checkpoints to Huggingface format.
+- Added `BeakerCallback`.
+
+### Fixed
+
+- Ensure certain optimizer param group fields are not overridden by the values in a checkpoint.
+- Fixed issue where non-zero ranks would report partially-reduced values for training metrics.
+
+## [v1.8.0](https://github.com/allenai/OLMo-core/releases/tag/v1.8.0) - 2025-01-29
+
+### Added
+
 - Added support for tensor parallelism. See the `TransformerConfig` class for usage.
 - Added more downstream tasks from the model ladder.
 - Added `io.copy_dir()` function.
 - Added new LR schedulers: `LinearWithWarmup`, `InvSqrtWithWarmup`, `ConstantWithWarmup`, `SequentialScheduler`.
 - Added option to pre-download checkpoint files from remote storage before trying to load a checkpoint.
 - Added a callback for sending Slack notifications.
+- Makes the MPS device work on Apple Silicon
 - Added `SkipStepAdamW` optimizer.
 - The trainer can load model-only checkpoints now.
 - Added the option to throttle checkpoint uploads to one rank from each node at a time.
-- Added `unshard_strategy` parameter to `unshard_checkpoint()` function in `olmo_coer.distributed.checkpoint`.
+- Added support for logging rich Table objects as text in source mixture datasets.
+- Added `unshard_strategy` parameter to `unshard_checkpoint()` function in `olmo_core.distributed.checkpoint`.
 - Added function `load_keys()` to `olmo_core.distributed.checkpoint`.
 - Added support for low precision optim state in `SkipStepAdamW`.
 
@@ -31,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added missing `weights_only=False` argument to fix loading train checkpoints with newer versions of PyTorch.
 - Fixed bug where GCS upload does not retry on transient failures.
+- Fixed bug where source mixture datasets were truncating source files instead of randomly sampling.
+- Fixed bug in source mixture datsets where sampling from small npy files raised an mmap exception due to 0 instances in the sampled index.
 
 ## [v1.7.0](https://github.com/allenai/OLMo-core/releases/tag/v1.7.0) - 2024-11-27
 

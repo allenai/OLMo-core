@@ -10,8 +10,8 @@ from typing import Callable, List, Optional, TypeVar, cast
 
 import torch
 import torch.distributed as dist
-from torch.distributed._tensor import DTensor
 from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor
 
 from ..exceptions import OLMoEnvironmentError
 from ..utils import logging_configured, move_to_device, set_env_var
@@ -243,7 +243,7 @@ def get_world_size(group: Optional[dist.ProcessGroup] = None) -> int:
     if is_distributed():
         return dist.get_world_size(group)
     else:
-        return 0
+        return 1
 
 
 def get_local_world_size() -> int:

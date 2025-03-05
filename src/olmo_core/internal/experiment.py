@@ -3,11 +3,13 @@ import sys
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, cast
 
+import torch
 from rich import print
 
 from olmo_core.config import Config, StrEnum
 from olmo_core.data import (
     DataMix,
+    InstanceFilterConfig,
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
     NumpyDatasetType,
@@ -26,6 +28,7 @@ from olmo_core.train import (
     teardown_training_environment,
 )
 from olmo_core.train.callbacks import (
+    BeakerCallback,
     Callback,
     CometCallback,
     ConfigSaverCallback,
@@ -72,6 +75,7 @@ class ExperimentConfig(Config):
 class SubCmd(StrEnum):
     launch = "launch"
     train = "train"
+    train_single = "train_single"
     prep = "prep"
     launch_prep = "launch_prep"
     dry_run = "dry_run"
@@ -81,6 +85,8 @@ class SubCmd(StrEnum):
             prepare_cli_environment()
         elif self == SubCmd.train:
             prepare_training_environment()
+        elif self == SubCmd.train_single:
+            prepare_training_environment(backend=None)
         else:
             raise NotImplementedError(self)
 
@@ -102,6 +108,23 @@ class SubCmd(StrEnum):
                 train(config)
             finally:
                 teardown_training_environment()
+        elif self == SubCmd.train_single:
+            if config.model.dp_config is not None:
+                log.warning(
+                    "dp_config is set to %s, but you can't use data parallelism when running on a single node. Disabling.",
+                    config.model.dp_config,
+                )
+                config.model.dp_config = None
+            if config.model.tp_config is not None:
+                log.warning(
+                    "tp_config is set to %s, but you can't use tensor parallelism when running on a single node. Disabling.",
+                    config.model.dp_config,
+                )
+                config.model.tp_config = None
+            try:
+                train(config)
+            finally:
+                teardown_training_environment()
         elif self == SubCmd.prep:
             prep(config)
         elif self == SubCmd.launch_prep:
@@ -118,6 +141,7 @@ def build_common_components(
     overrides: List[str],
     *,
     global_batch_size: int,
+    include_instance_filter: bool = False,
 ) -> CommonComponents:
     root_dir = get_root_dir(cluster)
 
@@ -149,6 +173,13 @@ def build_common_components(
             name=VSLCurriculumType.grow_p2, num_cycles=8, balanced=False
         ),
         work_dir=get_work_dir(root_dir),
+        instance_filter_config=None
+        if not include_instance_filter
+        else InstanceFilterConfig(
+            repetition_max_period=13,
+            repetition_min_period=1,
+            repetition_max_count=32,
+        ),
     )
 
     data_loader_config = NumpyDataLoaderConfig(
@@ -157,7 +188,6 @@ def build_common_components(
 
     callbacks: Dict[str, Callback] = {
         "lr_scheduler": SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=2000)),
-        "gpu_monitor": GPUMemoryMonitorCallback(),
         "grad_clipper": GradClipperCallback(max_grad_norm=1.0),
         "config_saver": ConfigSaverCallback(),
         "profiler": ProfilerCallback(enabled=False),
@@ -174,7 +204,10 @@ def build_common_components(
             eval_interval=1000,
         ),
         "slack_notifier": SlackNotifierCallback(name=run_name, enabled=False),
+        "beaker": BeakerCallback(),
     }
+    if torch.cuda.is_available():
+        callbacks["gpu_monitor"] = GPUMemoryMonitorCallback()
 
     return CommonComponents(
         run_name=run_name,
@@ -199,9 +232,16 @@ def build_config(
     optim_config_builder: Callable[[CommonComponents], OptimConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
+    include_instance_filter: bool = False,
 ) -> ExperimentConfig:
     common = build_common_components(
-        script, cmd, run_name, cluster, overrides, global_batch_size=global_batch_size
+        script,
+        cmd,
+        run_name,
+        cluster,
+        overrides,
+        global_batch_size=global_batch_size,
+        include_instance_filter=include_instance_filter,
     )
 
     model = model_config_builder(common)
@@ -273,7 +313,7 @@ def train(config: ExperimentConfig):
     model = config.model.build(
         init_device="meta",
         device=device,
-        max_seq_len=config.dataset.sequence_length,
+        max_seq_len=config.dataset.effective_sequence_length,
         mesh=world_mesh,
     )
     optim = config.optim.build(model)
@@ -298,6 +338,7 @@ def main(
     optim_config_builder: Callable[[CommonComponents], OptimConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
+    include_instance_filter: bool = False,
 ):
     usage = f"""
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
@@ -306,6 +347,7 @@ def main(
 [b magenta]launch:[/]      Launch the script on Beaker with the [b magenta]train[/] subcommand.
 [b magenta]train:[/]       Run the trainer. You usually shouldn't invoke the script with this subcommand directly.
              Instead use [b magenta]launch[/] or run it with torchrun.
+[b magenta]train_single:[/]       Run the trainer on a single device (GPU, CPU, MPS). num_nodes is ignored.
 [b magenta]prep:[/]        Prepare the dataset ahead of training to save GPU time.
 [b magenta]launch_prep:[/] Launch the script on Beaker with the [b magenta]prep[/] subcommand.
 [b magenta]dry_run:[/]     Pretty print the config and exit.
@@ -336,6 +378,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         optim_config_builder=optim_config_builder,
         trainer_config_builder=trainer_config_builder,
         finalize_config=finalize_config,
+        include_instance_filter=include_instance_filter,
     )
 
     cmd.run(config)

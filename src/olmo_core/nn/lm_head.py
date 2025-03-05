@@ -5,7 +5,7 @@ from typing import Dict, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
-from torch.distributed._tensor import Replicate, Shard
+from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import (
     ColwiseParallel,
     ParallelStyle,

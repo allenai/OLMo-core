@@ -185,8 +185,6 @@ jobs:
                     # H100 clusters
                     - ai2/jupiter-cirrascale-2
                     - ai2/augusta-google-1
-                    - ai2/allennlp-elara-cirrascale
-                    - ai2/ganymede-cirrascale
                     - ai2/ceres-cirrascale
                     # A100 clusters
                     - ai2/saturn-cirrascale
@@ -261,3 +259,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ./src/scripts/release/add_pr_comments_on_release.sh
+
+      - name: Send Slack notifications about release
+        run: |
+          . .venv/bin/activate
+          python ./src/scripts/release/slack_notification.py '${{ secrets.SLACK_WEBHOOK_URL}}'
