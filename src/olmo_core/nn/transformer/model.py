@@ -822,7 +822,7 @@ class MoETransformer(Transformer):
             for loss_name, loss_val in (
                 cast(MoETransformerBlock, block).compute_losses(total_bz, reset=reset).items()
             ):
-                loss_val.div_(self.n_layers)
+                loss_val = loss_val.div(self.n_layers)
                 if loss_name in out:
                     out[loss_name] += loss_val
                 else:

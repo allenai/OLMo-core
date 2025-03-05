@@ -194,7 +194,7 @@ class MoERouter(nn.Module):
         expert_weights, expert_indices = self.get_top_k(scores)
 
         if self.normalize_expert_weights is not None:
-            expert_weights.div_(
+            expert_weights = expert_weights.div(
                 torch.norm(
                     expert_weights,
                     p=self.normalize_expert_weights,
