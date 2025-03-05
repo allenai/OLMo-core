@@ -973,6 +973,8 @@ class Trainer:
         for batch in self._iter_batches():
             # Bookkeeping.
             self.global_step += 1
+            if self.global_step == 2628:
+                continue
             if (
                 global_num_tokens := self.data_loader.global_num_tokens_in_batch(batch)
             ) is not None:
