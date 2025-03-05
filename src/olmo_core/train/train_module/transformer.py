@@ -1,6 +1,7 @@
 import contextlib
 import logging
 from dataclasses import dataclass, replace
+from functools import cached_property
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union, cast
 
 import torch
@@ -31,7 +32,12 @@ from olmo_core.distributed.parallel import (
     get_ep_mesh,
     get_tp_mesh,
 )
-from olmo_core.distributed.utils import get_local_tensor, get_world_size, is_distributed
+from olmo_core.distributed.utils import (
+    get_local_tensor,
+    get_reduce_divide_factor,
+    get_world_size,
+    is_distributed,
+)
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
@@ -451,6 +457,14 @@ class TransformerTrainModule(TrainModule):
     def ep_enabled(self) -> bool:
         return self._ep_enabled
 
+    @cached_property
+    def world_size(self) -> int:
+        return get_world_size()
+
+    @cached_property
+    def _reduce_divide_factor(self) -> float:
+        return get_reduce_divide_factor(self.world_size)
+
     def on_attach(self):
         # Validate batch size.
         dp_ws = get_world_size(self.trainer.dp_process_group)
@@ -613,7 +627,16 @@ class TransformerTrainModule(TrainModule):
             return
 
         # Record loss metrics.
-        self.record_ce_loss(ce_batch_loss, ReduceType.mean)
+        if isinstance(self.optim, SkipStepOptimizer):
+            # Need to reduce the loss right away for the SkipStepOptimizer.
+            ce_batch_loss.div_(self._reduce_divide_factor)
+            dist.all_reduce(ce_batch_loss)
+            ce_batch_loss.div_(self.world_size)
+            ce_batch_loss.mul_(self._reduce_divide_factor)
+            self.record_ce_loss(ce_batch_loss)
+            self.optim.latest_loss = ce_batch_loss
+        else:
+            self.record_ce_loss(ce_batch_loss, ReduceType.mean)
         if z_batch_loss is not None:
             self.record_metric(
                 "Z loss",
@@ -639,9 +662,6 @@ class TransformerTrainModule(TrainModule):
                 reduction,
                 namespace="train",
             )
-
-        if isinstance(self.optim, SkipStepOptimizer):
-            self.optim.latest_loss = ce_batch_loss
 
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
