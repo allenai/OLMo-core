@@ -2,7 +2,7 @@
 # It has since changed substantially.
 
 from abc import abstractmethod
-from typing import Optional, Tuple
+from typing import Any, List, NamedTuple, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -17,6 +17,18 @@ from . import ops
 from .mlp import DroplessMoEMLP, MoEMLP, MoEMLPBase
 
 __all__ = ["ParallelMLPBase", "ParallelMLP", "ParallelDroplessMLP"]
+
+
+class PermutedAllToAllOutput(NamedTuple):
+    parallel_x: torch.Tensor
+    parallel_indices: torch.Tensor
+    parallel_bin_ids: Optional[torch.Tensor]
+    parallel_bins: torch.Tensor
+    parallel_batch_size_per_expert: torch.Tensor
+    recv_counts: Optional[List[int]]
+    send_counts: Optional[List[int]]
+    expert_capacity: int
+    handle: Any
 
 
 class ParallelMLPBase(nn.Module):
@@ -157,9 +169,6 @@ class ParallelMLPBase(nn.Module):
                 batch_size_per_expert=batch_size_per_expert,
             )
         else:
-            # self.all_to_all_pre_compute()
-            # self.compute_local_experts()
-            # self.all_to_all_post_compute()
             x = self.parallel_forward_once(
                 x,
                 expert_weights=expert_weights,
@@ -193,7 +202,6 @@ class ParallelMLPBase(nn.Module):
         """
         raise NotImplementedError
 
-    @abstractmethod
     def parallel_forward_once(
         self,
         x: torch.Tensor,
@@ -211,6 +219,114 @@ class ParallelMLPBase(nn.Module):
             typically equals ``batch_size x seq_len``.
         :param expert_indices: The indices of the top-k experts, shape ``(N, top_k)``.
         """
+        # NOTE: This function implements the same computation as forward_once
+        # but with expert model parallelism.
+        #
+        # 1. Permute the tokens locally so that they are grouped by their
+        # expert assignments. This allows us to transfer all of the tokens
+        # for a remote device in one communication primitive.
+        #
+        # 2. Permute the tokens across the expert parallel devices. After
+        # this is completed each device has all of the tokens assigned to
+        # its set of experts in its local HBM.
+        #
+        # 3. Permute the tokens locally so that they are grouped by their
+        # expert assignment. After the distributed permutation the tokens
+        # are grouped by which device they came from. We re-order them
+        # locally to allow for efficient computation.
+        #
+        # After this series of permutations we compute the linear layers
+        # and then repeat these three steps in reverse to produce the final
+        # output.
+
+        (
+            parallel_x,
+            parallel_indices,
+            parallel_bin_ids,
+            parallel_bins,
+            parallel_batch_size_per_expert,
+            recv_counts,
+            send_counts,
+            expert_capacity,
+            parallel_x_handle,
+        ) = self.permute_and_all_to_all(
+            x,
+            indices=indices,
+            bin_ids=bin_ids,
+            bins=bins,
+            batch_size_per_expert=batch_size_per_expert,
+        )
+
+        parallel_x_handle.wait()
+        parallel_x = self.compute_local_experts(
+            parallel_x,
+            parallel_indices=parallel_indices,
+            parallel_bin_ids=parallel_bin_ids,
+            parallel_bins=parallel_bins,
+            parallel_batch_size_per_expert=parallel_batch_size_per_expert,
+            expert_capacity=expert_capacity,
+        )
+
+        x, x_handle = self.reverse_all_to_all(
+            parallel_x, send_counts=send_counts, recv_counts=recv_counts
+        )
+
+        x_handle.wait()
+        return self.unpermute(
+            x,
+            expert_weights=expert_weights,
+            expert_indices=expert_indices,
+            indices=indices,
+            bin_ids=bin_ids,
+            bins=bins,
+        )
+
+    @abstractmethod
+    def permute_and_all_to_all(
+        self,
+        x: torch.Tensor,
+        *,
+        indices: torch.Tensor,
+        bin_ids: torch.Tensor,
+        bins: torch.Tensor,
+        batch_size_per_expert: torch.Tensor,
+    ) -> PermutedAllToAllOutput:
+        raise NotImplementedError
+
+    @abstractmethod
+    def compute_local_experts(
+        self,
+        parallel_x,
+        *,
+        parallel_indices: torch.Tensor,
+        parallel_bin_ids: Optional[torch.Tensor],
+        parallel_bins: torch.Tensor,
+        parallel_batch_size_per_expert: torch.Tensor,
+        expert_capacity: int,
+    ) -> torch.Tensor:
+        raise NotImplementedError
+
+    @abstractmethod
+    def reverse_all_to_all(
+        self,
+        parallel_x: torch.Tensor,
+        *,
+        send_counts: Optional[List[int]],
+        recv_counts: Optional[List[int]],
+    ) -> Tuple[torch.Tensor, Any]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def unpermute(
+        self,
+        x,
+        *,
+        expert_weights: torch.Tensor,
+        expert_indices: torch.Tensor,
+        indices: torch.Tensor,
+        bin_ids: torch.Tensor,
+        bins: torch.Tensor,
+    ):
         raise NotImplementedError
 
 
@@ -353,38 +469,16 @@ class ParallelMLP(ParallelMLPBase):
         )
         return x
 
-    @torch._dynamo.disable()
-    def parallel_forward_once(
+    def permute_and_all_to_all(
         self,
         x: torch.Tensor,
         *,
-        expert_weights: torch.Tensor,
-        expert_indices: torch.Tensor,
         indices: torch.Tensor,
         bin_ids: torch.Tensor,
         bins: torch.Tensor,
         batch_size_per_expert: torch.Tensor,
-    ) -> torch.Tensor:
-        # NOTE: This function implements the same computation as forward_once
-        # but with expert model parallelism.
-        #
-        # 1. Permute the tokens locally so that they are grouped by their
-        # expert assignments. This allows us to transfer all of the tokens
-        # for a remote device in one communication primitive.
-        #
-        # 2. Permute the tokens across the expert parallel devices. After
-        # this is completed each device has all of the tokens assigned to
-        # its set of experts in its local HBM.
-        #
-        # 3. Permute the tokens locally so that they are grouped by their
-        # expert assignment. After the distributed permutation the tokens
-        # are grouped by which device they came from. We re-order them
-        # locally to allow for efficient computation.
-        #
-        # After this series of permutations we compute the linear layers
-        # and then repeat these three steps in reverse to produce the final
-        # output.
-        del expert_indices, bin_ids, batch_size_per_expert
+    ) -> PermutedAllToAllOutput:
+        del bin_ids
 
         expert_capacity = self.expert_capacity(x.shape[0])
         local_expert_capacity = expert_capacity // self.ep_world_size
@@ -405,12 +499,6 @@ class ParallelMLP(ParallelMLPBase):
                 -1, local_expert_capacity, self.d_model
             )
 
-        # Start the cross-device permutation asynchronously so we can
-        # overlap communication with computation.
-        # shape: (num_local_experts * ep_world_size, local_expert_capacity, d_model)
-        #     ~= (num_local_experts, expert_capacity, d_model)
-        parallel_x, handle = ops.all_to_all(x, group=self.ep_pg, async_op=True)
-
         # After we do the cross-device permutation we have the tokens on the
         # correct device but not yet grouped by expert because we received
         # tokens from each device as contiguous chunks. To group the tokens
@@ -419,9 +507,39 @@ class ParallelMLP(ParallelMLPBase):
         parallel_indices, parallel_bins = self._get_parallel_indices_and_bins(
             expert_capacity=expert_capacity,
             local_expert_capacity=local_expert_capacity,
-            device=indices.device,
+            device=x.device,
         )
-        handle.wait()
+
+        # Start the cross-device permutation asynchronously so we can
+        # overlap communication with computation.
+        # shape: (num_local_experts * ep_world_size, local_expert_capacity, d_model)
+        #     ~= (num_local_experts, expert_capacity, d_model)
+        parallel_x, handle = ops.all_to_all(x, group=self.ep_pg, async_op=True)
+
+        return PermutedAllToAllOutput(
+            parallel_x,
+            parallel_indices,
+            None,
+            parallel_bins,
+            batch_size_per_expert,
+            None,
+            None,
+            expert_capacity,
+            handle,
+        )
+
+    def compute_local_experts(
+        self,
+        parallel_x,
+        *,
+        parallel_indices: torch.Tensor,
+        parallel_bin_ids: Optional[torch.Tensor],
+        parallel_bins: torch.Tensor,
+        parallel_batch_size_per_expert: torch.Tensor,
+        expert_capacity: int,
+    ) -> torch.Tensor:
+        assert parallel_bin_ids is None
+        del parallel_batch_size_per_expert
 
         # Locally permute the tokens and perform the expert computation.
         parallel_x = self.permute_and_compute(
@@ -433,9 +551,33 @@ class ParallelMLP(ParallelMLPBase):
             top_k=1,
         )
 
+        return parallel_x
+
+    def reverse_all_to_all(
+        self,
+        parallel_x: torch.Tensor,
+        *,
+        send_counts: Optional[List[int]],
+        recv_counts: Optional[List[int]],
+    ) -> Tuple[torch.Tensor, Any]:
+        assert send_counts is None
+        assert recv_counts is None
+
         # Un-permute the tokens across the devices.
         x, handle = ops.all_to_all(parallel_x, group=self.ep_pg, async_op=True)
-        handle.wait()
+        return x, handle
+
+    def unpermute(
+        self,
+        x,
+        *,
+        expert_weights: torch.Tensor,
+        expert_indices: torch.Tensor,
+        indices: torch.Tensor,
+        bin_ids: torch.Tensor,
+        bins: torch.Tensor,
+    ):
+        del expert_indices, bin_ids
 
         # Reduce along the hidden sharding to get the final outputs.
         if self.hidden_sharding_degree > 1:
@@ -507,23 +649,15 @@ class ParallelDroplessMLP(ParallelMLPBase):
             top_k=self.top_k,
         )
 
-    @torch._dynamo.disable()
-    def parallel_forward_once(
+    def permute_and_all_to_all(
         self,
         x: torch.Tensor,
         *,
-        expert_weights: torch.Tensor,
-        expert_indices: torch.Tensor,
         indices: torch.Tensor,
         bin_ids: torch.Tensor,
         bins: torch.Tensor,
         batch_size_per_expert: torch.Tensor,
-    ) -> torch.Tensor:
-        # NOTE: This function does the same thing as `ParallelMLP.parallel_forward_once()`
-        # but with extra bookkeeping to manage the dynamic sizes, and unfortunately this introduces
-        # a host-device sync.
-        del expert_indices
-
+    ) -> PermutedAllToAllOutput:
         with torch.no_grad():
             # If we're sharding the experts along the hidden dimension
             # multiple devices own parts of the same sets of experts.
@@ -574,16 +708,6 @@ class ParallelDroplessMLP(ParallelMLPBase):
         # get all of the tokens assigned to them.
         x = ops.repeat(x, (self.hidden_sharding_degree, 1))
 
-        # Start the cross-device permutation asynchronously so we can
-        # overlap communication with computation.
-        parallel_x, parallel_x_handle = ops.all_to_all(
-            x,
-            recv_counts,
-            send_counts,
-            group=self.ep_pg,
-            async_op=True,
-        )
-
         with torch.no_grad():
             # After we do the cross-device permutation we have the tokens on the
             # correct device but not yet grouped by expert because we received
@@ -618,9 +742,41 @@ class ParallelDroplessMLP(ParallelMLPBase):
             parallel_bins = torch.empty_like(parallel_batch_size_per_expert, dtype=torch.int32)
             torch.cumsum(parallel_batch_size_per_expert, 0, out=parallel_bins)
 
-        # Locally permute the tokens and perform the expert computation.
-        # Block to make sure that the cross-device permutation is complete.
-        parallel_x_handle.wait()
+        # Start the cross-device permutation asynchronously so we can
+        # overlap communication with computation.
+        parallel_x, parallel_x_handle = ops.all_to_all(
+            x,
+            recv_counts,
+            send_counts,
+            group=self.ep_pg,
+            async_op=True,
+        )
+
+        return PermutedAllToAllOutput(
+            parallel_x,
+            parallel_indices,
+            parallel_bin_ids,
+            parallel_bins,
+            parallel_batch_size_per_expert,
+            recv_counts,
+            send_counts,
+            -1,
+            parallel_x_handle,
+        )
+
+    def compute_local_experts(
+        self,
+        parallel_x,
+        *,
+        parallel_indices: torch.Tensor,
+        parallel_bin_ids: Optional[torch.Tensor],
+        parallel_bins: torch.Tensor,
+        parallel_batch_size_per_expert: torch.Tensor,
+        expert_capacity: int,
+    ) -> torch.Tensor:
+        assert parallel_bin_ids is not None
+        del expert_capacity
+
         parallel_x = self.permute_and_compute(
             parallel_x,
             batch_size_per_expert=parallel_batch_size_per_expert,
@@ -631,6 +787,18 @@ class ParallelDroplessMLP(ParallelMLPBase):
             top_k=1,
         )
 
+        return parallel_x
+
+    def reverse_all_to_all(
+        self,
+        parallel_x: torch.Tensor,
+        *,
+        send_counts: Optional[List[int]],
+        recv_counts: Optional[List[int]],
+    ) -> Tuple[torch.Tensor, Any]:
+        assert send_counts is not None
+        assert recv_counts is not None
+
         # Un-permute the tokens across the devices.
         x, handle = ops.all_to_all(
             parallel_x,
@@ -639,7 +807,19 @@ class ParallelDroplessMLP(ParallelMLPBase):
             group=self.ep_pg,
             async_op=True,
         )
-        handle.wait()
+        return x, handle
+
+    def unpermute(
+        self,
+        x,
+        *,
+        expert_weights: torch.Tensor,
+        expert_indices: torch.Tensor,
+        indices: torch.Tensor,
+        bin_ids: torch.Tensor,
+        bins: torch.Tensor,
+    ):
+        del expert_indices
 
         # Reduce along the hidden sharding to get the final outputs.
         x = ops.sum_tensor(x.view(self.hidden_sharding_degree, -1, self.d_model), dim=0)
