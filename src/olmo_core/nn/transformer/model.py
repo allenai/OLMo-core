@@ -566,12 +566,12 @@ class Transformer(nn.Module):
             This must be called after :meth:`apply_activation_checkpointing()` but
             before :meth:`apply_fsdp()` or :meth:`apply_ddp()`.
         """
-        for block_id, block in self.blocks.named_children():
-            block = torch.compile(block, fullgraph=False)
-            self.blocks.register_module(block_id, block)  # type: ignore
+        for block in self.blocks.values():
+            block = cast(TransformerBlockBase, block)
+            block.apply_compile()
 
         if self.lm_head is not None:
-            self.register_module("lm_head", torch.compile(self.lm_head, fullgraph=False))  # type: ignore
+            self.lm_head.compile(fullgraph=False)
 
         self._compile_enabled = True
 

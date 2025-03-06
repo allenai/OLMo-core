@@ -155,6 +155,9 @@ class TransformerBlockBase(nn.Module):
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         raise NotImplementedError
 
+    def apply_compile(self):
+        self.compile(fullgraph=False)
+
 
 class TransformerBlock(TransformerBlockBase):
     """

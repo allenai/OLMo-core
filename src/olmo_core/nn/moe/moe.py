@@ -159,6 +159,8 @@ class MoEBase(nn.Module):
         if z_loss_weight is not None:
             self.losses.append(MoERouterZLoss(loss_weight=z_loss_weight, num_experts=num_experts))
 
+        self._ep_enabled = False
+
     @property
     def num_experts(self) -> int:
         return self.router.num_experts
@@ -166,6 +168,10 @@ class MoEBase(nn.Module):
     @property
     def top_k(self) -> int:
         return self.router.top_k
+
+    @property
+    def ep_enabled(self) -> bool:
+        return self._ep_enabled
 
     def warmup_cache(self, max_local_microbatch_size: int):
         self.experts.warmup_cache(max_local_microbatch_size)
@@ -255,6 +261,7 @@ class MoEBase(nn.Module):
         Apply expert parallelism.
         """
         self.experts.apply_ep(ep_mesh, **kwargs)
+        self._ep_enabled = True
 
     def prepare_experts_for_fsdp(self, **kwargs):
         """
