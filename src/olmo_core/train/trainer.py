@@ -6,51 +6,27 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Generator,
-    Iterable,
-    Optional,
-    Tuple,
-    Type,
-    TypedDict,
-    TypeVar,
-    Union,
-    cast,
-)
+from typing import (Any, Callable, Dict, Generator, Iterable, Optional, Tuple,
+                    Type, TypedDict, TypeVar, Union, cast)
 
 import torch
 import torch.distributed as dist
 
 from ..aliases import PathOrStr
 from ..data import DataLoaderBase
-from ..distributed.utils import (
-    all_reduce_value,
-    backend_supports_cpu,
-    barrier,
-    get_fs_local_rank,
-    get_global_rank,
-    get_local_tensor,
-    get_rank,
-    get_world_size,
-    is_distributed,
-    scatter_object,
-)
+from ..distributed.utils import (all_reduce_value, backend_supports_cpu,
+                                 barrier, get_fs_local_rank, get_global_rank,
+                                 get_local_tensor, get_rank, get_world_size,
+                                 is_distributed, scatter_object)
 from ..exceptions import OLMoConfigurationError
 from ..io import copy_file, file_exists, is_url, join_path, normalize_path
 from ..utils import cuda_sync_debug_mode
-from .callbacks import (
-    Callback,
-    CheckpointerCallback,
-    ConsoleLoggerCallback,
-    EvaluatorCallback,
-    GarbageCollectorCallback,
-    SpeedMonitorCallback,
-)
+from .callbacks import (Callback, CheckpointerCallback, ConsoleLoggerCallback,
+                        EvaluatorCallback, GarbageCollectorCallback,
+                        SpeedMonitorCallback)
 from .checkpoint import Checkpointer
-from .common import Duration, DurationUnit, LoadStrategy, ReduceType, TrainingProgress
+from .common import (Duration, DurationUnit, LoadStrategy, ReduceType,
+                     TrainingProgress)
 from .train_module import TrainModule
 from .utils import EnvRngStates, move_metrics, reduce_metrics
 
@@ -173,7 +149,7 @@ class Trainer:
         called with the metrics for every single step, but will be delayed according to this value.
 
         For example, if this is set to 5, then every 5 steps the metrics from the past 5 steps
-        are collected and reduced together, then passed on to 
+        are collected and reduced together, then passed on to
         :meth:`Callback.log_metrics <olmo_core.train.callbacks.Callback.log_metrics>` altogether.
 
     .. tip::
@@ -407,6 +383,22 @@ class Trainer:
         The maximum number of steps to train for, as determined by :data:`max_duration`.
         """
         return self._get_max_steps(self.max_duration)
+
+    def convert_duration_to_steps(self, duration: Duration) -> int:
+        """Convert a duration to steps."""
+        if duration.unit == DurationUnit.epochs:
+            if self.steps_per_epoch is None:
+                raise RuntimeError(
+                    "the number of steps cannot be determined from an 'epochs' duration since "
+                    "the data loader's number of batches is unknown"
+                )
+            return self.steps_per_epoch * duration.value
+        elif duration.unit == DurationUnit.steps:
+            return duration.value
+        elif duration.unit == DurationUnit.tokens:
+            raise RuntimeError("the number of steps cannot be determined from a 'tokens' duration")
+        else:
+            raise NotImplementedError(f"Unsupported duration unit: {duration.unit}")
 
     def _get_max_steps(self, duration: Duration) -> int:
         if duration.unit == DurationUnit.steps:
