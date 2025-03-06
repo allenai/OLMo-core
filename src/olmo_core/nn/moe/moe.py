@@ -160,6 +160,7 @@ class MoEBase(nn.Module):
             self.losses.append(MoERouterZLoss(loss_weight=z_loss_weight, num_experts=num_experts))
 
         self._ep_enabled = False
+        self.secondary_stream: Optional[torch.cuda.Stream] = None
 
     @property
     def num_experts(self) -> int:
@@ -231,12 +232,15 @@ class MoEBase(nn.Module):
         shared_out: Optional[torch.Tensor] = None
         shared_out_closure: Optional[Callable] = None
 
-        if self.ep_enabled and self.shared_mlp is not None:
+        if self.ep_enabled and self.shared_mlp is not None and self.secondary_stream is not None:
+            self.secondary_stream.wait_stream(torch.cuda.default_stream())
 
             def _shared_out_closure():
                 nonlocal shared_out
                 assert self.shared_mlp is not None
-                shared_out = self.shared_mlp(x)
+                assert self.secondary_stream is not None
+                with torch.cuda.stream(self.secondary_stream):
+                    shared_out = self.shared_mlp(x)
 
             shared_out_closure = _shared_out_closure
 
@@ -248,6 +252,10 @@ class MoEBase(nn.Module):
         )
 
         if shared_out is not None:
+            if self.ep_enabled and self.secondary_stream is not None:
+                x.record_stream(self.secondary_stream)
+                torch.cuda.default_stream().wait_stream(self.secondary_stream)
+
             shared_out = shared_out / (self.top_k + 1)
             out = shared_out.add(out, alpha=self.top_k / (self.top_k + 1))
 
