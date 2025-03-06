@@ -6,27 +6,51 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import (Any, Callable, Dict, Generator, Iterable, Optional, Tuple,
-                    Type, TypedDict, TypeVar, Union, cast)
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generator,
+    Iterable,
+    Optional,
+    Tuple,
+    Type,
+    TypedDict,
+    TypeVar,
+    Union,
+    cast,
+)
 
 import torch
 import torch.distributed as dist
 
 from ..aliases import PathOrStr
 from ..data import DataLoaderBase
-from ..distributed.utils import (all_reduce_value, backend_supports_cpu,
-                                 barrier, get_fs_local_rank, get_global_rank,
-                                 get_local_tensor, get_rank, get_world_size,
-                                 is_distributed, scatter_object)
+from ..distributed.utils import (
+    all_reduce_value,
+    backend_supports_cpu,
+    barrier,
+    get_fs_local_rank,
+    get_global_rank,
+    get_local_tensor,
+    get_rank,
+    get_world_size,
+    is_distributed,
+    scatter_object,
+)
 from ..exceptions import OLMoConfigurationError
 from ..io import copy_file, file_exists, is_url, join_path, normalize_path
 from ..utils import cuda_sync_debug_mode
-from .callbacks import (Callback, CheckpointerCallback, ConsoleLoggerCallback,
-                        EvaluatorCallback, GarbageCollectorCallback,
-                        SpeedMonitorCallback)
+from .callbacks import (
+    Callback,
+    CheckpointerCallback,
+    ConsoleLoggerCallback,
+    EvaluatorCallback,
+    GarbageCollectorCallback,
+    SpeedMonitorCallback,
+)
 from .checkpoint import Checkpointer
-from .common import (Duration, DurationUnit, LoadStrategy, ReduceType,
-                     TrainingProgress)
+from .common import Duration, DurationUnit, LoadStrategy, ReduceType, TrainingProgress
 from .train_module import TrainModule
 from .utils import EnvRngStates, move_metrics, reduce_metrics
 
