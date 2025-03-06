@@ -160,7 +160,6 @@ class MoEBase(nn.Module):
             self.losses.append(MoERouterZLoss(loss_weight=z_loss_weight, num_experts=num_experts))
 
         self._ep_enabled = False
-        self.secondary_stream: Optional[torch.cuda.Stream] = None
 
     @property
     def num_experts(self) -> int:
