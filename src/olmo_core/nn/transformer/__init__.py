@@ -7,11 +7,11 @@ from .block import (
     ReorderedNormTransformerBlock,
     TransformerBlock,
     TransformerBlockBase,
-    TransformerBlockConfig,
-    TransformerBlockType,
 )
 from .config import (
     TransformerActivationCheckpointingMode,
+    TransformerBlockConfig,
+    TransformerBlockType,
     TransformerConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerType,

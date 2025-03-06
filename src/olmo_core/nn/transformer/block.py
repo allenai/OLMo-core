@@ -1,6 +1,5 @@
 import math
 from abc import abstractmethod
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
 import torch
@@ -10,10 +9,8 @@ from torch.distributed.fsdp import FSDPModule, fully_shard
 from torch.distributed.tensor import Shard
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
-from olmo_core.config import Config, StrEnum
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.doc_utils import beta_feature
-from olmo_core.exceptions import OLMoConfigurationError
 
 from ..attention import AttentionConfig, RingAttentionLoadBalancerType
 from ..buffer_cache import BufferCache
@@ -25,118 +22,6 @@ from .config import TransformerDataParallelWrappingStrategy
 
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
-
-
-class TransformerBlockType(StrEnum):
-    """
-    An enumeration of the different transformer block implementations.
-    """
-
-    default = "default"
-    """
-    ➡️ :class:`TransformerBlock`
-    """
-
-    reordered_norm = "reordered_norm"
-    """
-    ➡️ :class:`ReorderedNormTransformerBlock`
-    """
-
-    normalized = "normalized"
-    """
-    ➡️ :class:`NormalizedTransformerBlock`
-    """
-
-    moe = "moe"
-    """
-    ➡️ :class:`MoETransformerBlock`
-    """
-
-    moe_reordered_norm = "moe_reordered_norm"
-    """
-    ➡️ :class:`MoEReorderedNormTransformerBlock`
-    """
-
-    moe_parallel = "moe_parallel"
-    """
-    ➡️ :class:`MoEParallelTransformerBlock`
-    """
-
-    moe_parallel_reordered_norm = "moe_parallel_reordered_norm"
-    """
-    ➡️ :class:`MoEParallelReorderedNormTransformerBlock`
-    """
-
-
-@dataclass
-class TransformerBlockConfig(Config):
-    """
-    A configuration class for easily building transformer blocks.
-    """
-
-    attention: AttentionConfig
-    """
-    The attention config.
-    """
-    layer_norm: Optional[LayerNormConfig] = None
-    """
-    The layer norm config.
-    """
-    feed_forward: Optional[FeedForwardConfig] = None
-    """
-    The feed-forward config, required for non-MoE blocks.
-    """
-    feed_forward_moe: Optional[MoEConfig] = None
-    """
-    The config for the MoE feed-forward layer. Required for MoE blocks.
-    """
-    name: TransformerBlockType = TransformerBlockType.default
-    """
-    The block type.
-    """
-    dropout: Optional[float] = None
-    """
-    Dropout probability.
-    """
-
-    def build(
-        self,
-        *,
-        d_model: int,
-        block_idx: int,
-        init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
-    ) -> "TransformerBlockBase":
-        kwargs = self.as_dict(exclude_none=True, recurse=False)
-        kwargs.pop("name")
-        kwargs.update(
-            d_model=d_model,
-            block_idx=block_idx,
-            init_device=init_device,
-            cache=cache,
-        )
-
-        try:
-            if self.name == TransformerBlockType.default:
-                return TransformerBlock(**kwargs)
-            elif self.name == TransformerBlockType.reordered_norm:
-                return ReorderedNormTransformerBlock(**kwargs)
-            elif self.name == TransformerBlockType.normalized:
-                return NormalizedTransformerBlock(**kwargs)
-            elif self.name == TransformerBlockType.moe:
-                return MoETransformerBlock(**kwargs)
-            elif self.name == TransformerBlockType.moe_reordered_norm:
-                return MoEReorderedNormTransformerBlock(**kwargs)
-            elif self.name == TransformerBlockType.moe_parallel:
-                return MoEParallelTransformerBlock(**kwargs)
-            elif self.name == TransformerBlockType.moe_parallel_reordered_norm:
-                return MoEParallelReorderedNormTransformerBlock(**kwargs)
-            else:
-                raise NotImplementedError(self.name)
-        except TypeError as e:
-            raise OLMoConfigurationError(
-                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
-            ) from e
 
 
 class TransformerBlockBase(nn.Module):

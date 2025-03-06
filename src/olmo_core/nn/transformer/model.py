@@ -32,10 +32,10 @@ from .block import (
     NormalizedTransformerBlock,
     TransformerBlock,
     TransformerBlockBase,
-    TransformerBlockConfig,
 )
 from .config import (
     TransformerActivationCheckpointingMode,
+    TransformerBlockConfig,
     TransformerDataParallelWrappingStrategy,
 )
 from .init import InitMethod
