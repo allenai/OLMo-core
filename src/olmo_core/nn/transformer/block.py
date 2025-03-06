@@ -285,6 +285,7 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         w.copy_(l2_normalize(w, dim=dim))
 
 
+@beta_feature
 class MoETransformerBlock(TransformerBlockBase):
     """
     Like :class:`TransformerBlock` except that the dense :class:`~olmo_core.nn.feed_forward.FeedForward`
@@ -426,6 +427,7 @@ class MoETransformerBlock(TransformerBlockBase):
             fully_shard(self, **fsdp_kwargs)
 
 
+@beta_feature
 class MoEReorderedNormTransformerBlock(MoETransformerBlock):
     """
     Like :class:`MoETransformerBlock` except that the attention norm is applied on the output
@@ -452,10 +454,10 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
             fully_shard(self, **fsdp_kwargs)
 
 
+@beta_feature
 class MoEParallelTransformerBlockBase(MoETransformerBlock):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.secondary_stream: Optional[torch.cuda.Stream] = None
 
     def apply_fsdp(
         self,
@@ -483,6 +485,9 @@ class MoEParallelTransformerBlockBase(MoETransformerBlock):
     def parallel_forward(
         self, x_moe: torch.Tensor, x_att: torch.Tensor, **kwargs
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        # NOTE: this follows the same code path as the MoE's forward pass, except that we run
+        # the shared MLP and attention while we wait on expert parallel all-to-all comms.
+
         expert_logits, expert_scores, expert_weights, expert_indices = self.router(x_moe)
 
         # shape: (batch_size * top_k,)
@@ -561,6 +566,7 @@ class MoEParallelTransformerBlockBase(MoETransformerBlock):
         return x_moe.view(x_att.shape), x_att
 
 
+@beta_feature
 class MoEParallelTransformerBlock(MoEParallelTransformerBlockBase):
     """
     Like :class:`MoETransformerBlock` except that the attention and MLP are done in parallel
@@ -581,6 +587,7 @@ class MoEParallelTransformerBlock(MoEParallelTransformerBlockBase):
         return x + self.dropout(x_moe) + self.dropout(x_att)
 
 
+@beta_feature
 class MoEParallelReorderedNormTransformerBlock(MoEParallelTransformerBlockBase):
     """
     Like :class:`MoEReorderedNormTransformerBlock` except that the attention and MLP are done in parallel

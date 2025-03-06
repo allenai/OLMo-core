@@ -416,17 +416,12 @@ class Transformer(nn.Module):
         else:
             return h
 
-    def apply_tp(
-        self,
-        tp_mesh: DeviceMesh,
-        float8_enabled: bool = False,
-    ):
+    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         """
         Apply tensor parallelism to the model.
 
         :param loss_parallel: Set to ``True`` if parallelizing the loss function as well.
         :param float8_enabled: Set this to ``True`` if training with float8 linear layers.
-        :param with_labels: Should be set to ``True`` if
         """
         if self.embeddings is not None:
             parallelize_module(
@@ -810,18 +805,23 @@ class MoETransformer(Transformer):
             cast(MoETransformerBlock, block).reset_metrics()
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
-        secondary_cuda_stream: Optional[torch.cuda.Stream] = None
         for block in self.blocks.values():
             block = cast(MoETransformerBlock, block)
             block.apply_ep(ep_mesh, **kwargs)
+        #  self._add_secondary_stream_to_blocks()
 
-            # NOTE: 'isinstance()' check might fail due to other wrappers
-            if hasattr(block, "secondary_stream"):
-                block = cast(MoEParallelTransformerBlockBase, block)
+    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
+        super().apply_tp(tp_mesh, float8_enabled=float8_enabled)
+        #  self._add_secondary_stream_to_blocks()
+
+    def _add_secondary_stream_to_blocks(self):
+        secondary_cuda_stream: Optional[torch.cuda.Stream] = None
+        for block in self.blocks.values():
+            if isinstance(block, MoEParallelTransformerBlockBase):
                 if torch.cuda.is_available() and secondary_cuda_stream is None:
                     log.info("Creating secondary CUDA stream for MoE parallel block")
                     secondary_cuda_stream = torch.cuda.Stream()
-                block.secondary_stream = secondary_cuda_stream
+                block.secondary_stream = secondary_cuda_stream  # type: ignore
 
     def prepare_experts_for_fsdp(
         self,
