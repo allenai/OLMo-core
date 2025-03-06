@@ -60,12 +60,13 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
-            reduce_dtype=DType.float32,
+            reduce_dtype=DType.bfloat16,
             num_replicas=1,  # to enable full-way expert parallel
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
+            prefetch_factor=1,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
         ep_config=TransformerExpertParallelConfig(degree=-1),
-        float8_config=Float8Config(enabled=False),
+        float8_config=Float8Config(enabled=True),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
@@ -117,4 +118,5 @@ if __name__ == "__main__":
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
+        include_default_evals=False,
     )

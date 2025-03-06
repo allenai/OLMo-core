@@ -1,22 +1,23 @@
 from .block import (
+    MoEParallelReorderedNormTransformerBlock,
+    MoEParallelTransformerBlock,
     MoEReorderedNormTransformerBlock,
     MoETransformerBlock,
     NormalizedTransformerBlock,
     ReorderedNormTransformerBlock,
     TransformerBlock,
     TransformerBlockBase,
+)
+from .config import (
+    TransformerActivationCheckpointingMode,
     TransformerBlockConfig,
     TransformerBlockType,
-)
-from .config import TransformerConfig, TransformerType
-from .init import InitMethod
-from .model import (
-    MoETransformer,
-    NormalizedTransformer,
-    Transformer,
-    TransformerActivationCheckpointingMode,
+    TransformerConfig,
     TransformerDataParallelWrappingStrategy,
+    TransformerType,
 )
+from .init import InitMethod
+from .model import MoETransformer, NormalizedTransformer, Transformer
 
 __all__ = [
     "TransformerType",
@@ -32,6 +33,8 @@ __all__ = [
     "NormalizedTransformerBlock",
     "MoETransformerBlock",
     "MoEReorderedNormTransformerBlock",
+    "MoEParallelTransformerBlock",
+    "MoEParallelReorderedNormTransformerBlock",
     "TransformerDataParallelWrappingStrategy",
     "TransformerActivationCheckpointingMode",
     "InitMethod",

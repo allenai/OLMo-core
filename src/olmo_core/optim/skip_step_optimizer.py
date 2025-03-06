@@ -4,7 +4,7 @@ import torch
 from torch.optim.optimizer import Optimizer
 from typing_extensions import TypeAlias
 
-from olmo_core.utils import get_default_device
+from olmo_core.utils import get_default_device, move_to_device
 
 ParamsT: TypeAlias = Union[Iterable[torch.Tensor], Iterable[Dict[str, Any]]]
 
@@ -82,6 +82,7 @@ class SkipStepOptimizer(Optimizer):
         while len(self._grad_norms) > self.rolling_interval_length + 1:
             self._grad_norms.pop(0)
 
+    @torch._dynamo.disable()
     def get_step_factor(self) -> torch.Tensor:
         """
         Returns a float tensor which will be `1.0` if the optimizer should proceed with the step
@@ -91,7 +92,7 @@ class SkipStepOptimizer(Optimizer):
         without a host-device sync.
         """
         if len(self._losses) < max(2, self.rolling_interval_length // 2):
-            return torch.tensor(1.0).to(device=self.device, non_blocking=True)
+            return move_to_device(torch.tensor(1.0), self.device)
 
         loss_std, loss_mean = torch.std_mean(torch.stack(self._losses[:-1]))
         assert self.latest_loss is not None
