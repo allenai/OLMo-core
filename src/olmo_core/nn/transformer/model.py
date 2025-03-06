@@ -28,6 +28,7 @@ from ..lm_head import LMHeadConfig, LMOutputWithLoss
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
 from ..utils import selective_checkpointing_context_fn
 from .block import (
+    MoEParallelTransformerBlockBase,
     MoETransformerBlock,
     NormalizedTransformerBlock,
     TransformerBlock,
@@ -849,8 +850,18 @@ class MoETransformer(Transformer):
             cast(MoETransformerBlock, block).reset_metrics()
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
+        secondary_cuda_stream: Optional[torch.cuda.Stream] = None
         for block in self.blocks.values():
-            cast(MoETransformerBlock, block).apply_ep(ep_mesh, **kwargs)
+            block = cast(MoETransformerBlock, block)
+            block.apply_ep(ep_mesh, **kwargs)
+
+            # NOTE: 'isinstance()' check might fail due to other wrappers
+            if hasattr(block, "secondary_stream"):
+                block = cast(MoEParallelTransformerBlockBase, block)
+                if torch.cuda.is_available() and secondary_cuda_stream is None:
+                    log.info("Creating secondary CUDA stream for MoE parallel block")
+                    secondary_cuda_stream = torch.cuda.Stream()
+                block.secondary_stream = secondary_cuda_stream
 
     def prepare_experts_for_fsdp(
         self,

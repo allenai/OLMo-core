@@ -440,7 +440,13 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
         return h + self.dropout(self.feed_forward_norm(self.feed_forward_moe(h)))
 
 
-class MoEParallelTransformerBlock(MoETransformerBlock):
+class MoEParallelTransformerBlockBase(MoETransformerBlock):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.secondary_stream: Optional[torch.cuda.Stream] = None
+
+
+class MoEParallelTransformerBlock(MoEParallelTransformerBlockBase):
     """
     Like :class:`MoETransformerBlock` except that the attention and MLP are done in parallel
     like PaLM instead of in sequence.
@@ -454,35 +460,41 @@ class MoEParallelTransformerBlock(MoETransformerBlock):
         )
 
 
-class MoEParallelReorderedNormTransformerBlock(MoETransformerBlock):
+class MoEParallelReorderedNormTransformerBlock(MoEParallelTransformerBlockBase):
     """
     Like :class:`MoEReorderedNormTransformerBlock` except that the attention and MLP are done in parallel
     like PaLM instead of in sequence.
     """
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        if not self.ep_enabled:
+        if not self.ep_enabled or self.secondary_stream is None:
             return (
                 x
                 + self.dropout(self.feed_forward_norm(self.feed_forward_moe(x)))
                 + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
             )
 
+        self.secondary_stream.wait_stream(torch.cuda.default_stream())
         att_out = None
 
         def att_closure():
             nonlocal att_out
-            att_out = self._run_att(x, **kwargs)
+            assert self.secondary_stream is not None
+            with torch.cuda.stream(self.secondary_stream):
+                att_out = self._run_att(x, **kwargs)
 
         moe_out = self.dropout(
             self.feed_forward_norm(self.feed_forward_moe(x, closure=att_closure))
         )
         assert att_out is not None
 
+        x.record_stream(self.secondary_stream)
+        torch.cuda.default_stream().wait_stream(self.secondary_stream)
+
         return x + moe_out + att_out
 
     def apply_compile(self):
-        if not self.ep_enabled:
+        if not self.ep_enabled or self.secondary_stream is None:
             super().apply_compile()
         else:
             self._run_att = torch.compile(self._run_att, fullgraph=False)  # type: ignore
