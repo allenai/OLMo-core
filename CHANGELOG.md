@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for logging rich Table objects as text in source mixture datasets.
 - Added `unshard_strategy` parameter to `unshard_checkpoint()` function in `olmo_core.distributed.checkpoint`.
 - Added function `load_keys()` to `olmo_core.distributed.checkpoint`.
+- Added support for low precision optim state in `SkipStepAdamW`.
 
 ### Changed
 
