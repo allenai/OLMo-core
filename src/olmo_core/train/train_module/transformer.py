@@ -73,6 +73,8 @@ class TransformerDataParallelConfig(DataParallelConfig):
     The wrapping strategy.
     """
 
+    prefetch_factor: int = 0
+
 
 @dataclass
 class TransformerTensorParallelConfig(TensorParallelConfig):
@@ -398,6 +400,7 @@ class TransformerTrainModule(TrainModule):
                     reduce_dtype=dp_config.reduce_dtype.as_pt(),
                     wrapping_strategy=dp_config.wrapping_strategy,
                     pp_enabled=False,
+                    prefetch_factor=dp_config.prefetch_factor,
                 )
                 log.info(f"Applied FSDP to the model with {get_device_mesh_info(dp_mesh)}")
             elif dp_config.name == DataParallelType.ddp:

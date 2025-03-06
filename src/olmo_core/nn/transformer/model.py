@@ -582,6 +582,7 @@ class Transformer(nn.Module):
         param_dtype: Optional[torch.dtype] = None,
         reduce_dtype: torch.dtype = torch.float32,
         pp_enabled: bool = False,
+        prefetch_factor: int = 0,
         wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
     ):
         """
@@ -595,9 +596,11 @@ class Transformer(nn.Module):
         :param param_dtype: The data type to materialize params in. Defaults to the current param dtype.
         :param reduce_dtype: The data type for gradient reduction.
         :pp_enabled: If pipeline parallelism is also enabled.
+        :prefetch_factor: For tuning the prefetch settings. 0 is the default, and higher values result
+            in more aggressive prefetching.
         :wrapping_strategy: The wrapping strategy.
         """
-        from torch.distributed._composable.fsdp import MixedPrecisionPolicy, fully_shard
+        from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 
         mp_policy = MixedPrecisionPolicy(
             param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
@@ -652,6 +655,16 @@ class Transformer(nn.Module):
         self.register_forward_pre_hook(
             _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
         )
+
+        if prefetch_factor > 0:
+            log.info(f"Configuring FSDP to prefetch {prefetch_factor} module(s) ahead")
+            blocks = cast(List[FSDPModule], list(self.blocks.values()))
+            for i in range(len(blocks)):
+                block = blocks[i]
+                if i + 1 < len(blocks):
+                    block.set_modules_to_forward_prefetch(blocks[i + 1 : i + 1 + prefetch_factor])
+                else:
+                    block.set_modules_to_forward_prefetch([cast(FSDPModule, self.lm_head)])
 
     def apply_ddp(
         self,
