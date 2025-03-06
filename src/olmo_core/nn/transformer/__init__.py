@@ -10,15 +10,14 @@ from .block import (
     TransformerBlockConfig,
     TransformerBlockType,
 )
-from .config import TransformerConfig, TransformerType
-from .init import InitMethod
-from .model import (
-    MoETransformer,
-    NormalizedTransformer,
-    Transformer,
+from .config import (
     TransformerActivationCheckpointingMode,
+    TransformerConfig,
     TransformerDataParallelWrappingStrategy,
+    TransformerType,
 )
+from .init import InitMethod
+from .model import MoETransformer, NormalizedTransformer, Transformer
 
 __all__ = [
     "TransformerType",

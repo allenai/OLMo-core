@@ -1,7 +1,7 @@
 import logging
 from abc import abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -177,6 +177,38 @@ class MoEBase(nn.Module):
     def warmup_cache(self, max_local_microbatch_size: int):
         self.experts.warmup_cache(max_local_microbatch_size)
 
+    def update_losses_and_metrics(
+        self,
+        *,
+        expert_logits: torch.Tensor,
+        expert_scores: torch.Tensor,
+        expert_weights: torch.Tensor,
+        expert_indices: torch.Tensor,
+        batch_size_per_expert: torch.Tensor,
+    ):
+        if not self.losses and not self.metrics:
+            return
+
+        expert_logits = expert_logits.float()
+
+        for loss_fn in self.losses:
+            loss_fn.update(
+                expert_logits=expert_logits,
+                expert_scores=expert_scores,
+                expert_weights=expert_weights,
+                expert_indices=expert_indices,
+                batch_size_per_expert=batch_size_per_expert,
+            )
+
+        for metric in self.metrics:
+            metric.update(
+                expert_logits=expert_logits,
+                expert_scores=expert_scores,
+                expert_weights=expert_weights,
+                expert_indices=expert_indices,
+                batch_size_per_expert=batch_size_per_expert,
+            )
+
     def compute_losses(
         self, total_bz: Union[int, torch.Tensor], reset: bool = True
     ) -> Dict[str, torch.Tensor]:
@@ -214,11 +246,7 @@ class MoEBase(nn.Module):
     ) -> ParallelMLPBase:
         raise NotImplementedError
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        closure: Optional[Callable] = None,
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Run the MoE on the input ``x`` of shape ``(*, d_model)``.
 
@@ -230,55 +258,23 @@ class MoEBase(nn.Module):
         expert_logits, expert_scores, expert_weights, expert_indices = self.router(x)
 
         shared_out: Optional[torch.Tensor] = None
-        shared_out_closure: Optional[Callable] = None
-
-        if self.ep_enabled and self.shared_mlp is not None and self.secondary_stream is not None:
-            self.secondary_stream.wait_stream(torch.cuda.default_stream())
-
-            def _shared_out_closure():
-                nonlocal shared_out
-                assert self.shared_mlp is not None
-                assert self.secondary_stream is not None
-                with torch.cuda.stream(self.secondary_stream):
-                    shared_out = self.shared_mlp(x)
-
-            shared_out_closure = _shared_out_closure
-
-        elif self.shared_mlp is not None:
+        if self.shared_mlp is not None:
             shared_out = self.shared_mlp(x)
 
-        out, batch_size_per_expert = self.experts(
-            x, expert_weights, expert_indices, closure1=shared_out_closure, closure2=closure
-        )
+        out, batch_size_per_expert = self.experts(x, expert_weights, expert_indices)
 
         if shared_out is not None:
-            if self.ep_enabled and self.secondary_stream is not None:
-                x.record_stream(self.secondary_stream)
-                torch.cuda.default_stream().wait_stream(self.secondary_stream)
-
             shared_out = shared_out / (self.top_k + 1)
             out = shared_out.add(out, alpha=self.top_k / (self.top_k + 1))
 
-        if self.training and (self.losses or self.metrics):
-            expert_logits = expert_logits.float()
-
-            for loss_fn in self.losses:
-                loss_fn.update(
-                    expert_logits=expert_logits,
-                    expert_scores=expert_scores,
-                    expert_weights=expert_weights,
-                    expert_indices=expert_indices,
-                    batch_size_per_expert=batch_size_per_expert,
-                )
-
-            for metric in self.metrics:
-                metric.update(
-                    expert_logits=expert_logits,
-                    expert_scores=expert_scores,
-                    expert_weights=expert_weights,
-                    expert_indices=expert_indices,
-                    batch_size_per_expert=batch_size_per_expert,
-                )
+        if self.training:
+            self.update_losses_and_metrics(
+                expert_logits=expert_logits,
+                expert_scores=expert_scores,
+                expert_weights=expert_weights,
+                expert_indices=expert_indices,
+                batch_size_per_expert=batch_size_per_expert,
+            )
 
         return out
 

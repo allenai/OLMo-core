@@ -1,11 +1,12 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
 import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
+from torch.distributed.fsdp import FSDPModule, fully_shard
 from torch.distributed.tensor import Shard
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
@@ -14,12 +15,13 @@ from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 
-from ..attention import AttentionConfig
+from ..attention import AttentionConfig, RingAttentionLoadBalancerType
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig
 from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
 from ..moe import MoEConfig
+from .config import TransformerDataParallelWrappingStrategy
 
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
@@ -155,8 +157,21 @@ class TransformerBlockBase(nn.Module):
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         raise NotImplementedError
 
+    @abstractmethod
+    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+        raise NotImplementedError
+
     def apply_compile(self):
         self.compile(fullgraph=False)
+
+    @abstractmethod
+    def apply_fsdp(
+        self,
+        prefetch_factor: int = 0,
+        wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
+        **fsdp_kwargs,
+    ):
+        raise NotImplementedError
 
 
 class TransformerBlock(TransformerBlockBase):
@@ -231,6 +246,25 @@ class TransformerBlock(TransformerBlockBase):
 
         parallelize_module(self.dropout, device_mesh=tp_mesh, parallelize_plan=SequenceParallel())
 
+    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+        self.attention.apply_cp(cp_mesh, load_balancer)
+
+    def apply_fsdp(
+        self,
+        prefetch_factor: int = 0,
+        wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
+        **fsdp_kwargs,
+    ):
+        if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
+            fsdp_att = cast(FSDPModule, fully_shard(self.attention, **fsdp_kwargs))
+            fsdp_mlp = cast(FSDPModule, fully_shard(self.feed_forward, **fsdp_kwargs))
+            fsdp_root = cast(FSDPModule, fully_shard(self, **fsdp_kwargs))
+            if prefetch_factor > 0:
+                fsdp_root.set_modules_to_forward_prefetch([fsdp_att])
+                fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp])
+        else:
+            fully_shard(self, **fsdp_kwargs)
+
 
 class ReorderedNormTransformerBlock(TransformerBlock):
     """
@@ -242,6 +276,20 @@ class ReorderedNormTransformerBlock(TransformerBlock):
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+
+    def apply_fsdp(
+        self,
+        prefetch_factor: int = 0,
+        wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
+        **fsdp_kwargs,
+    ):
+        if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
+            fsdp_mlp = cast(FSDPModule, fully_shard(self.feed_forward, **fsdp_kwargs))
+            fsdp_root = cast(FSDPModule, fully_shard(self, **fsdp_kwargs))
+            if prefetch_factor > 0:
+                fsdp_root.set_modules_to_forward_prefetch([fsdp_mlp])
+        else:
+            fully_shard(self, **fsdp_kwargs)
 
 
 @beta_feature
@@ -312,6 +360,28 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         raise NotImplementedError(
             "TP is not implemented yet for the normalized transformer block variant"
         )
+
+    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+        self.attention.apply_cp(cp_mesh, load_balancer)
+
+    def apply_fsdp(
+        self,
+        prefetch_factor: int = 0,
+        wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
+        **fsdp_kwargs,
+    ):
+        if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
+            fully_shard(self.feed_forward, **fsdp_kwargs)
+
+        fully_shard(self, **fsdp_kwargs)
+
+        if (
+            wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained
+            and prefetch_factor > 0
+        ):
+            cast(FSDPModule, self).set_modules_to_forward_prefetch(
+                [cast(FSDPModule, self.feed_forward)]
+            )
 
     @torch.no_grad()
     def normalize_matrices(self):
@@ -427,6 +497,25 @@ class MoETransformerBlock(TransformerBlockBase):
 
         parallelize_module(self.dropout, device_mesh=tp_mesh, parallelize_plan=SequenceParallel())
 
+    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+        self.attention.apply_cp(cp_mesh, load_balancer)
+
+    def apply_fsdp(
+        self,
+        prefetch_factor: int = 0,
+        wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
+        **fsdp_kwargs,
+    ):
+        if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
+            fsdp_att = cast(FSDPModule, fully_shard(self.attention, **fsdp_kwargs))
+            fsdp_moe = cast(FSDPModule, fully_shard(self.feed_forward_moe, **fsdp_kwargs))
+            fsdp_root = cast(FSDPModule, fully_shard(self, **fsdp_kwargs))
+            if prefetch_factor > 0:
+                fsdp_root.set_modules_to_forward_prefetch([fsdp_att])
+                fsdp_att.set_modules_to_forward_prefetch([fsdp_moe])
+        else:
+            fully_shard(self, **fsdp_kwargs)
+
 
 class MoEReorderedNormTransformerBlock(MoETransformerBlock):
     """
@@ -439,11 +528,48 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
         h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
         return h + self.dropout(self.feed_forward_norm(self.feed_forward_moe(h)))
 
+    def apply_fsdp(
+        self,
+        prefetch_factor: int = 0,
+        wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
+        **fsdp_kwargs,
+    ):
+        if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
+            fsdp_moe = cast(FSDPModule, fully_shard(self.feed_forward_moe, **fsdp_kwargs))
+            fsdp_root = cast(FSDPModule, fully_shard(self, **fsdp_kwargs))
+            if prefetch_factor > 0:
+                fsdp_root.set_modules_to_forward_prefetch([fsdp_moe])
+        else:
+            fully_shard(self, **fsdp_kwargs)
+
 
 class MoEParallelTransformerBlockBase(MoETransformerBlock):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.secondary_stream: Optional[torch.cuda.Stream] = None
+
+    def apply_fsdp(
+        self,
+        prefetch_factor: int = 0,
+        wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
+        **fsdp_kwargs,
+    ):
+        if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
+            fsdp_att = cast(FSDPModule, fully_shard(self.attention, **fsdp_kwargs))
+            fsdp_shared_mlp = (
+                None
+                if self.feed_forward_moe.shared_mlp is None
+                else cast(FSDPModule, fully_shard(self.feed_forward_moe.shared_mlp, **fsdp_kwargs))
+            )
+            fsdp_root = cast(FSDPModule, fully_shard(self, **fsdp_kwargs))
+            if prefetch_factor > 0:
+                if fsdp_shared_mlp is not None:
+                    fsdp_root.set_modules_to_forward_prefetch([fsdp_shared_mlp])
+                    fsdp_shared_mlp.set_modules_to_forward_prefetch([fsdp_att])
+                else:
+                    fsdp_root.set_modules_to_forward_prefetch([fsdp_att])
+        else:
+            fully_shard(self, **fsdp_kwargs)
 
 
 class MoEParallelTransformerBlock(MoEParallelTransformerBlockBase):
@@ -467,41 +593,8 @@ class MoEParallelReorderedNormTransformerBlock(MoEParallelTransformerBlockBase):
     """
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        if not self.ep_enabled or self.secondary_stream is None:
-            return (
-                x
-                + self.dropout(self.feed_forward_norm(self.feed_forward_moe(x)))
-                + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-            )
-
-        self.secondary_stream.wait_stream(torch.cuda.default_stream())
-        att_out = None
-
-        def att_closure():
-            nonlocal att_out
-            assert self.secondary_stream is not None
-            with torch.cuda.stream(self.secondary_stream):
-                att_out = self._run_att(x, **kwargs)
-
-        moe_out = self.dropout(
-            self.feed_forward_norm(self.feed_forward_moe(x, closure=att_closure))
+        return (
+            x
+            + self.dropout(self.feed_forward_norm(self.feed_forward_moe(x)))
+            + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
         )
-        assert att_out is not None
-
-        x.record_stream(self.secondary_stream)
-        torch.cuda.default_stream().wait_stream(self.secondary_stream)
-
-        return x + moe_out + att_out
-
-    def apply_compile(self):
-        if not self.ep_enabled or self.secondary_stream is None:
-            super().apply_compile()
-        else:
-            self._run_att = torch.compile(self._run_att, fullgraph=False)  # type: ignore
-            self.feed_forward_moe.router.compile(fullgraph=False)
-            self.feed_forward_moe.experts.mlp.compile(fullgraph=False)
-            if self.feed_forward_moe.shared_mlp is not None:
-                self.feed_forward_moe.shared_mlp.compile(fullgraph=False)
-
-    def _run_att(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        return self.dropout(self.attention_norm(self.attention(x, **kwargs)))

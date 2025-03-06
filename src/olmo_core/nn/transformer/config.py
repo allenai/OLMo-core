@@ -1,9 +1,10 @@
 import logging
 from dataclasses import dataclass
 from fnmatch import fnmatch
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from olmo_core.config import Config, DType, StrEnum
+from olmo_core.doc_utils import beta_feature
 from olmo_core.utils import ensure_multiple_of
 
 from ..attention import AttentionConfig, AttentionType
@@ -14,9 +15,48 @@ from ..moe import MoEConfig, MoERouterConfig, MoEType
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from .block import TransformerBlockConfig, TransformerBlockType
 from .init import InitMethod
-from .model import MoETransformer, NormalizedTransformer, Transformer
+
+if TYPE_CHECKING:
+    from .model import Transformer
 
 log = logging.getLogger(__name__)
+
+
+class TransformerDataParallelWrappingStrategy(StrEnum):
+    """
+    An enumeration of the different wrapping strategy for the data parallel implementations.
+    """
+
+    full = "full"
+    """
+    Wrap each block and the LM head (only applies to FSDP).
+    """
+
+    blocks = "blocks"
+    """
+    Like full but the LM head is not wrapped separately (only applies to FSDP).
+    """
+
+    fine_grained = "fine_grained"
+    """
+    Wrap certain modules within each block in addition to wrapping each block (only applies to FSDP).
+    """
+
+
+@beta_feature
+class TransformerActivationCheckpointingMode(StrEnum):
+    """
+    An enumeration of the different activation checkpointing modes.
+    """
+
+    full = "full"
+    """Checkpoint every block."""
+    selected_blocks = "selected_blocks"
+    """Checkpoint only selected blocks."""
+    selected_modules = "selected_modules"
+    """Checkpoint only selected modules."""
+    selected_ops = "selected_ops"
+    """Checkpoint only a specific set of operations."""
 
 
 class TransformerType(StrEnum):
@@ -65,13 +105,15 @@ class TransformerConfig(Config):
         self,
         *,
         init_device: str = "cpu",
-    ) -> Transformer:
+    ) -> "Transformer":
         """
         Build the model corresponding to this config.
 
         :param init_device: The device to put the parameters on during initialization. In a
             distributed setting it usually makes sense to set this to "meta".
         """
+        from .model import MoETransformer, NormalizedTransformer, Transformer
+
         log.info(
             f"Building transformer with {self.num_params:,d} total params, "
             f"{self.num_non_embedding_params:,d} non-embedding params"

@@ -5,10 +5,10 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Uni
 import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
+from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
-from olmo_core.config import StrEnum
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
@@ -17,7 +17,6 @@ from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 
 from ..attention import (
     Attention,
-    AttentionBase,
     FusedAttention,
     RingAttentionLoadBalancer,
     RingAttentionLoadBalancerType,
@@ -35,6 +34,10 @@ from .block import (
     TransformerBlockBase,
     TransformerBlockConfig,
 )
+from .config import (
+    TransformerActivationCheckpointingMode,
+    TransformerDataParallelWrappingStrategy,
+)
 from .init import InitMethod
 
 if TYPE_CHECKING:
@@ -50,43 +53,6 @@ __all__ = [
 
 
 log = logging.getLogger(__name__)
-
-
-class TransformerDataParallelWrappingStrategy(StrEnum):
-    """
-    An enumeration of the different wrapping strategy for the data parallel implementations.
-    """
-
-    full = "full"
-    """
-    Wrap each block and the LM head (only applies to FSDP).
-    """
-
-    blocks = "blocks"
-    """
-    Like full but the LM head is not wrapped separately (only applies to FSDP).
-    """
-
-    fine_grained = "fine_grained"
-    """
-    Wrap certain modules within each block in addition to wrapping each block (only applies to FSDP).
-    """
-
-
-@beta_feature
-class TransformerActivationCheckpointingMode(StrEnum):
-    """
-    An enumeration of the different activation checkpointing modes.
-    """
-
-    full = "full"
-    """Checkpoint every block."""
-    selected_blocks = "selected_blocks"
-    """Checkpoint only selected blocks."""
-    selected_modules = "selected_modules"
-    """Checkpoint only selected modules."""
-    selected_ops = "selected_ops"
-    """Checkpoint only a specific set of operations."""
 
 
 class Transformer(nn.Module):
@@ -492,7 +458,7 @@ class Transformer(nn.Module):
         """
         self._cp_load_balancer = load_balancer.build(cp_mesh)
         for block in self.blocks.values():
-            cast(AttentionBase, block.attention).apply_cp(cp_mesh, load_balancer=load_balancer)
+            cast(TransformerBlockBase, block).apply_cp(cp_mesh, load_balancer)
 
     def apply_activation_checkpointing(
         self,
@@ -600,47 +566,28 @@ class Transformer(nn.Module):
             in more aggressive prefetching.
         :wrapping_strategy: The wrapping strategy.
         """
-        from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
-
         mp_policy = MixedPrecisionPolicy(
             param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
         )
         fsdp_config = dict(mesh=dp_mesh, mp_policy=mp_policy)
+        # For PP, do not reshard after forward to avoid per-microbatch all-gathers,
+        # which can be expensive and non-overlapped
+        reshard_after_forward = False if pp_enabled else True
 
         for block in self.blocks.values():
-            # For PP, do not reshard after forward to avoid per-microbatch
-            # all-gathers, which can be expensive and non-overlapped
-            reshard_after_forward = False if pp_enabled else True
-
-            if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
-                if self.is_moe:
-                    block = cast(MoETransformerBlock, block)
-                    if block.feed_forward_moe.shared_mlp is not None:
-                        fully_shard(
-                            block.feed_forward_moe.shared_mlp,
-                            reshard_after_forward=reshard_after_forward,
-                            **fsdp_config,
-                        )
-                    fully_shard(
-                        block.feed_forward_moe,
-                        reshard_after_forward=reshard_after_forward,
-                        **fsdp_config,
-                    )
-                else:
-                    assert block.feed_forward is not None
-                    fully_shard(
-                        block.feed_forward,  # type: ignore
-                        reshard_after_forward=reshard_after_forward,
-                        **fsdp_config,
-                    )
-
-            fully_shard(block, reshard_after_forward=reshard_after_forward, **fsdp_config)
+            block = cast(TransformerBlockBase, block)
+            block.apply_fsdp(
+                prefetch_factor=prefetch_factor,
+                wrapping_strategy=wrapping_strategy,
+                reshard_after_forward=reshard_after_forward,
+                **fsdp_config,
+            )
 
         if (
             wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained
             and self.embeddings is not None
         ):
-            fully_shard(self.embeddings, reshard_after_forward=not pp_enabled, **fsdp_config)
+            fully_shard(self.embeddings, reshard_after_forward=reshard_after_forward, **fsdp_config)
 
         if (
             wrapping_strategy != TransformerDataParallelWrappingStrategy.blocks
@@ -648,7 +595,7 @@ class Transformer(nn.Module):
         ):
             fully_shard(self.lm_head, reshard_after_forward=False, **fsdp_config)
 
-        fully_shard(self, reshard_after_forward=not pp_enabled, **fsdp_config)
+        fully_shard(self, reshard_after_forward=reshard_after_forward, **fsdp_config)
         # Some inputs need to be on CPU initially, but FSDP will move everything to model's
         # device if we don't hide it.
         self.register_forward_pre_hook(_hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True)
