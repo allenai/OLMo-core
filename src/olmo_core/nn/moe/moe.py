@@ -1,7 +1,7 @@
 import logging
 from abc import abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -213,7 +213,11 @@ class MoEBase(nn.Module):
     ) -> ParallelMLPBase:
         raise NotImplementedError
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        closure: Optional[Callable] = None,
+    ) -> torch.Tensor:
         """
         Run the MoE on the input ``x`` of shape ``(*, d_model)``.
 
@@ -225,10 +229,24 @@ class MoEBase(nn.Module):
         expert_logits, expert_scores, expert_weights, expert_indices = self.router(x)
 
         shared_out: Optional[torch.Tensor] = None
-        if self.shared_mlp is not None:
+        shared_out_closure: Optional[Callable] = None
+
+        if self.ep_enabled and self.shared_mlp is not None:
+
+            def _shared_out_closure():
+                nonlocal shared_out
+                assert self.shared_mlp is not None
+                shared_out = self.shared_mlp(x)
+
+            shared_out_closure = _shared_out_closure
+
+        elif self.shared_mlp is not None:
             shared_out = self.shared_mlp(x)
 
-        out, batch_size_per_expert = self.experts(x, expert_weights, expert_indices)
+        out, batch_size_per_expert = self.experts(
+            x, expert_weights, expert_indices, closure1=shared_out_closure, closure2=closure
+        )
+
         if shared_out is not None:
             shared_out = shared_out / (self.top_k + 1)
             out = shared_out.add(out, alpha=self.top_k / (self.top_k + 1))

@@ -357,6 +357,11 @@ class MoETransformerBlock(TransformerBlockBase):
         )
         self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
+        self._ep_enabled = False
+
+    @property
+    def ep_enabled(self) -> bool:
+        return self._ep_enabled
 
     def compute_losses(
         self, total_bz: Union[int, torch.Tensor], reset: bool = True
@@ -385,6 +390,7 @@ class MoETransformerBlock(TransformerBlockBase):
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         self.feed_forward_moe.apply_ep(ep_mesh, **kwargs)
+        self._ep_enabled = True
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         parallelize_module(
@@ -455,8 +461,35 @@ class MoEParallelReorderedNormTransformerBlock(MoETransformerBlock):
     """
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        return (
-            x
-            + self.dropout(self.feed_forward_norm(self.feed_forward_moe(x)))
-            + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+        if not self.ep_enabled:
+            return (
+                x
+                + self.dropout(self.feed_forward_norm(self.feed_forward_moe(x)))
+                + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+            )
+
+        att_out = None
+
+        def att_closure():
+            nonlocal att_out
+            att_out = self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+
+        moe_out = self.dropout(
+            self.feed_forward_norm(self.feed_forward_moe(x, closure=att_closure))
         )
+        assert att_out is not None
+
+        return x + moe_out + att_out
+
+    def apply_compile(self):
+        if not self.ep_enabled:
+            super().apply_compile()
+        else:
+            self._run_att = torch.compile(self._run_att, fullgraph=False)  # type: ignore
+            self.feed_forward_moe.router.compile(fullgraph=False)
+            self.feed_forward_moe.experts.mlp.compile(fullgraph=False)
+            if self.feed_forward_moe.shared_mlp is not None:
+                self.feed_forward_moe.shared_mlp.compile(fullgraph=False)
+
+    def _run_att(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        return self.dropout(self.attention_norm(self.attention(x, **kwargs)))

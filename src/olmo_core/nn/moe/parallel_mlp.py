@@ -2,7 +2,7 @@
 # It has since changed substantially.
 
 from abc import abstractmethod
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -123,6 +123,9 @@ class ParallelMLPBase(nn.Module):
         x: torch.Tensor,
         expert_weights: torch.Tensor,
         expert_indices: torch.Tensor,
+        *,
+        closure1: Optional[Callable] = None,
+        closure2: Optional[Callable] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         :param x: The input of shape ``(*, d_model)``, typically ``(num_docs, seq_len, d_model)``
@@ -139,8 +142,14 @@ class ParallelMLPBase(nn.Module):
 
         # Compute the experts.
         if self._expert_parallel_enabled:
-            x, batch_size_per_expert = self.parallel_forward_once(x, expert_weights, expert_indices)
+            x, batch_size_per_expert = self.parallel_forward_once(
+                x, expert_weights, expert_indices, closure1=closure1, closure2=closure2
+            )
         else:
+            if closure1 is not None or closure2 is not None:
+                raise RuntimeError(
+                    "parallel forward closures are only valid when expert parallelism is enabled"
+                )
             x, batch_size_per_expert = self.forward_once(x, expert_weights, expert_indices)
 
         return x.view(in_shape), batch_size_per_expert
@@ -167,6 +176,8 @@ class ParallelMLPBase(nn.Module):
         x: torch.Tensor,
         expert_weights: torch.Tensor,
         expert_indices: torch.Tensor,
+        closure1: Optional[Callable] = None,
+        closure2: Optional[Callable] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         :param x: The input of shape ``(*, d_model)``.
@@ -323,6 +334,8 @@ class ParallelMLP(ParallelMLPBase):
         x: torch.Tensor,
         expert_weights: torch.Tensor,
         expert_indices: torch.Tensor,
+        closure1: Optional[Callable] = None,
+        closure2: Optional[Callable] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # NOTE: This function implements the same computation as forward_once
         # but with expert model parallelism.
@@ -377,7 +390,10 @@ class ParallelMLP(ParallelMLPBase):
         # overlap communication with computation.
         # shape: (num_local_experts * ep_world_size, local_expert_capacity, d_model)
         #     ~= (num_local_experts, expert_capacity, d_model)
-        parallel_x, _ = ops.all_to_all(x, group=self.ep_pg)
+        parallel_x, handle = ops.all_to_all(x, group=self.ep_pg, async_op=True)
+
+        if closure1 is not None:
+            closure1()
 
         # After we do the cross-device permutation we have the tokens on the
         # correct device but not yet grouped by expert because we received
@@ -390,6 +406,8 @@ class ParallelMLP(ParallelMLPBase):
             device=indices.device,
         )
 
+        handle.wait()
+
         # Locally permute the tokens and perform the expert computation.
         parallel_x = self.permute_and_compute(
             parallel_x,
@@ -401,7 +419,12 @@ class ParallelMLP(ParallelMLPBase):
         )
 
         # Un-permute the tokens across the devices.
-        x, _ = ops.all_to_all(parallel_x, group=self.ep_pg)
+        x, handle = ops.all_to_all(parallel_x, group=self.ep_pg, async_op=True)
+
+        if closure2 is not None:
+            closure2()
+
+        handle.wait()
 
         # Reduce along the hidden sharding to get the final outputs.
         if self.hidden_sharding_degree > 1:
@@ -484,6 +507,8 @@ class ParallelDroplessMLP(ParallelMLPBase):
         x: torch.Tensor,
         expert_weights: torch.Tensor,
         expert_indices: torch.Tensor,
+        closure1: Optional[Callable] = None,
+        closure2: Optional[Callable] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # NOTE: This function does the same thing as `ParallelMLP.parallel_forward_once()`
         # but with extra bookkeeping to manage the dynamic sizes, and unfortunately this introduces
@@ -556,6 +581,9 @@ class ParallelDroplessMLP(ParallelMLPBase):
             async_op=True,
         )
 
+        if closure1 is not None:
+            closure1()
+
         with torch.no_grad():
             # After we do the cross-device permutation we have the tokens on the
             # correct device but not yet grouped by expert because we received
@@ -604,12 +632,18 @@ class ParallelDroplessMLP(ParallelMLPBase):
         )
 
         # Un-permute the tokens across the devices.
-        x, _ = ops.all_to_all(
+        x, handle = ops.all_to_all(
             parallel_x,
             send_counts,
             recv_counts,
             group=self.ep_pg,
+            async_op=True,
         )
+
+        if closure2 is not None:
+            closure2()
+
+        handle.wait()
 
         # Reduce along the hidden sharding to get the final outputs.
         x = ops.sum_tensor(x.view(self.hidden_sharding_degree, -1, self.d_model), dim=0)
