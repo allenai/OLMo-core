@@ -472,7 +472,7 @@ class MoEParallelReorderedNormTransformerBlock(MoETransformerBlock):
 
         def att_closure():
             nonlocal att_out
-            att_out = self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+            att_out = self._run_att(x, **kwargs)
 
         moe_out = self.dropout(
             self.feed_forward_norm(self.feed_forward_moe(x, closure=att_closure))
