@@ -4,11 +4,14 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from olmo_core.aliases import PathOrStr
+from olmo_core.data import NumpyDataLoaderBase
 from olmo_core.distributed.utils import get_rank
 
 from .callback import Callback
 
 log = logging.getLogger(__name__)
+
+DEFAULT_DATA_PATHS_FNAME = "data_paths.txt"
 
 
 @dataclass
@@ -20,6 +23,8 @@ class ConfigSaverCallback(Callback):
 
     config: Optional[Dict[str, Any]] = None
     fname: str = "config.json"
+    save_data_paths: bool = False
+    data_paths_fname: Optional[str] = None
 
     def post_checkpoint_saved(self, path: PathOrStr):
         if get_rank() != 0:
@@ -27,6 +32,17 @@ class ConfigSaverCallback(Callback):
 
         if self.config is None:
             log.warning(f"Config not set on {self.__class__.__name__}, doing nothing")
-            return
+        else:
+            self.trainer.write_file(self.fname, json.dumps(self.config), dir=path)
 
-        self.trainer.write_file(self.fname, json.dumps(self.config), dir=path)
+        if self.save_data_paths:
+            if isinstance(self.trainer.data_loader, NumpyDataLoaderBase):
+                ds = self.trainer.data_loader.dataset
+                all_paths = "\n".join(str(p) for p in ds.paths)
+                self.trainer.write_file(
+                    self.data_paths_fname or DEFAULT_DATA_PATHS_FNAME, all_paths, dir=path
+                )
+            else:
+                log.warning(
+                    f"Unable to save paths for data loader of type '{self.trainer.data_loader.__class__.__name__}' (not implemented)"
+                )
