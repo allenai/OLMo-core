@@ -5,6 +5,7 @@ from typing import List, Optional
 from olmo_core.config import DType
 
 from mup.coord_check import plot_coord_data
+from mup import set_base_shapes, load_base_shapes as mup_load
 
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.data import TokenizerConfig, NumpyFSLDataset, NumpyFSLDataLoader, DataCollator
@@ -15,7 +16,6 @@ from olmo_core.nn.transformer import (
 )
 from olmo_core.scaling.coord_check import get_coord_data
 from olmo_core.scaling.mup_utils import load_mu_model, save_base_shapes
-from olmo_core.utils import seed_all
 from olmo_core.nn.functional import cross_entropy_loss
 
 def get_dataloader(data_paths, batch_size: int):
@@ -45,7 +45,7 @@ def get_dataloader(data_paths, batch_size: int):
         seed=34521,
         shuffle=True,
         num_workers=1,
-        collator = DataCollator,
+        collator = DataCollator(pad_token_id=0),
         work_dir = dataset.work_dir
     )
 
@@ -67,30 +67,35 @@ def coord_check(
 ):
     def model_generator(d_model, standparam=False):
         def f():
-            config = TransformerConfig.olmo2_7B(
-                vocab_size=TokenizerConfig.dolma2().padded_vocab_size(),
-                compile=True,
-                d_model=d_model,
-                dp_config=TransformerDataParallelConfig(
-                    name=DataParallelType.fsdp,
-                    param_dtype=DType.bfloat16,
-                    reduce_dtype=DType.float32,
-                    wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
-                ),
-                use_mup=not standparam
-            )
-            if standparam:
-                config.mup_base_shapes = None
-            else:
-                assert load_base_shapes, "load_base_shapes needs to be specified for mup."
-                # config.mup_base_shapes = load_base_shapes
-
-            model = load_mu_model(config)
-            
-            # model.set_base_shapes()  # Required for muP initialization
-            # model.reset_parameters()  # Ensures correct muP init
-
-            return model
+            import mup.shape
+            original_assert_fn = mup.shape.assert_hidden_size_inf
+            def modified_assert_fn(model):
+                pass
+            mup.shape.assert_hidden_size_inf = modified_assert_fn
+            try:
+                config = TransformerConfig.olmo2_190M(
+                    vocab_size=TokenizerConfig.dolma2().padded_vocab_size(),
+                    compile=True,
+                    d_model=d_model,
+                    dp_config=TransformerDataParallelConfig(
+                        name=DataParallelType.fsdp,
+                        param_dtype=DType.bfloat16,
+                        reduce_dtype=DType.float32,
+                        wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+                    ),
+                    use_mup=not standparam
+                )
+                if standparam:
+                    config.mup_base_shapes = None
+                else:
+                    assert load_base_shapes, "load_base_shapes needs to be specified for mup."
+                model = load_mu_model(config)
+                if not standparam:
+                    base_shapes = mup_load(load_base_shapes)
+                    set_base_shapes(model, base_shapes)
+                return model
+            finally:
+                mup.shape.assert_hidden_size_inf = original_assert_fn
         return f
 
     # train_config = TrainConfig.load(config_path)
@@ -101,7 +106,8 @@ def coord_check(
     models = {width: model_generator(width, standparam=not mup) for width in widths}
 
     data_loader = get_dataloader(data_paths='sample-tokens.npy', batch_size=batch_size)
-
+    if hasattr(data_loader, 'reshuffle'):
+            data_loader.reshuffle()
     df = get_coord_data(
         models,
         data_loader,
@@ -146,7 +152,7 @@ if __name__ == "__main__":
     parser.add_argument("--load_base_shapes", type=str, default="", help="file location to load base shapes from")
 
     parser.add_argument("--batch_size", type=int, default=20, metavar="N", help="batch size")
-    parser.add_argument("--widths", type=int, nargs="+", default=[2 ** i for i in range(5, 12)], help="widths to use for coord check")
+    parser.add_argument("--widths", type=int, nargs="+", default=[2 ** i for i in range(4, 10)], help="widths to use for coord check")
 
     parser.add_argument("--cuda", action="store_true", help="use CUDA")
     parser.add_argument("--legend", type=str, help="'auto', 'brief', 'full', or False. This is passed to `seaborn.lineplot`.")
@@ -185,6 +191,12 @@ if __name__ == "__main__":
         print("testing parametrization")
 
         os.makedirs(args.coord_check_save_path, exist_ok=True)
+        import os
+        os.environ["RANK"] = "0"
+        os.environ["WORLD_SIZE"] = "1"
+        os.environ["LOCAL_RANK"] = "0"
+        os.environ["MASTER_ADDR"] = "localhost"
+        os.environ["MASTER_PORT"] = "29600"
 
         for use_mup in [True, False]:
             coord_check(

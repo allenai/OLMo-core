@@ -383,8 +383,9 @@ class TransformerConfig(Config):
 
     @classmethod
     def olmo2_190M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
-        return cls.llama_like(
-            d_model=768,
+        return cls.llama_like_mup(
+            # d_model=768,
+            d_model = kwargs.pop("d_model", 768),
             hidden_size_multiplier=1.5,
             n_layers=kwargs.pop("n_layers", 12),
             n_heads=kwargs.pop("n_heads", 12),
@@ -578,7 +579,7 @@ class TransformerConfig(Config):
         """
         A 7B Llama2-like model config.
         """
-        d_model = kwargs.pop("d_model", 4096)
+        d_model = kwargs.pop("d_model", 1024)
         return cls.llama_like_mup(
             d_model=d_model,
             vocab_size=vocab_size,

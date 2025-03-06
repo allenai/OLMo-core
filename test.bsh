@@ -1,0 +1,359 @@
+# This is a base shape file encoded in yaml
+# - `null` indicates a dimension is "finite", i.e. a non-"width" dimension
+# - a number indicates the base dimension of an "infinite" dimension, i.e. some notion of "width"
+blocks.0._orig_mod.attention.k_norm.weight:
+- 768
+blocks.0._orig_mod.attention.q_norm.weight:
+- 768
+blocks.0._orig_mod.attention.w_k.weight:
+- 768
+- 768
+blocks.0._orig_mod.attention.w_out.weight:
+- 768
+- 768
+blocks.0._orig_mod.attention.w_q.weight:
+- 768
+- 768
+blocks.0._orig_mod.attention.w_v.weight:
+- 768
+- 768
+blocks.0._orig_mod.attention_norm.weight:
+- 768
+blocks.0._orig_mod.feed_forward.w1.weight:
+- 3072
+- 768
+blocks.0._orig_mod.feed_forward.w2.weight:
+- 768
+- 3072
+blocks.0._orig_mod.feed_forward.w3.weight:
+- 3072
+- 768
+blocks.0._orig_mod.feed_forward_norm.weight:
+- 768
+blocks.1._orig_mod.attention.k_norm.weight:
+- 768
+blocks.1._orig_mod.attention.q_norm.weight:
+- 768
+blocks.1._orig_mod.attention.w_k.weight:
+- 768
+- 768
+blocks.1._orig_mod.attention.w_out.weight:
+- 768
+- 768
+blocks.1._orig_mod.attention.w_q.weight:
+- 768
+- 768
+blocks.1._orig_mod.attention.w_v.weight:
+- 768
+- 768
+blocks.1._orig_mod.attention_norm.weight:
+- 768
+blocks.1._orig_mod.feed_forward.w1.weight:
+- 3072
+- 768
+blocks.1._orig_mod.feed_forward.w2.weight:
+- 768
+- 3072
+blocks.1._orig_mod.feed_forward.w3.weight:
+- 3072
+- 768
+blocks.1._orig_mod.feed_forward_norm.weight:
+- 768
+blocks.10._orig_mod.attention.k_norm.weight:
+- 768
+blocks.10._orig_mod.attention.q_norm.weight:
+- 768
+blocks.10._orig_mod.attention.w_k.weight:
+- 768
+- 768
+blocks.10._orig_mod.attention.w_out.weight:
+- 768
+- 768
+blocks.10._orig_mod.attention.w_q.weight:
+- 768
+- 768
+blocks.10._orig_mod.attention.w_v.weight:
+- 768
+- 768
+blocks.10._orig_mod.attention_norm.weight:
+- 768
+blocks.10._orig_mod.feed_forward.w1.weight:
+- 3072
+- 768
+blocks.10._orig_mod.feed_forward.w2.weight:
+- 768
+- 3072
+blocks.10._orig_mod.feed_forward.w3.weight:
+- 3072
+- 768
+blocks.10._orig_mod.feed_forward_norm.weight:
+- 768
+blocks.11._orig_mod.attention.k_norm.weight:
+- 768
+blocks.11._orig_mod.attention.q_norm.weight:
+- 768
+blocks.11._orig_mod.attention.w_k.weight:
+- 768
+- 768
+blocks.11._orig_mod.attention.w_out.weight:
+- 768
+- 768
+blocks.11._orig_mod.attention.w_q.weight:
+- 768
+- 768
+blocks.11._orig_mod.attention.w_v.weight:
+- 768
+- 768
+blocks.11._orig_mod.attention_norm.weight:
+- 768
+blocks.11._orig_mod.feed_forward.w1.weight:
+- 3072
+- 768
+blocks.11._orig_mod.feed_forward.w2.weight:
+- 768
+- 3072
+blocks.11._orig_mod.feed_forward.w3.weight:
+- 3072
+- 768
+blocks.11._orig_mod.feed_forward_norm.weight:
+- 768
+blocks.2._orig_mod.attention.k_norm.weight:
+- 768
+blocks.2._orig_mod.attention.q_norm.weight:
+- 768
+blocks.2._orig_mod.attention.w_k.weight:
+- 768
+- 768
+blocks.2._orig_mod.attention.w_out.weight:
+- 768
+- 768
+blocks.2._orig_mod.attention.w_q.weight:
+- 768
+- 768
+blocks.2._orig_mod.attention.w_v.weight:
+- 768
+- 768
+blocks.2._orig_mod.attention_norm.weight:
+- 768
+blocks.2._orig_mod.feed_forward.w1.weight:
+- 3072
+- 768
+blocks.2._orig_mod.feed_forward.w2.weight:
+- 768
+- 3072
+blocks.2._orig_mod.feed_forward.w3.weight:
+- 3072
+- 768
+blocks.2._orig_mod.feed_forward_norm.weight:
+- 768
+blocks.3._orig_mod.attention.k_norm.weight:
+- 768
+blocks.3._orig_mod.attention.q_norm.weight:
+- 768
+blocks.3._orig_mod.attention.w_k.weight:
+- 768
+- 768
+blocks.3._orig_mod.attention.w_out.weight:
+- 768
+- 768
+blocks.3._orig_mod.attention.w_q.weight:
+- 768
+- 768
+blocks.3._orig_mod.attention.w_v.weight:
+- 768
+- 768
+blocks.3._orig_mod.attention_norm.weight:
+- 768
+blocks.3._orig_mod.feed_forward.w1.weight:
+- 3072
+- 768
+blocks.3._orig_mod.feed_forward.w2.weight:
+- 768
+- 3072
+blocks.3._orig_mod.feed_forward.w3.weight:
+- 3072
+- 768
+blocks.3._orig_mod.feed_forward_norm.weight:
+- 768
+blocks.4._orig_mod.attention.k_norm.weight:
+- 768
+blocks.4._orig_mod.attention.q_norm.weight:
+- 768
+blocks.4._orig_mod.attention.w_k.weight:
+- 768
+- 768
+blocks.4._orig_mod.attention.w_out.weight:
+- 768
+- 768
+blocks.4._orig_mod.attention.w_q.weight:
+- 768
+- 768
+blocks.4._orig_mod.attention.w_v.weight:
+- 768
+- 768
+blocks.4._orig_mod.attention_norm.weight:
+- 768
+blocks.4._orig_mod.feed_forward.w1.weight:
+- 3072
+- 768
+blocks.4._orig_mod.feed_forward.w2.weight:
+- 768
+- 3072
+blocks.4._orig_mod.feed_forward.w3.weight:
+- 3072
+- 768
+blocks.4._orig_mod.feed_forward_norm.weight:
+- 768
+blocks.5._orig_mod.attention.k_norm.weight:
+- 768
+blocks.5._orig_mod.attention.q_norm.weight:
+- 768
+blocks.5._orig_mod.attention.w_k.weight:
+- 768
+- 768
+blocks.5._orig_mod.attention.w_out.weight:
+- 768
+- 768
+blocks.5._orig_mod.attention.w_q.weight:
+- 768
+- 768
+blocks.5._orig_mod.attention.w_v.weight:
+- 768
+- 768
+blocks.5._orig_mod.attention_norm.weight:
+- 768
+blocks.5._orig_mod.feed_forward.w1.weight:
+- 3072
+- 768
+blocks.5._orig_mod.feed_forward.w2.weight:
+- 768
+- 3072
+blocks.5._orig_mod.feed_forward.w3.weight:
+- 3072
+- 768
+blocks.5._orig_mod.feed_forward_norm.weight:
+- 768
+blocks.6._orig_mod.attention.k_norm.weight:
+- 768
+blocks.6._orig_mod.attention.q_norm.weight:
+- 768
+blocks.6._orig_mod.attention.w_k.weight:
+- 768
+- 768
+blocks.6._orig_mod.attention.w_out.weight:
+- 768
+- 768
+blocks.6._orig_mod.attention.w_q.weight:
+- 768
+- 768
+blocks.6._orig_mod.attention.w_v.weight:
+- 768
+- 768
+blocks.6._orig_mod.attention_norm.weight:
+- 768
+blocks.6._orig_mod.feed_forward.w1.weight:
+- 3072
+- 768
+blocks.6._orig_mod.feed_forward.w2.weight:
+- 768
+- 3072
+blocks.6._orig_mod.feed_forward.w3.weight:
+- 3072
+- 768
+blocks.6._orig_mod.feed_forward_norm.weight:
+- 768
+blocks.7._orig_mod.attention.k_norm.weight:
+- 768
+blocks.7._orig_mod.attention.q_norm.weight:
+- 768
+blocks.7._orig_mod.attention.w_k.weight:
+- 768
+- 768
+blocks.7._orig_mod.attention.w_out.weight:
+- 768
+- 768
+blocks.7._orig_mod.attention.w_q.weight:
+- 768
+- 768
+blocks.7._orig_mod.attention.w_v.weight:
+- 768
+- 768
+blocks.7._orig_mod.attention_norm.weight:
+- 768
+blocks.7._orig_mod.feed_forward.w1.weight:
+- 3072
+- 768
+blocks.7._orig_mod.feed_forward.w2.weight:
+- 768
+- 3072
+blocks.7._orig_mod.feed_forward.w3.weight:
+- 3072
+- 768
+blocks.7._orig_mod.feed_forward_norm.weight:
+- 768
+blocks.8._orig_mod.attention.k_norm.weight:
+- 768
+blocks.8._orig_mod.attention.q_norm.weight:
+- 768
+blocks.8._orig_mod.attention.w_k.weight:
+- 768
+- 768
+blocks.8._orig_mod.attention.w_out.weight:
+- 768
+- 768
+blocks.8._orig_mod.attention.w_q.weight:
+- 768
+- 768
+blocks.8._orig_mod.attention.w_v.weight:
+- 768
+- 768
+blocks.8._orig_mod.attention_norm.weight:
+- 768
+blocks.8._orig_mod.feed_forward.w1.weight:
+- 3072
+- 768
+blocks.8._orig_mod.feed_forward.w2.weight:
+- 768
+- 3072
+blocks.8._orig_mod.feed_forward.w3.weight:
+- 3072
+- 768
+blocks.8._orig_mod.feed_forward_norm.weight:
+- 768
+blocks.9._orig_mod.attention.k_norm.weight:
+- 768
+blocks.9._orig_mod.attention.q_norm.weight:
+- 768
+blocks.9._orig_mod.attention.w_k.weight:
+- 768
+- 768
+blocks.9._orig_mod.attention.w_out.weight:
+- 768
+- 768
+blocks.9._orig_mod.attention.w_q.weight:
+- 768
+- 768
+blocks.9._orig_mod.attention.w_v.weight:
+- 768
+- 768
+blocks.9._orig_mod.attention_norm.weight:
+- 768
+blocks.9._orig_mod.feed_forward.w1.weight:
+- 3072
+- 768
+blocks.9._orig_mod.feed_forward.w2.weight:
+- 768
+- 3072
+blocks.9._orig_mod.feed_forward.w3.weight:
+- 3072
+- 768
+blocks.9._orig_mod.feed_forward_norm.weight:
+- 768
+embeddings.weight:
+- null
+- 768
+lm_head._orig_mod.norm.weight:
+- 768
+lm_head._orig_mod.w_out.weight:
+- null
+- 768

@@ -9,18 +9,17 @@ from olmo_core.nn.transformer import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
 )
-from olmo_core.utils import get_default_device
 import torch
 from olmo_core.distributed.utils import OLMO_LOCAL_WORLD_SIZE_ENV_VAR
 
 
 def load_mu_model(config: TransformerConfig):
     config.use_mup = True
-    device = get_default_device()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return config.build(device=device)
 
 
-def save_base_shapes(output_path: str, d_model: int = 4096):
+def save_base_shapes(output_path: str, d_model: int = 768):
     os.environ[OLMO_LOCAL_WORLD_SIZE_ENV_VAR] = "1"
     if 'RANK' not in os.environ:
         os.environ['RANK'] = '0'
@@ -30,9 +29,9 @@ def save_base_shapes(output_path: str, d_model: int = 4096):
         os.environ['MASTER_PORT'] = '29500'
 
     tokenizer_config = TokenizerConfig.dolma2()
-    config_use = TransformerConfig.olmo2_7B(
+    config_use = TransformerConfig.olmo2_190M(
         vocab_size=tokenizer_config.padded_vocab_size(),
-        compile=False,
+        compile=True,
         d_model=d_model,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp,
@@ -47,8 +46,8 @@ def save_base_shapes(output_path: str, d_model: int = 4096):
     base_shapes = get_shapes(base_model)
 
     # base_shapes = get_shapes(load_mu_model(config_use))
-    config_scaled = TransformerConfig.olmo2_7B(
-        vocab_size=TokenizerConfig.dolma2().padded_vocab_size(),
+    config_scaled = TransformerConfig.olmo2_190M(
+        vocab_size=tokenizer_config.padded_vocab_size(),
         compile=True,
         d_model=d_model * 2,  # Double d_model
         dp_config=TransformerDataParallelConfig(
