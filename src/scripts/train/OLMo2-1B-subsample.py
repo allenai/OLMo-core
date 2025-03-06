@@ -22,6 +22,7 @@ from olmo_core.train.callbacks import (
     LMEvaluatorCallbackConfig,
     WandBCallback,
 )
+from olmo_core.train.common import Duration
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -91,6 +92,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             cancel_check_interval=1,
             z_loss_multiplier=1e-5,
             compile_loss=True,
+            max_duration=Duration.tokens(113_184_153_600),
         )
         .with_callback(
             "checkpointer",
@@ -125,7 +127,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 if __name__ == "__main__":
     main(
-        global_batch_size=1024 * 4096,
+        global_batch_size=512 * 4096,
         model_config_builder=build_model_config,
         optim_config_builder=build_optim_config,
         trainer_config_builder=build_trainer_config,
