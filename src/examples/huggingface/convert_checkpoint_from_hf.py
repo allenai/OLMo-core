@@ -16,7 +16,7 @@ from transformers import AutoModelForCausalLM
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state, save_state_dict
 from olmo_core.io import clear_directory, dir_is_empty
-from olmo_core.nn.rope import RoPEScalingConfig
+from olmo_core.nn.rope import RoPELlamaScalingConfig, RoPELinearScalingConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.utils import get_default_device, prepare_cli_environment
 
@@ -27,19 +27,30 @@ HF_MODEL = "allenai/OLMo-2-1124-7B"
 # HF_MODEL = "allenai/OLMo-2-1124-13B-Instruct"
 # HF_MODEL = "meta-llama/Llama-3.2-1B"
 # HF_MODEL = "meta-llama/Llama-3.2-8B"
+# HF_MODEL = "deepseek-ai/deepseek-coder-1.3b-base"
 
 SAVE_PATH = f"/tmp/checkpoints/{HF_MODEL}"
 SAVE_OVERWRITE = False
 
 TOKENIZER_CONFIG = TokenizerConfig.from_hf(HF_MODEL)
+
 MODEL_CONFIG: TransformerConfig
-if HF_MODEL == "meta-llama/Llama-3.2-1B":
+if "Llama-3.2-1B" in HF_MODEL:
     MODEL_CONFIG = TransformerConfig.llama3_1B(
         TOKENIZER_CONFIG.vocab_size,
         fused_ops=False,
         use_flash=False,
-        rope_scaling=RoPEScalingConfig(),
+        rope_scaling=RoPELlamaScalingConfig(),
     )
+
+elif HF_MODEL.startswith("deepseek-coder-1.3b-base"):
+    MODEL_CONFIG = TransformerConfig.deepseek_1B(
+        TOKENIZER_CONFIG.vocab_size,
+        fused_ops=False,
+        use_flash=False,
+        rope_scaling=RoPELinearScalingConfig(factor=4.0),
+    )
+
 elif HF_MODEL.startswith("allenai/OLMo-2-1124-7B"):
     MODEL_CONFIG = TransformerConfig.olmo2_7B(
         TOKENIZER_CONFIG.vocab_size,
@@ -105,7 +116,7 @@ def convert_checkpoint() -> AutoModelForCausalLM:
         )
 
         # Layer norms.
-        if "Llama" in HF_MODEL:
+        if "Llama" or "deepseek" in HF_MODEL:
             new_state_dict[f"blocks.{block}.feed_forward_norm.weight"] = state_dict.pop(
                 f"model.layers.{block}.post_attention_layernorm.weight"
             )
@@ -152,7 +163,7 @@ def validate_conversion(hf_model):
     model = MODEL_CONFIG.build(device=device, max_seq_len=131072).eval()
 
     log.info("Loading converted checkpoint for validation...")
-    load_model_and_optim_state(SAVE_PATH, model)
+    load_model_and_optim_state(os.path.join(SAVE_PATH, "model_and_optim"), model)
 
     with torch.no_grad():
         logits = model(input_ids=input_ids)

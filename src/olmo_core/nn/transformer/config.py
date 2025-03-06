@@ -23,7 +23,7 @@ from ..attention import AttentionConfig, AttentionType
 from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
-from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
+from ..rope import RoPEConfig, RoPEScalingConfig, RoPELlamaScalingConfig, RoPELinearScalingConfig, RoPEType
 from .block import TransformerBlockConfig, TransformerBlockType
 from .init import InitMethod
 from .model import (
@@ -647,6 +647,25 @@ class TransformerConfig(Config):
             hidden_size_multiple_of=4096,
             **kwargs,
         )
+    @classmethod
+    def deepseek_1B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 1B deepseek model config.
+        """
+        return cls.llama_like(
+            d_model=2048,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 24),
+            n_heads=kwargs.pop("n_heads", 16),
+            layer_norm_eps=kwargs.pop("rms_norm_eps", 1e-06),
+            n_kv_heads=kwargs.pop("n_kv_heads", 16),
+            rope_theta=kwargs.pop("rope_theta", 100000),
+            # rope_scaling=RoPELinearScalingConfig(factor=4.0),
+            hidden_size_multiple_of=128,
+            hidden_size_multiplier=None,
+            rope_type="default",
+            **kwargs,
+        )
 
     @classmethod
     def llama3_405B(
@@ -740,7 +759,7 @@ class TransformerConfig(Config):
                 n_heads=n_heads,
                 n_kv_heads=n_kv_heads,
                 bias=False,
-                rope=RoPEConfig(name=rope_type, theta=rope_theta, scaling=rope_scaling),
+                rope=RoPEConfig(name=rope_type, theta=rope_theta, scaling=rope_scaling, full_precision=False),
                 qk_norm=layer_norm if qk_norm else None,
                 use_flash=use_flash,
                 dtype=dtype,
