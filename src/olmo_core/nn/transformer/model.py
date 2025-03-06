@@ -862,6 +862,7 @@ class MoETransformer(Transformer):
                     log.info("Creating secondary CUDA stream for MoE parallel block")
                     secondary_cuda_stream = torch.cuda.Stream()
                 block.secondary_stream = secondary_cuda_stream
+                block.feed_forward_moe.secondary_stream = secondary_cuda_stream
 
     def prepare_experts_for_fsdp(
         self,
