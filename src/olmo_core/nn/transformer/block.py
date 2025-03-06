@@ -314,6 +314,7 @@ class MoETransformerBlock(TransformerBlockBase):
         self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
         self._ep_enabled = False
+        self._tp_enabled = False
 
     @property
     def router(self) -> MoERouter:
@@ -334,6 +335,10 @@ class MoETransformerBlock(TransformerBlockBase):
     @property
     def ep_enabled(self) -> bool:
         return self._ep_enabled
+
+    @property
+    def tp_enabled(self) -> bool:
+        return self._tp_enabled
 
     def compute_losses(
         self, total_bz: Union[int, torch.Tensor], reset: bool = True
@@ -398,6 +403,8 @@ class MoETransformerBlock(TransformerBlockBase):
         )
 
         parallelize_module(self.dropout, device_mesh=tp_mesh, parallelize_plan=SequenceParallel())
+
+        self._tp_enabled = True
 
     def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
         self.attention.apply_cp(cp_mesh, load_balancer)
@@ -561,7 +568,7 @@ class MoEParallelTransformerBlock(MoEParallelTransformerBlockBase):
     """
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        if not self.ep_enabled:
+        if not self.ep_enabled and not self.tp_enabled:
             return (
                 x
                 + self.dropout(self.feed_forward_moe(self.feed_forward_norm(x)))
@@ -581,7 +588,7 @@ class MoEParallelReorderedNormTransformerBlock(MoEParallelTransformerBlockBase):
     """
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        if not self.ep_enabled:
+        if not self.ep_enabled and not self.tp_enabled:
             return (
                 x
                 + self.dropout(self.feed_forward_norm(self.feed_forward_moe(x)))
