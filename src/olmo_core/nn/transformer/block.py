@@ -14,10 +14,11 @@ from olmo_core.doc_utils import beta_feature
 
 from ..attention import AttentionConfig, RingAttentionLoadBalancerType
 from ..buffer_cache import BufferCache
-from ..feed_forward import FeedForwardConfig
+from ..feed_forward import FeedForward, FeedForwardConfig
 from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
-from ..moe import MoEConfig
+from ..moe import MoEConfig, MoERouter
+from ..moe.parallel_mlp import ParallelMLPBase
 from .config import TransformerDataParallelWrappingStrategy
 
 if TYPE_CHECKING:
@@ -315,6 +316,22 @@ class MoETransformerBlock(TransformerBlockBase):
         self._ep_enabled = False
 
     @property
+    def router(self) -> MoERouter:
+        return self.feed_forward_moe.router
+
+    @property
+    def shared_mlp(self) -> Optional[FeedForward]:
+        return self.feed_forward_moe.shared_mlp
+
+    @property
+    def experts(self) -> ParallelMLPBase:
+        return self.feed_forward_moe.experts
+
+    @property
+    def top_k(self) -> int:
+        return self.feed_forward_moe.top_k
+
+    @property
     def ep_enabled(self) -> bool:
         return self._ep_enabled
 
@@ -456,6 +473,86 @@ class MoEParallelTransformerBlockBase(MoETransformerBlock):
         else:
             fully_shard(self, **fsdp_kwargs)
 
+    def parallel_forward(
+        self, x_moe: torch.Tensor, x_att: torch.Tensor, **kwargs
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        expert_logits, expert_scores, expert_weights, expert_indices = self.router(x_moe)
+
+        # shape: (batch_size * top_k,)
+        expert_weights = expert_weights.flatten()
+        # shape: (batch_size * top_k,)
+        expert_indices = expert_indices.flatten()
+
+        with torch.no_grad():
+            indices, bin_ids, bins, batch_size_per_expert = self.experts.indices_and_bins(
+                expert_indices
+            )
+
+        (
+            parallel_x,
+            parallel_indices,
+            parallel_bin_ids,
+            parallel_bins,
+            parallel_batch_size_per_expert,
+            recv_counts,
+            send_counts,
+            expert_capacity,
+            parallel_x_handle,
+        ) = self.experts.permute_and_all_to_all(
+            x_moe.view(-1, x_moe.shape[-1]),
+            indices=indices,
+            bin_ids=bin_ids,
+            bins=bins,
+            batch_size_per_expert=batch_size_per_expert,
+        )
+
+        # Compute shared out while first all-to-all is in progress.
+        shared_out: Optional[torch.Tensor] = None
+        if self.shared_mlp is not None:
+            shared_out = self.shared_mlp(x_moe)
+
+        parallel_x_handle.wait()
+        parallel_x = self.experts.compute_local_experts(
+            parallel_x,
+            parallel_indices=parallel_indices,
+            parallel_bin_ids=parallel_bin_ids,
+            parallel_bins=parallel_bins,
+            parallel_batch_size_per_expert=parallel_batch_size_per_expert,
+            expert_capacity=expert_capacity,
+        )
+
+        x_moe, x_handle = self.experts.reverse_all_to_all(
+            parallel_x, send_counts=send_counts, recv_counts=recv_counts
+        )
+
+        # Compute attention while second all-to-all is in progress.
+        x_att = self.attention(x_att, **kwargs)
+
+        x_handle.wait()
+        x_moe = self.experts.unpermute(
+            x_moe,
+            expert_weights=expert_weights,
+            expert_indices=expert_indices,
+            indices=indices,
+            bin_ids=bin_ids,
+            bins=bins,
+        )
+
+        if shared_out is not None:
+            shared_out = shared_out / (self.top_k + 1)
+            x_moe = shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
+
+        if self.training:
+            self.feed_forward_moe.update_losses_and_metrics(
+                expert_logits=expert_logits,
+                expert_scores=expert_scores,
+                expert_weights=expert_weights,
+                expert_indices=expert_indices,
+                batch_size_per_expert=batch_size_per_expert,
+            )
+
+        return x_moe.view(x_att.shape), x_att
+
 
 class MoEParallelTransformerBlock(MoEParallelTransformerBlockBase):
     """
@@ -464,11 +561,17 @@ class MoEParallelTransformerBlock(MoEParallelTransformerBlockBase):
     """
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        return (
-            x
-            + self.dropout(self.feed_forward_moe(self.feed_forward_norm(x)))
-            + self.dropout(self.attention(self.attention_norm(x), **kwargs))
-        )
+        if not self.ep_enabled:
+            return (
+                x
+                + self.dropout(self.feed_forward_moe(self.feed_forward_norm(x)))
+                + self.dropout(self.attention(self.attention_norm(x), **kwargs))
+            )
+
+        x_moe = self.feed_forward_norm(x)
+        x_att = self.attention_norm(x)
+        x_moe, x_att = self.parallel_forward(x_moe, x_att, **kwargs)
+        return x + self.dropout(x_moe) + self.dropout(x_att)
 
 
 class MoEParallelReorderedNormTransformerBlock(MoEParallelTransformerBlockBase):
@@ -478,8 +581,16 @@ class MoEParallelReorderedNormTransformerBlock(MoEParallelTransformerBlockBase):
     """
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        if not self.ep_enabled:
+            return (
+                x
+                + self.dropout(self.feed_forward_norm(self.feed_forward_moe(x)))
+                + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+            )
+
+        x_moe, x_att = self.parallel_forward(x, x, **kwargs)
         return (
             x
-            + self.dropout(self.feed_forward_norm(self.feed_forward_moe(x)))
-            + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+            + self.dropout(self.feed_forward_norm(x_moe))
+            + self.dropout(self.attention_norm(x_att))
         )
