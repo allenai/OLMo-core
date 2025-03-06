@@ -272,7 +272,8 @@ class ParallelMLPBase(nn.Module):
         )
 
         x_handle.wait()
-        return self.unpermute(
+
+        x = self.unpermute(
             x,
             expert_weights=expert_weights,
             expert_indices=expert_indices,
@@ -280,6 +281,7 @@ class ParallelMLPBase(nn.Module):
             bin_ids=bin_ids,
             bins=bins,
         )
+        return x
 
     @abstractmethod
     def permute_and_all_to_all(
@@ -456,7 +458,7 @@ class ParallelMLP(ParallelMLPBase):
     ) -> torch.Tensor:
         del bin_ids, batch_size_per_expert, expert_indices
 
-        batch_size, _ = expert_weights.shape
+        batch_size = expert_weights.numel() // self.top_k
         expert_capacity = self.expert_capacity(batch_size)
 
         x = self.permute_and_compute(
