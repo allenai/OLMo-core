@@ -173,7 +173,7 @@ class Trainer:
         called with the metrics for every single step, but will be delayed according to this value.
 
         For example, if this is set to 5, then every 5 steps the metrics from the past 5 steps
-        are collected and reduced together, then passed on to 
+        are collected and reduced together, then passed on to
         :meth:`Callback.log_metrics <olmo_core.train.callbacks.Callback.log_metrics>` altogether.
 
     .. tip::
@@ -407,6 +407,22 @@ class Trainer:
         The maximum number of steps to train for, as determined by :data:`max_duration`.
         """
         return self._get_max_steps(self.max_duration)
+
+    def convert_duration_to_steps(self, duration: Duration) -> int:
+        """Convert a duration to steps."""
+        if duration.unit == DurationUnit.epochs:
+            if self.steps_per_epoch is None:
+                raise RuntimeError(
+                    "the number of steps cannot be determined from an 'epochs' duration since "
+                    "the data loader's number of batches is unknown"
+                )
+            return self.steps_per_epoch * duration.value
+        elif duration.unit == DurationUnit.steps:
+            return duration.value
+        elif duration.unit == DurationUnit.tokens:
+            raise RuntimeError("the number of steps cannot be determined from a 'tokens' duration")
+        else:
+            raise NotImplementedError(f"Unsupported duration unit: {duration.unit}")
 
     def _get_max_steps(self, duration: Duration) -> int:
         if duration.unit == DurationUnit.steps:
