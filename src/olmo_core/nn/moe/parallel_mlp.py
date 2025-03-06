@@ -458,6 +458,8 @@ class ParallelMLP(ParallelMLPBase):
         expert_capacity: int,
         top_k: int,
     ) -> torch.Tensor:
+        x = x.view(-1, x.shape[-1])
+
         # Route the tokens for MoE computation.
         # shape: (num_experts, expert_capacity, d_model)
         x = ops.binned_gather(x, indices, bins, expert_capacity, top_k)
@@ -658,8 +660,9 @@ class ParallelDroplessMLP(ParallelMLPBase):
         bins: torch.Tensor,
         top_k: int,
     ) -> torch.Tensor:
-        # Route the tokens for MoE computation.
         x = x.view(-1, x.shape[-1])
+
+        # Route the tokens for MoE computation.
         x = ops.gather(x, indices, bin_ids, bins, top_k)
 
         # Perform the expert computation.
