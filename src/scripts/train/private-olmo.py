@@ -26,7 +26,7 @@ CONTEXT_LENGTH = 4096
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = 4096
-    dropless = True  # TODO: ablate this?
+    dropless = False  # TODO: ablate this?
     return TransformerConfig.llama_like_moe(
         vocab_size=common.tokenizer.padded_vocab_size(),
         d_model=d_model,
