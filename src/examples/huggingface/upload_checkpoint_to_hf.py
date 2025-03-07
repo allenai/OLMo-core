@@ -47,7 +47,7 @@ if __name__ == "__main__":
     parser.add_argument('--local_checkpoint_dir', type=str, required=True,
                         help='Local directory containing checkpoint files')
     parser.add_argument('--repo_id', type=str, required=True,
-                        help='Hugging Face repo ID (e.g., "allenai/OLMo-2-0225-32B")')
+                        help='Hugging Face repo ID (e.g., "allenai/OLMo-2-0325-32B")')
     parser.add_argument('--step', type=int, required=True,
                         help='Step number')
     parser.add_argument('--token', type=str, required=True,
