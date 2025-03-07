@@ -68,7 +68,6 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp,
-            num_replicas=1,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
