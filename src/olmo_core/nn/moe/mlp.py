@@ -159,8 +159,7 @@ class MoEMLP(MoEMLPBase):
         super().__init__(d_model=d_model, hidden_size=hidden_size, num_experts=num_experts)
         self.w1 = nn.Parameter(
             torch.empty(
-                num_experts,
-                d_model,
+                num_experts * d_model,
                 hidden_size,
                 device=init_device,
                 dtype=dtype,
@@ -168,8 +167,7 @@ class MoEMLP(MoEMLPBase):
         )
         self.w2 = nn.Parameter(
             torch.empty(
-                num_experts,
-                hidden_size,
+                num_experts * hidden_size,
                 d_model,
                 device=init_device,
                 dtype=dtype,
@@ -177,8 +175,7 @@ class MoEMLP(MoEMLPBase):
         )
         self.w3 = nn.Parameter(
             torch.empty(
-                num_experts,
-                d_model,
+                num_experts * d_model,
                 hidden_size,
                 device=init_device,
                 dtype=dtype,
@@ -199,9 +196,15 @@ class MoEMLP(MoEMLPBase):
         # Scale gradients and get local tensors (in case of expert parallelism).
         # shape (all): (num_local_experts, hidden_size, d_model)
         w1, w2, w3 = (
-            get_local_tensor(self.scale_grad(self.w1)),
-            get_local_tensor(self.scale_grad(self.w2)),
-            get_local_tensor(self.scale_grad(self.w3)),
+            get_local_tensor(
+                self.scale_grad(self.w1).view(self.num_experts, self.d_model, self.hidden_size)
+            ),
+            get_local_tensor(
+                self.scale_grad(self.w2).view(self.num_experts, self.hidden_size, self.d_model)
+            ),
+            get_local_tensor(
+                self.scale_grad(self.w3).view(self.num_experts, self.d_model, self.hidden_size)
+            ),
         )
 
         x = x.type_as(w1)
