@@ -651,6 +651,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
             top_k=self.top_k,
         )
 
+    @torch._dynamo.disable()
     def permute_and_all_to_all(
         self,
         x: torch.Tensor,
@@ -766,6 +767,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
             parallel_x_handle,
         )
 
+    @torch._dynamo.disable()
     def compute_local_experts(
         self,
         parallel_x,
@@ -791,6 +793,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
 
         return parallel_x
 
+    @torch._dynamo.disable()
     def reverse_all_to_all(
         self,
         parallel_x: torch.Tensor,
@@ -811,6 +814,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
         )
         return x, handle
 
+    @torch._dynamo.disable()
     def unpermute(
         self,
         x,
