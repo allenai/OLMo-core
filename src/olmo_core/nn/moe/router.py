@@ -10,6 +10,7 @@ from torch.distributed.tensor import Replicate, Shard, distribute_tensor
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
 from olmo_core.config import Config, DType, StrEnum
+from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.exceptions import OLMoConfigurationError
 
 __all__ = ["MoERouter", "MoELinearRouter", "MoERouterConfig", "MoERouterType"]
@@ -231,7 +232,7 @@ class MoELinearRouter(MoERouter):
         )
 
     def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
-        return F.linear(x, self.weight.view(self.num_experts, self.d_model))
+        return F.linear(x, get_local_tensor(self.weight).view(self.num_experts, self.d_model))
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         del float8_enabled
