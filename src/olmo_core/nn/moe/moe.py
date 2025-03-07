@@ -14,7 +14,6 @@ from torch.distributed.tensor.parallel import (
 )
 
 from olmo_core.config import Config, DType, StrEnum
-from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.exceptions import OLMoConfigurationError
 
 from ..buffer_cache import BufferCache
@@ -312,7 +311,7 @@ class MoEBase(nn.Module):
             parallelize_plan=PrepareModuleInput(
                 input_layouts=None if input_layout is None else (input_layout,),
                 desired_input_layouts=(Shard(1),),
-                use_local_output=True,
+                use_local_output=False,
             ),
         )
 
