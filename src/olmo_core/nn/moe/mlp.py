@@ -7,6 +7,7 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
+from torch.distributed.fsdp import fully_shard
 from torch.distributed.tensor import Placement, Shard, distribute_tensor
 
 from olmo_core.distributed.parallel import get_device_mesh_info
@@ -108,11 +109,6 @@ class MoEMLPBase(nn.Module):
         """
         Should be called before wrapping this module, or a parent module, with FSDP2.
         """
-        if True:
-            return
-
-        from torch.distributed._composable.fsdp import fully_shard
-
         # If expert/tensor parallel is not enabled then we don't need to do anything special here.
         if self.ep_mesh is None:
             return
@@ -123,35 +119,24 @@ class MoEMLPBase(nn.Module):
         if (dim_names := world_mesh.mesh_dim_names) is None:
             raise RuntimeError("mesh must have named dimensions!")
 
-        # Shard local experts over the adjacent DP dimension.
-        dim_name = dim_names[dim_names.index(self.ep_mesh.mesh_dim_names[0]) - 1]
-        mesh = world_mesh[dim_name]
+        # If the experts are already sharded over a data parallel dimension, we need to shard them
+        # over the other data parallel dimension, otherwise `fully_shard` called with the full DP
+        # mesh won't handle this module correctly.
+        if self.ep_mesh.mesh_dim_names[0].startswith("dp"):
+            # Shard local experts over the adjacent DP dimension.
+            dim_name = dim_names[dim_names.index(self.ep_mesh.mesh_dim_names[0]) - 1]
+            mesh = world_mesh[dim_name]
 
-        log.info(f"Sharding local experts over {get_device_mesh_info(mesh)}...")
-        fully_shard(self, mesh=mesh, **kwargs)
+            log.info(f"Sharding local experts over {get_device_mesh_info(mesh)}...")
+            fully_shard(self, mesh=mesh, **kwargs)
 
     def prepare_experts_for_ddp(self, *, world_mesh: DeviceMesh):
         """
         Should be called before wrapping this module, or a parent module, with FSDP2.
         """
-        from torch.distributed._composable.replicate import replicate
-
-        # If expert/tensor parallel is not enabled then we don't need to do anything special here.
-        if self.ep_mesh is None:
-            return
-
-        if self.ep_mesh.mesh_dim_names is None:
-            raise RuntimeError("mesh must have named dimensions!")
-
-        if (dim_names := world_mesh.mesh_dim_names) is None:
-            raise RuntimeError("mesh must have named dimensions!")
-
-        # Replicate local experts over the adjacent DP dimension.
-        dim_name = dim_names[dim_names.index(self.ep_mesh.mesh_dim_names[0]) - 1]
-        mesh = world_mesh[dim_name]
-
-        log.info(f"Replicating local experts {get_device_mesh_info(mesh)}...")
-        replicate(self, device_mesh=mesh)
+        # TODO: do we need to do anything special here like with FSDP?
+        del world_mesh
+        pass
 
 
 class MoEMLP(MoEMLPBase):
