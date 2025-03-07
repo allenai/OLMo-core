@@ -13,6 +13,7 @@ from torch.distributed.tensor import Placement, Shard, distribute_tensor
 from olmo_core.distributed.parallel import get_device_mesh_info
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.utils import log_once
 
 try:
     import grouped_gemm  # type: ignore
@@ -127,7 +128,9 @@ class MoEMLPBase(nn.Module):
             dp_replicate_dim_name = dim_names[dim_names.index(ep_mesh_dim_name) - 1]
             dp_replicate_mesh = world_mesh[dp_replicate_dim_name]
 
-            log.info(f"Sharding local experts over {get_device_mesh_info(dp_replicate_mesh)}...")
+            log_once(
+                log, f"Sharding local experts over {get_device_mesh_info(dp_replicate_mesh)}..."
+            )
             fully_shard(self, mesh=dp_replicate_mesh, **kwargs)
 
     def prepare_experts_for_ddp(self, *, world_mesh: DeviceMesh):
