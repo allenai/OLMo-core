@@ -254,22 +254,22 @@ class muPFeedForward(FeedForward):
         )
         self.mup_base_shapes = mup_base_shapes
 
-        from mup import MuReadout, set_base_shapes
+        # from mup import MuReadout, set_base_shapes
 
-        self.w1 = MuReadout(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
-        self.w2 = MuReadout(hidden_size, d_model, bias=bias, dtype=dtype, device=init_device)
-        self.w3 = MuReadout(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
+        self.w1 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
+        self.w2 = nn.Linear(hidden_size, d_model, bias=bias, dtype=dtype, device=init_device)
+        self.w3 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
 
-        if mup_base_shapes:
-            self.set_base_shapes()
+        # if mup_base_shapes:
+        #     self.set_base_shapes()
 
-    def set_base_shapes(self):
-        """
-        Applies muP base shapes.
-        """
-        from mup import set_base_shapes
-        log.info("Applying muP base shapes to MuPFeedForward layers...")
-        set_base_shapes(self, self.mup_base_shapes)
+    # def set_base_shapes(self):
+    #     """
+    #     Applies muP base shapes.
+    #     """
+    #     from mup import set_base_shapes
+    #     log.info("Applying muP base shapes to MuPFeedForward layers...")
+    #     set_base_shapes(self, self.mup_base_shapes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

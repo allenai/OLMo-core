@@ -13,6 +13,7 @@ from torch.distributed.tensor.parallel import (
     parallelize_module,
 )
 from torch.distributed.tensor.placement_types import Placement
+from mup import MuReadout, set_base_shapes
 
 from ..config import Config, DType, StrEnum
 from ..doc_utils import beta_feature
@@ -20,7 +21,7 @@ from ..exceptions import OLMoConfigurationError
 from .functional import l2_normalize
 from .layer_norm import LayerNormConfig
 
-__all__ = ["LMHeadType", "LMHeadConfig", "LMHead", "NormalizedLMHead"]
+__all__ = ["LMHeadType", "LMHeadConfig", "LMHead", "NormalizedLMHead", "muPLMHead"]
 
 
 class LMHeadType(StrEnum):
@@ -36,6 +37,11 @@ class LMHeadType(StrEnum):
     normalized = "normalized"
     """
     ➡️ :class:`NormalizedLMHead`
+    """
+
+    mup = "mup"
+    """
+    ➡️ :class:`muPLMHead`
     """
 
 
@@ -96,6 +102,8 @@ class LMHeadConfig(Config):
                 return LMHead(**kwargs)
             elif self.name == LMHeadType.normalized:
                 return NormalizedLMHead(**kwargs)
+            elif self.name == LMHeadType.mup:
+                return muPLMHead(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
@@ -123,7 +131,7 @@ class LMHead(nn.Module):
         self.norm = (
             None if layer_norm is None else layer_norm.build(d_model, init_device=init_device)
         )
-        self.w_out = nn.Linear(d_model, vocab_size, bias=bias, dtype=dtype, device=init_device)
+        self.w_out = MuReadout(d_model, vocab_size, bias=bias, dtype=dtype, device=init_device)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -180,6 +188,65 @@ class NormalizedLMHead(LMHead):
         self.sz = nn.Parameter(
             self.sz_init_scaling * torch.ones(vocab_size, dtype=dtype, device=init_device)
         )
+
+    def reset_parameters(self):
+        """
+        Reset the scaling parameter.
+        """
+        nn.init.ones_(self.sz)
+        self.sz.mul_(self.sz_init_scaling)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        sz = self.sz * (self.sz_init_value / self.sz_init_scaling)
+        return sz * self.w_out(x)
+
+    def apply_tp(self, tp_mesh: DeviceMesh, loss_parallel: bool = False):
+        del tp_mesh, loss_parallel
+
+        raise NotImplementedError("TP is not implemented yet for the normalized LM head variant")
+
+    @torch.no_grad()
+    def normalize_matrices(self):
+        self._normalize_matrix(self.w_out.weight)
+
+    def _normalize_matrix(self, w: torch.Tensor, dim: int = -1):
+        w.copy_(l2_normalize(w, dim=dim))
+
+@beta_feature
+class muPLMHead(LMHead):
+    """
+    An nGPT LM head implementation.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        vocab_size: int,
+        layer_norm: Optional[LayerNormConfig] = None,
+        dtype: torch.dtype = torch.float32,
+        bias: bool = False,
+        init_device: str = "cpu",
+    ):
+        nn.Module.__init__(self)
+        self.norm = (
+            None if layer_norm is None else layer_norm.build(d_model, init_device=init_device)
+        )
+        self.w_out = MuReadout(d_model, vocab_size, bias=bias, dtype=dtype, device=init_device)
+
+        # super().__init__(
+        #     d_model=d_model,
+        #     vocab_size=vocab_size,
+        #     layer_norm=None,
+        #     bias=False,
+        #     dtype=dtype,
+        #     init_device=init_device,
+        # )
+        # self.sz_init_value = 1.0
+        # self.sz_init_scaling = 1.0 / math.sqrt(d_model)
+        # self.sz = nn.Parameter(
+        #     self.sz_init_scaling * torch.ones(vocab_size, dtype=dtype, device=init_device)
+        # )
 
     def reset_parameters(self):
         """

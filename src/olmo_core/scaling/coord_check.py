@@ -118,6 +118,27 @@ def _get_coord_data(
             model = model.train()
             if cuda:
                 model = model.cuda()
+                print("✓ Successfully applied base shapes to model")
+                print("\nChecking parameters for infshape attribute...")
+                missing_infshape = []
+                total_params = 0
+                
+                for name, param in model.named_parameters():
+                    total_params += 1
+                    if not hasattr(param, 'infshape'):
+                        missing_infshape.append((name, param.shape))
+                
+                if missing_infshape:
+                    print(f"✗ ISSUE: {len(missing_infshape)}/{total_params} parameters missing infshape attribute")
+                    print("\nSample parameters missing infshape:")
+                    for i, (name, shape) in enumerate(missing_infshape[:5]):
+                        print(f"  - {name}: {shape}")
+                    if len(missing_infshape) > 5:
+                        print(f"  ... and {len(missing_infshape) - 5} more")
+                    return False
+                else:
+                    print(f"✓ All {total_params} parameters have infshape attribute") 
+
             optimizer = optcls(model)
             for batch_idx, batch in enumerate(dataloader, 1):
                 remove_hooks = []

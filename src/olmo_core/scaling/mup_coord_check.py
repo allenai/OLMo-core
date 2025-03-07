@@ -3,9 +3,12 @@ import os
 import numpy as np
 from typing import List, Optional
 from olmo_core.config import DType
+import torch
 
 from mup.coord_check import plot_coord_data
-from mup import set_base_shapes, load_base_shapes as mup_load
+from mup import set_base_shapes
+from mup import load_base_shapes as mup_load
+import mup as mupo
 
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.data import TokenizerConfig, NumpyFSLDataset, NumpyFSLDataLoader, DataCollator
@@ -67,35 +70,45 @@ def coord_check(
 ):
     def model_generator(d_model, standparam=False):
         def f():
-            import mup.shape
-            original_assert_fn = mup.shape.assert_hidden_size_inf
-            def modified_assert_fn(model):
-                pass
-            mup.shape.assert_hidden_size_inf = modified_assert_fn
-            try:
-                config = TransformerConfig.olmo2_190M(
-                    vocab_size=TokenizerConfig.dolma2().padded_vocab_size(),
-                    compile=True,
-                    d_model=d_model,
-                    dp_config=TransformerDataParallelConfig(
-                        name=DataParallelType.fsdp,
-                        param_dtype=DType.bfloat16,
-                        reduce_dtype=DType.float32,
-                        wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
-                    ),
-                    use_mup=not standparam
-                )
-                if standparam:
-                    config.mup_base_shapes = None
-                else:
-                    assert load_base_shapes, "load_base_shapes needs to be specified for mup."
-                model = load_mu_model(config)
-                if not standparam:
-                    base_shapes = mup_load(load_base_shapes)
-                    set_base_shapes(model, base_shapes)
-                return model
-            finally:
-                mup.shape.assert_hidden_size_inf = original_assert_fn
+            base_shapes = mup_load(load_base_shapes)
+            config = TransformerConfig.olmo2_190M(
+                vocab_size=TokenizerConfig.dolma2().padded_vocab_size(),
+                compile=True,
+                d_model=d_model,
+                dp_config=TransformerDataParallelConfig(
+                    name=DataParallelType.fsdp,
+                    param_dtype=DType.bfloat16,
+                    reduce_dtype=DType.float32,
+                    wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+                ),
+            )
+            config.use_mup = True
+            device = torch.device('cuda')
+            model = config.build(device=device)
+            set_base_shapes(model, base_shapes)
+            # print("✓ Successfully applied base shapes to model")
+            # optimizer = mupo.optim.MuSGD(model.parameters(), lr=0.1)
+            # print("✓ Successfully created muP optimizer")
+            # print("\nChecking parameters for infshape attribute...")
+            # missing_infshape = []
+            # total_params = 0
+            
+            # for name, param in model.named_parameters():
+            #     total_params += 1
+            #     if not hasattr(param, 'infshape'):
+            #         missing_infshape.append((name, param.shape))
+            
+            # if missing_infshape:
+            #     print(f"✗ ISSUE: {len(missing_infshape)}/{total_params} parameters missing infshape attribute")
+            #     print("\nSample parameters missing infshape:")
+            #     for i, (name, shape) in enumerate(missing_infshape[:5]):
+            #         print(f"  - {name}: {shape}")
+            #     if len(missing_infshape) > 5:
+            #         print(f"  ... and {len(missing_infshape) - 5} more")
+            #     return False
+            # else:
+            #     print(f"✓ All {total_params} parameters have infshape attribute")                        
+            return model
         return f
 
     # train_config = TrainConfig.load(config_path)
@@ -111,7 +124,7 @@ def coord_check(
     df = get_coord_data(
         models,
         data_loader,
-        mup=mup,
+        mup=True,
         # lr=lr,
         optimizer=optimizer,
         nseeds=nseeds,

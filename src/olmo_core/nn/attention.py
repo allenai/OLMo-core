@@ -23,6 +23,7 @@ from .rope import (
     RoPEConfig,
     RotaryEmbedding,
 )
+from mup import MuReadout, set_base_shapes
 from .utils import get_tp_wrappers
 
 __all__ = ["AttentionType", "AttentionConfig", "Attention", "FusedAttention", "NormalizedAttention", "muPAttention"]
