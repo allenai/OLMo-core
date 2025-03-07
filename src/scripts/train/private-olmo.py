@@ -127,5 +127,6 @@ if __name__ == "__main__":
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
+        sequence_length=CONTEXT_LENGTH,
         include_default_evals=False,
     )
