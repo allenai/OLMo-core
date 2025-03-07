@@ -312,7 +312,7 @@ class MoEBase(nn.Module):
             parallelize_plan=PrepareModuleInput(
                 input_layouts=None if input_layout is None else (input_layout,),
                 desired_input_layouts=(Shard(1),),
-                use_local_output=False,
+                use_local_output=True,
             ),
         )
 
