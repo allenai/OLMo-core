@@ -599,8 +599,13 @@ class Transformer(nn.Module):
         )
 
         if prefetch_factor > 0:
-            log.info(f"Configuring FSDP to prefetch {prefetch_factor} module(s) ahead")
-            blocks = cast(List[FSDPModule], list(self.blocks.values()))
+            blocks = list(self.blocks.values())
+            # With activation checkpointing this won't work.
+            if not blocks or not isinstance(blocks[0], FSDPModule):
+                log.warning("'prefetch_factor' > 0 has no effect with current settings")
+                return
+
+            blocks = cast(List[FSDPModule], blocks)
             for i in range(len(blocks)):
                 block = blocks[i]
                 if i + 1 < len(blocks):
