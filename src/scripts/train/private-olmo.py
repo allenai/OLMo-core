@@ -21,6 +21,8 @@ from olmo_core.train.train_module import (
 
 log = logging.getLogger(__name__)
 
+CONTEXT_LENGTH = 2048
+
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = 4096
@@ -52,7 +54,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     return TransformerTrainModuleConfig(
-        rank_microbatch_size=1 * 4096,
+        rank_microbatch_size=1 * CONTEXT_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=AdamWConfig(
             lr=3e-4,
@@ -121,7 +123,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 if __name__ == "__main__":
     main(
-        global_batch_size=128 * 4096,  # TODO: adjust as needed
+        global_batch_size=128 * CONTEXT_LENGTH,  # TODO: adjust as needed
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
