@@ -184,19 +184,17 @@ class NormalizedFeedForward(FeedForward):
         )
         self.sw_init_value = 1.0
         self.sw_init_scaling = 1.0
-        self.sw1 = torch.nn.Parameter(
-            self.sw_init_scaling * torch.ones(hidden_size, dtype=dtype, device=init_device)
-        )
-        self.sw3 = torch.nn.Parameter(
-            self.sw_init_scaling * torch.ones(hidden_size, dtype=dtype, device=init_device)
-        )
+        self.sw1 = torch.nn.Parameter(torch.empty(hidden_size, dtype=dtype, device=init_device))
+        self.sw3 = torch.nn.Parameter(torch.empty(hidden_size, dtype=dtype, device=init_device))
         self.sqrt_d_model = math.sqrt(d_model)
+        self.reset_parameters()
 
     def reset_parameters(self):
         nn.init.ones_(self.sw1)
-        self.sw1.mul_(self.sw_init_scaling)
         nn.init.ones_(self.sw3)
-        self.sw3.mul_(self.sw_init_scaling)
+        with torch.no_grad():
+            self.sw1.mul_(self.sw_init_scaling)
+            self.sw3.mul_(self.sw_init_scaling)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         sw1 = self.sw1 * ((self.sw_init_value / self.sw_init_scaling) * self.sqrt_d_model)

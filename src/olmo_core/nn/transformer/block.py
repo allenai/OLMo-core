@@ -204,22 +204,20 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         self.attn_alpha_init_value = 0.05
         self.attn_alpha_init_scaling = 1.0 / math.sqrt(d_model)
         self.attn_alpha = nn.Parameter(
-            self.attn_alpha_init_scaling
-            * torch.ones(d_model, dtype=torch.float32, device=init_device)
+            torch.empty(d_model, dtype=torch.float32, device=init_device)
         )
 
         self.mlp_alpha_init_value = 0.05
         self.mlp_alpha_init_scaling = 1.0 / math.sqrt(d_model)
-        self.mlp_alpha = nn.Parameter(
-            self.mlp_alpha_init_scaling
-            * torch.ones(d_model, dtype=torch.float32, device=init_device)
-        )
+        self.mlp_alpha = nn.Parameter(torch.empty(d_model, dtype=torch.float32, device=init_device))
+        self.reset_parameters()
 
     def reset_parameters(self):
         nn.init.ones_(self.attn_alpha)
-        self.attn_alpha.mul_(self.attn_alpha_init_scaling)
         nn.init.ones_(self.mlp_alpha)
-        self.mlp_alpha.mul_(self.mlp_alpha_init_scaling)
+        with torch.no_grad():
+            self.attn_alpha.mul_(self.attn_alpha_init_scaling)
+            self.mlp_alpha.mul_(self.mlp_alpha_init_scaling)
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         h = l2_normalize(

@@ -230,6 +230,10 @@ class MoELinearRouter(MoERouter):
         self.weight = nn.Parameter(
             torch.empty(self.num_experts * self.d_model, device=init_device, dtype=dtype)
         )
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        nn.init.trunc_normal_(self.weight, std=0.02, a=-3 * 0.02, b=3 * 0.02)
 
     def extra_repr(self):
         return f"in_features={self.d_model}, num_experts={self.num_experts}"

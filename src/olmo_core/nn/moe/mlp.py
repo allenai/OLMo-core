@@ -1,4 +1,5 @@
 import logging
+import math
 import warnings
 from typing import Any, Callable, List, Optional
 
@@ -183,6 +184,14 @@ class MoEMLP(MoEMLPBase):
                 dtype=dtype,
             ),
         )
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        # Setting a=sqrt(5) in kaiming_uniform is the same as initializing with
+        # uniform(-1/sqrt(in_features), 1/sqrt(in_features)). For details, see
+        # https://github.com/pytorch/pytorch/issues/57109
+        for w in (self.w1, self.w2, self.w3):
+            nn.init.kaiming_uniform_(w, a=math.sqrt(5))
 
     def extra_repr(self):
         return f"num_experts={self.num_experts}, in_features={self.d_model}, hidden_size={self.hidden_size}"
@@ -264,6 +273,14 @@ class DroplessMoEMLP(MoEMLPBase):
                 "Please install the 'grouped_gemm' package if possible.\n"
                 "https://github.com/tgale96/grouped_gemm"
             )
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        # Setting a=sqrt(5) in kaiming_uniform is the same as initializing with
+        # uniform(-1/sqrt(in_features), 1/sqrt(in_features)). For details, see
+        # https://github.com/pytorch/pytorch/issues/57109
+        for w in (self.w1, self.w2, self.w3):
+            nn.init.kaiming_uniform_(w, a=math.sqrt(5))
 
     @torch._dynamo.disable()
     def gmm(

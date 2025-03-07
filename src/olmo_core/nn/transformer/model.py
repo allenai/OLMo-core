@@ -200,16 +200,16 @@ class Transformer(nn.Module):
         device = device or self.device
         self.to_empty(device=device)
 
+        for module in self.modules():
+            if hasattr(module, "reset_parameters"):
+                module.reset_parameters()  # type: ignore
+
         generator = torch.Generator(device).manual_seed(self.init_seed)
 
         if self.embeddings is not None:
             self.init_method.init_embeddings(
                 self.embeddings, d_model=self.d_model, generator=generator
             )
-
-        for module in self.modules():
-            if hasattr(module, "reset_parameters"):
-                module.reset_parameters()  # type: ignore
 
         for block in self.blocks.values():
             # This might fail if it's wrapped.
