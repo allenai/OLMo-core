@@ -10,7 +10,6 @@ from torch.distributed.tensor import Shard
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
 from olmo_core.config import Config, DType, StrEnum
-from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.exceptions import OLMoConfigurationError
 
 __all__ = ["MoERouter", "MoELinearRouter", "MoERouterConfig", "MoERouterType"]
@@ -244,17 +243,4 @@ class MoELinearRouter(MoERouter):
                 desired_input_layouts=(Shard(1),),
                 use_local_output=True,
             ),
-        )
-        parallelize_module(
-            self.w_score,
-            device_mesh=tp_mesh,
-            parallelize_plan=PrepareModuleInput(
-                input_layouts=(Shard(1),),
-                desired_input_layouts=(Shard(1),),
-            ),
-        )
-        parallelize_module(
-            self.w_score,
-            device_mesh=tp_mesh,
-            parallelize_plan=SequenceParallel(use_local_output=True),
         )
