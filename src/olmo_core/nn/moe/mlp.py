@@ -7,11 +7,13 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
+from torch.distributed.fsdp import fully_shard
 from torch.distributed.tensor import Placement, Shard, distribute_tensor
 
 from olmo_core.distributed.parallel import get_device_mesh_info
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.utils import log_once
 
 try:
     import grouped_gemm  # type: ignore
@@ -108,8 +110,6 @@ class MoEMLPBase(nn.Module):
         """
         Should be called before wrapping this module, or a parent module, with FSDP2.
         """
-        from torch.distributed._composable.fsdp import fully_shard
-
         # If expert/tensor parallel is not enabled then we don't need to do anything special here.
         if self.ep_mesh is None:
             return
@@ -120,35 +120,26 @@ class MoEMLPBase(nn.Module):
         if (dim_names := world_mesh.mesh_dim_names) is None:
             raise RuntimeError("mesh must have named dimensions!")
 
-        # Shard local experts over the adjacent DP dimension.
-        dim_name = dim_names[dim_names.index(self.ep_mesh.mesh_dim_names[0]) - 1]
-        mesh = world_mesh[dim_name]
+        # If the experts are already sharded over a data parallel dimension, we need to shard them
+        # over the other data parallel dimension, otherwise `fully_shard` called with the full DP
+        # mesh won't handle this module correctly.
+        if (ep_mesh_dim_name := self.ep_mesh.mesh_dim_names[0]).startswith("dp"):
+            # Shard local experts over the adjacent DP dimension.
+            dp_replicate_dim_name = dim_names[dim_names.index(ep_mesh_dim_name) - 1]
+            dp_replicate_mesh = world_mesh[dp_replicate_dim_name]
 
-        log.info(f"Sharding local experts over {get_device_mesh_info(mesh)}...")
-        fully_shard(self, mesh=mesh, **kwargs)
+            log_once(
+                log, f"Sharding local experts over {get_device_mesh_info(dp_replicate_mesh)}..."
+            )
+            fully_shard(self, mesh=dp_replicate_mesh, **kwargs)
 
     def prepare_experts_for_ddp(self, *, world_mesh: DeviceMesh):
         """
         Should be called before wrapping this module, or a parent module, with FSDP2.
         """
-        from torch.distributed._composable.replicate import replicate
-
-        # If expert/tensor parallel is not enabled then we don't need to do anything special here.
-        if self.ep_mesh is None:
-            return
-
-        if self.ep_mesh.mesh_dim_names is None:
-            raise RuntimeError("mesh must have named dimensions!")
-
-        if (dim_names := world_mesh.mesh_dim_names) is None:
-            raise RuntimeError("mesh must have named dimensions!")
-
-        # Replicate local experts over the adjacent DP dimension.
-        dim_name = dim_names[dim_names.index(self.ep_mesh.mesh_dim_names[0]) - 1]
-        mesh = world_mesh[dim_name]
-
-        log.info(f"Replicating local experts {get_device_mesh_info(mesh)}...")
-        replicate(self, device_mesh=mesh)
+        # TODO: do we need to do anything special here like with FSDP?
+        del world_mesh
+        pass
 
 
 class MoEMLP(MoEMLPBase):
@@ -166,10 +157,11 @@ class MoEMLP(MoEMLPBase):
         init_device: str = "cpu",
     ):
         super().__init__(d_model=d_model, hidden_size=hidden_size, num_experts=num_experts)
+        # NOTE: these parameters need to have a large enough first dimension (which would be num experts)
+        # in order to be sharded over big world sizes with FSDP. So we flatten them to a single dimension tensor.
         self.w1 = nn.Parameter(
             torch.empty(
-                num_experts,
-                d_model,
+                num_experts * d_model,
                 hidden_size,
                 device=init_device,
                 dtype=dtype,
@@ -177,8 +169,7 @@ class MoEMLP(MoEMLPBase):
         )
         self.w2 = nn.Parameter(
             torch.empty(
-                num_experts,
-                hidden_size,
+                num_experts * hidden_size,
                 d_model,
                 device=init_device,
                 dtype=dtype,
@@ -186,8 +177,7 @@ class MoEMLP(MoEMLPBase):
         )
         self.w3 = nn.Parameter(
             torch.empty(
-                num_experts,
-                d_model,
+                num_experts * d_model,
                 hidden_size,
                 device=init_device,
                 dtype=dtype,
@@ -208,9 +198,15 @@ class MoEMLP(MoEMLPBase):
         # Scale gradients and get local tensors (in case of expert parallelism).
         # shape (all): (num_local_experts, hidden_size, d_model)
         w1, w2, w3 = (
-            get_local_tensor(self.scale_grad(self.w1)),
-            get_local_tensor(self.scale_grad(self.w2)),
-            get_local_tensor(self.scale_grad(self.w3)),
+            get_local_tensor(
+                self.scale_grad(self.w1).view(self.num_experts, self.d_model, self.hidden_size)
+            ),
+            get_local_tensor(
+                self.scale_grad(self.w2).view(self.num_experts, self.hidden_size, self.d_model)
+            ),
+            get_local_tensor(
+                self.scale_grad(self.w3).view(self.num_experts, self.d_model, self.hidden_size)
+            ),
         )
 
         x = x.type_as(w1)
@@ -234,10 +230,11 @@ class DroplessMoEMLP(MoEMLPBase):
         init_device: str = "cpu",
     ):
         super().__init__(d_model=d_model, hidden_size=hidden_size, num_experts=num_experts)
+        # NOTE: these parameters need to have a large enough first dimension (which would be num experts)
+        # in order to be sharded over big world sizes with FSDP. So we flatten them to a single dimension tensor.
         self.w1 = nn.Parameter(
             torch.empty(
-                num_experts,
-                hidden_size,
+                num_experts * hidden_size,
                 d_model,
                 device=init_device,
                 dtype=dtype,
@@ -245,8 +242,7 @@ class DroplessMoEMLP(MoEMLPBase):
         )
         self.w2 = nn.Parameter(
             torch.empty(
-                num_experts,
-                hidden_size,
+                num_experts * hidden_size,
                 d_model,
                 device=init_device,
                 dtype=dtype,
@@ -254,8 +250,7 @@ class DroplessMoEMLP(MoEMLPBase):
         )
         self.w3 = nn.Parameter(
             torch.empty(
-                num_experts,
-                hidden_size,
+                num_experts * hidden_size,
                 d_model,
                 device=init_device,
                 dtype=dtype,
@@ -296,9 +291,15 @@ class DroplessMoEMLP(MoEMLPBase):
         # Scale gradients and get local tensors (in case of expert parallelism).
         # shape (all): (num_local_experts, hidden_size, d_model)
         w1, w2, w3 = (
-            get_local_tensor(self.scale_grad(self.w1)),
-            get_local_tensor(self.scale_grad(self.w2)),
-            get_local_tensor(self.scale_grad(self.w3)),
+            get_local_tensor(
+                self.scale_grad(self.w1).view(self.num_experts, self.hidden_size, self.d_model)
+            ),
+            get_local_tensor(
+                self.scale_grad(self.w2).view(self.num_experts, self.hidden_size, self.d_model)
+            ),
+            get_local_tensor(
+                self.scale_grad(self.w3).view(self.num_experts, self.hidden_size, self.d_model)
+            ),
         )
 
         # Compute the MLP.

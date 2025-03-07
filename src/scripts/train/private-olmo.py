@@ -15,25 +15,28 @@ from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandB
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
+    TransformerExpertParallelConfig,
     TransformerTrainModuleConfig,
 )
 
 log = logging.getLogger(__name__)
 
+CONTEXT_LENGTH = 4096
+
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = 4096
-    dropless = True  # TODO: ablate this?
+    dropless = False  # TODO: ablate this?
     return TransformerConfig.llama_like_moe(
         vocab_size=common.tokenizer.padded_vocab_size(),
         d_model=d_model,
         n_layers=32,
         n_heads=32,
-        num_experts=2,  # NOTE: if increasing this you may need to enable EP or TP
+        num_experts=8,
         top_k=1,
         expert_hidden_size=11008,
         dropless=dropless,
-        capacity_factor=None if dropless else 1.2,  # adjust as needed
+        capacity_factor=None if dropless else 1.05,  # adjust as needed
         lb_loss_weight=0.01,
         z_loss_weight=0.001,
         reordered_norm=True,
@@ -51,7 +54,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     return TransformerTrainModuleConfig(
-        rank_microbatch_size=1 * 4096,
+        rank_microbatch_size=1 * CONTEXT_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=AdamWConfig(
             lr=3e-4,
@@ -64,13 +67,12 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp,
+            name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
         ),
-        # NOTE: expert parallelism requires either HSDP or tensor parallelism.
-        #  ep_config=TransformerExpertParallelConfig(degree=-1),
+        ep_config=TransformerExpertParallelConfig(degree=-1),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=None,  # TODO: Z-loss on router logits, not sure if you want this
         max_grad_norm=1.0,
@@ -119,8 +121,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 if __name__ == "__main__":
     main(
-        global_batch_size=128 * 4096,  # TODO: adjust as needed
+        global_batch_size=64 * CONTEXT_LENGTH,  # TODO: adjust as needed
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
+        sequence_length=CONTEXT_LENGTH,
+        include_default_evals=False,
     )

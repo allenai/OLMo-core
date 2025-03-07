@@ -49,7 +49,7 @@ def run_mlp_with_expert_parallelism():
     )
     mlp.apply_ep(ep_mesh)
     mlp.to_empty(device=get_default_device())
-    assert get_local_tensor(mlp.w1).shape == (2, 128, 256)
+    assert get_local_tensor(mlp.w1).shape == (2 * 128, 256)
 
     x = torch.randn(2, 3, 128, device="cuda", dtype=torch.bfloat16)
     out = mlp(x)
@@ -75,7 +75,7 @@ def run_dropless_mlp_with_expert_parallelism():
     )
     mlp.apply_ep(ep_mesh)
     mlp.to_empty(device=get_default_device())
-    assert get_local_tensor(mlp.w1).shape == (2, 256, 128)
+    assert get_local_tensor(mlp.w1).shape == (2 * 256, 128)
 
     x = torch.randn(5, 128, device="cuda", dtype=torch.bfloat16)
     tokens_per_expert = torch.tensor([2, 3], device="cuda")

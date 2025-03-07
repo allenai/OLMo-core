@@ -144,7 +144,12 @@ class ParallelMLPBase(nn.Module):
         :returns: The output with the same shape as ``x`` and a tensor with shape ``(num_local_experts,)``
             containing the number of items/tokens routed to each (local) expert.
         """
-        x = get_local_tensor(x)
+        x, expert_weights, expert_indices = (
+            get_local_tensor(x),
+            get_local_tensor(expert_weights),
+            get_local_tensor(expert_indices),
+        )
+
         in_shape = x.size()
 
         # shape: (N, d_model)
@@ -651,6 +656,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
             top_k=self.top_k,
         )
 
+    @torch._dynamo.disable()  # TODO: might be able to relax this, or be more fine-grained
     def permute_and_all_to_all(
         self,
         x: torch.Tensor,
@@ -766,6 +772,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
             parallel_x_handle,
         )
 
+    @torch._dynamo.disable()  # TODO: might be able to relax this, or be more fine-grained
     def compute_local_experts(
         self,
         parallel_x,
@@ -791,6 +798,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
 
         return parallel_x
 
+    @torch._dynamo.disable()  # TODO: might be able to relax this, or be more fine-grained
     def reverse_all_to_all(
         self,
         parallel_x: torch.Tensor,
@@ -811,6 +819,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
         )
         return x, handle
 
+    @torch._dynamo.disable()  # TODO: might be able to relax this, or be more fine-grained
     def unpermute(
         self,
         x,
