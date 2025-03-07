@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
-from torch.distributed.tensor import Replicate, Shard
+from torch.distributed.tensor import DTensor, Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
 from olmo_core.data.utils import get_cumulative_document_lengths
@@ -115,6 +115,8 @@ class Transformer(nn.Module):
         self._compile_enabled = False
         self._device: Optional[torch.device] = None
         self._cp_load_balancer: Optional[RingAttentionLoadBalancer] = None
+        self._tp_enabled = False
+        self._tp_mesh: Optional[DeviceMesh] = None
 
         # Cache the value of these properties up-front in case the parameters are removed
         # later, like for pipeline parallelism.
@@ -127,6 +129,7 @@ class Transformer(nn.Module):
     def compute_auxiliary_losses(
         self, total_bz: Union[int, torch.Tensor], reset: bool = True
     ) -> Dict[str, torch.Tensor]:
+        # NOTE: need to distributed loss tensors with DTen
         del total_bz, reset
         return {}
 
@@ -141,6 +144,10 @@ class Transformer(nn.Module):
 
     def reset_auxiliary_metrics(self):
         pass
+
+    @property
+    def tp_enabled(self) -> bool:
+        return self._tp_enabled
 
     @property
     def is_moe(self) -> bool:
@@ -443,6 +450,9 @@ class Transformer(nn.Module):
 
         if self.lm_head is not None:
             self.lm_head.apply_tp(tp_mesh, input_layouts=(Shard(1), Replicate()))
+
+        self._tp_enabled = True
+        self._tp_mesh = tp_mesh
 
     def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
         """
@@ -778,6 +788,12 @@ class MoETransformer(Transformer):
                 cast(MoETransformerBlock, block).compute_losses(total_bz, reset=reset).items()
             ):
                 loss_val = loss_val.div(self.n_layers)
+
+                if self.tp_enabled:
+                    assert self._tp_mesh is not None
+                    loss_val = DTensor.from_local(loss_val.unsqueeze(0), self._tp_mesh, (Shard(0),))
+                    loss_val = loss_val.redistribute(placements=(Replicate(),)).mean()
+
                 if loss_name in out:
                     out[loss_name] += loss_val
                 else:
