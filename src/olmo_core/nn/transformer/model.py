@@ -838,30 +838,6 @@ class MoETransformer(Transformer):
                     secondary_cuda_stream = torch.cuda.Stream()
                 block.secondary_stream = secondary_cuda_stream  # type: ignore
 
-    def prepare_experts_for_fsdp(
-        self,
-        world_mesh: DeviceMesh,
-        param_dtype: Optional[torch.dtype] = None,
-        reduce_dtype: torch.dtype = torch.float32,
-        pp_enabled: bool = False,
-    ):
-        from torch.distributed._composable.fsdp import MixedPrecisionPolicy
-
-        for block in self.blocks.values():
-            cast(MoETransformerBlock, block).feed_forward_moe.prepare_experts_for_fsdp(
-                world_mesh=world_mesh,
-                mp_policy=MixedPrecisionPolicy(
-                    param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
-                ),
-                reshard_after_forward=not pp_enabled,
-            )
-
-    def prepare_experts_for_ddp(self, world_mesh: DeviceMesh):
-        for block in self.blocks.values():
-            cast(MoETransformerBlock, block).feed_forward_moe.prepare_experts_for_ddp(
-                world_mesh=world_mesh,
-            )
-
 
 def _hide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
     del m

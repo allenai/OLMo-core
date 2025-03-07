@@ -37,7 +37,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
 from olmo_core.nn.attention import RingAttentionLoadBalancer
 from olmo_core.nn.lm_head import LMOutputWithLoss
-from olmo_core.nn.transformer import MoETransformer, NormalizedTransformer, Transformer
+from olmo_core.nn.transformer import NormalizedTransformer, Transformer
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
@@ -411,13 +411,6 @@ class TransformerPipelineTrainModule(TrainModule):
                     dp_config.param_dtype.as_pt() if dp_config.param_dtype is not None else None
                 )
                 for model in self.model_parts:
-                    if model.is_moe:
-                        cast(MoETransformer, model).prepare_experts_for_fsdp(
-                            self.world_mesh,
-                            param_dtype=param_dtype,
-                            reduce_dtype=dp_config.reduce_dtype.as_pt(),
-                            pp_enabled=True,
-                        )
                     model.apply_fsdp(
                         dp_mesh=dp_mesh,
                         param_dtype=param_dtype,
@@ -428,8 +421,6 @@ class TransformerPipelineTrainModule(TrainModule):
                 log.info(f"Applied FSDP to the model with {get_device_mesh_info(dp_mesh)}")
             elif dp_config.name == DataParallelType.ddp:
                 for model in self.model_parts:
-                    if model.is_moe:
-                        cast(MoETransformer, model).prepare_experts_for_ddp(self.world_mesh)
                     model.apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model)
                 log.info(f"Applied DDP to the model with {get_device_mesh_info(dp_mesh)}")
             else:
