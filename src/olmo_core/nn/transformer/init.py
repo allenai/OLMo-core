@@ -116,7 +116,8 @@ class InitMethod(StrEnum):
         elif self == InitMethod.normalized:
             std = d_model**-0.5
 
-        self._init_linear(m.w3, std=std, generator=generator)
+        if hasattr(m, "w3"):
+            self._init_linear(m.w3, std=std, generator=generator)
 
         if self == InitMethod.normalized:
             std = std / (2 * num_blocks) ** 0.5
