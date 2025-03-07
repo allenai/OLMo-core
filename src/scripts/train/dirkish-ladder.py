@@ -1,5 +1,8 @@
+import copy
 from dataclasses import dataclass
 from typing import Any, ClassVar, Dict
+
+import olmo_eval.tasks
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
@@ -85,28 +88,71 @@ class DirkishModelLadder(ModelLadder):
             gpu_type=gpu_type,
             dp_world_size=dp_world_size)
 
+        # monkey-patch oe-eval
+        available_task_labels = list(olmo_eval.tasks.label_to_task_map.keys())
+        for task_label in available_task_labels:
+            bpb_task_label = task_label + "_bpb"
+            if bpb_task_label in olmo_eval.tasks.label_to_task_map:
+                continue
+            task = olmo_eval.tasks.label_to_task_map[task_label]
+            if not isinstance(task, tuple):
+                continue
+            if len(task) < 2:
+                continue
+            if not isinstance(task[1], dict):
+                continue
+            bpb_task = copy.deepcopy(task)
+            bpb_task[1]["metric_type"] = "bpb"
+            olmo_eval.tasks.label_to_task_map[bpb_task_label] = bpb_task
+
         config.callbacks['lm_evaluator'].enabled = False
         config.callbacks['downstream_evaluator'] = DownstreamEvaluatorCallbackConfig(
             tasks=[
-                # OLMES
-                "arc_challenge_rc_5shot_bpb",
-                "arc_easy_rc_5shot_bpb",
-                "boolq_rc_5shot_bpb",
-                "csqa_rc_5shot_bpb",
+                # OLMES Core 9 RC
+                "arc_challenge_test_rc_5shot_bpb",
+                "arc_easy_test_rc_5shot_bpb",
                 "hellaswag_rc_5shot_bpb",
-                "openbookqa_rc_5shot_bpb",
-                "piqa_rc_5shot_bpb",
-                "socialiqa_rc_5shot_bpb",
-                "winogrande_rc_5shot_bpb",
-                # OLMES includes MMLU
-                "mmlu_stem_val_rc_5shot",
-                "mmlu_humanities_val_rc_5shot",
-                "mmlu_social_sciences_val_rc_5shot",
-                "mmlu_other_val_rc_5shot",
-                "mmlu_stem_test_rc_5shot",
-                "mmlu_humanities_test_rc_5shot",
-                "mmlu_social_sciences_test_rc_5shot",
-                "mmlu_other_test_rc_5shot",
+                "winogrande_val_rc_5shot_bpb", # Helpful after 750M-5xC scale
+                "csqa_val_rc_5shot_bpb",
+                "piqa_val_rc_5shot_bpb",
+                "socialiqa_val_rc_5shot_bpb",
+
+                # Too noisy to be worth tracking
+                # "boolq_val_rc_5shot_bpb",
+                # "openbookqa_test_rc_5shot_bpb",
+
+                # MMLU RC BPB
+                "mmlu_stem_val_rc_5shot_bpb",
+                "mmlu_humanities_val_rc_5shot_bpb",
+                "mmlu_social_sciences_val_rc_5shot_bpb",
+                "mmlu_other_val_rc_5shot_bpb",
+                "mmlu_stem_test_rc_5shot_bpb",
+                "mmlu_humanities_test_rc_5shot_bpb",
+                "mmlu_social_sciences_test_rc_5shot_bpb",
+                "mmlu_other_test_rc_5shot_bpb",
+
+                # OLMES Core 9 MC (BPB is included in these)
+                "arc_challenge_test_mc_5shot_bpb",
+                "arc_easy_test_mc_5shot_bpb",
+                "hellaswag_rc_5shot_bpb",
+                "csqa_val_mc_5shot_bpb",
+                "piqa_val_mc_5shot_bpb",
+                "socialiqa_val_mc_5shot_bpb",
+                "winogrande_val_rc_5shot_bpb",
+
+                # Too noisy to be worth tracking
+                # "boolq_val_mc_5shot_bpb",
+                # "openbookqa_test_mc_5shot_bpb",
+
+                # MMLU MC BPB
+                "mmlu_stem_val_mc_5shot_bpb",
+                "mmlu_humanities_val_mc_5shot_bpb",
+                "mmlu_social_sciences_val_mc_5shot_bpb",
+                "mmlu_other_val_mc_5shot_bpb",
+                "mmlu_stem_test_mc_5shot_bpb",
+                "mmlu_humanities_test_mc_5shot_bpb",
+                "mmlu_social_sciences_test_mc_5shot_bpb",
+                "mmlu_other_test_mc_5shot_bpb",
             ],
             tokenizer=self.tokenizer,
             eval_interval=1000,
