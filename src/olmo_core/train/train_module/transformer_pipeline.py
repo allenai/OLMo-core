@@ -20,24 +20,19 @@ from olmo_core.config import Config, DType
 from olmo_core.data.utils import get_labels
 from olmo_core.distributed.checkpoint import _swap_param_keys
 from olmo_core.distributed.parallel import (
-    DataParallelType,
     PipelineParallelConfig,
     PipelineSchedule,
     build_world_mesh,
-    get_cp_mesh,
     get_device_mesh_info,
-    get_dp_model_mesh,
     get_dp_process_group,
     get_pp_mesh,
-    get_tp_mesh,
 )
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
-from olmo_core.nn.attention import RingAttentionLoadBalancer
 from olmo_core.nn.lm_head import LMOutputWithLoss
-from olmo_core.nn.transformer import MoETransformer, NormalizedTransformer, Transformer
+from olmo_core.nn.transformer import NormalizedTransformer, Transformer
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
@@ -48,7 +43,9 @@ from .transformer import (
     TransformerActivationCheckpointingConfig,
     TransformerContextParallelConfig,
     TransformerDataParallelConfig,
+    TransformerExpertParallelConfig,
     TransformerTensorParallelConfig,
+    parallelize_model,
 )
 
 log = logging.getLogger(__name__)
@@ -298,6 +295,7 @@ class TransformerPipelineTrainModule(TrainModule):
         dp_config: Optional[TransformerDataParallelConfig] = None,
         tp_config: Optional[TransformerTensorParallelConfig] = None,
         cp_config: Optional[TransformerContextParallelConfig] = None,
+        ep_config: Optional[TransformerExpertParallelConfig] = None,
         ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
         z_loss_multiplier: Optional[float] = None,
         autocast_precision: Optional[torch.dtype] = None,
@@ -311,6 +309,10 @@ class TransformerPipelineTrainModule(TrainModule):
     ):
         super().__init__()
 
+        # TODO: (epwalsh) need to handle the MoE auxiliary losses correctly.
+        if model.is_moe:
+            raise NotImplementedError("Pipeline parallelism with MoE's is currently not supported")
+
         # Validate some options.
         if rank_microbatch_size % max_sequence_length != 0:
             raise OLMoConfigurationError(
@@ -318,138 +320,51 @@ class TransformerPipelineTrainModule(TrainModule):
                 f"'max_sequence_length' ({max_sequence_length:,d} tokens)"
             )
 
+        # Build world mesh.
         self.device = device or get_default_device()
         self.world_mesh = build_world_mesh(
             dp=dp_config, tp=tp_config, cp=cp_config, pp=pp_config, device_type=self.device.type
         )
         log.info(f"Data parallel world size = {get_world_size(self.dp_process_group):,d}")
 
-        self.label_ignore_index = label_ignore_index
-        self.z_loss_multiplier = z_loss_multiplier
-
         self.float8_handler: Optional[Float8Handler] = None
-        float8_enabled = False
         if float8_config is not None:
-            float8_enabled = float8_config.enabled
             float8_config.compile = compile_model
             self.float8_handler = float8_config.build()
 
+        # Split model into pipeline stages.
         self._pp_config = pp_config
         # We'll initialize this lazily when the trainer is attached, since we need to know
         # the global batch size in order to determine the number of pipeline micro-batches.
         self._train_pp_schedule: Optional[PipelineSchedule] = None
         self._pp_stages: Optional[List[PipelineStage]] = None
-
-        self.model_parts: List[Transformer] = []
         pp_mesh = get_pp_mesh(self.world_mesh)
         stages, model_parts = pp_config.split_model(model, pp_mesh=pp_mesh, device=self.device)
         self._pp_stages = stages
-        self.model_parts = model_parts
         log.info(f"Applied pipeline parallelism to the model with {get_device_mesh_info(pp_mesh)}")
 
-        # Maybe convert linear layers to FP8 linear.
-        if self.float8_handler is not None and self.float8_handler.enabled:
-            for model in self.model_parts:
-                self.float8_handler.convert_to_float8_training(
-                    model, modules_to_ignore={"lm_head.w_out"}
-                )
-            log.info("Swapped linear layers to Float8 linear layers")
+        # Parallelize model parts.
+        self.model_parts: List[Transformer] = parallelize_model(
+            model_parts,
+            world_mesh=self.world_mesh,
+            device=self.device,
+            max_sequence_length=max_sequence_length,
+            rank_microbatch_size=rank_microbatch_size,
+            compile_model=compile_model,
+            float8_handler=self.float8_handler,
+            dp_config=dp_config,
+            tp_config=tp_config,
+            cp_config=cp_config,
+            ep_config=ep_config,
+            ac_config=ac_config,
+        )
 
-        # Maybe apply context parallelism.
-        self._cp_config = cp_config
-        self._cp_load_balancer: Optional[RingAttentionLoadBalancer] = None
-        if cp_config is not None:
-            cp_mesh = get_cp_mesh(self.world_mesh)
-            self._cp_load_balancer = cp_config.load_balancer.build(cp_mesh)
-            for model in self.model_parts:
-                model.apply_cp(cp_mesh, load_balancer=cp_config.load_balancer)
-            log.info(
-                f"Applied context parallelism to the model with {get_device_mesh_info(cp_mesh)}"
-            )
-
-        # Maybe apply tensor parallelism.
-        self._tp_enabled = False
-        if tp_config is not None:
-            tp_mesh = get_tp_mesh(self.world_mesh)
-            for model in self.model_parts:
-                model.apply_tp(
-                    tp_mesh,
-                    float8_enabled=float8_enabled,
-                )
-            tp_config.maybe_enable_async_tp(tp_mesh)
-            log.info(
-                f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model "
-                f"with {get_device_mesh_info(tp_mesh)}"
-            )
-            self._tp_enabled = True
-
-        # Maybe apply activation checkpointing.
-        if ac_config is not None:
-            for model in self.model_parts:
-                model.apply_activation_checkpointing(
-                    ac_config.mode,
-                    block_interval=ac_config.block_interval,
-                    modules=ac_config.modules,
-                )
-            log.info(f"Applied '{ac_config.mode}' activation checkpointing to the model")
-
-        # Maybe compile.
-        if compile_model:
-            if torch.cuda.is_available():
-                for model in self.model_parts:
-                    model.apply_compile()
-                log.info("Applied torch.compile() to the model")
-            else:
-                log.warning("Skipping model compilation since CUDA is not available")
-
-        # Maybe shard/replicate according to data parallel config.
         self._dp_config = dp_config
-        if dp_config is not None:
-            dp_mesh = get_dp_model_mesh(self.world_mesh)
-            if dp_config.name in (DataParallelType.fsdp, DataParallelType.hsdp):
-                param_dtype = (
-                    dp_config.param_dtype.as_pt() if dp_config.param_dtype is not None else None
-                )
-                for model in self.model_parts:
-                    if model.is_moe:
-                        cast(MoETransformer, model).prepare_experts_for_fsdp(
-                            self.world_mesh,
-                            param_dtype=param_dtype,
-                            reduce_dtype=dp_config.reduce_dtype.as_pt(),
-                            pp_enabled=True,
-                        )
-                    model.apply_fsdp(
-                        dp_mesh=dp_mesh,
-                        param_dtype=param_dtype,
-                        reduce_dtype=dp_config.reduce_dtype.as_pt(),
-                        wrapping_strategy=dp_config.wrapping_strategy,
-                        pp_enabled=True,
-                    )
-                log.info(f"Applied FSDP to the model with {get_device_mesh_info(dp_mesh)}")
-            elif dp_config.name == DataParallelType.ddp:
-                for model in self.model_parts:
-                    if model.is_moe:
-                        cast(MoETransformer, model).prepare_experts_for_ddp(self.world_mesh)
-                    model.apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model)
-                log.info(f"Applied DDP to the model with {get_device_mesh_info(dp_mesh)}")
-            else:
-                raise NotImplementedError(dp_config.name)
-
-        # Materialize and init parameters.
-        for model in self.model_parts:
-            log.info("Initializing model weights...")
-            model.init_weights(max_seq_len=max_sequence_length, device=self.device)
-
-        # Build optimizer(s).
-        log.info("Building optimizer(s)...")
-        self.optimizers: List[Optimizer] = [
-            optim.build(model, strict=False) for model in self.model_parts
-        ]
-        if isinstance(self.optimizers[0], SkipStepOptimizer):
-            raise NotImplementedError(
-                "Pipeline parallelism with a SkipStepOptimizer is currently not supported"
-            )
-
+        self._cp_config = cp_config
+        self._tp_config = tp_config
+        self._ep_config = ep_config
+        self.label_ignore_index = label_ignore_index
+        self.z_loss_multiplier = z_loss_multiplier
         self.rank_microbatch_size = rank_microbatch_size
         self.max_sequence_length = max_sequence_length
         self.autocast_precision = autocast_precision
@@ -463,12 +378,16 @@ class TransformerPipelineTrainModule(TrainModule):
         )
         self.load_key_mapping = load_key_mapping
 
-        for model in self.model_parts:
-            if model.is_moe:
-                # TODO (epwalsh): need to handle the MoE auxiliary losses correctly.
-                raise NotImplementedError(
-                    "Pipeline parallelism with MoE's is currently not supported"
-                )
+        # Build optimizer(s).
+        log.info("Building optimizer(s)...")
+        self.optimizers: List[Optimizer] = [
+            optim.build(model, strict=False) for model in self.model_parts
+        ]
+        # TODO: (epwalsh) fix this
+        if isinstance(self.optimizers[0], SkipStepOptimizer):
+            raise NotImplementedError(
+                "Pipeline parallelism with a SkipStepOptimizer is currently not supported"
+            )
 
         self._ce_batch_loss: Optional[torch.Tensor] = None
         self._z_batch_loss: Optional[torch.Tensor] = None
@@ -493,7 +412,7 @@ class TransformerPipelineTrainModule(TrainModule):
 
     @property
     def tp_enabled(self) -> bool:
-        return self._tp_enabled
+        return self._tp_config is not None
 
     @property
     def cp_enabled(self) -> bool:
