@@ -10,6 +10,7 @@ import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.checkpoint.metadata import Metadata
+from torch.distributed.fsdp import FSDPModule
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.tensor import DTensor
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -449,6 +450,10 @@ class TransformerTrainModule(TrainModule):
         )
 
     @property
+    def dp_config(self) -> Optional[TransformerDataParallelConfig]:
+        return self._dp_config
+
+    @property
     def tp_enabled(self) -> bool:
         return self._tp_enabled
 
@@ -784,10 +789,21 @@ class TransformerTrainModule(TrainModule):
     def _train_microbatch_context(
         self, micro_batch_idx: int, num_micro_batches: int
     ) -> Generator[None, None, None]:
+        is_last_mb = micro_batch_idx == num_micro_batches - 1
         with contextlib.ExitStack() as stack:
-            # For DDP, only sync gradients on the final micro batch.
-            if isinstance(self.model, DDP) and micro_batch_idx != num_micro_batches - 1:
-                stack.enter_context(self.model.no_sync())
+            if isinstance(self.model, FSDPModule):
+                assert self.dp_config is not None
+                # On the last backward FSDP waits on pending gradient reduction and clears internal data
+                # data structures for backward prefetching.
+                self.model.set_is_last_backward(is_last_mb)
+                # For HSDP we can delay the gradients all-reduce until the final micro-batch.
+                if self.dp_config.name == DataParallelType.hsdp:
+                    self.model.set_requires_all_reduce(is_last_mb)
+            elif isinstance(self.model, DDP):
+                # For DDP, only sync gradients on the final micro-batch.
+                if not is_last_mb:
+                    stack.enter_context(self.model.no_sync())
+
             yield
 
     @contextlib.contextmanager
