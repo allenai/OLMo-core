@@ -111,10 +111,8 @@ def coord_check(
             return model
         return f
 
-    # train_config = TrainConfig.load(config_path)
     optimizer = "adam"
     optimizer = optimizer.replace("mu", "")
-    # lr = train_config.optimizer.learning_rate
     
     models = {width: model_generator(width, standparam=not mup) for width in widths}
 
