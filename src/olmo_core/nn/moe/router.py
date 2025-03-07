@@ -1,3 +1,4 @@
+import math
 from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Tuple
@@ -230,6 +231,13 @@ class MoELinearRouter(MoERouter):
         self.weight = nn.Parameter(
             torch.empty(self.num_experts * self.d_model, device=init_device, dtype=dtype)
         )
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        # Setting a=sqrt(5) in kaiming_uniform is the same as initializing with
+        # uniform(-1/sqrt(in_features), 1/sqrt(in_features)). For details, see
+        # https://github.com/pytorch/pytorch/issues/57109
+        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
 
     def extra_repr(self):
         return f"in_features={self.d_model}, num_experts={self.num_experts}"
