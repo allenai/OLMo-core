@@ -28,6 +28,7 @@ from ...utils import requires_gpu
 def init_mlp_weights(moe: MoEBase):
     for w in (moe.experts.mlp.w1, moe.experts.mlp.w2, moe.experts.mlp.w3):
         torch.nn.init.normal_(w, std=0.02)  # type: ignore
+    torch.nn.init.normal_(moe.router.weight, std=0.02)  # type: ignore
 
 
 @requires_gpu
