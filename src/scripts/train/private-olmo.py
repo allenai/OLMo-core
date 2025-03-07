@@ -26,7 +26,7 @@ CONTEXT_LENGTH = 4096
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = 4096
-    dropless = True  # TODO: ablate this?
+    dropless = False  # TODO: ablate this?
     return TransformerConfig.llama_like_moe(
         vocab_size=common.tokenizer.padded_vocab_size(),
         d_model=d_model,
@@ -36,7 +36,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         top_k=1,
         expert_hidden_size=11008,
         dropless=dropless,
-        capacity_factor=None if dropless else 1.2,  # adjust as needed
+        capacity_factor=None if dropless else 1.05,  # adjust as needed
         lb_loss_weight=0.01,
         z_loss_weight=0.001,
         reordered_norm=True,
@@ -71,8 +71,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             num_replicas=1,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            prefetch_factor=1,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
         ),
         ep_config=TransformerExpertParallelConfig(degree=-1),
         float8_config=Float8Config(enabled=False),
