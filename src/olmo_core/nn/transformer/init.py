@@ -76,10 +76,13 @@ class InitMethod(StrEnum):
         if self == InitMethod.normalized:
             std = d_model**-0.5
 
-        if isinstance(m, Attention):
+        # NOTE: isinstance checks could fail with AC wrappers
+        if isinstance(m, Attention) or hasattr(m, "w_q"):
+            m = cast(Attention, m)
             for w in (m.w_q, m.w_k, m.w_v):
                 self._init_linear(w, std=std, generator=generator)
-        elif isinstance(m, FusedAttention):
+        elif isinstance(m, FusedAttention) or hasattr(m, "w_qkv"):
+            m = cast(FusedAttention, m)
             self._init_linear(m.w_qkv, std=std, generator=generator)
         else:
             raise NotImplementedError(m)
