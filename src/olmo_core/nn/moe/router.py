@@ -231,6 +231,9 @@ class MoELinearRouter(MoERouter):
             torch.empty(self.num_experts * self.d_model, device=init_device, dtype=dtype)
         )
 
+    def extra_repr(self):
+        return f"in_features={self.d_model}, num_experts={self.num_experts}"
+
     def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
         return F.linear(x, get_local_tensor(self.weight).view(self.num_experts, self.d_model))
 
