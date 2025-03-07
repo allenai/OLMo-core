@@ -12,9 +12,10 @@ from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
-from olmo_core.train.train_module import (  # TransformerExpertParallelConfig,
+from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
+    TransformerExpertParallelConfig,
     TransformerTensorParallelConfig,
     TransformerTrainModuleConfig,
 )
@@ -67,15 +68,15 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp,
+            name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             num_replicas=1,
             prefetch_factor=1,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
-        #  ep_config=TransformerExpertParallelConfig(degree=-1),
-        tp_config=TransformerTensorParallelConfig(degree=8),
+        ep_config=TransformerExpertParallelConfig(degree=-1),
+        #  tp_config=TransformerTensorParallelConfig(degree=8),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=None,  # TODO: Z-loss on router logits, not sure if you want this
         max_grad_norm=1.0,
