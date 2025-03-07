@@ -122,13 +122,13 @@ class MoEMLPBase(nn.Module):
         # If the experts are already sharded over a data parallel dimension, we need to shard them
         # over the other data parallel dimension, otherwise `fully_shard` called with the full DP
         # mesh won't handle this module correctly.
-        if self.ep_mesh.mesh_dim_names[0].startswith("dp"):
+        if (ep_mesh_dim_name := self.ep_mesh.mesh_dim_names[0]).startswith("dp"):
             # Shard local experts over the adjacent DP dimension.
-            dim_name = dim_names[dim_names.index(self.ep_mesh.mesh_dim_names[0]) - 1]
-            mesh = world_mesh[dim_name]
+            dp_replicate_dim_name = dim_names[dim_names.index(ep_mesh_dim_name) - 1]
+            dp_replicate_mesh = world_mesh[dp_replicate_dim_name]
 
-            log.info(f"Sharding local experts over {get_device_mesh_info(mesh)}...")
-            fully_shard(self, mesh=mesh, **kwargs)
+            log.info(f"Sharding local experts over {get_device_mesh_info(dp_replicate_mesh)}...")
+            fully_shard(self, mesh=dp_replicate_mesh, **kwargs)
 
     def prepare_experts_for_ddp(self, *, world_mesh: DeviceMesh):
         """
