@@ -304,6 +304,7 @@ class MoEBase(nn.Module):
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
+        # Sequence parallel for the most part.
         parallelize_module(
             self,
             device_mesh=tp_mesh,
@@ -314,13 +315,10 @@ class MoEBase(nn.Module):
             ),
         )
 
-        # Sequence parallel
-        self.router.apply_tp(tp_mesh, float8_enabled=float8_enabled)
-
-        # Expert parallel
+        # Expert parallel.
         self.experts.apply_tp(tp_mesh, float8_enabled=float8_enabled)
 
-        # Model parallel
+        # Model parallel.
         if self.shared_mlp is not None:
             self.shared_mlp.apply_tp(
                 tp_mesh,
