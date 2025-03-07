@@ -9,7 +9,7 @@ def upload_to_branch(local_checkpoint_dir: str, repo_id: str, step: int, token: 
     api = HfApi()
     total_tokens = step * 2048 * 4096
     tokens_b = math.ceil(total_tokens / 1_000_000_000)
-    branch = f"stage1-step{step}-tokens{tokens_b}B"
+    branch = f"stage2-ingredient1-step{step}-tokens{tokens_b}B"
     print(f"Creating and uploading to branch: {branch}")
     os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
     try:
