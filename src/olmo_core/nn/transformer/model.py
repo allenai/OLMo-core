@@ -589,10 +589,6 @@ class Transformer(nn.Module):
                 **fsdp_config,
             )
 
-        #  if (
-        #      wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained
-        #      and self.embeddings is not None
-        #  ):
         if self.embeddings is not None:
             fully_shard(self.embeddings, reshard_after_forward=reshard_after_forward, **fsdp_config)
             # Embedding params are not needed for backwards computation.
