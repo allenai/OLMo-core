@@ -234,10 +234,7 @@ class MoELinearRouter(MoERouter):
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
-        # Setting a=sqrt(5) in kaiming_uniform is the same as initializing with
-        # uniform(-1/sqrt(in_features), 1/sqrt(in_features)). For details, see
-        # https://github.com/pytorch/pytorch/issues/57109
-        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        nn.init.trunc_normal_(self.weight, std=0.02, a=-3 * 0.02, b=3 * 0.02)
 
     def extra_repr(self):
         return f"in_features={self.d_model}, num_experts={self.num_experts}"
