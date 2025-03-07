@@ -317,11 +317,7 @@ class MoEBase(nn.Module):
         )
 
         # Sequence parallel.
-        parallelize_module(
-            self.router,
-            device_mesh=tp_mesh,
-            parallelize_plan=SequenceParallel(use_local_output=True),
-        )
+        self.router.apply_tp(tp_mesh, float8_enabled=float8_enabled)
 
         # Expert parallel.
         self.experts.apply_tp(tp_mesh, float8_enabled=float8_enabled)
