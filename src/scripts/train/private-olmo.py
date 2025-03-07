@@ -68,15 +68,15 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.hsdp,
+            name=DataParallelType.fsdp,
+            #  num_replicas=1,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            num_replicas=1,
             prefetch_factor=1,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
-        ep_config=TransformerExpertParallelConfig(degree=-1),
-        #  tp_config=TransformerTensorParallelConfig(degree=8),
+        #  ep_config=TransformerExpertParallelConfig(degree=-1),
+        tp_config=TransformerTensorParallelConfig(degree=8),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=None,  # TODO: Z-loss on router logits, not sure if you want this
         max_grad_norm=1.0,
@@ -125,7 +125,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 if __name__ == "__main__":
     main(
-        global_batch_size=128 * CONTEXT_LENGTH,  # TODO: adjust as needed
+        global_batch_size=16 * CONTEXT_LENGTH,  # TODO: adjust as needed
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
