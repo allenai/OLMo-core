@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
-from torch.distributed.tensor import Shard
+from torch.distributed.tensor import Replicate, Shard, distribute_tensor
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
 from olmo_core.config import Config, DType, StrEnum
@@ -243,4 +243,8 @@ class MoELinearRouter(MoERouter):
                 desired_input_layouts=(Shard(1),),
                 use_local_output=True,
             ),
+        )
+
+        self.register_parameter(
+            "weight", nn.Parameter(distribute_tensor(self.weight, tp_mesh, [Replicate()]))
         )
