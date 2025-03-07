@@ -599,19 +599,13 @@ class Transformer(nn.Module):
         )
 
         if prefetch_factor > 0:
-            blocks = list(self.blocks.values())
-            # With activation checkpointing this won't work.
-            if not blocks or not isinstance(blocks[0], FSDPModule):
-                log.warning("'prefetch_factor' > 0 has no effect with current settings")
-                return
-
-            blocks = cast(List[FSDPModule], blocks)
+            blocks = cast(List[FSDPModule], list(self.blocks.values()))
             for i in range(len(blocks)):
                 block = blocks[i]
                 if i + 1 < len(blocks):
                     block.set_modules_to_forward_prefetch(blocks[i + 1 : i + 1 + prefetch_factor])
-                else:
-                    block.set_modules_to_forward_prefetch([cast(FSDPModule, self.lm_head)])
+                elif isinstance(self.lm_head, FSDPModule):
+                    block.set_modules_to_forward_prefetch([self.lm_head])
 
     def apply_ddp(
         self,
