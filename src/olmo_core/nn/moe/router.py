@@ -4,6 +4,7 @@ from typing import Any, Callable, Optional, Tuple
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Shard
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
@@ -58,7 +59,6 @@ class MoERouterConfig(Config):
     jitter_eps: Optional[float] = None
     normalize_expert_weights: Optional[float] = None
     uniform_expert_assignment: bool = False
-    bias: bool = True
     dtype: Optional[DType] = None
 
     def num_params(self, d_model: int, num_experts: int) -> int:
@@ -70,8 +70,6 @@ class MoERouterConfig(Config):
         num_params = 0
         if self.name == MoERouterType.default:
             num_params += d_model * num_experts
-            if self.bias:
-                num_params += num_experts
         else:
             raise NotImplementedError
 
@@ -221,18 +219,20 @@ class MoELinearRouter(MoERouter):
     def __init__(
         self,
         *,
-        bias: bool = True,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
         **kwargs,
     ):
         super().__init__(**kwargs)
-        self.w_score = nn.Linear(
-            self.d_model, self.num_experts, bias=bias, dtype=dtype, device=init_device
+        # NOTE: this parameter needs to have a large enough first dimension (num experts) in order
+        # to be sharded over big world sizes with FSDP. So we flatten it to a single dimension tensor.
+        # And for that reason we don't support a 'bias' option.
+        self.weight = nn.Parameter(
+            torch.empty(self.num_experts * self.d_model, device=init_device, dtype=dtype)
         )
 
     def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
-        return self.w_score(x)
+        return F.linear(x, self.weight.view(self.num_experts, self.d_model))
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         del float8_enabled

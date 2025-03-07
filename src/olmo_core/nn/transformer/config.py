@@ -547,8 +547,8 @@ class TransformerConfig(Config):
                 name=MoEType.default,
                 num_experts=32,
                 hidden_size=int(0.5 * d_model),
-                router=MoERouterConfig(top_k=4, bias=False),
-                shared_mlp=FeedForwardConfig(hidden_size=d_model * 2, bias=False),
+                router=MoERouterConfig(top_k=4),
+                shared_mlp=FeedForwardConfig(hidden_size=d_model * 2),
                 lb_loss_weight=0.01,
                 z_loss_weight=0.001,
             ),
@@ -571,7 +571,7 @@ class TransformerConfig(Config):
                 name=MoEType.dropless,
                 num_experts=64,
                 hidden_size=int(0.5 * d_model),
-                router=MoERouterConfig(top_k=8, bias=False),
+                router=MoERouterConfig(top_k=8),
                 lb_loss_weight=0.01,
                 z_loss_weight=0.001,
             ),
@@ -882,7 +882,7 @@ class TransformerConfig(Config):
                 num_experts=num_experts,
                 hidden_size=expert_hidden_size,
                 capacity_factor=capacity_factor,
-                router=MoERouterConfig(top_k=top_k, bias=False),
+                router=MoERouterConfig(top_k=top_k),
                 shared_mlp=None
                 if shared_expert_hidden_size is None
                 else FeedForwardConfig(hidden_size=shared_expert_hidden_size, bias=False),
