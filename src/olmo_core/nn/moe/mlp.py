@@ -108,9 +108,6 @@ class MoEMLPBase(nn.Module):
         """
         Should be called before wrapping this module, or a parent module, with FSDP2.
         """
-        if True:
-            return
-
         from torch.distributed._composable.fsdp import fully_shard
 
         # If expert/tensor parallel is not enabled then we don't need to do anything special here.
