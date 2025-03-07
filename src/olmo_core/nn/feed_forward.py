@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor.parallel import parallelize_module
 from torch.distributed.tensor.placement_types import Placement
+from transformers.activations import PytorchGELUTanh
 
 from ..config import Config, DType, StrEnum
 from ..doc_utils import beta_feature
@@ -31,6 +32,11 @@ class FeedForwardType(StrEnum):
     normalized = "normalized"
     """
     ➡️ :class:`NormalizedFeedForward`
+    """
+
+    starcoder = "starcoder"
+    """
+    ➡️ :class:`Starcoder2FeedForward`
     """
 
 
@@ -58,7 +64,9 @@ class FeedForwardConfig(Config):
 
         params = 0
 
-        params += 3 * d_model * self.hidden_size
+        params += 2 * d_model * self.hidden_size
+        if self.name != FeedForwardType.starcoder:
+            params += d_model * self.hidden_size
         if bias:
             params += 2 * self.hidden_size + d_model
 
@@ -84,6 +92,8 @@ class FeedForwardConfig(Config):
                 return FeedForward(**kwargs)
             elif self.name == FeedForwardType.normalized:
                 return NormalizedFeedForward(**kwargs)
+            elif self.name == FeedForwardType.starcoder:
+                return StarCoder2FeedForward(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
@@ -139,6 +149,61 @@ class FeedForward(nn.Module):
                     output_layouts=output_layouts, use_local_output=use_local_output
                 ),
                 "w3": colwise_parallel(),
+            },
+        )
+
+
+class StarCoder2FeedForward(nn.Module):
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        hidden_size: int,
+        bias: bool = True,
+        dtype: torch.dtype = torch.float32,
+        init_device: str = "cpu",
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.hidden_size = hidden_size
+        """ 
+        e.g.
+        (mlp): Starcoder2MLP(
+          (c_fc): Linear(in_features=3072, out_features=12288, bias=True)
+          (c_proj): Linear(in_features=12288, out_features=3072, bias=True)
+          (act): PytorchGELUTanh()
+        """
+        self.w1 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
+        self.w2 = nn.Linear(hidden_size, d_model, bias=bias, dtype=dtype, device=init_device)
+        self.act = PytorchGELUTanh()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Run the feed-forward on the input ``x``.
+
+        :param x: The input of shape ``(*, d_model)``.
+        """
+        x = self.w1(x)
+        x = self.act(x)
+        x = self.w2(x)
+        return x
+
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        output_layouts: Optional[Placement] = None,
+        use_local_output: bool = True,
+        float8_enabled: bool = False,
+    ):
+        rowwise_parallel, colwise_parallel, _ = get_tp_wrappers(float8_enabled=float8_enabled)
+        parallelize_module(
+            module=self,
+            device_mesh=tp_mesh,
+            parallelize_plan={
+                "w1": colwise_parallel(),
+                "w2": rowwise_parallel(
+                    output_layouts=output_layouts, use_local_output=use_local_output
+                ),
             },
         )
 

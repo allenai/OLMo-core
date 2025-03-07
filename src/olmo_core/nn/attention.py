@@ -16,12 +16,7 @@ from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
 from .functional import l2_normalize
 from .layer_norm import LayerNorm, LayerNormConfig
-from .rope import (
-    ComplexRotaryEmbedding,
-    FusedRotaryEmbedding,
-    RoPEConfig,
-    RotaryEmbedding,
-)
+from .rope import ComplexRotaryEmbedding, FusedRotaryEmbedding, RoPEConfig, RotaryEmbedding
 from .utils import get_tp_wrappers
 
 __all__ = ["AttentionType", "AttentionConfig", "Attention", "FusedAttention", "NormalizedAttention"]
@@ -287,7 +282,7 @@ class Attention(nn.Module):
 
             # shape: (batch_size, n_heads, seq_len, head_dim)
             att = F.scaled_dot_product_attention(
-                q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
+                q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale, enable_gqa=True
             )
             # shape: (batch_size, seq_len, n_heads, head_dim)
             att = att.transpose(1, 2).contiguous()
