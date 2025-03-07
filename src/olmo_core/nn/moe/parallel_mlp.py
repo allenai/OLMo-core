@@ -87,6 +87,18 @@ class ParallelMLPBase(nn.Module):
         self.mlp.apply_tp(tp_mesh, **kwargs)
         self._expert_parallel_enabled = True
 
+    def prepare_experts_for_fsdp(self, **kwargs):
+        """
+        Should be called before wrapping this module with FSDP2.
+        """
+        self.mlp.prepare_experts_for_fsdp(**kwargs)
+
+    def prepare_experts_for_ddp(self, **kwargs):
+        """
+        Should be called before wrapping this module with DDP2.
+        """
+        self.mlp.prepare_experts_for_ddp(**kwargs)
+
     def indices_and_bins(
         self, expert_indices: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:

@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Shard, distribute_tensor
 
+from olmo_core.distributed.parallel import get_device_mesh_info
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.exceptions import OLMoConfigurationError
 
@@ -102,6 +103,55 @@ class MoEMLPBase(nn.Module):
         self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, mesh, placements)))  # type: ignore
         self.register_parameter("w2", nn.Parameter(distribute_tensor(self.w2, mesh, placements)))  # type: ignore
         self.register_parameter("w3", nn.Parameter(distribute_tensor(self.w3, mesh, placements)))  # type: ignore
+
+    def prepare_experts_for_fsdp(self, *, world_mesh: DeviceMesh, **kwargs):
+        """
+        Should be called before wrapping this module, or a parent module, with FSDP2.
+        """
+        if True:
+            return
+
+        from torch.distributed._composable.fsdp import fully_shard
+
+        # If expert/tensor parallel is not enabled then we don't need to do anything special here.
+        if self.ep_mesh is None:
+            return
+
+        if self.ep_mesh.mesh_dim_names is None:
+            raise RuntimeError("mesh must have named dimensions!")
+
+        if (dim_names := world_mesh.mesh_dim_names) is None:
+            raise RuntimeError("mesh must have named dimensions!")
+
+        # Shard local experts over the adjacent DP dimension.
+        dim_name = dim_names[dim_names.index(self.ep_mesh.mesh_dim_names[0]) - 1]
+        mesh = world_mesh[dim_name]
+
+        log.info(f"Sharding local experts over {get_device_mesh_info(mesh)}...")
+        fully_shard(self, mesh=mesh, **kwargs)
+
+    def prepare_experts_for_ddp(self, *, world_mesh: DeviceMesh):
+        """
+        Should be called before wrapping this module, or a parent module, with FSDP2.
+        """
+        from torch.distributed._composable.replicate import replicate
+
+        # If expert/tensor parallel is not enabled then we don't need to do anything special here.
+        if self.ep_mesh is None:
+            return
+
+        if self.ep_mesh.mesh_dim_names is None:
+            raise RuntimeError("mesh must have named dimensions!")
+
+        if (dim_names := world_mesh.mesh_dim_names) is None:
+            raise RuntimeError("mesh must have named dimensions!")
+
+        # Replicate local experts over the adjacent DP dimension.
+        dim_name = dim_names[dim_names.index(self.ep_mesh.mesh_dim_names[0]) - 1]
+        mesh = world_mesh[dim_name]
+
+        log.info(f"Replicating local experts {get_device_mesh_info(mesh)}...")
+        replicate(self, device_mesh=mesh)
 
 
 class MoEMLP(MoEMLPBase):
