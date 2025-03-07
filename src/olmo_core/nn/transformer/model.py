@@ -129,7 +129,8 @@ class Transformer(nn.Module):
     def compute_auxiliary_losses(
         self, total_bz: Union[int, torch.Tensor], reset: bool = True
     ) -> Dict[str, torch.Tensor]:
-        # NOTE: need to distributed loss tensors with DTen
+        # NOTE: if tensor parallelism is enabled you'll need to distribute loss tensors as DTensors.
+        # See how the MoETransformer handles that for an example.
         del total_bz, reset
         return {}
 
