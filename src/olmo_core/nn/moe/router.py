@@ -224,8 +224,8 @@ class MoELinearRouter(MoERouter):
         **kwargs,
     ):
         super().__init__(**kwargs)
-        # NOTE: this parameter needs to have a large enough first dimension (num experts) in order
-        # to be sharded over big world sizes with FSDP. So we flatten it to a single dimension tensor.
+        # NOTE: this parameter needs to have a large enough first dimension (which would be num experts)
+        # in order to be sharded over big world sizes with FSDP. So we flatten it to a single dimension tensor.
         # And for that reason we don't support a 'bias' option.
         self.weight = nn.Parameter(
             torch.empty(self.num_experts * self.d_model, device=init_device, dtype=dtype)
