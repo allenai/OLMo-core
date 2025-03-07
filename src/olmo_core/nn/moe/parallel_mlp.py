@@ -8,12 +8,6 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed import DeviceMesh
-from torch.distributed.tensor import Placement, Replicate, Shard
-from torch.distributed.tensor.parallel import (
-    PrepareModuleInput,
-    PrepareModuleOutput,
-    parallelize_module,
-)
 
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
 from olmo_core.utils import ensure_multiple_of, get_default_device, move_to_device
@@ -91,17 +85,6 @@ class ParallelMLPBase(nn.Module):
         Apply tensor parallelism.
         """
         self.mlp.apply_tp(tp_mesh, **kwargs)
-
-        parallelize_module(
-            self,
-            device_mesh=tp_mesh,
-            parallelize_plan=PrepareModuleInput(
-                input_layouts=(Shard(1),),
-                desired_input_layouts=(Shard(1),),
-                use_local_output=True,
-            ),
-        )
-
         self._expert_parallel_enabled = True
 
     def prepare_experts_for_fsdp(self, **kwargs):
@@ -161,7 +144,12 @@ class ParallelMLPBase(nn.Module):
         :returns: The output with the same shape as ``x`` and a tensor with shape ``(num_local_experts,)``
             containing the number of items/tokens routed to each (local) expert.
         """
-        x = get_local_tensor(x)
+        x, expert_weights, expert_indices = (
+            get_local_tensor(x),
+            get_local_tensor(expert_weights),
+            get_local_tensor(expert_indices),
+        )
+
         in_shape = x.size()
 
         # shape: (N, d_model)
