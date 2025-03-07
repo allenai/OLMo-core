@@ -16,7 +16,6 @@ from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerExpertParallelConfig,
-    TransformerTensorParallelConfig,
     TransformerTrainModuleConfig,
 )
 
@@ -68,15 +67,14 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp,
-            #  num_replicas=1,
+            name=DataParallelType.hsdp,
+            num_replicas=1,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             prefetch_factor=1,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
-        #  ep_config=TransformerExpertParallelConfig(degree=-1),
-        tp_config=TransformerTensorParallelConfig(degree=8),
+        ep_config=TransformerExpertParallelConfig(degree=-1),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=None,  # TODO: Z-loss on router logits, not sure if you want this
         max_grad_norm=1.0,
