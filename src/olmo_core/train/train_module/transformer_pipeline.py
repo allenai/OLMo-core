@@ -665,19 +665,12 @@ class TransformerPipelineTrainModule(TrainModule):
         for optim in self.optimizers:
             optim.zero_grad(set_to_none=True)
 
-    def model_forward(
-        self, input_ids: torch.Tensor, labels: torch.Tensor, **kwargs
-    ) -> Optional[torch.Tensor]:
+    def model_forward(self, input_ids: torch.Tensor, labels: torch.Tensor, **kwargs):
         """
-        Run a forward pass on a micro-batch, returning the logits and potentially the loss.
+        Run the pipeline.
         """
 
-        # Don't want the pipeline schedule to mess with kwargs, so we inject them with a hook.
-        def kwargs_saver(_, args_, kwargs_):
-            kwargs_.update(kwargs)
-            return (args_, kwargs_)
-
-        # We also don't want the pipeline schedule to save the logits from every stage because
+        # We don't want the pipeline schedule to save the logits from every stage because
         # that would blow up our memory usage, so we capture the output from the final stage
         # and only return the loss.
         def capture_losses(_, args_, output) -> torch.Tensor:
@@ -706,27 +699,20 @@ class TransformerPipelineTrainModule(TrainModule):
 
         handles = []
         for model in self.model_parts:
-            handle = model.register_forward_pre_hook(kwargs_saver, with_kwargs=True)
-            handles.append(handle)
-
             if model.lm_head is not None:
                 handle = model.register_forward_hook(capture_losses)
                 handles.append(handle)
 
         with self._model_forward_context():
-            output, _ = self.train_pp_schedule.step(
+            self.train_pp_schedule.step(
                 input_ids,
-                labels,
                 target=labels,
+                labels=labels,
+                **kwargs,
             )
-
-            if self.train_pp_schedule.is_last_stage:
-                assert output is not None
 
         for handle in handles:
             handle.remove()
-
-        return output
 
     def num_flops_per_token(self, seq_len: int) -> int:
         return self.model_parts[0].num_flops_per_token(seq_len)

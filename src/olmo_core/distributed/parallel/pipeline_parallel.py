@@ -151,13 +151,17 @@ class PipelineSchedule:
         target: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[Any, Optional[torch.Tensor]]:
+        """
+        :param args: Only passed to first stage.
+        :param kwargs: Passed to all stages.
+        """
         if self.is_first_stage:
             self.base_schedule.step(*args, **kwargs)
             return None, None
         elif self.is_last_stage:
             losses: Optional[List[torch.Tensor]] = [] if self.loss_fn is not None else None
-            output = self.base_schedule.step(target=target, losses=losses)
+            output = self.base_schedule.step(target=target, losses=losses, **kwargs)
             return output, None if losses is None else torch.stack(losses)
         else:
-            self.base_schedule.step()
+            self.base_schedule.step(**kwargs)
             return None, None
