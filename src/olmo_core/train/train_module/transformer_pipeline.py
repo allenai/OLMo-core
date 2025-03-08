@@ -426,7 +426,36 @@ class TransformerPipelineTrainModule(TrainModule):
 
     def loss_fn(self, output: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         del labels
-        return output.squeeze(0)
+
+        local_loss = get_local_tensor(output)
+        num_losses = local_loss.numel()
+
+        # Get loss to optimize for.
+        loss: torch.Tensor
+        ce_loss: torch.Tensor
+        z_loss: Optional[torch.Tensor] = None
+        if num_losses == 2:
+            ce_loss = local_loss[0].detach()
+            z_loss = local_loss[1].detach()
+            loss = output.sum()
+        elif num_losses == 1:
+            loss = output.squeeze(0)
+            ce_loss = loss.detach()
+        else:
+            raise RuntimeError(f"expected 1 or 2 losses, got {output.numel()} losses")
+
+        # Update overall CE batch loss.
+        if self._ce_batch_loss is None:
+            self._ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
+        self._ce_batch_loss += get_local_tensor(ce_loss.detach())
+
+        # Update overall Z batch loss.
+        if z_loss is not None:
+            if self._z_batch_loss is None:
+                self._z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
+            self._z_batch_loss += get_local_tensor(z_loss.detach())
+
+        return loss
 
     def on_attach(self):
         # Validate batch size.
@@ -679,23 +708,10 @@ class TransformerPipelineTrainModule(TrainModule):
             assert isinstance(output, LMOutputWithLoss)
             _, ce_loss, z_loss = output
 
-            # Get loss to optimize for.
-            loss = ce_loss
+            losses: List[torch.Tensor] = [ce_loss]
             if z_loss is not None:
-                loss += z_loss
-
-            # Update overall CE batch loss.
-            if self._ce_batch_loss is None:
-                self._ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
-            self._ce_batch_loss += get_local_tensor(ce_loss.detach())
-
-            # Update overall Z batch loss.
-            if z_loss is not None:
-                if self._z_batch_loss is None:
-                    self._z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
-                self._z_batch_loss += get_local_tensor(z_loss.detach())
-
-            return loss.unsqueeze(0)
+                losses.append(z_loss)
+            return torch.stack(losses)
 
         handles = []
         for model in self.model_parts:
