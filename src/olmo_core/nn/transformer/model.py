@@ -845,8 +845,6 @@ class MoETransformer(Transformer):
         reduce_dtype: torch.dtype = torch.float32,
         pp_enabled: bool = False,
     ):
-        from torch.distributed._composable.fsdp import MixedPrecisionPolicy
-
         for block in self.blocks.values():
             cast(MoETransformerBlock, block).feed_forward_moe.prepare_experts_for_fsdp(
                 world_mesh=world_mesh,
