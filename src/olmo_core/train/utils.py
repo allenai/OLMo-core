@@ -158,13 +158,14 @@ def validate_metrics(
     metrics_reduce_type: Dict[str, Optional[ReduceType]],
     process_group: Optional[dist.ProcessGroup] = None,
 ):
-    all_ranks_metrics_reduce_type = all_gather_object(metrics_reduce_type, group=process_group)
+    metrics_to_reduce = {k: v for k, v in metrics_reduce_type.items() if v is not None}
+    all_ranks_metrics_to_reduce = all_gather_object(metrics_to_reduce, group=process_group)
     for rank in range(get_world_size(process_group)):
-        if metrics_reduce_type != all_ranks_metrics_reduce_type[rank]:
+        if metrics_to_reduce != all_ranks_metrics_to_reduce[rank]:
             raise RuntimeError(
                 f"Ranks are logging different metrics!\n"
-                f"Rank {get_rank(process_group)}: {metrics_reduce_type}\n"
-                f"Rank {rank}: {all_ranks_metrics_reduce_type[rank]}"
+                f"Rank {get_rank(process_group)}: {metrics_to_reduce}\n"
+                f"Rank {rank}: {all_ranks_metrics_to_reduce[rank]}"
             )
 
 
