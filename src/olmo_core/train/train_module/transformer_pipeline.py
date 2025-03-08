@@ -584,7 +584,7 @@ class TransformerPipelineTrainModule(TrainModule):
                 loss_name,
                 loss_value / get_world_size(self.dp_process_group),
                 ReduceType.sum,
-                namespace="Train",
+                namespace="train",
             )
 
         # And additional metrics.
