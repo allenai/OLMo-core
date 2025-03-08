@@ -752,9 +752,8 @@ class TransformerPipelineTrainModule(TrainModule):
 
         handles = []
         for model in self.model_parts:
-            if model.lm_head is not None:
-                handles.append(model.register_forward_pre_hook(pass_losses_through))
-                handles.append(model.register_forward_hook(capture_losses))
+            handles.append(model.register_forward_pre_hook(pass_losses_through))
+            handles.append(model.register_forward_hook(capture_losses))
 
         with self._model_forward_context():
             self.train_pp_schedule.step(
