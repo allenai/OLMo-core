@@ -1,9 +1,9 @@
 """
-Example of how to train a Llama transformer language model with pipeline parallelism.
+Example of how to train an MoE transformer language model with pipeline parallelism.
 
 Launch this with torchrun:
 
-    torchrun --nproc-per-node=4 src/examples/llama/train_pipeline.py run_name [OVERRIDES...]
+    torchrun --nproc-per-node=4 src/examples/moe/train_pipeline.py run_name [OVERRIDES...]
 """
 
 import sys
@@ -54,7 +54,7 @@ class ExperimentConfig(Config):
 def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     tokenizer_config = TokenizerConfig.gpt2()
 
-    model_config = TransformerConfig.llama2_271M(
+    model_config = TransformerConfig.smallmoe(
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
     )
 

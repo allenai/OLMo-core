@@ -319,10 +319,6 @@ class TransformerPipelineTrainModule(TrainModule):
     ):
         super().__init__()
 
-        # TODO: (epwalsh) need to handle the MoE auxiliary losses correctly.
-        if model.is_moe:
-            raise NotImplementedError("Pipeline parallelism with MoE's is currently not supported")
-
         # Validate some options.
         if rank_microbatch_size % max_sequence_length != 0:
             raise OLMoConfigurationError(

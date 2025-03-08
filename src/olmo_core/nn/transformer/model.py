@@ -127,7 +127,7 @@ class Transformer(nn.Module):
         del block
 
     def compute_auxiliary_losses(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, torch.Tensor]:
         # NOTE: if tensor parallelism is enabled you'll need to distribute loss tensors as DTensors.
         # See how the MoETransformer handles that for an example.
@@ -138,7 +138,7 @@ class Transformer(nn.Module):
         pass
 
     def compute_auxiliary_metrics(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
         del total_bz, reset
         return {}
@@ -780,7 +780,7 @@ class MoETransformer(Transformer):
             )
 
     def compute_auxiliary_losses(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, torch.Tensor]:
         out: Dict[str, torch.Tensor] = {}
         for block in self.blocks.values():
@@ -805,7 +805,7 @@ class MoETransformer(Transformer):
             cast(MoETransformerBlock, block).reset_losses()
 
     def compute_auxiliary_metrics(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
         out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
         for block_idx, block in self.blocks.items():
