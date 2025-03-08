@@ -426,7 +426,7 @@ class TransformerPipelineTrainModule(TrainModule):
 
     def loss_fn(self, output: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         del labels
-        return output
+        return output.squeeze(0)
 
     def on_attach(self):
         # Validate batch size.
@@ -695,7 +695,7 @@ class TransformerPipelineTrainModule(TrainModule):
                     self._z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
                 self._z_batch_loss += get_local_tensor(z_loss.detach())
 
-            return loss
+            return loss.unsqueeze(0)
 
         handles = []
         for model in self.model_parts:
