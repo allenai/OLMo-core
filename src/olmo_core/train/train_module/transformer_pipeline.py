@@ -733,11 +733,11 @@ class TransformerPipelineTrainModule(TrainModule):
                 if z_loss is not None:
                     losses.append(z_loss)
                     record_loss(Z_LOSS_NAME, z_loss)
-                return torch.stack(losses).sum()
+                return torch.stack(losses).sum(0, keepdim=True)
             else:
                 assert isinstance(output, torch.Tensor)
                 if losses:
-                    return output, torch.stack(losses).sum()
+                    return output, torch.stack(losses).sum(0, keepdim=True)
                 else:
                     return output
 
