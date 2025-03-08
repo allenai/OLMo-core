@@ -702,6 +702,7 @@ class TransformerPipelineTrainModule(TrainModule):
         """
 
         losses_to_record: Dict[str, torch.Tensor] = {}
+        current_stage_loss: Optional[torch.Tensor] = None
 
         def record_loss(name: str, value: torch.Tensor):
             nonlocal losses_to_record
@@ -715,8 +716,12 @@ class TransformerPipelineTrainModule(TrainModule):
             model: Transformer, args, output
         ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
             del args
+            nonlocal current_stage_loss
 
             losses: List[torch.Tensor] = []
+            if current_stage_loss is not None:
+                losses.append(current_stage_loss)
+                current_stage_loss = None
 
             # Get auxiliary losses.
             for name, value in model.compute_auxiliary_losses(
@@ -741,11 +746,22 @@ class TransformerPipelineTrainModule(TrainModule):
                 else:
                     return output
 
+        def pass_losses_through(model: Transformer, args: Tuple[torch.Tensor, ...]) -> torch.Tensor:
+            del model
+            nonlocal current_stage_loss
+            assert current_stage_loss is None
+
+            if len(args) > 1:
+                assert len(args) == 2
+                current_stage_loss = args[1]
+
+            return args[0]
+
         handles = []
         for model in self.model_parts:
             if model.lm_head is not None:
-                handle = model.register_forward_hook(capture_losses)
-                handles.append(handle)
+                handles.append(model.register_forward_pre_hook(pass_losses_through, prepend=True))
+                handles.append(model.register_forward_hook(capture_losses))
 
         with self._model_forward_context():
             self.train_pp_schedule.step(
