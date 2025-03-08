@@ -340,6 +340,10 @@ class TransformerPipelineTrainModule(TrainModule):
         self._pp_stages: Optional[List[PipelineStage]] = None
         pp_mesh = get_pp_mesh(self.world_mesh)
         stages, model_parts = pp_config.split_model(model, pp_mesh=pp_mesh, device=self.device)
+        # NOTE: each rank needs at least one block, otherwise ranks might have different auxiliary
+        # metrics which causes issues in the trainer when it tries to reduce those metrics.
+        if not any([len(model.blocks) > 0 for model in model_parts]):
+            raise RuntimeError("Each rank needs at least one transformer block in its stages")
         self._pp_stages = stages
         log.info(f"Applied pipeline parallelism to the model with {get_device_mesh_info(pp_mesh)}")
 
@@ -588,20 +592,17 @@ class TransformerPipelineTrainModule(TrainModule):
             )
 
         # And additional metrics.
-        # TODO: need to handle the case where different ranks have different metrics due to having
-        # different blocks.
         for model in self.model_parts:
-            model.reset_auxiliary_metrics()
-            #  for metric_name, (metric_val, reduction) in model.compute_auxiliary_metrics(
-            #      batch_num_tokens_for_loss,
-            #      reset=True,
-            #  ).items():
-            #      self.record_metric(
-            #          metric_name,
-            #          metric_val,
-            #          reduction,
-            #          namespace="train",
-            #      )
+            for metric_name, (metric_val, reduction) in model.compute_auxiliary_metrics(
+                batch_num_tokens_for_loss,
+                reset=True,
+            ).items():
+                self.record_metric(
+                    metric_name,
+                    metric_val,
+                    reduction,
+                    namespace="train",
+                )
 
     def eval_batch(self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None) -> Any:
         del batch, labels

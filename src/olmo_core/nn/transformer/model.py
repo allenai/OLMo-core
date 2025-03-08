@@ -807,12 +807,45 @@ class MoETransformer(Transformer):
     def compute_auxiliary_metrics(
         self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
-        out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
+        needs_reduction = False
+        metrics_by_block: Dict[int, Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]] = {}
         for block_idx, block in self.blocks.items():
-            for metric_name, metric_val in (
-                cast(MoETransformerBlock, block).compute_metrics(total_bz, reset=reset).items()
-            ):
+            block = cast(MoETransformerBlock, block)
+            block_metrics = block.compute_metrics(total_bz, reset=reset)
+            if not needs_reduction:
+                for _, reduce_type in block_metrics.values():
+                    if reduce_type is not None:
+                        needs_reduction = True
+                        break
+            metrics_by_block[int(block_idx)] = block_metrics
+
+        # NOTE: we need to return metrics for each block, even missing blocks when using pipeline
+        # parallelism, otherwise the trainer won't be able to reduce the metrics.
+        if self.n_layers != len(self.blocks) and needs_reduction:
+            from olmo_core.train.common import ReduceType
+
+            assert len(self.blocks) > 0  # need at least one in order to infer metrics
+            example_metrics: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
+            for metric_name, (_, metric_reduce_type) in next(
+                iter(metrics_by_block.values())
+            ).items():
+                if metric_reduce_type == ReduceType.max:
+                    example_metrics[metric_name] = (torch.tensor(float("-inf")), ReduceType.max)
+                elif metric_reduce_type is not None:
+                    raise RuntimeError(
+                        f"unable to infer fake metrics for '{metric_name}' with reduce type '{metric_reduce_type}'"
+                    )
+
+            for block_idx in range(self.n_layers):
+                if block_idx not in metrics_by_block:
+                    metrics_by_block[block_idx] = example_metrics
+
+        # Flatten out metrics and name by block.
+        out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
+        for block_idx, block_metrics in metrics_by_block.items():
+            for metric_name, metric_val in block_metrics.items():
                 out[f"block {int(block_idx):02d}/{metric_name}"] = metric_val
+
         return out
 
     def reset_auxiliary_metrics(self):
