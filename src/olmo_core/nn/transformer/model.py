@@ -13,7 +13,12 @@ from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
+from olmo_core.utils import (
+    get_default_device,
+    mark_dynamic,
+    min_value_of_dtype,
+    move_to_device,
+)
 
 from ..attention import (
     Attention,
@@ -830,7 +835,10 @@ class MoETransformer(Transformer):
                 iter(metrics_by_block.values())
             ).items():
                 if metric_reduce_type == ReduceType.max:
-                    example_metrics[metric_name] = (torch.tensor(float("-inf")), ReduceType.max)
+                    example_metrics[metric_name] = (
+                        torch.tensor(min_value_of_dtype(torch.float)),
+                        ReduceType.max,
+                    )
                 elif metric_reduce_type is not None:
                     raise RuntimeError(
                         f"unable to infer fake metrics for '{metric_name}' with reduce type '{metric_reduce_type}'"
@@ -844,7 +852,7 @@ class MoETransformer(Transformer):
         out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
         for block_idx, block_metrics in metrics_by_block.items():
             for metric_name, metric_val in block_metrics.items():
-                out[f"block {int(block_idx):02d}/{metric_name}"] = metric_val
+                out[f"block {block_idx:02d}/{metric_name}"] = metric_val
 
         return out
 
