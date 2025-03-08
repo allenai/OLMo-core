@@ -134,12 +134,6 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
             if not is_last:
                 model_chunk.lm_head = None  # type: ignore
 
-            if len(model_chunk.blocks) == 0:
-                # NOTE: need at least one block in each stage in order to handle auxiliary losses
-                # correctly. It's possible to get around this if all ranks are aware of all of the
-                # auxiliary losses, but this is probably an unlikely scenario anyway.
-                raise RuntimeError("All pipeline stages must have at least one transformer block")
-
             stage = PipelineStage(
                 model_chunk,
                 stage_idx,
@@ -594,17 +588,20 @@ class TransformerPipelineTrainModule(TrainModule):
             )
 
         # And additional metrics.
+        # TODO: need to handle the case where different ranks have different metrics due to having
+        # different blocks.
         for model in self.model_parts:
-            for metric_name, (metric_val, reduction) in model.compute_auxiliary_metrics(
-                batch_num_tokens_for_loss,
-                reset=True,
-            ).items():
-                self.record_metric(
-                    metric_name,
-                    metric_val,
-                    reduction,
-                    namespace="train",
-                )
+            model.reset_auxiliary_metrics()
+            #  for metric_name, (metric_val, reduction) in model.compute_auxiliary_metrics(
+            #      batch_num_tokens_for_loss,
+            #      reset=True,
+            #  ).items():
+            #      self.record_metric(
+            #          metric_name,
+            #          metric_val,
+            #          reduction,
+            #          namespace="train",
+            #      )
 
     def eval_batch(self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None) -> Any:
         del batch, labels
