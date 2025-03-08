@@ -699,7 +699,8 @@ class TransformerTrainModule(TrainModule):
 
         # And additional metrics.
         for metric_name, (metric_val, reduction) in self.model.compute_auxiliary_metrics(
-            batch_num_tokens_for_loss
+            batch_num_tokens_for_loss,
+            reset=True,
         ).items():
             self.record_metric(
                 metric_name,

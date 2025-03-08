@@ -22,7 +22,7 @@ class MoELoss(metaclass=ABCMeta):
 
     @abstractmethod
     def compute(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True, **kwargs
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True, **kwargs
     ) -> Dict[str, torch.Tensor]:
         raise NotImplementedError
 
@@ -59,7 +59,7 @@ class MoELoadBalancingLoss(MoELoss):
             self.loss += loss
 
     def compute(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True, **kwargs
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True, **kwargs
     ) -> Dict[str, torch.Tensor]:
         del kwargs
         if self.loss is None:
@@ -91,7 +91,7 @@ class MoERouterZLoss(MoELoss):
             self.loss += loss
 
     def compute(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True, **kwargs
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True, **kwargs
     ) -> Dict[str, torch.Tensor]:
         del kwargs
         if self.loss is None:

@@ -4,7 +4,7 @@ import logging
 import math
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import Any, Dict, Generator, List, Optional, Tuple, cast
+from typing import Any, Dict, Generator, List, Optional, Tuple, Union, cast
 
 import torch
 import torch.distributed as dist
@@ -35,7 +35,7 @@ from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.transformer import NormalizedTransformer, Transformer
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
-from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
+from olmo_core.utils import gc_cuda, get_default_device, log_once
 
 from ..common import ReduceType
 from .train_module import EvalBatchSizeUnit, EvalBatchSpec, TrainModule
@@ -49,6 +49,10 @@ from .transformer import (
 )
 
 log = logging.getLogger(__name__)
+
+
+CE_LOSS_NAME = "CE loss"
+Z_LOSS_NAME = "Z loss"
 
 
 @beta_feature
@@ -129,6 +133,12 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
 
             if not is_last:
                 model_chunk.lm_head = None  # type: ignore
+
+            if len(model_chunk.blocks) == 0:
+                # NOTE: need at least one block in each stage in order to handle auxiliary losses
+                # correctly. It's possible to get around this if all ranks are aware of all of the
+                # auxiliary losses, but this is probably an unlikely scenario anyway.
+                raise RuntimeError("All pipeline stages must have at least one transformer block")
 
             stage = PipelineStage(
                 model_chunk,
@@ -389,9 +399,6 @@ class TransformerPipelineTrainModule(TrainModule):
                 "Pipeline parallelism with a SkipStepOptimizer is currently not supported"
             )
 
-        self._ce_batch_loss: Optional[torch.Tensor] = None
-        self._z_batch_loss: Optional[torch.Tensor] = None
-
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
         return get_dp_process_group(self.world_mesh)
@@ -425,37 +432,9 @@ class TransformerPipelineTrainModule(TrainModule):
         return self._train_pp_schedule
 
     def loss_fn(self, output: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        # NOTE: the output is the loss.
         del labels
-
-        local_loss = get_local_tensor(output)
-        num_losses = local_loss.numel()
-
-        # Get loss to optimize for.
-        loss: torch.Tensor
-        ce_loss: torch.Tensor
-        z_loss: Optional[torch.Tensor] = None
-        if num_losses == 2:
-            ce_loss = local_loss[0].detach()
-            z_loss = local_loss[1].detach()
-            loss = output.sum()
-        elif num_losses == 1:
-            loss = output.squeeze(0)
-            ce_loss = loss.detach()
-        else:
-            raise RuntimeError(f"expected 1 or 2 losses, got {output.numel()} losses")
-
-        # Update overall CE batch loss.
-        if self._ce_batch_loss is None:
-            self._ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
-        self._ce_batch_loss += get_local_tensor(ce_loss.detach())
-
-        # Update overall Z batch loss.
-        if z_loss is not None:
-            if self._z_batch_loss is None:
-                self._z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
-            self._z_batch_loss += get_local_tensor(z_loss.detach())
-
-        return loss
+        return output
 
     def on_attach(self):
         # Validate batch size.
@@ -571,48 +550,65 @@ class TransformerPipelineTrainModule(TrainModule):
         # Run pipeline schedule.
         input_ids, labels, model_kwargs = self._prepare_batch(batch, labels)
         assert labels is not None
-        self.model_forward(
+        losses_to_record = self.run_pipeline(
             input_ids,
             labels,
+            batch_num_tokens_for_loss,
             ignore_index=self.label_ignore_index,
             loss_reduction="sum",
             z_loss_multiplier=self.z_loss_multiplier,
-            loss_div_factor=batch_num_tokens_for_loss,
             return_logits=False,
             **model_kwargs,
         )
 
         if dry_run:
-            self._clear_loss_buffers()
+            for model in self.model_parts:
+                model.reset_auxiliary_losses()
+                model.reset_auxiliary_metrics()
             return
 
-        # Record loss metrics.
-        # NOTE: losses could be none for pipeline parallelism if rank doesn't have the final stage.
-        if self._ce_batch_loss is None:
-            self.record_ce_loss(0.0, ReduceType.sum)
-        else:
+        # Record all of the losses we captured.
+        # NOTE: main losses will be missing for non-final stages.
+
+        if CE_LOSS_NAME in losses_to_record:
             self.record_ce_loss(
-                self._ce_batch_loss / get_world_size(self.dp_process_group), ReduceType.sum
+                losses_to_record.pop(CE_LOSS_NAME) / get_world_size(self.dp_process_group),
+                ReduceType.sum,
             )
+        else:
+            self.record_ce_loss(0.0, ReduceType.sum)
+
         if self.z_loss_multiplier is not None:
-            if self._z_batch_loss is None:
-                self.record_metric("Z loss", 0.0, ReduceType.sum, namespace="train")
-            else:
+            if Z_LOSS_NAME in losses_to_record:
                 self.record_metric(
                     "Z loss",
-                    self._z_batch_loss / get_world_size(self.dp_process_group),
+                    losses_to_record.pop(Z_LOSS_NAME) / get_world_size(self.dp_process_group),
                     ReduceType.sum,
                     namespace="train",
                 )
-        # TODO: handle model auxiliary losses, like with MoE.
+            else:
+                self.record_metric("Z loss", 0.0, ReduceType.sum, namespace="train")
 
-        for optim in self.optimizers:
-            if isinstance(optim, SkipStepOptimizer):
-                assert self._ce_batch_loss is not None
-                optim.latest_loss = self._ce_batch_loss
+        for loss_name, loss_value in losses_to_record.items():
+            self.record_metric(
+                loss_name,
+                loss_value / get_world_size(self.dp_process_group),
+                ReduceType.sum,
+                namespace="Train",
+            )
 
-        # Lastly, clear internal loss buffers.
-        self._clear_loss_buffers()
+        # And additional metrics.
+        for model in self.model_parts:
+            for metric_name, (metric_val, reduction) in model.compute_auxiliary_metrics(
+                batch_num_tokens_for_loss,
+                reset=True,
+            ).items():
+                self.record_metric(
+                    metric_name,
+                    metric_val,
+                    reduction,
+                    namespace="train",
+                )
 
     def eval_batch(self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None) -> Any:
         del batch, labels
@@ -694,24 +690,56 @@ class TransformerPipelineTrainModule(TrainModule):
         for optim in self.optimizers:
             optim.zero_grad(set_to_none=True)
 
-    def model_forward(self, input_ids: torch.Tensor, labels: torch.Tensor, **kwargs):
+    def run_pipeline(
+        self,
+        input_ids: torch.Tensor,
+        labels: torch.Tensor,
+        batch_num_tokens_for_loss: Union[int, float],
+        **kwargs,
+    ) -> Dict[str, torch.Tensor]:
         """
-        Run the pipeline.
+        Run the pipeline, returning the losses captured.
         """
 
-        # We don't want the pipeline schedule to save the logits from every stage because
-        # that would blow up our memory usage, so we capture the output from the final stage
-        # and only return the loss.
-        def capture_losses(_, args_, output) -> torch.Tensor:
-            del args_
+        losses_to_record: Dict[str, torch.Tensor] = {}
 
-            assert isinstance(output, LMOutputWithLoss)
-            _, ce_loss, z_loss = output
+        def record_loss(name: str, value: torch.Tensor):
+            nonlocal losses_to_record
+            value = get_local_tensor(value.detach()).float()
+            if name in losses_to_record:
+                losses_to_record[name] += value
+            else:
+                losses_to_record[name] = value
 
-            losses: List[torch.Tensor] = [ce_loss]
-            if z_loss is not None:
-                losses.append(z_loss)
-            return torch.stack(losses)
+        def capture_losses(
+            model: Transformer, args, output
+        ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+            del args
+
+            losses: List[torch.Tensor] = []
+
+            # Get auxiliary losses.
+            for name, value in model.compute_auxiliary_losses(
+                total_bz=batch_num_tokens_for_loss, reset=True
+            ).items():
+                losses.append(value)
+                record_loss(name, value)
+
+            if model.lm_head is not None:
+                assert isinstance(output, LMOutputWithLoss)
+                _, ce_loss, z_loss = output
+                losses.append(ce_loss)
+                record_loss(CE_LOSS_NAME, ce_loss)
+                if z_loss is not None:
+                    losses.append(z_loss)
+                    record_loss(Z_LOSS_NAME, z_loss)
+                return torch.stack(losses).sum()
+            else:
+                assert isinstance(output, torch.Tensor)
+                if losses:
+                    return output, torch.stack(losses).sum()
+                else:
+                    return output
 
         handles = []
         for model in self.model_parts:
@@ -723,6 +751,7 @@ class TransformerPipelineTrainModule(TrainModule):
             self.train_pp_schedule.step(
                 input_ids,
                 target=labels,
+                loss_div_factor=batch_num_tokens_for_loss,
                 labels=labels,
                 **kwargs,
             )
@@ -730,22 +759,18 @@ class TransformerPipelineTrainModule(TrainModule):
         for handle in handles:
             handle.remove()
 
+        return losses_to_record
+
     def num_flops_per_token(self, seq_len: int) -> int:
         return self.model_parts[0].num_flops_per_token(seq_len)
 
     @contextlib.contextmanager
     def _model_forward_context(self) -> Generator[None, None, None]:
         with contextlib.ExitStack() as stack:
+            # TODO: FSDP optimizations like in other train module
             if self.autocast_precision is not None:
                 stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
             yield
-
-    def _clear_loss_buffers(self):
-        self._ce_batch_loss = None
-        self._z_batch_loss = None
-        for model in self.model_parts:
-            model.reset_auxiliary_losses()
-            model.reset_auxiliary_metrics()
 
     def _get_state_dict(self, sd_options: dist_cp_sd.StateDictOptions) -> Dict[str, Any]:
         return {
