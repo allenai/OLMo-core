@@ -806,6 +806,9 @@ class TransformerPipelineTrainModule(TrainModule):
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
         input_ids = batch.pop("input_ids")
         labels = labels if labels is not None else batch.pop("labels", None)
+        kwargs: Dict[str, Any] = {}
         if "doc_lens" in batch and "max_doc_lens" in batch:
             log_once(log, "intra-document masking enabled")
-        return input_ids, labels, batch
+            kwargs["doc_lens"] = batch["doc_lens"]
+            kwargs["max_doc_lens"] = batch["max_doc_lens"]
+        return input_ids, labels, kwargs
