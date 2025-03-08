@@ -376,8 +376,9 @@ class Transformer(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,
-        labels: Optional[torch.Tensor] = None,
+        _previous_stage_loss: Optional[torch.Tensor] = None,  # for pipeline parallelism
         *,
+        labels: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
@@ -392,6 +393,8 @@ class Transformer(nn.Module):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
+        del _previous_stage_loss
+
         input_ids, labels, block_kwargs, lm_head_kwargs = self._prepare_inputs(
             input_ids,
             labels,
