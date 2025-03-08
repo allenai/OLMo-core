@@ -724,7 +724,7 @@ class TransformerPipelineTrainModule(TrainModule):
 
             nonlocal current_stage_loss
             if current_stage_loss is not None:
-                losses.append(current_stage_loss)
+                losses.append(current_stage_loss.squeeze(0))
                 current_stage_loss = None
 
             # Get auxiliary losses.
