@@ -15,7 +15,9 @@ from packaging.version import parse as parse_version
 
 from ..config import Config
 from ..distributed.utils import (
+    all_gather_object,
     get_local_tensor,
+    get_rank,
     get_reduce_divide_factor,
     get_world_size,
     is_distributed,
@@ -152,13 +154,31 @@ def move_metrics(
     return target
 
 
+def validate_metrics(
+    metrics_reduce_type: Dict[str, Optional[ReduceType]],
+    process_group: Optional[dist.ProcessGroup] = None,
+):
+    all_ranks_metrics_reduce_type = all_gather_object(metrics_reduce_type, group=process_group)
+    for rank in range(get_world_size(process_group)):
+        if metrics_reduce_type != all_ranks_metrics_reduce_type[rank]:
+            raise RuntimeError(
+                f"Ranks are logging different metrics!\n"
+                f"Rank {get_rank(process_group)}: {metrics_reduce_type}\n"
+                f"Rank {rank}: {all_ranks_metrics_reduce_type[rank]}"
+            )
+
+
 @torch.no_grad()
 def reduce_metrics(
     metrics: Dict[int, Dict[str, torch.Tensor]],
     metrics_reduce_type: Dict[str, Optional[ReduceType]],
     device: torch.device,
     process_group: Optional[dist.ProcessGroup] = None,
+    validate: bool = False,
 ) -> Dict[int, Dict[str, float]]:
+    if validate:
+        validate_metrics(metrics_reduce_type, process_group=process_group)
+
     metrics = move_metrics(metrics, device)
     out: Dict[int, Dict[str, float]] = defaultdict(dict)
 

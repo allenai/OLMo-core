@@ -250,6 +250,7 @@ class Trainer:
     _thread_pool: Optional[ThreadPoolExecutor] = None
     _bookkeeping_pg: Optional[dist.ProcessGroup] = None
     _checkpoint_loaded: bool = False
+    _metrics_validated: bool = False
 
     def __post_init__(self):
         self.save_folder = normalize_path(self.save_folder)
@@ -999,8 +1000,10 @@ class Trainer:
             self._metrics_reduce_type,
             self.bookkeeping_device,
             process_group=self.bookkeeping_pg,
+            validate=not self._metrics_validated,
             cb=self._check_and_pass_on_metrics,
         )
+        self._metrics_validated = True
 
     def _check_and_pass_on_metrics(self, metrics: Dict[int, Dict[str, float]]):
         for step in sorted(metrics.keys()):
