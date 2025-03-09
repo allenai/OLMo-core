@@ -566,28 +566,24 @@ class TransformerPipelineTrainModule(TrainModule):
 
         if CE_LOSS_NAME in losses_to_record:
             self.record_ce_loss(
-                losses_to_record.pop(CE_LOSS_NAME) / get_world_size(self.dp_process_group),
-                ReduceType.sum,
+                losses_to_record.pop(CE_LOSS_NAME),
+                ReduceType.mean,
             )
-        else:
-            self.record_ce_loss(0.0, ReduceType.sum)
 
         if self.z_loss_multiplier is not None:
             if Z_LOSS_NAME in losses_to_record:
                 self.record_metric(
                     "Z loss",
-                    losses_to_record.pop(Z_LOSS_NAME) / get_world_size(self.dp_process_group),
-                    ReduceType.sum,
+                    losses_to_record.pop(Z_LOSS_NAME),
+                    ReduceType.mean,
                     namespace="train",
                 )
-            else:
-                self.record_metric("Z loss", 0.0, ReduceType.sum, namespace="train")
 
         for loss_name, loss_value in losses_to_record.items():
             self.record_metric(
                 loss_name,
-                loss_value / get_world_size(self.dp_process_group),
-                ReduceType.sum,
+                loss_value,
+                ReduceType.mean,
                 namespace="train",
             )
 
