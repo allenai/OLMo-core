@@ -807,6 +807,12 @@ class Trainer:
         if self.global_step not in self._metrics:
             self._metrics[self.global_step] = OrderedDict()
         self._metrics[self.global_step][name] = value
+        # reduce type must be consistent to avoid issues
+        if name in self._metrics_reduce_type and self._metrics_reduce_type[name] != reduce_type:
+            raise RuntimeError(
+                f"expected '{self._metrics_reduce_type[name]}' reduce type for metric '{name}' "
+                f"based on last record, but got '{reduce_type}' this time"
+            )
         self._metrics_reduce_type[name] = reduce_type
 
     def record_ce_loss(
