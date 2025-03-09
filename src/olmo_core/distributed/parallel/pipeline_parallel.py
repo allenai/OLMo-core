@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, Iterable, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -28,6 +28,7 @@ class PipelineScheduleType(StrEnum):
     gpipe = "GPipe"
     looped_bfs = "LoopedBFS"
     interleaved_zero_bubble = "InterleavedZeroBubble"
+    zbv_zero_bubble = "ZBVZeroBubble"
 
     @property
     def is_single_stage(self) -> bool:
@@ -39,6 +40,11 @@ class PipelineScheduleType(StrEnum):
     @property
     def is_multi_stage(self) -> bool:
         return not self.is_single_stage
+
+
+class PipelineSplitStyle(StrEnum):
+    loop = "loop"
+    v = "v"
 
 
 @dataclass
@@ -57,9 +63,31 @@ class PipelineParallelConfig(Config):
     The name of the schedule.
     """
 
-    def stage_ids_this_rank(
-        self, pp_rank: int, num_stages: int, style: str = "loop"
-    ) -> Tuple[int, ...]:
+    style: PipelineSplitStyle
+    """
+    The split style.
+    """
+
+    def final_stage_rank(self) -> int:
+        if self.style == PipelineSplitStyle.loop:
+            return self.degree - 1
+        elif self.style == PipelineSplitStyle.v:
+            return 0
+        else:
+            raise NotImplementedError(self.style)
+
+    def rank_completion_order(self) -> Iterable[int]:
+        """
+        The order that ranks within the PP group will complete a batch.
+        """
+        if self.style == PipelineSplitStyle.loop:
+            return range(self.degree)
+        elif self.style == PipelineSplitStyle.v:
+            return range(self.degree - 1, -1, -1)
+        else:
+            raise NotImplementedError(self.style)
+
+    def stage_ids_this_rank(self, pp_rank: int, num_stages: int) -> Tuple[int, ...]:
         """
         Compute the stage ids for the stages that will run on this pp rank for either a looped or
         V style schedule.
@@ -70,9 +98,9 @@ class PipelineParallelConfig(Config):
             )
 
         stages_per_rank = num_stages // self.degree
-        if style == "loop":
+        if self.style == PipelineSplitStyle.loop:
             return tuple(pp_rank + s * self.degree for s in range(stages_per_rank))
-        elif style == "v":
+        elif self.style == PipelineSplitStyle.v:
             assert (
                 stages_per_rank == 2
             ), f"v schedules assume 2 stages per rank, got {stages_per_rank}"
@@ -81,7 +109,7 @@ class PipelineParallelConfig(Config):
             )
             return stage_v_pairs[pp_rank]
         else:
-            raise NotImplementedError(style)
+            raise NotImplementedError(self.style)
 
 
 class PipelineSchedule:

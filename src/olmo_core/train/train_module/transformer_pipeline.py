@@ -3,7 +3,7 @@ import copy
 import logging
 import math
 from dataclasses import dataclass, replace
-from functools import partial
+from functools import cached_property, partial
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union, cast
 
 import torch
@@ -27,7 +27,12 @@ from olmo_core.distributed.parallel import (
     get_dp_process_group,
     get_pp_mesh,
 )
-from olmo_core.distributed.utils import get_local_tensor, get_world_size
+from olmo_core.distributed.utils import (
+    get_local_tensor,
+    get_rank,
+    get_reduce_divide_factor,
+    get_world_size,
+)
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
@@ -35,7 +40,7 @@ from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.transformer import NormalizedTransformer, Transformer
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
-from olmo_core.utils import gc_cuda, get_default_device, log_once
+from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
 
 from ..common import TRAIN_CE_LOSS_METRIC, TRAIN_Z_LOSS_METRIC, ReduceType
 from .train_module import EvalBatchSizeUnit, EvalBatchSpec, TrainModule
@@ -144,7 +149,7 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
 
         stages = []
         models = []
-        for stage_idx in self.stage_ids_this_rank(pp_rank, num_stages, style="loop"):
+        for stage_idx in self.stage_ids_this_rank(pp_rank, num_stages):
             start_layer = split_points[stage_idx - 1] if stage_idx > 0 else None
             stop_layer = split_points[stage_idx] if stage_idx < num_stages - 1 else None
             stage, model_chunk = build_stage(
@@ -322,23 +327,33 @@ class TransformerPipelineTrainModule(TrainModule):
         self.world_mesh = build_world_mesh(
             dp=dp_config, tp=tp_config, cp=cp_config, pp=pp_config, device_type=self.device.type
         )
-        log.info(f"Data parallel world size = {get_world_size(self.dp_process_group):,d}")
+        self.dp_world_size = get_world_size(self.dp_process_group)
+        log.info(f"Data parallel world size = {self.dp_world_size:,d}")
 
         self.float8_handler: Optional[Float8Handler] = None
         if float8_config is not None:
             float8_config.compile = compile_model
             self.float8_handler = float8_config.build()
 
-        # Split model into pipeline stages.
         self._pp_config = pp_config
         # We'll initialize this lazily when the trainer is attached, since we need to know
         # the global batch size in order to determine the number of pipeline micro-batches.
         self._train_pp_schedule: Optional[PipelineSchedule] = None
         self._pp_stages: Optional[List[PipelineStage]] = None
-        pp_mesh = get_pp_mesh(self.world_mesh)
-        stages, model_parts = pp_config.split_model(model, pp_mesh=pp_mesh, device=self.device)
+        self.pp_mesh = get_pp_mesh(self.world_mesh)
+        self.pp_group = self.pp_mesh.get_group()
+        self.pp_group_rank = get_rank(self.pp_group)
+        self.pp_group_size = get_world_size(self.pp_group)
+        self.pp_prev_rank = (self.pp_group_rank - 1) % self.pp_group_size
+        self.pp_next_rank = (self.pp_group_rank + 1) % self.pp_group_size
+        self.pp_final_stage_rank = self._pp_config.final_stage_rank()
+
+        # Split model into pipeline stages.
+        stages, model_parts = pp_config.split_model(model, pp_mesh=self.pp_mesh, device=self.device)
         self._pp_stages = stages
-        log.info(f"Applied pipeline parallelism to the model with {get_device_mesh_info(pp_mesh)}")
+        log.info(
+            f"Applied pipeline parallelism to the model with {get_device_mesh_info(self.pp_mesh)}"
+        )
 
         # Parallelize model parts.
         self.model_parts: List[Transformer] = parallelize_model(
@@ -382,13 +397,6 @@ class TransformerPipelineTrainModule(TrainModule):
             optim.build(model, strict=False) for model in self.model_parts
         ]
 
-        # TODO: (epwalsh) add support for SkipStepOptimizers. Just need to reduce loss before
-        # optimizer step.
-        if isinstance(self.optimizers[0], SkipStepOptimizer):
-            raise NotImplementedError(
-                "Pipeline parallelism with a SkipStepOptimizer is currently not supported"
-            )
-
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
         return get_dp_process_group(self.world_mesh)
@@ -420,6 +428,10 @@ class TransformerPipelineTrainModule(TrainModule):
         self.trainer  # make sure trainer has been attached before trying to access this
         assert self._train_pp_schedule is not None
         return self._train_pp_schedule
+
+    @cached_property
+    def _reduce_divide_factor(self) -> float:
+        return get_reduce_divide_factor(get_world_size(self.dp_process_group))
 
     def loss_fn(self, output: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         # NOTE: the output is the loss.
@@ -559,7 +571,8 @@ class TransformerPipelineTrainModule(TrainModule):
 
         # Record all of the losses we captured.
         # NOTE: main losses will be missing for non-final stages.
-        if (ce_loss := losses_to_record.pop(TRAIN_CE_LOSS_METRIC, None)) is not None:
+        ce_loss = losses_to_record.pop(TRAIN_CE_LOSS_METRIC, None)
+        if ce_loss is not None:
             self.record_metric(TRAIN_CE_LOSS_METRIC, ce_loss, ReduceType.mean)
         if (z_loss := losses_to_record.pop(TRAIN_Z_LOSS_METRIC, None)) is not None:
             self.record_metric(TRAIN_Z_LOSS_METRIC, z_loss, ReduceType.mean)
@@ -573,6 +586,33 @@ class TransformerPipelineTrainModule(TrainModule):
                 reset=True,
             ).items():
                 self.record_metric(metric_name, metric_val, reduction, namespace="train")
+
+        # If we have a SkipStepOptimizer we'll reduce the loss (if we have the final stage) across
+        # the DP process group and then asynchronously send to the ranks in the PP group.
+        if isinstance(self.optimizers[0], SkipStepOptimizer):
+            ce_loss = self.reduce_send_recv(ce_loss)
+            for optim in self.optimizers:
+                cast(SkipStepOptimizer, optim).latest_loss = ce_loss
+
+    def reduce_send_recv(self, x: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if self.pp_group_rank == self.pp_final_stage_rank:
+            assert x is not None
+            # Reduce across DP process group.
+            x.div_(self._reduce_divide_factor)
+            dist.all_reduce(x, group=self.dp_process_group)
+            x.div_(self.dp_world_size)
+            x.mul_(self._reduce_divide_factor)
+            # Asynchronously send to previous stage ranks in the PP group.
+            for rank in self._pp_config.rank_completion_order():
+                dist.isend(x, group=self.pp_group, group_dst=rank)
+        else:
+            # Receive from final stage rank.
+            assert x is None
+            x = move_to_device(torch.empty([]), self.device)
+            req = dist.irecv(x, group=self.pp_group, group_src=self.pp_final_stage_rank)
+            assert req is not None
+            req.wait()
+        return x
 
     def eval_batch(self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None) -> Any:
         del batch, labels
@@ -813,12 +853,11 @@ class TransformerPipelineTrainModule(TrainModule):
             # If only using PP, total_norm will be a local tensor.
             total_norm = total_norm.full_tensor()
 
-        pp_mesh = self.train_pp_schedule.pp_mesh
         if math.isinf(norm_type):
-            dist.all_reduce(total_norm, op=dist.ReduceOp.MAX, group=pp_mesh.get_group())
+            dist.all_reduce(total_norm, op=dist.ReduceOp.MAX, group=self.pp_group)
         else:
             total_norm **= norm_type
-            dist.all_reduce(total_norm, op=dist.ReduceOp.SUM, group=pp_mesh.get_group())
+            dist.all_reduce(total_norm, op=dist.ReduceOp.SUM, group=self.pp_group)
             total_norm **= 1.0 / norm_type
 
         torch.nn.utils.clip_grads_with_norm_(parameters, max_grad_norm, total_norm, foreach=foreach)

@@ -17,9 +17,18 @@ from olmo_core.data import (
     NumpyDatasetType,
     TokenizerConfig,
 )
-from olmo_core.distributed.parallel import DataParallelType, PipelineScheduleType
+from olmo_core.distributed.parallel import (
+    DataParallelType,
+    PipelineScheduleType,
+    PipelineSplitStyle,
+)
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
+from olmo_core.optim import (
+    AdamWConfig,
+    CosWithWarmup,
+    OptimGroupOverride,
+    SkipStepAdamWConfig,
+)
 from olmo_core.train import (
     TrainerConfig,
     prepare_training_environment,
@@ -52,6 +61,13 @@ class ExperimentConfig(Config):
 
 
 def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
+    skip_step_optim = False
+    try:
+        overrides.remove("--skip_step_optim")
+        skip_step_optim = True
+    except ValueError:
+        pass
+
     tokenizer_config = TokenizerConfig.gpt2()
 
     model_config = TransformerConfig.smallmoe(
@@ -81,10 +97,19 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
+        )
+        if not skip_step_optim
+        else SkipStepAdamWConfig(
+            lr=1e-3,
+            group_overrides=[
+                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+            ],
         ),
         compile_model=True,
         pp_config=TransformerPipelineParallelConfig(
-            degree=2, schedule=PipelineScheduleType.interleaved_1F1B
+            degree=2,
+            schedule=PipelineScheduleType.interleaved_1F1B,
+            style=PipelineSplitStyle.loop,
         ),
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
