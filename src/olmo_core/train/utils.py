@@ -237,7 +237,6 @@ def reduce_metrics(
     max_metric_values: List[torch.Tensor] = []
 
     for step in sorted(metrics.keys()):
-        metric_world_sizes: Optional[Dict[str, int]] = all_steps_metric_world_sizes.get(step)
         step_metrics_reduce_type: Dict[
             str, Optional[ReduceType]
         ] = all_steps_metrics_reduce_type.get(step, metrics_reduce_type)
@@ -249,8 +248,8 @@ def reduce_metrics(
         step_metrics = metrics[step]
 
         sorted_metric_names: List[str]
-        if metric_world_sizes is not None:
-            sorted_metric_names = sorted(metric_world_sizes.keys())
+        if not metrics_consistent:
+            sorted_metric_names = sorted(all_steps_metric_world_sizes[step].keys())
         else:
             sorted_metric_names = sorted(step_metrics.keys())
 
