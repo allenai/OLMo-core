@@ -3,8 +3,8 @@ import copy
 import logging
 import math
 from dataclasses import dataclass, replace
-from functools import partial
-from typing import Any, Dict, Generator, List, Optional, Tuple, cast
+from functools import cached_property, partial
+from typing import Any, Dict, Generator, List, Optional, Tuple, Union, cast
 
 import torch
 import torch.distributed as dist
@@ -27,7 +27,13 @@ from olmo_core.distributed.parallel import (
     get_dp_process_group,
     get_pp_mesh,
 )
-from olmo_core.distributed.utils import get_local_tensor, get_world_size
+from olmo_core.distributed.utils import (
+    get_global_rank,
+    get_local_tensor,
+    get_rank,
+    get_reduce_divide_factor,
+    get_world_size,
+)
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
@@ -37,7 +43,7 @@ from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
 
-from ..common import ReduceType
+from ..common import TRAIN_CE_LOSS_METRIC, TRAIN_Z_LOSS_METRIC, ReduceType
 from .train_module import EvalBatchSizeUnit, EvalBatchSpec, TrainModule
 from .transformer import (
     TransformerActivationCheckpointingConfig,
@@ -144,7 +150,7 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
 
         stages = []
         models = []
-        for stage_idx in self.stage_ids_this_rank(pp_rank, num_stages, style="loop"):
+        for stage_idx in self.stage_ids_this_rank(pp_rank, num_stages):
             start_layer = split_points[stage_idx - 1] if stage_idx > 0 else None
             stop_layer = split_points[stage_idx] if stage_idx < num_stages - 1 else None
             stage, model_chunk = build_stage(
@@ -191,6 +197,7 @@ class TransformerPipelineTrainModuleConfig(Config):
     dp_config: Optional[TransformerDataParallelConfig] = None
     tp_config: Optional[TransformerTensorParallelConfig] = None
     cp_config: Optional[TransformerContextParallelConfig] = None
+    ep_config: Optional[TransformerExpertParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
 
     # Loss function settings.
@@ -309,10 +316,6 @@ class TransformerPipelineTrainModule(TrainModule):
     ):
         super().__init__()
 
-        # TODO: (epwalsh) need to handle the MoE auxiliary losses correctly.
-        if model.is_moe:
-            raise NotImplementedError("Pipeline parallelism with MoE's is currently not supported")
-
         # Validate some options.
         if rank_microbatch_size % max_sequence_length != 0:
             raise OLMoConfigurationError(
@@ -325,23 +328,33 @@ class TransformerPipelineTrainModule(TrainModule):
         self.world_mesh = build_world_mesh(
             dp=dp_config, tp=tp_config, cp=cp_config, pp=pp_config, device_type=self.device.type
         )
-        log.info(f"Data parallel world size = {get_world_size(self.dp_process_group):,d}")
+        self.dp_world_size = get_world_size(self.dp_process_group)
+        log.info(f"Data parallel world size = {self.dp_world_size:,d}")
 
         self.float8_handler: Optional[Float8Handler] = None
         if float8_config is not None:
             float8_config.compile = compile_model
             self.float8_handler = float8_config.build()
 
-        # Split model into pipeline stages.
         self._pp_config = pp_config
         # We'll initialize this lazily when the trainer is attached, since we need to know
         # the global batch size in order to determine the number of pipeline micro-batches.
         self._train_pp_schedule: Optional[PipelineSchedule] = None
         self._pp_stages: Optional[List[PipelineStage]] = None
-        pp_mesh = get_pp_mesh(self.world_mesh)
-        stages, model_parts = pp_config.split_model(model, pp_mesh=pp_mesh, device=self.device)
+        self.pp_mesh = get_pp_mesh(self.world_mesh)
+        self.pp_group = self.pp_mesh.get_group()
+        self.pp_group_rank = get_rank(self.pp_group)
+        self.pp_group_size = get_world_size(self.pp_group)
+        self.pp_prev_rank = (self.pp_group_rank - 1) % self.pp_group_size
+        self.pp_next_rank = (self.pp_group_rank + 1) % self.pp_group_size
+        self.pp_final_stage_rank = self._pp_config.final_stage_rank()
+
+        # Split model into pipeline stages.
+        stages, model_parts = pp_config.split_model(model, pp_mesh=self.pp_mesh, device=self.device)
         self._pp_stages = stages
-        log.info(f"Applied pipeline parallelism to the model with {get_device_mesh_info(pp_mesh)}")
+        log.info(
+            f"Applied pipeline parallelism to the model with {get_device_mesh_info(self.pp_mesh)}"
+        )
 
         # Parallelize model parts.
         self.model_parts: List[Transformer] = parallelize_model(
@@ -357,6 +370,7 @@ class TransformerPipelineTrainModule(TrainModule):
             cp_config=cp_config,
             ep_config=ep_config,
             ac_config=ac_config,
+            pp_enabled=True,
         )
 
         self._dp_config = dp_config
@@ -383,14 +397,6 @@ class TransformerPipelineTrainModule(TrainModule):
         self.optimizers: List[Optimizer] = [
             optim.build(model, strict=False) for model in self.model_parts
         ]
-        # TODO: (epwalsh) fix this
-        if isinstance(self.optimizers[0], SkipStepOptimizer):
-            raise NotImplementedError(
-                "Pipeline parallelism with a SkipStepOptimizer is currently not supported"
-            )
-
-        self._ce_batch_loss: Optional[torch.Tensor] = None
-        self._z_batch_loss: Optional[torch.Tensor] = None
 
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
@@ -424,7 +430,12 @@ class TransformerPipelineTrainModule(TrainModule):
         assert self._train_pp_schedule is not None
         return self._train_pp_schedule
 
+    @cached_property
+    def _reduce_divide_factor(self) -> float:
+        return get_reduce_divide_factor(get_world_size(self.dp_process_group))
+
     def loss_fn(self, output: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        # NOTE: the output is the loss.
         del labels
         return output
 
@@ -542,48 +553,88 @@ class TransformerPipelineTrainModule(TrainModule):
         # Run pipeline schedule.
         input_ids, labels, model_kwargs = self._prepare_batch(batch, labels)
         assert labels is not None
-        self.model_forward(
+        losses_to_record = self.run_pipeline(
             input_ids,
             labels,
+            batch_num_tokens_for_loss,
             ignore_index=self.label_ignore_index,
             loss_reduction="sum",
             z_loss_multiplier=self.z_loss_multiplier,
-            loss_div_factor=batch_num_tokens_for_loss,
             return_logits=False,
             **model_kwargs,
         )
 
         if dry_run:
-            self._clear_loss_buffers()
+            for model in self.model_parts:
+                model.reset_auxiliary_losses()
+                model.reset_auxiliary_metrics()
             return
 
-        # Record loss metrics.
-        # NOTE: losses could be none for pipeline parallelism if rank doesn't have the final stage.
-        if self._ce_batch_loss is None:
-            self.record_ce_loss(0.0, ReduceType.sum)
+        # Record all of the losses we captured.
+        # NOTE: main losses will be missing for non-final stages.
+        ce_loss = losses_to_record.pop(TRAIN_CE_LOSS_METRIC, None)
+        # If we have a SkipStepOptimizer we'll reduce the loss (if we have the final stage) across
+        # the DP process group and then asynchronously send to the ranks in the PP group.
+        if isinstance(self.optimizers[0], SkipStepOptimizer):
+            ce_loss = self.reduce_send_recv(ce_loss)
+            for optim in self.optimizers:
+                cast(SkipStepOptimizer, optim).latest_loss = ce_loss
+            self.record_metric(TRAIN_CE_LOSS_METRIC, ce_loss)
+        elif ce_loss is not None:
+            self.record_metric(TRAIN_CE_LOSS_METRIC, ce_loss, ReduceType.mean)
+        if (z_loss := losses_to_record.pop(TRAIN_Z_LOSS_METRIC, None)) is not None:
+            self.record_metric(TRAIN_Z_LOSS_METRIC, z_loss, ReduceType.mean)
+        for loss_name, loss_value in losses_to_record.items():
+            self.record_metric(loss_name, loss_value, ReduceType.mean, namespace="train")
+
+        # And additional metrics.
+        for model in self.model_parts:
+            for metric_name, (metric_val, reduction) in model.compute_auxiliary_metrics(
+                batch_num_tokens_for_loss,
+                reset=True,
+            ).items():
+                self.record_metric(metric_name, metric_val, reduction, namespace="train")
+
+    def reduce_send_recv(self, x: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if self.pp_group_rank == self.pp_final_stage_rank:
+            assert x is not None
+            # Reduce across DP process group.
+            x.div_(self._reduce_divide_factor)
+            dist.all_reduce(x, group=self.dp_process_group)
+            x.div_(self.dp_world_size)
+            x.mul_(self._reduce_divide_factor)
         else:
-            self.record_ce_loss(
-                self._ce_batch_loss / get_world_size(self.dp_process_group), ReduceType.sum
+            assert x is None
+            x = move_to_device(torch.empty([]), self.device)
+
+        # Asynchronously send to previous stage rank in the PP group.
+        ordered_ranks = list(self._pp_config.rank_completion_order())
+        local_index = ordered_ranks.index(self.pp_group_rank)
+        src_rank = None if local_index == 0 else ordered_ranks[local_index - 1]
+        dst_rank = (
+            None if local_index == (len(ordered_ranks) - 1) else ordered_ranks[local_index + 1]
+        )
+
+        ops: List[dist.P2POp] = []
+        if src_rank is not None:
+            log.debug(
+                f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) receiving from rank "
+                f"{get_global_rank(src_rank, group=self.pp_group)} (pp group rank {src_rank})"
             )
-        if self.z_loss_multiplier is not None:
-            if self._z_batch_loss is None:
-                self.record_metric("Z loss", 0.0, ReduceType.sum, namespace="train")
-            else:
-                self.record_metric(
-                    "Z loss",
-                    self._z_batch_loss / get_world_size(self.dp_process_group),
-                    ReduceType.sum,
-                    namespace="train",
-                )
-        # TODO: handle model auxiliary losses, like with MoE.
+            ops.append(dist.P2POp(dist.irecv, x, group=self.pp_group, group_peer=src_rank))
+        if dst_rank is not None:
+            log.debug(
+                f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) sending to rank "
+                f"{get_global_rank(dst_rank, group=self.pp_group)} (pp group rank {dst_rank})"
+            )
+            ops.append(dist.P2POp(dist.isend, x, group=self.pp_group, group_peer=dst_rank))
 
-        for optim in self.optimizers:
-            if isinstance(optim, SkipStepOptimizer):
-                assert self._ce_batch_loss is not None
-                optim.latest_loss = self._ce_batch_loss
+        reqs = dist.batch_isend_irecv(ops)
+        if self.pp_group_rank != self.pp_final_stage_rank:
+            for req in reqs:
+                req.wait()
 
-        # Lastly, clear internal loss buffers.
-        self._clear_loss_buffers()
+        return x
 
     def eval_batch(self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None) -> Any:
         del batch, labels
@@ -603,8 +654,9 @@ class TransformerPipelineTrainModule(TrainModule):
 
         # Sync Float8 AMAXs (argmax of abs(max)) and scales.
         if self.float8_handler is not None:
-            for model in self.model_parts:
-                self.float8_handler.sync_float8_amax_and_scale_history(model)
+            self.float8_handler.sync_float8_amax_and_scale_history(
+                cast(List[nn.Module], self.model_parts)
+            )
 
         # Maybe adjust learning rate.
         if self.scheduler is not None:
@@ -658,75 +710,117 @@ class TransformerPipelineTrainModule(TrainModule):
         # Calculate Float8 dynamic AMAX/scale for all parameters.
         # For FSDP2 this issues a single all-reduce for all parameters at once.
         if self.float8_handler is not None:
-            for model in self.model_parts:
-                self.float8_handler.precompute_float8_dynamic_scale_for_fsdp(model)
+            self.float8_handler.precompute_float8_dynamic_scale_for_fsdp(
+                cast(List[nn.Module], self.model_parts)
+            )
 
     def zero_grads(self):
         for optim in self.optimizers:
             optim.zero_grad(set_to_none=True)
 
-    def model_forward(
-        self, input_ids: torch.Tensor, labels: torch.Tensor, **kwargs
-    ) -> Optional[torch.Tensor]:
+    def run_pipeline(
+        self,
+        input_ids: torch.Tensor,
+        labels: torch.Tensor,
+        batch_num_tokens_for_loss: Union[int, float],
+        **kwargs,
+    ) -> Dict[str, torch.Tensor]:
         """
-        Run a forward pass on a micro-batch, returning the logits and potentially the loss.
+        Run the pipeline, returning the losses captured.
         """
 
-        # Don't want the pipeline schedule to mess with kwargs, so we inject them with a hook.
-        def kwargs_saver(_, args_, kwargs_):
-            kwargs_.update(kwargs)
-            return (args_, kwargs_)
+        # NOTE: we to take extra care to handle auxiliary losses correctly which need to be propagated
+        # from stage to stage just like other activations. So each stage will return either a single
+        # tensor of activations (if there are no auxiliary losses) or a tuple of two tensors
+        # representing the activation and the combined_auxiliary losses, respectively, except for the
+        # final stage which always just returns the total combined loss.
+        # To accomplish this without complicated ad hoc model code changes, we register pre- and post-forward
+        # hooks to handle the logic.
+        #
+        # In particular, we have:
+        #  - A post-forward hook `capture_losses()`, which modifies a stage's output to include a
+        #    combined auxiliary loss when needed, in which the output becomes a `Tuple[Tensor, Tensor]`
+        #    instead of a `Tensor`. At the same time this callback will record/accumulate the individual
+        #    losses for logging later.
+        #  - A pre-forward hook `pass_losses_through()` which removes the added auxiliary loss
+        #    (from the previous stage) from the current stage's input so as to not require code
+        #    changes in the model. The remove loss will be added into the current stage's auxiliary
+        #    losses from the post-forward hook (`capture_losses`).
 
-        # We also don't want the pipeline schedule to save the logits from every stage because
-        # that would blow up our memory usage, so we capture the output from the final stage
-        # and only return the loss.
-        def capture_losses(_, args_, output) -> torch.Tensor:
-            del args_
+        losses_to_record: Dict[str, torch.Tensor] = {}
+        previous_stage_aux_loss: Optional[torch.Tensor] = None
 
-            assert isinstance(output, LMOutputWithLoss)
-            _, ce_loss, z_loss = output
+        def record_loss(name: str, value: torch.Tensor):
+            nonlocal losses_to_record
+            value = get_local_tensor(value.detach()).float()
+            if name in losses_to_record:
+                losses_to_record[name] += value
+            else:
+                losses_to_record[name] = value
 
-            # Get loss to optimize for.
-            loss = ce_loss
-            if z_loss is not None:
-                loss += z_loss
+        def capture_losses(
+            model: Transformer, args: Tuple[torch.Tensor, ...], output: Any
+        ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+            del args
+            losses: List[torch.Tensor] = []
 
-            # Update overall CE batch loss.
-            if self._ce_batch_loss is None:
-                self._ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
-            self._ce_batch_loss += get_local_tensor(ce_loss.detach())
+            nonlocal previous_stage_aux_loss
+            if previous_stage_aux_loss is not None:
+                losses.append(previous_stage_aux_loss.squeeze(0))
+                previous_stage_aux_loss = None
 
-            # Update overall Z batch loss.
-            if z_loss is not None:
-                if self._z_batch_loss is None:
-                    self._z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
-                self._z_batch_loss += get_local_tensor(z_loss.detach())
+            # Get auxiliary losses.
+            for name, value in model.compute_auxiliary_losses(
+                total_bz=batch_num_tokens_for_loss, reset=True
+            ).items():
+                losses.append(value)
+                record_loss(name, value)
 
-            return loss
+            if model.lm_head is not None:
+                assert isinstance(output, LMOutputWithLoss)
+                _, ce_loss, z_loss = output
+                losses.append(ce_loss)
+                record_loss(TRAIN_CE_LOSS_METRIC, ce_loss)
+                if z_loss is not None:
+                    losses.append(z_loss)
+                    record_loss(TRAIN_Z_LOSS_METRIC, z_loss)
+                return torch.stack(losses).sum(0, keepdim=True)
+            else:
+                assert isinstance(output, torch.Tensor)
+                if losses:
+                    return output, torch.stack(losses).sum(0, keepdim=True)
+                else:
+                    return output
+
+        def pass_losses_through(model: Transformer, args: Tuple[torch.Tensor, ...]) -> torch.Tensor:
+            del model
+            nonlocal previous_stage_aux_loss
+            assert previous_stage_aux_loss is None
+
+            if len(args) > 1:
+                assert len(args) == 2
+                previous_stage_aux_loss = args[1]
+
+            return args[0]
 
         handles = []
         for model in self.model_parts:
-            handle = model.register_forward_pre_hook(kwargs_saver, with_kwargs=True)
-            handles.append(handle)
-
-            if model.lm_head is not None:
-                handle = model.register_forward_hook(capture_losses)
-                handles.append(handle)
+            handles.append(model.register_forward_pre_hook(pass_losses_through))
+            handles.append(model.register_forward_hook(capture_losses))
 
         with self._model_forward_context():
-            output, _ = self.train_pp_schedule.step(
+            self.train_pp_schedule.step(
                 input_ids,
-                labels,
                 target=labels,
+                loss_div_factor=batch_num_tokens_for_loss,
+                labels=labels,
+                **kwargs,
             )
-
-            if self.train_pp_schedule.is_last_stage:
-                assert output is not None
 
         for handle in handles:
             handle.remove()
 
-        return output
+        return losses_to_record
 
     def num_flops_per_token(self, seq_len: int) -> int:
         return self.model_parts[0].num_flops_per_token(seq_len)
@@ -737,13 +831,6 @@ class TransformerPipelineTrainModule(TrainModule):
             if self.autocast_precision is not None:
                 stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
             yield
-
-    def _clear_loss_buffers(self):
-        self._ce_batch_loss = None
-        self._z_batch_loss = None
-        for model in self.model_parts:
-            model.reset_auxiliary_losses()
-            model.reset_auxiliary_metrics()
 
     def _get_state_dict(self, sd_options: dist_cp_sd.StateDictOptions) -> Dict[str, Any]:
         return {
@@ -788,12 +875,11 @@ class TransformerPipelineTrainModule(TrainModule):
             # If only using PP, total_norm will be a local tensor.
             total_norm = total_norm.full_tensor()
 
-        pp_mesh = self.train_pp_schedule.pp_mesh
         if math.isinf(norm_type):
-            dist.all_reduce(total_norm, op=dist.ReduceOp.MAX, group=pp_mesh.get_group())
+            dist.all_reduce(total_norm, op=dist.ReduceOp.MAX, group=self.pp_group)
         else:
             total_norm **= norm_type
-            dist.all_reduce(total_norm, op=dist.ReduceOp.SUM, group=pp_mesh.get_group())
+            dist.all_reduce(total_norm, op=dist.ReduceOp.SUM, group=self.pp_group)
             total_norm **= 1.0 / norm_type
 
         torch.nn.utils.clip_grads_with_norm_(parameters, max_grad_norm, total_norm, foreach=foreach)
@@ -804,6 +890,9 @@ class TransformerPipelineTrainModule(TrainModule):
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
         input_ids = batch.pop("input_ids")
         labels = labels if labels is not None else batch.pop("labels", None)
+        kwargs: Dict[str, Any] = {}
         if "doc_lens" in batch and "max_doc_lens" in batch:
             log_once(log, "intra-document masking enabled")
-        return input_ids, labels, batch
+            kwargs["doc_lens"] = batch["doc_lens"]
+            kwargs["max_doc_lens"] = batch["max_doc_lens"]
+        return input_ids, labels, kwargs

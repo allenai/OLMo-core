@@ -127,7 +127,7 @@ class Transformer(nn.Module):
         del block
 
     def compute_auxiliary_losses(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, torch.Tensor]:
         # NOTE: if tensor parallelism is enabled you'll need to distribute loss tensors as DTensors.
         # See how the MoETransformer handles that for an example.
@@ -138,7 +138,7 @@ class Transformer(nn.Module):
         pass
 
     def compute_auxiliary_metrics(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
         del total_bz, reset
         return {}
@@ -376,8 +376,8 @@ class Transformer(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,
-        labels: Optional[torch.Tensor] = None,
         *,
+        labels: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
@@ -780,7 +780,7 @@ class MoETransformer(Transformer):
             )
 
     def compute_auxiliary_losses(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, torch.Tensor]:
         out: Dict[str, torch.Tensor] = {}
         for block in self.blocks.values():
@@ -805,13 +805,13 @@ class MoETransformer(Transformer):
             cast(MoETransformerBlock, block).reset_losses()
 
     def compute_auxiliary_metrics(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
         out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
         for block_idx, block in self.blocks.items():
-            for metric_name, metric_val in (
-                cast(MoETransformerBlock, block).compute_metrics(total_bz, reset=reset).items()
-            ):
+            block = cast(MoETransformerBlock, block)
+            block_metrics = block.compute_metrics(total_bz, reset=reset)
+            for metric_name, metric_val in block_metrics.items():
                 out[f"block {int(block_idx):02d}/{metric_name}"] = metric_val
         return out
 

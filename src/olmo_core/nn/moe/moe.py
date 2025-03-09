@@ -209,7 +209,7 @@ class MoEBase(nn.Module):
             )
 
     def compute_losses(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, torch.Tensor]:
         out: Dict[str, torch.Tensor] = {}
         for loss_fn in self.losses:
@@ -221,7 +221,7 @@ class MoEBase(nn.Module):
             loss_fn.reset()
 
     def compute_metrics(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
         out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
         for metric in self.metrics:
