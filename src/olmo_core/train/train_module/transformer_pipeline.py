@@ -632,9 +632,11 @@ class TransformerPipelineTrainModule(TrainModule):
             )
             ops.append(dist.P2POp(dist.isend, x, group=self.pp_group, group_peer=dst_rank))
 
+        log.warning(f"Rank {get_rank()} waiting...")
         reqs = dist.batch_isend_irecv(ops)
         for req in reqs:
             req.wait()
+        log.warning(f"Rank {get_rank()} done")
 
         return x
 

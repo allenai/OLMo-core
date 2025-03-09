@@ -81,9 +81,9 @@ class PipelineParallelConfig(Config):
         The order that ranks within the PP group will complete a batch.
         """
         if self.style == PipelineSplitStyle.loop:
-            return range(self.degree)
-        elif self.style == PipelineSplitStyle.v:
             return range(self.degree - 1, -1, -1)
+        elif self.style == PipelineSplitStyle.v:
+            return range(self.degree)
         else:
             raise NotImplementedError(self.style)
 
