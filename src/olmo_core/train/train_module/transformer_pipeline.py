@@ -37,7 +37,7 @@ from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once
 
-from ..common import ReduceType
+from ..common import TRAIN_CE_LOSS_METRIC, TRAIN_Z_LOSS_METRIC, ReduceType
 from .train_module import EvalBatchSizeUnit, EvalBatchSpec, TrainModule
 from .transformer import (
     TransformerActivationCheckpointingConfig,
@@ -49,10 +49,6 @@ from .transformer import (
 )
 
 log = logging.getLogger(__name__)
-
-
-CE_LOSS_NAME = "CE loss"
-Z_LOSS_NAME = "Z loss"
 
 
 @beta_feature
@@ -563,29 +559,12 @@ class TransformerPipelineTrainModule(TrainModule):
 
         # Record all of the losses we captured.
         # NOTE: main losses will be missing for non-final stages.
-
-        if CE_LOSS_NAME in losses_to_record:
-            self.record_ce_loss(
-                losses_to_record.pop(CE_LOSS_NAME),
-                ReduceType.mean,
-            )
-
-        if self.z_loss_multiplier is not None:
-            if Z_LOSS_NAME in losses_to_record:
-                self.record_metric(
-                    "Z loss",
-                    losses_to_record.pop(Z_LOSS_NAME),
-                    ReduceType.mean,
-                    namespace="train",
-                )
-
+        if (ce_loss := losses_to_record.pop(TRAIN_CE_LOSS_METRIC, None)) is not None:
+            self.record_metric(TRAIN_CE_LOSS_METRIC, ce_loss, ReduceType.mean)
+        if (z_loss := losses_to_record.pop(TRAIN_Z_LOSS_METRIC)) is not None:
+            self.record_metric(TRAIN_Z_LOSS_METRIC, z_loss, ReduceType.mean)
         for loss_name, loss_value in losses_to_record.items():
-            self.record_metric(
-                loss_name,
-                loss_value,
-                ReduceType.mean,
-                namespace="train",
-            )
+            self.record_metric(loss_name, loss_value, ReduceType.mean, namespace="train")
 
         # And additional metrics.
         for model in self.model_parts:
@@ -593,12 +572,7 @@ class TransformerPipelineTrainModule(TrainModule):
                 batch_num_tokens_for_loss,
                 reset=True,
             ).items():
-                self.record_metric(
-                    metric_name,
-                    metric_val,
-                    reduction,
-                    namespace="train",
-                )
+                self.record_metric(metric_name, metric_val, reduction, namespace="train")
 
     def eval_batch(self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None) -> Any:
         del batch, labels
@@ -744,10 +718,10 @@ class TransformerPipelineTrainModule(TrainModule):
                 assert isinstance(output, LMOutputWithLoss)
                 _, ce_loss, z_loss = output
                 losses.append(ce_loss)
-                record_loss(CE_LOSS_NAME, ce_loss)
+                record_loss(TRAIN_CE_LOSS_METRIC, ce_loss)
                 if z_loss is not None:
                     losses.append(z_loss)
-                    record_loss(Z_LOSS_NAME, z_loss)
+                    record_loss(TRAIN_Z_LOSS_METRIC, z_loss)
                 return torch.stack(losses).sum(0, keepdim=True)
             else:
                 assert isinstance(output, torch.Tensor)

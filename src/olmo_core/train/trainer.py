@@ -50,14 +50,20 @@ from .callbacks import (
     SpeedMonitorCallback,
 )
 from .checkpoint import Checkpointer
-from .common import Duration, DurationUnit, LoadStrategy, ReduceType, TrainingProgress
+from .common import (
+    TRAIN_CE_LOSS_METRIC,
+    TRAIN_PPL_METRIC,
+    Duration,
+    DurationUnit,
+    LoadStrategy,
+    ReduceType,
+    TrainingProgress,
+)
 from .train_module import TrainModule
 from .utils import EnvRngStates, check_metrics_consistent, move_metrics, reduce_metrics
 
 log = logging.getLogger(__name__)
 
-TRAIN_CE_LOSS_METRIC = "train/CE loss"
-TRAIN_PPL_METRIC = "train/PPL"
 
 T = TypeVar("T")
 
