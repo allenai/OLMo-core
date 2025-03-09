@@ -153,21 +153,33 @@ def move_metrics(
     return target
 
 
+def get_metrics_reduce_type_by_step(
+    metrics: Dict[int, Dict[str, torch.Tensor]],
+    metrics_reduce_type: Dict[str, Optional[ReduceType]],
+    process_group: Optional[dist.ProcessGroup] = None,
+) -> Dict[int, Dict[str, Optional[ReduceType]]]:
+    all_ranks_metrics_reduce_type = all_gather_object(metrics_reduce_type, group=process_group)
+
+    out: Dict[int, Dict[str, Optional[ReduceType]]] = defaultdict(dict)
+    for step in metrics.keys():
+        for rank_metrics_reduce_type in all_ranks_metrics_reduce_type:
+            for metric_name, reduce_type in rank_metrics_reduce_type.items():
+                out[step][metric_name] = reduce_type
+
+    return out
+
+
 def get_metric_world_sizes_by_step(
     metrics: Dict[int, Dict[str, torch.Tensor]],
+    metrics_reduce_type: Dict[str, Optional[ReduceType]],
     process_group: Optional[dist.ProcessGroup] = None,
 ) -> Dict[int, Dict[str, int]]:
-    all_steps_metrics: Dict[int, Set[str]] = defaultdict(set)
-    for step, step_metrics in metrics.items():
-        for name in step_metrics.keys():
-            all_steps_metrics[step].add(name)
-
-    all_ranks_steps_metrics = all_gather_object(all_steps_metrics, group=process_group)
+    all_ranks_metrics_reduce_type = all_gather_object(metrics_reduce_type, group=process_group)
 
     all_steps_world_sizes: Dict[int, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    for rank_steps_metrics in all_ranks_steps_metrics:
-        for step, step_metrics in rank_steps_metrics.items():
-            for metric_name in step_metrics:
+    for step in metrics.keys():
+        for rank_metrics_reduce_type in all_ranks_metrics_reduce_type:
+            for metric_name in rank_metrics_reduce_type.keys():
                 all_steps_world_sizes[step][metric_name] += 1
 
     return all_steps_world_sizes
@@ -205,9 +217,16 @@ def reduce_metrics(
     world_size = get_world_size(process_group)
     divide_factor = get_reduce_divide_factor(world_size)
     all_steps_metric_world_sizes: Dict[int, Dict[str, int]] = {}
+    all_steps_metrics_reduce_type: Dict[int, Dict[str, Optional[ReduceType]]] = {}
     if not metrics_consistent:
         all_steps_metric_world_sizes = get_metric_world_sizes_by_step(
             metrics,
+            metrics_reduce_type,
+            process_group=process_group,
+        )
+        all_steps_metrics_reduce_type = get_metrics_reduce_type_by_step(
+            metrics,
+            metrics_reduce_type,
             process_group=process_group,
         )
 
@@ -219,6 +238,9 @@ def reduce_metrics(
 
     for step in sorted(metrics.keys()):
         metric_world_sizes: Optional[Dict[str, int]] = all_steps_metric_world_sizes.get(step)
+        step_metrics_reduce_type: Dict[
+            str, Optional[ReduceType]
+        ] = all_steps_metrics_reduce_type.get(step, metrics_reduce_type)
         step_sum_metric_names: List[str] = []
         step_sum_metric_values: List[torch.Tensor] = []
         step_max_metric_names: List[str] = []
@@ -234,7 +256,7 @@ def reduce_metrics(
 
         for name in sorted_metric_names:
             value = step_metrics.get(name)
-            reduce_type = metrics_reduce_type[name]
+            reduce_type = step_metrics_reduce_type[name]
             if reduce_type in (ReduceType.mean, ReduceType.sum):
                 step_sum_metric_names.append(name)
                 if value is None:
