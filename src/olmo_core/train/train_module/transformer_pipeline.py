@@ -561,7 +561,7 @@ class TransformerPipelineTrainModule(TrainModule):
         # NOTE: main losses will be missing for non-final stages.
         if (ce_loss := losses_to_record.pop(TRAIN_CE_LOSS_METRIC, None)) is not None:
             self.record_metric(TRAIN_CE_LOSS_METRIC, ce_loss, ReduceType.mean)
-        if (z_loss := losses_to_record.pop(TRAIN_Z_LOSS_METRIC)) is not None:
+        if (z_loss := losses_to_record.pop(TRAIN_Z_LOSS_METRIC, None)) is not None:
             self.record_metric(TRAIN_Z_LOSS_METRIC, z_loss, ReduceType.mean)
         for loss_name, loss_value in losses_to_record.items():
             self.record_metric(loss_name, loss_value, ReduceType.mean, namespace="train")
