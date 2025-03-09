@@ -602,16 +602,33 @@ class TransformerPipelineTrainModule(TrainModule):
             dist.all_reduce(x, group=self.dp_process_group)
             x.div_(self.dp_world_size)
             x.mul_(self._reduce_divide_factor)
-            # Asynchronously send to previous stage ranks in the PP group.
-            for rank in self._pp_config.rank_completion_order():
-                dist.isend(x, group=self.pp_group, group_dst=rank)
         else:
-            # Receive from final stage rank.
             assert x is None
             x = move_to_device(torch.empty([]), self.device)
-            req = dist.irecv(x, group=self.pp_group, group_src=self.pp_final_stage_rank)
-            assert req is not None
+
+        # Asynchronously send to previous stage ranks in the PP group.
+        ordered_ranks = list(self._pp_config.rank_completion_order())
+        src_rank: Optional[int] = None
+        try:
+            src_rank = ordered_ranks[ordered_ranks.index(self.pp_group_rank) - 1]
+        except IndexError:
+            pass
+        dst_rank: Optional[int] = None
+        try:
+            dst_rank = ordered_ranks[ordered_ranks.index(self.pp_group_rank) + 1]
+        except IndexError:
+            pass
+
+        ops: List[dist.P2POp] = []
+        if src_rank is not None:
+            ops.append(dist.P2POp(dist.irecv, x, group=self.pp_group, group_peer=src_rank))
+        if dst_rank is not None:
+            ops.append(dist.P2POp(dist.isend, x, group=self.pp_group, group_peer=dst_rank))
+
+        reqs = dist.batch_isend_irecv(ops)
+        for req in reqs:
             req.wait()
+
         return x
 
     def eval_batch(self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None) -> Any:
