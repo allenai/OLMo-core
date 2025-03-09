@@ -329,9 +329,7 @@ def reduce_metrics(
     all_max_metrics = all_max_metrics.cpu()
 
     for i, step in enumerate(sorted(metrics.keys())):
-        step_metrics_reduce_type: Dict[
-            str, Optional[ReduceType]
-        ] = all_steps_metrics_reduce_type.get(step, metrics_reduce_type)
+        step_metrics_reduce_type = all_steps_metrics_reduce_type.get(step, metrics_reduce_type)
         step_sum_metric_names = sum_metric_names[i]
         step_sum_metric_items = all_sum_metrics[i].tolist()
         step_max_metric_names = max_metric_names[i]
