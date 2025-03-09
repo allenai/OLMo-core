@@ -573,7 +573,14 @@ class TransformerPipelineTrainModule(TrainModule):
         # Record all of the losses we captured.
         # NOTE: main losses will be missing for non-final stages.
         ce_loss = losses_to_record.pop(TRAIN_CE_LOSS_METRIC, None)
-        if ce_loss is not None:
+        # If we have a SkipStepOptimizer we'll reduce the loss (if we have the final stage) across
+        # the DP process group and then asynchronously send to the ranks in the PP group.
+        if isinstance(self.optimizers[0], SkipStepOptimizer):
+            ce_loss = self.reduce_send_recv(ce_loss)
+            for optim in self.optimizers:
+                cast(SkipStepOptimizer, optim).latest_loss = ce_loss
+            self.record_metric(TRAIN_CE_LOSS_METRIC, ce_loss)
+        elif ce_loss is not None:
             self.record_metric(TRAIN_CE_LOSS_METRIC, ce_loss, ReduceType.mean)
         if (z_loss := losses_to_record.pop(TRAIN_Z_LOSS_METRIC, None)) is not None:
             self.record_metric(TRAIN_Z_LOSS_METRIC, z_loss, ReduceType.mean)
@@ -588,13 +595,6 @@ class TransformerPipelineTrainModule(TrainModule):
             ).items():
                 self.record_metric(metric_name, metric_val, reduction, namespace="train")
 
-        # If we have a SkipStepOptimizer we'll reduce the loss (if we have the final stage) across
-        # the DP process group and then asynchronously send to the ranks in the PP group.
-        if isinstance(self.optimizers[0], SkipStepOptimizer):
-            ce_loss = self.reduce_send_recv(ce_loss)
-            for optim in self.optimizers:
-                cast(SkipStepOptimizer, optim).latest_loss = ce_loss
-
     def reduce_send_recv(self, x: Optional[torch.Tensor] = None) -> torch.Tensor:
         if self.pp_group_rank == self.pp_final_stage_rank:
             assert x is not None
@@ -607,7 +607,7 @@ class TransformerPipelineTrainModule(TrainModule):
             assert x is None
             x = move_to_device(torch.empty([]), self.device)
 
-        # Asynchronously send to previous stage ranks in the PP group.
+        # Asynchronously send to previous stage rank in the PP group.
         ordered_ranks = list(self._pp_config.rank_completion_order())
         local_index = ordered_ranks.index(self.pp_group_rank)
         src_rank = None if local_index == 0 else ordered_ranks[local_index - 1]
