@@ -16,7 +16,7 @@ from torch.distributed.pipelining import PipelineStage
 from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
-from olmo_core.config import Config, DType
+from olmo_core.config import DType
 from olmo_core.data.utils import get_labels
 from olmo_core.distributed.checkpoint import _swap_param_keys
 from olmo_core.distributed.parallel import (
@@ -51,6 +51,7 @@ from .transformer import (
     TransformerDataParallelConfig,
     TransformerExpertParallelConfig,
     TransformerTensorParallelConfig,
+    TransformerTrainModuleConfig,
     parallelize_model,
 )
 
@@ -172,48 +173,19 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
 
 @beta_feature
 @dataclass
-class TransformerPipelineTrainModuleConfig(Config):
+class TransformerPipelineTrainModuleConfig(TransformerTrainModuleConfig):
     """
-    A configuration class for building :class:`TransformerTrainModule` instances.
+    A configuration class for building :class:`TransformerPipelineTrainModule` instances.
 
     .. seealso::
-        See the :class:`TransformerTrainModule` documentation for a description of the fields.
+        See the :class:`TransformerPipelineTrainModule` documentation for a description of the fields.
     """
 
-    rank_microbatch_size: int
-    max_sequence_length: int
-    pp_config: TransformerPipelineParallelConfig
+    pp_config: Optional[TransformerPipelineParallelConfig] = None
 
-    # Optimizer settings.
-
-    optim: OptimConfig
-    max_grad_norm: Optional[float] = None
-    scheduler: Optional[Scheduler] = None
-
-    # Model settings.
-
-    compile_model: bool = False
-    float8_config: Optional[Float8Config] = None
-    dp_config: Optional[TransformerDataParallelConfig] = None
-    tp_config: Optional[TransformerTensorParallelConfig] = None
-    cp_config: Optional[TransformerContextParallelConfig] = None
-    ep_config: Optional[TransformerExpertParallelConfig] = None
-    ac_config: Optional[TransformerActivationCheckpointingConfig] = None
-
-    # Loss function settings.
-
-    z_loss_multiplier: Optional[float] = None
-
-    # Checkpoint settings.
-
-    state_dict_save_opts: Optional[Dict[str, Any]] = None
-    state_dict_load_opts: Optional[Dict[str, Any]] = None
-    load_key_mapping: Optional[Dict[str, str]] = None
-
-    # Other train settings.
-
-    autocast_precision: Optional[DType] = None
-    label_ignore_index: int = -100
+    def __post_init__(self):
+        if self.pp_config is None:
+            raise OLMoConfigurationError("'pp_config' is required")
 
     def build(
         self,
