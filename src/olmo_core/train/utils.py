@@ -328,13 +328,16 @@ def reduce_metrics(
     all_max_metrics = all_max_metrics.cpu()
 
     for i, step in enumerate(sorted(metrics.keys())):
+        step_metrics_reduce_type: Dict[
+            str, Optional[ReduceType]
+        ] = all_steps_metrics_reduce_type.get(step, metrics_reduce_type)
         step_sum_metric_names = sum_metric_names[i]
         step_sum_metric_items = all_sum_metrics[i].tolist()
         step_max_metric_names = max_metric_names[i]
         step_max_metric_items = all_max_metrics[i].tolist()
         for name, item in zip(step_sum_metric_names, step_sum_metric_items):
             item = item * divide_factor
-            reduce_type = metrics_reduce_type[name]
+            reduce_type = step_metrics_reduce_type[name]
             if reduce_type == ReduceType.mean:
                 item = item / all_steps_metric_world_sizes.get(step, {}).get(name, world_size)
             elif reduce_type == ReduceType.l2_norm:
