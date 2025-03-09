@@ -28,6 +28,7 @@ from olmo_core.distributed.parallel import (
     get_pp_mesh,
 )
 from olmo_core.distributed.utils import (
+    get_global_rank,
     get_local_tensor,
     get_rank,
     get_reduce_divide_factor,
@@ -621,8 +622,14 @@ class TransformerPipelineTrainModule(TrainModule):
 
         ops: List[dist.P2POp] = []
         if src_rank is not None:
+            log.warning(
+                f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) receiving from rank {get_global_rank(src_rank)} (pp group rank {src_rank})"
+            )
             ops.append(dist.P2POp(dist.irecv, x, group=self.pp_group, group_peer=src_rank))
         if dst_rank is not None:
+            log.warning(
+                f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) sending to rank {get_global_rank(dst_rank)} (pp group rank {dst_rank})"
+            )
             ops.append(dist.P2POp(dist.isend, x, group=self.pp_group, group_peer=dst_rank))
 
         reqs = dist.batch_isend_irecv(ops)
