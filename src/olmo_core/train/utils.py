@@ -273,7 +273,7 @@ def reduce_metrics(
             elif reduce_type == ReduceType.max:
                 step_max_metric_names.append(name)
                 if value is None:
-                    step_sum_metric_values.append(
+                    step_max_metric_values.append(
                         move_to_device(torch.tensor(float("-inf")), device)
                     )
                 else:
