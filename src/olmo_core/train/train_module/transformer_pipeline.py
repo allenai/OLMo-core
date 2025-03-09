@@ -609,16 +609,11 @@ class TransformerPipelineTrainModule(TrainModule):
 
         # Asynchronously send to previous stage ranks in the PP group.
         ordered_ranks = list(self._pp_config.rank_completion_order())
-        src_rank: Optional[int] = None
-        try:
-            src_rank = ordered_ranks[ordered_ranks.index(self.pp_group_rank) - 1]
-        except IndexError:
-            pass
-        dst_rank: Optional[int] = None
-        try:
-            dst_rank = ordered_ranks[ordered_ranks.index(self.pp_group_rank) + 1]
-        except IndexError:
-            pass
+        local_index = ordered_ranks.index(self.pp_group_rank)
+        src_rank = None if local_index == 0 else ordered_ranks[local_index - 1]
+        dst_rank = (
+            None if local_index == (len(ordered_ranks) - 1) else ordered_ranks[local_index + 1]
+        )
 
         ops: List[dist.P2POp] = []
         if src_rank is not None:
