@@ -1002,7 +1002,9 @@ class Trainer:
             )
             if not self._metrics_consistent:
                 log.warning(
-                    "Detected inconsistent metrics between ranks which will result in a slower metric reduction algorithm"
+                    "Detected inconsistent metrics between ranks which will result in a slower metrics reduction algorithm. "
+                    "This is expected in some cases (like with pipeline parallelism) and probably won't affect training "
+                    "speed if your backend supports CPU reductions."
                 )
 
         self._run_bookkeeping_op(
