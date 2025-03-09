@@ -236,6 +236,7 @@ def parallelize_model(
     cp_config: Optional[TransformerContextParallelConfig] = None,
     ep_config: Optional[TransformerExpertParallelConfig] = None,
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
+    pp_enabled: bool = False,
 ) -> M:
     model_parts: List[Transformer] = [model] if isinstance(model, Transformer) else model
 
@@ -311,14 +312,14 @@ def parallelize_model(
                         world_mesh,
                         param_dtype=param_dtype,
                         reduce_dtype=dp_config.reduce_dtype.as_pt(),
-                        pp_enabled=False,
+                        pp_enabled=pp_enabled,
                     )
                 m.apply_fsdp(
                     dp_mesh=dp_mesh,
                     param_dtype=param_dtype,
                     reduce_dtype=dp_config.reduce_dtype.as_pt(),
                     wrapping_strategy=dp_config.wrapping_strategy,
-                    pp_enabled=False,
+                    pp_enabled=pp_enabled,
                     prefetch_factor=dp_config.prefetch_factor,
                 )
             log.info(f"Applied FSDP to the model with {get_device_mesh_info(dp_mesh)}")

@@ -357,6 +357,7 @@ class TransformerPipelineTrainModule(TrainModule):
             cp_config=cp_config,
             ep_config=ep_config,
             ac_config=ac_config,
+            pp_enabled=True,
         )
 
         self._dp_config = dp_config
