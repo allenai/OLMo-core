@@ -195,6 +195,7 @@ class TransformerPipelineTrainModuleConfig(Config):
     dp_config: Optional[TransformerDataParallelConfig] = None
     tp_config: Optional[TransformerTensorParallelConfig] = None
     cp_config: Optional[TransformerContextParallelConfig] = None
+    ep_config: Optional[TransformerExpertParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
 
     # Loss function settings.
