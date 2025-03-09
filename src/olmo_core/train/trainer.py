@@ -1007,11 +1007,13 @@ class Trainer:
                 process_group=self.bookkeeping_pg,
             )
             if not self._metrics_consistent:
-                log.warning(
-                    "Detected inconsistent metrics between ranks which will result in a slower metrics reduction algorithm. "
-                    "This is expected in some cases (like with pipeline parallelism) and probably won't affect training "
-                    "speed if your backend supports CPU reductions."
+                msg = (
+                    "Detected inconsistent metrics between ranks. This is expected in some cases "
+                    "(like with pipeline parallelism)."
                 )
+                if not self.async_bookkeeping:
+                    msg += " This may result in slower training speeds since you don't have async bookkeeping enabled."
+                log.warning(msg)
 
         self._run_bookkeeping_op(
             reduce_metrics,

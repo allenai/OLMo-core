@@ -385,7 +385,9 @@ class TransformerPipelineTrainModule(TrainModule):
         self.optimizers: List[Optimizer] = [
             optim.build(model, strict=False) for model in self.model_parts
         ]
-        # TODO: (epwalsh) fix this
+
+        # TODO: (epwalsh) add support for SkipStepOptimizers. Just need to reduce loss before
+        # optimizer step.
         if isinstance(self.optimizers[0], SkipStepOptimizer):
             raise NotImplementedError(
                 "Pipeline parallelism with a SkipStepOptimizer is currently not supported"
