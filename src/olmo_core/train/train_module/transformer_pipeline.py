@@ -340,10 +340,6 @@ class TransformerPipelineTrainModule(TrainModule):
         self._pp_stages: Optional[List[PipelineStage]] = None
         pp_mesh = get_pp_mesh(self.world_mesh)
         stages, model_parts = pp_config.split_model(model, pp_mesh=pp_mesh, device=self.device)
-        # NOTE: each rank needs at least one block, otherwise ranks might have different auxiliary
-        # metrics which causes issues in the trainer when it tries to reduce those metrics.
-        if not any([len(model.blocks) > 0 for model in model_parts]):
-            raise RuntimeError("Each rank needs at least one transformer block in its stages")
         self._pp_stages = stages
         log.info(f"Applied pipeline parallelism to the model with {get_device_mesh_info(pp_mesh)}")
 
