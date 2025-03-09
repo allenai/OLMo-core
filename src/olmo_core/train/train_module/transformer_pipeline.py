@@ -623,12 +623,12 @@ class TransformerPipelineTrainModule(TrainModule):
         ops: List[dist.P2POp] = []
         if src_rank is not None:
             log.warning(
-                f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) receiving from rank {get_global_rank(src_rank)} (pp group rank {src_rank})"
+                f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) receiving from rank {get_global_rank(src_rank, group=self.pp_group)} (pp group rank {src_rank})"
             )
             ops.append(dist.P2POp(dist.irecv, x, group=self.pp_group, group_peer=src_rank))
         if dst_rank is not None:
             log.warning(
-                f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) sending to rank {get_global_rank(dst_rank)} (pp group rank {dst_rank})"
+                f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) sending to rank {get_global_rank(dst_rank, group=self.pp_group)} (pp group rank {dst_rank})"
             )
             ops.append(dist.P2POp(dist.isend, x, group=self.pp_group, group_peer=dst_rank))
 
