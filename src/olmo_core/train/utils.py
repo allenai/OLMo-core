@@ -4,7 +4,7 @@ import random
 import sys
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import torch
@@ -17,7 +17,6 @@ from ..config import Config
 from ..distributed.utils import (
     all_gather_object,
     get_local_tensor,
-    get_rank,
     get_reduce_divide_factor,
     get_world_size,
     is_distributed,
@@ -154,19 +153,36 @@ def move_metrics(
     return target
 
 
-def validate_metrics(
+def get_metric_world_sizes_by_step(
+    metrics: Dict[int, Dict[str, torch.Tensor]],
+    process_group: Optional[dist.ProcessGroup] = None,
+) -> Dict[int, Dict[str, int]]:
+    all_steps_metrics: Dict[int, Set[str]] = defaultdict(set)
+    for step, step_metrics in metrics.items():
+        for name in step_metrics.keys():
+            all_steps_metrics[step].add(name)
+
+    all_ranks_steps_metrics = all_gather_object(all_steps_metrics, group=process_group)
+
+    all_steps_world_sizes: Dict[int, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for rank_steps_metrics in all_ranks_steps_metrics:
+        for step, step_metrics in rank_steps_metrics.items():
+            for metric_name in step_metrics:
+                all_steps_world_sizes[step][metric_name] += 1
+
+    return all_steps_world_sizes
+
+
+def check_metrics_consistent(
     metrics_reduce_type: Dict[str, Optional[ReduceType]],
     process_group: Optional[dist.ProcessGroup] = None,
-):
-    metrics_to_reduce = {k: v for k, v in metrics_reduce_type.items() if v is not None}
+) -> bool:
+    metrics_to_reduce: Set[str] = set(k for k, v in metrics_reduce_type.items() if v is not None)
     all_ranks_metrics_to_reduce = all_gather_object(metrics_to_reduce, group=process_group)
     for rank in range(get_world_size(process_group)):
         if metrics_to_reduce != all_ranks_metrics_to_reduce[rank]:
-            raise RuntimeError(
-                f"Ranks are logging different metrics!\n"
-                f"Rank {get_rank(process_group)}: {metrics_to_reduce}\n"
-                f"Rank {rank}: {all_ranks_metrics_to_reduce[rank]}"
-            )
+            return False
+    return True
 
 
 @torch.no_grad()
@@ -175,11 +191,8 @@ def reduce_metrics(
     metrics_reduce_type: Dict[str, Optional[ReduceType]],
     device: torch.device,
     process_group: Optional[dist.ProcessGroup] = None,
-    validate: bool = False,
+    metrics_consistent: bool = True,
 ) -> Dict[int, Dict[str, float]]:
-    if validate:
-        validate_metrics(metrics_reduce_type, process_group=process_group)
-
     metrics = move_metrics(metrics, device)
     out: Dict[int, Dict[str, float]] = defaultdict(dict)
 
@@ -191,6 +204,12 @@ def reduce_metrics(
 
     world_size = get_world_size(process_group)
     divide_factor = get_reduce_divide_factor(world_size)
+    all_steps_metric_world_sizes: Dict[int, Dict[str, int]] = {}
+    if not metrics_consistent:
+        all_steps_metric_world_sizes = get_metric_world_sizes_by_step(
+            metrics,
+            process_group=process_group,
+        )
 
     # Flattened metrics by step and reduce type.
     sum_metric_names: List[List[str]] = []
@@ -199,26 +218,46 @@ def reduce_metrics(
     max_metric_values: List[torch.Tensor] = []
 
     for step in sorted(metrics.keys()):
+        metric_world_sizes: Optional[Dict[str, int]] = all_steps_metric_world_sizes.get(step)
         step_sum_metric_names: List[str] = []
         step_sum_metric_values: List[torch.Tensor] = []
         step_max_metric_names: List[str] = []
         step_max_metric_values: List[torch.Tensor] = []
 
         step_metrics = metrics[step]
-        for name in sorted(step_metrics.keys()):
-            value = step_metrics[name]
+
+        sorted_metric_names: List[str]
+        if metric_world_sizes is not None:
+            sorted_metric_names = sorted(metric_world_sizes.keys())
+        else:
+            sorted_metric_names = sorted(step_metrics.keys())
+
+        for name in sorted_metric_names:
+            value = step_metrics.get(name)
             reduce_type = metrics_reduce_type[name]
             if reduce_type in (ReduceType.mean, ReduceType.sum):
                 step_sum_metric_names.append(name)
-                step_sum_metric_values.append(value)
+                if value is None:
+                    step_sum_metric_values.append(move_to_device(torch.tensor(0.0), device))
+                else:
+                    step_sum_metric_values.append(value)
             elif reduce_type == ReduceType.l2_norm:
                 step_sum_metric_names.append(name)
-                step_sum_metric_values.append(value.pow(2))
+                if value is None:
+                    step_sum_metric_values.append(move_to_device(torch.tensor(0.0), device))
+                else:
+                    step_sum_metric_values.append(value.pow(2))
             elif reduce_type == ReduceType.max:
                 step_max_metric_names.append(name)
-                step_max_metric_values.append(value)
+                if value is None:
+                    step_sum_metric_values.append(
+                        move_to_device(torch.tensor(float("-inf")), device)
+                    )
+                else:
+                    step_max_metric_values.append(value)
             elif reduce_type is None:
-                out[step][name] = value.item()
+                if value is not None:
+                    out[step][name] = value.item()
             else:
                 raise NotImplementedError()
 
@@ -275,7 +314,7 @@ def reduce_metrics(
             item = item * divide_factor
             reduce_type = metrics_reduce_type[name]
             if reduce_type == ReduceType.mean:
-                item = item / world_size
+                item = item / all_steps_metric_world_sizes.get(step, {}).get(name, world_size)
             elif reduce_type == ReduceType.l2_norm:
                 item = math.sqrt(item)
             out[step][name] = item

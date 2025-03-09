@@ -52,7 +52,7 @@ from .callbacks import (
 from .checkpoint import Checkpointer
 from .common import Duration, DurationUnit, LoadStrategy, ReduceType, TrainingProgress
 from .train_module import TrainModule
-from .utils import EnvRngStates, move_metrics, reduce_metrics
+from .utils import EnvRngStates, check_metrics_consistent, move_metrics, reduce_metrics
 
 log = logging.getLogger(__name__)
 
@@ -250,7 +250,7 @@ class Trainer:
     _thread_pool: Optional[ThreadPoolExecutor] = None
     _bookkeeping_pg: Optional[dist.ProcessGroup] = None
     _checkpoint_loaded: bool = False
-    _metrics_validated: bool = False
+    _metrics_consistent: Optional[bool] = None
 
     def __post_init__(self):
         self.save_folder = normalize_path(self.save_folder)
@@ -994,16 +994,26 @@ class Trainer:
         # so CUDA training can continue.
         metrics_to_reduce = move_metrics(self._metrics, self.bookkeeping_device)
         self._metrics.clear()
+
+        if self._metrics_consistent is None:
+            self._metrics_consistent = check_metrics_consistent(
+                self._metrics_reduce_type,
+                process_group=self.bookkeeping_pg,
+            )
+            if not self._metrics_consistent:
+                log.warning(
+                    "Detected inconsistent metrics between ranks which will result in a slower metric reduction algorithm"
+                )
+
         self._run_bookkeeping_op(
             reduce_metrics,
             metrics_to_reduce,
             self._metrics_reduce_type,
             self.bookkeeping_device,
             process_group=self.bookkeeping_pg,
-            validate=not self._metrics_validated,
+            metrics_consistent=self._metrics_consistent,
             cb=self._check_and_pass_on_metrics,
         )
-        self._metrics_validated = True
 
     def _check_and_pass_on_metrics(self, metrics: Dict[int, Dict[str, float]]):
         for step in sorted(metrics.keys()):
