@@ -615,8 +615,9 @@ class TransformerPipelineTrainModule(TrainModule):
 
         # Sync Float8 AMAXs (argmax of abs(max)) and scales.
         if self.float8_handler is not None:
-            for model in self.model_parts:
-                self.float8_handler.sync_float8_amax_and_scale_history(model)
+            self.float8_handler.sync_float8_amax_and_scale_history(
+                cast(List[nn.Module], self.model_parts)
+            )
 
         # Maybe adjust learning rate.
         if self.scheduler is not None:
@@ -670,8 +671,9 @@ class TransformerPipelineTrainModule(TrainModule):
         # Calculate Float8 dynamic AMAX/scale for all parameters.
         # For FSDP2 this issues a single all-reduce for all parameters at once.
         if self.float8_handler is not None:
-            for model in self.model_parts:
-                self.float8_handler.precompute_float8_dynamic_scale_for_fsdp(model)
+            self.float8_handler.precompute_float8_dynamic_scale_for_fsdp(
+                cast(List[nn.Module], self.model_parts)
+            )
 
     def zero_grads(self):
         for optim in self.optimizers:
@@ -688,8 +690,26 @@ class TransformerPipelineTrainModule(TrainModule):
         Run the pipeline, returning the losses captured.
         """
 
+        # NOTE: we to take extra care to handle auxiliary losses correctly which need to be propagated
+        # from stage to stage just like other activations. So each stage will return either a single
+        # tensor of activations (if there are no auxiliary losses) or a tuple of two tensors
+        # representing the activation and the combined_auxiliary losses, respectively, except for the
+        # final stage which always just returns the total combined loss.
+        # To accomplish this without complicated ad hoc model code changes, we register pre- and post-forward
+        # hooks to handle the logic.
+        #
+        # In particular, we have:
+        #  - A post-forward hook `capture_losses()`, which modifies a stage's output to include a
+        #    combined auxiliary loss when needed, in which the output becomes a `Tuple[Tensor, Tensor]`
+        #    instead of a `Tensor`. At the same time this callback will record/accumulate the individual
+        #    losses for logging later.
+        #  - A pre-forward hook `pass_losses_through()` which removes the added auxiliary loss
+        #    (from the previous stage) from the current stage's input so as to not require code
+        #    changes in the model. The remove loss will be added into the current stage's auxiliary
+        #    losses from the post-forward hook (`capture_losses`).
+
         losses_to_record: Dict[str, torch.Tensor] = {}
-        current_stage_loss: Optional[torch.Tensor] = None
+        previous_stage_aux_loss: Optional[torch.Tensor] = None
 
         def record_loss(name: str, value: torch.Tensor):
             nonlocal losses_to_record
@@ -699,27 +719,16 @@ class TransformerPipelineTrainModule(TrainModule):
             else:
                 losses_to_record[name] = value
 
-        def pass_losses_through(model: Transformer, args: Tuple[torch.Tensor, ...]) -> torch.Tensor:
-            del model
-            nonlocal current_stage_loss
-            assert current_stage_loss is None
-
-            if len(args) > 1:
-                assert len(args) == 2
-                current_stage_loss = args[1]
-
-            return args[0]
-
         def capture_losses(
             model: Transformer, args: Tuple[torch.Tensor, ...], output: Any
         ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
             del args
             losses: List[torch.Tensor] = []
 
-            nonlocal current_stage_loss
-            if current_stage_loss is not None:
-                losses.append(current_stage_loss.squeeze(0))
-                current_stage_loss = None
+            nonlocal previous_stage_aux_loss
+            if previous_stage_aux_loss is not None:
+                losses.append(previous_stage_aux_loss.squeeze(0))
+                previous_stage_aux_loss = None
 
             # Get auxiliary losses.
             for name, value in model.compute_auxiliary_losses(
@@ -743,6 +752,17 @@ class TransformerPipelineTrainModule(TrainModule):
                     return output, torch.stack(losses).sum(0, keepdim=True)
                 else:
                     return output
+
+        def pass_losses_through(model: Transformer, args: Tuple[torch.Tensor, ...]) -> torch.Tensor:
+            del model
+            nonlocal previous_stage_aux_loss
+            assert previous_stage_aux_loss is None
+
+            if len(args) > 1:
+                assert len(args) == 2
+                previous_stage_aux_loss = args[1]
+
+            return args[0]
 
         handles = []
         for model in self.model_parts:
