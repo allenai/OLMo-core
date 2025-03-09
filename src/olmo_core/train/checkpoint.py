@@ -12,25 +12,27 @@ from typing import Any, ClassVar, Dict, Generator, Optional, Tuple, Union
 import torch
 import torch.distributed as dist
 from cached_path import cached_path
+from huggingface_hub import repo_exists
 from torch.distributed.checkpoint.metadata import Metadata
 
-from ..aliases import PathOrStr
-from ..config import Config
-from ..distributed.checkpoint import (
+from olmo_core.aliases import PathOrStr
+from olmo_core.checkpointing.hf import load_hf_checkpoint, save_as_hf_checkpoint
+from olmo_core.config import Config, StrEnum
+from olmo_core.distributed.checkpoint import (
     async_save_state_dict,
     get_checkpoint_metadata,
     load_state_dict,
     save_state_dict,
 )
-from ..distributed.utils import (
+from olmo_core.distributed.utils import (
     barrier,
     get_fs_local_rank,
     get_rank,
     is_distributed,
     scatter_object,
 )
-from ..exceptions import OLMoConfigurationError
-from ..io import (
+from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.io import (
     clear_directory,
     dir_is_empty,
     file_exists,
@@ -39,11 +41,29 @@ from ..io import (
     normalize_path,
     upload,
 )
-from ..utils import wait_for
-from ..version import VERSION
-from .train_module import TrainModule
+from olmo_core.train.train_module import TrainModule
+from olmo_core.utils import wait_for
+from olmo_core.version import VERSION
 
 log = logging.getLogger(__name__)
+
+
+class CheckpointFormat(StrEnum):
+    """
+    The format of the checkpoint on disk.
+    """
+
+    distributed = "distributed"
+    """
+    The native distributed checkpoint format of olmo_core.
+    """
+
+    hf = "hf"
+    """
+    A Hugging Face compatible checkpoint format.
+
+    WARNING: This format does not support loading or saving optimizer or trainer state.
+    """
 
 
 @dataclass
@@ -58,6 +78,7 @@ class CheckpointerConfig(Config):
     save_thread_count: Optional[int] = None
     load_thread_count: Optional[int] = None
     throttle_uploads: bool = False
+    checkpoint_save_format: CheckpointFormat = CheckpointFormat.distributed
 
     def build(self, process_group: Optional[dist.ProcessGroup] = None, **kwargs) -> "Checkpointer":
         kwargs = {**self.as_dict(exclude_none=True, recurse=False), **kwargs}
@@ -88,6 +109,7 @@ class Checkpointer:
     save_thread_count: Optional[int] = None
     load_thread_count: Optional[int] = None
     throttle_uploads: bool = False
+    checkpoint_save_format: CheckpointFormat = CheckpointFormat.distributed
 
     def __post_init__(self):
         self.work_dir = Path(self.work_dir)
@@ -99,22 +121,16 @@ class Checkpointer:
         Save model, optim, and other training state to a local or remote directory.
         """
         dir = normalize_path(dir)
-        with self._temporary_wd(dir) as wd:
-            # Save trainer state.
-            self._save_train_state(dir, wd, train_state)
 
-            # Save model and optim state.
-            train_module_dir = f"{dir}/model_and_optim" if is_url(dir) else wd / "model_and_optim"
-            save_state_dict(
-                train_module_dir,
-                train_module.state_dict_to_save(),
-                process_group=self.process_group,
-                save_overwrite=self.save_overwrite,
-                thread_count=self.save_thread_count,
-                throttle_uploads=self.throttle_uploads,
+        # TODO: Deal with lacking metadata
+        if self.checkpoint_save_format == CheckpointFormat.distributed:
+            return self._save_distributed(dir, train_module, train_state)
+        elif self.checkpoint_save_format == CheckpointFormat.hf:
+            return self._save_hf(dir, train_module)
+        else:
+            raise NotImplementedError(
+                f"Saving for format {self.checkpoint_save_format.format} is not yet implemented"
             )
-
-        self._save_metadata(dir, CheckpointMetadata())
 
     def save_async(
         self, dir: PathOrStr, train_module: TrainModule, train_state: Dict[str, Any]
@@ -166,52 +182,16 @@ class Checkpointer:
         """
         dir = normalize_path(dir)
 
-        # Maybe load trainer state.
-        trainer_state: Optional[Dict[str, Any]] = None
-        if load_trainer_state is not False:
-            # Try loading the given rank's state first, then fall back to rank 0 train state if it
-            # doesn't exist, which can happen when we're restoring a checkpoint with a different world size.
-            for path in (f"{dir}/train/rank{get_rank()}.pt", f"{dir}/train/rank0.pt"):
-                try:
-                    trainer_state = torch.load(cached_path(path, quiet=True), weights_only=False)
-                    break
-                except FileNotFoundError:
-                    pass
-
-            if load_trainer_state is True and trainer_state is None:
-                raise FileNotFoundError(f"Missing trainer state in checkpoint dir '{dir}'")
-
-        # Load train module state.
-        train_module_dir = f"{dir}/model_and_optim"
-        metadata: Optional[Metadata] = None
-        if get_rank(self.process_group) == 0:
-            try:
-                metadata = get_checkpoint_metadata(train_module_dir)
-            except FileNotFoundError:
-                # Try base directory, which could be the case if user is trying to load model weights
-                # (possibly with optimizer state), and not an actual train checkpoint.
-                if trainer_state is None:
-                    metadata = get_checkpoint_metadata(dir)
-                    train_module_dir = dir
-                else:
-                    raise
-
-        train_module_dir = scatter_object(train_module_dir)
-        if metadata is None:
-            metadata = get_checkpoint_metadata(train_module_dir)
-
-        state_dict = train_module.state_dict_to_load(metadata)
-        load_state_dict(
-            train_module_dir,
-            state_dict,
-            process_group=self.process_group,
-            pre_download=is_url(dir) and self.pre_download,
-            work_dir=self.work_dir,
-            thread_count=self.load_thread_count,
-        )
-        train_module.load_state_dict(state_dict)
-
-        return trainer_state
+        if self.contains_checkpoint(dir):
+            return self._load_distributed(dir, train_module, load_trainer_state=load_trainer_state)
+        elif (
+            repo_exists(str(dir))
+            or file_exists(f"{dir}/model.safetensors.index.json")
+            or file_exists(f"{dir}/pytorch_model.bin")
+        ):
+            return self._load_hf(dir, train_module)
+        else:
+            raise RuntimeError(f"Unable to determine how to load checkpoint at {dir}")
 
     def write_file(self, dir: PathOrStr, fname: str, contents: Union[str, bytes]) -> PathOrStr:
         """
@@ -326,6 +306,47 @@ class Checkpointer:
         else:
             return latest_checkpoint
 
+    def _save_hf(self, dir: PathOrStr, train_module: TrainModule):
+        log.warning(
+            "Saving checkpoint to Hugging Face format, optimizer and training state will not be saved."
+        )
+
+        from olmo_core.train.train_module.transformer import TransformerTrainModule
+
+        if not isinstance(train_module, TransformerTrainModule):
+            raise RuntimeError(
+                "Saving to Hugging Face format is currently only support for TransformerTrainModule"
+            )
+
+        save_as_hf_checkpoint(
+            dir,
+            train_module.state_dict_to_save()["model"],
+            train_module.model,
+            process_group=self.process_group,
+            work_dir=self.work_dir,
+            save_overwrite=self.save_overwrite,
+        )
+
+    def _save_distributed(
+        self, dir: PathOrStr, train_module: TrainModule, train_state: Dict[str, Any]
+    ) -> None:
+        with self._temporary_wd(dir) as wd:
+            # Save trainer state.
+            self._save_train_state(dir, wd, train_state)
+
+            # Save model and optim state.
+            train_module_dir = f"{dir}/model_and_optim" if is_url(dir) else wd / "model_and_optim"
+            save_state_dict(
+                train_module_dir,
+                train_module.state_dict_to_save(),
+                process_group=self.process_group,
+                save_overwrite=self.save_overwrite,
+                thread_count=self.save_thread_count,
+                throttle_uploads=self.throttle_uploads,
+            )
+
+        self._save_metadata(dir, CheckpointMetadata())
+
     def _save_train_state(self, dir: PathOrStr, wd: Path, train_state: Dict[str, Any]):
         train_dir = wd / "train"
         # NOTE: if 'dir' is a URL, the 'wd' will be a different temp dir for each rank.
@@ -333,6 +354,95 @@ class Checkpointer:
             train_dir.mkdir(exist_ok=True, parents=True)
         wait_for(train_dir.exists, description=f"Waiting for '{train_dir}' to be created...")
         torch.save(train_state, train_dir / f"rank{get_rank()}.pt")
+
+    def _load_hf(
+        self,
+        dir: PathOrStr,
+        train_module: TrainModule,
+    ):
+        dir = normalize_path(dir)
+
+        log.warning(
+            "Loading checkpoint of Hugging Face format, optimizer and training state will not be set."
+        )
+
+        from olmo_core.train.train_module.transformer import TransformerTrainModule
+
+        if not isinstance(train_module, TransformerTrainModule):
+            raise RuntimeError(
+                "Loading from to Hugging Face format is currently only support for TransformerTrainModule"
+            )
+
+        # TODO: Check this is needed
+        # state_dict = train_module.state_dict_to_load(metadata=None)
+        state_dict = train_module.state_dict()
+
+        load_hf_checkpoint(
+            dir,
+            state_dict["model"],
+            train_module.model.n_layers,
+            process_group=self.process_group,
+            work_dir=self.work_dir,
+        )
+
+        train_module.load_state_dict(state_dict)
+        return None
+
+    def _load_distributed(
+        self,
+        dir: PathOrStr,
+        train_module: TrainModule,
+        *,
+        load_trainer_state: Optional[bool] = None,
+    ) -> Optional[Dict[str, Any]]:
+        dir = normalize_path(dir)
+
+        # Maybe load trainer state.
+        trainer_state: Optional[Dict[str, Any]] = None
+        if load_trainer_state is not False:
+            # Try loading the given rank's state first, then fall back to rank 0 train state if it
+            # doesn't exist, which can happen when we're restoring a checkpoint with a different world size.
+            for path in (f"{dir}/train/rank{get_rank()}.pt", f"{dir}/train/rank0.pt"):
+                try:
+                    trainer_state = torch.load(cached_path(path, quiet=True), weights_only=False)
+                    break
+                except FileNotFoundError:
+                    pass
+
+            if load_trainer_state is True and trainer_state is None:
+                raise FileNotFoundError(f"Missing trainer state in checkpoint dir '{dir}'")
+
+        # Load train module state.
+        train_module_dir = f"{dir}/model_and_optim"
+        metadata: Optional[Metadata] = None
+        if get_rank(self.process_group) == 0:
+            try:
+                metadata = get_checkpoint_metadata(train_module_dir)
+            except FileNotFoundError:
+                # Try base directory, which could be the case if user is trying to load model weights
+                # (possibly with optimizer state), and not an actual train checkpoint.
+                if trainer_state is None:
+                    metadata = get_checkpoint_metadata(dir)
+                    train_module_dir = dir
+                else:
+                    raise
+
+        train_module_dir = scatter_object(train_module_dir)
+        if metadata is None:
+            metadata = get_checkpoint_metadata(train_module_dir)
+
+        state_dict = train_module.state_dict_to_load(metadata)
+        load_state_dict(
+            train_module_dir,
+            state_dict,
+            process_group=self.process_group,
+            pre_download=is_url(dir) and self.pre_download,
+            work_dir=self.work_dir,
+            thread_count=self.load_thread_count,
+        )
+        train_module.load_state_dict(state_dict)
+
+        return trainer_state
 
     def _save_metadata(self, dir: PathOrStr, metadata: CheckpointMetadata):
         if get_rank() == 0:
