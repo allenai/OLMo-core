@@ -174,7 +174,9 @@ def get_metric_world_sizes_by_step(
     metrics_reduce_type: Dict[str, Optional[ReduceType]],
     process_group: Optional[dist.ProcessGroup] = None,
 ) -> Dict[int, Dict[str, int]]:
-    all_ranks_metrics_reduce_type = all_gather_object(metrics_reduce_type, group=process_group)
+    all_ranks_metrics_reduce_type: List[Dict[str, Optional[ReduceType]]] = all_gather_object(
+        metrics_reduce_type, group=process_group
+    )
 
     all_steps_world_sizes: Dict[int, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for step in metrics.keys():
