@@ -573,7 +573,14 @@ class TransformerPipelineTrainModule(TrainModule):
         # Record all of the losses we captured.
         # NOTE: main losses will be missing for non-final stages.
         ce_loss = losses_to_record.pop(TRAIN_CE_LOSS_METRIC, None)
-        if ce_loss is not None:
+        # If we have a SkipStepOptimizer we'll reduce the loss (if we have the final stage) across
+        # the DP process group and then asynchronously send to the ranks in the PP group.
+        if isinstance(self.optimizers[0], SkipStepOptimizer):
+            ce_loss = self.reduce_send_recv(ce_loss)
+            for optim in self.optimizers:
+                cast(SkipStepOptimizer, optim).latest_loss = ce_loss
+            self.record_metric(TRAIN_CE_LOSS_METRIC, ce_loss)
+        elif ce_loss is not None:
             self.record_metric(TRAIN_CE_LOSS_METRIC, ce_loss, ReduceType.mean)
         if (z_loss := losses_to_record.pop(TRAIN_Z_LOSS_METRIC, None)) is not None:
             self.record_metric(TRAIN_Z_LOSS_METRIC, z_loss, ReduceType.mean)
@@ -587,13 +594,6 @@ class TransformerPipelineTrainModule(TrainModule):
                 reset=True,
             ).items():
                 self.record_metric(metric_name, metric_val, reduction, namespace="train")
-
-        # If we have a SkipStepOptimizer we'll reduce the loss (if we have the final stage) across
-        # the DP process group and then asynchronously send to the ranks in the PP group.
-        if isinstance(self.optimizers[0], SkipStepOptimizer):
-            ce_loss = self.reduce_send_recv(ce_loss)
-            for optim in self.optimizers:
-                cast(SkipStepOptimizer, optim).latest_loss = ce_loss
 
     def reduce_send_recv(self, x: Optional[torch.Tensor] = None) -> torch.Tensor:
         if self.pp_group_rank == self.pp_final_stage_rank:
@@ -617,21 +617,21 @@ class TransformerPipelineTrainModule(TrainModule):
 
         ops: List[dist.P2POp] = []
         if src_rank is not None:
-            log.warning(
-                f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) receiving from rank {get_global_rank(src_rank, group=self.pp_group)} (pp group rank {src_rank})"
+            log.debug(
+                f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) receiving from rank "
+                f"{get_global_rank(src_rank, group=self.pp_group)} (pp group rank {src_rank})"
             )
             ops.append(dist.P2POp(dist.irecv, x, group=self.pp_group, group_peer=src_rank))
         if dst_rank is not None:
-            log.warning(
-                f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) sending to rank {get_global_rank(dst_rank, group=self.pp_group)} (pp group rank {dst_rank})"
+            log.debug(
+                f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) sending to rank "
+                f"{get_global_rank(dst_rank, group=self.pp_group)} (pp group rank {dst_rank})"
             )
             ops.append(dist.P2POp(dist.isend, x, group=self.pp_group, group_peer=dst_rank))
 
-        log.warning(f"Rank {get_rank()} waiting...")
         reqs = dist.batch_isend_irecv(ops)
         for req in reqs:
             req.wait()
-        log.warning(f"Rank {get_rank()} done")
 
         return x
 
