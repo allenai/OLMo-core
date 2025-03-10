@@ -196,8 +196,5 @@ class PipelineSchedule:
         else:
             target = None
 
-        if not self.has_first_stage:
-            args = tuple()
-
         output = self.base_schedule.step(*args, target=target, losses=losses, **kwargs)
         return output, None if losses is None else torch.stack(losses)
