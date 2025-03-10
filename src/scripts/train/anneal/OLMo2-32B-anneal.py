@@ -172,12 +172,12 @@ class AnnealingConfig(Config):
                     num_replicas=128 // 32,  # common.launch.num_nodes // 2,
                 ),
                 ac_config=TransformerActivationCheckpointingConfig(
-                   mode=TransformerActivationCheckpointingMode.selected_modules,
-                   modules=["blocks.*.feed_forward"],
+                    mode=TransformerActivationCheckpointingMode.selected_modules,
+                    modules=["blocks.*.feed_forward"],
                 ),
-                #ac_config=TransformerActivationCheckpointingConfig(
+                # ac_config=TransformerActivationCheckpointingConfig(
                 #    mode=TransformerActivationCheckpointingMode.full
-                #),
+                # ),
             ),
             optim=SkipStepAdamWConfig(
                 lr=starting_lr,
