@@ -1,14 +1,17 @@
-from test.utils import DEVICES
+from typing import Optional
 
 import pytest
 import torch
 import torch.nn as nn
 
+from olmo_core.config import DType
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
 from olmo_core.optim import AdamWConfig, OptimGroupOverride, SkipStepAdamWConfig
+
+from ..utils import DEVICES
 
 
 class MyModel(nn.Module):
@@ -76,8 +79,12 @@ def test_adamw(device: torch.device, tmp_path):
 
 
 @pytest.mark.parametrize("device", DEVICES)
-def test_skip_step_adamw(device: torch.device):
-    config = SkipStepAdamWConfig()
+@pytest.mark.parametrize("dtype", [None, DType.bfloat16])
+def test_skip_step_adamw(device: torch.device, dtype: Optional[DType]):
+    if dtype == DType.bfloat16 and device.type == "cpu":
+        pytest.skip("bfloat16 dtype requires cuda")
+
+    config = SkipStepAdamWConfig(dtype=dtype)
     model = MyModel().train().to(device)
     optim = config.build(model)
 
