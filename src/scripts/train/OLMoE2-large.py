@@ -12,6 +12,7 @@ from olmo_core.distributed.parallel import (
 )
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
+from olmo_core.launch.beaker import OLMoCoreBeakerImage
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import TrainerConfig
@@ -25,6 +26,9 @@ from olmo_core.train.train_module import (
 )
 
 log = logging.getLogger(__name__)
+
+
+DEFAULT_NUM_NODES = 8
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -63,7 +67,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerPipelineTr
         ),
         compile_model=True,
         pp_config=TransformerPipelineParallelConfig(
-            degree=4, schedule=PipelineScheduleType.interleaved_1F1B, style=PipelineSplitStyle.loop
+            degree=DEFAULT_NUM_NODES,
+            schedule=PipelineScheduleType.interleaved_1F1B,
+            style=PipelineSplitStyle.loop,
         ),
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
@@ -127,4 +133,8 @@ if __name__ == "__main__":
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         include_default_evals=False,
+        # nightly needed right now for FP8 to work with PP
+        # https://github.com/pytorch/pytorch/issues/143194
+        beaker_image=OLMoCoreBeakerImage.nightly,
+        num_nodes=DEFAULT_NUM_NODES,
     )
