@@ -5,11 +5,7 @@ Train a large OLMoE model. Run this script without any arguments to see usage in
 import logging
 
 from olmo_core.config import DType
-from olmo_core.distributed.parallel import (
-    DataParallelType,
-    PipelineScheduleType,
-    PipelineSplitStyle,
-)
+from olmo_core.distributed.parallel import DataParallelType, PipelineScheduleType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
@@ -63,7 +59,6 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         kwargs["pp_config"] = TransformerPipelineParallelConfig(
             degree=DEFAULT_NUM_NODES,
             schedule=PipelineScheduleType.interleaved_1F1B,
-            style=PipelineSplitStyle.loop,
         )
     return config_cls(
         rank_microbatch_size=1 * 4096,

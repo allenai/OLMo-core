@@ -17,11 +17,7 @@ from olmo_core.data import (
     NumpyDatasetType,
     TokenizerConfig,
 )
-from olmo_core.distributed.parallel import (
-    DataParallelType,
-    PipelineScheduleType,
-    PipelineSplitStyle,
-)
+from olmo_core.distributed.parallel import DataParallelType, PipelineScheduleType
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
@@ -88,7 +84,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         ),
         compile_model=True,
         pp_config=TransformerPipelineParallelConfig(
-            degree=2, schedule=PipelineScheduleType.interleaved_1F1B, style=PipelineSplitStyle.loop
+            degree=2, schedule=PipelineScheduleType.interleaved_1F1B
         ),
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32

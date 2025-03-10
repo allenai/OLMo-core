@@ -17,6 +17,11 @@ from olmo_core.config import Config, StrEnum
 from olmo_core.exceptions import OLMoConfigurationError
 
 
+class PipelineSplitStyle(StrEnum):
+    loop = "loop"
+    v = "v"
+
+
 class PipelineScheduleType(StrEnum):
     """
     An enumeration of the different pipeline schedules available.
@@ -42,10 +47,12 @@ class PipelineScheduleType(StrEnum):
     def is_multi_stage(self) -> bool:
         return not self.is_single_stage
 
-
-class PipelineSplitStyle(StrEnum):
-    loop = "loop"
-    v = "v"
+    @property
+    def default_style(self) -> PipelineSplitStyle:
+        if "ZeroBubble" in self:
+            return PipelineSplitStyle.v
+        else:
+            return PipelineSplitStyle.loop
 
 
 @dataclass
@@ -64,44 +71,53 @@ class PipelineParallelConfig(Config):
     The name of the schedule.
     """
 
-    style: PipelineSplitStyle
+    style: Optional[PipelineSplitStyle] = None
     """
     The split style.
     """
 
+    def infer_style(self) -> PipelineSplitStyle:
+        if self.style is not None:
+            return self.style
+        else:
+            return self.schedule.default_style
+
     def final_stage_rank(self) -> int:
-        if self.style == PipelineSplitStyle.loop:
+        style = self.infer_style()
+        if style == PipelineSplitStyle.loop:
             return self.degree - 1
-        elif self.style == PipelineSplitStyle.v:
+        elif style == PipelineSplitStyle.v:
             return 0
         else:
-            raise NotImplementedError(self.style)
+            raise NotImplementedError(style)
 
     def rank_completion_order(self) -> Iterable[int]:
         """
         The order that ranks within the PP group will complete a batch.
         """
-        if self.style == PipelineSplitStyle.loop:
+        style = self.infer_style()
+        if style == PipelineSplitStyle.loop:
             return range(self.degree - 1, -1, -1)
-        elif self.style == PipelineSplitStyle.v:
+        elif style == PipelineSplitStyle.v:
             return range(self.degree)
         else:
-            raise NotImplementedError(self.style)
+            raise NotImplementedError(style)
 
     def stage_ids_this_rank(self, pp_rank: int, num_stages: int) -> Tuple[int, ...]:
         """
         Compute the stage ids for the stages that will run on this pp rank for either a looped or
         V style schedule.
         """
+        style = self.infer_style()
         if num_stages % self.degree != 0:
             raise OLMoConfigurationError(
                 f"num_stages {num_stages} must be evenly divisible by pipeline size {self.degree}"
             )
 
         stages_per_rank = num_stages // self.degree
-        if self.style == PipelineSplitStyle.loop:
+        if style == PipelineSplitStyle.loop:
             return tuple(pp_rank + s * self.degree for s in range(stages_per_rank))
-        elif self.style == PipelineSplitStyle.v:
+        elif style == PipelineSplitStyle.v:
             assert (
                 stages_per_rank == 2
             ), f"v schedules assume 2 stages per rank, got {stages_per_rank}"
@@ -110,7 +126,7 @@ class PipelineParallelConfig(Config):
             )
             return stage_v_pairs[pp_rank]
         else:
-            raise NotImplementedError(self.style)
+            raise NotImplementedError(style)
 
 
 class PipelineSchedule:
