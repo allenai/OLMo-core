@@ -81,7 +81,11 @@ class BaselineModelLadder(ModelLadder):
 
 
 def build_ladder(root_dir: str) -> BaselineModelLadder:
-    save_folder = str(join_path(root_dir, f"checkpoints/{get_beaker_username().lower()}/ladder"))
+    beaker_username = get_beaker_username()
+    if beaker_username is not None:
+        save_folder = str(join_path(root_dir, f"checkpoints/{beaker_username.lower()}/ladder"))
+    else:
+        save_folder = str(join_path(root_dir, "checkpoints/ladder"))
     return BaselineModelLadder(
         name="OLMo2",
         project="OLMo2-model-ladder",
