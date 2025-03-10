@@ -764,19 +764,19 @@ class TransformerPipelineTrainModule(TrainModule):
                 else:
                     return output
 
-        def pass_losses_through(
-            model: Transformer, args: Tuple[torch.Tensor, ...]
-        ) -> Optional[torch.Tensor]:
+        def pass_losses_through(model: Transformer, args: Tuple[torch.Tensor, ...]) -> torch.Tensor:
             del model
             nonlocal previous_stage_aux_loss
             assert previous_stage_aux_loss is None
 
-            if len(args) > 1:
-                assert len(args) == 2
+            if len(args) == 2:
                 previous_stage_aux_loss = args[1]
+            elif len(args) != 1:
+                raise RuntimeError(
+                    f"Expected 1 or 2 positional tensor inputs to model, got {len(args)}"
+                )
 
-            if args:
-                return args[0]
+            return args[0]
 
         handles = []
         for model in self.model_parts:
