@@ -27,6 +27,10 @@ This major release introduces a few breaking changes. As such, we've provided an
 
 ## Unreleased
 
+### Fixed
+
+- Ensure certain optimizer param group fields are not overridden by the values in a checkpoint.
+
 ### Added
 
 - Added `instance_filter_config` field to `NumpyDatasetConfig`.
