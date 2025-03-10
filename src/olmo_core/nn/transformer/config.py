@@ -925,7 +925,7 @@ class TransformerConfig(Config):
         vocab_size: int,
         **kwargs,
     ) -> "TransformerConfig":
-        return cls.starcoder_like(
+        return cls.llama_like(
             d_model=3072,
             hidden_size_multiplier=1.5,
             vocab_size=vocab_size,
