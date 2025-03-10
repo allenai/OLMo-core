@@ -31,6 +31,7 @@ from olmo_core.distributed.parallel import (
     get_dp_model_mesh,
     get_dp_process_group,
     get_ep_mesh,
+    get_pp_mesh,
     get_tp_mesh,
 )
 from olmo_core.distributed.utils import (
@@ -240,6 +241,11 @@ def parallelize_model(
 ) -> M:
     model_parts: List[Transformer] = [model] if isinstance(model, Transformer) else model
 
+    pp_mesh: Optional[DeviceMesh] = None
+    if pp_enabled:
+        assert world_mesh is not None
+        pp_mesh = get_pp_mesh(world_mesh)
+
     # Maybe convert linear layers to FP8 linear.
     float8_enabled = False
     if float8_handler is not None and float8_handler.enabled:
@@ -342,6 +348,7 @@ def parallelize_model(
             max_seq_len=max_sequence_length,
             max_local_microbatch_size=rank_microbatch_size,
             device=device,
+            pp_mesh=pp_mesh,
         )
 
     return model
