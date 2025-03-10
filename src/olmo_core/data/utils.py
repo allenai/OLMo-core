@@ -397,6 +397,9 @@ def bucket_documents(
             indices.append(start_idx + x)
             start_idx += x
 
+    if not indices:
+        raise RuntimeError(f"Failed to produce any bucketed documents for source file at '{path}'")
+
     with memmap_to_write(target, dtype=indices_dtype, shape=(len(indices),)) as indices_mmap:
         indices_mmap[:] = indices
 

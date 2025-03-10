@@ -127,7 +127,7 @@ class Checkpointer:
         """
         if is_distributed() and self.process_group is None:
             raise OLMoConfigurationError(
-                "a checkointer process group is required for async checkointing!"
+                "a checkpointer process group is required for async checkpointing!"
             )
 
         dir = normalize_path(dir)

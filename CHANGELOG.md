@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- Ensure certain optimizer param group fields are not overridden by the values in a checkpoint.
+
 ### Added
 
 - Added `instance_filter_config` field to `NumpyDatasetConfig`.
