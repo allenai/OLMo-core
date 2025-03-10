@@ -764,7 +764,9 @@ class TransformerPipelineTrainModule(TrainModule):
                 else:
                     return output
 
-        def pass_losses_through(model: Transformer, args: Tuple[torch.Tensor, ...]) -> torch.Tensor:
+        def pass_losses_through(
+            model: Transformer, args: Tuple[torch.Tensor, ...]
+        ) -> Optional[torch.Tensor]:
             del model
             nonlocal previous_stage_aux_loss
             assert previous_stage_aux_loss is None
@@ -773,7 +775,8 @@ class TransformerPipelineTrainModule(TrainModule):
                 assert len(args) == 2
                 previous_stage_aux_loss = args[1]
 
-            return args[0]
+            if args:
+                return args[0]
 
         handles = []
         for model in self.model_parts:
