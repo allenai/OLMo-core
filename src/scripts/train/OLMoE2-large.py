@@ -23,12 +23,14 @@ from olmo_core.train.train_module import (
     TransformerExpertParallelConfig,
     TransformerPipelineParallelConfig,
     TransformerPipelineTrainModuleConfig,
+    TransformerTrainModuleConfig,
 )
 
 log = logging.getLogger(__name__)
 
 
-DEFAULT_NUM_NODES = 8
+PIPELINE_PARALLEL = False
+DEFAULT_NUM_NODES = 8 if PIPELINE_PARALLEL else 4
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -52,8 +54,18 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     )
 
 
-def build_train_module_config(common: CommonComponents) -> TransformerPipelineTrainModuleConfig:
-    return TransformerPipelineTrainModuleConfig(
+def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
+    config_cls = (
+        TransformerPipelineTrainModuleConfig if PIPELINE_PARALLEL else TransformerTrainModuleConfig
+    )
+    kwargs = {}
+    if PIPELINE_PARALLEL:
+        kwargs["pp_config"] = TransformerPipelineParallelConfig(
+            degree=DEFAULT_NUM_NODES,
+            schedule=PipelineScheduleType.interleaved_1F1B,
+            style=PipelineSplitStyle.loop,
+        )
+    return config_cls(
         rank_microbatch_size=1 * 4096,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=AdamWConfig(
@@ -66,11 +78,6 @@ def build_train_module_config(common: CommonComponents) -> TransformerPipelineTr
             fused=True,
         ),
         compile_model=True,
-        pp_config=TransformerPipelineParallelConfig(
-            degree=DEFAULT_NUM_NODES,
-            schedule=PipelineScheduleType.interleaved_1F1B,
-            style=PipelineSplitStyle.loop,
-        ),
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
@@ -84,6 +91,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerPipelineTr
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
+        **kwargs,
     )
 
 
