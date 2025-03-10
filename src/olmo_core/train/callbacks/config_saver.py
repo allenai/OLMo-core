@@ -23,7 +23,7 @@ class ConfigSaverCallback(Callback):
 
     config: Optional[Dict[str, Any]] = None
     fname: str = "config.json"
-    save_data_paths: bool = False
+    save_data_paths: Optional[bool] = None
     data_paths_fname: Optional[str] = None
 
     def post_checkpoint_saved(self, path: PathOrStr):
@@ -35,14 +35,14 @@ class ConfigSaverCallback(Callback):
         else:
             self.trainer.write_file(self.fname, json.dumps(self.config), dir=path)
 
-        if self.save_data_paths:
+        if self.save_data_paths is not False:
             if isinstance(self.trainer.data_loader, NumpyDataLoaderBase):
                 ds = self.trainer.data_loader.dataset
                 all_paths = "\n".join(str(p) for p in ds.paths)
                 self.trainer.write_file(
                     self.data_paths_fname or DEFAULT_DATA_PATHS_FNAME, all_paths, dir=path
                 )
-            else:
+            elif self.save_data_paths:
                 log.warning(
                     f"Unable to save paths for data loader of type '{self.trainer.data_loader.__class__.__name__}' (not implemented)"
                 )
