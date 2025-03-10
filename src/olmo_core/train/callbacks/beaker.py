@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, ClassVar, Optional
 from olmo_core.distributed.utils import get_rank
 from olmo_core.exceptions import OLMoEnvironmentError
 
+from ..common import TrainingProgress
 from .callback import Callback
 from .comet import CometCallback
 from .wandb import WandBCallback
@@ -90,26 +91,17 @@ class BeakerCallback(Callback):
     def _update(self):
         self.trainer.thread_pool.submit(
             self._set_description,
-            step=self.step,
-            max_steps=self.trainer.max_steps,
+            self.trainer.training_progress,
         )
         self._last_update = time.monotonic()
 
-    def _set_description(self, *, step: Optional[int], max_steps: Optional[int]):
+    def _set_description(self, progress: TrainingProgress):
         from beaker import BeakerError, HTTPError
         from requests.exceptions import RequestException
 
         assert self.experiment_id is not None
 
-        description = ""
-        if step is not None:
-            progress: str
-            if max_steps is not None:
-                perc = min(100, int(100 * step / max_steps))
-                progress = f"{perc}%, {step:,d}/{max_steps:,d}"
-            else:
-                progress = f"{step:,d}/??"
-            description = f"[{progress}] "
+        description = f"[{progress}] "
 
         if self.description is not None:
             description = f"{description}{self.description}\n"

@@ -93,12 +93,12 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
         source_configs=[
             SourceMixtureConfig(
                 source_name="mmap1",
-                paths=[i[0] for i in mmap1],
+                paths=[str(i[0]) for i in mmap1],
                 target_ratio=0.8,
             ),
             SourceMixtureConfig(
                 source_name="mmap2",
-                paths=[i[0] for i in mmap2],
+                paths=[str(i[0]) for i in mmap2],
                 target_ratio=0.2,
             ),
         ],
@@ -165,7 +165,7 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
         pad_token_id=-1,
     )
 
-    source1_paths = [i[0] for i in mmap1] * 2  # duplicate the paths
+    source1_paths = [str(i[0]) for i in mmap1] * 2  # duplicate the paths
 
     mixture_config = SourceMixtureDatasetConfig(
         render_tables=False,
@@ -177,7 +177,7 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
             ),
             SourceMixtureConfig(
                 source_name="mmap2",
-                paths=[i[0] for i in mmap2],
+                paths=[str(i[0]) for i in mmap2],
                 target_ratio=0.2,
             ),
         ],

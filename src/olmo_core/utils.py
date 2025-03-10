@@ -1,6 +1,7 @@
 import dataclasses
 import gc
 import logging
+import math
 import os
 import socket
 import sys
@@ -8,7 +9,8 @@ import time
 import uuid
 import warnings
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
+from functools import lru_cache
 from itertools import cycle, islice
 from queue import Queue
 from threading import Thread
@@ -111,11 +113,14 @@ def move_to_device(o: T, device: torch.device, non_blocking: Optional[bool] = No
         return o
 
 
-def mark_dynamic(x: torch.Tensor, dim: Union[int, Sequence[int]]):
+def mark_dynamic(x: torch.Tensor, dim: Union[int, Sequence[int]], strict: bool = True):
     """
     Mark a tensor as having dynamic sizes for ``torch.compile()``.
     """
-    torch._dynamo.mark_dynamic(x, dim)
+    if strict:
+        torch._dynamo.mark_dynamic(x, dim)
+    else:
+        torch._dynamo.maybe_mark_dynamic(x, dim)
 
 
 def get_default_device() -> torch.device:
@@ -318,6 +323,7 @@ def setup_logging(
 
     logging.captureWarnings(True)
     logging.getLogger("urllib3").setLevel(logging.ERROR)
+    logging.getLogger("google").setLevel(logging.WARNING)
 
     _LOGGING_CONFIGURED = True
 
@@ -389,6 +395,11 @@ def filter_warnings():
         category=UserWarning,
         message="Synchronization debug mode is a prototype feature.*",
         module="torch.cuda",
+    )
+    warnings.filterwarnings(
+        action="ignore",
+        category=UserWarning,
+        message="TORCH_NCCL_AVOID_RECORD_STREAMS=1 has no effect .*",
     )
     warnings.filterwarnings(
         action="ignore",
@@ -609,6 +620,29 @@ def format_float(value: float) -> str:
         return f"{value:.4f}"
 
 
+def format_timedelta(td: timedelta) -> str:
+    breakdown = []
+    if td.days > 0:
+        breakdown.append(f"{td.days}d")
+
+    hours = td.seconds // 3600
+    if hours > 0:
+        breakdown.append(f"{hours}h")
+
+    minutes = (td.seconds % 3600) // 60
+    if minutes > 0:
+        breakdown.append(f"{minutes}m")
+
+    seconds = td.seconds % 60
+    if seconds > 0:
+        breakdown.append(f"{seconds}s")
+
+    if breakdown:
+        return ", ".join(breakdown)
+    else:
+        return "0s"
+
+
 def flatten_dict(d: Dict[str, Any]) -> Dict[str, Any]:
     """
     Flatten a nested dictionary with strings keys using dot notation.
@@ -653,3 +687,31 @@ def get_element_size(dtype: torch.dtype) -> int:
     Get the size in bytes of element of the given PyTorch dtype.
     """
     return torch._utils._element_size(dtype)  # type: ignore
+
+
+def ensure_multiple_of(x: int, of: int) -> int:
+    return of * math.ceil(x / of)
+
+
+@lru_cache(maxsize=128)
+def log_once(logger: logging.Logger, msg: str, *args, level: int = logging.INFO, **kwargs):
+    logger.log(level, msg, *args, **kwargs)
+
+
+def info_value_of_dtype(dtype: torch.dtype):
+    """
+    Returns the `finfo` or `iinfo` object of a given PyTorch data type. Does not allow torch.bool.
+    """
+    if dtype == torch.bool:
+        raise TypeError("Does not support torch.bool")
+    elif dtype.is_floating_point:
+        return torch.finfo(dtype)
+    else:
+        return torch.iinfo(dtype)
+
+
+def min_value_of_dtype(dtype: torch.dtype):
+    """
+    Returns the minimum value of a given PyTorch data type. Does not allow torch.bool.
+    """
+    return info_value_of_dtype(dtype).min

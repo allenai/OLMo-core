@@ -8,13 +8,8 @@ from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
-from olmo_core.nn.transformer import (
-    TransformerActivationCheckpointingConfig,
-    TransformerActivationCheckpointingMode,
-    TransformerConfig,
-    TransformerDataParallelConfig,
-)
-from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, DurationUnit, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
@@ -24,17 +19,35 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.checkpoint import CheckpointerConfig
+from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
+    TransformerActivationCheckpointingMode,
+    TransformerDataParallelConfig,
+    TransformerTrainModuleConfig,
+)
 
 log = logging.getLogger(__name__)
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    compile = True
-    return TransformerConfig.olmo2_32B(
-        vocab_size=common.tokenizer.padded_vocab_size(),
-        compile=compile,
-        fused_ops=False,
-        use_flash=not compile,
+    return TransformerConfig.olmo2_32B(vocab_size=common.tokenizer.padded_vocab_size())
+
+
+def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
+    return TransformerTrainModuleConfig(
+        rank_microbatch_size=2 * 4096,
+        max_sequence_length=common.dataset.effective_sequence_length,
+        optim=SkipStepAdamWConfig(
+            lr=6e-4,
+            weight_decay=0.1,
+            betas=(0.9, 0.95),
+            group_overrides=[
+                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+            ],
+            # fused=True,
+            compile=True,
+        ),
+        compile_model=True,
         # dp_config=TransformerDataParallelConfig(
         #     name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         # ),
@@ -49,21 +62,10 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             mode=TransformerActivationCheckpointingMode.selected_modules,
             modules=[f"blocks.{i}.feed_forward" for i in range(64)],
         ),
-        float8_config=Float8Config(compile=compile, enabled=False),
-    )
-
-
-def build_optim_config(common: CommonComponents) -> SkipStepAdamWConfig:
-    del common
-    return SkipStepAdamWConfig(
-        lr=6e-4,
-        weight_decay=0.1,
-        betas=(0.9, 0.95),
-        group_overrides=[
-            OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-        ],
-        # fused=True,
-        compile=True,
+        float8_config=Float8Config(enabled=False),
+        z_loss_multiplier=1e-5,
+        max_grad_norm=1.0,
+        scheduler=CosWithWarmup(warmup_steps=2000),
     )
 
 
@@ -72,16 +74,12 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/{project_name}/",
-            rank_microbatch_size=2 * 4096,
             checkpointer=CheckpointerConfig(
                 save_thread_count=1, load_thread_count=32, throttle_uploads=True
             ),
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=10,
-            z_loss_multiplier=1e-5,
-            compile_loss=False,
-            fused_loss=True,
             max_duration=Duration(int(6.5e12), DurationUnit.tokens),
         )
         .with_callback(
@@ -199,6 +197,6 @@ if __name__ == "__main__":
     main(
         global_batch_size=2048 * 4096,
         model_config_builder=build_model_config,
-        optim_config_builder=build_optim_config,
+        train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
     )

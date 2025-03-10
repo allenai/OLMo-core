@@ -65,6 +65,8 @@ def build_launch_config(
     workspace: str = "ai2/OLMo-core",
     budget: str = "ai2/oe-training",
     nccl_debug: bool = False,
+    beaker_image: str = OLMoCoreBeakerImage.stable,
+    num_nodes: int = 1,
 ) -> BeakerLaunchConfig:
     weka_buckets: List[BeakerWekaBucket] = []
     if root_dir.startswith("/weka/"):
@@ -80,8 +82,8 @@ def build_launch_config(
         workspace=workspace,
         clusters=[cluster],
         weka_buckets=weka_buckets,
-        beaker_image=OLMoCoreBeakerImage.nightly,  # some features require nightly at the moment
-        num_nodes=1,
+        beaker_image=beaker_image,
+        num_nodes=num_nodes,
         num_gpus=8,
         shared_filesystem=not is_url(root_dir),
         allow_dirty=False,
@@ -103,6 +105,7 @@ def build_launch_config(
             "git submodule update --init --recursive",
             # Setup python environment.
             "conda shell.bash activate base",
+            #  "pip install 'ai2-olmo-eval @ git+https://git@github.com/allenai/OLMo-in-loop-evals.git@epwalsh/debug'",
             "pip install -e '.[all]'",
             "pip install --upgrade beaker-py",
             # Quickly try a new version of PyTorch like this

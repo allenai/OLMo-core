@@ -50,6 +50,8 @@ from .filesystem import RemoteFileSystemReader, RemoteFileSystemWriter
 
 __all__ = [
     "save_state_dict",
+    "async_save_state_dict",
+    "load_state_dict",
     "save_model_and_optim_state",
     "async_save_model_and_optim_state",
     "load_model_and_optim_state",
@@ -90,6 +92,7 @@ def save_state_dict(
         rank from each node will upload data at a time.
     """
     dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
+    planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
     dist_cp.state_dict_saver.save(
         state_dict,
         storage_writer=RemoteFileSystemWriter(
@@ -98,6 +101,67 @@ def save_state_dict(
             process_group=process_group,
             throttle_uploads=throttle_uploads,
         ),
+        process_group=process_group,
+        planner=planner,
+    )
+
+
+@torch.no_grad()
+def async_save_state_dict(
+    dir: PathOrStr,
+    state_dict: Dict[str, Any],
+    *,
+    process_group: Optional[dist.ProcessGroup] = None,
+    save_overwrite: bool = False,
+    thread_count: Optional[int] = None,
+    throttle_uploads: bool = False,
+) -> Future[None]:
+    """
+    An async version of :func:`save_state_dict()`.
+
+    This code first de-stages the state dict on the CPU, then writes it in a separate thread.
+    """
+    dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
+    planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
+    return dist_cp.state_dict_saver.async_save(
+        state_dict,
+        storage_writer=RemoteFileSystemWriter(
+            dir,
+            thread_count=thread_count,
+            process_group=process_group,
+            throttle_uploads=throttle_uploads,
+        ),
+        process_group=process_group,
+        planner=planner,
+    )
+
+
+@torch.no_grad()
+def load_state_dict(
+    dir: PathOrStr,
+    state_dict: Dict[str, Any],
+    *,
+    process_group: Optional[dist.ProcessGroup] = None,
+    pre_download: bool = False,
+    work_dir: Optional[PathOrStr] = None,
+    thread_count: Optional[int] = None,
+):
+    """
+    Load an arbitrary state dict in-place from a checkpoint saved with :func:`save_state_dict()`.
+
+    :param dir: Path/URL to the checkpoint saved via :func:`save_state_dict()`.
+    :param state_dict: The state dict to load the state into.
+    :param process_group: The process group to use for distributed collectives.
+    :param thread_count: Set the number of threads used for certain operations.
+    """
+    dir = normalize_path(dir)
+    reader = RemoteFileSystemReader(
+        dir, thread_count=thread_count, pre_download=pre_download, work_dir=work_dir
+    )
+    dist_cp.load(
+        state_dict,
+        checkpoint_id=dir,
+        storage_reader=reader,
         process_group=process_group,
     )
 
@@ -110,6 +174,7 @@ def save_model_and_optim_state(
     *,
     process_group: Optional[dist.ProcessGroup] = None,
     save_overwrite: bool = False,
+    flatten_optimizer_state: bool = False,
     thread_count: Optional[int] = None,
     throttle_uploads: bool = False,
 ) -> None:
@@ -134,6 +199,9 @@ def save_model_and_optim_state(
     :param optim: The optimizer to save state from.
     :param process_group: The process group to use for distributed collectives.
     :param save_overwrite: Overwrite existing files.
+    :param flatten_optimizer_state: Flatten the optimizer state before saving. This should match
+        the setting used when loading the state dict and is needed in a distributed setting when
+        the params in some param groups may differ between ranks, such as with pipeline parallelism.
     :param thread_count: Set this to override the number of threads used while writing data.
     :param throttle_uploads: If this is set to ``True`` and ``dir`` is a URL then only one
         rank from each node will upload data at a time.
@@ -141,7 +209,12 @@ def save_model_and_optim_state(
     :raises FileExistsError: If the checkpoint dir exists and is non-empty unless ``save_overwrite=True``.
     """
     dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
-    state_dict = _prepare_state_dict(model, optim=optim, process_group=process_group)
+    state_dict = _prepare_state_dict(
+        model,
+        optim=optim,
+        process_group=process_group,
+        flatten_optimizer_state=flatten_optimizer_state,
+    )
     planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
     dist_cp.state_dict_saver.save(
         state_dict,
@@ -164,6 +237,7 @@ def async_save_model_and_optim_state(
     *,
     process_group: Optional[dist.ProcessGroup] = None,
     save_overwrite: bool = False,
+    flatten_optimizer_state: bool = False,
     thread_count: Optional[int] = None,
     throttle_uploads: bool = False,
 ) -> Future[None]:
@@ -173,7 +247,12 @@ def async_save_model_and_optim_state(
     This code first de-stages the state dict on the CPU, then writes it in a separate thread.
     """
     dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
-    state_dict = _prepare_state_dict(model, optim=optim, process_group=process_group)
+    state_dict = _prepare_state_dict(
+        model,
+        optim=optim,
+        process_group=process_group,
+        flatten_optimizer_state=flatten_optimizer_state,
+    )
     planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
     return dist_cp.state_dict_saver.async_save(
         state_dict,
@@ -198,6 +277,8 @@ def load_model_and_optim_state(
     key_mapping: Optional[Dict[str, str]] = None,
     pre_download: bool = False,
     work_dir: Optional[PathOrStr] = None,
+    strict: bool = True,
+    flatten_optimizer_state: bool = False,
     thread_count: Optional[int] = None,
 ):
     """
@@ -236,34 +317,23 @@ def load_model_and_optim_state(
         This dictionary should map current keys to keys in the checkpoint to be loaded.
     :param pre_download: Download and cache relevant remote checkpoint files before trying to read from them.
     :param work_dir: A working directory for caching files/directories.
+    :param strict: Load keys strictly.
+    :param flatten_optimizer_state: Flatten the optimizer state when loading. This should match
+        the setting used when saving the state dict and is needed in a distributed setting when
+        the params in some param groups may differ between ranks, such as with pipeline parallelism.
     :param thread_count: Set the number of threads used for certain operations.
     """
     dir = normalize_path(dir)
-    state_dict = _prepare_state_dict(model, optim, process_group=process_group)
+    state_dict = _prepare_state_dict(
+        model, optim, process_group=process_group, flatten_optimizer_state=flatten_optimizer_state
+    )
     reader = RemoteFileSystemReader(
         dir, thread_count=thread_count, pre_download=pre_download, work_dir=work_dir
     )
     metadata = reader.read_metadata()
 
     if key_mapping is not None:
-        for current_key, original_key in key_mapping.items():
-            if f"model.{original_key}" not in metadata.state_dict_metadata:
-                continue
-
-            log.info(f"Mapping current param '{current_key}' to '{original_key}' in checkpoint")
-            state_dict["model"][original_key] = state_dict["model"].pop(current_key)
-
-            if optim is None:
-                continue
-
-            state_dict["optim"]["state"][original_key] = state_dict["optim"]["state"].pop(
-                current_key
-            )
-            for group in state_dict["optim"]["param_groups"]:
-                if current_key in group["params"]:
-                    idx = group["params"].index(current_key)
-                    group["params"][idx] = original_key
-                    break
+        _swap_param_keys(state_dict, key_mapping, metadata=metadata)
 
     dist_cp.load(
         state_dict,
@@ -273,32 +343,21 @@ def load_model_and_optim_state(
     )
 
     if key_mapping is not None:
-        for current_key, original_key in key_mapping.items():
-            if f"model.{original_key}" not in metadata.state_dict_metadata:
-                continue
-
-            state_dict["model"][current_key] = state_dict["model"].pop(original_key)
-
-            if optim is None:
-                continue
-
-            state_dict["optim"]["state"][current_key] = state_dict["optim"]["state"].pop(
-                original_key
-            )
-            for group in state_dict["optim"]["param_groups"]:
-                if original_key in group["params"]:
-                    idx = group["params"].index(original_key)
-                    group["params"][idx] = current_key
-                    break
+        _swap_param_keys(state_dict, key_mapping, reverse=True, quiet=True)
 
     dist_cp_sd.set_model_state_dict(
-        model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=True)
+        model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=strict)
     )
     gc_cuda()
 
     if optim is not None:
         dist_cp_sd.set_optimizer_state_dict(
-            model, optim, state_dict["optim"], options=dist_cp_sd.StateDictOptions(strict=True)
+            model,
+            optim,
+            state_dict["optim"],
+            options=dist_cp_sd.StateDictOptions(
+                strict=strict, flatten_optimizer_state_dict=flatten_optimizer_state
+            ),
         )
         gc_cuda()
 
@@ -606,9 +665,14 @@ def _prepare_state_dict(
     model: nn.Module,
     optim: Optional[torch.optim.Optimizer] = None,
     process_group: Optional[dist.ProcessGroup] = None,
+    flatten_optimizer_state: bool = False,
 ) -> Dict[str, Any]:
     del process_group  # I feel like these torch functions should take a process group argument.
-    sd_options = dist_cp_sd.StateDictOptions(full_state_dict=False, cpu_offload=True)
+    sd_options = dist_cp_sd.StateDictOptions(
+        full_state_dict=False,
+        cpu_offload=True,
+        flatten_optimizer_state_dict=flatten_optimizer_state,
+    )
 
     state_dict: Dict[str, Any] = {
         "model": dist_cp_sd.get_model_state_dict(model, options=sd_options)
@@ -617,6 +681,52 @@ def _prepare_state_dict(
         state_dict["optim"] = dist_cp_sd.get_optimizer_state_dict(model, optim, options=sd_options)
 
     return state_dict
+
+
+def _swap_param_keys(
+    state_dict: Dict[str, Any],
+    key_mapping: Dict[str, str],
+    metadata: Optional[Metadata] = None,
+    reverse: bool = False,
+    quiet: bool = False,
+):
+    for current_key, original_key in key_mapping.items():
+        if metadata is not None and f"model.{original_key}" not in metadata.state_dict_metadata:
+            continue
+
+        if reverse:
+            current_key, original_key = original_key, current_key
+
+        if current_key not in state_dict["model"]:
+            continue
+
+        if not quiet:
+            log.info(f"Mapping current param '{current_key}' to '{original_key}' in checkpoint")
+
+        state_dict["model"][original_key] = state_dict["model"].pop(current_key)
+
+        if "optim" not in state_dict:
+            continue
+
+        if "state" in state_dict["optim"]:  # unflattened optim state dict
+            state_dict["optim"]["state"][original_key] = state_dict["optim"]["state"].pop(
+                current_key
+            )
+            for group in state_dict["optim"]["param_groups"]:
+                if current_key in group["params"]:
+                    idx = group["params"].index(current_key)
+                    group["params"][idx] = original_key
+                    break
+        else:  # flattened optim state dict
+            for key in list(state_dict["optim"].keys()):
+                if key.startswith(f"state.{current_key}."):
+                    new_key = key.replace(f"state.{current_key}.", f"state.{original_key}.", 1)
+                    state_dict["optim"][new_key] = state_dict["optim"].pop(key)
+                elif key.startswith(f"param_groups.{current_key}."):
+                    new_key = key.replace(
+                        f"param_groups.{current_key}.", f"param_groups.{original_key}.", 1
+                    )
+                    state_dict["optim"][new_key] = state_dict["optim"].pop(key)
 
 
 def _load_unsharded_keys(

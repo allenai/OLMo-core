@@ -7,11 +7,18 @@ import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
 
-from olmo_core.data import NumpyDatasetConfig, NumpyPaddedFSLDataset, TokenizerConfig
+from olmo_core.data import (
+    NumpyDatasetConfig,
+    NumpyPaddedFSLDataset,
+    TextDataLoaderBase,
+    TokenizerConfig,
+)
+from olmo_core.data.utils import get_labels
 from olmo_core.distributed.utils import get_rank, get_world_size, is_distributed
 from olmo_core.eval import Evaluator
 from olmo_core.eval.lm_evaluator import LMEvaluator
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.utils import (
     cuda_sync_debug_mode,
     format_float,
@@ -20,6 +27,7 @@ from olmo_core.utils import (
 )
 
 from ..common import Duration
+from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TransformerTrainModule
 from .callback import Callback, CallbackConfig
 
 if TYPE_CHECKING:
@@ -33,7 +41,8 @@ log = logging.getLogger(__name__)
 @dataclass
 class EvaluatorCallback(Callback):
     """
-    Runs in-loop evaluations periodically during training.
+    Runs in-loop evaluations for a :class:`~olmo_core.train.train_module.TransformerTrainModule`
+    periodically during training.
     """
 
     evaluators: List[Evaluator] = field(default_factory=list)
@@ -56,13 +65,20 @@ class EvaluatorCallback(Callback):
     How often to log eval progress to the console during an eval loop.
     """
 
+    def post_attach(self):
+        if not isinstance(self.trainer.train_module, TransformerTrainModule):
+            raise OLMoConfigurationError(
+                f"'{self.__class__.__name__}' only suports the '{TransformerTrainModule.__name__}' train module"
+            )
+
     def post_step(self):
         if self.step <= 1 or self.step % self.eval_interval != 0:
             return
 
         # Put model in eval train mode.
-        self.trainer.optim.zero_grad(set_to_none=True)
-        self.trainer.model.eval()
+        # TODO: make sure grads will be zeroed at this point
+        #  self.trainer.optim.zero_grad(set_to_none=True)
+        #  self.trainer.model.eval()
         dp_world_size = get_world_size(self.trainer.dp_process_group)
 
         evaluator_times = []
@@ -78,21 +94,24 @@ class EvaluatorCallback(Callback):
             for batch in evaluator:
                 eval_step += 1
                 eval_tokens += batch["input_ids"].numel() * dp_world_size
-                batch = move_to_device(batch, self.trainer.device)
-                logits, ce_loss, _ = self.trainer.eval_batch(
-                    batch, loss_reduction="none", compute_z_loss=False
-                )
 
-                # NOTE: might have host-device syncs here but that's okay.
-                with cuda_sync_debug_mode(0):
-                    evaluator.update_metrics(batch, ce_loss, logits)
+                batch = move_to_device(batch, get_default_device())
+                with torch.no_grad():
+                    # Run forward pass, get logits and un-reduced CE loss.
+                    labels = get_labels(batch)
+                    output = self.trainer.train_module.eval_batch(batch, labels=labels)
+                    assert isinstance(output, LMOutputWithLoss)
+                    logits, ce_loss, _ = output
+
+                    # NOTE: might have host-device syncs here but that's okay.
+                    with cuda_sync_debug_mode(0):
+                        evaluator.update_metrics(batch, ce_loss, logits)
 
                 if eval_step % self.trainer.cancel_check_interval == 0:
                     self.trainer.check_if_canceled()
 
                 if self.trainer.is_canceled:
                     self._log_progress(evaluator, eval_step)
-                    self.trainer.model.train()
                     return
                 elif self.eval_duration.due(step=eval_step, tokens=eval_tokens, epoch=1):
                     self._log_progress(evaluator, eval_step)
@@ -141,9 +160,6 @@ class EvaluatorCallback(Callback):
         self.trainer.record_metric("throughput/in-loop eval time (s)", total_time)
         self.trainer.record_metric("throughput/in-loop eval batches", total_bs)
 
-        # Restore model to train mode.
-        self.trainer.model.train()
-
     def _log_progress(self, evaluator: Evaluator, eval_step: int):
         if evaluator.total_batches is not None:
             log.info(f"[eval={evaluator.name},step={eval_step}/{evaluator.total_batches}]")
@@ -155,7 +171,6 @@ class EvaluatorCallback(Callback):
 class LMEvaluatorCallbackConfig(CallbackConfig):
     eval_dataset: NumpyDatasetConfig
     eval_interval: int = 1000
-    eval_batch_size: Optional[int] = None
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     log_interval: int = 5
     enabled: bool = True
@@ -164,20 +179,45 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
         if not self.enabled:
             return None
 
-        eval_batch_size = (
-            self.eval_batch_size
-            if self.eval_batch_size is not None
-            else 2 * trainer.rank_microbatch_size * get_world_size(trainer.dp_process_group)
-        )
+        batch_spec = trainer.train_module.eval_batch_spec
+        if (
+            batch_spec.max_sequence_length is not None
+            and self.eval_dataset.effective_sequence_length > batch_spec.max_sequence_length
+        ):
+            raise OLMoConfigurationError(
+                f"The maximum sequence length for the LM eval dataset ({self.eval_dataset.effective_sequence_length:,d} tokens) "
+                f"is too long for the train module's maximum eval sequence length ({batch_spec.max_sequence_length:,d} tokens)"
+            )
+
+        global_eval_batch_size: int
+        if batch_spec.batch_size_unit == EvalBatchSizeUnit.tokens:
+            global_eval_batch_size = batch_spec.rank_batch_size * get_world_size(
+                trainer.dp_process_group
+            )
+        elif batch_spec.batch_size_unit == EvalBatchSizeUnit.instances:
+            global_eval_batch_size = (
+                batch_spec.rank_batch_size
+                * self.eval_dataset.effective_sequence_length
+                * get_world_size(trainer.dp_process_group)
+            )
+        else:
+            raise NotImplementedError(batch_spec.batch_size_unit)
+
         dataset = self.eval_dataset.build()
         if not isinstance(dataset, NumpyPaddedFSLDataset):
             raise OLMoConfigurationError(
                 f"Expected a padded FSL dataset, got '{dataset.__class__.__name__}' instead"
             )
+
+        if not isinstance(trainer.data_loader, TextDataLoaderBase):
+            raise OLMoConfigurationError(
+                f"Expected a text-based data loader, got '{dataset.__class__.__name__}' instead"
+            )
+
         evaluator = LMEvaluator.from_numpy_dataset(
             dataset,
             name="lm",
-            global_batch_size=eval_batch_size,
+            global_batch_size=global_eval_batch_size,
             collator=trainer.data_loader.collator,
             device=trainer.device,
             dp_process_group=trainer.dp_process_group,
@@ -207,15 +247,26 @@ class DownstreamEvaluator(Evaluator):
         *,
         name: str,
         task: str,
-        rank_batch_size: int,
+        batch_spec: EvalBatchSpec,
         tokenizer: "HFTokenizer",
         device: Optional[torch.device] = None,
         dp_process_group: Optional[dist.ProcessGroup] = None,
     ):
-        from olmo_eval import ICLMetric, build_task
+        from olmo_eval import ICLMetric, ICLMultiChoiceTaskDataset, build_task
+
+        task_dataset: ICLMultiChoiceTaskDataset
+        if batch_spec.fixed_sequence_length:
+            assert batch_spec.max_sequence_length is not None
+            task_dataset = build_task(
+                task, tokenizer, model_ctx_len=batch_spec.max_sequence_length, fixed_ctx_len=True
+            )
+        elif batch_spec.max_sequence_length is not None:
+            task_dataset = build_task(task, tokenizer, model_ctx_len=batch_spec.max_sequence_length)
+        else:
+            task_dataset = build_task(task, tokenizer)
 
         self.label = task
-        self.task = build_task(task, tokenizer)
+        self.task = task_dataset
         self.metric = ICLMetric(metric_type=self.task.metric_type).to(
             device or get_default_device()
         )
@@ -229,7 +280,35 @@ class DownstreamEvaluator(Evaluator):
                 rank=get_rank(dp_process_group),
             )
 
-        rank_batch_size_instances = max(0, rank_batch_size // self.task.max_sequence_length)
+        if (
+            batch_spec.max_sequence_length is not None
+            and self.task.max_sequence_length > batch_spec.max_sequence_length
+        ):
+            raise OLMoConfigurationError(
+                f"The maximum sequence length for downstream eval task '{task}' ({self.task.max_sequence_length:,d} tokens) "
+                f"is too long for the train module's maximum eval sequence length ({batch_spec.max_sequence_length:,d} tokens)"
+            )
+
+        rank_batch_size_instances: int
+        if batch_spec.batch_size_unit == EvalBatchSizeUnit.instances:
+            rank_batch_size_instances = batch_spec.rank_batch_size
+        elif batch_spec.batch_size_unit == EvalBatchSizeUnit.tokens:
+            if batch_spec.fixed_sequence_length:
+                assert batch_spec.max_sequence_length is not None
+                if batch_spec.rank_batch_size % batch_spec.max_sequence_length != 0:
+                    raise OLMoConfigurationError(
+                        f"The eval batch size ({batch_spec.rank_batch_size} tokens) must be divisible "
+                        f"by the maximum eval sequence length ({batch_spec.max_sequence_length:,d} tokens)"
+                    )
+                rank_batch_size_instances = (
+                    batch_spec.rank_batch_size // batch_spec.max_sequence_length
+                )
+            else:
+                rank_batch_size_instances = (
+                    batch_spec.rank_batch_size // self.task.max_sequence_length
+                )
+        else:
+            raise NotImplementedError(batch_spec.batch_size_unit)
 
         log.info(
             f"Using per-rank batch size of {rank_batch_size_instances} instances "
@@ -240,16 +319,15 @@ class DownstreamEvaluator(Evaluator):
             self.task,  # type: ignore
             batch_size=rank_batch_size_instances,
             collate_fn=self.task.collate_fn,
+            drop_last=True,
             num_workers=0,
             sampler=sampler,
         )
 
-        super().__init__(
-            name=name, batches=data_loader, device=device, dp_process_group=dp_process_group
-        )
+        super().__init__(name=name, batches=data_loader, device=device)
 
     def update_metrics(
-        self, batch: Dict[str, Any], ce_loss: torch.Tensor, logits: torch.Tensor
+        self, batch: Dict[str, Any], ce_loss: Optional[torch.Tensor], logits: Optional[torch.Tensor]
     ) -> None:
         del ce_loss
         self.metric.update(batch, logits)
@@ -270,7 +348,6 @@ class DownstreamEvaluator(Evaluator):
 class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     tasks: List[str]
     tokenizer: TokenizerConfig
-    eval_batch_size: Optional[int] = None  # NOTE: this counts in number of tokens
     eval_interval: int = 1000
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     log_interval: int = 5
@@ -281,17 +358,6 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
             return None
 
         from olmo_eval import HFTokenizer
-
-        global_eval_batch_size = (
-            self.eval_batch_size
-            if self.eval_batch_size is not None
-            else trainer.rank_microbatch_size * get_world_size(trainer.dp_process_group)
-        )
-        rank_eval_batch_size = global_eval_batch_size // get_world_size(trainer.dp_process_group)
-        if rank_eval_batch_size == 0:
-            raise OLMoConfigurationError(
-                f"'eval_batch_size' of {global_eval_batch_size:,d} tokens is too small for the given world size"
-            )
 
         if self.tokenizer.identifier is None:
             raise OLMoConfigurationError(
@@ -311,7 +377,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
                 DownstreamEvaluator(
                     name="downstream",
                     task=task,
-                    rank_batch_size=rank_eval_batch_size,
+                    batch_spec=trainer.train_module.eval_batch_spec,
                     tokenizer=tokenizer,
                     device=trainer.device,
                     dp_process_group=trainer.dp_process_group,

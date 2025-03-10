@@ -26,16 +26,10 @@ from olmo_core.distributed.utils import get_local_rank
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.io import resource_path
 from olmo_core.launch.beaker import BeakerLaunchConfig
-from olmo_core.nn.transformer import (
-    TransformerActivationCheckpointingConfig,
-    TransformerActivationCheckpointingMode,
-    TransformerConfig,
-    TransformerDataParallelConfig,
-)
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import (
     CosWithWarmup,
     LinearWithWarmup,
-    OptimConfig,
     OptimGroupOverride,
     SkipStepAdamWConfig,
 )
@@ -53,11 +47,15 @@ from olmo_core.train.callbacks import (
     DownstreamEvaluatorCallbackConfig,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
-    GradClipperCallback,
-    SchedulerCallback,
 )
 from olmo_core.train.checkpoint import CheckpointerConfig
-from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
+from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
+    TransformerActivationCheckpointingMode,
+    TransformerDataParallelConfig,
+    TransformerTrainModuleConfig,
+)
+from olmo_core.utils import prepare_cli_environment, seed_all
 
 log = logging.getLogger(__name__)
 
@@ -104,9 +102,9 @@ class AnnealingConfig(Config):
     run_name: str
     launch: BeakerLaunchConfig
     model: TransformerConfig
-    optim: OptimConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
+    train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
     init_seed: int = 12536
 
@@ -155,11 +153,35 @@ class AnnealingConfig(Config):
                 cluster=cluster,
                 nccl_debug=False,
             ),
-            model=TransformerConfig.olmo2_32B(
-                vocab_size=tokenizer_config.padded_vocab_size(),
-                compile=True,
-                fused_ops=False,
-                use_flash=False,
+            model=TransformerConfig.olmo2_32B(vocab_size=tokenizer_config.padded_vocab_size()),
+            dataset=NumpyDatasetConfig.from_data_mix(
+                AnnealingDataMix.dolmino100,
+                tokenizer=tokenizer_config,
+                mix_base_dir=root_dir,
+                sequence_length=4096,
+                work_dir=get_work_dir(root_dir),
+            ),
+            data_loader=NumpyDataLoaderConfig(
+                global_batch_size=2048 * 4096,  # NOTE: this is specified in TOKENS, not instances.
+                seed=34521,  # NOTE: can update this to change data order.
+                num_workers=4,
+            ),
+            train_module=TransformerTrainModuleConfig(
+                rank_microbatch_size=2 * 4096,  # NOTE: again this is specified in tokens.
+                max_sequence_length=4096,
+                z_loss_multiplier=1e-5,
+                compile_model=True,
+                optim=SkipStepAdamWConfig(
+                    lr=starting_lr,
+                    weight_decay=0.1,
+                    betas=(0.9, 0.95),
+                    group_overrides=[
+                        OptimGroupOverride(
+                            params=["embeddings.weight"], opts=dict(weight_decay=0.0)
+                        )
+                    ],
+                    compile=True,
+                ),
                 # dp_config=TransformerDataParallelConfig(
                 #     name=DataParallelType.fsdp,
                 #     param_dtype=DType.bfloat16,
@@ -178,41 +200,21 @@ class AnnealingConfig(Config):
                 # ac_config=TransformerActivationCheckpointingConfig(
                 #    mode=TransformerActivationCheckpointingMode.full
                 # ),
-            ),
-            optim=SkipStepAdamWConfig(
-                lr=starting_lr,
-                weight_decay=0.1,
-                betas=(0.9, 0.95),
-                group_overrides=[
-                    OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-                ],
-                compile=True,
-            ),
-            dataset=NumpyDatasetConfig.from_data_mix(
-                AnnealingDataMix.dolmino100,
-                tokenizer=tokenizer_config,
-                mix_base_dir=root_dir,
-                sequence_length=4096,
-                work_dir=get_work_dir(root_dir),
-            ),
-            data_loader=NumpyDataLoaderConfig(
-                global_batch_size=2048 * 4096,  # NOTE: this is specified in TOKENS, not instances.
-                seed=34521,  # NOTE: can update this to change data order.
-                num_workers=4,
+                scheduler=LinearWithWarmup(
+                    warmup_steps=0,
+                    alpha_f=0.0,
+                ),
+                max_grad_norm=1.0,
             ),
             trainer=TrainerConfig(
                 save_folder=f"gs://ai2-llm/checkpoints/peteish32-anneal/{run_name}",
                 load_strategy=LoadStrategy.always,
-                rank_microbatch_size=2 * 4096,  # NOTE: again this is specified in tokens.
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
                 ),
                 save_overwrite=True,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
-                z_loss_multiplier=1e-5,
-                compile_loss=False,
-                fused_loss=True,
                 max_duration=Duration.tokens(int(100e9)),
             )
             .with_callback(
@@ -234,19 +236,9 @@ class AnnealingConfig(Config):
                 ),
             )
             .with_callback(
-                "lr_scheduler",
-                SchedulerCallback(
-                    scheduler=LinearWithWarmup(
-                        warmup_steps=0,
-                        alpha_f=0.0,
-                    )
-                ),
-            )
-            .with_callback(
                 "gpu_monitor",
                 GPUMemoryMonitorCallback(),
             )
-            .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0))
             .with_callback("config_saver", ConfigSaverCallback())
             .with_callback("garbage_collector", GarbageCollectorCallback())
             .with_callback(
@@ -339,22 +331,12 @@ def train(checkpoint: str, config: AnnealingConfig):
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
-    device = get_default_device()
-
-    # Build mesh, if needed.
-    world_mesh = config.model.build_mesh(device=device)
-
     # Build components.
-    model = config.model.build(
-        init_device="meta",
-        device=device,
-        max_seq_len=config.dataset.effective_sequence_length,
-        mesh=world_mesh,
-    )
-    optim = config.optim.build(model)
+    model = config.model.build(init_device="meta")
+    train_module = config.train_module.build(model)
     dataset = config.dataset.build()
-    data_loader = config.data_loader.build(dataset, mesh=world_mesh)
-    trainer = config.trainer.build(model, optim, data_loader, mesh=world_mesh)
+    data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
+    trainer = config.trainer.build(train_module, data_loader)
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()

@@ -32,14 +32,9 @@ class LMEvaluator(Evaluator):
         batches: Iterable[Dict[str, Any]],
         labels: Sequence[str],
         device: Optional[torch.device] = None,
-        dp_process_group: Optional[dist.ProcessGroup] = None,
     ):
-        super().__init__(
-            name=name, batches=batches, device=device, dp_process_group=dp_process_group
-        )
-        self.metrics = {
-            label: MeanMetric(device=device, process_group=dp_process_group) for label in labels
-        }
+        super().__init__(name=name, batches=batches, device=device)
+        self.metrics = {label: MeanMetric(device=device) for label in labels}
 
     @classmethod
     def from_numpy_dataset(
@@ -90,17 +85,18 @@ class LMEvaluator(Evaluator):
             batches=data_loader,
             labels=list(labels),
             device=device,
-            dp_process_group=dp_process_group,
         )
 
     def update_metrics(
-        self, batch: Dict[str, Any], ce_loss: torch.Tensor, logits: torch.Tensor
+        self, batch: Dict[str, Any], ce_loss: Optional[torch.Tensor], logits: Optional[torch.Tensor]
     ) -> None:
-        del logits
+        if logits is None or ce_loss is None:
+            return
+
         for idx, (metadata, tokens_loss) in enumerate(zip(batch["metadata"], ce_loss)):
             metric = self.metrics[metadata["label"]]
             if "label_mask" in batch:
-                tokens_loss = tokens_loss.masked_select(batch["label_mask"][idx][1:])
+                tokens_loss = tokens_loss.masked_select(batch["label_mask"][idx])
             metric.update(tokens_loss)
 
     def compute_metrics(self) -> Dict[str, torch.Tensor]:
