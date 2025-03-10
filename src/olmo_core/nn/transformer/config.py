@@ -901,7 +901,9 @@ class TransformerConfig(Config):
                 dtype=dtype,
             ),
             feed_forward=FeedForwardConfig(
-                hidden_size=hidden_size, bias=False, dtype=dtype, name=FeedForwardType.starcoder
+                hidden_size=hidden_size,
+                bias=False,
+                dtype=dtype,  # name=FeedForwardType.starcoder # commenting to sanity check
             ),
             layer_norm=layer_norm,
         )
