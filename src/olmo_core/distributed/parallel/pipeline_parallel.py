@@ -167,14 +167,14 @@ class PipelineSchedule:
         self.num_microbatches = num_microbatches
 
     @cached_property
-    def is_first_stage(self) -> bool:
+    def has_first_stage(self) -> bool:
         for stage in self.stages:
             if stage.is_first:
                 return True
         return False
 
     @cached_property
-    def is_last_stage(self) -> bool:
+    def has_last_stage(self) -> bool:
         for stage in self.stages:
             if stage.is_last:
                 return True
@@ -191,12 +191,12 @@ class PipelineSchedule:
         :param kwargs: Passed to all stages.
         """
         losses: Optional[List[torch.Tensor]] = None
-        if self.is_last_stage and self.loss_fn is not None:
+        if self.has_last_stage and self.loss_fn is not None:
             losses = []
         else:
             target = None
 
-        if not self.is_first_stage:
+        if not self.has_first_stage:
             args = tuple()
 
         output = self.base_schedule.step(*args, target=target, losses=losses, **kwargs)
