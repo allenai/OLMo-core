@@ -187,6 +187,7 @@ class Transformer(nn.Module):
         max_seq_len: Optional[int] = None,
         max_local_microbatch_size: Optional[int] = None,
         device: Optional[torch.device] = None,
+        pp_mesh: Optional[DeviceMesh] = None,
     ) -> torch.Generator:
         """
         Initialize the model weights.
@@ -196,6 +197,8 @@ class Transformer(nn.Module):
         :param max_local_microbatch_size: The maximum local (rank) micro-batch size (in tokens)
             expected. This is used to warm-up some MoE cache.
         :param device: The device the local copy of the model will be trained on.
+        :param pp_mesh: Pipeline parallel mesh. Pass this when using pipeline parallelism
+            to ensure the weights are initialized differently for different stages.
         """
         device = device or self.device
         self.to_empty(device=device)
@@ -204,7 +207,10 @@ class Transformer(nn.Module):
             if hasattr(module, "reset_parameters"):
                 module.reset_parameters()  # type: ignore
 
-        generator = torch.Generator(device).manual_seed(self.init_seed)
+        seed = self.init_seed
+        if pp_mesh is not None:
+            seed += pp_mesh.get_local_rank()
+        generator = torch.Generator(device).manual_seed(seed)
 
         if self.embeddings is not None:
             self.init_method.init_embeddings(
