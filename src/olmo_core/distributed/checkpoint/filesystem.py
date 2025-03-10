@@ -228,7 +228,9 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
         if self.throttle_uploads and is_url(self.path):
             buckets = _split_by_size_and_type(1, plan.items)
             results = do_n_at_a_time(
-                partial(write_items, buckets), process_group=self.process_group, n=get_num_nodes() // 4
+                partial(write_items, buckets),
+                process_group=self.process_group,
+                n=max(get_num_nodes() // 4, 1),
             )
         else:
             buckets = _split_by_size_and_type(self.thread_count, plan.items)
