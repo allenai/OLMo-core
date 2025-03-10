@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from functools import cached_property
 from typing import Any, Callable, Iterable, List, Optional, Tuple
 
 import torch
@@ -165,13 +166,19 @@ class PipelineSchedule:
         self.base_schedule = schedule
         self.num_microbatches = num_microbatches
 
-    @property
+    @cached_property
     def is_first_stage(self) -> bool:
-        return self.pp_mesh.get_local_rank() == 0
+        for stage in self.stages:
+            if stage.is_first:
+                return True
+        return False
 
-    @property
+    @cached_property
     def is_last_stage(self) -> bool:
-        return self.pp_mesh.get_local_rank() == self.pp_mesh.size() - 1
+        for stage in self.stages:
+            if stage.is_last:
+                return True
+        return False
 
     def step(
         self,
