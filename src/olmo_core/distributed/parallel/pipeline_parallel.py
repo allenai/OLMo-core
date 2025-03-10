@@ -66,7 +66,7 @@ class PipelineParallelConfig(Config):
     The PP degree.
     """
 
-    schedule: PipelineScheduleType
+    schedule: PipelineScheduleType = PipelineScheduleType.interleaved_1F1B
     """
     The name of the schedule.
     """
