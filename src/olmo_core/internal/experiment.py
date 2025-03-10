@@ -18,7 +18,7 @@ from olmo_core.data import (
     VSLCurriculumType,
 )
 from olmo_core.distributed.utils import get_local_rank
-from olmo_core.launch.beaker import BeakerLaunchConfig
+from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.train import (
     TrainerConfig,
@@ -142,6 +142,8 @@ def build_common_components(
     include_default_evals: bool = True,
     intra_document_masking: bool = False,
     include_instance_filter: bool = False,
+    beaker_image: str = OLMoCoreBeakerImage.stable,
+    num_nodes: int = 1,
 ) -> CommonComponents:
     root_dir = get_root_dir(cluster)
 
@@ -155,6 +157,8 @@ def build_common_components(
         cmd=[script, cmd_to_launch, run_name, cluster, *overrides],
         cluster=cluster,
         nccl_debug=False,
+        beaker_image=beaker_image,
+        num_nodes=num_nodes,
     )
 
     beaker_user = get_beaker_username()
@@ -317,6 +321,8 @@ def main(
     include_default_evals: bool = True,
     intra_document_masking: bool = False,
     include_instance_filter: bool = False,
+    beaker_image: str = OLMoCoreBeakerImage.stable,
+    num_nodes: int = 1,
 ):
     usage = f"""
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
@@ -360,6 +366,8 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         include_default_evals=include_default_evals,
         intra_document_masking=intra_document_masking,
         include_instance_filter=include_instance_filter,
+        beaker_image=beaker_image,
+        num_nodes=num_nodes,
     )
 
     cmd.run(config)

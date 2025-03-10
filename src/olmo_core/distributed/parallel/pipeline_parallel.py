@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from functools import cached_property
 from typing import Any, Callable, Iterable, List, Optional, Tuple
 
 import torch
@@ -165,13 +166,19 @@ class PipelineSchedule:
         self.base_schedule = schedule
         self.num_microbatches = num_microbatches
 
-    @property
-    def is_first_stage(self) -> bool:
-        return self.pp_mesh.get_local_rank() == 0
+    @cached_property
+    def has_first_stage(self) -> bool:
+        for stage in self.stages:
+            if stage.is_first:
+                return True
+        return False
 
-    @property
-    def is_last_stage(self) -> bool:
-        return self.pp_mesh.get_local_rank() == self.pp_mesh.size() - 1
+    @cached_property
+    def has_last_stage(self) -> bool:
+        for stage in self.stages:
+            if stage.is_last:
+                return True
+        return False
 
     def step(
         self,
@@ -183,13 +190,11 @@ class PipelineSchedule:
         :param args: Only passed to first stage.
         :param kwargs: Passed to all stages.
         """
-        if self.is_first_stage:
-            self.base_schedule.step(*args, **kwargs)
-            return None, None
-        elif self.is_last_stage:
-            losses: Optional[List[torch.Tensor]] = [] if self.loss_fn is not None else None
-            output = self.base_schedule.step(target=target, losses=losses, **kwargs)
-            return output, None if losses is None else torch.stack(losses)
+        losses: Optional[List[torch.Tensor]] = None
+        if self.has_last_stage and self.loss_fn is not None:
+            losses = []
         else:
-            self.base_schedule.step(**kwargs)
-            return None, None
+            target = None
+
+        output = self.base_schedule.step(*args, target=target, losses=losses, **kwargs)
+        return output, None if losses is None else torch.stack(losses)

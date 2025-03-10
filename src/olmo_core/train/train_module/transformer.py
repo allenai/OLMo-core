@@ -245,7 +245,10 @@ def parallelize_model(
     if float8_handler is not None and float8_handler.enabled:
         float8_enabled = True
         for m in model_parts:
-            float8_handler.convert_to_float8_training(m, modules_to_ignore={"lm_head.w_out"})
+            modules_to_ignore = set()
+            if m.lm_head is not None:
+                modules_to_ignore.add("lm_head.w_out")
+            float8_handler.convert_to_float8_training(m, modules_to_ignore=modules_to_ignore)
             log.info("Swapped linear layers to Float8 linear layers\n%s", m)
 
     # Maybe apply context parallelism.
