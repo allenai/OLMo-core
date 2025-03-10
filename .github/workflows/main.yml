@@ -8,11 +8,9 @@ on:
   pull_request:
     branches:
       - main
-      - v2
   push:
     branches:
       - main
-      - v2
     tags:
       - 'v*.*.*'
 
@@ -257,11 +255,12 @@ jobs:
           files: |
             dist/*
 
-      - name: Add PR comments on release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          ./src/scripts/release/add_pr_comments_on_release.sh
+      # TODO: uncomment this after first v2 release. I just didn't want a million notifications.
+      # - name: Add PR comments on release
+      #   env:
+      #     GH_TOKEN: ${{ github.token }}
+      #   run: |
+      #     ./src/scripts/release/add_pr_comments_on_release.sh
 
       - name: Send Slack notifications about release
         run: |
