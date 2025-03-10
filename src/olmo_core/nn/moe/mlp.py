@@ -159,7 +159,7 @@ class MoEMLP(MoEMLPBase):
     ):
         super().__init__(d_model=d_model, hidden_size=hidden_size, num_experts=num_experts)
         # NOTE: these parameters need to have a large enough first dimension (which would be num experts)
-        # in order to be sharded over big world sizes with FSDP. So we flatten them to a single dimension tensor.
+        # in order to be sharded over big world sizes with FSDP, so we flatten the first 2 dimensions.
         self.w1 = nn.Parameter(
             torch.empty(
                 num_experts * d_model,
@@ -240,7 +240,7 @@ class DroplessMoEMLP(MoEMLPBase):
     ):
         super().__init__(d_model=d_model, hidden_size=hidden_size, num_experts=num_experts)
         # NOTE: these parameters need to have a large enough first dimension (which would be num experts)
-        # in order to be sharded over big world sizes with FSDP. So we flatten them to a single dimension tensor.
+        # in order to be sharded over big world sizes with FSDP, so we flatten the first 2 dimensions.
         self.w1 = nn.Parameter(
             torch.empty(
                 num_experts * hidden_size,
