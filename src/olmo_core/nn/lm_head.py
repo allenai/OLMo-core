@@ -417,16 +417,16 @@ class NormalizedLMHead(LMHead):
         )
         self.sz_init_value = 1.0
         self.sz_init_scaling = 1.0 / math.sqrt(d_model)
-        self.sz = nn.Parameter(
-            self.sz_init_scaling * torch.ones(vocab_size, dtype=dtype, device=init_device)
-        )
+        self.sz = nn.Parameter(torch.empty(vocab_size, dtype=dtype, device=init_device))
+        self.reset_parameters()
 
     def reset_parameters(self):
         """
         Reset the scaling parameter.
         """
         nn.init.ones_(self.sz)
-        self.sz.mul_(self.sz_init_scaling)
+        with torch.no_grad():
+            self.sz.mul_(self.sz_init_scaling)
 
     def forward(
         self,

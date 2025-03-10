@@ -46,7 +46,7 @@ class FeedForwardConfig(Config):
     The name of the implementation.
     """
     bias: Optional[bool] = None
-    dtype: DType = DType.float32
+    dtype: Optional[DType] = None
 
     def num_params(self, d_model: int) -> int:
         """
@@ -68,7 +68,9 @@ class FeedForwardConfig(Config):
 
         return params
 
-    def build(self, d_model: int, *, init_device: str = "cpu") -> "FeedForward":
+    def build(
+        self, d_model: int, *, dtype: Optional[torch.dtype] = None, init_device: str = "cpu"
+    ) -> "FeedForward":
         """
         Build the corresponding feed-forward module.
 
@@ -77,7 +79,11 @@ class FeedForwardConfig(Config):
         """
         kwargs = self.as_dict(exclude_none=True)
         kwargs.pop("name")
-        kwargs.update(d_model=d_model, init_device=init_device, dtype=kwargs.pop("dtype").as_pt())
+        kwargs.update(d_model=d_model, init_device=init_device)
+        if self.dtype is not None:
+            kwargs["dtype"] = self.dtype.as_pt()
+        elif dtype is not None:
+            kwargs["dtype"] = dtype
 
         try:
             if self.name == FeedForwardType.default:
@@ -178,19 +184,17 @@ class NormalizedFeedForward(FeedForward):
         )
         self.sw_init_value = 1.0
         self.sw_init_scaling = 1.0
-        self.sw1 = torch.nn.Parameter(
-            self.sw_init_scaling * torch.ones(hidden_size, dtype=dtype, device=init_device)
-        )
-        self.sw3 = torch.nn.Parameter(
-            self.sw_init_scaling * torch.ones(hidden_size, dtype=dtype, device=init_device)
-        )
+        self.sw1 = torch.nn.Parameter(torch.empty(hidden_size, dtype=dtype, device=init_device))
+        self.sw3 = torch.nn.Parameter(torch.empty(hidden_size, dtype=dtype, device=init_device))
         self.sqrt_d_model = math.sqrt(d_model)
+        self.reset_parameters()
 
     def reset_parameters(self):
         nn.init.ones_(self.sw1)
-        self.sw1.mul_(self.sw_init_scaling)
         nn.init.ones_(self.sw3)
-        self.sw3.mul_(self.sw_init_scaling)
+        with torch.no_grad():
+            self.sw1.mul_(self.sw_init_scaling)
+            self.sw3.mul_(self.sw_init_scaling)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         sw1 = self.sw1 * ((self.sw_init_value / self.sw_init_scaling) * self.sqrt_d_model)

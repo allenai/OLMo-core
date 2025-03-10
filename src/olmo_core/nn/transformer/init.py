@@ -76,10 +76,13 @@ class InitMethod(StrEnum):
         if self == InitMethod.normalized:
             std = d_model**-0.5
 
-        if isinstance(m, Attention):
+        # NOTE: isinstance checks could fail with AC wrappers
+        if isinstance(m, Attention) or hasattr(m, "w_q"):
+            m = cast(Attention, m)
             for w in (m.w_q, m.w_k, m.w_v):
                 self._init_linear(w, std=std, generator=generator)
-        elif isinstance(m, FusedAttention):
+        elif isinstance(m, FusedAttention) or hasattr(m, "w_qkv"):
+            m = cast(FusedAttention, m)
             self._init_linear(m.w_qkv, std=std, generator=generator)
         else:
             raise NotImplementedError(m)
@@ -140,7 +143,10 @@ class InitMethod(StrEnum):
         elif self == InitMethod.llama_depth:
             std = 0.02 / (2 * (block_idx + 1)) ** 0.5
 
-        self._init_linear(cast(MoELinearRouter, m.router).w_score, std=0.02, generator=generator)
+        assert isinstance(m.router, MoELinearRouter)
+        nn.init.trunc_normal_(
+            m.router.weight, mean=0.0, std=std, a=-3 * std, b=3 * std, generator=generator
+        )
         nn.init.trunc_normal_(
             cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w1,
             mean=0.0,

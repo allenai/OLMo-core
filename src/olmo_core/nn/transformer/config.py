@@ -1,22 +1,64 @@
 import logging
 from dataclasses import dataclass
 from fnmatch import fnmatch
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from olmo_core.config import Config, DType, StrEnum
+from olmo_core.doc_utils import beta_feature
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import ensure_multiple_of
 
 from ..attention import AttentionConfig, AttentionType
+from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
-from ..moe import MoEConfig, MoERouterConfig, MoEType, SharedMLPConfig
+from ..moe import MoEConfig, MoERouterConfig, MoEType
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
-from .block import TransformerBlockConfig, TransformerBlockType
 from .init import InitMethod
-from .model import MoETransformer, NormalizedTransformer, Transformer
+
+if TYPE_CHECKING:
+    from .block import TransformerBlockBase
+    from .model import Transformer
 
 log = logging.getLogger(__name__)
+
+
+class TransformerDataParallelWrappingStrategy(StrEnum):
+    """
+    An enumeration of the different wrapping strategy for the data parallel implementations.
+    """
+
+    full = "full"
+    """
+    Wrap each block and the LM head (only applies to FSDP).
+    """
+
+    blocks = "blocks"
+    """
+    Like full but the LM head is not wrapped separately (only applies to FSDP).
+    """
+
+    fine_grained = "fine_grained"
+    """
+    Wrap certain modules within each block in addition to wrapping each block (only applies to FSDP).
+    """
+
+
+@beta_feature
+class TransformerActivationCheckpointingMode(StrEnum):
+    """
+    An enumeration of the different activation checkpointing modes.
+    """
+
+    full = "full"
+    """Checkpoint every block."""
+    selected_blocks = "selected_blocks"
+    """Checkpoint only selected blocks."""
+    selected_modules = "selected_modules"
+    """Checkpoint only selected modules."""
+    selected_ops = "selected_ops"
+    """Checkpoint only a specific set of operations."""
 
 
 class TransformerType(StrEnum):
@@ -38,6 +80,128 @@ class TransformerType(StrEnum):
     """
     ➡️ :class:`MoETransformer`
     """
+
+
+class TransformerBlockType(StrEnum):
+    """
+    An enumeration of the different transformer block implementations.
+    """
+
+    default = "default"
+    """
+    ➡️ :class:`TransformerBlock`
+    """
+
+    reordered_norm = "reordered_norm"
+    """
+    ➡️ :class:`ReorderedNormTransformerBlock`
+    """
+
+    normalized = "normalized"
+    """
+    ➡️ :class:`NormalizedTransformerBlock`
+    """
+
+    moe = "moe"
+    """
+    ➡️ :class:`MoETransformerBlock`
+    """
+
+    moe_reordered_norm = "moe_reordered_norm"
+    """
+    ➡️ :class:`MoEReorderedNormTransformerBlock`
+    """
+
+    moe_parallel = "moe_parallel"
+    """
+    ➡️ :class:`MoEParallelTransformerBlock`
+    """
+
+    moe_parallel_reordered_norm = "moe_parallel_reordered_norm"
+    """
+    ➡️ :class:`MoEParallelReorderedNormTransformerBlock`
+    """
+
+
+@dataclass
+class TransformerBlockConfig(Config):
+    """
+    A configuration class for easily building transformer blocks.
+    """
+
+    attention: AttentionConfig
+    """
+    The attention config.
+    """
+    layer_norm: Optional[LayerNormConfig] = None
+    """
+    The layer norm config.
+    """
+    feed_forward: Optional[FeedForwardConfig] = None
+    """
+    The feed-forward config, required for non-MoE blocks.
+    """
+    feed_forward_moe: Optional[MoEConfig] = None
+    """
+    The config for the MoE feed-forward layer. Required for MoE blocks.
+    """
+    name: TransformerBlockType = TransformerBlockType.default
+    """
+    The block type.
+    """
+    dropout: Optional[float] = None
+    """
+    Dropout probability.
+    """
+
+    def build(
+        self,
+        *,
+        d_model: int,
+        block_idx: int,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ) -> "TransformerBlockBase":
+        from .block import (
+            MoEParallelReorderedNormTransformerBlock,
+            MoEParallelTransformerBlock,
+            MoEReorderedNormTransformerBlock,
+            MoETransformerBlock,
+            NormalizedTransformerBlock,
+            ReorderedNormTransformerBlock,
+            TransformerBlock,
+        )
+
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
+        kwargs.pop("name")
+        kwargs.update(
+            d_model=d_model,
+            block_idx=block_idx,
+            init_device=init_device,
+            cache=cache,
+        )
+
+        try:
+            if self.name == TransformerBlockType.default:
+                return TransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.reordered_norm:
+                return ReorderedNormTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.normalized:
+                return NormalizedTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.moe:
+                return MoETransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.moe_reordered_norm:
+                return MoEReorderedNormTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.moe_parallel:
+                return MoEParallelTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.moe_parallel_reordered_norm:
+                return MoEParallelReorderedNormTransformerBlock(**kwargs)
+            else:
+                raise NotImplementedError(self.name)
+        except TypeError as e:
+            raise OLMoConfigurationError(
+                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+            ) from e
 
 
 @dataclass
@@ -65,13 +229,15 @@ class TransformerConfig(Config):
         self,
         *,
         init_device: str = "cpu",
-    ) -> Transformer:
+    ) -> "Transformer":
         """
         Build the model corresponding to this config.
 
         :param init_device: The device to put the parameters on during initialization. In a
             distributed setting it usually makes sense to set this to "meta".
         """
+        from .model import MoETransformer, NormalizedTransformer, Transformer
+
         log.info(
             f"Building transformer with {self.num_params:,d} total params, "
             f"{self.num_non_embedding_params:,d} non-embedding params"
@@ -381,8 +547,8 @@ class TransformerConfig(Config):
                 name=MoEType.default,
                 num_experts=32,
                 hidden_size=int(0.5 * d_model),
-                router=MoERouterConfig(top_k=4, bias=False),
-                shared_mlp=SharedMLPConfig(hidden_size=d_model * 2, bias=False),
+                router=MoERouterConfig(top_k=4),
+                shared_mlp=FeedForwardConfig(hidden_size=d_model * 2),
                 lb_loss_weight=0.01,
                 z_loss_weight=0.001,
             ),
@@ -405,7 +571,7 @@ class TransformerConfig(Config):
                 name=MoEType.dropless,
                 num_experts=64,
                 hidden_size=int(0.5 * d_model),
-                router=MoERouterConfig(top_k=8, bias=False),
+                router=MoERouterConfig(top_k=8),
                 lb_loss_weight=0.01,
                 z_loss_weight=0.001,
             ),
@@ -716,10 +882,10 @@ class TransformerConfig(Config):
                 num_experts=num_experts,
                 hidden_size=expert_hidden_size,
                 capacity_factor=capacity_factor,
-                router=MoERouterConfig(top_k=top_k, bias=False),
+                router=MoERouterConfig(top_k=top_k),
                 shared_mlp=None
                 if shared_expert_hidden_size is None
-                else SharedMLPConfig(hidden_size=shared_expert_hidden_size, bias=False),
+                else FeedForwardConfig(hidden_size=shared_expert_hidden_size, bias=False),
                 lb_loss_weight=lb_loss_weight,
                 z_loss_weight=z_loss_weight,
             ),

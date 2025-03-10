@@ -15,6 +15,7 @@ from .pipeline_parallel import (
     PipelineParallelConfig,
     PipelineSchedule,
     PipelineScheduleType,
+    PipelineSplitStyle,
 )
 from .tensor_parallel import TensorParallelConfig
 
@@ -37,6 +38,7 @@ __all__ = [
     "ExpertParallelConfig",
     "PipelineParallelConfig",
     "PipelineScheduleType",
+    "PipelineSplitStyle",
     "PipelineSchedule",
     "ContextParallelConfig",
 ]

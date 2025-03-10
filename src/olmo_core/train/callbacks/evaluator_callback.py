@@ -81,6 +81,10 @@ class EvaluatorCallback(Callback):
         #  self.trainer.model.eval()
         dp_world_size = get_world_size(self.trainer.dp_process_group)
 
+        evaluator_times = []
+        evaluator_names = []
+        evaluator_bs = []
+
         for evaluator in self.evaluators:
             log.info(f"Running {evaluator.name} evals...")
             start_time = time.monotonic()
@@ -117,15 +121,44 @@ class EvaluatorCallback(Callback):
 
             # NOTE: going to have a host-device sync here but that's okay. It's only once
             # per evaluator.
-            metrics = []
+            metrics = evaluator.compute_metrics()
+            metrics_str = []
+            evaluation_names = []
             with cuda_sync_debug_mode(0):
-                for name, value in evaluator.compute_metrics().items():
-                    metrics.append(f"    {name}={format_float(value.item())}")
+                for name, value in metrics.items():
+                    evaluation_names.append(name)
+                    metrics_str.append(f"    {name}={format_float(value.item())}")
                     self.trainer.record_metric(f"eval/{evaluator.name}/{name}", value)
+
+            evaluator_times.append(time.monotonic() - start_time)
+            evaluator_names.append(evaluation_names)
+            evaluator_bs.append(evaluator.total_batches)
+
             log.info(
                 f"Finished {evaluator.name} evals in {time.monotonic() - start_time:.1f} seconds. Metrics:\n"
-                + "\n".join(metrics)
+                + "\n".join(metrics_str)
             )
+
+        # Sort by evaluator_times in ascending order
+        sorted_evaluators = sorted(
+            zip(evaluator_names, evaluator_bs, evaluator_times), key=lambda x: x[2]
+        )
+
+        # Record evaluation speed
+        log.info("Evaluation speed:")
+        max_time_width = max(len(f"{t:.1f}") for t in evaluator_times)
+        max_batch_width = max(len(str(bs)) for bs in evaluator_bs)
+        for names, bs, t in sorted_evaluators:
+            name = names[0]  # only use the name of the first metric for each downstream task
+            log.info(
+                f"    {t:>{max_time_width}.1f} sec ({bs:>{max_batch_width}} batches): {name} (+ variants)"
+            )
+        total_time = sum(evaluator_times)
+        total_bs = sum(int(bs) if bs is not None else 0 for bs in evaluator_bs)
+        log.info(f"    Total evaluation time: {total_time:.1f} seconds ({total_bs} batches)")
+
+        self.trainer.record_metric("throughput/in-loop eval time (s)", total_time)
+        self.trainer.record_metric("throughput/in-loop eval batches", total_bs)
 
     def _log_progress(self, evaluator: Evaluator, eval_step: int):
         if evaluator.total_batches is not None:

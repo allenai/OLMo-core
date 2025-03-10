@@ -65,6 +65,8 @@ def build_launch_config(
     workspace: str = "ai2/OLMo-core",
     budget: str = "ai2/oe-training",
     nccl_debug: bool = False,
+    beaker_image: str = OLMoCoreBeakerImage.stable,
+    num_nodes: int = 1,
 ) -> BeakerLaunchConfig:
     weka_buckets: List[BeakerWekaBucket] = []
     if root_dir.startswith("/weka/"):
@@ -80,8 +82,8 @@ def build_launch_config(
         workspace=workspace,
         clusters=[cluster],
         weka_buckets=weka_buckets,
-        beaker_image=OLMoCoreBeakerImage.stable,
-        num_nodes=1,
+        beaker_image=beaker_image,
+        num_nodes=num_nodes,
         num_gpus=8,
         shared_filesystem=not is_url(root_dir),
         allow_dirty=False,

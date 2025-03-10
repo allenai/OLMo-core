@@ -550,24 +550,24 @@ class NormalizedAttention(Attention):
         self.sq_init_value = 1.0
         self.sq_init_scaling = 1.0 / math.sqrt(d_model)
         self.sq = nn.Parameter(
-            self.sq_init_scaling
-            * torch.ones(self.head_dim * self.n_heads, dtype=dtype, device=init_device)
+            torch.empty(self.head_dim * self.n_heads, dtype=dtype, device=init_device)
         )
 
         self.sk_init_value = 1.0
         self.sk_init_scaling = 1.0 / math.sqrt(d_model)
         self.sk = nn.Parameter(
-            self.sk_init_scaling
-            * torch.ones(self.head_dim * self.n_kv_heads, dtype=dtype, device=init_device)
+            torch.empty(self.head_dim * self.n_kv_heads, dtype=dtype, device=init_device)
         )
 
         self.sqrt_head_dim = math.sqrt(self.head_dim)
+        self.reset_parameters()
 
     def reset_parameters(self):
         nn.init.ones_(self.sq)
-        self.sq.mul_(self.sq_init_scaling)
         nn.init.ones_(self.sk)
-        self.sk.mul_(self.sk_init_scaling)
+        with torch.no_grad():
+            self.sq.mul_(self.sq_init_scaling)
+            self.sk.mul_(self.sk_init_scaling)
 
     def forward(
         self,

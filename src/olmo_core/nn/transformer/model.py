@@ -5,10 +5,10 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Uni
 import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
-from torch.distributed.tensor import Replicate, Shard
+from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
+from torch.distributed.tensor import DTensor, Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
-from olmo_core.config import StrEnum
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
@@ -17,7 +17,6 @@ from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 
 from ..attention import (
     Attention,
-    AttentionBase,
     FusedAttention,
     RingAttentionLoadBalancer,
     RingAttentionLoadBalancerType,
@@ -28,11 +27,16 @@ from ..lm_head import LMHeadConfig, LMOutputWithLoss
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
 from ..utils import selective_checkpointing_context_fn
 from .block import (
+    MoEParallelTransformerBlockBase,
     MoETransformerBlock,
     NormalizedTransformerBlock,
     TransformerBlock,
     TransformerBlockBase,
+)
+from .config import (
+    TransformerActivationCheckpointingMode,
     TransformerBlockConfig,
+    TransformerDataParallelWrappingStrategy,
 )
 from .init import InitMethod
 
@@ -49,43 +53,6 @@ __all__ = [
 
 
 log = logging.getLogger(__name__)
-
-
-class TransformerDataParallelWrappingStrategy(StrEnum):
-    """
-    An enumeration of the different wrapping strategy for the data parallel implementations.
-    """
-
-    full = "full"
-    """
-    Wrap each block and the LM head (only applies to FSDP).
-    """
-
-    blocks = "blocks"
-    """
-    Like full but the LM head is not wrapped separately (only applies to FSDP).
-    """
-
-    fine_grained = "fine_grained"
-    """
-    Wrap certain modules within each block in addition to wrapping each block (only applies to FSDP).
-    """
-
-
-@beta_feature
-class TransformerActivationCheckpointingMode(StrEnum):
-    """
-    An enumeration of the different activation checkpointing modes.
-    """
-
-    full = "full"
-    """Checkpoint every block."""
-    selected_blocks = "selected_blocks"
-    """Checkpoint only selected blocks."""
-    selected_modules = "selected_modules"
-    """Checkpoint only selected modules."""
-    selected_ops = "selected_ops"
-    """Checkpoint only a specific set of operations."""
 
 
 class Transformer(nn.Module):
@@ -148,6 +115,8 @@ class Transformer(nn.Module):
         self._compile_enabled = False
         self._device: Optional[torch.device] = None
         self._cp_load_balancer: Optional[RingAttentionLoadBalancer] = None
+        self._tp_enabled = False
+        self._tp_mesh: Optional[DeviceMesh] = None
 
         # Cache the value of these properties up-front in case the parameters are removed
         # later, like for pipeline parallelism.
@@ -158,8 +127,10 @@ class Transformer(nn.Module):
         del block
 
     def compute_auxiliary_losses(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, torch.Tensor]:
+        # NOTE: if tensor parallelism is enabled you'll need to distribute loss tensors as DTensors.
+        # See how the MoETransformer handles that for an example.
         del total_bz, reset
         return {}
 
@@ -167,13 +138,17 @@ class Transformer(nn.Module):
         pass
 
     def compute_auxiliary_metrics(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
         del total_bz, reset
         return {}
 
     def reset_auxiliary_metrics(self):
         pass
+
+    @property
+    def tp_enabled(self) -> bool:
+        return self._tp_enabled
 
     @property
     def is_moe(self) -> bool:
@@ -212,6 +187,7 @@ class Transformer(nn.Module):
         max_seq_len: Optional[int] = None,
         max_local_microbatch_size: Optional[int] = None,
         device: Optional[torch.device] = None,
+        pp_mesh: Optional[DeviceMesh] = None,
     ) -> torch.Generator:
         """
         Initialize the model weights.
@@ -221,20 +197,25 @@ class Transformer(nn.Module):
         :param max_local_microbatch_size: The maximum local (rank) micro-batch size (in tokens)
             expected. This is used to warm-up some MoE cache.
         :param device: The device the local copy of the model will be trained on.
+        :param pp_mesh: Pipeline parallel mesh. Pass this when using pipeline parallelism
+            to ensure the weights are initialized differently for different stages.
         """
         device = device or self.device
         self.to_empty(device=device)
 
-        generator = torch.Generator(device).manual_seed(self.init_seed)
+        for module in self.modules():
+            if hasattr(module, "reset_parameters"):
+                module.reset_parameters()  # type: ignore
+
+        seed = self.init_seed
+        if pp_mesh is not None:
+            seed += pp_mesh.get_local_rank()
+        generator = torch.Generator(device).manual_seed(seed)
 
         if self.embeddings is not None:
             self.init_method.init_embeddings(
                 self.embeddings, d_model=self.d_model, generator=generator
             )
-
-        for module in self.modules():
-            if hasattr(module, "reset_parameters"):
-                module.reset_parameters()  # type: ignore
 
         for block in self.blocks.values():
             # This might fail if it's wrapped.
@@ -401,8 +382,8 @@ class Transformer(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,
-        labels: Optional[torch.Tensor] = None,
         *,
+        labels: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
@@ -449,17 +430,12 @@ class Transformer(nn.Module):
         else:
             return h
 
-    def apply_tp(
-        self,
-        tp_mesh: DeviceMesh,
-        float8_enabled: bool = False,
-    ):
+    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         """
         Apply tensor parallelism to the model.
 
         :param loss_parallel: Set to ``True`` if parallelizing the loss function as well.
         :param float8_enabled: Set this to ``True`` if training with float8 linear layers.
-        :param with_labels: Should be set to ``True`` if
         """
         if self.embeddings is not None:
             parallelize_module(
@@ -482,6 +458,9 @@ class Transformer(nn.Module):
         if self.lm_head is not None:
             self.lm_head.apply_tp(tp_mesh, input_layouts=(Shard(1), Replicate()))
 
+        self._tp_enabled = True
+        self._tp_mesh = tp_mesh
+
     def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
         """
         Prepare the model for context-parallelism (CP).
@@ -491,7 +470,7 @@ class Transformer(nn.Module):
         """
         self._cp_load_balancer = load_balancer.build(cp_mesh)
         for block in self.blocks.values():
-            cast(AttentionBase, block.attention).apply_cp(cp_mesh, load_balancer=load_balancer)
+            cast(TransformerBlockBase, block).apply_cp(cp_mesh, load_balancer)
 
     def apply_activation_checkpointing(
         self,
@@ -522,7 +501,7 @@ class Transformer(nn.Module):
             raise ValueError("'modules' is required for 'selected_modules' mode")
 
         # TODO: only preserve RNG state if dropout is active
-        preserve_rng_state = True
+        preserve_rng_state = False
 
         if mode == TransformerActivationCheckpointingMode.selected_modules:
             from fnmatch import fnmatch
@@ -566,12 +545,12 @@ class Transformer(nn.Module):
             This must be called after :meth:`apply_activation_checkpointing()` but
             before :meth:`apply_fsdp()` or :meth:`apply_ddp()`.
         """
-        for block_id, block in self.blocks.named_children():
-            block = torch.compile(block, fullgraph=False)
-            self.blocks.register_module(block_id, block)  # type: ignore
+        for block in self.blocks.values():
+            block = cast(TransformerBlockBase, block)
+            block.apply_compile()
 
         if self.lm_head is not None:
-            self.register_module("lm_head", torch.compile(self.lm_head, fullgraph=False))  # type: ignore
+            self.lm_head.compile(fullgraph=False)
 
         self._compile_enabled = True
 
@@ -581,6 +560,7 @@ class Transformer(nn.Module):
         param_dtype: Optional[torch.dtype] = None,
         reduce_dtype: torch.dtype = torch.float32,
         pp_enabled: bool = False,
+        prefetch_factor: int = 0,
         wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
     ):
         """
@@ -594,41 +574,31 @@ class Transformer(nn.Module):
         :param param_dtype: The data type to materialize params in. Defaults to the current param dtype.
         :param reduce_dtype: The data type for gradient reduction.
         :pp_enabled: If pipeline parallelism is also enabled.
+        :prefetch_factor: For tuning the prefetch settings. 0 is the default, and higher values result
+            in more aggressive prefetching.
         :wrapping_strategy: The wrapping strategy.
         """
-        from torch.distributed._composable.fsdp import MixedPrecisionPolicy, fully_shard
-
         mp_policy = MixedPrecisionPolicy(
             param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
         )
         fsdp_config = dict(mesh=dp_mesh, mp_policy=mp_policy)
+        # For PP, do not reshard after forward to avoid per-microbatch all-gathers,
+        # which can be expensive and non-overlapped
+        reshard_after_forward = False if pp_enabled else True
 
         for block in self.blocks.values():
-            # For PP, do not reshard after forward to avoid per-microbatch
-            # all-gathers, which can be expensive and non-overlapped
-            reshard_after_forward = False if pp_enabled else True
+            block = cast(TransformerBlockBase, block)
+            block.apply_fsdp(
+                prefetch_factor=prefetch_factor,
+                wrapping_strategy=wrapping_strategy,
+                reshard_after_forward=reshard_after_forward,
+                **fsdp_config,
+            )
 
-            if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
-                if hasattr(block, "feed_forward"):
-                    fully_shard(
-                        block.feed_forward,  # type: ignore
-                        reshard_after_forward=reshard_after_forward,
-                        **fsdp_config,
-                    )
-                else:
-                    fully_shard(
-                        block.feed_forward_moe,  # type: ignore
-                        reshard_after_forward=reshard_after_forward,
-                        **fsdp_config,
-                    )
-
-            fully_shard(block, reshard_after_forward=reshard_after_forward, **fsdp_config)
-
-        if (
-            wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained
-            and self.embeddings is not None
-        ):
-            fully_shard(self.embeddings, reshard_after_forward=not pp_enabled, **fsdp_config)
+        if self.embeddings is not None:
+            fully_shard(self.embeddings, reshard_after_forward=reshard_after_forward, **fsdp_config)
+            # Embedding params are not needed for backwards computation.
+            cast(FSDPModule, self.embeddings).set_unshard_in_backward(False)
 
         if (
             wrapping_strategy != TransformerDataParallelWrappingStrategy.blocks
@@ -636,13 +606,22 @@ class Transformer(nn.Module):
         ):
             fully_shard(self.lm_head, reshard_after_forward=False, **fsdp_config)
 
-        fully_shard(self, reshard_after_forward=not pp_enabled, **fsdp_config)
+        fully_shard(self, reshard_after_forward=reshard_after_forward, **fsdp_config)
         # Some inputs need to be on CPU initially, but FSDP will move everything to model's
         # device if we don't hide it.
         self.register_forward_pre_hook(_hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True)
         self.register_forward_pre_hook(
             _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
         )
+
+        if prefetch_factor > 0:
+            blocks = cast(List[FSDPModule], list(self.blocks.values()))
+            for i in range(len(blocks)):
+                block = blocks[i]
+                if i + 1 < len(blocks):
+                    block.set_modules_to_forward_prefetch(blocks[i + 1 : i + 1 + prefetch_factor])
+                elif isinstance(self.lm_head, FSDPModule):
+                    block.set_modules_to_forward_prefetch([self.lm_head])
 
     def apply_ddp(
         self,
@@ -807,14 +786,20 @@ class MoETransformer(Transformer):
             )
 
     def compute_auxiliary_losses(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, torch.Tensor]:
         out: Dict[str, torch.Tensor] = {}
         for block in self.blocks.values():
             for loss_name, loss_val in (
                 cast(MoETransformerBlock, block).compute_losses(total_bz, reset=reset).items()
             ):
-                loss_val.div_(self.n_layers)
+                loss_val = loss_val.div(self.n_layers)
+
+                if self.tp_enabled:
+                    assert self._tp_mesh is not None
+                    loss_val = DTensor.from_local(loss_val.unsqueeze(0), self._tp_mesh, (Shard(0),))
+                    loss_val = loss_val.redistribute(placements=(Replicate(),)).mean()
+
                 if loss_name in out:
                     out[loss_name] += loss_val
                 else:
@@ -826,13 +811,13 @@ class MoETransformer(Transformer):
             cast(MoETransformerBlock, block).reset_losses()
 
     def compute_auxiliary_metrics(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
         out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
         for block_idx, block in self.blocks.items():
-            for metric_name, metric_val in (
-                cast(MoETransformerBlock, block).compute_metrics(total_bz, reset=reset).items()
-            ):
+            block = cast(MoETransformerBlock, block)
+            block_metrics = block.compute_metrics(total_bz, reset=reset)
+            for metric_name, metric_val in block_metrics.items():
                 out[f"block {int(block_idx):02d}/{metric_name}"] = metric_val
         return out
 
@@ -842,7 +827,22 @@ class MoETransformer(Transformer):
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         for block in self.blocks.values():
-            cast(MoETransformerBlock, block).apply_ep(ep_mesh, **kwargs)
+            block = cast(MoETransformerBlock, block)
+            block.apply_ep(ep_mesh, **kwargs)
+        #  self._add_secondary_stream_to_blocks()
+
+    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
+        super().apply_tp(tp_mesh, float8_enabled=float8_enabled)
+        #  self._add_secondary_stream_to_blocks()
+
+    def _add_secondary_stream_to_blocks(self):
+        secondary_cuda_stream: Optional[torch.cuda.Stream] = None
+        for block in self.blocks.values():
+            if isinstance(block, MoEParallelTransformerBlockBase):
+                if torch.cuda.is_available() and secondary_cuda_stream is None:
+                    log.info("Creating secondary CUDA stream for MoE parallel block")
+                    secondary_cuda_stream = torch.cuda.Stream()
+                block.secondary_stream = secondary_cuda_stream  # type: ignore
 
     def prepare_experts_for_fsdp(
         self,
@@ -851,8 +851,6 @@ class MoETransformer(Transformer):
         reduce_dtype: torch.dtype = torch.float32,
         pp_enabled: bool = False,
     ):
-        from torch.distributed._composable.fsdp import MixedPrecisionPolicy
-
         for block in self.blocks.values():
             cast(MoETransformerBlock, block).feed_forward_moe.prepare_experts_for_fsdp(
                 world_mesh=world_mesh,

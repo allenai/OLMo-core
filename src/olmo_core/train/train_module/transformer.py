@@ -2,7 +2,7 @@ import contextlib
 import logging
 from dataclasses import dataclass, replace
 from functools import cached_property
-from typing import Any, Dict, Generator, List, Optional, Tuple, Union, cast
+from typing import Any, Dict, Generator, List, Optional, Tuple, TypeVar, Union, cast
 
 import torch
 import torch.distributed as dist
@@ -10,6 +10,7 @@ import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.checkpoint.metadata import Metadata
+from torch.distributed.fsdp import FSDPModule
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.tensor import DTensor
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -30,6 +31,7 @@ from olmo_core.distributed.parallel import (
     get_dp_model_mesh,
     get_dp_process_group,
     get_ep_mesh,
+    get_pp_mesh,
     get_tp_mesh,
 )
 from olmo_core.distributed.utils import (
@@ -72,6 +74,8 @@ class TransformerDataParallelConfig(DataParallelConfig):
     """
     The wrapping strategy.
     """
+
+    prefetch_factor: int = 0
 
 
 @dataclass
@@ -216,6 +220,140 @@ class TransformerTrainModuleConfig(Config):
         )
 
 
+M = TypeVar("M", Transformer, List[Transformer])
+
+
+def parallelize_model(
+    model: M,
+    *,
+    world_mesh: Optional[DeviceMesh],
+    device: torch.device,
+    max_sequence_length: int,
+    rank_microbatch_size: int,
+    compile_model: bool = False,
+    float8_handler: Optional[Float8Handler] = None,
+    dp_config: Optional[TransformerDataParallelConfig] = None,
+    tp_config: Optional[TransformerTensorParallelConfig] = None,
+    cp_config: Optional[TransformerContextParallelConfig] = None,
+    ep_config: Optional[TransformerExpertParallelConfig] = None,
+    ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
+    pp_enabled: bool = False,
+) -> M:
+    model_parts: List[Transformer] = [model] if isinstance(model, Transformer) else model
+
+    pp_mesh: Optional[DeviceMesh] = None
+    if pp_enabled:
+        assert world_mesh is not None
+        pp_mesh = get_pp_mesh(world_mesh)
+
+    # Maybe convert linear layers to FP8 linear.
+    float8_enabled = False
+    if float8_handler is not None and float8_handler.enabled:
+        float8_enabled = True
+        for m in model_parts:
+            modules_to_ignore = set()
+            if m.lm_head is not None:
+                modules_to_ignore.add("lm_head.w_out")
+            float8_handler.convert_to_float8_training(m, modules_to_ignore=modules_to_ignore)
+            log.info("Swapped linear layers to Float8 linear layers\n%s", m)
+
+    # Maybe apply context parallelism.
+    if cp_config is not None:
+        assert world_mesh is not None
+        cp_mesh = get_cp_mesh(world_mesh)
+        for m in model_parts:
+            m.apply_cp(cp_mesh, load_balancer=cp_config.load_balancer)
+        log.info(f"Applied context parallelism to the model with {get_device_mesh_info(cp_mesh)}")
+
+    # Maybe apply tensor/expert parallelism.
+    if tp_config is not None and ep_config is not None:
+        raise NotImplementedError("TP + EP is not implemented yet")
+    if tp_config is not None:
+        assert world_mesh is not None
+        tp_mesh = get_tp_mesh(world_mesh)
+        for m in model_parts:
+            m.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+        tp_config.maybe_enable_async_tp(tp_mesh)
+        log.info(
+            f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model "
+            f"with {get_device_mesh_info(tp_mesh)}"
+        )
+
+    if ep_config is not None:
+        assert world_mesh is not None
+        ep_mesh = get_ep_mesh(world_mesh)
+        for m in model_parts:
+            if not m.is_moe:
+                raise OLMoConfigurationError("Expert parallelism is only valid for MoE models")
+            cast(MoETransformer, m).apply_ep(ep_mesh)
+        log.info(f"Applied expert parallelism to the model with {get_device_mesh_info(ep_mesh)}")
+
+    # Maybe apply activation checkpointing.
+    if ac_config is not None:
+        for m in model_parts:
+            m.apply_activation_checkpointing(
+                ac_config.mode,
+                block_interval=ac_config.block_interval,
+                modules=ac_config.modules,
+            )
+        log.info(f"Applied '{ac_config.mode}' activation checkpointing to the model")
+
+    # Maybe compile.
+    if compile_model:
+        if torch.cuda.is_available():
+            for m in model_parts:
+                m.apply_compile()
+            log.info("Applied torch.compile() to the model")
+        else:
+            log.warning("Skipping model compilation since CUDA is not available")
+
+    # Maybe shard/replicate according to data parallel config.
+    if dp_config is not None:
+        assert world_mesh is not None
+        dp_mesh = get_dp_model_mesh(world_mesh)
+        if dp_config.name in (DataParallelType.fsdp, DataParallelType.hsdp):
+            param_dtype = (
+                dp_config.param_dtype.as_pt() if dp_config.param_dtype is not None else None
+            )
+            for m in model_parts:
+                if m.is_moe:
+                    cast(MoETransformer, m).prepare_experts_for_fsdp(
+                        world_mesh,
+                        param_dtype=param_dtype,
+                        reduce_dtype=dp_config.reduce_dtype.as_pt(),
+                        pp_enabled=pp_enabled,
+                    )
+                m.apply_fsdp(
+                    dp_mesh=dp_mesh,
+                    param_dtype=param_dtype,
+                    reduce_dtype=dp_config.reduce_dtype.as_pt(),
+                    wrapping_strategy=dp_config.wrapping_strategy,
+                    pp_enabled=pp_enabled,
+                    prefetch_factor=dp_config.prefetch_factor,
+                )
+            log.info(f"Applied FSDP to the model with {get_device_mesh_info(dp_mesh)}")
+        elif dp_config.name == DataParallelType.ddp:
+            for m in model_parts:
+                if m.is_moe:
+                    cast(MoETransformer, m).prepare_experts_for_ddp(world_mesh)
+                m.apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model)
+            log.info(f"Applied DDP to the model with {get_device_mesh_info(dp_mesh)}")
+        else:
+            raise NotImplementedError(dp_config.name)
+
+    # Materialize and init parameters.
+    log.info("Initializing model weights...")
+    for m in model_parts:
+        m.init_weights(
+            max_seq_len=max_sequence_length,
+            max_local_microbatch_size=rank_microbatch_size,
+            device=device,
+            pp_mesh=pp_mesh,
+        )
+
+    return model
+
+
 class TransformerTrainModule(TrainModule):
     """
     A :class:`TrainModule` for any :class:`~olmo_core.nn.transformer.Transformer` model
@@ -285,12 +423,14 @@ class TransformerTrainModule(TrainModule):
                 f"'max_sequence_length' ({max_sequence_length:,d} tokens)"
             )
 
+        # Build world mesh.
         self.device = device or get_default_device()
         self.world_mesh: Optional[DeviceMesh] = None
         if is_distributed():
             self.world_mesh = build_world_mesh(
                 dp=dp_config, tp=tp_config, cp=cp_config, ep=ep_config, device_type=self.device.type
             )
+            log.info(f"Data parallel world size = {get_world_size(self.dp_process_group):,d}")
         elif (
             dp_config is not None
             or tp_config is not None
@@ -301,125 +441,33 @@ class TransformerTrainModule(TrainModule):
                 "Training parallelism configs are only valid for distributed training"
             )
 
-        log.info(f"Data parallel world size = {get_world_size(self.dp_process_group):,d}")
-
-        self.label_ignore_index = label_ignore_index
-        self.z_loss_multiplier = z_loss_multiplier
-
         self.float8_handler: Optional[Float8Handler] = None
-        float8_enabled = False
         if float8_config is not None:
-            float8_enabled = float8_config.enabled
             float8_config.compile = compile_model
             self.float8_handler = float8_config.build()
 
-        self.model = model
-
-        # Maybe convert linear layers to FP8 linear.
-        if self.float8_handler is not None and self.float8_handler.enabled:
-            self.float8_handler.convert_to_float8_training(
-                self.model, modules_to_ignore={"lm_head.w_out"}
-            )
-            log.info("Swapped linear layers to Float8 linear layers\n%s", self.model)
-
-        # Maybe apply context parallelism.
-        self._cp_config = cp_config
-        if cp_config is not None:
-            assert self.world_mesh is not None
-            cp_mesh = get_cp_mesh(self.world_mesh)
-            self.model.apply_cp(cp_mesh, load_balancer=cp_config.load_balancer)
-            log.info(
-                f"Applied context parallelism to the model with {get_device_mesh_info(cp_mesh)}"
-            )
-
-        # Maybe apply tensor/expert parallelism.
-        self._tp_enabled = False
-        if tp_config is not None and ep_config is not None:
-            raise NotImplementedError("TP + EP is not implemented yet")
-        if tp_config is not None:
-            assert self.world_mesh is not None
-            tp_mesh = get_tp_mesh(self.world_mesh)
-            self.model.apply_tp(tp_mesh, float8_enabled=float8_enabled)
-            tp_config.maybe_enable_async_tp(tp_mesh)
-            log.info(
-                f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model "
-                f"with {get_device_mesh_info(tp_mesh)}"
-            )
-            self._tp_enabled = True
-
-        self._ep_enabled = False
-        if ep_config is not None:
-            assert self.world_mesh is not None
-            if not self.model.is_moe:
-                raise OLMoConfigurationError("Expert parallelism is only valid for MoE models")
-            ep_mesh = get_ep_mesh(self.world_mesh)
-            cast(MoETransformer, self.model).apply_ep(ep_mesh)
-            log.info(
-                f"Applied expert parallelism to the model with {get_device_mesh_info(ep_mesh)}"
-            )
-            self._ep_enabled = True
-
-        # Maybe apply activation checkpointing.
-        if ac_config is not None:
-            self.model.apply_activation_checkpointing(
-                ac_config.mode,
-                block_interval=ac_config.block_interval,
-                modules=ac_config.modules,
-            )
-            log.info(f"Applied '{ac_config.mode}' activation checkpointing to the model")
-
-        # Maybe compile.
-        if compile_model:
-            if torch.cuda.is_available():
-                self.model.apply_compile()
-                log.info("Applied torch.compile() to the model")
-            else:
-                log.warning("Skipping model compilation since CUDA is not available")
-
-        # Maybe shard/replicate according to data parallel config.
-        self._dp_config = dp_config
-        if dp_config is not None:
-            assert self.world_mesh is not None
-            dp_mesh = get_dp_model_mesh(self.world_mesh)
-            if dp_config.name in (DataParallelType.fsdp, DataParallelType.hsdp):
-                param_dtype = (
-                    dp_config.param_dtype.as_pt() if dp_config.param_dtype is not None else None
-                )
-                if self.model.is_moe:
-                    cast(MoETransformer, self.model).prepare_experts_for_fsdp(
-                        self.world_mesh,
-                        param_dtype=param_dtype,
-                        reduce_dtype=dp_config.reduce_dtype.as_pt(),
-                        pp_enabled=False,
-                    )
-                self.model.apply_fsdp(
-                    dp_mesh=dp_mesh,
-                    param_dtype=param_dtype,
-                    reduce_dtype=dp_config.reduce_dtype.as_pt(),
-                    wrapping_strategy=dp_config.wrapping_strategy,
-                    pp_enabled=False,
-                )
-                log.info(f"Applied FSDP to the model with {get_device_mesh_info(dp_mesh)}")
-            elif dp_config.name == DataParallelType.ddp:
-                if self.model.is_moe:
-                    cast(MoETransformer, self.model).prepare_experts_for_ddp(self.world_mesh)
-                self.model.apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model)
-                log.info(f"Applied DDP to the model with {get_device_mesh_info(dp_mesh)}")
-            else:
-                raise NotImplementedError(dp_config.name)
-
-        # Materialize and init parameters.
-        log.info("Initializing model weights...")
-        self.model.init_weights(
-            max_seq_len=max_sequence_length,
-            max_local_microbatch_size=rank_microbatch_size,
+        # Parallelize model.
+        self.model = parallelize_model(
+            model,
+            world_mesh=self.world_mesh,
             device=self.device,
+            max_sequence_length=max_sequence_length,
+            rank_microbatch_size=rank_microbatch_size,
+            compile_model=compile_model,
+            float8_handler=self.float8_handler,
+            dp_config=dp_config,
+            tp_config=tp_config,
+            cp_config=cp_config,
+            ep_config=ep_config,
+            ac_config=ac_config,
         )
 
-        # Build optimizer(s).
-        log.info("Building optimizer...")
-        self.optim: Optimizer = optim.build(self.model, strict=True)
-
+        self._dp_config = dp_config
+        self._cp_config = cp_config
+        self._tp_config = tp_config
+        self._ep_config = ep_config
+        self.label_ignore_index = label_ignore_index
+        self.z_loss_multiplier = z_loss_multiplier
         self.rank_microbatch_size = rank_microbatch_size
         self.max_sequence_length = max_sequence_length
         self.autocast_precision = autocast_precision
@@ -432,6 +480,10 @@ class TransformerTrainModule(TrainModule):
             flatten_optimizer_state_dict=True, strict=True
         )
         self.load_key_mapping = load_key_mapping
+
+        # Build optimizer(s).
+        log.info("Building optimizer...")
+        self.optim: Optimizer = optim.build(self.model, strict=True)
 
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
@@ -446,8 +498,12 @@ class TransformerTrainModule(TrainModule):
         )
 
     @property
+    def dp_config(self) -> Optional[TransformerDataParallelConfig]:
+        return self._dp_config
+
+    @property
     def tp_enabled(self) -> bool:
-        return self._tp_enabled
+        return self._tp_config is not None
 
     @property
     def cp_enabled(self) -> bool:
@@ -455,7 +511,7 @@ class TransformerTrainModule(TrainModule):
 
     @property
     def ep_enabled(self) -> bool:
-        return self._ep_enabled
+        return self._ep_config is not None
 
     @cached_property
     def world_size(self) -> int:
@@ -654,7 +710,8 @@ class TransformerTrainModule(TrainModule):
 
         # And additional metrics.
         for metric_name, (metric_val, reduction) in self.model.compute_auxiliary_metrics(
-            batch_num_tokens_for_loss
+            batch_num_tokens_for_loss,
+            reset=True,
         ).items():
             self.record_metric(
                 metric_name,
@@ -781,10 +838,21 @@ class TransformerTrainModule(TrainModule):
     def _train_microbatch_context(
         self, micro_batch_idx: int, num_micro_batches: int
     ) -> Generator[None, None, None]:
+        is_last_mb = micro_batch_idx == num_micro_batches - 1
         with contextlib.ExitStack() as stack:
-            # For DDP, only sync gradients on the final micro batch.
-            if isinstance(self.model, DDP) and micro_batch_idx != num_micro_batches - 1:
-                stack.enter_context(self.model.no_sync())
+            if isinstance(self.model, FSDPModule):
+                assert self.dp_config is not None
+                # On the last backward FSDP waits on pending gradient reduction and clears internal data
+                # data structures for backward prefetching.
+                self.model.set_is_last_backward(is_last_mb)
+                # For HSDP we can delay the gradients all-reduce until the final micro-batch.
+                if self.dp_config.name == DataParallelType.hsdp:
+                    self.model.set_requires_all_reduce(is_last_mb)
+            elif isinstance(self.model, DDP):
+                # For DDP, only sync gradients on the final micro-batch.
+                if not is_last_mb:
+                    stack.enter_context(self.model.no_sync())
+
             yield
 
     @contextlib.contextmanager
