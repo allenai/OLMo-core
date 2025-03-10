@@ -25,6 +25,11 @@ class PipelineSplitStyle(StrEnum):
 class PipelineScheduleType(StrEnum):
     """
     An enumeration of the different pipeline schedules available.
+
+    .. warning::
+        The zero-bubble variants have several issues at the moment including not being compatible
+        with ``torch.compile``.
+
     """
 
     # See torch.distributed.pipelining.schedules.get_schedule_class for a list of available.
@@ -49,7 +54,7 @@ class PipelineScheduleType(StrEnum):
 
     @property
     def default_style(self) -> PipelineSplitStyle:
-        if "ZeroBubble" in self:
+        if self == self.zbv_zero_bubble:
             return PipelineSplitStyle.v
         else:
             return PipelineSplitStyle.loop
