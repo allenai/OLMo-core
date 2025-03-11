@@ -692,6 +692,7 @@ class TransformerConfig(Config):
         dtype: DType = DType.float32,
         compile: bool = False,
         rope_scaling: Optional[RoPEScalingConfig] = None,
+        ff_type: FeedForwardType = FeedForwardType.default,
         **kwargs,
     ) -> "TransformerConfig":
         """
@@ -747,7 +748,9 @@ class TransformerConfig(Config):
                 use_flash=use_flash,
                 dtype=dtype,
             ),
-            feed_forward=FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype),
+            feed_forward=FeedForwardConfig(
+                hidden_size=hidden_size, bias=False, dtype=dtype, name=ff_type
+            ),
             layer_norm=layer_norm,
         )
 
@@ -825,101 +828,6 @@ class TransformerConfig(Config):
         )
 
     @classmethod
-    def starcoder_like(
-        cls,
-        *,
-        d_model: int,
-        vocab_size: int,
-        n_layers: int,
-        n_heads: int,
-        n_kv_heads: Optional[int] = None,
-        qk_norm: bool = False,
-        layer_norm_eps: float = 1e-5,
-        rope_theta: int = 500_000,
-        rope_type: Optional[RoPEType] = None,
-        hidden_size_multiple_of: int = 256,
-        hidden_size_multiplier: Optional[float] = None,
-        fused_ops: Optional[bool] = None,
-        use_flash: Optional[bool] = None,
-        block_name: TransformerBlockType = TransformerBlockType.default,
-        dtype: DType = DType.float32,
-        compile: bool = False,
-        rope_scaling: Optional[RoPEScalingConfig] = None,
-        **kwargs,
-    ) -> "TransformerConfig":
-        """
-        Create a Llama-like model configuration.
-
-        :param hidden_size_multiple_of: Ensure the FFN hidden size is a multiple of this value.
-        :param hidden_size_multiplier: Custom multiplier for the FFN hidden size.
-        :param fused_ops: Use fused operations where possible. Defaults to ``True`` if flash-attn is
-            installed and ``compile=False``, otherwise ``False``.
-        :param use_flash: Use flash-attn. Defaults to ``True`` if flash-attn is
-            installed and ``compile=False``, otherwise ``False``.
-        :param dtype: The default data type to use for all parameters.
-        """
-        if fused_ops is None:
-            fused_ops = False if compile else has_flash_attn()
-        if use_flash is None:
-            use_flash = False if compile else has_flash_attn()
-
-        # Resolve hidden size of FFN in blocks.
-        hidden_size = int(8 * d_model / 3)
-        if hidden_size_multiplier is not None:
-            hidden_size = int(hidden_size_multiplier * hidden_size)
-        hidden_size = hidden_size_multiple_of * (
-            (hidden_size + hidden_size_multiple_of - 1) // hidden_size_multiple_of
-        )
-
-        # Configure global layer norm.
-        layer_norm = LayerNormConfig(
-            name=LayerNormType.fused_rms if fused_ops else LayerNormType.rms,
-            eps=layer_norm_eps,
-            bias=False,
-            dtype=dtype,
-        )
-
-        # Decide on attention/rope implementations.
-        att_type = AttentionType.default
-        if rope_type is None:
-            rope_type = RoPEType.default
-            if fused_ops and n_kv_heads is None:  # fused attention not compatible with MQA/GQA.
-                att_type = AttentionType.fused
-                rope_type = RoPEType.fused
-
-        # Configure blocks.
-        block = TransformerBlockConfig(
-            name=block_name,
-            attention=AttentionConfig(
-                name=att_type,
-                n_heads=n_heads,
-                n_kv_heads=n_kv_heads,
-                bias=False,
-                rope=RoPEConfig(name=rope_type, theta=rope_theta, scaling=rope_scaling),
-                qk_norm=layer_norm if qk_norm else None,
-                use_flash=use_flash,
-                dtype=dtype,
-            ),
-            feed_forward=FeedForwardConfig(
-                hidden_size=hidden_size,
-                bias=False,
-                dtype=dtype,  # name=FeedForwardType.starcoder # commenting to sanity check
-            ),
-            layer_norm=layer_norm,
-        )
-
-        return cls(
-            d_model=d_model,
-            vocab_size=vocab_size,
-            n_layers=n_layers,
-            block=block,
-            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
-            dtype=dtype,
-            compile=compile,
-            **kwargs,
-        )
-
-    @classmethod
     def starcoder2_3b(
         cls,
         vocab_size: int,
@@ -933,5 +841,6 @@ class TransformerConfig(Config):
             n_kv_heads=2,
             n_heads=24,
             rope_theta=int(1e5),
+            ff_type=FeedForwardType.starcoder,
             **kwargs,
         )
