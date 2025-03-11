@@ -8,12 +8,14 @@ TORCH_NIGHTLY_VERSION = "2.7.0.dev20250202"
 TORCH_NIGHTLY_VERSION_SHORT = $(shell echo $(TORCH_NIGHTLY_VERSION) | tr -d .)
 TORCHAO_VERSION = "0.8.0"
 GROUPED_GEMM_VERSION = "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
+DEEP_GEMM_VERSION = "deep_gemm @ git+https://git@github.com/deepseek-ai/DeepGEMM.git@main"
 FLASH_ATTN_WHEEL = https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
 
 VERSION = $(shell python src/olmo_core/version.py)
 VERSION_SHORT = $(shell python src/olmo_core/version.py short)
-STABLE_IMAGE = tch$(TORCH_VERSION_SHORT)cu$(TORCH_CUDA_VERSION)
-NIGHTLY_IMAGE = tch$(TORCH_NIGHTLY_VERSION_SHORT)cu$(TORCH_CUDA_VERSION)
+IMAGE_SUFFIX = ""
+STABLE_IMAGE = tch$(TORCH_VERSION_SHORT)cu$(TORCH_CUDA_VERSION)$(IMAGE_SUFFIX)
+NIGHTLY_IMAGE = tch$(TORCH_NIGHTLY_VERSION_SHORT)cu$(TORCH_CUDA_VERSION)$(IMAGE_SUFFIX)
 BEAKER_WORKSPACE = ai2/OLMo-core
 BEAKER_USER = $(shell beaker account whoami --format=json | jq -r '.[0].name')
 
@@ -56,6 +58,7 @@ stable-image :
 		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
 		--build-arg FLASH_ATTN_WHEEL=$(FLASH_ATTN_WHEEL) \
 		--build-arg GROUPED_GEMM_VERSION=$(GROUPED_GEMM_VERSION) \
+		--build-arg DEEP_GEMM_VERSION=$(DEEP_GEMM_VERSION) \
 		--build-arg TORCHAO_VERSION=$(TORCHAO_VERSION) \
 		--target stable \
 		--progress plain \
@@ -71,6 +74,7 @@ nightly-image :
 		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
 		--build-arg FLASH_ATTN_WHEEL=$(FLASH_ATTN_WHEEL) \
 		--build-arg GROUPED_GEMM_VERSION=$(GROUPED_GEMM_VERSION) \
+		--build-arg DEEP_GEMM_VERSION=$(DEEP_GEMM_VERSION) \
 		--build-arg TORCHAO_VERSION=$(TORCHAO_VERSION) \
 		--build-arg TORCH_NIGHTLY_VERSION=$(TORCH_NIGHTLY_VERSION) \
 		--target nightly \
