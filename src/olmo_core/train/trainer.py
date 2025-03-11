@@ -40,7 +40,7 @@ from ..distributed.utils import (
 )
 from ..exceptions import OLMoConfigurationError
 from ..io import copy_file, file_exists, is_url, join_path, normalize_path
-from ..utils import cuda_sync_debug_mode
+from ..utils import cuda_sync_debug_mode, gc_cuda
 from .callbacks import (
     Callback,
     CheckpointerCallback,
@@ -622,6 +622,7 @@ class Trainer:
         self._thread_pool = None
         barrier()
 
+        gc_cuda()
         log.info("Training complete")
 
     def state_dict(self) -> TrainerStateDict:
