@@ -15,6 +15,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Added `namespace` argument to `Trainer.record_metric()`.
 - Added support for context parallelism.
 - Added support for expert parallelism with MoE models.
+- Added in-loop evals for Minerva, GSM, HumanEval, MBPP (`ai2-olmo-eval==0.7.0`)
 
 ### Changed
 
