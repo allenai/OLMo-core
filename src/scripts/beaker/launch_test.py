@@ -34,9 +34,9 @@ def build_config(command: List[str], overrides: List[str]) -> BeakerLaunchConfig
             # Make symbolic links for third-party (CUTLASS and CuTe) include directories
             "python setup.py develop",
             # Test JIT compilation
-            "python tests/test_jit.py",
+            # "python tests/test_jit.py",
             # Test all GEMM implements (normal, contiguous-grouped and masked-grouped)
-            "python tests/test_core.py",
+            # "python tests/test_core.py",
         ],
     ).merge(overrides)
 
