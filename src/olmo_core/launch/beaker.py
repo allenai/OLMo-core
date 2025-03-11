@@ -441,7 +441,7 @@ class BeakerLaunchConfig(Config):
                 f"see {self.beaker.experiment.url(experiment)} for details"
             )
         else:
-            log.info("Experiment completed successfully")
+            log.info(f"Experiment completed successfully: {self.beaker.experiment.url(experiment)}")
 
     def launch(
         self, follow: bool = False, torchrun: bool = True, entrypoint: Optional[str] = None

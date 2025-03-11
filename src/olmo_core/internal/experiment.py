@@ -50,7 +50,7 @@ log = logging.getLogger(__name__)
 class CommonComponents(Config):
     run_name: str
     save_folder: str
-    launch: BeakerLaunchConfig
+    launch: Optional[BeakerLaunchConfig]
     tokenizer: TokenizerConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
@@ -60,7 +60,7 @@ class CommonComponents(Config):
 @dataclass
 class ExperimentConfig(Config):
     run_name: str
-    launch: BeakerLaunchConfig
+    launch: Optional[BeakerLaunchConfig]
     model: TransformerConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
@@ -151,17 +151,18 @@ def build_common_components(
     if cmd == SubCmd.launch_prep:
         cmd_to_launch = SubCmd.prep
 
-    launch_config = build_launch_config(
-        name=f"{run_name}-{cmd_to_launch}",
-        root_dir=root_dir,
-        cmd=[script, cmd_to_launch, run_name, cluster, *overrides],
-        cluster=cluster,
-        nccl_debug=False,
-        beaker_image=beaker_image,
-        num_nodes=num_nodes,
-    )
-
     beaker_user = get_beaker_username()
+    launch_config: Optional[BeakerLaunchConfig] = None
+    if beaker_user is not None:
+        launch_config = build_launch_config(
+            name=f"{run_name}-{cmd_to_launch}",
+            root_dir=root_dir,
+            cmd=[script, cmd_to_launch, run_name, cluster, *overrides],
+            cluster=cluster,
+            nccl_debug=False,
+            beaker_image=beaker_image,
+            num_nodes=num_nodes,
+        )
 
     tokenizer_config = TokenizerConfig.dolma2()
 
@@ -196,8 +197,9 @@ def build_common_components(
         "profiler": ProfilerCallback(enabled=False),
         "garbage_collector": GarbageCollectorCallback(),
         "slack_notifier": SlackNotifierCallback(name=run_name, enabled=False),
-        "beaker": BeakerCallback(),
     }
+    if beaker_user is not None:
+        callbacks["beaker"] = BeakerCallback()
 
     if torch.cuda.is_available():
         callbacks["gpu_monitor"] = GPUMemoryMonitorCallback()
@@ -220,9 +222,15 @@ def build_common_components(
             eval_interval=1000,
         )
 
+    save_folder: str
+    if beaker_user is not None:
+        save_folder = f"{root_dir}/checkpoints/{beaker_user.lower()}/{run_name}"
+    else:
+        save_folder = f"{root_dir}/checkpoints/{run_name}"
+
     return CommonComponents(
         run_name=run_name,
-        save_folder=f"{root_dir}/checkpoints/{beaker_user.lower()}/{run_name}",
+        save_folder=save_folder,
         launch=launch_config,
         tokenizer=tokenizer_config,
         dataset=dataset_config,
@@ -273,10 +281,12 @@ def build_config(
 
 def launch(config: ExperimentConfig):
     log.info(config)
+    assert config.launch is not None
     config.launch.launch(follow=True)
 
 
 def launch_prep(config: ExperimentConfig):
+    assert config.launch is not None
     config.launch.num_gpus = 0
     config.launch.num_nodes = 1
     log.info(config)
