@@ -61,7 +61,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             schedule=PipelineScheduleType.interleaved_1F1B,
         )
     return config_cls(
-        rank_microbatch_size=1 * 4096,
+        rank_microbatch_size=(2 if PIPELINE_PARALLEL else 1) * 4096,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=AdamWConfig(
             lr=3e-4,
