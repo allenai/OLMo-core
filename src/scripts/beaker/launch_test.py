@@ -18,7 +18,7 @@ def build_config(command: List[str], overrides: List[str]) -> BeakerLaunchConfig
         cmd=command,
         task_name="test",
         workspace="ai2/OLMo-core",
-        beaker_image=OLMoCoreBeakerImage.stable,
+        beaker_image=OLMoCoreBeakerImage.stable_dev,
         clusters=[
             "ai2/jupiter-cirrascale-2",
             "ai2/augusta-google-1",
@@ -31,6 +31,7 @@ def build_config(command: List[str], overrides: List[str]) -> BeakerLaunchConfig
         setup_steps=[
             # Submodule must be cloned
             "git clone --recursive https://github.com/deepseek-ai/DeepGEMM.git .",
+            "rm -rf deep_gemm/",
             # Make symbolic links for third-party (CUTLASS and CuTe) include directories
             # "python setup.py develop",
             # Test JIT compilation

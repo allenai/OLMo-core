@@ -64,7 +64,19 @@ class OLMoCoreBeakerImage(StrEnum):
 
     nightly = "olmo-core-tch270dev20250202cu124"
     """
-    Built with the latest compatible nightly version of PyTorch.
+    Built with a recent compatible nightly version of PyTorch.
+    """
+
+    stable_dev = "olmo-core-tch260cu124-devel"
+    """
+    Built with the latest compatible stable version of PyTorch and includes all the usual CUDA development
+    dependencies for building CUDA extensions.
+    """
+
+    nightly_dev = "olmo-core-tch270dev20250202cu124-devel"
+    """
+    Built with a recent compatible nightly version of PyTorch and includes all the usual CUDA development
+    dependencies for building CUDA extensions.
     """
 
 
