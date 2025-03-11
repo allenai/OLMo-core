@@ -66,7 +66,7 @@ stable-image :
 	echo "Built image 'olmo-core:$(STABLE_IMAGE)', size: $$(docker inspect -f '{{ .Size }}' olmo-core:$(STABLE_IMAGE) | numfmt --to=si)"
 
 .PHONY : stable-dev-image
-stable-image :
+stable-dev-image :
 	docker build -f src/Dockerfile \
 		--build-arg BUILDKIT_INLINE_CACHE=1 \
 		--build-arg CUDA_VERSION=$(CUDA_VERSION) \
@@ -100,7 +100,7 @@ nightly-image :
 	echo "Built image 'olmo-core:$(NIGHTLY_IMAGE)', size: $$(docker inspect -f '{{ .Size }}' olmo-core:$(NIGHTLY_IMAGE) | numfmt --to=si)"
 
 .PHONY : nightly-dev-image
-nightly-image :
+nightly-dev-image :
 	docker build -f src/Dockerfile \
 		--build-arg BUILDKIT_INLINE_CACHE=1 \
 		--build-arg CUDA_VERSION=$(CUDA_VERSION) \
@@ -135,7 +135,7 @@ beaker-image-stable : stable-image
 	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(STABLE_IMAGE) olmo-core-$(STABLE_IMAGE)-v$(VERSION) $(BEAKER_WORKSPACE)
 
 .PHONY : beaker-image-stable-dev
-beaker-image-stable : stable-dev-image
+beaker-image-stable-dev : stable-dev-image
 	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(STABLE_IMAGE)-devel olmo-core-$(STABLE_IMAGE)-devel $(BEAKER_WORKSPACE)
 
 .PHONY : ghcr-image-nightly
@@ -154,7 +154,7 @@ beaker-image-nightly : nightly-image
 	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(NIGHTLY_IMAGE) olmo-core-$(NIGHTLY_IMAGE)-v$(VERSION) $(BEAKER_WORKSPACE)
 
 .PHONY : beaker-image-nightly-dev
-beaker-image-nightly : nightly-dev-image
+beaker-image-nightly-dev : nightly-dev-image
 	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(NIGHTLY_IMAGE)-devel olmo-core-$(NIGHTLY_IMAGE)-devel $(BEAKER_WORKSPACE)
 
 .PHONY : get-beaker-workspace
