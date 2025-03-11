@@ -30,7 +30,7 @@ def build_config(command: List[str], overrides: List[str]) -> BeakerLaunchConfig
         #  host_networking=False,
         setup_steps=[
             # Submodule must be cloned
-            "git clone --recursive git@github.com:deepseek-ai/DeepGEMM.git .",
+            "git clone --recursive https://github.com/deepseek-ai/DeepGEMM.git .",
             # Make symbolic links for third-party (CUTLASS and CuTe) include directories
             "python setup.py develop",
             # Test JIT compilation
