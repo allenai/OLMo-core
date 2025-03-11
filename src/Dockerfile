@@ -2,6 +2,7 @@
 ARG CUDA_VERSION="12.4"
 ARG TORCH_CUDA_VERSION="124"
 ARG TORCH_VERSION="2.6.0
+ARG BASE=runtime
 
 #########################################################################
 # Build image
@@ -50,7 +51,6 @@ RUN echo "Built wheels:" && ls -lh .
 # Stable image
 #########################################################################
 
-ARG BASE=runtime
 FROM pytorch/pytorch:${TORCH_VERSION}-cuda${CUDA_VERSION}-cudnn9-${BASE} as stable
 
 # Install system dependencies.
