@@ -2,6 +2,7 @@ CUDA_VERSION = "12.4"
 TORCH_CUDA_VERSION = $(shell echo $(CUDA_VERSION) | tr -d .)
 TORCH_VERSION = "2.6.0"
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
+IMAGE_BASE = runtime
 # NOTE: when upgrading the nightly version you also need to upgrade the torch version specification
 # in 'pyproject.toml' to include that nightly version.
 TORCH_NIGHTLY_VERSION = "2.7.0.dev20250202"
@@ -56,6 +57,7 @@ stable-image :
 		--build-arg CUDA_VERSION=$(CUDA_VERSION) \
 		--build-arg TORCH_CUDA_VERSION=$(TORCH_CUDA_VERSION) \
 		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
+		--build-arg BASE=$(IMAGE_BASE) \
 		--build-arg FLASH_ATTN_WHEEL=$(FLASH_ATTN_WHEEL) \
 		--build-arg GROUPED_GEMM_VERSION=$(GROUPED_GEMM_VERSION) \
 		--build-arg DEEP_GEMM_VERSION=$(DEEP_GEMM_VERSION) \
@@ -72,6 +74,7 @@ nightly-image :
 		--build-arg CUDA_VERSION=$(CUDA_VERSION) \
 		--build-arg TORCH_CUDA_VERSION=$(TORCH_CUDA_VERSION) \
 		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
+		--build-arg BASE=$(IMAGE_BASE) \
 		--build-arg FLASH_ATTN_WHEEL=$(FLASH_ATTN_WHEEL) \
 		--build-arg GROUPED_GEMM_VERSION=$(GROUPED_GEMM_VERSION) \
 		--build-arg DEEP_GEMM_VERSION=$(DEEP_GEMM_VERSION) \

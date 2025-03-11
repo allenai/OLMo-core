@@ -50,7 +50,8 @@ RUN echo "Built wheels:" && ls -lh .
 # Stable image
 #########################################################################
 
-FROM pytorch/pytorch:${TORCH_VERSION}-cuda${CUDA_VERSION}-cudnn9-runtime as stable
+ARG BASE=runtime
+FROM pytorch/pytorch:${TORCH_VERSION}-cuda${CUDA_VERSION}-cudnn9-${BASE} as stable
 
 # Install system dependencies.
 RUN apt-get update && apt-get install -y --no-install-recommends \
