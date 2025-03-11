@@ -102,10 +102,10 @@ class EvaluatorCallback(Callback):
 
             # NOTE: going to have a host-device sync here but that's okay. It's only once
             # per evaluator.
-            metrics = evaluator.compute_metrics()
             metrics_str = []
             evaluation_names = []
             with cuda_sync_debug_mode(0):
+                metrics = evaluator.compute_metrics()
                 for name, value in metrics.items():
                     evaluation_names.append(name)
                     metrics_str.append(f"    {name}={format_float(value.item())}")
@@ -240,6 +240,8 @@ class DownstreamEvaluator(Evaluator):
             self.task,  # type: ignore
             batch_size=rank_batch_size_instances,
             collate_fn=self.task.collate_fn,
+            drop_last=False,
+            shuffle=False,
             num_workers=0,
             sampler=sampler,
         )
