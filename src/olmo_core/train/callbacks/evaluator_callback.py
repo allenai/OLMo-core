@@ -319,7 +319,8 @@ class DownstreamEvaluator(Evaluator):
             self.task,  # type: ignore
             batch_size=rank_batch_size_instances,
             collate_fn=self.task.collate_fn,
-            drop_last=True,
+            drop_last=False,
+            shuffle=False,
             num_workers=0,
             sampler=sampler,
         )

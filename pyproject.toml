@@ -22,7 +22,7 @@ dependencies = [
     "omegaconf",
     "safetensors",
     "importlib_resources",
-    "ai2-olmo-eval==0.6.1",
+    "ai2-olmo-eval==0.7.0",
 ]
 
 [project.urls]
