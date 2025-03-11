@@ -34,7 +34,7 @@ RUN pip wheel --no-build-isolation --no-cache-dir "${GROUPED_GEMM_VERSION}"
 
 # Build DeepGEMM.
 ARG DEEP_GEMM_VERSION="deep_gemm @ git+https://git@github.com/deepseek-ai/DeepGEMM.git@main"
-RUN pip wheel --no-build-isoloation --no-cache-dir "${DEEP_GEMM_VERSION}"
+RUN pip wheel --no-build-isolation --no-cache-dir "${DEEP_GEMM_VERSION}"
 
 # Build flash-attn.
 ARG FLASH_ATTN_WHEEL=https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
