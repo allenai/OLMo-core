@@ -44,10 +44,7 @@ from ..distributed.utils import (
 )
 from ..exceptions import OLMoConfigurationError
 from ..io import copy_file, file_exists, is_url, join_path, normalize_path
-from ..nn.functional.cross_entropy_loss import (
-    cross_entropy_loss,
-    fused_cross_entropy_loss,
-)
+from ..nn.functional.cross_entropy_loss import cross_entropy_loss, fused_cross_entropy_loss
 from ..optim import SkipStepOptimizer
 from ..utils import cuda_sync_debug_mode, mark_dynamic, move_to_device
 from .callbacks import (
@@ -754,8 +751,16 @@ class Trainer:
 
         :returns: The path/URL to the checkpoint.
         """
+
+        def _get_gpu_usage():
+            cuda_info = torch.cuda.memory_stats(self.device)
+            max_active = cuda_info["active_bytes.all.peak"]
+            return 100 * max_active / self.device_capacity
+
         dirname = self.checkpointer.checkpoint_dirname(self.global_step)
         path = join_path(self.save_folder, dirname)
+
+        log.info(f"MEM PRE-CHECKPOINT-SAVE IS {_get_gpu_usage()}")
         log.info(f"Saving checkpoint for step {self.global_step} to '{path}'...")
         self.checkpointer.save(
             path, self.model, self.optim, cast(Dict[str, Any], self.state_dict())
@@ -763,6 +768,7 @@ class Trainer:
         for callback in self.callbacks.values():
             callback.post_checkpoint_saved(path)
         log.info("Checkpoint saved")
+        log.info(f"MEM POST-CHECKPOINT-SAVE IS {_get_gpu_usage()}")
         return path
 
     def save_checkpoint_async(self) -> Tuple[PathOrStr, Future]:
