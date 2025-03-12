@@ -213,7 +213,9 @@ def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
         config_dict = json.load(f)
 
     if "model" not in config_dict:
-        log.warning(f"Config file at {checkpoint_input_dir} is not an OLMo core experiment config, ignoring")
+        log.warning(
+            f"Config file at {checkpoint_input_dir} is not an OLMo core experiment config, ignoring"
+        )
         return None
 
     return config_dict
