@@ -569,18 +569,17 @@ class TransformerPipelineTrainModule(TrainModule):
                     has_optim_state = True
                     break
 
-        state_dict = self._get_state_dict(load_opts)
+        if not has_optim_state:
+            log.warning("No optimizer state found in checkpoint")
+
+        state_dict = self._get_state_dict(load_opts, optim=has_optim_state)
         if self.load_key_mapping is not None:
             _swap_param_keys(state_dict, self.load_key_mapping, metadata=metadata)
 
-        if not has_optim_state:
-            del state_dict["optim"]
-            log.warning("No optimizer state found in checkpoint")
-
         return state_dict
 
-    def state_dict_to_save(self) -> Dict[str, Any]:
-        return self._get_state_dict(self.state_dict_save_opts)
+    def state_dict_to_save(self, *, optim: bool = True) -> Dict[str, Any]:
+        return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         if self.load_key_mapping is not None:
@@ -827,16 +826,18 @@ class TransformerPipelineTrainModule(TrainModule):
             model.reset_auxiliary_losses()
             model.reset_auxiliary_metrics()
 
-    def _get_state_dict(self, sd_options: dist_cp_sd.StateDictOptions) -> Dict[str, Any]:
-        return {
-            "model": {
-                k: v
-                for sd in map(
-                    partial(dist_cp_sd.get_model_state_dict, options=sd_options), self.model_parts
-                )
-                for k, v in sd.items()
-            },
-            "optim": {
+    def _get_state_dict(
+        self, sd_options: dist_cp_sd.StateDictOptions, optim: bool = True
+    ) -> Dict[str, Any]:
+        state_dict: Dict[str, Any] = {
+            k: v
+            for sd in map(
+                partial(dist_cp_sd.get_model_state_dict, options=sd_options), self.model_parts
+            )
+            for k, v in sd.items()
+        }
+        if optim:
+            state_dict["optim"] = {
                 k: v
                 for sd in map(
                     partial(dist_cp_sd.get_optimizer_state_dict, options=sd_options),
@@ -844,8 +845,8 @@ class TransformerPipelineTrainModule(TrainModule):
                     self.optimizers,
                 )
                 for k, v in sd.items()
-            },
-        }
+            }
+        return state_dict
 
     def _clip_grad_norm(
         self, max_grad_norm: float, norm_type: float = 2.0, foreach: Optional[bool] = None

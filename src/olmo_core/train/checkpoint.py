@@ -320,7 +320,7 @@ class Checkpointer:
 
         save_hf_model(
             dir,
-            train_module.state_dict_to_save()["model"],
+            train_module.state_dict_to_save(optim=False)["model"],
             train_module.model,
             process_group=self.process_group,
             work_dir=self.work_dir,
