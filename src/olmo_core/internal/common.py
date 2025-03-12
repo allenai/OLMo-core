@@ -134,7 +134,7 @@ def get_gpu_type(cluster: str) -> str:
     if cluster in CLUSTER_TO_GPU_TYPE:
         return CLUSTER_TO_GPU_TYPE[cluster]
     elif cluster == "local":
-        return str(torch.get_default_device()).split(":")[0]
+        return torch.get_default_device().type
     else:
         log.warning(f"Missing cluster '{cluster}' in CLUSTER_TO_GPU_TYPE mapping")
         beaker = get_beaker_client()
