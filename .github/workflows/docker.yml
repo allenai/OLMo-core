@@ -7,9 +7,9 @@ concurrency:
 on:
   workflow_dispatch:
   # TODO: disabled for now because it takes too long in CI
-  # pull_request:
-  #   branches:
-  #     - main
+  pull_request:
+    branches:
+      - main
   #   paths:
   #     - 'Makefile'
   #     - 'pyproject.toml'
