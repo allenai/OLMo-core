@@ -178,16 +178,6 @@ def build_common_components(
             name=VSLCurriculumType.grow_p2, num_cycles=8, balanced=False
         ),
         work_dir=get_work_dir(root_dir),
-<<<<<<< HEAD
-        instance_filter_config=(
-            None
-            if not include_instance_filter
-            else InstanceFilterConfig(
-                repetition_max_period=13,
-                repetition_min_period=1,
-                repetition_max_count=32,
-            )
-=======
         generate_doc_lengths=intra_document_masking,
         instance_filter_config=None
         if not include_instance_filter
@@ -195,7 +185,6 @@ def build_common_components(
             repetition_max_period=13,
             repetition_min_period=1,
             repetition_max_count=32,
->>>>>>> main
         ),
     )
 

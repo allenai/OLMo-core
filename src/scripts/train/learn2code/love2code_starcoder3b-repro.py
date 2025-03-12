@@ -38,7 +38,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 def build_optim_config(common: CommonComponents) -> AdamWConfig:
     del common
     return AdamWConfig(
-        lr=1.8e-3,
+        lr=7.0e-4,
         weight_decay=0.1,
         betas=(0.9, 0.95),
         group_overrides=[
@@ -86,19 +86,19 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=common.save_folder,
-            rank_microbatch_size=8 * 4096,
+            rank_microbatch_size=4 * 4096,
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
             z_loss_multiplier=1e-5,
             compile_loss=True,
-            max_duration=Duration.tokens(113_184_153_600),
+            max_duration=Duration.tokens(318_651_801_600),
         )
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=10_000,
-                ephemeral_save_interval=1000,
+                save_interval=1000,
+                ephemeral_save_interval=20,
                 save_async=True,
             ),
         )
@@ -107,7 +107,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             CometCallback(
                 name=common.run_name,
                 workspace="ai2",
-                project="OLMo-core-1B",
+                project="learn2code",
                 enabled=True,
                 cancel_check_interval=10,
             ),
@@ -117,7 +117,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=common.run_name,
                 entity="ai2-llm",
-                project="OLMo-core-1B",
+                project="learn2code",
                 enabled=False,
                 cancel_check_interval=10,
             ),
