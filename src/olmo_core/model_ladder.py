@@ -367,7 +367,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
             max_sequence_length=self.sequence_length,
             optim=self.get_optim_config(size=size),
             max_grad_norm=1.0,
-            scheduler=scheduler=CosWithWarmup(warmup_steps=round(self.model_size / global_bz)),
+            scheduler=CosWithWarmup(warmup_steps=round(self.model_size / global_bz)),
         )
 
     def get_trainer_config(
