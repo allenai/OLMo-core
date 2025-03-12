@@ -755,7 +755,8 @@ class Trainer:
         def _get_gpu_usage():
             cuda_info = torch.cuda.memory_stats(self.device)
             max_active = cuda_info["active_bytes.all.peak"]
-            return 100 * max_active / self.device_capacity
+            device_capacity = torch.cuda.get_device_properties(self.device).total_memory
+            return 100 * max_active / device_capacity
 
         dirname = self.checkpointer.checkpoint_dirname(self.global_step)
         path = join_path(self.save_folder, dirname)
