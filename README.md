@@ -7,6 +7,9 @@
   <h4>Building blocks for OLMo modeling and training</h4>
 </div>
 <p align="center">
+  <a href="https://discord.gg/sZq3jTNVNG">
+    <img alt="Pypi" src="https://img.shields.io/pypi/v/ai2-olmo-core.svg">
+  </a>  
   <a href="https://github.com/allenai/OLMo/blob/main/LICENSE">
     <img alt="GitHub License" src="https://img.shields.io/github/license/allenai/OLMo">
   </a>
@@ -14,7 +17,7 @@
     <img alt="Docs" src="https://img.shields.io/badge/OLMocore-docs-red">
   </a>
   <a href="https://arxiv.org/pdf/2501.00656.pdf">
-    <img alt="Paper URL" src="https://img.shields.io/badge/arxiv-2402.00838-blue">
+    <img alt="Paper URL" src="https://img.shields.io/badge/arxiv-2402.00838-orange">
   </a>
   <a href="https://playground.allenai.org">
     <img alt="Playground" src="https://img.shields.io/badge/Ai2-Playground-F0529C">
@@ -93,11 +96,13 @@ Throughput numbers from these scripts with various different configuration setti
 | | | 4096 | BF16/FP8 | 12,500 TPS | `Llama3-8B.py` | `--train_module.float8_config.enabled=true` |
 | **13B** | OLMo-1124 | 4096 | BF16 | 4,600 TPS | `OLMo2-13B.py` | |
 | | | 4096 | BF16/FP8 | 5,500 TPS | `OLMo2-13B.py` | `--train_module.float8_config.enabled=true` |
+| **32B** | OLMo-0325 | 4096 | BF16 | 1,500 TPS | `OLMo2-32B.py` | |
+| | | 4096 | BF16/FP8 | 1,800 TPS | `OLMo2-32B.py` | `--train_module.float8_config.enabled=true` |
 
 [^1]: Throughput reported in tokens per second per device.
 [^2]: In this setup most matrix multiplications are computed in `float8`, everything else is in `bfloat16`.
 
-You can find list of all the checkpoints of 32B in [`configs/`](https://github.com/allenai/OLMo-core/tree/main/configs).
+You can find list of all the checkpoints of 32B in [`src/scripts/train/official-0325/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/train/official-0325).
 
 ## OLMo-2 Model Training
 
