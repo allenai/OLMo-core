@@ -3,7 +3,7 @@ import sys
 
 import requests
 import torch.distributed as dist
-from urllib3.exceptions import MaxRetryError, NameResolutionError
+from urllib3.exceptions import MaxRetryError
 
 
 def main():
@@ -42,8 +42,8 @@ def main():
             if not isinstance(e, MaxRetryError):
                 raise
             e = e.reason
-            if not isinstance(e, NameResolutionError):
-                raise
+
+            raise
             # Seems we called this outside of GCP, so we do nothing and just print our original rank.
             print(args.rank)
             sys.exit(0)
