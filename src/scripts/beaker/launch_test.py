@@ -18,7 +18,7 @@ def build_config(command: List[str], overrides: List[str]) -> BeakerLaunchConfig
         cmd=command,
         task_name="test",
         workspace="ai2/OLMo-core",
-        beaker_image=OLMoCoreBeakerImage.stable_dev,
+        beaker_image=OLMoCoreBeakerImage.stable,
         clusters=[
             "ai2/jupiter-cirrascale-2",
             "ai2/augusta-google-1",
