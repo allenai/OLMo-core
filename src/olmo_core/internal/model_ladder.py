@@ -64,12 +64,13 @@ class SubCmd(StrEnum):
             if self == SubCmd.train_single:
                 for parallelism_strategy in {"d", "t", "e", "c"}:
                     setting_name = f"{parallelism_strategy}p_config"
-                    log.warning(
-                        "%s is set to %s, but you can't use data parallelism when running on a single node. Disabling.",
-                        setting_name,
-                        getattr(config.train_module, setting_name),
-                    )
-                    setattr(config.train_module, setting_name, None)
+                    if getattr(config.train_module, setting_name) is not None:
+                        log.warning(
+                            "%s is set to %s, but you can't use data parallelism when running on a single node. Disabling.",
+                            setting_name,
+                            getattr(config.train_module, setting_name),
+                        )
+                        setattr(config.train_module, setting_name, None)
                 init_device = str(get_default_device())
             else:
                 init_device = "meta"
