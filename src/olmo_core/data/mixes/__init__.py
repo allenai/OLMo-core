@@ -64,9 +64,9 @@ class DataMix(DataMixBase):
                         continue
                     label, path = line.split(",")
                     if "{TOKENIZER}" not in path:
-                        print("TOKENIZER IS ", "{TOKENIZER}")
-                        raise ValueError(f"line {line_num+1} in data mix '{self}' is invalid")
-                    path = path.replace("{TOKENIZER}", tokenizer_id)
+                        # raise ValueError(f"line {line_num+1} in data mix '{self}' is invalid")
+                        # NO MORE NANNY STATE
+                        path = path.replace("{TOKENIZER}", tokenizer_id)
                     paths.append(f"{base_dir}{path}")
                     labels.append(label)
         return paths, labels
