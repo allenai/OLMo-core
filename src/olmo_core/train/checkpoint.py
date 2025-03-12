@@ -137,9 +137,14 @@ class Checkpointer:
         """
         An async version of :meth:`save()`.
         """
+        if self.checkpoint_save_format != CheckpointFormat.distributed:
+            raise OLMoConfigurationError(
+                "Async checkpointing is only supported for distributed checkpoints"
+            )
+
         if is_distributed() and self.process_group is None:
             raise OLMoConfigurationError(
-                "a checkointer process group is required for async checkointing!"
+                "a checkointer process group is required for async checkpointing!"
             )
 
         dir = normalize_path(dir)
