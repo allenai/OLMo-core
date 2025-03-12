@@ -1,5 +1,5 @@
 """
-Example script to convert a OLMo Core model checkpoint to a HuggingFace model checkpoint.
+Example script to convert a OLMo Core compatible checkpoint to a different OLMo Core compatible format.
 """
 
 import json
@@ -11,7 +11,8 @@ from typing import Any, Dict, Optional
 
 import torch
 from cached_path import cached_path
-from transformers import AutoConfig, AutoModelForCausalLM, PreTrainedModel
+from huggingface_hub import repo_exists
+from transformers import AutoConfig, AutoModelForCausalLM
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.data.tokenizer import TokenizerConfig
@@ -19,7 +20,11 @@ from olmo_core.io import file_exists
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.optim.adamw import AdamWConfig
-from olmo_core.train.checkpoint import CheckpointerConfig, CheckpointFormat
+from olmo_core.train.checkpoint import (
+    Checkpointer,
+    CheckpointerConfig,
+    CheckpointFormat,
+)
 from olmo_core.train.train_module.transformer import TransformerTrainModuleConfig
 from olmo_core.utils import get_default_device, prepare_cli_environment
 
@@ -66,8 +71,9 @@ def _get_tokenizer_config(tokenizer_id: str) -> TokenizerConfig:
     return tokenizer_configs[tokenizer_id.lower()]()
 
 
-def convert_to_hf_checkpoint(
-    olmo_checkpoint_path: str | Path,
+def convert_checkpoint(
+    original_checkpoint_path: str | Path,
+    output_format: CheckpointFormat,
     output_path: str | Path,
     transformer_config_dict: Dict[str, Any],
     tokenizer_config_dict: Dict[str, Any],
@@ -76,13 +82,14 @@ def convert_to_hf_checkpoint(
     validate: bool = True,
 ) -> None:
     """
-    Convert an OLMo core checkpoint to Hugging Face format.
+    Convert a checkpoint to a different OLMo core compatible format.
 
     Args:
-        olmo_checkpoint_path: Path to the OLMo core checkpoint
-        output_path: Where to save the converted HF model
-        olmo_core_config: OLMo core configuration dictionary
-        tokenizer: HuggingFace tokenizer instance
+        original_checkpoint_path: Path to the original checkpoint
+        output_format: Format of converted checkpoint
+        output_path: Where to save the converted model
+        transformer_config_dict: Dictionary form of OLMo core model config
+        tokenizer_config_dict: Dictionary form of OLMo core tokenizer config
     """
     if max_sequence_length <= 0:
         raise ValueError(f"Missing or invalid sequence length: {max_sequence_length}")
@@ -108,51 +115,93 @@ def convert_to_hf_checkpoint(
 
     with TemporaryDirectory() as work_dir:
         checkpointer_config = CheckpointerConfig(
-            work_dir=work_dir, save_overwrite=True, checkpoint_save_format=CheckpointFormat.hf
+            work_dir=work_dir, save_overwrite=True, checkpoint_save_format=output_format
         )
         checkpointer = checkpointer_config.build()
 
-        log.info(f"Loading OLMo core checkpoint from '{olmo_checkpoint_path}'")
-        checkpointer.load(olmo_checkpoint_path, train_module, load_trainer_state=False)
-        log.info(f"Saving HF checkpoint to '{output_path}'")
+        log.info(f"Loading checkpoint from '{original_checkpoint_path}'")
+        checkpointer.load(original_checkpoint_path, train_module, load_trainer_state=False)
+        log.info(f"Saving checkpoint to '{output_path}'")
         checkpointer.save(output_path, train_module, train_state={})
-        log.info(f"Successfully saved HF model to '{output_path}'")
+        log.info(f"Successfully saved converted model to '{output_path}'")
 
-    log.info("Fixing config using tokenizer config data and script arguments")
-
-    huggingface_config = AutoConfig.from_pretrained(output_path)
-    huggingface_config.max_position_embeddings = max_sequence_length
-    huggingface_config.pad_token_id = tokenizer_config.pad_token_id
-    huggingface_config.bos_token_id = tokenizer_config.bos_token_id
-    huggingface_config.eos_token_id = tokenizer_config.eos_token_id
-    huggingface_config.save_pretrained(output_path)
-    log.info("Successfully fixed config using tokenizer config data and script arguments")
+    if output_format == CheckpointFormat.hf:
+        log.info("Fixing HF config using tokenizer config data and script arguments")
+        huggingface_config = AutoConfig.from_pretrained(output_path)
+        huggingface_config.max_position_embeddings = max_sequence_length
+        huggingface_config.pad_token_id = tokenizer_config.pad_token_id
+        huggingface_config.bos_token_id = tokenizer_config.bos_token_id
+        huggingface_config.eos_token_id = tokenizer_config.eos_token_id
+        huggingface_config.save_pretrained(output_path)
+        log.info("Successfully fixed config using tokenizer config data and script arguments")
 
     if validate:
         log.info("Validating converted model")
-        hf_model = AutoModelForCausalLM.from_pretrained(output_path)
-        validate_conversion(hf_model, model, tokenizer_config.vocab_size)
+        validate_conversion(
+            original_checkpoint_path, output_path, model, checkpointer, tokenizer_config.vocab_size
+        )
         log.info("Validation completed successful")
 
 
-def validate_conversion(hf_model: PreTrainedModel, model: Transformer, vocab_size: int):
+def _load_model_native(
+    model_path: str | Path,
+    olmo_core_model: Transformer,
+    checkpointer: Checkpointer,
+    model_format: Optional[CheckpointFormat] = None,
+):
+    if model_format is None:
+        if checkpointer.contains_checkpoint(model_path):
+            model_format = CheckpointFormat.distributed
+        elif (
+            file_exists(f"{dir}/generation_config.json")
+            or file_exists(f"{dir}/model.safetensors.index.json")
+            or file_exists(f"{dir}/pytorch_model.bin")
+            or repo_exists(str(dir))
+        ):
+            model_format = CheckpointFormat.hf
+        else:
+            raise RuntimeError(f"Unable to determine how to load checkpoint at {dir}")
+
+    if model_format == CheckpointFormat.distributed:
+        # Assume that the model has already been loaded
+        return olmo_core_model
+    elif model_format == CheckpointFormat.hf:
+        return AutoModelForCausalLM.from_pretrained(model_path)
+    else:
+        raise NotImplementedError(model_format)
+
+
+def validate_conversion(
+    original_checkpoint_path: str | Path,
+    output_path: str | Path,
+    model: Transformer,
+    checkpointer: Checkpointer,
+    vocab_size: int,
+):
     device = get_default_device()
+
+    original_model = _load_model_native(original_checkpoint_path, model, checkpointer)
+    converted_model = _load_model_native(output_path, model, checkpointer)
 
     B, T = 1, 120
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
 
-    hf_model = hf_model.to(device).eval()
+    original_model = original_model.to(device).eval()
     with torch.no_grad():
-        hf_logits, *_ = hf_model(input_ids=input_ids, return_dict=False)
+        original_logits = original_model(input_ids=input_ids)
+        if hasattr(original_logits, "logits"):
+            original_logits = original_logits.logits
 
-    del hf_model
+    del original_model
 
-    model.eval()
+    converted_model.eval()
 
     with torch.no_grad():
-        logits = model(input_ids=input_ids)
+        converted_logits = converted_model(input_ids=input_ids)
+        if hasattr(converted_logits, "logits"):
+            converted_logits = converted_logits.logits
 
-    torch.testing.assert_close(hf_logits, logits)
+    torch.testing.assert_close(original_logits, converted_logits)
 
 
 def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
@@ -163,12 +212,17 @@ def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
     with cached_path(f"{checkpoint_input_dir}/config.json").open("r", encoding="utf-8") as f:
         config_dict = json.load(f)
 
+    if "model" not in config_dict:
+        log.warning(f"Config file at {checkpoint_input_dir} is not an OLMo core experiment config, ignoring")
+        return None
+
     return config_dict
 
 
 def parse_args():
     parser = ArgumentParser(description=__doc__)
     parser.add_argument("-i", "--checkpoint-input-path", type=str, required=True)
+    parser.add_argument("-f", "--output-format", type=CheckpointFormat, required=True)
 
     parser.add_argument("-c", "--config-path", type=str, default=None)
     parser.add_argument("-m", "--model-arch")
@@ -200,8 +254,9 @@ def main():
     assert transformer_config_dict is not None
     assert tokenizer_config_dict is not None
 
-    convert_to_hf_checkpoint(
-        olmo_checkpoint_path=args.checkpoint_input_path,
+    convert_checkpoint(
+        original_checkpoint_path=args.checkpoint_input_path,
+        output_format=args.output_format,
         output_path=args.huggingface_output_dir,
         transformer_config_dict=transformer_config_dict,
         tokenizer_config_dict=tokenizer_config_dict,
