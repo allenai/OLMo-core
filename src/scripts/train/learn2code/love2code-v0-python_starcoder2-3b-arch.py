@@ -46,17 +46,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
-    config_cls = (
-        TransformerPipelineTrainModuleConfig if PIPELINE_PARALLEL else TransformerTrainModuleConfig
-    )
-    kwargs = {}
-    if PIPELINE_PARALLEL:
-        kwargs["pp_config"] = TransformerPipelineParallelConfig(
-            degree=DEFAULT_NUM_NODES,
-            schedule=PipelineScheduleType.interleaved_1F1B,
-        )
-    return config_cls(
-        rank_microbatch_size=(4 if PIPELINE_PARALLEL else 2) * 4096,
+    return TransformerTrainModuleConfig(
+        rank_microbatch_size=4 * 4096,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=AdamWConfig(
             lr=7.0e-4,
@@ -71,17 +62,13 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
-            reduce_dtype=DType.bfloat16,
-            num_replicas=1,  # to enable full-way expert parallel
-            prefetch_factor=1,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
+            reduce_dtype=DType.float32,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),
-        ep_config=TransformerExpertParallelConfig(degree=-1),
-        float8_config=Float8Config(enabled=True),
+        float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
-        **kwargs,
     )
 
 
