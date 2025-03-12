@@ -18,7 +18,7 @@ from olmo_core.train import (
 )
 from olmo_core.train.callbacks import CometCallback, ConfigSaverCallback, WandBCallback
 from olmo_core.train.train_module import TransformerTrainModuleConfig
-from olmo_core.utils import prepare_cli_environment, seed_all, get_default_device
+from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
 
 from .common import build_launch_config, get_gpu_type, get_root_dir
 
