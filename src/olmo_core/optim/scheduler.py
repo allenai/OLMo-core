@@ -91,6 +91,7 @@ class WSD(Scheduler):
             self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
     ) -> Union[float, torch.Tensor]:
         if self.warmup_steps is None:
+            assert self.warmup_fraction is not None
             warmup_steps = round(max_steps * self.warmup_fraction)
         else:
             warmup_steps = self.warmup_steps
@@ -99,6 +100,7 @@ class WSD(Scheduler):
             return _linear_warmup(initial_lr, step, warmup_steps, self.warmup_min_lr)
 
         if self.decay_steps is None:
+            assert self.decay_fraction is not None
             decay_steps = round(max_steps * self.decay_fraction)
         else:
             decay_steps = self.decay_steps
@@ -192,10 +194,17 @@ class CosWithWarmupAndLinearDecay(CosWithWarmup):
     decay_fraction: Optional[float] = 0.1
     decay_min_lr: float = 0.0
 
+    def __post_init__(self):
+        if (self.decay_fraction is None) == (self.decay_steps is None):
+            raise OLMoConfigurationError("Either decay_fraction or decay_steps must be specified.")
+        if self.decay_fraction is not None and (self.decay_fraction < 0 or self.decay_fraction > 1):
+            raise OLMoConfigurationError("decay_fraction must be between 0 and 1.")
+
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
     ) -> Union[float, torch.Tensor]:
         if self.decay_steps is None:
+            assert self.decay_fraction is not None
             decay_steps = round(max_steps * self.decay_fraction)
         else:
             decay_steps = self.decay_steps
