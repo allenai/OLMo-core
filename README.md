@@ -41,17 +41,17 @@ Even though this library is under rapid development we are trying hard to adhere
 
 ## Official training scripts
 
-Official training scripts for released models can be found in [`src/scripts/train/official/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/train/official).
+Official training scripts for released models can be found in [`src/scripts/official/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/official).
 These scripts are meant to be launched with ``torchrun``. For example:
 
 ```bash
-torchrun --nproc-per-node=8 ./src/scripts/train/official/OLMo2-0325-32B.py run01
+torchrun --nproc-per-node=8 ./src/scripts/official/OLMo2-0325-32B-train.py run01
 ```
 
 You can override most configuration options from the command-line. For example, to override the learning rate you could launch the script like this:
 
 ```bash
-torchrun --nproc-per-node=8 ./src/scripts/train/official/OLMo2-0325-32B.py run01 --train_module.optim.lr=6e-3
+torchrun --nproc-per-node=8 ./src/scripts/train/OLMo2-0325-32B-train.py run01 --train_module.optim.lr=6e-3
 ```
 
 ## Development
