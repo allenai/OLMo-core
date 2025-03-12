@@ -70,7 +70,7 @@ python src/scripts/train/OLMo2-13B.py train_single {training_name}
 ```
 
 
-#### OLMo 7B and 13B models were trained using our previous training infrastructure. All related checkpoints, configs, and scripts for these models (training/fine-tuning) can be found in the [OLMo](https://github.com/allenai/OLMo) repository. Our new 32B model was trained using our updated training infrastructure. While you can also train 7B and 13B models on this new trainer, please note that the released checkpoints and configs for those models use a different format than the new 32B model.
+##### OLMo 7B and 13B models were trained using our previous training infrastructure. All related checkpoints, configs, and scripts for these models (training/fine-tuning) can be found in the [OLMo](https://github.com/allenai/OLMo) repository. Our new 32B model was trained using our updated training infrastructure. While you can also train 7B and 13B models on this new trainer, please note that the released checkpoints and configs for those models use a different format than the new 32B model.
 
 ## Official training scripts
 
@@ -95,7 +95,7 @@ Throughput numbers from these scripts with various different configuration setti
 [^1]: Throughput reported in tokens per second per device.
 [^2]: In this setup most matrix multiplications are computed in `float8`, everything else is in `bfloat16`.
 
-You can find list of all the checkpoints and training configs in [`configs/`](https://github.com/allenai/OLMo-core/tree/main/configs).
+You can find list of all the checkpoints of 32B in [`configs/`](https://github.com/allenai/OLMo-core/tree/main/configs).
 
 ## OLMo-2 Model Training
 
