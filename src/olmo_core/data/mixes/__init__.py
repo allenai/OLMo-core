@@ -57,11 +57,13 @@ class DataMix(DataMixBase):
         labels = []
         with _get_data_mix_path(self) as mix_path:
             with mix_path.open() as f:
-                for line in f:
+                for line_num, line in enumerate(f):
                     line = line.strip()
                     if not line or line.startswith("#"):
                         continue
                     label, path = line.split(",")
+                    if "{TOKENIZER}" not in path:
+                        raise ValueError(f"line {line_num+1} in data mix '{self}' is invalid")
                     path = path.replace("{TOKENIZER}", tokenizer_id)
                     paths.append(f"{base_dir}{path}")
                     labels.append(label)

@@ -102,7 +102,7 @@ def build_config(script: str, run_name: str, cluster: str, overrides: List[str])
         task_name="benchmark",
         workspace="ai2/OLMo-core",
         clusters=[cluster],
-        beaker_image=OLMoCoreBeakerImage.nightly,  # some features require nightly at the moment
+        beaker_image=OLMoCoreBeakerImage.stable,
         num_nodes=1,
         num_gpus=8,
         allow_dirty=False,

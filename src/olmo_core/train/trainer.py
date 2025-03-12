@@ -1,17 +1,17 @@
-import contextlib
 import logging
 import math
 import signal
 from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import (
     Any,
     Callable,
     Dict,
     Generator,
-    Literal,
+    Iterable,
     Optional,
     Tuple,
     Type,
@@ -23,13 +23,9 @@ from typing import (
 
 import torch
 import torch.distributed as dist
-import torch.nn as nn
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.optim import Optimizer
 
 from ..aliases import PathOrStr
 from ..data import DataLoaderBase
-from ..data.utils import get_labels, split_batch
 from ..distributed.utils import (
     all_reduce_value,
     backend_supports_cpu,
@@ -44,27 +40,30 @@ from ..distributed.utils import (
 )
 from ..exceptions import OLMoConfigurationError
 from ..io import copy_file, file_exists, is_url, join_path, normalize_path
-from ..nn.functional.cross_entropy_loss import cross_entropy_loss, fused_cross_entropy_loss
-from ..optim import SkipStepOptimizer
-from ..utils import cuda_sync_debug_mode, mark_dynamic, move_to_device
+from ..utils import cuda_sync_debug_mode
 from .callbacks import (
     Callback,
     CheckpointerCallback,
     ConsoleLoggerCallback,
+    EvaluatorCallback,
     GarbageCollectorCallback,
     SpeedMonitorCallback,
 )
 from .checkpoint import Checkpointer
-from .common import Duration, DurationUnit, LoadStrategy, ReduceType
-from .utils import EnvRngStates, move_metrics, reduce_metrics
+from .common import (
+    TRAIN_CE_LOSS_METRIC,
+    TRAIN_PPL_METRIC,
+    Duration,
+    DurationUnit,
+    LoadStrategy,
+    ReduceType,
+    TrainingProgress,
+)
+from .train_module import TrainModule
+from .utils import EnvRngStates, check_metrics_consistent, move_metrics, reduce_metrics
 
 log = logging.getLogger(__name__)
 
-TRAIN_CE_LOSS_METRIC = "train/CE loss"
-TRAIN_PPL_METRIC = "train/PPL"
-TRAIN_Z_LOSS_METRIC = "train/Z loss"
-OPTIM_STEP_SKIPPED_METRIC = "optim/step skipped"
-SEQ_LEN_METRIC = "data/sequence length"
 
 T = TypeVar("T")
 
@@ -77,6 +76,7 @@ class TrainerStateDict(TypedDict):
     epoch: int
     world_size: int
     rng: Dict[str, Any]
+    callbacks: Dict[str, Dict[str, Any]]
 
 
 @dataclass
@@ -99,14 +99,9 @@ class Trainer:
         the :data:`save_folder` if it's a local directory.
     """
 
-    model: nn.Module
+    train_module: TrainModule
     """
-    The model to fit.
-    """
-
-    optim: Optimizer
-    """
-    The optimizer to use.
+    The train module to fit.
     """
 
     data_loader: DataLoaderBase
@@ -155,15 +150,6 @@ class Trainer:
         or :meth:`steps <Duration.steps>`, but not epochs.
     """
 
-    rank_microbatch_size: int
-    """
-    Microbatch size *in tokens* per rank, i.e. the number of tokens to process at a time from each rank.
-
-    This must evently divide into :data:`global_batch_size` by a factor of the data parallel world size.
-    If this is less than :data:`global_batch_size` divided by the data parallel world size then
-    gradient accumulation is used.
-    """
-
     save_overwrite: bool = False
     """
     Whether to overwrite existing files/checkpoints in the :data:`save_folder`.
@@ -182,12 +168,6 @@ class Trainer:
     The strategy for loading a checkpoint prior to training.
     """
 
-    load_key_mapping: Optional[Dict[str, str]] = None
-    """
-    Can be used when loading a checkpoint where certain parameters have different names.
-    This dictionary should map current keys to keys in the checkpoint to be loaded.
-    """
-
     metrics_collect_interval: int = 5
     """
     How often (in steps) to collect, reduce, and pass on metrics to the
@@ -199,34 +179,12 @@ class Trainer:
         called with the metrics for every single step, but will be delayed according to this value.
 
         For example, if this is set to 5, then every 5 steps the metrics from the past 5 steps
-        are collected and reduced together, then passed on to 
+        are collected and reduced together, then passed on to
         :meth:`Callback.log_metrics <olmo_core.train.callbacks.Callback.log_metrics>` altogether.
 
     .. tip::
         Increasing this can improve throughput since logging metrics always requires a host-device
         sync.
-    """
-
-    fused_loss: bool = False
-    """
-    Use the fused cross-entropy loss function (:func:`~olmo_core.nn.functional.fused_cross_entropy_loss`)
-    instead the PyTorch built-in. This can help reduce GPU memory usage. Relative performance will
-    depend on the input sizes.
-    """
-
-    compile_loss: bool = False
-    """
-    Compile the loss function.
-    """
-
-    z_loss_multiplier: Optional[float] = None
-    """
-    Use Z-loss with this multiplier.
-    """
-
-    autocast_precision: Optional[torch.dtype] = None
-    """
-    Enable AMP with this data type.
     """
 
     dp_process_group: Optional[dist.ProcessGroup] = None
@@ -272,6 +230,22 @@ class Trainer:
     This requires a separate CPU-only backend, and will default to ``True`` if one is available.
     """
 
+    # Benchmarking
+
+    no_checkpoints: bool = False
+    """
+    Set this to ``True`` to disable automatic saving/loading of checkpoints altogether.
+    This is useful for benchmarking.
+    """
+
+    no_evals: bool = False
+    """
+    Set this to ``True`` to disable evaluator callbacks.
+    This is useful for benchmarking.
+    """
+
+    # Internal bookkeeping
+
     _metrics: Dict[int, Dict[str, torch.Tensor]] = field(default_factory=OrderedDict)
     _metrics_reduce_type: Dict[str, Optional[ReduceType]] = field(default_factory=dict)
     _canceled: bool = False
@@ -282,9 +256,7 @@ class Trainer:
     _thread_pool: Optional[ThreadPoolExecutor] = None
     _bookkeeping_pg: Optional[dist.ProcessGroup] = None
     _checkpoint_loaded: bool = False
-    # NOTE: do not assign a default here or it will become a bound method due to the way
-    # dataclasses work.
-    _loss_fn = None
+    _metrics_consistent: Optional[bool] = None
 
     def __post_init__(self):
         self.save_folder = normalize_path(self.save_folder)
@@ -331,6 +303,9 @@ class Trainer:
         # synchronization/communication calls.
         self._sort_callbacks()
 
+        if self.dp_process_group is None:
+            self.dp_process_group = self.train_module.dp_process_group
+
         # Maybe create separate process group for bookkeeping.
         if self._bookkeeping_pg is None and is_distributed():
             if self.async_bookkeeping is None:
@@ -360,32 +335,10 @@ class Trainer:
                 f"got {self.data_loader.fs_local_rank}, expected {get_fs_local_rank()}."
             )
 
-        # Make sure global batch size is divisible by microbatch size times world size
-        if (
-            self.global_batch_size
-            % (self.rank_microbatch_size * (ws := get_world_size(self.dp_process_group)))
-            != 0
-        ):
-            raise OLMoConfigurationError(
-                f"global batch size ({self.global_batch_size}) must be divisible by "
-                f"micro-batch size ({self.rank_microbatch_size}) x DP world size ({ws})"
-            )
-
         for callback in self.callbacks.values():
             callback.post_attach()
 
-        # Set loss function.
-        if self.fused_loss:
-            self._loss_fn = fused_cross_entropy_loss
-        else:
-            self._loss_fn = cross_entropy_loss
-        if self.compile_loss:
-            if torch.cuda.is_available():
-                self._loss_fn = torch.compile(self._loss_fn)
-            else:
-                log.warning(
-                    "compile_loss was set to True, but CUDA is not available. Compiling only works with CUDA. Ignoring."
-                )
+        self.train_module._attach_trainer(self)
 
     @property
     def global_batch_size(self) -> int:
@@ -460,15 +413,34 @@ class Trainer:
         """
         The maximum number of steps to train for, as determined by :data:`max_duration`.
         """
-        if self.max_duration.unit == DurationUnit.steps:
-            return self.max_duration.value
-        elif self.max_duration.unit == DurationUnit.epochs:
+        return self._get_max_steps(self.max_duration)
+
+    def convert_duration_to_steps(self, duration: Duration) -> int:
+        """Convert a duration to steps."""
+        if duration.unit == DurationUnit.epochs:
+            if self.steps_per_epoch is None:
+                raise RuntimeError(
+                    "the number of steps cannot be determined from an 'epochs' duration since "
+                    "the data loader's number of batches is unknown"
+                )
+            return self.steps_per_epoch * duration.value
+        elif duration.unit == DurationUnit.steps:
+            return duration.value
+        elif duration.unit == DurationUnit.tokens:
+            raise RuntimeError("the number of steps cannot be determined from a 'tokens' duration")
+        else:
+            raise NotImplementedError(f"Unsupported duration unit: {duration.unit}")
+
+    def _get_max_steps(self, duration: Duration) -> int:
+        if duration.unit == DurationUnit.steps:
+            return duration.value
+        elif duration.unit == DurationUnit.epochs:
             if self.data_loader.total_batches is None:
                 raise RuntimeError(
                     "the number of steps cannot be determined from an 'epochs' duration since "
                     "the data loader's number of batches is unknown"
                 )
-            max_epochs = self.max_duration.value
+            max_epochs = duration.value
             complete_epochs_remaining = max(max_epochs - self.epoch, 0)
             steps_remaining_this_epoch = max(
                 self.data_loader.total_batches - self.data_loader.batches_processed, 0
@@ -478,9 +450,9 @@ class Trainer:
                 + steps_remaining_this_epoch
             )
             return self.global_step + steps_remaining
-        elif self.max_duration.unit == DurationUnit.tokens:
+        elif duration.unit == DurationUnit.tokens:
             # Need to account for a change in batch size.
-            max_tokens = self.max_duration.value
+            max_tokens = duration.value
             tokens_remaining = max(max_tokens - self.global_train_tokens_seen, 0)
             steps_remaining = math.ceil(tokens_remaining / self.tokens_per_batch)
             return self.global_step + steps_remaining
@@ -524,6 +496,35 @@ class Trainer:
         """
         return self._checkpoint_loaded
 
+    @property
+    def training_progress(self) -> TrainingProgress:
+        # Calculate total steps.
+        total_steps = max(
+            self._get_max_steps(self.hard_stop) if self.hard_stop is not None else self.max_steps,
+            self.global_step,
+        )
+
+        # Get current speed in batches per second.
+        bps: Optional[float] = None
+        for callback in self._iter_callbacks():
+            if isinstance(callback, SpeedMonitorCallback):
+                bps = callback.bps_avg
+                break
+
+        # Estimate the remaining time.
+        time_remaining: Optional[timedelta] = None
+        if bps is not None and (steps_remaining := (total_steps - self.global_step)) > 0:
+            seconds_remaining = steps_remaining / bps
+            # Round to nearest minute.
+            minutes_remaining = 1 + (seconds_remaining // 60)
+            time_remaining = timedelta(minutes=minutes_remaining)
+
+        return TrainingProgress(
+            current_step=self.global_step,
+            total_steps=total_steps,
+            time_remaining=time_remaining,
+        )
+
     def cancel_run(self, reason: str):
         """
         Mark the run canceled.
@@ -551,7 +552,11 @@ class Trainer:
         self._canceling_rank = None
 
         # Maybe load a checkpoint.
-        if not self.checkpoint_loaded and self.load_strategy != LoadStrategy.never:
+        if (
+            not self.no_checkpoints
+            and not self.checkpoint_loaded
+            and self.load_strategy != LoadStrategy.never
+        ):
             # Try loading from the save folder first.
             self.maybe_load_checkpoint(self.save_folder)
 
@@ -576,11 +581,15 @@ class Trainer:
                         f"load path ('{self.load_path}'), will train from scratch..."
                     )
 
+        barrier()
+
+        log.info("Callback order:")
+        for i, callback_name in enumerate(self.callbacks.keys()):
+            log.info(f"  - Callback {i+1}: {callback_name}")
+
         log.info(f"Training for {self.max_steps:,d} steps")
 
-        self.model.train()
-
-        for callback in self.callbacks.values():
+        for callback in self._iter_callbacks():
             callback.pre_train()
 
         barrier()
@@ -597,7 +606,7 @@ class Trainer:
                 self._fit_epoch()
         except BaseException as exc:
             log.error(f"Training failed due to:\n{exc}")
-            for callback in self.callbacks.values():
+            for callback in self._iter_callbacks():
                 callback.on_error(exc)
             raise
         finally:
@@ -605,7 +614,7 @@ class Trainer:
             signal.signal(signal.SIGTERM, og_sigterm_handler)
             signal.signal(signal.SIGINT, og_sigint_handler)
 
-        for callback in self.callbacks.values():
+        for callback in self._iter_callbacks():
             callback.post_train()
 
         # Wait for any bookkeeping tasks to finish.
@@ -627,6 +636,7 @@ class Trainer:
             "epoch": self.epoch,
             "world_size": get_world_size(),  # global world size here on purpose
             "rng": EnvRngStates.current_state().as_dict(),
+            "callbacks": {k: cb.state_dict() for k, cb in self.callbacks.items()},
         }
 
     def load_state_dict(self, state_dict: TrainerStateDict):
@@ -657,6 +667,10 @@ class Trainer:
         self.global_train_tokens_seen = state_dict["global_train_tokens_seen"]
         self.epoch = state_dict["epoch"]
 
+        for cb_name, cb_state in state_dict.get("callbacks", {}).items():
+            if (cb := self.callbacks.get(cb_name)) is not None:
+                cb.load_state_dict(cb_state)
+
         log.info(f"Will resume training from step {self.global_step}, epoch {self.epoch}")
 
         if state_dict["world_size"] == get_world_size():  # global world size here on purpose
@@ -671,13 +685,7 @@ class Trainer:
                 "were saved with a different world size."
             )
 
-    def load_checkpoint(
-        self,
-        dir: PathOrStr,
-        *,
-        load_optimizer_state: Optional[bool] = None,
-        load_trainer_state: Optional[bool] = None,
-    ):
+    def load_checkpoint(self, dir: PathOrStr, *, load_trainer_state: Optional[bool] = None):
         """
         Load a checkpoint.
 
@@ -685,7 +693,6 @@ class Trainer:
             :meth:`fit()` may call this method automatically depending on the :data:`load_strategy`.
 
         :param dir: The path/URL to a checkpoint or a folder of checkpoints.
-        :param load_optimizer_state: Load optimizer state.
         :param load_trainer_state: Load trainer state.
         """
         dir = normalize_path(dir)
@@ -700,27 +707,20 @@ class Trainer:
         log.info(f"Loading checkpoint from '{dir}'...")
         trainer_state = self.checkpointer.load(
             dir,
-            self.model,
-            self.optim,
-            load_optimizer_state=load_optimizer_state,
+            self.train_module,
             load_trainer_state=load_trainer_state,
-            key_mapping=self.load_key_mapping,
         )
         if trainer_state is not None:
             self.load_state_dict(cast(TrainerStateDict, trainer_state))
 
-        for callback in self.callbacks.values():
+        for callback in self._iter_callbacks():
             callback.post_checkpoint_loaded(dir)
 
         self._checkpoint_loaded = True
         log.info("Checkpoint successfully loaded")
 
     def maybe_load_checkpoint(
-        self,
-        dir: PathOrStr,
-        *,
-        load_optimizer_state: Optional[bool] = None,
-        load_trainer_state: Optional[bool] = None,
+        self, dir: PathOrStr, *, load_trainer_state: Optional[bool] = None
     ) -> bool:
         """
         Like :meth:`load_checkpoint()` but is a no-op if there is no checkpoint in the ``dir`` provided.
@@ -737,7 +737,6 @@ class Trainer:
         if should_load:
             self.load_checkpoint(
                 dir,
-                load_optimizer_state=load_optimizer_state,
                 load_trainer_state=load_trainer_state,
             )
             assert self.checkpoint_loaded
@@ -756,10 +755,8 @@ class Trainer:
         path = join_path(self.save_folder, dirname)
 
         log.info(f"Saving checkpoint for step {self.global_step} to '{path}'...")
-        self.checkpointer.save(
-            path, self.model, self.optim, cast(Dict[str, Any], self.state_dict())
-        )
-        for callback in self.callbacks.values():
+        self.checkpointer.save(path, self.train_module, cast(Dict[str, Any], self.state_dict()))
+        for callback in self._iter_callbacks():
             callback.post_checkpoint_saved(path)
         log.info("Checkpoint saved")
         return path
@@ -777,12 +774,12 @@ class Trainer:
 
         log.info(f"Saving checkpoint for step {step} to '{path}' asynchronously...")
         fut = self.checkpointer.save_async(
-            path, self.model, self.optim, cast(Dict[str, Any], self.state_dict())
+            path, self.train_module, cast(Dict[str, Any], self.state_dict())
         )
 
         def callback(future: Future):
             future.result()  # ensure it finished successfully
-            for callback in self.callbacks.values():
+            for callback in self._iter_callbacks():
                 callback.post_checkpoint_saved(path)
             log.info(f"Checkpoint for step {step} saved successfully")
 
@@ -791,20 +788,26 @@ class Trainer:
         return path, fut
 
     def record_metric(
-        self, name: str, value: Union[float, torch.Tensor], reduce_type: Optional[ReduceType] = None
+        self,
+        name: str,
+        value: Union[float, torch.Tensor],
+        reduce_type: Optional[ReduceType] = None,
+        namespace: Optional[str] = None,
     ):
         """
         Record a new metric for the current step.
 
-        .. important::
-            Metrics added with a ``reduce_type`` are reduced across the data parallel process group,
-            which is not necessarily the default process group.
+        .. seealso::
+            Use :meth:`record_ce_loss()` to record the cross-entropy loss, specifically.
 
         :param name: The name of the metric.
         :param value: The value of the metric.
         :param reduce_type: Specifies how to reduce the metric across the distributed process group.
             ``None`` means no reduction.
+        :param namespace: A namespace to record the metric under, i.g. "train" or "optim".
         """
+        if namespace is not None:
+            name = f"{namespace.rstrip('/')}/{name.lstrip('/')}"
         if not isinstance(value, torch.Tensor):
             value = torch.tensor(value)
         else:
@@ -812,15 +815,25 @@ class Trainer:
         if self.global_step not in self._metrics:
             self._metrics[self.global_step] = OrderedDict()
         self._metrics[self.global_step][name] = value
+        # reduce type must be consistent to avoid issues
+        if name in self._metrics_reduce_type and self._metrics_reduce_type[name] != reduce_type:
+            raise RuntimeError(
+                f"expected '{self._metrics_reduce_type[name]}' reduce type for metric '{name}' "
+                f"based on last record, but got '{reduce_type}' this time"
+            )
         self._metrics_reduce_type[name] = reduce_type
 
-    def get_metric(self, name: str) -> Optional[torch.Tensor]:
+    def record_ce_loss(
+        self, value: Union[float, torch.Tensor], reduce_type: Optional[ReduceType] = None
+    ):
+        """
+        Record the cross-entropy loss metric specifically.
+        """
+        return self.record_metric(TRAIN_CE_LOSS_METRIC, value, reduce_type=reduce_type)
+
+    def get_metric(self, name: str, namespace: Optional[str] = None) -> Optional[torch.Tensor]:
         """
         Get the value of a metric recorded during the current step.
-
-        .. seealso::
-            - :meth:`get_loss()`
-            - :meth:`get_zloss()`
 
         .. warning::
             Metrics will only be available from the time they're recorded until the end of the
@@ -834,39 +847,9 @@ class Trainer:
         """
         if self.global_step not in self._metrics:
             return None
+        if namespace is not None:
+            name = f"{namespace.rstrip('/')}/{name.lstrip('/')}"
         return self._metrics[self.global_step].get(name)
-
-    def get_loss(self) -> Optional[torch.Tensor]:
-        """
-        Get the value of the cross-entropy loss for the current step.
-
-        .. important::
-            If you're trying to access the loss from a callback, it may only be accessible
-            within the following callback methods:
-
-            - :meth:`~olmo_core.train.callbacks.Callback.pre_optim_step()`
-            - :meth:`~olmo_core.train.callbacks.Callback.post_train_batch()`
-            - :meth:`~olmo_core.train.callbacks.Callback.post_step()`
-
-        :returns: The loss scalar tensor, typically on GPU.
-        """
-        return self.get_metric(TRAIN_CE_LOSS_METRIC)
-
-    def get_zloss(self) -> Optional[torch.Tensor]:
-        """
-        Get the value of the Z-loss for the current step.
-
-        .. important::
-            If you're trying to access the Z-loss from a callback, it may only be accessible
-            within the following callback methods:
-
-            - :meth:`~olmo_core.train.callbacks.Callback.pre_optim_step()`
-            - :meth:`~olmo_core.train.callbacks.Callback.post_train_batch()`
-            - :meth:`~olmo_core.train.callbacks.Callback.post_step()`
-
-        :returns: The Z-loss scalar tensor, typically on GPU.
-        """
-        return self.get_metric(TRAIN_Z_LOSS_METRIC)
 
     def write_file(
         self, name: str, contents: Union[str, bytes], dir: Optional[PathOrStr] = None
@@ -912,106 +895,6 @@ class Trainer:
         self._sort_callbacks()
         callback.post_attach()
 
-    def model_forward(self, micro_batch: Dict[str, Any]) -> torch.Tensor:
-        """
-        Run a forward pass on a micro-batch, returning the logits.
-        """
-        with self._model_forward_context():
-            # NOTE: Input sizes might be dynamic, e.g. when training with variable sequence lengths
-            # or during an eval loop, so we mark them as dynamic for torch.compile up-front to avoid
-            # recompiling later.
-            # In theory this could harm performance a bit when input sizes are actually static
-            # but so far I haven't noticed any dip in throughput with the models I've tested.
-            mark_dynamic(micro_batch["input_ids"], (0, 1))
-            if "doc_lens" in micro_batch:
-                mark_dynamic(micro_batch["doc_lens"], (0, 1))
-
-            # shape: (batch_size, seq_len, vocab_size)
-            logits = self.model(
-                input_ids=micro_batch["input_ids"],
-                #  attention_mask=micro_batch.get("attention_mask"),
-                #  attention_bias=micro_batch.get("attention_bias"),
-                doc_lens=micro_batch.get("doc_lens"),
-                max_doc_lens=micro_batch.get("max_doc_lens"),
-            )
-        return logits
-
-    def get_losses(
-        self,
-        micro_batch: Dict[str, Any],
-        logits: torch.Tensor,
-        loss_reduction: Literal["mean", "sum", "none"] = "mean",
-        compute_z_loss: Optional[bool] = None,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """
-        Compute the cross-entropy loss and optionally the Z-loss from a micro-batch and the
-        corresponding logits returned from :meth:`model_forward()`.
-
-        :param micro_batch: The micro-batch to evaluate.
-        :param logits: The logits from the forward pass.
-        :param loss_reduction: The (local) reduction to apply to the loss(es).
-        :param compute_z_loss: Whether or not to compute and return the Z-loss.
-
-        :returns: The cross entropy and optional Z-loss, respectively.
-        """
-        if compute_z_loss is None:
-            compute_z_loss = self.z_loss_multiplier is not None
-
-        # shape: (batch_size, seq_len - 1, vocab_size)
-        logits_for_loss = logits[..., :-1, :].contiguous()
-        # shape: (batch_size * (seq_len - 1), vocab_size)
-        logits_for_loss = logits_for_loss.view(-1, logits_for_loss.size(-1))
-
-        # shape: (batch_size, seq_len - 1)
-        labels = micro_batch.get("labels", self._get_labels(micro_batch))
-        # shape: (batch_size * (seq_len - 1),)
-        labels = labels.view(-1)
-
-        ce_loss, z_loss = self._loss_fn(  # type: ignore
-            logits_for_loss,
-            labels,
-            ignore_index=self.data_loader.collator.label_ignore_index,
-            reduction=loss_reduction,
-            compute_z_loss=compute_z_loss,
-            z_loss_multiplier=self.z_loss_multiplier or 1e-4,
-        )
-
-        if loss_reduction == "none":
-            # Reshape (batch_size * (seq_len - 1),) -> (batch_size, seq_len - 1)
-            ce_loss = ce_loss.view(micro_batch["input_ids"].shape[0], -1)
-            if z_loss is not None:
-                z_loss = z_loss.view(micro_batch["input_ids"].shape[0], -1)
-
-        return ce_loss, z_loss
-
-    def eval_batch(
-        self,
-        batch: Dict[str, Any],
-        loss_reduction: Literal["mean", "sum", "none"] = "mean",
-        compute_z_loss: Optional[bool] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-        """
-        Get the loss for an eval batch.
-
-        .. important::
-            You are responsible for ensuring the model is in ``.eval()`` mode before calling this.
-
-        :param batch: The batch to evaluate.
-        :param loss_reduction: The (local) reduction to apply to the loss(es).
-        :param compute_z_loss: Whether or not to compute and return the Z-loss.
-
-        :returns: The logits, cross-entropy loss, and Z-loss, respectively.
-        """
-        batch = move_to_device(batch, self.device)
-        for callback in self.callbacks.values():
-            callback.pre_eval_batch(batch)
-        with torch.no_grad():
-            logits = self.model_forward(batch)
-            ce_loss, z_loss = self.get_losses(
-                batch, logits, loss_reduction=loss_reduction, compute_z_loss=compute_z_loss
-            )
-        return logits, ce_loss, z_loss
-
     def has_callback(self, cb_class: Type[Callback]) -> bool:
         """
         Check if the trainer already has a registered instance of the given callback class.
@@ -1025,11 +908,21 @@ class Trainer:
         self.callbacks = OrderedDict(
             (
                 (k, cb)
-                for k, cb in sorted(
-                    self.callbacks.items(), key=lambda x: (x[1].priority, x[0]), reverse=True
+                for _, (k, cb) in sorted(
+                    enumerate(self.callbacks.items()),
+                    key=lambda x: (x[1][1].priority, x[0]),
+                    reverse=True,
                 )
             )
         )
+
+    def _iter_callbacks(self) -> Iterable[Callback]:
+        callbacks: Iterable[Callback] = self.callbacks.values()
+        if self.no_checkpoints:
+            callbacks = filter(lambda cb: not isinstance(cb, CheckpointerCallback), callbacks)
+        if self.no_evals:
+            callbacks = filter(lambda cb: not isinstance(cb, EvaluatorCallback), callbacks)
+        return callbacks
 
     def _duration_due(self, duration: Duration) -> bool:
         return duration.due(
@@ -1115,12 +1008,28 @@ class Trainer:
         # so CUDA training can continue.
         metrics_to_reduce = move_metrics(self._metrics, self.bookkeeping_device)
         self._metrics.clear()
+
+        if self._metrics_consistent is None:
+            self._metrics_consistent = check_metrics_consistent(
+                self._metrics_reduce_type,
+                process_group=self.bookkeeping_pg,
+            )
+            if not self._metrics_consistent:
+                msg = (
+                    "Detected inconsistent metrics between ranks. This is expected in some cases "
+                    "(like with pipeline parallelism)."
+                )
+                if not self.async_bookkeeping:
+                    msg += " This may result in slower training speeds since you don't have async bookkeeping enabled."
+                log.warning(msg)
+
         self._run_bookkeeping_op(
             reduce_metrics,
             metrics_to_reduce,
             self._metrics_reduce_type,
             self.bookkeeping_device,
             process_group=self.bookkeeping_pg,
+            metrics_consistent=self._metrics_consistent,
             cb=self._check_and_pass_on_metrics,
         )
 
@@ -1132,145 +1041,14 @@ class Trainer:
                     raise RuntimeError(f"{ce_loss} loss encountered at step {step}")
                 if ce_loss < 10:
                     metrics[step][TRAIN_PPL_METRIC] = math.exp(ce_loss)
-            for callback in self.callbacks.values():
+            for callback in self._iter_callbacks():
                 callback.log_metrics(step, metrics[step])
-
-    def _get_labels(self, batch: Dict[str, Any]) -> torch.Tensor:
-        return get_labels(batch, label_ignore_index=self.data_loader.collator.label_ignore_index)
-
-    @contextlib.contextmanager
-    def _model_forward_context(self) -> Generator[None, None, None]:
-        with contextlib.ExitStack() as stack:
-            if self.autocast_precision is not None:
-                stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
-            yield
-
-    def _model_forward(
-        self,
-        batch: Dict[str, Any],
-        loss_reduction: Literal["mean", "sum", "none"] = "mean",
-        compute_z_loss: bool = False,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
-        # NOTE: keep this method for backwards compatibility.
-        logits = self.model_forward(batch)
-        ce_loss, z_loss = self.get_losses(
-            batch, logits, loss_reduction=loss_reduction, compute_z_loss=compute_z_loss
-        )
-        return ce_loss, z_loss, logits
-
-    @contextlib.contextmanager
-    def _train_microbatch_context(
-        self, micro_batch_idx: int, num_micro_batches: int
-    ) -> Generator[None, None, None]:
-        with contextlib.ExitStack() as stack:
-            if isinstance(self.model, DDP) and micro_batch_idx != num_micro_batches - 1:
-                # For DDP, only sync gradients on the final micro batch.
-                stack.enter_context(self.model.no_sync())
-            yield
-
-    def _train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
-        # Record how many instances are going to be skipped (masked out).
-        if (instance_mask := batch.get("instance_mask")) is not None and not dry_run:
-            masked = (~instance_mask).float()
-            self.record_metric("train/masked instances (%)", masked.mean(), ReduceType.mean)
-
-        # Zero-gradients.
-        self.optim.zero_grad(set_to_none=True)
-
-        # Move tensors to the right device.
-        batch = move_to_device(batch, self.device)
-
-        # Generate labels, calculate how many tokens are going to be use in the loss.
-        if "labels" not in batch:
-            batch["labels"] = self._get_labels(batch)
-        batch_num_tokens_for_loss = (
-            batch["labels"] != self.data_loader.collator.label_ignore_index
-        ).sum()
-
-        # Split into micro-batches.
-        if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
-            raise RuntimeError(
-                f"Microbatch size ({self.rank_microbatch_size}) is too small relative to sequence length ({seq_len})"
-            )
-        micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
-        num_micro_batches = len(micro_batches)
-
-        ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
-        z_batch_loss = (
-            None
-            if self.z_loss_multiplier is None
-            else move_to_device(torch.tensor(0.0), self.device)
-        )
-
-        # Train one micro-batch at a time.
-        for micro_batch_idx, micro_batch in enumerate(micro_batches):
-            with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
-                # Run forward pass.
-                logits = self.model_forward(micro_batch)
-
-                # NOTE: we use the "sum" loss reduction and then divide by 'batch_num_tokens_for_loss'
-                # (the total number of tokens used in the loss across the whole batch, not just the micro batch)
-                # to avoid biasing the loss in the case where micro-batches might not be the same size.
-                ce_loss, z_loss = self.get_losses(micro_batch, logits, loss_reduction="sum")
-                ce_loss.div_(batch_num_tokens_for_loss)
-                if z_loss is not None:
-                    z_loss.div_(batch_num_tokens_for_loss)
-
-                # Get loss to optimize for.
-                loss: torch.Tensor
-                if z_loss is not None:
-                    loss = ce_loss + z_loss
-                else:
-                    loss = ce_loss
-
-                # Update overall CE batch loss.
-                ce_batch_loss += get_local_tensor(ce_loss.detach())
-
-                # Update overall Z batch loss.
-                if z_loss is not None:
-                    assert z_batch_loss is not None
-                    z_batch_loss += get_local_tensor(z_loss.detach())
-
-                # Run through callbacks.
-                for callback in self.callbacks.values():
-                    callback.pre_backward(batch=batch, micro_batch=micro_batch, loss=loss)
-
-                # Run backward pass.
-                loss.backward()
-
-        # In case this helps with memory utilization.
-        del batch
-
-        if dry_run:
-            # Zero-gradients again.
-            self.optim.zero_grad(set_to_none=True)
-            return
-
-        self.record_metric(TRAIN_CE_LOSS_METRIC, ce_batch_loss, ReduceType.mean)
-        if z_batch_loss is not None:
-            self.record_metric(TRAIN_Z_LOSS_METRIC, z_batch_loss, ReduceType.mean)
-
-        if isinstance(self.optim, SkipStepOptimizer):
-            self.optim.latest_loss = ce_batch_loss
-
-        # Run through callbacks.
-        for callback in self.callbacks.values():
-            callback.pre_optim_step()
-
-        # Optimizer step.
-        self.optim.step()
-        if isinstance(self.optim, SkipStepOptimizer):
-            self.record_metric(OPTIM_STEP_SKIPPED_METRIC, self.optim.step_skipped)
-
-        # Run through callbacks.
-        for callback in self.callbacks.values():
-            callback.post_train_batch()
 
     def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:
         data_iterator = iter(self.data_loader)
 
         while True:
-            for callback in self.callbacks.values():
+            for callback in self._iter_callbacks():
                 callback.pre_load_batch()
 
             try:
@@ -1279,21 +1057,6 @@ class Trainer:
             except StopIteration:
                 break
 
-    def _validate_batch(self, batch: Dict[str, Any]) -> int:
-        """
-        Validate the data in a batch and return the global total number of tokens in the batch.
-        """
-        # NOTE: To track the global number of tokens seen per batch we make the
-        # assumption that all ranks see the same number batch size in tokens per step,
-        # which should always be the case for training efficiency at least.
-        # Alternatively we'd have to use a distributed collective which isn't worth it.
-        if batch["input_ids"].numel() != self.rank_batch_size:
-            raise RuntimeError(
-                f"Expected batch size of {self.rank_batch_size:,d} tokens on rank {get_rank()}, "
-                f"got input IDs with shape {tuple(batch['input_ids'].shape)} = {batch['input_ids'].numel():,d} tokens"
-            )
-        return self.global_batch_size
-
     def _dry_run_batch(self):
         try:
             batch = self.data_loader.get_mock_batch()
@@ -1301,8 +1064,7 @@ class Trainer:
             return  # for backwards compatibility
 
         log.info("Starting forward/backward dry-run batch...")
-        self._validate_batch(batch)
-        self._train_batch(batch, dry_run=True)
+        self.train_module.train_batch(batch, dry_run=True)
         log.info("Dry-run complete")
 
     def _fit_epoch(self):
@@ -1310,23 +1072,35 @@ class Trainer:
 
         log.info(f"Starting epoch {self.epoch}...")
 
-        for callback in self.callbacks.values():
+        for callback in self._iter_callbacks():
             callback.pre_epoch()
+
+        self.train_module.zero_grads()
 
         first_batch = True
         for batch in self._iter_batches():
             # Bookkeeping.
             self.global_step += 1
-            self.global_train_tokens_seen += self._validate_batch(batch)
+            if (
+                global_num_tokens := self.data_loader.global_num_tokens_in_batch(batch)
+            ) is not None:
+                self.global_train_tokens_seen += global_num_tokens
 
-            self.record_metric(SEQ_LEN_METRIC, float(batch["input_ids"].shape[1]))
-
-            for callback in self.callbacks.values():
+            for callback in self._iter_callbacks():
                 callback.pre_step(batch)
 
-            self._train_batch(batch)
+            self.train_module.train_batch(batch)
 
-            for callback in self.callbacks.values():
+            for callback in self._iter_callbacks():
+                callback.pre_optim_step()
+
+            self.train_module.optim_step()
+            self.train_module.zero_grads()
+
+            for callback in self._iter_callbacks():
+                callback.post_train_batch()
+
+            for callback in self._iter_callbacks():
                 callback.post_step()
 
             if first_batch or self.global_step % self.metrics_collect_interval == 0:
@@ -1347,7 +1121,7 @@ class Trainer:
 
         log.info("Epoch complete")
 
-        for callback in self.callbacks.values():
+        for callback in self._iter_callbacks():
             callback.post_epoch()
 
         # Bookkeeping

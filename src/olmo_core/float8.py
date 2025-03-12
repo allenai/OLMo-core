@@ -36,12 +36,6 @@ class Float8Handler:
     """
     Enables Float8 training with linear layers.
 
-    .. seealso::
-        See :class:`~olmo_core.train.callbacks.Float8HandlerCallback` for enabling Float8 training
-        with the :class:`~olmo_core.train.Trainer`.
-        Note that even with the callback you will need to call :meth:`convert_to_float8_training()`
-        on your model manually.
-
     :param config: The handler config.
     """
 
@@ -67,17 +61,23 @@ class Float8Handler:
         )
         self._sync_float8_amax_and_scale_history = None
 
-    def convert_to_float8_training(self, model: nn.Module):
+    @property
+    def enabled(self) -> bool:
+        return self.config.enabled
+
+    def convert_to_float8_training(
+        self, model: nn.Module, modules_to_ignore: Optional[Set[str]] = None
+    ):
         """
         This just calls out to :meth:`Float8Config.convert_to_float8_training()`.
         """
-        if not self.config.enabled:
+        if not self.enabled:
             return
 
-        self.config.convert_to_float8_training(model)
+        self.config.convert_to_float8_training(model, modules_to_ignore=modules_to_ignore)
 
     def precompute_float8_dynamic_scale_for_fsdp(self, model: Union[nn.Module, List[nn.Module]]):
-        if not self.config.enabled:
+        if not self.enabled:
             return
 
         if not self.precompute_scale:
@@ -92,7 +92,7 @@ class Float8Handler:
             precompute_float8_dynamic_scale_for_fsdp(m)
 
     def sync_float8_amax_and_scale_history(self, model: Union[nn.Module, List[nn.Module]]):
-        if not self.config.enabled:
+        if not self.enabled:
             return
 
         if not self.delayed_scaling:
@@ -134,6 +134,7 @@ class Float8Config(Config):
     scaling_type_grad_output: Float8ScalingType = Float8ScalingType.dynamic
     enable_fsdp_float8_all_gather: bool = True
     precompute_float8_dynamic_scale_for_fsdp: bool = True
+    force_recompute_fp8_weight_in_bwd: bool = True
     compile: Optional[bool] = None
     enabled: bool = True
 
@@ -155,6 +156,7 @@ class Float8Config(Config):
         scaling_type_grad_output = ScalingType(self.scaling_type_grad_output)
         return Float8LinearConfig(
             enable_fsdp_float8_all_gather=self.enable_fsdp_float8_all_gather,
+            force_recompute_fp8_weight_in_bwd=self.force_recompute_fp8_weight_in_bwd,
             cast_config_input=CastConfig(scaling_type=scaling_type_input),
             cast_config_weight=CastConfig(scaling_type=scaling_type_weight),
             cast_config_grad_output=CastConfig(scaling_type=scaling_type_grad_output),
@@ -191,11 +193,17 @@ class Float8Config(Config):
         ignored_modules_found = set()
 
         def module_filter_fn(m: nn.Module, fqn: str) -> bool:
-            del m
             nonlocal ignored_modules_found
             if modules_to_ignore is not None and fqn in modules_to_ignore:
                 ignored_modules_found.add(fqn)
                 return False
+
+            # Linear layers must have all dimensions divisible by 16.
+            if isinstance(m, nn.Linear):
+                for d in m.weight.shape:
+                    if d % 16 != 0:
+                        return False
+
             return True
 
         # Mutates the model in place, replacing instances of nn.Linear with Float8Linear.
@@ -209,8 +217,6 @@ class Float8Config(Config):
             raise OLMoConfigurationError(
                 f"invalid module name(s) in 'modules_to_ignore': {list(modules_to_ignore - ignored_modules_found)}"
             )
-
-        log.info("Swapped to Float8Linear layers")
 
     def build(self) -> Float8Handler:
         """

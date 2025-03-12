@@ -11,17 +11,16 @@ from typing import Any, ClassVar, Dict, Generator, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
-import torch.nn as nn
 from cached_path import cached_path
-from torch.optim import Optimizer
+from torch.distributed.checkpoint.metadata import Metadata
 
 from ..aliases import PathOrStr
 from ..config import Config
 from ..distributed.checkpoint import (
-    async_save_model_and_optim_state,
+    async_save_state_dict,
     get_checkpoint_metadata,
-    load_model_and_optim_state,
-    save_model_and_optim_state,
+    load_state_dict,
+    save_state_dict,
 )
 from ..distributed.utils import (
     barrier,
@@ -42,6 +41,7 @@ from ..io import (
 )
 from ..utils import wait_for
 from ..version import VERSION
+from .train_module import TrainModule
 
 log = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ class Checkpointer:
         if get_fs_local_rank() == 0:
             self.work_dir.mkdir(exist_ok=True, parents=True)
 
-    def save(self, dir: PathOrStr, model: nn.Module, optim: Optimizer, train_state: Dict[str, Any]):
+    def save(self, dir: PathOrStr, train_module: TrainModule, train_state: Dict[str, Any]):
         """
         Save model, optim, and other training state to a local or remote directory.
         """
@@ -104,13 +104,10 @@ class Checkpointer:
             self._save_train_state(dir, wd, train_state)
 
             # Save model and optim state.
-            model_and_optim_dir = (
-                f"{dir}/model_and_optim" if is_url(dir) else wd / "model_and_optim"
-            )
-            save_model_and_optim_state(
-                model_and_optim_dir,
-                model,
-                optim,
+            train_module_dir = f"{dir}/model_and_optim" if is_url(dir) else wd / "model_and_optim"
+            save_state_dict(
+                train_module_dir,
+                train_module.state_dict_to_save(),
                 process_group=self.process_group,
                 save_overwrite=self.save_overwrite,
                 thread_count=self.save_thread_count,
@@ -120,14 +117,14 @@ class Checkpointer:
         self._save_metadata(dir, CheckpointMetadata())
 
     def save_async(
-        self, dir: PathOrStr, model: nn.Module, optim: Optimizer, train_state: Dict[str, Any]
+        self, dir: PathOrStr, train_module: TrainModule, train_state: Dict[str, Any]
     ) -> Future[None]:
         """
         An async version of :meth:`save()`.
         """
         if is_distributed() and self.process_group is None:
             raise OLMoConfigurationError(
-                "a checkointer process group is required for async checkointing!"
+                "a checkpointer process group is required for async checkpointing!"
             )
 
         dir = normalize_path(dir)
@@ -137,11 +134,10 @@ class Checkpointer:
             self._save_train_state(dir, wd, train_state)
 
         # Save model and optim state.
-        model_and_optim_dir = f"{dir}/model_and_optim"
-        future = async_save_model_and_optim_state(
-            model_and_optim_dir,
-            model,
-            optim,
+        train_module_dir = f"{dir}/model_and_optim"
+        future = async_save_state_dict(
+            train_module_dir,
+            train_module.state_dict_to_save(),
             process_group=self.process_group,
             save_overwrite=self.save_overwrite,
             thread_count=self.save_thread_count,
@@ -160,12 +156,9 @@ class Checkpointer:
     def load(
         self,
         dir: PathOrStr,
-        model: nn.Module,
-        optim: Optimizer,
+        train_module: TrainModule,
         *,
-        load_optimizer_state: Optional[bool] = None,
         load_trainer_state: Optional[bool] = None,
-        key_mapping: Optional[Dict[str, str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Load model, optim, and other training state from a local or remote checkpoint directory
@@ -188,41 +181,35 @@ class Checkpointer:
             if load_trainer_state is True and trainer_state is None:
                 raise FileNotFoundError(f"Missing trainer state in checkpoint dir '{dir}'")
 
-        # Load model and optimizer state.
-        model_and_optim_dir: str = f"{dir}/model_and_optim"
+        # Load train module state.
+        train_module_dir = f"{dir}/model_and_optim"
+        metadata: Optional[Metadata] = None
         if get_rank(self.process_group) == 0:
             try:
-                metadata = get_checkpoint_metadata(model_and_optim_dir)
-            except FileNotFoundError as exc:
+                metadata = get_checkpoint_metadata(train_module_dir)
+            except FileNotFoundError:
                 # Try base directory, which could be the case if user is trying to load model weights
                 # (possibly with optimizer state), and not an actual train checkpoint.
                 if trainer_state is None:
                     metadata = get_checkpoint_metadata(dir)
-                    model_and_optim_dir = dir
+                    train_module_dir = dir
                 else:
-                    raise FileNotFoundError(f"Missing checkpointing metadata in '{dir}'") from exc
+                    raise
 
-            if load_optimizer_state is None:
-                for key in metadata.state_dict_metadata.keys():
-                    if key.startswith("optim."):
-                        load_optimizer_state = True
-                        break
-                else:
-                    load_optimizer_state = False
+        train_module_dir = scatter_object(train_module_dir)
+        if metadata is None:
+            metadata = get_checkpoint_metadata(train_module_dir)
 
-        model_and_optim_dir = scatter_object(model_and_optim_dir, group=self.process_group)
-        load_optimizer_state = scatter_object(load_optimizer_state, group=self.process_group)
-
-        load_model_and_optim_state(
-            model_and_optim_dir,
-            model,
-            optim if load_optimizer_state else None,
+        state_dict = train_module.state_dict_to_load(metadata)
+        load_state_dict(
+            train_module_dir,
+            state_dict,
             process_group=self.process_group,
-            key_mapping=key_mapping,
             pre_download=is_url(dir) and self.pre_download,
             work_dir=self.work_dir,
             thread_count=self.load_thread_count,
         )
+        train_module.load_state_dict(state_dict)
 
         return trainer_state
 

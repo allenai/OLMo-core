@@ -79,52 +79,48 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
     def device(self) -> torch.device:
         return get_default_device()
 
-    def build_groups(self, model: nn.Module) -> Union[Iterable[torch.Tensor], List[Dict[str, Any]]]:
+    def build_groups(
+        self, model: nn.Module, strict: bool = True
+    ) -> Union[Iterable[torch.Tensor], List[Dict[str, Any]]]:
         """
         Build parameters groups.
-        """
-        if self.group_overrides is None:
-            log.info(f"Building {self.optimizer().__name__} optimizer with 1 param group...")
-            return model.parameters()
 
+        :param model: The model to optimize.
+        :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
+            match any parameter.
+        """
         all_params: Dict[str, torch.Tensor] = OrderedDict()
         for n, p in model.named_parameters():
-            all_params[n] = p
+            if p.requires_grad:
+                all_params[n] = p
+
+        if self.group_overrides is None:
+            return all_params.values()
 
         # Build groups.
-        param_groups: List[Dict[str, Any]] = [
-            {"params": [], **go.opts} for go in self.group_overrides
-        ]
-        for g_idx, (g, go) in enumerate(zip(param_groups, self.group_overrides)):
+        param_groups: List[Dict[str, Any]] = []
+        for g_idx, go in enumerate(self.group_overrides):
+            group: Dict[str, Any] = {"params": [], **go.opts}
             for pattern in go.params:
                 matches = 0
                 for name in list(all_params.keys()):
                     if fnmatch(name, pattern):
-                        g["params"].append(all_params.pop(name))
+                        group["params"].append(all_params.pop(name))
                         matches += 1
 
                 if matches == 0:
-                    raise OLMoConfigurationError(
-                        f"optim group {g_idx} override pattern '{pattern}' does not match any parameters"
-                    )
+                    msg = f"optim group {g_idx} override pattern '{pattern}' does not match any parameters"
+                    if strict:
+                        raise OLMoConfigurationError(msg)
+                    else:
+                        log.warning(msg)
+
+            if len(group["params"]) > 0:
+                param_groups.append(group)
 
         # Put any left-over params into a default group.
         if all_params:
             param_groups.append({"params": list(all_params.values())})
-
-        log.info(
-            f"Building {self.optimizer().__name__} optimizer with {len(param_groups)} param groups..."
-        )
-        for g_idx, group in enumerate(param_groups):
-            group_fields_list = "\n - ".join(
-                [f"{k}: {v}" for k, v in param_groups[g_idx].items() if k != "params"]
-            )
-            if group_fields_list:
-                log.info(
-                    f"Group {g_idx}, {len(group['params'])} parameter(s) with overrides:\n - {group_fields_list}"
-                )
-            else:
-                log.info(f"Group {g_idx}, {len(group['params'])} parameter(s)")
 
         return param_groups
 
@@ -136,16 +132,21 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         """
         raise NotImplementedError
 
-    def build(self, model: nn.Module) -> Opt:
+    def build(self, model: nn.Module, strict: bool = True) -> Opt:
         """
         Build the optimizer.
+
+        :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
+            match any parameter.
         """
         kwargs = self.as_dict()
         kwargs.pop("group_overrides")
         kwargs.pop("compile")
         kwargs.pop("fixed_fields")
 
-        optim: torch.optim.Optimizer = self.optimizer()(self.build_groups(model), **kwargs)
+        optim: torch.optim.Optimizer = self.optimizer()(
+            self.build_groups(model, strict=strict), **kwargs
+        )
 
         # Set 'lr' and 'initial_lr' in each group if needed.
         fixed_fields_per_group: List[Dict[str, Any]] = [{} for _ in optim.param_groups]
@@ -167,6 +168,20 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
             for k in self.fixed_fields:
                 if k in group:
                     fixed_fields[k] = group[k]
+
+        log.info(
+            f"Building {self.optimizer().__name__} optimizer with {len(optim.param_groups)} param group(s)..."
+        )
+        for g_idx, group in enumerate(optim.param_groups):
+            group_fields_list = "\n - ".join(
+                [f"{k}: {v}" for k, v in optim.param_groups[g_idx].items() if k != "params"]
+            )
+            if group_fields_list:
+                log.info(
+                    f"Group {g_idx}, {len(group['params'])} parameter(s):\n - {group_fields_list}"
+                )
+            else:
+                log.info(f"Group {g_idx}, {len(group['params'])} parameter(s)")
 
         if self.compile:
             log.info("Compiling optimizer step...")

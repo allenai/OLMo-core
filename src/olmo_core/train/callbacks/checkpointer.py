@@ -2,7 +2,7 @@ import logging
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import List, Optional, Tuple
+from typing import ClassVar, List, Optional, Tuple
 
 import torch.distributed as dist
 
@@ -58,6 +58,8 @@ class CheckpointerCallback(Callback):
         If you want to override this callback you should subclass it.
     """
 
+    priority: ClassVar[int] = 1
+
     save_interval: int = 250
     """
     The interval, in steps, with which to save permanent checkoints.
@@ -86,6 +88,8 @@ class CheckpointerCallback(Callback):
     """
     The strategy for removing old checkpoints found in the save folder.
     """
+
+    enabled: bool = True
 
     # Bookkeeping
 
@@ -165,6 +169,9 @@ class CheckpointerCallback(Callback):
         self._checkpoints_to_remove.clear()
 
     def pre_train(self):
+        if not self.enabled:
+            return
+
         if self.save_async is None:
             self.save_async = backend_supports_cpu()
 
@@ -223,6 +230,9 @@ class CheckpointerCallback(Callback):
                 )
 
     def post_train_batch(self):
+        if not self.enabled:
+            return
+
         self._await_last_checkpoint(blocking=False)
         if not self.checkpoint_pending:
             self._remove_old_checkpoints()
@@ -239,6 +249,10 @@ class CheckpointerCallback(Callback):
                 self._schedule_for_removal(oldest_path)
 
     def post_train(self):
+        if not self.enabled:
+            return
+
         if self.step > self._latest_checkpoint_step:
             self._checkpoints.append(self._save_checkpoint(save_async=False))
+
         self._await_last_checkpoint()

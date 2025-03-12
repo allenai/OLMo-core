@@ -1,13 +1,13 @@
-from typing import Optional, Union
+from typing import Optional, Union, cast
 
 import torch
 import torch.nn as nn
 
 from olmo_core.config import StrEnum
 
-from ..attention import Attention, FusedAttention
+from ..attention import Attention, AttentionBase, FusedAttention
 from ..feed_forward import FeedForward
-from ..moe import MoE
+from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP
 
 
 class InitMethod(StrEnum):
@@ -65,7 +65,7 @@ class InitMethod(StrEnum):
 
     def init_attention(
         self,
-        m: Union[Attention, FusedAttention],
+        m: AttentionBase,
         *,
         d_model: int,
         block_idx: int,
@@ -76,10 +76,13 @@ class InitMethod(StrEnum):
         if self == InitMethod.normalized:
             std = d_model**-0.5
 
-        if isinstance(m, Attention):
+        # NOTE: isinstance checks could fail with AC wrappers
+        if isinstance(m, Attention) or hasattr(m, "w_q"):
+            m = cast(Attention, m)
             for w in (m.w_q, m.w_k, m.w_v):
                 self._init_linear(w, std=std, generator=generator)
-        elif isinstance(m, FusedAttention):
+        elif isinstance(m, FusedAttention) or hasattr(m, "w_qkv"):
+            m = cast(FusedAttention, m)
             self._init_linear(m.w_qkv, std=std, generator=generator)
         else:
             raise NotImplementedError(m)
@@ -126,7 +129,7 @@ class InitMethod(StrEnum):
 
     def init_feed_forward_moe(
         self,
-        m: MoE,
+        m: MoEBase,
         *,
         d_model: int,
         block_idx: int,
@@ -141,21 +144,35 @@ class InitMethod(StrEnum):
         elif self == InitMethod.llama_depth:
             std = 0.02 / (2 * (block_idx + 1)) ** 0.5
 
-        self._init_linear(m.inner.router.layer, std=0.02, generator=generator)
         nn.init.trunc_normal_(
-            m.inner.experts.mlp.w1, mean=0.0, std=0.02, a=-3 * std, b=3 * std, generator=generator
+            cast(MoELinearRouter, m.router).weight,
+            mean=0.0,
+            std=std,
+            a=-3 * std,
+            b=3 * std,
+            generator=generator,
         )
         nn.init.trunc_normal_(
-            m.inner.experts.mlp.w2, mean=0.0, std=std, a=-3 * std, b=3 * std, generator=generator
+            cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w1,
+            mean=0.0,
+            std=0.02,
+            a=-3 * std,
+            b=3 * std,
+            generator=generator,
         )
-        if hasattr(m.inner.experts.mlp, "v1"):
-            nn.init.trunc_normal_(
-                m.inner.experts.mlp.v1,
-                mean=0.0,
-                std=std,
-                a=-3 * std,
-                b=3 * std,
-                generator=generator,
-            )
-        if (bias := getattr(m.inner.experts, "bias", None)) is not None:
-            nn.init.zeros_(bias)
+        nn.init.trunc_normal_(
+            cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w2,
+            mean=0.0,
+            std=std,
+            a=-3 * std,
+            b=3 * std,
+            generator=generator,
+        )
+        nn.init.trunc_normal_(
+            cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w3,
+            mean=0.0,
+            std=std,
+            a=-3 * std,
+            b=3 * std,
+            generator=generator,
+        )

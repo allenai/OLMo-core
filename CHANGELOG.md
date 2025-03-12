@@ -7,11 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+This major release introduces a few breaking changes. We've provided more information here: [OLMo-core v2 design and upgrade guide](https://docs.google.com/document/d/1LvANhNzA-MdtiD2pLniLTqB9wxSSuqY435WuJIADeFM/edit?usp=sharing).
+
+### Added
+
+- Added `TrainModule` abstraction with `TransformerTrainModule` implementation, which encapsulates both a model and optimizer.
+- Added `namespace` argument to `Trainer.record_metric()`.
+- Added support for context parallelism.
+- Added support for expert parallelism with MoE models.
+- Added in-loop evals for Minerva, GSM, HumanEval, MBPP (`ai2-olmo-eval==0.7.0`)
+
+### Changed
+
+- The `Trainer` now takes a `TrainModule` instead of a model and optimizer, and several configuration options have been moved to `TransformerTrainModule`, including `rank_microbatch_size`, `fused_loss`, `compile_loss`, `z_loss_multiplier`, and `autocast_precision`.
+- Several `TransformerModelConfig` options have been to `TransformerTrainModule` / `TransformerTrainModuleConfig`, including `dp_config`, `tp_config`, `float8_config`, and `compile`.
+
+### Removed
+
+- Removed the following callbacks: `MoEHandlerCallback`, `SchedulerCallback`, `MatrixNormalizerCallback`, `GradClipperCallback`, and `Float8HandlerCallback`.
+  The functionality from all of those callbacks has been moved to the `TransformerTrainModule` class.
+- Removed the callback methods `.pre_eval_batch()` and `.post_eval_batch()`.
+
+## [v1.9.0](https://github.com/allenai/OLMo-core/releases/tag/v1.9.0) - 2025-03-10
+
+### Fixed
+
+- Ensure certain optimizer param group fields are not overridden by the values in a checkpoint.
+
 ### Added
 
 - Added `instance_filter_config` field to `NumpyDatasetConfig`.
 - Added conversion script for OLMo 2 checkpoints to Huggingface format.
 - Added `BeakerCallback`.
+- Added logging for in-loop eval throughput
 
 ### Fixed
 

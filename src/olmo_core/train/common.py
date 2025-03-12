@@ -1,6 +1,16 @@
 from dataclasses import dataclass
+from datetime import timedelta
+from typing import Any, Dict, Optional, Tuple
+
+import torch
 
 from ..config import StrEnum
+from ..data.utils import get_labels
+from ..utils import format_timedelta
+
+TRAIN_CE_LOSS_METRIC = "train/CE loss"
+TRAIN_PPL_METRIC = "train/PPL"
+TRAIN_Z_LOSS_METRIC = "train/Z loss"
 
 
 class DurationUnit(StrEnum):
@@ -116,3 +126,46 @@ class ReduceType(StrEnum):
     For metrics that are computed as L2 norms on each rank, this will correctly reduce the norm
     across the process group to produce the global L2 norm.
     """
+
+
+def reshape_inputs_for_loss(
+    logits: torch.Tensor, labels: torch.Tensor
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    # shape: (B * S, V)
+    logits_for_loss = logits.view(-1, logits.size(-1))
+    # shape: (B, S) -> (B * S,)
+    labels_for_loss = labels.view(-1)
+    return logits_for_loss, labels_for_loss
+
+
+def get_inputs_for_loss(
+    batch: Dict[str, Any], logits: torch.Tensor, label_ignore_index: int = -100
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    return reshape_inputs_for_loss(
+        logits, batch.get("labels", get_labels(batch, label_ignore_index=label_ignore_index))
+    )
+
+
+@dataclass
+class TrainingProgress:
+    current_step: int
+    """
+    The current training step.
+    """
+    total_steps: int
+    """
+    The step that training will stop at.
+    """
+    time_remaining: Optional[timedelta] = None
+    """
+    Estimated time remaining.
+    """
+
+    def __str__(self) -> str:
+        progress_perc = min(100, int(100 * self.current_step / self.total_steps))
+        progress_str = (
+            f"{progress_perc}% complete (step {self.current_step:,d}/{self.total_steps:,d})"
+        )
+        if self.time_remaining is not None:
+            progress_str += f", eta {format_timedelta(self.time_remaining)}"
+        return progress_str

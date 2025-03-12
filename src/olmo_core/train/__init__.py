@@ -23,10 +23,10 @@ For example::
     if __name__ == "__main__":
         prepare_training_environment()
         try:
-            # Build model, optimizer, dataset...
+            # Build train module and data loader...
 
             # Build trainer.
-            trainer = trainer_config.build(model, optim, dataset)
+            trainer = trainer_config.build(train_module, data_loader)
 
             # Run the trainer.
             trainer.fit()
@@ -87,7 +87,7 @@ def prepare_training_environment(
         Internally this calls:
 
         - :func:`~olmo_core.distributed.utils.init_distributed()`, which also calls :func:`torch.cuda.set_device()`
-          for backends that support CUDA.
+          for backends that support CUDA, otherwise :func:`torch.set_default_device()`.
         - :func:`~olmo_core.utils.prepare_cli_environment()`
 
         So there's no need to call those separately.
