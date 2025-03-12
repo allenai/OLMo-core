@@ -21,7 +21,6 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
-    Duration,
     TrainerConfig,
     prepare_training_environment,
     teardown_training_environment,
@@ -32,7 +31,6 @@ from olmo_core.train.callbacks import (
     ConfigSaverCallback,
     DownstreamEvaluatorCallbackConfig,
     GPUMemoryMonitorCallback,
-    LMEvaluatorCallbackConfig,
     ProfilerCallback,
     WandBCallback,
 )
@@ -142,23 +140,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         )
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("profiler", ProfilerCallback(enabled=False))
-        .with_callback(
-            "lm_evaluator",
-            LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyDatasetConfig(
-                    paths=[
-                        "http://olmo-data.org/examples/c4-en/gpt2/c4-validation.00000-00008.npy"
-                    ],
-                    metadata=[{"label": "c4-validation"}],
-                    name=NumpyDatasetType.padded_fsl,
-                    sequence_length=SEQUENCE_LENGTH,
-                    tokenizer=tokenizer_config,
-                    work_dir="/tmp/dataset-cache",
-                ),
-                eval_interval=250,
-                eval_duration=Duration.steps(10),
-            ),
-        )
         .with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
