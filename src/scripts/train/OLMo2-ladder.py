@@ -82,6 +82,7 @@ class BaselineModelLadder(ModelLadder):
             assert "h100" in gpu_type.lower()
             return self.MBZ_SIZES[size]
 
+
 def build_ladder(root_dir: str) -> BaselineModelLadder:
     beaker_username = get_beaker_username()
     if beaker_username is not None:

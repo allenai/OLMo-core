@@ -62,8 +62,8 @@ class SubCmd(StrEnum):
             pass
         elif self in (SubCmd.train, SubCmd.train_single):
             if self == SubCmd.train_single:
-                for parallelism_strategy in {'d', 't', 'e', 'c'}:
-                    setting_name = f'{parallelism_strategy}p_config'
+                for parallelism_strategy in {"d", "t", "e", "c"}:
+                    setting_name = f"{parallelism_strategy}p_config"
                     log.warning(
                         "%s is set to %s, but you can't use data parallelism when running on a single node. Disabling.",
                         setting_name,
