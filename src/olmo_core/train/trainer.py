@@ -752,16 +752,9 @@ class Trainer:
         :returns: The path/URL to the checkpoint.
         """
 
-        def _get_gpu_usage():
-            cuda_info = torch.cuda.memory_stats(self.device)
-            max_active = cuda_info["active_bytes.all.peak"]
-            device_capacity = torch.cuda.get_device_properties(self.device).total_memory
-            return 100 * max_active / device_capacity
-
         dirname = self.checkpointer.checkpoint_dirname(self.global_step)
         path = join_path(self.save_folder, dirname)
 
-        log.info(f"MEM PRE-CHECKPOINT-SAVE IS {_get_gpu_usage()}")
         log.info(f"Saving checkpoint for step {self.global_step} to '{path}'...")
         self.checkpointer.save(
             path, self.model, self.optim, cast(Dict[str, Any], self.state_dict())
@@ -769,7 +762,6 @@ class Trainer:
         for callback in self.callbacks.values():
             callback.post_checkpoint_saved(path)
         log.info("Checkpoint saved")
-        log.info(f"MEM POST-CHECKPOINT-SAVE IS {_get_gpu_usage()}")
         return path
 
     def save_checkpoint_async(self) -> Tuple[PathOrStr, Future]:
