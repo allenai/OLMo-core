@@ -21,6 +21,7 @@ from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
+from olmo_core.train.common import Duration
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -34,7 +35,6 @@ log = logging.getLogger(__name__)
 
 
 PIPELINE_PARALLEL = True
-DEFAULT_NUM_NODES = 2 if PIPELINE_PARALLEL else 2  # 2 nodes for now
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -97,12 +97,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
+            max_duration=Duration.tokens(318_651_801_600),
         )
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1_000,
-                ephemeral_save_interval=20,  # 20 for now to check leakiness
+                ephemeral_save_interval=250,  # 20 for now to check leakiness
                 save_async=True,
             ),
         )
@@ -139,5 +140,5 @@ if __name__ == "__main__":
         # nightly needed right now for FP8 to work with PP
         # https://github.com/pytorch/pytorch/issues/143194
         beaker_image=OLMoCoreBeakerImage.nightly,
-        num_nodes=DEFAULT_NUM_NODES,
+        num_nodes=16,
     )
