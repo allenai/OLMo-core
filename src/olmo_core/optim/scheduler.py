@@ -1,7 +1,7 @@
 import logging
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, field
-from math import cos, pi, sqrt
+from math import cos, pi, sqrt, ceil
 from typing import List, Optional, Union
 
 import torch
@@ -177,16 +177,56 @@ class CosWithWarmup(Scheduler):
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
     ) -> Union[float, torch.Tensor]:
-        max_steps = max_steps if self.t_max is None else self.t_max
-        eta_min = initial_lr * self.alpha_f
-        if step < self.warmup_steps:
-            return _linear_warmup(initial_lr, step, self.warmup_steps, self.warmup_min_lr)
-        elif step >= max_steps:
-            return eta_min
+        return _cosine_with_warmup(
+            initial_lr,
+            step,
+            max_steps if self.t_max is None else self.t_max,
+            self.warmup_steps,
+            self.warmup_min_lr,
+            self.alpha_f)
+
+
+@dataclass
+class CosWithWarmupAndLinearDecay(CosWithWarmup):
+    """
+    Cosine learning rate schedule with a warmup, followed by a linear decay.
+    """
+    decay_steps: Optional[int] = None
+    decay_fraction: Optional[float] = 0.1
+    decay_min_lr: float = 0.0
+
+    def get_lr(
+        self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
+    ) -> Union[float, torch.Tensor]:
+        if self.decay_steps is None:
+            decay_steps = round(max_steps * self.decay_fraction)
         else:
-            step = step - self.warmup_steps
-            max_steps = max_steps - self.warmup_steps
-            return eta_min + (initial_lr - eta_min) * (1 + cos(pi * step / max_steps)) / 2
+            decay_steps = self.decay_steps
+
+        if step >= max_steps - decay_steps:
+            final_cosine_lr = super().get_lr(initial_lr, max_steps - decay_steps, max_steps)
+            return _linear_decay(final_cosine_lr, max_steps - step, decay_steps, self.decay_min_lr)
+
+        return super().get_lr(initial_lr, step, max_steps)
+
+
+def _cosine_with_warmup(
+    initial_lr: Union[float, torch.Tensor],
+    step: int,
+    max_steps: int,
+    warmup_steps: int,
+    warmup_min_lr: float = 0.0,
+    alpha_f: float = 0.1,
+) -> Union[float, torch.Tensor]:
+    eta_min = initial_lr * alpha_f
+    if step < warmup_steps:
+        return _linear_warmup(initial_lr, step, warmup_steps, warmup_min_lr)
+    elif step >= max_steps:
+        return eta_min
+    else:
+        step = step - warmup_steps
+        max_steps = max_steps - warmup_steps
+        return eta_min + (initial_lr - eta_min) * (1 + cos(pi * step / max_steps)) / 2
 
 
 @dataclass

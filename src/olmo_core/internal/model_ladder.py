@@ -57,7 +57,7 @@ class SubCmd(StrEnum):
             print(config)
 
         if self == SubCmd.launch:
-            config.launch.launch(follow=True)
+            config.launch.launch(follow=False)
         elif self == SubCmd.dry_run:
             pass
         elif self in (SubCmd.train, SubCmd.train_single):
@@ -133,6 +133,8 @@ def build_config(
     trainer = ladder.get_trainer_config(
         size=size, run_duration=run_duration, gpu_type=gpu_type, dp_world_size=dp_world_size
     )
+    if gpu_type in ("cpu", "mps"):
+        del trainer.callbacks["gpu_monitor"]
 
     return LadderRunConfig(
         launch=launch,
