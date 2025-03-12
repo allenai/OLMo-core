@@ -79,18 +79,18 @@ To see the exact usage for each script, run the script without any arguments.
 
 Throughput numbers from these scripts with various different configuration settings are reported below, measured on a cluster with NVIDIA H100 GPUs.
 
-| Model&nbsp;size | Model&nbsp;arch.&nbsp;&nbsp; | Context&nbsp;length | Precision | Throughput[^1] | Training&nbsp;&nbsp;&nbsp;script | Commandline&nbsp;overrides&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; |
+| Model&nbsp;size | Model&nbsp;arch.&nbsp;&nbsp; | Context&nbsp;length | Precision | Throughput[^1] | Training&nbsp;&nbsp;&nbsp;script | Commandline&nbsp;overrides&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; |
 | :--------: | :--------: | :------------: | :-------: | -----------: | :----------- | :-------- |
 | **1B**  | OLMo-1124 | 4096 | BF16 | 55,000 TPS | `OLMo2-1B.py` | |
-| | | 4096 | BF16/FP8[^2] | 65,000 TPS | `OLMo2-1B.py` | `--model.float8_config.enabled=true` |
+| | | 4096 | BF16/FP8[^2] | 65,000 TPS | `OLMo2-1B.py` | `--train_module.float8_config.enabled=true` |
 | **7B**  | OLMo-1124 | 4096 | BF16 | 10,000 TPS | `OLMo2-7B.py` | |
-| | | 4096 | BF16/FP8 | 13,000 TPS | `OLMo2-7B.py` | `--model.float8_config.enabled=true` |
+| | | 4096 | BF16/FP8 | 13,000 TPS | `OLMo2-7B.py` | `--train_module.float8_config.enabled=true` |
 | **8B**  | Llama | 4096 | BF16 | 9,500 TPS | `Llama3-8B.py` | |
-| | | 4096 | BF16/FP8 | 12,500 TPS | `Llama3-8B.py` | `--model.float8_config.enabled=true` |
+| | | 4096 | BF16/FP8 | 12,500 TPS | `Llama3-8B.py` | `--train_module.float8_config.enabled=true` |
 | **13B** | OLMo-1124 | 4096 | BF16 | 4,600 TPS | `OLMo2-13B.py` | |
-| | | 4096 | BF16/FP8 | 5,500 TPS | `OLMo2-13B.py` | `--model.float8_config.enabled=true` |
+| | | 4096 | BF16/FP8 | 5,500 TPS | `OLMo2-13B.py` | `--train_module.float8_config.enabled=true` |
 | **32B** | OLMo-1124 | 4096 | BF16 | 1,500 TPS | `OLMo2-32B.py` | |
-| | | 4096 | BF16/FP8 | 1,800 TPS | `OLMo2-32B.py` | `--model.float8_config.enabled=true` |
+| | | 4096 | BF16/FP8 | 1,800 TPS | `OLMo2-32B.py` | `--train_module.float8_config.enabled=true` |
 
 [^1]: Throughput reported in tokens per second per device.
 [^2]: In this setup most matrix multiplications are computed in `float8`, everything else is in `bfloat16`.
