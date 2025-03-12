@@ -1,6 +1,11 @@
 Data loading
 ============
 
+.. note::
+   This guide is specific to text-based data, however the :class:`~olmo_core.train.Trainer` can be
+   used with other modalities as well by creating a custom data loader subclass of
+   :class:`~olmo_core.data.data_loader.DataLoaderBase`.
+
 Using OLMo-core's builtin data loading
 --------------------------------------
 

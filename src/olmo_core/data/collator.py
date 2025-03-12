@@ -23,7 +23,7 @@ class PaddingDirection(StrEnum):
 @dataclass
 class DataCollator:
     """
-    The default data collator used by the :class:`~olmo_core.train.Trainer`.
+    The default data collator used by :class:`~olmo_core.data.data_loader.TextDataLoaderBase` subclasses.
     """
 
     pad_token_id: int

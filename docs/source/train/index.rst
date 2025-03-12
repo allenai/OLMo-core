@@ -9,3 +9,4 @@
    :caption: Submodules
 
    callbacks
+   train_module

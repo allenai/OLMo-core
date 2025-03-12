@@ -5,8 +5,9 @@ from typing import Any, ClassVar, Dict, Optional
 import torch
 
 from olmo_core.distributed.utils import get_world_size
-from olmo_core.nn.transformer import Transformer
 
+from ..common import ReduceType
+from ..train_module import TransformerTrainModule
 from .callback import Callback
 
 
@@ -20,7 +21,7 @@ class SpeedMonitorCallback(Callback):
         If you want to override this callback you should subclass it.
     """
 
-    priority: ClassVar[int] = -1
+    priority: ClassVar[int] = -2
 
     num_flops_per_token: Optional[int] = None
     device_peak_flops: Optional[int] = None
@@ -35,12 +36,17 @@ class SpeedMonitorCallback(Callback):
     _step_tokens: int = 0
     _step_seq_len: int = 0
     _parallel_degree: int = 1
+    _bps_avg: Optional[float] = None
+
+    @property
+    def bps_avg(self) -> Optional[float]:
+        return self._bps_avg
 
     def _get_num_flops_per_token(self, seq_len: int) -> Optional[int]:
         if self.num_flops_per_token is not None:
             return self.num_flops_per_token
-        elif isinstance(self.trainer.model, Transformer):
-            return self.trainer.model.num_flops_per_token(seq_len)
+        elif isinstance(self.trainer.train_module, TransformerTrainModule):
+            return self.trainer.train_module.num_flops_per_token(seq_len)
         else:
             return None
 
@@ -52,9 +58,13 @@ class SpeedMonitorCallback(Callback):
                 self.trainer.dp_process_group
             )
 
-        if self.device_peak_flops is None and self.trainer.device.type == "cuda":
+        if (
+            self.device_peak_flops is None
+            and self.trainer.device.type == "cuda"
+            and isinstance(self.trainer.train_module, TransformerTrainModule)
+        ):
             device_name = torch.cuda.get_device_name(self.trainer.device)
-            if self.trainer.autocast_precision == torch.bfloat16:
+            if self.trainer.train_module.autocast_precision == torch.bfloat16:
                 if "A100" in device_name:
                     self.device_peak_flops = int(312e12)
                 elif "H100" in device_name:
@@ -87,7 +97,9 @@ class SpeedMonitorCallback(Callback):
 
     def post_step(self):
         counter = time.perf_counter()
-        self.trainer.record_metric("throughput/device/data loading (s)", self._batch_load_time)
+        self.trainer.record_metric(
+            "throughput/device/data loading (s)", self._batch_load_time, reduce_type=ReduceType.max
+        )
 
         if self._first_step:
             # Now we can start recording.
@@ -108,8 +120,12 @@ class SpeedMonitorCallback(Callback):
         bps_avg = self._total_steps / total_time
         data_pct = 100 * self._batch_load_time / step_time
 
+        self._bps_avg = bps_avg
+
         self.trainer.record_metric("throughput/total tokens", self.trainer.global_train_tokens_seen)
-        self.trainer.record_metric("throughput/device/data loading (%)", data_pct)
+        self.trainer.record_metric(
+            "throughput/device/data loading (%)", data_pct, reduce_type=ReduceType.max
+        )
         self.trainer.record_metric("throughput/device/TPS", tps)
         self.trainer.record_metric("throughput/device/TPS (actual avg)", tps_avg)
         self.trainer.record_metric("throughput/device/BPS", bps)

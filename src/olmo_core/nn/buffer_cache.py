@@ -1,6 +1,9 @@
 from collections.abc import MutableMapping
+from typing import Optional
 
 import torch
+
+from olmo_core.utils import move_to_device
 
 
 class BufferCache(dict, MutableMapping[str, torch.Tensor]):
@@ -12,3 +15,12 @@ class BufferCache(dict, MutableMapping[str, torch.Tensor]):
     since (A) it isn't necessary, and (B) we sometimes have `-inf` in these biases which might get turned into
     NaNs when they're synchronized due to casting or some other issue.
     """
+
+    def get_for_device(self, key: str, device: torch.device) -> Optional[torch.Tensor]:
+        if (tensor := self.get(key)) is not None:
+            if tensor.device != device:
+                tensor = move_to_device(tensor, device)
+                self[key] = tensor
+            return tensor
+        else:
+            return None

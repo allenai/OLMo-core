@@ -6,7 +6,7 @@ import logging
 import math
 import os
 from datetime import timedelta
-from typing import Callable, List, Optional, TypeVar, cast
+from typing import Callable, List, Optional, TypeVar, Union, cast
 
 import torch
 import torch.distributed as dist
@@ -27,7 +27,7 @@ BEAKER_HOSTNAME_ENV_VAR = "BEAKER_NODE_HOSTNAME"
 log = logging.getLogger(__name__)
 
 
-def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minutes=30)):
+def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minutes=30), **kwargs):
     """
     Initialize the distributed process group with the given backend(s) and check/set the
     relevant environment variables.
@@ -102,7 +102,7 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
         device = torch.device(f"cuda:{int(os.environ[OLMO_LOCAL_RANK_ENV_VAR])}")
         torch.cuda.set_device(device)
 
-    dist.init_process_group(backend, timeout=timeout)
+    dist.init_process_group(backend, timeout=timeout, **kwargs)
 
     validate_env_vars()
 
@@ -424,6 +424,13 @@ def get_local_tensor(x: torch.Tensor) -> torch.Tensor:
         return x
 
 
+def get_full_tensor(x: torch.Tensor) -> torch.Tensor:
+    if isinstance(x, DTensor):
+        return x.full_tensor()
+    else:
+        return x
+
+
 def do_n_at_a_time(
     f: Callable[[], T],
     *,
@@ -455,3 +462,19 @@ def do_n_at_a_time(
             result = f()
         barrier(process_group)
     return cast(T, result)
+
+
+class _HiddenTensor:
+    def __init__(self, x: torch.Tensor):
+        self.x = x
+
+
+def hide_from_torch(x: torch.Tensor) -> _HiddenTensor:
+    return _HiddenTensor(x)
+
+
+def unhide_from_torch(x: Union[torch.Tensor, _HiddenTensor]) -> torch.Tensor:
+    if isinstance(x, _HiddenTensor):
+        return x.x
+    else:
+        return x

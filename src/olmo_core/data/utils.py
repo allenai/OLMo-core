@@ -20,6 +20,7 @@ from typing import (
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.io import add_cached_path_clients, get_bytes_range, is_url, resource_path
@@ -397,6 +398,9 @@ def bucket_documents(
             indices.append(start_idx + x)
             start_idx += x
 
+    if not indices:
+        raise RuntimeError(f"Failed to produce any bucketed documents for source file at '{path}'")
+
     with memmap_to_write(target, dtype=indices_dtype, shape=(len(indices),)) as indices_mmap:
         indices_mmap[:] = indices
 
@@ -439,6 +443,9 @@ def segment_documents_into_instances(
         rng = get_rng(seed)
         indices = rng.choice(indices.reshape(-1, 2), size=max_instances).reshape(-1)
 
+    if indices.size == 0:
+        raise RuntimeError(f"Failed to produce any documents from '{path}'")
+
     with memmap_to_write(target, dtype=indices_dtype, shape=(indices.size,)) as indices_mmap:
         indices_mmap[:] = indices
 
@@ -468,7 +475,8 @@ def get_labels(batch: Dict[str, Any], label_ignore_index: int = -100) -> torch.T
         labels.masked_fill_(attention_mask == 0.0, label_ignore_index)
     if instance_mask is not None:
         labels.masked_fill_(~instance_mask.unsqueeze(-1), value=label_ignore_index)
-    return labels[..., 1:].contiguous()
+    # Shift and pad.
+    return F.pad(labels[..., 1:], (0, 1, 0, 0), value=label_ignore_index)
 
 
 def find_end_first_consecutive_true(arr: np.ndarray) -> int:

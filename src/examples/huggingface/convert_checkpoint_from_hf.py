@@ -6,7 +6,9 @@ Note that this script is architecture-dependent, meaning it may only work for OL
 HuggingFace.
 """
 
+import json
 import logging
+import os
 
 import torch
 from transformers import AutoModelForCausalLM
@@ -127,7 +129,10 @@ def convert_checkpoint() -> AutoModelForCausalLM:
     assert len(state_dict) == 0
 
     log.info(f"Saving converted model checkpoint '{SAVE_PATH}'...")
-    save_state_dict(SAVE_PATH, {"model": new_state_dict})
+    save_state_dict(os.path.join(SAVE_PATH, "model_and_optim"), {"model": new_state_dict})
+
+    with open(os.path.join(SAVE_PATH, "config.json"), "w") as f:
+        json.dump({"model": MODEL_CONFIG.as_dict()}, f)
 
     return hf_model
 
@@ -144,7 +149,9 @@ def validate_conversion(hf_model):
 
     del hf_model
 
-    model = MODEL_CONFIG.build(device=device, max_seq_len=131072).eval()
+    model = MODEL_CONFIG.build()
+    model.init_weights(device=device, max_seq_len=131072)
+    model.eval()
 
     log.info("Loading converted checkpoint for validation...")
     load_model_and_optim_state(SAVE_PATH, model)
@@ -159,5 +166,7 @@ def validate_conversion(hf_model):
 
 if __name__ == "__main__":
     prepare_cli_environment()
+
+    config = MODEL_CONFIG.as_dict()
     hf_model = convert_checkpoint()
     validate_conversion(hf_model)

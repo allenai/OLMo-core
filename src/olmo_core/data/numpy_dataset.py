@@ -654,7 +654,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                         )
                         futures.append(future)
 
-                concurrent.futures.wait(futures, return_when="ALL_COMPLETED")
+                concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
 
                 # Log results.
                 for path, future in zip([item[0] for item in paths_needed], futures):
@@ -819,7 +819,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                     )
                     futures.append(future)
 
-                concurrent.futures.wait(futures, return_when="ALL_COMPLETED")
+                concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
 
                 # Log results.
                 for path, future in zip(paths_needed, futures):
@@ -865,11 +865,13 @@ class VSLCurriculum:
             num_natural_batches = natural_batches_per_bucket[i][1]
             if num_batches != num_natural_batches:
                 log.info(
-                    f"- bucket {i}: sequence length {seq_len}, using {num_batches:,d} batches out of "
-                    f"{num_natural_batches:,d} total"
+                    f"- bucket {i}:   sequence length {seq_len:>6d} => {num_batches:>6d} batches "
+                    f"used ({num_natural_batches:d} total)"
                 )
             else:
-                log.info(f"- bucket {i}: sequence length {seq_len}, {num_batches:,d} batches")
+                log.info(
+                    f"- bucket {i}:   sequence length {seq_len:>6d} => {num_batches:>6d} batches"
+                )
 
     @property
     @abstractmethod
@@ -1342,7 +1344,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                     )
                     futures.append(future)
 
-                concurrent.futures.wait(futures, return_when="ALL_COMPLETED")
+                concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
 
                 # Log results.
                 for path, future in zip(paths_needed, futures):

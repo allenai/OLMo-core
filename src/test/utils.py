@@ -8,7 +8,7 @@ import torch
 
 has_cuda = torch.cuda.is_available()
 has_flash_attn = False
-has_megablocks = False
+has_grouped_gemm = False
 
 try:
     import flash_attn  # type: ignore
@@ -19,10 +19,10 @@ except ModuleNotFoundError:
     pass
 
 try:
-    import megablocks  # type: ignore
+    import grouped_gemm  # type: ignore
 
-    has_megablocks = True
-    del megablocks
+    has_grouped_gemm = True
+    del grouped_gemm
 except ModuleNotFoundError:
     pass
 
@@ -48,14 +48,14 @@ def requires_flash_attn(func):
     return func
 
 
-MEGABLOCKS_MARKS = (
+GROUPED_GEMM_MARKS = (
     pytest.mark.gpu,
-    pytest.mark.skipif(not has_megablocks, reason="Requires megablocks"),
+    pytest.mark.skipif(not has_grouped_gemm, reason="Requires grouped_gemm"),
 )
 
 
-def requires_megablocks(func):
-    for mark in MEGABLOCKS_MARKS:
+def requires_grouped_gemm(func):
+    for mark in GROUPED_GEMM_MARKS:
         func = mark(func)
     return func
 

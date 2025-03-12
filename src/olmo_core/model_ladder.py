@@ -29,11 +29,10 @@ from .train.callbacks import (
     DownstreamEvaluatorCallbackConfig,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
-    GradClipperCallback,
     LMEvaluatorCallbackConfig,
-    SchedulerCallback,
     WandBCallback,
 )
+from .train.train_module import TransformerTrainModuleConfig
 
 __all__ = ["ModelSize", "ModelLadder", "RunDuration"]
 
@@ -310,14 +309,12 @@ class ModelLadder(Config, metaclass=ABCMeta):
         dp_world_size: int,
     ) -> TrainerConfig:
         """
-        Build the trainer config.
+        Build the train module config.
 
         :param size: The target model size.
         :param gpu_type: The type of GPU as given by ``torch.cuda.get_device_name()``.
         :param dp_world_size: The data parallel world size.
         """
-        from olmo_eval import list_tasks
-
         if dp_world_size > self.max_dp_world_size:
             raise OLMoConfigurationError(
                 f"max_dp_world_size ({self.max_dp_world_size}) must be at least as big as current dp "
@@ -365,26 +362,41 @@ class ModelLadder(Config, metaclass=ABCMeta):
                 "with data parallel world size"
             )
             rank_mbz = new_rank_mbz
+        return TransformerTrainModuleConfig(
+            rank_microbatch_size=rank_mbz,
+            max_sequence_length=self.sequence_length,
+            optim=self.get_optim_config(size=size),
+            max_grad_norm=1.0,
+            scheduler=scheduler=CosWithWarmup(warmup_steps=round(self.model_size / global_bz)),
+        )
+
+    def get_trainer_config(
+        self,
+        *,
+        size: ModelSize,
+        run_duration: RunDuration,
+        gpu_type: str,
+        dp_world_size: int,
+    ) -> TrainerConfig:
+        """
+        Build the trainer config.
+
+        :param size: The target model size.
+        :param gpu_type: The type of GPU as given by ``torch.cuda.get_device_name()``.
+        :param dp_world_size: The data parallel world size.
+        """
+        del gpu_type, dp_world_size
+
+        from olmo_eval import list_tasks
 
         return (
             TrainerConfig(
                 save_folder=self.get_save_folder(size, run_duration),
-                rank_microbatch_size=rank_mbz,
                 metrics_collect_interval=10,
                 cancel_check_interval=1,
-                z_loss_multiplier=1e-5,
-                compile_loss=True,
-                fused_loss=False,
                 max_duration=self.get_duration(run_duration),
             )
-            .with_callback(
-                "lr_scheduler",
-                SchedulerCallback(
-                    scheduler=CosWithWarmup(warmup_steps=round(self.model_size / global_bz))
-                ),
-            )
             .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
-            .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0))
             .with_callback("config_saver", ConfigSaverCallback())
             .with_callback("garbage_collector", GarbageCollectorCallback())
             .with_callback(
