@@ -89,8 +89,6 @@ Throughput numbers from these scripts with various different configuration setti
 | | | 4096 | BF16/FP8 | 12,500 TPS | `Llama3-8B.py` | `--train_module.float8_config.enabled=true` |
 | **13B** | OLMo-1124 | 4096 | BF16 | 4,600 TPS | `OLMo2-13B.py` | |
 | | | 4096 | BF16/FP8 | 5,500 TPS | `OLMo2-13B.py` | `--train_module.float8_config.enabled=true` |
-| **32B** | OLMo-1124 | 4096 | BF16 | 1,500 TPS | `OLMo2-32B.py` | |
-| | | 4096 | BF16/FP8 | 1,800 TPS | `OLMo2-32B.py` | `--train_module.float8_config.enabled=true` |
 
 [^1]: Throughput reported in tokens per second per device.
 [^2]: In this setup most matrix multiplications are computed in `float8`, everything else is in `bfloat16`.
