@@ -11,11 +11,11 @@ from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.utils import generate_uuid, prepare_cli_environment
 
 
-def build_config(pytest_opts: List[str], overrides: List[str]) -> BeakerLaunchConfig:
+def build_config(command: List[str], overrides: List[str]) -> BeakerLaunchConfig:
     return BeakerLaunchConfig(
-        name=f"olmo-core-pytest-{generate_uuid()[:8]}",
+        name=f"olmo-core-test-{generate_uuid()[:8]}",
         budget="ai2/oe-training",
-        cmd=pytest_opts,
+        cmd=command,
         task_name="test",
         workspace="ai2/OLMo-core",
         beaker_image=OLMoCoreBeakerImage.stable,
@@ -33,15 +33,16 @@ def build_config(pytest_opts: List[str], overrides: List[str]) -> BeakerLaunchCo
 
 if __name__ == "__main__":
     if len(sys.argv) < 3 or "--" not in sys.argv:
-        print(f"Usage: python {sys.argv[0]} [OVERRIDES...] -- [PYTEST_OPTS...] TEST_TARGET")
+        print(f"Usage: python {sys.argv[0]} [OVERRIDES...] -- [CMD...]")
         sys.exit(1)
 
     sep_index = sys.argv.index("--")
     overrides = sys.argv[1:sep_index]
-    pytest_opts = sys.argv[sep_index + 1 :]
+    entrypoint = sys.argv[sep_index + 1]
+    command = sys.argv[sep_index + 2 :]
 
     prepare_cli_environment()
 
-    config = build_config(pytest_opts, overrides)
+    config = build_config(command, overrides)
     print(config)
-    config.launch(follow=True, torchrun=False, entrypoint="pytest")
+    config.launch(follow=True, torchrun=False, entrypoint=entrypoint)

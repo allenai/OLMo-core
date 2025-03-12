@@ -12,8 +12,9 @@ FLASH_ATTN_WHEEL = https://github.com/Dao-AILab/flash-attention/releases/downloa
 
 VERSION = $(shell python src/olmo_core/version.py)
 VERSION_SHORT = $(shell python src/olmo_core/version.py short)
-STABLE_IMAGE = tch$(TORCH_VERSION_SHORT)cu$(TORCH_CUDA_VERSION)
-NIGHTLY_IMAGE = tch$(TORCH_NIGHTLY_VERSION_SHORT)cu$(TORCH_CUDA_VERSION)
+IMAGE_SUFFIX = ""
+STABLE_IMAGE = tch$(TORCH_VERSION_SHORT)cu$(TORCH_CUDA_VERSION)$(IMAGE_SUFFIX)
+NIGHTLY_IMAGE = tch$(TORCH_NIGHTLY_VERSION_SHORT)cu$(TORCH_CUDA_VERSION)$(IMAGE_SUFFIX)
 BEAKER_WORKSPACE = ai2/OLMo-core
 BEAKER_USER = $(shell beaker account whoami --format=json | jq -r '.[0].name')
 
@@ -62,6 +63,22 @@ stable-image :
 		-t olmo-core:$(STABLE_IMAGE) .
 	echo "Built image 'olmo-core:$(STABLE_IMAGE)', size: $$(docker inspect -f '{{ .Size }}' olmo-core:$(STABLE_IMAGE) | numfmt --to=si)"
 
+.PHONY : stable-dev-image
+stable-dev-image :
+	docker build -f src/Dockerfile \
+		--build-arg BUILDKIT_INLINE_CACHE=1 \
+		--build-arg CUDA_VERSION=$(CUDA_VERSION) \
+		--build-arg TORCH_CUDA_VERSION=$(TORCH_CUDA_VERSION) \
+		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
+		--build-arg BASE=devel \
+		--build-arg FLASH_ATTN_WHEEL=$(FLASH_ATTN_WHEEL) \
+		--build-arg GROUPED_GEMM_VERSION=$(GROUPED_GEMM_VERSION) \
+		--build-arg TORCHAO_VERSION=$(TORCHAO_VERSION) \
+		--target stable \
+		--progress plain \
+		-t olmo-core:$(STABLE_IMAGE)-devel .
+	echo "Built image 'olmo-core:$(STABLE_IMAGE)-devel', size: $$(docker inspect -f '{{ .Size }}' olmo-core:$(STABLE_IMAGE)-devel | numfmt --to=si)"
+
 .PHONY : nightly-image
 nightly-image :
 	docker build -f src/Dockerfile \
@@ -77,6 +94,23 @@ nightly-image :
 		--progress plain \
 		-t olmo-core:$(NIGHTLY_IMAGE) .
 	echo "Built image 'olmo-core:$(NIGHTLY_IMAGE)', size: $$(docker inspect -f '{{ .Size }}' olmo-core:$(NIGHTLY_IMAGE) | numfmt --to=si)"
+
+.PHONY : nightly-dev-image
+nightly-dev-image :
+	docker build -f src/Dockerfile \
+		--build-arg BUILDKIT_INLINE_CACHE=1 \
+		--build-arg CUDA_VERSION=$(CUDA_VERSION) \
+		--build-arg TORCH_CUDA_VERSION=$(TORCH_CUDA_VERSION) \
+		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
+		--build-arg BASE=devel \
+		--build-arg FLASH_ATTN_WHEEL=$(FLASH_ATTN_WHEEL) \
+		--build-arg GROUPED_GEMM_VERSION=$(GROUPED_GEMM_VERSION) \
+		--build-arg TORCHAO_VERSION=$(TORCHAO_VERSION) \
+		--build-arg TORCH_NIGHTLY_VERSION=$(TORCH_NIGHTLY_VERSION) \
+		--target nightly \
+		--progress plain \
+		-t olmo-core:$(NIGHTLY_IMAGE)-devel .
+	echo "Built image 'olmo-core:$(NIGHTLY_IMAGE)-devel', size: $$(docker inspect -f '{{ .Size }}' olmo-core:$(NIGHTLY_IMAGE)-devel | numfmt --to=si)"
 
 .PHONY : ghcr-image-stable
 ghcr-image-stable : stable-image
@@ -95,6 +129,15 @@ beaker-image-stable : stable-image
 	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(STABLE_IMAGE) olmo-core-$(STABLE_IMAGE)-v$(VERSION_SHORT) $(BEAKER_WORKSPACE)
 	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(STABLE_IMAGE) olmo-core-$(STABLE_IMAGE)-v$(VERSION) $(BEAKER_WORKSPACE)
 
+.PHONY : ghcr-image-stable-dev
+ghcr-image-stable-dev : stable-dev-image
+	docker tag olmo-core:$(STABLE_IMAGE)-devel ghcr.io/allenai/olmo-core:$(STABLE_IMAGE)-devel
+	docker push ghcr.io/allenai/olmo-core:$(STABLE_IMAGE)-devel
+
+.PHONY : beaker-image-stable-dev
+beaker-image-stable-dev : stable-dev-image
+	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(STABLE_IMAGE)-devel olmo-core-$(STABLE_IMAGE)-devel $(BEAKER_WORKSPACE)
+
 .PHONY : ghcr-image-nightly
 ghcr-image-nightly : nightly-image
 	docker tag olmo-core:$(NIGHTLY_IMAGE) ghcr.io/allenai/olmo-core:$(NIGHTLY_IMAGE)
@@ -109,6 +152,15 @@ beaker-image-nightly : nightly-image
 	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(NIGHTLY_IMAGE) olmo-core-$(NIGHTLY_IMAGE) $(BEAKER_WORKSPACE)
 	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(NIGHTLY_IMAGE) olmo-core-$(NIGHTLY_IMAGE)-v$(VERSION_SHORT) $(BEAKER_WORKSPACE)
 	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(NIGHTLY_IMAGE) olmo-core-$(NIGHTLY_IMAGE)-v$(VERSION) $(BEAKER_WORKSPACE)
+
+.PHONY : ghcr-image-nightly-dev
+ghcr-image-nightly-dev : nightly-dev-image
+	docker tag olmo-core:$(NIGHTLY_IMAGE)-devel ghcr.io/allenai/olmo-core:$(NIGHTLY_IMAGE)-devel
+	docker push ghcr.io/allenai/olmo-core:$(NIGHTLY_IMAGE)-devel
+
+.PHONY : beaker-image-nightly-dev
+beaker-image-nightly-dev : nightly-dev-image
+	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(NIGHTLY_IMAGE)-devel olmo-core-$(NIGHTLY_IMAGE)-devel $(BEAKER_WORKSPACE)
 
 .PHONY : get-beaker-workspace
 get-beaker-workspace :
