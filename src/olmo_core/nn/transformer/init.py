@@ -143,9 +143,13 @@ class InitMethod(StrEnum):
         elif self == InitMethod.llama_depth:
             std = 0.02 / (2 * (block_idx + 1)) ** 0.5
 
-        assert isinstance(m.router, MoELinearRouter)
         nn.init.trunc_normal_(
-            m.router.weight, mean=0.0, std=std, a=-3 * std, b=3 * std, generator=generator
+            cast(MoELinearRouter, m.router).weight,
+            mean=0.0,
+            std=std,
+            a=-3 * std,
+            b=3 * std,
+            generator=generator,
         )
         nn.init.trunc_normal_(
             cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w1,
