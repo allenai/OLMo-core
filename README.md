@@ -41,27 +41,18 @@ Even though this library is under rapid development we are trying hard to adhere
 
 ## Official training scripts
 
-> ❗❗ NOTE: By default these scripts are configured with data and checkpoint paths that are only accessible to Ai2 employees, so external users will not be able to run them out-of-the-box.
-> The [example scripts](https://github.com/allenai/OLMo-core/tree/main/src/examples), on the other hand, can be used by anybody and are much easier to modify.
+Official training scripts for released models can be found in [`src/scripts/train/official/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/train/official).
+These scripts are meant to be launched with ``torchrun``. For example:
 
-Official training scripts for various model sizes can be found in [`src/scripts/train/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/train).
-To see the exact usage for each script, run the script without any arguments.
+```bash
+torchrun --nproc-per-node=8 ./src/scripts/train/official/OLMo2-0325-32B.py run01
+```
 
-Throughput numbers from these scripts with various different configuration settings are reported below, measured on a cluster with NVIDIA H100 GPUs.
+You can override most configuration options from the command-line. For example, to override the learning rate you could launch the script like this:
 
-| Model&nbsp;size | Model&nbsp;arch.&nbsp;&nbsp; | Context&nbsp;length | Precision | Throughput[^1] | Training&nbsp;&nbsp;&nbsp;script | Commandline&nbsp;overrides&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; |
-| :--------: | :--------: | :------------: | :-------: | -----------: | :----------- | :-------- |
-| **1B**  | OLMo-1124 | 4096 | BF16 | 55,000 TPS | `OLMo2-1B.py` | |
-| | | 4096 | BF16/FP8[^2] | 65,000 TPS | `OLMo2-1B.py` | `--train_module.float8_config.enabled=true` |
-| **7B**  | OLMo-1124 | 4096 | BF16 | 10,000 TPS | `OLMo2-7B.py` | |
-| | | 4096 | BF16/FP8 | 13,000 TPS | `OLMo2-7B.py` | `--train_module.float8_config.enabled=true` |
-| **8B**  | Llama | 4096 | BF16 | 9,500 TPS | `Llama3-8B.py` | |
-| | | 4096 | BF16/FP8 | 12,500 TPS | `Llama3-8B.py` | `--train_module.float8_config.enabled=true` |
-| **13B** | OLMo-1124 | 4096 | BF16 | 4,600 TPS | `OLMo2-13B.py` | |
-| | | 4096 | BF16/FP8 | 5,500 TPS | `OLMo2-13B.py` | `--train_module.float8_config.enabled=true` |
-
-[^1]: Throughput reported in tokens per second per device.
-[^2]: In this setup most matrix multiplications are computed in `float8`, everything else is in `bfloat16`.
+```bash
+torchrun --nproc-per-node=8 ./src/scripts/train/official/OLMo2-0325-32B.py run01 --train_module.optim.lr=6e-3
+```
 
 ## Development
 
