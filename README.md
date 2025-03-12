@@ -41,6 +41,9 @@ Even though this library is under rapid development we are trying hard to adhere
 
 ## Official training scripts
 
+> ❗❗ NOTE: By default these scripts point to data and checkpoint paths that are only accessible to Ai2 employees, so external users will not be able to run them out-of-the-box.
+> The [examples scripts](https://github.com/allenai/OLMo-core/tree/main/src/examples), on the other hand, can be used out of the box and are much easier to modify.
+
 Official training scripts for various model sizes can be found in [`src/scripts/train/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/train).
 To see the exact usage for each script, run the script without any arguments.
 

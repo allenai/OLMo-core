@@ -40,6 +40,22 @@ from olmo_core.train.train_module.transformer_pipeline import (
 )
 from olmo_core.utils import seed_all
 
+SEQUENCE_LENGTH = 1024
+
+DATA_PATHS = [
+    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00000-00099.npy",
+    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00100-00199.npy",
+    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00200-00299.npy",
+    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00300-00399.npy",
+    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00400-00499.npy",
+    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00500-00599.npy",
+    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00600-00699.npy",
+    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00700-00799.npy",
+    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00800-00899.npy",
+    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00900-00999.npy",
+    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.01000-01023.npy",
+]
+
 
 @dataclass
 class ExperimentConfig(Config):
@@ -58,23 +74,23 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
     )
 
-    dataset_config = NumpyDatasetConfig.glob(
-        "/net/nfs/allennlp/llm-data/c4/en/c4-train.*.npy",  # can be globs
+    dataset_config = NumpyDatasetConfig(
+        paths=DATA_PATHS,
         name=NumpyDatasetType.fsl,
-        sequence_length=1024,
+        sequence_length=SEQUENCE_LENGTH,
         max_target_sequence_length=8192,
         tokenizer=tokenizer_config,
         work_dir="/tmp/dataset-cache",
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=256 * 1024,
+        global_batch_size=256 * SEQUENCE_LENGTH,
         seed=0,
         num_workers=4,
     )
 
     train_module_config = TransformerPipelineTrainModuleConfig(
-        rank_microbatch_size=16 * 1024,
+        rank_microbatch_size=16 * SEQUENCE_LENGTH,
         max_sequence_length=dataset_config.effective_sequence_length,
         optim=AdamWConfig(
             lr=1e-3,
