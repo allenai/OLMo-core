@@ -1,20 +1,41 @@
 <div align="center">
+  <!-- <img src="https://github.com/allenai/OLMo/assets/8812459/774ac485-a535-4768-8f7c-db7be20f5cc3" width="300"/> -->
+  <img src="https://allenai.org/olmo/olmo-7b-animation.gif" alt="OLMo Logo" width="600" style="margin-left:'auto' margin-right:'auto' display:'block'"/>
+  <br>
+  <br>
   <h1>OLMo-core</h1>
-  <p>Building blocks for OLMo modeling and training</p>
+  <h4>Building blocks for OLMo modeling and training</h4>
 </div>
 <p align="center">
-  <a href="https://github.com/allenai/OLMo-core/tree/main/src/examples">Examples</a> ||
-  <a href="https://olmo-core.readthedocs.io/en/latest/">Docs</a> ||
-  <a href="https://pypi.org/project/ai2-olmo-core/">PyPI</a> ||
-  <a href="https://github.com/orgs/allenai/packages?repo_name=OLMo-core">Docker Images</a> ||
-  <a href="https://beaker.org/ws/ai2/OLMo-core/images">Beaker Images</a> ||
-  <a href="https://github.com/allenai/OLMo-core/blob/main/LICENSE">License</a> ||
-  <a href="https://github.com/allenai/OLMo-core/blob/main/CHANGELOG.md">Changelog</a>
+  <a href="https://github.com/allenai/OLMo/blob/main/LICENSE">
+    <img alt="GitHub License" src="https://img.shields.io/github/license/allenai/OLMo">
+  </a>
+  <a href="https://github.com/allenai/OLMo/releases">
+    <img alt="Docs" src="https://img.shields.io/badge/OLMocore-docs-red">
+  </a>
+  <a href="https://arxiv.org/pdf/2501.00656.pdf">
+    <img alt="Paper URL" src="https://img.shields.io/badge/arxiv-2402.00838-blue">
+  </a>
+  <a href="https://playground.allenai.org">
+    <img alt="Playground" src="https://img.shields.io/badge/Ai2-Playground-F0529C">
+  </a>
+  <a href="https://discord.gg/sZq3jTNVNG">
+    <img alt="Discord" src="https://img.shields.io/badge/Discord%20-%20blue?style=flat&logo=discord&label=Ai2&color=%235B65E9">
+  </a>
 </p>
 
 ## Installation
 
-First install [PyTorch](https://pytorch.org) according to the instructions specific to your operating system and hardware. Then you can install from PyPI with:
+First install [PyTorch](https://pytorch.org) according to the instructions specific to your operating system and hardware.
+
+For development, we recommend installing from source:
+
+```bash
+git clone https://github.com/allenai/OLMo-core.git
+cd OLMo-core
+pip install -e .[all]
+```
+Or you can install from PyPI with:
 
 ```bash
 pip install ai2-olmo-core
@@ -31,12 +52,6 @@ But there are several things to keep in mind if you intend to use these images:
 - They may not work on your own cluster if you have different hardware or driver/CUDA versions.
 
 If the published images do not work for your use-case for any of the above reasons, you could adapt our [Dockerfile](https://github.com/allenai/OLMo-core/blob/main/src/Dockerfile) to build your own images.
-
-## API stability
-
-Even though this library is under rapid development we are trying hard to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with every release except for features that are explicitly marked as beta features. Those features will be tagged like this in the [API docs](https://olmo-core.readthedocs.io/en/latest/):
-
-![image](https://github.com/user-attachments/assets/c666686d-3ae6-4c88-8381-befd698d3fd0)
 
 ## Official training scripts
 
@@ -59,21 +74,13 @@ Throughput numbers from these scripts with various different configuration setti
 [^1]: Throughput reported in tokens per second per device.
 [^2]: In this setup most matrix multiplications are computed in `float8`, everything else is in `bfloat16`.
 
-## Development
 
-After cloning OLMo-core and setting up a Python virtual environment, install the codebase from source with:
+## API stability
 
-```bash
-pip install -e .[all]
-```
+Even though this library is under rapid development we are trying hard to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with every release except for features that are explicitly marked as beta features. Those features will be tagged like this in the [API docs](https://olmo-core.readthedocs.io/en/latest/):
 
-The Python library source code is located in `src/olmo_core`. The corresponding tests are located in `src/test`. The library docs are located in `docs`. You can build the docs locally with `make docs`.
+![image](https://github.com/user-attachments/assets/c666686d-3ae6-4c88-8381-befd698d3fd0)
 
-Code checks:
-- We use `pytest` to run tests. You can run all tests with `pytest -v src/test`. You can also point `pytest` at a specific test file to run it individually.
-- We use `isort` and `black` for code formatting. Ideally you should integrate these into your editor, but you can also run them manually or configure them with a pre-commit hook. To validate that all files are formatted correctly, run `make style-check`.
-- We use `ruff` as our primary linter. You can run it with `make lint-check`.
-- We use `mypy` as our type checker. You can run it with `make type-check`.
 
 ## Citing
 
