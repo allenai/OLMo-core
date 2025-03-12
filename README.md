@@ -7,13 +7,16 @@
   <h4>Building blocks for OLMo modeling and training</h4>
 </div>
 <p align="center">
-  <a href="https://discord.gg/sZq3jTNVNG">
+  <a href="https://github.com/allenai/OLMo-core/tree/main/src/examples">
+    <img alt="Pypi" src="https://img.shields.io/badge/Train-Examples-F0529C">
+  </a>
+  <a href="https://github.com/allenai/OLMo-core/releases/tag/v1.9.0">
     <img alt="Pypi" src="https://img.shields.io/pypi/v/ai2-olmo-core.svg">
   </a>  
-  <a href="https://github.com/allenai/OLMo/blob/main/LICENSE">
+  <a href="https://github.com/allenai/OLMo-core/blob/main/LICENSE">
     <img alt="GitHub License" src="https://img.shields.io/github/license/allenai/OLMo">
   </a>
-  <a href="https://github.com/allenai/OLMo/releases">
+  <a href="https://olmo-core.readthedocs.io/en/latest/">
     <img alt="Docs" src="https://img.shields.io/badge/OLMocore-docs-red">
   </a>
   <a href="https://arxiv.org/pdf/2501.00656.pdf">
@@ -57,75 +60,37 @@ But there are several things to keep in mind if you intend to use these images:
 
 If the published images do not work for your use-case for any of the above reasons, you could adapt our [Dockerfile](https://github.com/allenai/OLMo-core/blob/main/src/Dockerfile) to build your own images.
 
-### Steps to reproduce
-
-To reproduce any of the training processes, for distributed training across multiple nodes:
-
-```bash
-python src/scripts/train/OLMo2-32B.py launch run_name --launch.num_nodes=N
-```
-To resume training from a checkpoint:
-```bash
-python src/scripts/train/OLMo2-32B.py launch continued_training --launch.num_nodes=N --trainer.load_path="path/to/checkpoint" --trainer.load_strategy=if_available
-```
-To train on a single GPU:
-```bash
-python src/scripts/train/OLMo2-13B.py train_single {training_name}
-```
-
-
-##### OLMo 7B and 13B models were trained using our previous training infrastructure. All related checkpoints, configs, and scripts for these models (training/fine-tuning) can be found in the [OLMo](https://github.com/allenai/OLMo) repository. Our new 32B model was trained using our updated training infrastructure. While you can also train 7B and 13B models on this new trainer, please note that the released checkpoints and configs for those models use a different format than the new 32B model.
-
 ## Official training scripts
 
-> ❗❗ NOTE: By default these scripts are configured with data and checkpoint paths that are only accessible to Ai2 employees, so external users will not be able to run them out-of-the-box.
-> The [example scripts](https://github.com/allenai/OLMo-core/tree/main/src/examples), on the other hand, can be used by anybody and are much easier to modify.
+Official training scripts for released models can be found in [`src/scripts/official/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/official).
+These scripts are meant to be launched with ``torchrun``. For example:
 
-Official training scripts for various model sizes can be found in [`src/scripts/train/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/train).
-To see the exact usage for each script, run the script without any arguments.
+```bash
+torchrun --nproc-per-node=8 ./src/scripts/official/OLMo2-0325-32B-train.py run01
+```
 
-Throughput numbers from these scripts with various different configuration settings are reported below, measured on a cluster with NVIDIA H100 GPUs.
+You can override most configuration options from the command-line. For example, to override the learning rate you could launch the script like this:
 
-| Model&nbsp;size | Model&nbsp;arch.&nbsp;&nbsp; | Context&nbsp;length | Precision | Throughput[^1] | Training&nbsp;&nbsp;&nbsp;script | Commandline&nbsp;overrides&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; |
-| :--------: | :--------: | :------------: | :-------: | -----------: | :----------- | :-------- |
-| **1B**  | OLMo-1124 | 4096 | BF16 | 55,000 TPS | `OLMo2-1B.py` | |
-| | | 4096 | BF16/FP8[^2] | 65,000 TPS | `OLMo2-1B.py` | `--train_module.float8_config.enabled=true` |
-| **7B**  | OLMo-1124 | 4096 | BF16 | 10,000 TPS | `OLMo2-7B.py` | |
-| | | 4096 | BF16/FP8 | 13,000 TPS | `OLMo2-7B.py` | `--train_module.float8_config.enabled=true` |
-| **8B**  | Llama | 4096 | BF16 | 9,500 TPS | `Llama3-8B.py` | |
-| | | 4096 | BF16/FP8 | 12,500 TPS | `Llama3-8B.py` | `--train_module.float8_config.enabled=true` |
-| **13B** | OLMo-1124 | 4096 | BF16 | 4,600 TPS | `OLMo2-13B.py` | |
-| | | 4096 | BF16/FP8 | 5,500 TPS | `OLMo2-13B.py` | `--train_module.float8_config.enabled=true` |
-| **32B** | OLMo-0325 | 4096 | BF16 | 1,500 TPS | `OLMo2-32B.py` | |
-| | | 4096 | BF16/FP8 | 1,800 TPS | `OLMo2-32B.py` | `--train_module.float8_config.enabled=true` |
-
-[^1]: Throughput reported in tokens per second per device.
-[^2]: In this setup most matrix multiplications are computed in `float8`, everything else is in `bfloat16`.
+```bash
+torchrun --nproc-per-node=8 ./src/scripts/train/OLMo2-0325-32B-train.py run01 --train_module.optim.lr=6e-3
+```
 
 You can find list of all the checkpoints of 32B in [`src/scripts/train/official-0325/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/train/official-0325).
 
+#### OLMo 7B and 13B models were trained using our previous training infrastructure. All related checkpoints, configs, and scripts for these models (training/fine-tuning) can be found in the [OLMo](https://github.com/allenai/OLMo) repository. Our new 32B model was trained using our updated training infrastructure. While you can also train 7B and 13B models on this new trainer, please note that the released checkpoints and configs for those models use a different format than the new 32B model.
+
 ## OLMo-2 Model Training
 
-Below is a comprehensive table showing the Stage 2 training details for all OLMo 2 model sizes (7B, 13B, and 32B).
+Below is a comprehensive table showing the Stage 2 training details for all OLMo 2 32B.
 
-| Model Size | Training | Checkpoint | Training Config | Monitoring |
-|------------|----------|------------|-----------------|------------|
-| **7B** | random seed 42, 50B tokens | [stage2-ingredient1-step11931-tokens50B](https://huggingface.co/allenai/OLMo-2-1124-7B/tree/stage2-ingredient1-step11931-tokens50B) | [OLMo2-7B-stage2-seed42.yaml](configs/official-1124/OLMo2-7B-stage2-seed42.yaml) | [wandb.ai/OLMo2-7B](https://wandb.ai/ai2-llm/OLMo-2-1124-7B/reports/) |
-|  | random seed 42069, 50B tokens | [stage2-ingredient2-step11931-tokens50B](https://huggingface.co/allenai/OLMo-2-1124-7B/tree/stage2-ingredient2-step11931-tokens50B) | [OLMo2-7B-stage2-seed42069.yaml](configs/official-1124/OLMo2-7B-stage2-seed42069.yaml) | [wandb.ai/OLMo2-7B](https://wandb.ai/ai2-llm/OLMo-2-1124-7B/reports/) |
-| | random seed 666, 50B tokens | [stage2-ingredient3-step11931-tokens50B](https://huggingface.co/allenai/OLMo-2-1124-7B/tree/stage2-ingredient3-step11931-tokens50B) | [OLMo2-7B-stage2-seed666.yaml](configs/official-1124/OLMo2-7B-stage2-seed666.yaml) | [wandb.ai/OLMo2-7B](https://wandb.ai/ai2-llm/OLMo-2-1124-7B/reports/) |
-| | **Final Souped Model** | [main](https://huggingface.co/allenai/OLMo-2-1124-7B/tree/main) | No config, weights averaged in Python | - |
-| **13B** | random seed 1110, 100B tokens | [stage2-ingredient1-step11931-tokens100B](https://huggingface.co/allenai/OLMo-2-1124-13B/tree/stage2-ingredient1-step11931-tokens100B) | [OLMo2-13B-stage2-seed1110-100B.yaml](configs/official-1124/OLMo2-13B-stage2-seed1110-100B.yaml) | [wandb.ai/OLMo2-13B](https://wandb.ai/ai2-llm/OLMo-2-1124-13B/reports/OLMo-2-13B-Nov-2024--VmlldzoxMDUzMjQxNg) |
-|  | random seed 2662, 100B tokens | [stage2-ingredient2-step11931-tokens100B](https://huggingface.co/allenai/OLMo-2-1124-13B/tree/stage2-ingredient2-step11931-tokens100B) | [OLMo2-13B-stage2-seed2662-100B.yaml](configs/official-1124/OLMo2-13B-stage2-seed2662-100B.yaml) | [wandb.ai/OLMo2-13B](https://wandb.ai/ai2-llm/OLMo-2-1124-13B/reports/OLMo-2-13B-Nov-2024--VmlldzoxMDUzMjQxNg) |
-|  | random seed 6209, 100B tokens | [stage2-ingredient3-step11921-tokens100B](https://huggingface.co/allenai/OLMo-2-1124-13B/tree/stage2-ingredient3-step11921-tokens100B) | [OLMo2-13B-stage2-seed6209-100B.yaml](configs/official-1124/OLMo2-13B-stage2-seed6209-100B.yaml) | [wandb.ai/OLMo2-13B](https://wandb.ai/ai2-llm/OLMo-2-1124-13B/reports/OLMo-2-13B-Nov-2024--VmlldzoxMDUzMjQxNg) |
-|  | random seed 2662, 300B tokens | [stage2-ingredient4-step11931-tokens300B](https://huggingface.co/allenai/OLMo-2-1124-13B/tree/stage2-ingredient4-step35773-tokens300B) | [OLMo2-13B-stage2-seed2662-300B.yaml](configs/official-1124/OLMo2-13B-stage2-seed2662-300B.yaml) | [wandb.ai/OLMo2-13B](https://wandb.ai/ai2-llm/OLMo-2-1124-13B/reports/OLMo-2-13B-Nov-2024--VmlldzoxMDUzMjQxNg) |
-|  | **Final Souped Model** | [main](https://huggingface.co/allenai/OLMo-2-1124-13B/tree/main) | No config, weights averaged in Python | - |
-| **32B** | random seed 1110, 100B tokens | [stage2-ingredient1-step11921-tokens100B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage2-ingredient1-step11921-tokens101B) |  | coming soon |
-|  | random seed 2662, 100B tokens | [stage2-ingredient2-step11921-tokens100B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage2-ingredient2-step11921-tokens101B) |  | coming soon |
-|  | random seed 6209, 100B tokens | [stage2-ingredient3-step11921-tokens100B](https://huggingface.co/allenai/OLMo-2-1124-13B/tree/stage2-ingredient3-step11931-tokens100B) |  | coming soon |
+| Model Size | Training | Checkpoint | Monitoring |
+|------------|----------|------------|------------|
+| **32B** | random seed 1110, 100B tokens | [stage2-ingredient1-step11921-tokens100B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage2-ingredient1-step11921-tokens101B) | coming soon |
+|  | random seed 2662, 100B tokens | [stage2-ingredient2-step11921-tokens100B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage2-ingredient2-step11921-tokens101B) | coming soon |
+|  | random seed 6209, 100B tokens | [stage2-ingredient3-step11921-tokens100B](https://huggingface.co/allenai/OLMo-2-1124-13B/tree/stage2-ingredient3-step11931-tokens100B) | coming soon |
 |  | **Final Souped Model** | [main](https://huggingface.co/allenai/OLMo-2-1124-13B/tree/main) | No config, weights averaged in Python | - |
 
-All training configs are set up to download the latest checkpoint after stage 1 and start training from there.
-
+Note: You can find all the configs and checkpoints for 7B and 13B in the [OLMo](https://github.com/allenai/OLMo) repository.
 ## Inference
 
 You can use our Hugging Face integration to run inference on the OLMo Transformers checkpoints:

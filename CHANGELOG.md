@@ -18,7 +18,6 @@ This major release introduces a few breaking changes. We've provided more inform
 - Added in-loop evals for Minerva, GSM, HumanEval, MBPP (`ai2-olmo-eval==0.7.0`)
 - Added `CosWithWarmupAndLinearDecay` learning rate scheduler
 - Added `WSD` learning rate scheduler
-- Added .csv files of 32B checkpoints
 ### Changed
 
 - The `Trainer` now takes a `TrainModule` instead of a model and optimizer, and several configuration options have been moved to `TransformerTrainModule`, including `rank_microbatch_size`, `fused_loss`, `compile_loss`, `z_loss_multiplier`, and `autocast_precision`.
