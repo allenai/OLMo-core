@@ -8,7 +8,7 @@
 </div>
 <p align="center">
   <a href="https://github.com/allenai/OLMo-core/tree/main/src/examples">
-    <img alt="Pypi" src="https://img.shields.io/badge/Train-Examples-994B00">
+    <img alt="Examples" src="https://img.shields.io/badge/Train-Examples-994B00">
   </a>
   <a href="https://github.com/allenai/OLMo-core/releases/tag/v1.9.0">
     <img alt="Pypi" src="https://img.shields.io/pypi/v/ai2-olmo-core.svg">
