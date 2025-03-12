@@ -128,15 +128,14 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         """
         raise NotImplementedError
 
-    def state_dict_to_save(self, *, optim: bool = True) -> Dict[str, Any]:
+    def state_dict_to_save(self) -> Dict[str, Any]:
         """
         Can be overridden if the state dict to save should be different from the state dict to load.
         By default just returns :func:`state_dict()`.
         """
-        del optim
         return self.state_dict()
 
-    def state_dict_to_load(self, *, metadata: Optional[Metadata] = None) -> Dict[str, Any]:
+    def state_dict_to_load(self, metadata: Metadata) -> Dict[str, Any]:
         """
         Can be overridden if the state dict to load should be different from the state dict to save.
         By default just returns :func:`state_dict()`.

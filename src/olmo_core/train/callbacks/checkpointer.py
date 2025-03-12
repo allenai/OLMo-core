@@ -18,7 +18,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.io import clear_directory, is_url
 from olmo_core.utils import wait_for
 
-from ..checkpoint import Checkpointer, CheckpointFormat
+from ..checkpoint import Checkpointer
 from .callback import Callback
 
 log = logging.getLogger(__name__)
@@ -91,8 +91,6 @@ class CheckpointerCallback(Callback):
 
     enabled: bool = True
 
-    _checkpoint_format: CheckpointFormat = CheckpointFormat.distributed
-
     # Bookkeeping
 
     # NOTE: can't use type annotation here, omegaconf doesn't like it
@@ -146,9 +144,9 @@ class CheckpointerCallback(Callback):
         save_async = save_async if save_async is not None else self.save_async
         self._await_last_checkpoint()
         if save_async:
-            path, self._future = self.trainer.save_checkpoint_async(self._checkpoint_format)
+            path, self._future = self.trainer.save_checkpoint_async()
         else:
-            path = self.trainer.save_checkpoint(self._checkpoint_format)
+            path = self.trainer.save_checkpoint()
         self._latest_checkpoint_step = self.step
         self._latest_checkpoint_path = str(path)
         return str(path)
@@ -257,16 +255,3 @@ class CheckpointerCallback(Callback):
             self._checkpoints.append(self._save_checkpoint(save_async=False))
 
         self._await_last_checkpoint()
-
-
-@dataclass
-class HuggingFaceCheckpointerCallback(CheckpointerCallback):
-    def __post_init__(self):
-        super().__post_init__()
-
-        self._checkpoint_format = CheckpointFormat.hf
-
-        if self.remove != CheckpointRemovalStrategy.never:
-            raise OLMoConfigurationError(
-                "Hugging Face checkpointing does not support removing old checkpoints"
-            )
