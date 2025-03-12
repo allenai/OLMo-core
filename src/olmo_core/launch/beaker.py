@@ -389,7 +389,7 @@ class BeakerLaunchConfig(Config):
         ]
 
         if torchrun:
-            if self.num_nodes > 1 and any(["augusta" in cluster for cluster in self.clusters]):
+            if self.num_nodes > 1 and any(["augusta" in cluster for cluster in self.clusters]) and self.num_nodes > 1:
                 entrypoint_script.append(
                     "BEAKER_REPLICA_RANK=$("
                     "python -m olmo_core.launch.reorder_ranks_in_gcp "

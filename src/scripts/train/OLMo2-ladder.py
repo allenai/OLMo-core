@@ -4,7 +4,7 @@ from typing import Any, ClassVar, Dict
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.common import get_beaker_username, get_work_dir
-from olmo_core.internal.model_ladder import main
+from olmo_core.internal.model_ladder import RunDuration, main
 from olmo_core.io import join_path
 from olmo_core.model_ladder import ModelLadder, ModelSize
 from olmo_core.nn.transformer import TransformerConfig
@@ -39,17 +39,22 @@ class BaselineModelLadder(ModelLadder):
         ModelSize.size_1B: dict(n_layers=16),  # need to scale down our actual 1B model
     }
 
-    def get_model_config(self, *, size: ModelSize) -> TransformerConfig:
+    def _get_model_config(self, *, size: ModelSize) -> TransformerConfig:
+        # if size in [ModelSize.size_7B, ModelSize.size_13B]:
+        #     data_parallel_type = DataParallelType.fsdp
+        # else:
+        #     data_parallel_type = DataParallelType.ddp
+        # data_parallel_type = DataParallelType.hsdp
         return getattr(TransformerConfig, f"olmo2_{size}")(
             vocab_size=self.tokenizer.padded_vocab_size(),
             init_seed=self.init_seed,
             **self.MODEL_OVERRIDES.get(size, {}),
         )
 
-    def get_optim_config(self, *, size: ModelSize) -> OptimConfig:
+    def get_optim_config(self) -> OptimConfig:
         # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838
         assert self.sequence_length in {2048, 4096}
-        lr = 0.0047 * (size.num_params / 108000000) ** (-1 / 3)
+        lr = 0.0047 * (self.model_size / 108000000) ** (-1 / 3)
         if self.sequence_length == 4096:
             lr /= 4
 
@@ -64,10 +69,10 @@ class BaselineModelLadder(ModelLadder):
         )
 
     def get_train_module_config(
-        self, *, size: ModelSize, gpu_type: str, dp_world_size: int
+        self, *, size: ModelSize, run_duration: RunDuration, gpu_type: str, dp_world_size: int
     ) -> TransformerTrainModuleConfig:
         config = super().get_train_module_config(
-            size=size, gpu_type=gpu_type, dp_world_size=dp_world_size
+            size=size, run_duration=run_duration, gpu_type=gpu_type, dp_world_size=dp_world_size
         )
         config.compile_model = True
         config.dp_config = TransformerDataParallelConfig(
