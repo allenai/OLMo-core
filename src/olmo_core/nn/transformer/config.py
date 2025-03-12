@@ -955,7 +955,7 @@ class TransformerConfig(Config):
         **kwargs,
     ) -> "TransformerConfig":
         ff_config = FeedForwardConfig(
-            hidden_size=3072 * 4, bias=False, dtype=Dtype.float32, name=FeedForwardType.starcoder
+            hidden_size=3072 * 4, bias=False, dtype=DType.float32, name=FeedForwardType.starcoder
         )
         return cls.llama_like(
             d_model=3072,

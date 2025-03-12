@@ -5,8 +5,16 @@ Train a large OLMoE model. Run this script without any arguments to see usage in
 import logging
 
 from olmo_core.config import DType
+from olmo_core.data import (
+    DataMix,
+    NumpyDatasetConfig,
+    NumpyDatasetType,
+    VSLCurriculumConfig,
+    VSLCurriculumType,
+)
 from olmo_core.distributed.parallel import DataParallelType, PipelineScheduleType
 from olmo_core.float8 import Float8Config
+from olmo_core.internal.common import get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
 from olmo_core.nn.transformer import TransformerConfig
@@ -34,7 +42,6 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
     return TransformerConfig.starcoder2_3b(
         vocab_size=common.tokenizer.padded_vocab_size(),
-        compile=True,
     )
 
 
@@ -95,20 +102,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         work_dir=get_work_dir(root_dir),
     )
 
-    lm_evaluator = LMEvaluatorCallbackConfig(
-        eval_dataset=NumpyDatasetConfig.from_data_mix(
-            DataMix.v3_small_ppl_validation,
-            name=NumpyDatasetType.padded_fsl,
-            mix_base_dir=root_dir,
-            sequence_length=dataset_config.effective_sequence_length,
-            tokenizer=common.tokenizer,
-            work_dir=get_work_dir(root_dir),
-        ),
-        eval_interval=1000,
-    )
-
     common.dataset = dataset_config
-    common.callbacks["lm_evaluator"] = lm_evaluator
 
     return (
         TrainerConfig(
