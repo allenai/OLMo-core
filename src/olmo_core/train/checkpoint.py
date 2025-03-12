@@ -122,7 +122,6 @@ class Checkpointer:
         """
         dir = normalize_path(dir)
 
-        # TODO: Deal with lacking metadata
         if self.checkpoint_save_format == CheckpointFormat.distributed:
             return self._save_distributed(dir, train_module, train_state)
         elif self.checkpoint_save_format == CheckpointFormat.hf:
@@ -185,9 +184,10 @@ class Checkpointer:
         if self.contains_checkpoint(dir):
             return self._load_distributed(dir, train_module, load_trainer_state=load_trainer_state)
         elif (
-            repo_exists(str(dir))
+            file_exists(f"{dir}/generation_config.json")
             or file_exists(f"{dir}/model.safetensors.index.json")
             or file_exists(f"{dir}/pytorch_model.bin")
+            or repo_exists(str(dir))
         ):
             return self._load_hf(dir, train_module)
         else:
