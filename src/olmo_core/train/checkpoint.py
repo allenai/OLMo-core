@@ -16,7 +16,6 @@ from huggingface_hub import repo_exists
 from torch.distributed.checkpoint.metadata import Metadata
 
 from olmo_core.aliases import PathOrStr
-from olmo_core.checkpointing.hf import load_hf_checkpoint, save_as_hf_checkpoint
 from olmo_core.config import Config, StrEnum
 from olmo_core.distributed.checkpoint import (
     async_save_state_dict,
@@ -41,6 +40,7 @@ from olmo_core.io import (
     normalize_path,
     upload,
 )
+from olmo_core.nn.hf import load_hf_model, save_hf_model
 from olmo_core.train.train_module import TrainModule
 from olmo_core.utils import wait_for
 from olmo_core.version import VERSION
@@ -318,7 +318,7 @@ class Checkpointer:
                 "Saving to Hugging Face format is currently only support for TransformerTrainModule"
             )
 
-        save_as_hf_checkpoint(
+        save_hf_model(
             dir,
             train_module.state_dict_to_save()["model"],
             train_module.model,
@@ -373,11 +373,8 @@ class Checkpointer:
                 "Loading from to Hugging Face format is currently only support for TransformerTrainModule"
             )
 
-        # TODO: Check this is needed
-        # state_dict = train_module.state_dict_to_load(metadata=None)
-        state_dict = train_module.state_dict()
-
-        load_hf_checkpoint(
+        state_dict = train_module.state_dict_to_load()
+        load_hf_model(
             dir,
             state_dict["model"],
             train_module.model.n_layers,
@@ -431,7 +428,7 @@ class Checkpointer:
         if metadata is None:
             metadata = get_checkpoint_metadata(train_module_dir)
 
-        state_dict = train_module.state_dict_to_load(metadata)
+        state_dict = train_module.state_dict_to_load(metadata=metadata)
         load_state_dict(
             train_module_dir,
             state_dict,
