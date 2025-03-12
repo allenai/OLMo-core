@@ -4,7 +4,7 @@ import torch
 from torch.optim.optimizer import Optimizer
 from typing_extensions import TypeAlias
 
-from olmo_core.utils import get_default_device
+from olmo_core.utils import get_default_device, move_to_device
 
 ParamsT: TypeAlias = Union[Iterable[torch.Tensor], Iterable[Dict[str, Any]]]
 
@@ -20,10 +20,9 @@ class SkipStepOptimizer(Optimizer):
         :data:`latest_grad_norm` to the current loss and grad norm, respectively, *before* calling
         :meth:`step()`.
 
-        The :class:`~olmo_core.train.Trainer` will automatically set the :data:`latest_loss` whenever
-        its optimizer is a subclass of :class:`SkipStepOptimizer`, and the
-        :class:`~olmo_core.train.callbacks.GradClipperCallback` will automatically set the
-        :data:`latest_grad_norm`.
+        The :class:`~olmo_core.train.train_module.TransformerTrainModule` will automatically set
+        the :data:`latest_loss` and :data:`latest_grad_norm` whenever its optimizer is a subclass of
+        :class:`SkipStepOptimizer`.
 
     .. tip::
         When implementing a :class:`SkipStepOptimizer` you should be careful to avoid host-device
@@ -83,6 +82,7 @@ class SkipStepOptimizer(Optimizer):
         while len(self._grad_norms) > self.rolling_interval_length + 1:
             self._grad_norms.pop(0)
 
+    @torch._dynamo.disable()
     def get_step_factor(self) -> torch.Tensor:
         """
         Returns a float tensor which will be `1.0` if the optimizer should proceed with the step
@@ -92,10 +92,12 @@ class SkipStepOptimizer(Optimizer):
         without a host-device sync.
         """
         if len(self._losses) < max(2, self.rolling_interval_length // 2):
-            return torch.tensor(1.0).to(device=self.device, non_blocking=True)
+            return move_to_device(torch.tensor(1.0), self.device)
 
         loss_std, loss_mean = torch.std_mean(torch.stack(self._losses[:-1]))
+        assert self.latest_loss is not None
         if self._grad_norms:
+            assert self.latest_grad_norm is not None
             grad_norm_std, grad_norm_mean = torch.std_mean(torch.stack(self._grad_norms[:-1]))
             step_factor = torch.logical_and(
                 (self.latest_loss - loss_mean) <= self.sigma_factor * loss_std,

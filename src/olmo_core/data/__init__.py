@@ -4,12 +4,11 @@ Dataset, data loaders, and config builders for use with the :class:`~olmo_core.t
 Overview
 --------
 
-Prepare your data by writing token IDs to numpy arrays on disk, using the
+For text-based data you should prepare your data by writing token IDs to numpy arrays on disk, using the
 `Dolma toolkit <https://allenai.github.io/dolma/>`_ for example.
-
-Configure and build your dataset using the :class:`~olmo_core.data.numpy_dataset.NumpyDatasetConfig`
+Then configure and build your dataset using the :class:`~olmo_core.data.numpy_dataset.NumpyDatasetConfig`
 builder, build your data loader with the :class:`~olmo_core.data.data_loader.NumpyDataLoaderConfig`
-builder, then pass it to :meth:`TrainerConfig.build() <olmo_core.train.TrainerConfig.build>`.
+builder, and pass it to :meth:`TrainerConfig.build() <olmo_core.train.TrainerConfig.build>`.
 """
 
 from .collator import DataCollator, PaddingDirection
@@ -19,9 +18,11 @@ from .data_loader import (
     NumpyDataLoaderConfig,
     NumpyFSLDataLoader,
     NumpyVSLDataLoader,
+    TextDataLoaderBase,
 )
 from .mixes import DataMix, DataMixBase
 from .numpy_dataset import (
+    InstanceFilterConfig,
     NumpyDatasetBase,
     NumpyDatasetConfig,
     NumpyFSLDataset,
@@ -50,6 +51,7 @@ __all__ = [
     "VSLGrowLinearCurriculum",
     "NumpyDatasetConfig",
     "NumpyDatasetType",
+    "InstanceFilterConfig",
     "VSLCurriculumType",
     "VSLCurriculumConfig",
     "NumpyDatasetDType",
@@ -60,6 +62,7 @@ __all__ = [
     "DataCollator",
     "PaddingDirection",
     "DataLoaderBase",
+    "TextDataLoaderBase",
     "NumpyDataLoaderBase",
     "NumpyFSLDataLoader",
     "NumpyVSLDataLoader",

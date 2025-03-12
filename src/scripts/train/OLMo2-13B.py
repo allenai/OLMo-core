@@ -6,35 +6,45 @@ import logging
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
-from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
-from olmo_core.optim import AdamWConfig, OptimGroupOverride
+from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
+from olmo_core.train.train_module import (
+    TransformerDataParallelConfig,
+    TransformerTrainModuleConfig,
+)
 
 log = logging.getLogger(__name__)
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    return TransformerConfig.olmo2_13B(
-        vocab_size=common.tokenizer.padded_vocab_size(),
-        compile=True,
+    return TransformerConfig.olmo2_13B(vocab_size=common.tokenizer.padded_vocab_size())
+
+
+def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
+    return TransformerTrainModuleConfig(
+        rank_microbatch_size=1 * 4096,
+        max_sequence_length=common.dataset.effective_sequence_length,
+        optim=AdamWConfig(
+            lr=3e-4,
+            weight_decay=0.1,
+            betas=(0.9, 0.95),
+            group_overrides=[
+                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+            ],
+            fused=True,
+        ),
+        compile_model=True,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
-    )
-
-
-def build_optim_config(common: CommonComponents) -> AdamWConfig:
-    del common
-    return AdamWConfig(
-        lr=3e-4,
-        weight_decay=0.1,
-        betas=(0.9, 0.95),
-        group_overrides=[
-            OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-        ],
-        fused=True,
+        float8_config=Float8Config(enabled=False),
+        z_loss_multiplier=1e-5,
+        max_grad_norm=1.0,
+        scheduler=CosWithWarmup(warmup_steps=2000),
     )
 
 
@@ -42,12 +52,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=common.save_folder,
-            rank_microbatch_size=1 * 4096,
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
-            z_loss_multiplier=1e-5,
-            compile_loss=True,
         )
         .with_callback(
             "checkpointer",
@@ -84,6 +91,6 @@ if __name__ == "__main__":
     main(
         global_batch_size=2048 * 4096,
         model_config_builder=build_model_config,
-        optim_config_builder=build_optim_config,
+        train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
     )

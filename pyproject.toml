@@ -14,7 +14,7 @@ requires-python = ">=3.9"
 license = { file = "LICENSE" }
 dependencies = [
     "numpy<2.0",
-    "torch>=2.5.1",
+    "torch>=2.6.0",
     "cached-path>=1.6.6",
     "requests",
     "packaging",
@@ -22,7 +22,7 @@ dependencies = [
     "omegaconf",
     "safetensors",
     "importlib_resources",
-    "ai2-olmo-eval==0.5.0",
+    "ai2-olmo-eval==0.7.0",
 ]
 
 [project.urls]
@@ -169,4 +169,6 @@ filterwarnings = [
     'ignore::DeprecationWarning:pkg_resources',
     'ignore::DeprecationWarning:google\.rpc',
     'ignore::FutureWarning:torch\.distributed\.checkpoint\.default_planner',
+    'ignore::UserWarning:torch\.distributed\.checkpoint\.state_dict_saver',
+    'ignore::UserWarning:torch\.distributed\.checkpoint\.state_dict_loader',
 ]

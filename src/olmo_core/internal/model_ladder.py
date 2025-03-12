@@ -11,13 +11,13 @@ from olmo_core.distributed.utils import get_local_rank
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.model_ladder import ModelLadder, ModelSize
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import OptimConfig
 from olmo_core.train import (
     TrainerConfig,
     prepare_training_environment,
     teardown_training_environment,
 )
 from olmo_core.train.callbacks import CometCallback, ConfigSaverCallback, WandBCallback
+from olmo_core.train.train_module import TransformerTrainModuleConfig
 from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
 
 from .common import build_launch_config, get_gpu_type, get_root_dir
@@ -30,15 +30,16 @@ class LadderRunConfig(Config):
     launch: BeakerLaunchConfig
     ladder: ModelLadder
     model: TransformerConfig
-    optim: OptimConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
+    train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
 
 
 class SubCmd(StrEnum):
     launch = "launch"
     train = "train"
+    train_single = "train_single"
     dry_run = "dry_run"
 
     def prepare_environment(self):
@@ -46,6 +47,8 @@ class SubCmd(StrEnum):
             prepare_cli_environment()
         elif self == SubCmd.train:
             prepare_training_environment()
+        elif self == SubCmd.train_single:
+            prepare_training_environment(backend=None)
         else:
             raise NotImplementedError(self)
 
@@ -57,27 +60,33 @@ class SubCmd(StrEnum):
             config.launch.launch(follow=True)
         elif self == SubCmd.dry_run:
             pass
-        elif self == SubCmd.train:
+        elif self in (SubCmd.train, SubCmd.train_single):
+            if self == SubCmd.train_single:
+                for parallelism_strategy in {"d", "t", "e", "c"}:
+                    setting_name = f"{parallelism_strategy}p_config"
+                    if getattr(config.train_module, setting_name) is not None:
+                        log.warning(
+                            "%s is set to %s, but you can't use data parallelism when running on a single node. Disabling.",
+                            setting_name,
+                            getattr(config.train_module, setting_name),
+                        )
+                        setattr(config.train_module, setting_name, None)
+                init_device = str(get_default_device())
+            else:
+                init_device = "meta"
+
             try:
                 # Set RNG states on all devices.
                 seed_all(config.ladder.init_seed)
 
-                device = get_default_device()
-
-                # Build mesh, if needed.
-                world_mesh = config.model.build_mesh(device=device)
-
                 # Build components.
-                model = config.model.build(
-                    init_device="meta",
-                    device=device,
-                    max_seq_len=config.dataset.sequence_length,
-                    mesh=world_mesh,
-                )
-                optim = config.optim.build(model)
+                model = config.model.build(init_device=init_device)
+                train_module = config.train_module.build(model)
                 dataset = config.dataset.build()
-                data_loader = config.data_loader.build(dataset, mesh=world_mesh)
-                trainer = config.trainer.build(model, optim, data_loader, mesh=world_mesh)
+                data_loader = config.data_loader.build(
+                    dataset, dp_process_group=train_module.dp_process_group
+                )
+                trainer = config.trainer.build(train_module, data_loader)
 
                 # Record the config to W&B/Comet and each checkpoint dir.
                 config_dict = config.as_config_dict()
@@ -115,18 +124,20 @@ def build_config(
     gpu_type = get_gpu_type(cluster)
 
     model = ladder.get_model_config(size=size)
-    optim = ladder.get_optim_config(size=size)
     dataset = ladder.get_dataset_config()
     data_loader = ladder.get_data_loader_config(size=size)
+    train_module = ladder.get_train_module_config(
+        size=size, gpu_type=gpu_type, dp_world_size=dp_world_size
+    )
     trainer = ladder.get_trainer_config(size=size, gpu_type=gpu_type, dp_world_size=dp_world_size)
 
     return LadderRunConfig(
         launch=launch,
         ladder=ladder,
         model=model,
-        optim=optim,
         dataset=dataset,
         data_loader=data_loader,
+        train_module=train_module,
         trainer=trainer,
     ).merge(overrides)
 
@@ -136,10 +147,11 @@ def main(ladder_builder: Callable[[str], ModelLadder]):
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]SIZE CLUSTER[/] [i][OVERRIDES...][/]
 
 [b]Subcommands[/]
-[b magenta]launch:[/]      Launch the script on Beaker with the [b magenta]train[/] subcommand.
-[b magenta]train:[/]       Run the trainer. You usually shouldn't invoke the script with this subcommand directly.
-             Instead use [b magenta]launch[/] or run it with torchrun.
-[b magenta]dry_run:[/]     Pretty print the config to run and exit.
+[b magenta]launch:[/]       Launch the script on Beaker with the [b magenta]train[/] subcommand.
+[b magenta]train:[/]        Run the trainer. You usually shouldn't invoke the script with this subcommand directly.
+              Instead use [b magenta]launch[/] or run it with torchrun.
+[b magenta]train_single:[/] Run the trainer on a single device (GPU, CPU, MPS). num_nodes is ignored.
+[b magenta]dry_run:[/]      Pretty print the config to run and exit.
 
 [b]Examples[/]
 $ [i]python {sys.argv[0]} {SubCmd.launch} 1B ai2/pluto-cirrascale --launch.num_nodes=2[/]

@@ -42,9 +42,10 @@ pip install ai2-olmo-core
 ```
 
 There are a number of optional dependencies that must be installed to use certain functionality as well, including:
-- [flash-attn](https://github.com/Dao-AILab/flash-attention) for flash attention and certain other fused operations.
+- [flash-attn](https://github.com/Dao-AILab/flash-attention) and [ring-flash-attn](https://github.com/zhuzilin/ring-flash-attention) for intra-document masking and context parallelism.
+- [Liger-Kernel](https://github.com/linkedin/Liger-Kernel) for a low-memory "fused-linear" loss implementation.
 - [torchao](https://github.com/pytorch/ao) for float8 training.
-- [megablocks](https://github.com/databricks/megablocks) for mixture-of-experts (MoE) models.
+- [grouped_gemm](https://github.com/tgale96/grouped_gemm) for dropless mixture-of-experts (MoE) models. You may need to compile from source until [PR #21](https://github.com/tgale96/grouped_gemm/pull/21) is released (post v0.1.6).
 
 The published [Docker images](https://github.com/orgs/allenai/packages?repo_name=OLMo-core) contain all core and optional dependencies, and are regularly tested on our in-house H100 clusters.
 But there are several things to keep in mind if you intend to use these images:
@@ -73,6 +74,9 @@ python src/scripts/train/OLMo2-13B.py train_single {training_name}
 ##### OLMo 7B and 13B models were trained using our previous training infrastructure. All related checkpoints, configs, and scripts for these models (training/fine-tuning) can be found in the [OLMo](https://github.com/allenai/OLMo) repository. Our new 32B model was trained using our updated training infrastructure. While you can also train 7B and 13B models on this new trainer, please note that the released checkpoints and configs for those models use a different format than the new 32B model.
 
 ## Official training scripts
+
+> ❗❗ NOTE: By default these scripts are configured with data and checkpoint paths that are only accessible to Ai2 employees, so external users will not be able to run them out-of-the-box.
+> The [example scripts](https://github.com/allenai/OLMo-core/tree/main/src/examples), on the other hand, can be used by anybody and are much easier to modify.
 
 Official training scripts for various model sizes can be found in [`src/scripts/train/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/train).
 To see the exact usage for each script, run the script without any arguments.

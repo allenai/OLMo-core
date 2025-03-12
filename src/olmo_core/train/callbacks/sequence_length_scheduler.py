@@ -8,6 +8,7 @@ from olmo_core.data.utils import melt_batch, truncate_batch
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import gc_cuda
 
+from ..train_module import TransformerTrainModule
 from .callback import Callback
 
 log = logging.getLogger(__name__)
@@ -58,6 +59,11 @@ class SequenceLengthSchedulerCallback(Callback):
                 "The sequence length scheduler callback requires a 'NumpyFSLDataLoader', "
                 f"got '{type(self.trainer.data_loader)}' instead"
             )
+        if not isinstance(self.trainer.train_module, TransformerTrainModule):
+            raise OLMoConfigurationError(
+                "The sequence length scheduler callback requires a 'TransformerTrainModule', "
+                f"got '{type(self.trainer.train_module)}' instead"
+            )
 
         dataset = self.trainer.data_loader.dataset
         assert isinstance(dataset, NumpyFSLDataset)
@@ -75,7 +81,7 @@ class SequenceLengthSchedulerCallback(Callback):
                 "train sequence length must be greater than 'min_sequence_length'"
             )
 
-        self._og_rank_microbatch_size = self.trainer.rank_microbatch_size
+        self._og_rank_microbatch_size = self.trainer.train_module.rank_microbatch_size
 
     def pre_step(self, batch: Dict[str, Any]):
         if not self.enabled:
@@ -87,6 +93,7 @@ class SequenceLengthSchedulerCallback(Callback):
         assert isinstance(self.trainer.data_loader, NumpyFSLDataLoader)
         dataset = self.trainer.data_loader.dataset
         assert isinstance(dataset, NumpyFSLDataset)
+        assert isinstance(self.trainer.train_module, TransformerTrainModule)
 
         new_seq_len: int
         if self.truncate:
@@ -123,7 +130,7 @@ class SequenceLengthSchedulerCallback(Callback):
             new_rank_microbatch_size = self._og_rank_microbatch_size * (
                 dataset.sequence_length // new_seq_len
             )
-            self.trainer.rank_microbatch_size = new_rank_microbatch_size
+            self.trainer.train_module.rank_microbatch_size = new_rank_microbatch_size
 
         if new_seq_len != self._last_seq_len:
             log.info(f"Changing sequence length to {new_seq_len} per warm-up schedule")
@@ -135,8 +142,9 @@ class SequenceLengthSchedulerCallback(Callback):
         if not self.enabled or self.step > self.warmup_steps + 1:
             return
 
+        assert isinstance(self.trainer.train_module, TransformerTrainModule)
         assert self._og_rank_microbatch_size is not None
-        self.trainer.rank_microbatch_size = self._og_rank_microbatch_size
+        self.trainer.train_module.rank_microbatch_size = self._og_rank_microbatch_size
 
 
 def _get_split_sequence_length(

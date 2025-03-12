@@ -1,26 +1,6 @@
 """
 Distributed, deterministic, stateful data loaders used by the :class:`~olmo_core.train.Trainer`.
 
-Overview
---------
-
-Construct a data loader from a :class:`~olmo_core.data.numpy_dataset.NumpyDatasetBase` instance
-using :meth:`NumpyDataLoaderBase.wrap_numpy_dataset()`::
-
-    data_loader = NumpyDataLoaderBase.wrap_numpy_dataset(dataset, ...)
-
-Then load batches for an epoch like this::
-
-    # Prepare for the epoch.
-    data_loader.reshuffle(epoch=1)
-
-    for batch in data_loader:
-        # process batch
-        pass
-
-    # Reset internal bookkeeping.
-    data_loader.reset()
-
 """
 
 import logging
@@ -54,6 +34,7 @@ from .utils import get_rng, iter_batched, load_array_slice, memmap_to_write
 
 __all__ = [
     "DataLoaderBase",
+    "TextDataLoaderBase",
     "NumpyDataLoaderBase",
     "NumpyFSLDataLoader",
     "NumpyVSLDataLoader",
@@ -73,10 +54,21 @@ class DataLoaderBase(ABC):
         (i.e. before calling :meth:`__iter__`) and you must call :meth:`reset()` *after* each
         epoch (i.e. after the iterator returned from :meth:`__iter__` has been exhausted).
         Failure to do so will result in incorrect data order.
+        For example::
 
-    :param collator: The data collator to use to create batches from instances.
+            # Prepare for the epoch.
+            data_loader.reshuffle(epoch=1)
+
+            for batch in data_loader:
+                # process batch
+                pass
+
+            # Reset internal bookkeeping.
+            data_loader.reset()
+
     :param work_dir: The working directory. Should be shared among local ranks.
-    :param global_batch_size: The global batch size *in tokens*.
+    :param global_batch_size: The global batch size. The units for this depend on the data loader
+        implementation.
     :param dp_world_size: The data parallel world size.
     :param dp_rank: The local data parallel rank.
     :param fs_local_rank: The filesystem-local rank.
@@ -85,14 +77,12 @@ class DataLoaderBase(ABC):
     def __init__(
         self,
         *,
-        collator: DataCollator,
         work_dir: PathOrStr,
         global_batch_size: int,
         dp_world_size: int = 1,
         dp_rank: int = 0,
         fs_local_rank: int = 0,
     ):
-        self.collator = collator
         self.work_dir = work_dir
         self.global_batch_size = global_batch_size
         assert dp_rank < dp_world_size
@@ -104,11 +94,6 @@ class DataLoaderBase(ABC):
         self.batches_processed = 0
         """
         The total number of batches processed so far in the current epoch.
-        """
-
-        self.tokens_processed = 0
-        """
-        The total number of tokens processed globally so far in the current epoch.
         """
 
         self._epoch: Optional[int] = None
@@ -144,26 +129,29 @@ class DataLoaderBase(ABC):
         if self.total_batches is not None:
             return self.total_batches
         else:
-            raise TypeError("data loader length (number of batches) is unknown")
+            raise TypeError(
+                f"total length (number of batches) is unknown for {self.__class__.__name__}"
+            )
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         """
         Iterate over the local rank batches.
         """
         for batch in self._iter_batches():
-            if batch["input_ids"].numel() != self.rank_batch_size:
-                raise RuntimeError(
-                    f"Expected batch size of {self.rank_batch_size:,d} tokens on rank {self.dp_rank}, "
-                    f"got input IDs with shape {tuple(batch['input_ids'].shape)} = {batch['input_ids'].numel():,d} tokens"
-                )
             self.batches_processed += 1
-            self.tokens_processed += self.global_batch_size
             yield batch
+
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        """
+        Get a single batch if possible, otherwise :class:`TypeError` is raised.
+        """
+        del index
+        raise TypeError(f"__getitem__ is not implemented for {self.__class__.__name__}")
 
     @property
     def rank_batch_size(self) -> int:
         """
-        The batch size, per rank, in tokens.
+        The batch size per rank.
         """
         return self.global_batch_size // self.dp_world_size
 
@@ -201,7 +189,7 @@ class DataLoaderBase(ABC):
             batch should be generated from this method.
 
         :returns: All batches in the epoch, where each batch just contains the local rank's portion
-            of the batch, which should have exactly :data:`rank_batch_size` tokens.
+            of the batch, which should have size exactly :data:`rank_batch_size`.
         """
         raise NotImplementedError
 
@@ -210,7 +198,6 @@ class DataLoaderBase(ABC):
         Reset epoch bookkeeping. Should be called at the end of an epoch.
         """
         self.batches_processed = 0
-        self.tokens_processed = 0
 
     @abstractmethod
     def get_mock_batch(self) -> Dict[str, Any]:
@@ -220,8 +207,73 @@ class DataLoaderBase(ABC):
         """
         raise NotImplementedError
 
+    def global_num_tokens_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
+        """
+        For text-based data loaders this should return the total (global) number of tokens
+        in the batch. This is used by the trainer for bookkeeping.
+        """
+        del batch
+        return None
 
-class NumpyDataLoaderBase(DataLoaderBase):
+
+class TextDataLoaderBase(DataLoaderBase):
+    """
+    An abstract base class for text-based data loaders.
+
+    :param collator: The data collator to use to create batches from instances.
+    :param work_dir: The working directory. Should be shared among local ranks.
+    :param global_batch_size: The global batch size *in tokens*.
+    :param dp_world_size: The data parallel world size.
+    :param dp_rank: The local data parallel rank.
+    :param fs_local_rank: The filesystem-local rank.
+    """
+
+    def __init__(
+        self,
+        *,
+        collator: DataCollator,
+        work_dir: PathOrStr,
+        global_batch_size: int,
+        dp_world_size: int = 1,
+        dp_rank: int = 0,
+        fs_local_rank: int = 0,
+    ):
+        super().__init__(
+            work_dir=work_dir,
+            global_batch_size=global_batch_size,
+            dp_world_size=dp_world_size,
+            dp_rank=dp_rank,
+            fs_local_rank=fs_local_rank,
+        )
+        self.collator = collator
+        """
+        The data collator.
+        """
+        self.tokens_processed: int = 0
+        """
+        The total number of tokens processed so far in the current epoch.
+        """
+
+    def __iter__(self) -> Iterator[Dict[str, Any]]:
+        for batch in super().__iter__():
+            if batch["input_ids"].numel() != self.rank_batch_size:
+                raise RuntimeError(
+                    f"Expected batch size of {self.rank_batch_size:,d} tokens on rank {self.dp_rank}, "
+                    f"got input IDs with shape {tuple(batch['input_ids'].shape)} = {batch['input_ids'].numel():,d} tokens"
+                )
+            self.tokens_processed += self.global_batch_size
+            yield batch
+
+    def reset(self):
+        super().reset()
+        self.tokens_processed = 0
+
+    def global_num_tokens_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
+        del batch
+        return self.global_batch_size
+
+
+class NumpyDataLoaderBase(TextDataLoaderBase):
     """
     A distributed, deterministic, stateful data loader base class for use with
     :class:`~olmo_core.data.numpy_dataset.NumpyDatasetBase` dataset classes.
@@ -445,18 +497,44 @@ class NumpyDataLoaderBase(DataLoaderBase):
             generator=rng,
             device=device,
         )
-        return {"input_ids": input_ids}
+        out: Dict[str, Any] = {"input_ids": input_ids}
+        if isinstance(self.dataset, NumpyFSLDataset) and self.dataset._generate_doc_lengths:
+            splits = torch.randint(
+                2,
+                self.dataset.max_sequence_length - 2,
+                (num_instances,),
+                generator=rng,
+                device=device,
+            )
+            out["doc_lens"] = torch.stack(
+                [splits, self.dataset.max_sequence_length - splits], dim=1
+            )
+            out["max_doc_lens"] = torch.max(out["doc_lens"], dim=-1).values.tolist()
+        return out
 
     def _iter_batches(self) -> Iterable[Dict[str, Any]]:
-        return torch.utils.data.DataLoader(
-            _IterableDatasetWrapper(self),
-            batch_size=None,
-            num_workers=self.num_workers,
-            pin_memory=self.target_device_type == "cuda" and self.num_workers > 0,
-            prefetch_factor=self.prefetch_factor,
-            persistent_workers=False,
-            timeout=0,
-        )
+        current_global_batch_size = self.global_batch_size
+
+        def _build_batch_iterator():
+            return iter(
+                torch.utils.data.DataLoader(
+                    _IterableDatasetWrapper(self),
+                    batch_size=None,
+                    num_workers=self.num_workers,
+                    pin_memory=self.target_device_type == "cuda" and self.num_workers > 0,
+                    prefetch_factor=self.prefetch_factor,
+                    persistent_workers=False,
+                    timeout=0,
+                ),
+            )
+
+        batch_iterator = _build_batch_iterator()
+        while (batch := next(batch_iterator, None)) is not None:
+            yield batch
+
+            # If batch size has changed, re-initialize the workers.
+            if current_global_batch_size != self.global_batch_size:
+                batch_iterator = _build_batch_iterator()
 
     def _get_dataset_item(self, idx: int) -> Dict[str, Any]:
         item = self.dataset[idx]
@@ -548,8 +626,30 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
         indices = indices[: self.total_size]
         return indices
 
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        # NOTE: Make sure the logic here matches that in '_get_local_instance_indices()'
+
+        # NOTE: 'indices' are global instance indices.
+        indices = self.get_global_indices()
+
+        # Slice up by batch.
+        assert isinstance(self.dataset, NumpyFSLDataset)
+        instances_per_batch = self.global_batch_size // self.dataset.sequence_length
+        # shape: (global num batches, global num instances per batch)
+        indices = indices.reshape(-1, instances_per_batch)
+
+        # Slice batches into micro batches for the local DP rank.
+        if self.dp_world_size > 1:
+            indices = indices[:, self.dp_rank :: self.dp_world_size]
+
+        # Get instances for the batch.
+        instances = [self._get_dataset_item(int(idx)) for idx in indices[index]]
+
+        return self.collator(instances)
+
     def _get_local_instance_indices(self, indices: np.ndarray) -> Iterable[int]:
         # NOTE: 'indices' are global instance indices.
+        # Make sure the logic here matches that in '__getitem__()'
 
         # Slice up by batch.
         assert isinstance(self.dataset, NumpyFSLDataset)
@@ -740,6 +840,20 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
         else:
             return np.arange(self.total_batches, dtype=np.uint32)
 
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        # NOTE: Make sure the logic here matches that in '_get_local_instance_indices()'
+
+        # NOTE: 'indices' are global *batch* indices.
+        indices = self.get_global_indices()
+
+        # Map to instance indices.
+        instance_indices = self._batch_index_to_local_instance_indices(indices[index])
+
+        # Get instances for the batch.
+        instances = [self._get_dataset_item(int(idx)) for idx in instance_indices]
+
+        return self.collator(instances)
+
     def _get_local_instance_indices(self, indices: np.ndarray) -> Iterable[int]:
         # NOTE: 'indices' are *batch* indices at this point.
 
@@ -927,8 +1041,7 @@ class NumpyDataLoaderConfig(Config):
 
         :param dataset: The dataset.
         :param mesh: An optional ``DeviceMesh`` that defines the data parallel dimensions. Ideally
-            you should create this mesh using :func:`~olmo_core.distributed.parallel.build_device_mesh()`
-            or equivalently :meth:`olmo_core.nn.transformer.TransformerConfig.build_mesh()`.
+            you should create this mesh using :func:`~olmo_core.distributed.parallel.build_world_mesh()`.
             Alternatively you can pass the ``dp_process_group`` instead.
         :param dp_process_group: The data parallel process group.
         """

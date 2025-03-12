@@ -27,11 +27,10 @@ from .train.callbacks import (
     DownstreamEvaluatorCallbackConfig,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
-    GradClipperCallback,
     LMEvaluatorCallbackConfig,
-    SchedulerCallback,
     WandBCallback,
 )
+from .train.train_module import TransformerTrainModuleConfig
 
 __all__ = ["ModelSize", "ModelLadder"]
 
@@ -244,22 +243,16 @@ class ModelLadder(Config, metaclass=ABCMeta):
         """
         return Duration.tokens(2 * 20 * size.num_params)
 
-    def get_trainer_config(
-        self,
-        *,
-        size: ModelSize,
-        gpu_type: str,
-        dp_world_size: int,
-    ) -> TrainerConfig:
+    def get_train_module_config(
+        self, *, size: ModelSize, gpu_type: str, dp_world_size: int
+    ) -> TransformerTrainModuleConfig:
         """
-        Build the trainer config.
+        Build the train module config.
 
         :param size: The target model size.
         :param gpu_type: The type of GPU as given by ``torch.cuda.get_device_name()``.
         :param dp_world_size: The data parallel world size.
         """
-        from olmo_eval import list_tasks
-
         if dp_world_size > self.max_dp_world_size:
             raise OLMoConfigurationError(
                 f"max_dp_world_size ({self.max_dp_world_size}) must be at least as big as current dp "
@@ -307,76 +300,93 @@ class ModelLadder(Config, metaclass=ABCMeta):
                 "with data parallel world size"
             )
             rank_mbz = new_rank_mbz
-
-        return (
-            TrainerConfig(
-                save_folder=self.get_save_folder(size),
-                rank_microbatch_size=rank_mbz,
-                metrics_collect_interval=10,
-                cancel_check_interval=1,
-                compile_loss=True,
-                max_duration=self.get_duration(size),
-            )
-            .with_callback(
-                "lr_scheduler", SchedulerCallback(scheduler=CosWithWarmup(warmup_steps=2000))
-            )
-            .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
-            .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0))
-            .with_callback("config_saver", ConfigSaverCallback())
-            .with_callback("garbage_collector", GarbageCollectorCallback())
-            .with_callback(
-                "lm_evaluator",
-                LMEvaluatorCallbackConfig(
-                    eval_dataset=NumpyDatasetConfig.from_data_mix(
-                        DataMix.v3_small_ppl_validation,
-                        name=NumpyDatasetType.padded_fsl,
-                        mix_base_dir=self.mix_base_dir,
-                        sequence_length=self.sequence_length,
-                        tokenizer=self.tokenizer,
-                        work_dir=self.work_dir,
-                    ),
-                    eval_interval=500,
-                ),
-            )
-            .with_callback(
-                "downstream_evaluator",
-                DownstreamEvaluatorCallbackConfig(
-                    tasks=[
-                        task for task in list_tasks() if "_mc" not in task and "_var" not in task
-                    ],
-                    tokenizer=self.tokenizer,
-                    eval_interval=500,
-                ),
-            )
-            .with_callback(
-                "checkpointer",
-                CheckpointerCallback(
-                    save_interval=100_000,  # large enough value that we won't save until the end
-                    ephemeral_save_interval=250,
-                    save_async=True,
-                ),
-            )
-            .with_callback(
-                "comet",
-                CometCallback(
-                    name=f"{self.name}-{size}",
-                    workspace="ai2",
-                    project=self.project,
-                    enabled=True,
-                    cancel_check_interval=5,
-                ),
-            )
-            .with_callback(
-                "wandb",
-                WandBCallback(
-                    name=f"{self.name}-{size}",
-                    entity="ai2",
-                    project=self.project,
-                    enabled=False,
-                    cancel_check_interval=5,
-                ),
-            )
+        return TransformerTrainModuleConfig(
+            rank_microbatch_size=rank_mbz,
+            max_sequence_length=self.sequence_length,
+            optim=self.get_optim_config(size=size),
+            max_grad_norm=1.0,
+            scheduler=CosWithWarmup(warmup_steps=2000),
         )
+
+    def get_trainer_config(
+        self,
+        *,
+        size: ModelSize,
+        gpu_type: str,
+        dp_world_size: int,
+    ) -> TrainerConfig:
+        """
+        Build the trainer config.
+
+        :param size: The target model size.
+        :param gpu_type: The type of GPU as given by ``torch.cuda.get_device_name()``.
+        :param dp_world_size: The data parallel world size.
+        """
+        del dp_world_size
+
+        from olmo_eval import list_tasks
+
+        config = TrainerConfig(
+            save_folder=self.get_save_folder(size),
+            metrics_collect_interval=10,
+            cancel_check_interval=10,
+            max_duration=self.get_duration(size),
+        )
+        if gpu_type not in ("cpu", "mps"):
+            config = config.with_callback("gpu_monitor", GPUMemoryMonitorCallback())
+        config = config.with_callback("config_saver", ConfigSaverCallback())
+        config = config.with_callback("garbage_collector", GarbageCollectorCallback())
+        config = config.with_callback(
+            "lm_evaluator",
+            LMEvaluatorCallbackConfig(
+                eval_dataset=NumpyDatasetConfig.from_data_mix(
+                    DataMix.v3_small_ppl_validation,
+                    name=NumpyDatasetType.padded_fsl,
+                    mix_base_dir=self.mix_base_dir,
+                    sequence_length=self.sequence_length,
+                    tokenizer=self.tokenizer,
+                    work_dir=self.work_dir,
+                ),
+                eval_interval=500,
+            ),
+        )
+        config = config.with_callback(
+            "downstream_evaluator",
+            DownstreamEvaluatorCallbackConfig(
+                tasks=[task for task in list_tasks() if "_mc" not in task and "_var" not in task],
+                tokenizer=self.tokenizer,
+                eval_interval=500,
+            ),
+        )
+        config = config.with_callback(
+            "checkpointer",
+            CheckpointerCallback(
+                save_interval=100_000,  # large enough value that we won't save until the end
+                ephemeral_save_interval=250,
+                save_async=True,
+            ),
+        )
+        config = config.with_callback(
+            "comet",
+            CometCallback(
+                name=f"{self.name}-{size}",
+                workspace="ai2",
+                project=self.project,
+                enabled=True,
+                cancel_check_interval=5,
+            ),
+        )
+        config = config.with_callback(
+            "wandb",
+            WandBCallback(
+                name=f"{self.name}-{size}",
+                entity="ai2",
+                project=self.project,
+                enabled=False,
+                cancel_check_interval=5,
+            ),
+        )
+        return config
 
     def validate(self):
         """

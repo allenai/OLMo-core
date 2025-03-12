@@ -9,10 +9,9 @@ from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
-from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.distributed.utils import get_world_size
+from olmo_core.distributed.utils import get_full_tensor, get_world_size
 from olmo_core.nn.layer_norm import LayerNorm
-from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.utils import get_default_device
 
 from ...distributed.utils import BACKENDS, requires_multi_gpu, run_distributed_test
@@ -31,7 +30,8 @@ log = logging.getLogger(__name__)
 def test_small_llama2_builder_config(init_device, device):
     config = TransformerConfig.llama2_271M(vocab_size=50257)
     log.info(config)
-    model = config.build(init_device=init_device, device=torch.device(device))
+    model = config.build(init_device=init_device)
+    model.init_weights(device=torch.device(device))
 
     # Make sure num params estimate is correct.
     num_actual_params = 0
@@ -49,8 +49,8 @@ def test_small_llama2_builder_config(init_device, device):
             assert (module.weight == 1).all()
 
     # Make sure block_idx is set correctly.
-    assert model.blocks[0].block_idx == 0
-    assert model.blocks[-1].block_idx == len(model.blocks) - 1
+    assert model.blocks["0"].block_idx == 0
+    assert model.blocks[str(len(model.blocks) - 1)].block_idx == len(model.blocks) - 1
 
 
 def check_ngpt_matrices(model: nn.Module, d_model: int):
@@ -83,7 +83,8 @@ def check_ngpt_matrices(model: nn.Module, d_model: int):
 )
 def test_small_ngpt_builder_config(init_device, device):
     config = TransformerConfig.ngpt_271M(vocab_size=50257)
-    model = config.build(init_device=init_device, device=torch.device(device))
+    model = config.build(init_device=init_device)
+    model.init_weights(device=torch.device(device))
 
     # Make sure num params estimate is correct.
     num_actual_params = 0
@@ -93,20 +94,20 @@ def test_small_ngpt_builder_config(init_device, device):
     assert model.num_params == num_actual_params
 
     # Make sure block_idx is set correctly.
-    assert model.blocks[0].block_idx == 0
-    assert model.blocks[-1].block_idx == len(model.blocks) - 1
+    assert model.blocks["0"].block_idx == 0
+    assert model.blocks[str(len(model.blocks) - 1)].block_idx == len(model.blocks) - 1
 
     # Make sure all weights are normalized in the embedding dimension.
     check_ngpt_matrices(model, config.d_model)
 
 
 def run_ngpt_with_fsdp2():
-    config = TransformerConfig.ngpt_271M(
-        vocab_size=50257,
-        use_flash=False,
-        dp_config=TransformerDataParallelConfig(name=DataParallelType.fsdp),
+    config = TransformerConfig.ngpt_271M(vocab_size=50257)
+    model = config.build(
+        init_device="meta",
     )
-    model = config.build(init_device="meta", max_seq_len=1024)
+    model.apply_fsdp()
+    model.init_weights(max_seq_len=1024, device=get_default_device())
     optim = torch.optim.Adam(model.parameters())
 
     # Take an optimizer step.
@@ -114,7 +115,7 @@ def run_ngpt_with_fsdp2():
     optim.step()
 
     # Re-normalize weights.
-    model.normalize_matrices()
+    model.normalize_matrices()  # type: ignore
 
     # Check that the re-normalization was successful.
     check_ngpt_matrices(model, config.d_model)
@@ -162,7 +163,9 @@ def run_tensor_parallel_transformer(checkpoint_dir, outputs_path, architecture: 
         mesh_dim_names=("tp",),
     )
 
-    model = config.build(device=device, max_seq_len=512, tp_mesh=mesh["tp"])
+    model = config.build()
+    model.apply_tp(mesh["tp"])
+    model.init_weights(device=device, max_seq_len=512)
     load_model_and_optim_state(checkpoint_dir, model)
 
     logits = model(input_ids=input_ids)
@@ -171,7 +174,7 @@ def run_tensor_parallel_transformer(checkpoint_dir, outputs_path, architecture: 
     loss.backward()
 
     og_logits = torch.load(outputs_path, map_location=device)
-    torch.testing.assert_close(og_logits, logits)
+    torch.testing.assert_close(og_logits, get_full_tensor(logits))
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
@@ -179,7 +182,8 @@ def run_tensor_parallel_transformer(checkpoint_dir, outputs_path, architecture: 
 def test_tensor_parallel_transformer(backend: str, architecture: str, tmp_path):
     device = torch.device("cuda") if "nccl" in backend else torch.device("cpu")
     config = get_transformer_config(architecture)
-    model = config.build(device=device, max_seq_len=512)
+    model = config.build()
+    model.init_weights(device=device, max_seq_len=512)
     input_ids = get_transformer_inputs().to(device)
     logits = model(input_ids=input_ids)
 
