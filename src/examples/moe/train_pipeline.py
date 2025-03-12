@@ -6,6 +6,7 @@ Launch this with torchrun:
     torchrun --nproc-per-node=4 src/examples/moe/train_pipeline.py run_name [OVERRIDES...]
 """
 
+import os
 import sys
 from dataclasses import dataclass
 from typing import List, cast
@@ -47,18 +48,21 @@ from olmo_core.utils import seed_all
 
 SEQUENCE_LENGTH = 1024
 
+# This will read stream data from the public endpoints by default, but that might be a lot slower
+# than reading data locally.
+DATA_ROOT = os.environ.get("OLMO_DATA_ROOT", "http://olmo-data.org/examples/c4-en/gpt2").rstrip("/")
 DATA_PATHS = [
-    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00000-00099.npy",
-    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00100-00199.npy",
-    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00200-00299.npy",
-    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00300-00399.npy",
-    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00400-00499.npy",
-    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00500-00599.npy",
-    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00600-00699.npy",
-    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00700-00799.npy",
-    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00800-00899.npy",
-    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00900-00999.npy",
-    "http://olmo-data.org/examples/c4-en/gpt2/c4-train.01000-01023.npy",
+    f"{DATA_ROOT}/c4-train.00000-00099.npy",
+    f"{DATA_ROOT}/c4-train.00100-00199.npy",
+    f"{DATA_ROOT}/c4-train.00200-00299.npy",
+    f"{DATA_ROOT}/c4-train.00300-00399.npy",
+    f"{DATA_ROOT}/c4-train.00400-00499.npy",
+    f"{DATA_ROOT}/c4-train.00500-00599.npy",
+    f"{DATA_ROOT}/c4-train.00600-00699.npy",
+    f"{DATA_ROOT}/c4-train.00700-00799.npy",
+    f"{DATA_ROOT}/c4-train.00800-00899.npy",
+    f"{DATA_ROOT}/c4-train.00900-00999.npy",
+    f"{DATA_ROOT}/c4-train.01000-01023.npy",
 ]
 
 
