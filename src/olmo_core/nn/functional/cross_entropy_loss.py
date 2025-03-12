@@ -6,7 +6,7 @@ import torch.nn.functional as F
 __all__ = ["cross_entropy_loss", "fused_cross_entropy_loss", "fused_linear_cross_entropy_loss"]
 
 
-def cross_entropy_loss(
+def new_cross_entropy_loss(
     logits: torch.Tensor,
     labels: torch.Tensor,
     *,
@@ -47,6 +47,26 @@ def cross_entropy_loss(
 
     z_loss = z_loss_multiplier * z_squared
 
+    return loss, z_loss
+
+
+def cross_entropy_loss(
+    logits,
+    labels,
+    ignore_index: int = -100,
+    reduction: str = "mean",
+    compute_z_loss: bool = False,
+    z_loss_multiplier: float = 1e-4,
+):
+    loss = F.cross_entropy(logits, labels, ignore_index=ignore_index, reduction=reduction)
+    if not compute_z_loss:
+        return loss, None
+    z_squared = logits.logsumexp(-1).pow(2)
+    if reduction == "mean":
+        z_squared = (z_squared * (labels != ignore_index)).mean()
+    elif reduction == "sum":
+        z_squared = (z_squared * (labels != ignore_index)).sum()
+    z_loss = z_loss_multiplier * z_squared
     return loss, z_loss
 
 
