@@ -78,7 +78,6 @@ class CheckpointerConfig(Config):
     save_thread_count: Optional[int] = None
     load_thread_count: Optional[int] = None
     throttle_uploads: bool = False
-    checkpoint_save_format: CheckpointFormat = CheckpointFormat.distributed
 
     def build(self, process_group: Optional[dist.ProcessGroup] = None, **kwargs) -> "Checkpointer":
         kwargs = {**self.as_dict(exclude_none=True, recurse=False), **kwargs}
@@ -109,35 +108,44 @@ class Checkpointer:
     save_thread_count: Optional[int] = None
     load_thread_count: Optional[int] = None
     throttle_uploads: bool = False
-    checkpoint_save_format: CheckpointFormat = CheckpointFormat.distributed
 
     def __post_init__(self):
         self.work_dir = Path(self.work_dir)
         if get_fs_local_rank() == 0:
             self.work_dir.mkdir(exist_ok=True, parents=True)
 
-    def save(self, dir: PathOrStr, train_module: TrainModule, train_state: Dict[str, Any]):
+    def save(
+        self,
+        dir: PathOrStr,
+        train_module: TrainModule,
+        train_state: Dict[str, Any],
+        format: CheckpointFormat,
+    ):
         """
         Save model, optim, and other training state to a local or remote directory.
         """
         dir = normalize_path(dir)
 
-        if self.checkpoint_save_format == CheckpointFormat.distributed:
+        if format == CheckpointFormat.distributed:
             return self._save_distributed(dir, train_module, train_state)
-        elif self.checkpoint_save_format == CheckpointFormat.hf:
+        elif format == CheckpointFormat.hf:
             return self._save_hf(dir, train_module)
         else:
             raise NotImplementedError(
-                f"Saving for format {self.checkpoint_save_format.format} is not yet implemented"
+                f"Saving for checkpoint format {format} is not yet implemented"
             )
 
     def save_async(
-        self, dir: PathOrStr, train_module: TrainModule, train_state: Dict[str, Any]
+        self,
+        dir: PathOrStr,
+        train_module: TrainModule,
+        train_state: Dict[str, Any],
+        format: CheckpointFormat,
     ) -> Future[None]:
         """
         An async version of :meth:`save()`.
         """
-        if self.checkpoint_save_format != CheckpointFormat.distributed:
+        if format != CheckpointFormat.distributed:
             raise OLMoConfigurationError(
                 "Async checkpointing is only supported for distributed checkpoints"
             )

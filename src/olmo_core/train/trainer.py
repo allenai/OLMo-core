@@ -49,7 +49,7 @@ from .callbacks import (
     GarbageCollectorCallback,
     SpeedMonitorCallback,
 )
-from .checkpoint import Checkpointer
+from .checkpoint import Checkpointer, CheckpointFormat
 from .common import Duration, DurationUnit, LoadStrategy, ReduceType, TrainingProgress
 from .train_module import TrainModule
 from .utils import EnvRngStates, move_metrics, reduce_metrics
@@ -737,7 +737,7 @@ class Trainer:
         else:
             return False
 
-    def save_checkpoint(self) -> PathOrStr:
+    def save_checkpoint(self, checkpoint_format: CheckpointFormat) -> PathOrStr:
         """
         Save a checkpoint for the current step to the :data:`save_folder`.
 
@@ -746,13 +746,17 @@ class Trainer:
         dirname = self.checkpointer.checkpoint_dirname(self.global_step)
         path = join_path(self.save_folder, dirname)
         log.info(f"Saving checkpoint for step {self.global_step} to '{path}'...")
-        self.checkpointer.save(path, self.train_module, cast(Dict[str, Any], self.state_dict()))
+        self.checkpointer.save(
+            path, self.train_module, cast(Dict[str, Any], self.state_dict()), checkpoint_format
+        )
         for callback in self._iter_callbacks():
             callback.post_checkpoint_saved(path)
         log.info("Checkpoint saved")
         return path
 
-    def save_checkpoint_async(self) -> Tuple[PathOrStr, Future]:
+    def save_checkpoint_async(
+        self, checkpoint_format: CheckpointFormat
+    ) -> Tuple[PathOrStr, Future]:
         """
         Save a checkpoint for the current step to the :data:`save_folder` asynchronously.
 
@@ -765,7 +769,7 @@ class Trainer:
 
         log.info(f"Saving checkpoint for step {step} to '{path}' asynchronously...")
         fut = self.checkpointer.save_async(
-            path, self.train_module, cast(Dict[str, Any], self.state_dict())
+            path, self.train_module, cast(Dict[str, Any], self.state_dict()), checkpoint_format
         )
 
         def callback(future: Future):

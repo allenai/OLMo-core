@@ -114,15 +114,13 @@ def convert_checkpoint(
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
 
     with TemporaryDirectory() as work_dir:
-        checkpointer_config = CheckpointerConfig(
-            work_dir=work_dir, save_overwrite=True, checkpoint_save_format=output_format
-        )
+        checkpointer_config = CheckpointerConfig(work_dir=work_dir, save_overwrite=True)
         checkpointer = checkpointer_config.build()
 
         log.info(f"Loading checkpoint from '{original_checkpoint_path}'")
         checkpointer.load(original_checkpoint_path, train_module, load_trainer_state=False)
         log.info(f"Saving checkpoint to '{output_path}'")
-        checkpointer.save(output_path, train_module, train_state={})
+        checkpointer.save(output_path, train_module, train_state={}, format=output_format)
         log.info(f"Successfully saved converted model to '{output_path}'")
 
     if output_format == CheckpointFormat.hf:

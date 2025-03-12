@@ -7,7 +7,7 @@ import torch.distributed as dist
 
 from olmo_core.distributed.utils import barrier, get_rank
 from olmo_core.io import dir_is_empty, file_exists, is_url, normalize_path
-from olmo_core.train.checkpoint import Checkpointer
+from olmo_core.train.checkpoint import Checkpointer, CheckpointFormat
 from olmo_core.train.train_module import BasicTrainModule
 
 from ..distributed.utils import run_distributed_test
@@ -25,7 +25,7 @@ def run_checkpointer(base_dir, work_dir, model_factory):
     train_module = BasicTrainModule(model, optim, 128)
 
     # Save checkpoint.
-    checkpointer.save(dir, train_module, {"rank": get_rank()})
+    checkpointer.save(dir, train_module, {"rank": get_rank()}, CheckpointFormat.distributed)
     barrier()
 
     assert file_exists((f"{dir}/train/rank0.pt"))
@@ -76,7 +76,9 @@ def run_async_checkpointer(dir, work_dir, model_factory):
     train_module = BasicTrainModule(model, optim, 128)
 
     # Save checkpoint.
-    future = checkpointer.save_async(dir, train_module, {"rank": get_rank()})
+    future = checkpointer.save_async(
+        dir, train_module, {"rank": get_rank()}, CheckpointFormat.distributed
+    )
     future.result()
     time.sleep(0.1)  # allow done callback to run.
     barrier()
