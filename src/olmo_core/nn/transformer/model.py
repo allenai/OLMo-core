@@ -1,6 +1,17 @@
 import logging
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+    cast,
+)
 
 import torch
 import torch.nn as nn
@@ -507,6 +518,7 @@ class Transformer(nn.Module):
             from fnmatch import fnmatch
 
             assert modules is not None
+            wrapped_modules: Set[str] = set()
             for name, module in self.named_modules():
                 for pattern in modules:
                     if fnmatch(name, pattern):
@@ -514,11 +526,16 @@ class Transformer(nn.Module):
                 else:
                     continue
 
+                # NOTE: have to be careful not to try to wrap submodules of modules that have been wrapped.
                 parent_name = ".".join(name.split(".")[:-1])
+                if parent_name in wrapped_modules:
+                    continue
+
                 parent = self if not parent_name else self.get_submodule(parent_name)
                 module = ptd_checkpoint_wrapper(module, preserve_rng_state=preserve_rng_state)
                 parent.register_module(name.split(".")[-1], module)
                 log.info(f"Wrapped '{name}' for activation checkpointing")
+                wrapped_modules.add(name)
         else:
             for block_idx, block in enumerate(self.blocks.values()):
                 if mode == TransformerActivationCheckpointingMode.selected_blocks:
