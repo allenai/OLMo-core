@@ -16,6 +16,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Added support for context parallelism.
 - Added support for expert parallelism with MoE models.
 - Added in-loop evals for Minerva, GSM, HumanEval, MBPP (`ai2-olmo-eval==0.7.0`)
+- Added `RunDuration` in `model_ladder` to configure training durations in terms of Chinchilla multipliers.
 
 ### Changed
 
