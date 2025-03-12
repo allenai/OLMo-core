@@ -300,14 +300,14 @@ class ModelLadder(Config, metaclass=ABCMeta):
         """
         return Duration.tokens(int(run_duration.multiplier * 20) * self.model_size)
 
-    def get_trainer_config(
+    def get_train_module_config(
         self,
         *,
         size: ModelSize,
         run_duration: RunDuration,
         gpu_type: str,
         dp_world_size: int,
-    ) -> TrainerConfig:
+    ) -> TransformerTrainModuleConfig:
         """
         Build the train module config.
 
@@ -365,7 +365,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
         return TransformerTrainModuleConfig(
             rank_microbatch_size=rank_mbz,
             max_sequence_length=self.sequence_length,
-            optim=self.get_optim_config(size=size),
+            optim=self.get_optim_config(),
             max_grad_norm=1.0,
             scheduler=CosWithWarmup(warmup_steps=round(self.model_size / global_bz)),
         )
