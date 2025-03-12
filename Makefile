@@ -129,6 +129,11 @@ beaker-image-stable : stable-image
 	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(STABLE_IMAGE) olmo-core-$(STABLE_IMAGE)-v$(VERSION_SHORT) $(BEAKER_WORKSPACE)
 	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(STABLE_IMAGE) olmo-core-$(STABLE_IMAGE)-v$(VERSION) $(BEAKER_WORKSPACE)
 
+.PHONY : ghcr-image-stable-dev
+ghcr-image-stable-dev : stable-dev-image
+	docker tag olmo-core:$(STABLE_IMAGE)-devel ghcr.io/allenai/olmo-core:$(STABLE_IMAGE)-devel
+	docker push ghcr.io/allenai/olmo-core:$(STABLE_IMAGE)-devel
+
 .PHONY : beaker-image-stable-dev
 beaker-image-stable-dev : stable-dev-image
 	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(STABLE_IMAGE)-devel olmo-core-$(STABLE_IMAGE)-devel $(BEAKER_WORKSPACE)
@@ -147,6 +152,11 @@ beaker-image-nightly : nightly-image
 	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(NIGHTLY_IMAGE) olmo-core-$(NIGHTLY_IMAGE) $(BEAKER_WORKSPACE)
 	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(NIGHTLY_IMAGE) olmo-core-$(NIGHTLY_IMAGE)-v$(VERSION_SHORT) $(BEAKER_WORKSPACE)
 	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(NIGHTLY_IMAGE) olmo-core-$(NIGHTLY_IMAGE)-v$(VERSION) $(BEAKER_WORKSPACE)
+
+.PHONY : ghcr-image-nightly-dev
+ghcr-image-nightly-dev : nightly-dev-image
+	docker tag olmo-core:$(NIGHTLY_IMAGE)-devel ghcr.io/allenai/olmo-core:$(NIGHTLY_IMAGE)-devel
+	docker push ghcr.io/allenai/olmo-core:$(NIGHTLY_IMAGE)-devel
 
 .PHONY : beaker-image-nightly-dev
 beaker-image-nightly-dev : nightly-dev-image
