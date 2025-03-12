@@ -28,6 +28,10 @@ This major release introduces a few breaking changes. We've provided more inform
   The functionality from all of those callbacks has been moved to the `TransformerTrainModule` class.
 - Removed the callback methods `.pre_eval_batch()` and `.post_eval_batch()`.
 
+### Fixed
+
+- Fixed the model ladder code when training on mps or cpu device
+
 ## [v1.9.0](https://github.com/allenai/OLMo-core/releases/tag/v1.9.0) - 2025-03-10
 
 ### Fixed
