@@ -25,7 +25,7 @@ class MoEMetric(metaclass=ABCMeta):
 
     @abstractmethod
     def compute(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True, **kwargs
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True, **kwargs
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
         raise NotImplementedError
 
@@ -57,7 +57,7 @@ class MoELoadImbalanceMetric(MoEMetric):
 
     @torch.no_grad()
     def compute(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True, **kwargs
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True, **kwargs
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
         del kwargs
         if self.batch_size_per_expert is None:

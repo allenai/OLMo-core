@@ -27,7 +27,7 @@ from torch.distributed.checkpoint.planner import (
 from torch.futures import Future
 
 from olmo_core.aliases import PathOrStr
-from olmo_core.distributed.utils import do_n_at_a_time
+from olmo_core.distributed.utils import do_n_at_a_time, get_num_nodes
 from olmo_core.exceptions import OLMoCheckpointError
 from olmo_core.io import (
     file_exists,
@@ -230,7 +230,9 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
         if self.throttle_uploads and is_url(self.path):
             buckets = _split_by_size_and_type(1, plan.items)
             results = do_n_at_a_time(
-                partial(write_items, buckets), process_group=self.process_group
+                partial(write_items, buckets),
+                process_group=self.process_group,
+                n=max(get_num_nodes() // 4, 1),
             )
         else:
             buckets = _split_by_size_and_type(self.thread_count, plan.items)

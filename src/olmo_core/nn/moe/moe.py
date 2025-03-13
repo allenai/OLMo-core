@@ -17,12 +17,12 @@ from olmo_core.config import Config, DType, StrEnum
 from olmo_core.exceptions import OLMoConfigurationError
 
 from ..buffer_cache import BufferCache
+from ..feed_forward import FeedForwardConfig
 from .loss import MoELoadBalancingLoss, MoELoss, MoERouterZLoss
 from .metric import MoELoadImbalanceMetric, MoEMetric
 from .mlp import DroplessMoEMLP, MoEMLP
 from .parallel_mlp import ParallelDroplessMLP, ParallelMLP, ParallelMLPBase
 from .router import MoERouterConfig
-from .shared_mlp import SharedMLPConfig
 
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
@@ -59,7 +59,7 @@ class MoEConfig(Config):
     hidden_size: int = 256
     capacity_factor: Optional[float] = None
     router: MoERouterConfig = field(default_factory=MoERouterConfig)
-    shared_mlp: Optional[SharedMLPConfig] = None
+    shared_mlp: Optional[FeedForwardConfig] = None
     lb_loss_weight: Optional[float] = 1.0
     z_loss_weight: Optional[float] = None
     dtype: DType = DType.float32
@@ -69,7 +69,7 @@ class MoEConfig(Config):
         num_params += self.router.num_params(d_model, self.num_experts)
         num_params += 3 * d_model * self.hidden_size * self.num_experts
         if self.shared_mlp is not None:
-            num_params += self.shared_mlp.num_params(d_model, self.hidden_size)
+            num_params += self.shared_mlp.num_params(d_model)
         return num_params
 
     def num_active_params(self, d_model: int) -> int:
@@ -120,7 +120,7 @@ class MoEBase(nn.Module):
         num_experts: int,
         hidden_size: int,
         router: MoERouterConfig,
-        shared_mlp: Optional[SharedMLPConfig] = None,
+        shared_mlp: Optional[FeedForwardConfig] = None,
         init_device: str = "cpu",
         lb_loss_weight: Optional[float] = None,
         z_loss_weight: Optional[float] = None,
@@ -139,10 +139,10 @@ class MoEBase(nn.Module):
             cache=cache,
             **kwargs,
         )
-        self.shared_experts = (
+        self.shared_mlp = (
             None
             if shared_mlp is None
-            else shared_mlp.build(d_model, hidden_size, dtype=dtype, init_device=init_device)
+            else shared_mlp.build(d_model, dtype=dtype, init_device=init_device)
         )
         self.losses: List[MoELoss] = []
         self.metrics: List[MoEMetric] = [
@@ -159,15 +159,57 @@ class MoEBase(nn.Module):
         if z_loss_weight is not None:
             self.losses.append(MoERouterZLoss(loss_weight=z_loss_weight, num_experts=num_experts))
 
+        self._ep_enabled = False
+
     @property
     def num_experts(self) -> int:
         return self.router.num_experts
 
+    @property
+    def top_k(self) -> int:
+        return self.router.top_k
+
+    @property
+    def ep_enabled(self) -> bool:
+        return self._ep_enabled
+
     def warmup_cache(self, max_local_microbatch_size: int):
         self.experts.warmup_cache(max_local_microbatch_size)
 
+    def update_losses_and_metrics(
+        self,
+        *,
+        expert_logits: torch.Tensor,
+        expert_scores: torch.Tensor,
+        expert_weights: torch.Tensor,
+        expert_indices: torch.Tensor,
+        batch_size_per_expert: torch.Tensor,
+    ):
+        if not self.losses and not self.metrics:
+            return
+
+        expert_logits = expert_logits.float()
+
+        for loss_fn in self.losses:
+            loss_fn.update(
+                expert_logits=expert_logits,
+                expert_scores=expert_scores,
+                expert_weights=expert_weights,
+                expert_indices=expert_indices,
+                batch_size_per_expert=batch_size_per_expert,
+            )
+
+        for metric in self.metrics:
+            metric.update(
+                expert_logits=expert_logits,
+                expert_scores=expert_scores,
+                expert_weights=expert_weights,
+                expert_indices=expert_indices,
+                batch_size_per_expert=batch_size_per_expert,
+            )
+
     def compute_losses(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, torch.Tensor]:
         out: Dict[str, torch.Tensor] = {}
         for loss_fn in self.losses:
@@ -179,7 +221,7 @@ class MoEBase(nn.Module):
             loss_fn.reset()
 
     def compute_metrics(
-        self, total_bz: Union[int, torch.Tensor], reset: bool = True
+        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
         out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
         for metric in self.metrics:
@@ -214,31 +256,24 @@ class MoEBase(nn.Module):
         """
         expert_logits, expert_scores, expert_weights, expert_indices = self.router(x)
 
+        shared_out: Optional[torch.Tensor] = None
+        if self.shared_mlp is not None:
+            shared_out = self.shared_mlp(x)
+
         out, batch_size_per_expert = self.experts(x, expert_weights, expert_indices)
 
-        if self.shared_experts is not None:
-            out = self.shared_experts(x, out, self.router.top_k)
+        if shared_out is not None:
+            shared_out = shared_out / (self.top_k + 1)
+            out = shared_out.add(out, alpha=self.top_k / (self.top_k + 1))
 
-        if self.training and (self.losses or self.metrics):
-            expert_logits = expert_logits.float()
-
-            for loss_fn in self.losses:
-                loss_fn.update(
-                    expert_logits=expert_logits,
-                    expert_scores=expert_scores,
-                    expert_weights=expert_weights,
-                    expert_indices=expert_indices,
-                    batch_size_per_expert=batch_size_per_expert,
-                )
-
-            for metric in self.metrics:
-                metric.update(
-                    expert_logits=expert_logits,
-                    expert_scores=expert_scores,
-                    expert_weights=expert_weights,
-                    expert_indices=expert_indices,
-                    batch_size_per_expert=batch_size_per_expert,
-                )
+        if self.training:
+            self.update_losses_and_metrics(
+                expert_logits=expert_logits,
+                expert_scores=expert_scores,
+                expert_weights=expert_weights,
+                expert_indices=expert_indices,
+                batch_size_per_expert=batch_size_per_expert,
+            )
 
         return out
 
@@ -247,6 +282,7 @@ class MoEBase(nn.Module):
         Apply expert parallelism.
         """
         self.experts.apply_ep(ep_mesh, **kwargs)
+        self._ep_enabled = True
 
     def prepare_experts_for_fsdp(self, **kwargs):
         """
@@ -268,25 +304,32 @@ class MoEBase(nn.Module):
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
+        # Sequence parallel for the most part.
         parallelize_module(
             self,
             device_mesh=tp_mesh,
             parallelize_plan=PrepareModuleInput(
                 input_layouts=None if input_layout is None else (input_layout,),
                 desired_input_layouts=(Shard(1),),
-                use_local_output=True,
+                use_local_output=False,
             ),
         )
 
-        # Sequence parallel
+        # Sequence parallel.
         self.router.apply_tp(tp_mesh, float8_enabled=float8_enabled)
 
-        # Expert parallel
+        # Expert parallel.
         self.experts.apply_tp(tp_mesh, float8_enabled=float8_enabled)
 
-        # Sequence parallel
-        if self.shared_experts is not None:
-            self.shared_experts.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+        # Model parallel.
+        if self.shared_mlp is not None:
+            self.shared_mlp.apply_tp(
+                tp_mesh,
+                input_layout=Shard(1),
+                output_layout=Shard(1),
+                use_local_output=True,
+                float8_enabled=float8_enabled,
+            )
 
         parallelize_module(
             self,
@@ -311,7 +354,7 @@ class MoE(MoEBase):
         num_experts: int,
         hidden_size: int,
         router: MoERouterConfig,
-        shared_mlp: Optional[SharedMLPConfig] = None,
+        shared_mlp: Optional[FeedForwardConfig] = None,
         capacity_factor: float = 1.2,
         init_device: str = "cpu",
         lb_loss_weight: Optional[float] = None,

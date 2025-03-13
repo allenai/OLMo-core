@@ -17,22 +17,12 @@ from olmo_core.distributed.parallel import (
     get_ep_mesh,
 )
 from olmo_core.distributed.utils import get_local_tensor
-from olmo_core.nn.moe import (
-    MoEBase,
-    MoEConfig,
-    MoERouterConfig,
-    MoEType,
-    SharedMLPConfig,
-)
+from olmo_core.nn.feed_forward import FeedForwardConfig
+from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
 from olmo_core.utils import get_default_device, seed_all
 
 from ...distributed.utils import requires_multi_gpu, run_distributed_test
 from ...utils import requires_gpu
-
-
-def init_mlp_weights(moe: MoEBase):
-    for w in (moe.experts.mlp.w1, moe.experts.mlp.w2, moe.experts.mlp.w3):
-        torch.nn.init.normal_(w, std=0.02)  # type: ignore
 
 
 @requires_gpu
@@ -48,12 +38,11 @@ def test_moe(moe_type: MoEType, shared: bool, dtype: torch.dtype):
         num_experts=4,
         hidden_size=256,
         router=MoERouterConfig(top_k=1),
-        shared_mlp=None if not shared else SharedMLPConfig(),
+        shared_mlp=None if not shared else FeedForwardConfig(hidden_size=256),
         z_loss_weight=0.1,
         dtype=DType.from_pt(dtype),
     )
     moe = config.build(d_model=d_model, init_device="cuda")
-    init_mlp_weights(moe)
 
     # Check num params calculation.
     num_params = 0
@@ -190,7 +179,6 @@ def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: t
     )
     moe = config.build(d_model=d_model, init_device="cpu")
     moe.to(device=device)
-    init_mlp_weights(moe)
 
     # Save state so when we spawn distributed processes they can load the same weights.
     save_model_and_optim_state(tmp_path, moe)

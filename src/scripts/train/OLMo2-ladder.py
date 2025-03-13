@@ -76,12 +76,19 @@ class BaselineModelLadder(ModelLadder):
         return config
 
     def get_rank_microbatch_size(self, *, size: ModelSize, gpu_type: str) -> int:
-        assert "h100" in gpu_type.lower()
-        return self.MBZ_SIZES[size]
+        if gpu_type.lower() in ("mps", "cpu"):
+            return 4096
+        else:
+            assert "h100" in gpu_type.lower()
+            return self.MBZ_SIZES[size]
 
 
 def build_ladder(root_dir: str) -> BaselineModelLadder:
-    save_folder = str(join_path(root_dir, f"checkpoints/{get_beaker_username().lower()}/ladder"))
+    beaker_username = get_beaker_username()
+    if beaker_username is not None:
+        save_folder = str(join_path(root_dir, f"checkpoints/{beaker_username.lower()}/ladder"))
+    else:
+        save_folder = str(join_path(root_dir, "checkpoints/ladder"))
     return BaselineModelLadder(
         name="OLMo2",
         project="OLMo2-model-ladder",

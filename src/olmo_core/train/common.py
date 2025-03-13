@@ -8,6 +8,10 @@ from ..config import StrEnum
 from ..data.utils import get_labels
 from ..utils import format_timedelta
 
+TRAIN_CE_LOSS_METRIC = "train/CE loss"
+TRAIN_PPL_METRIC = "train/PPL"
+TRAIN_Z_LOSS_METRIC = "train/Z loss"
+
 
 class DurationUnit(StrEnum):
     """

@@ -5,9 +5,10 @@ Train a large OLMoE model. Run this script without any arguments to see usage in
 import logging
 
 from olmo_core.config import DType
-from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.distributed.parallel import DataParallelType, PipelineScheduleType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
+from olmo_core.launch.beaker import OLMoCoreBeakerImage
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import TrainerConfig
@@ -16,10 +17,16 @@ from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerExpertParallelConfig,
+    TransformerPipelineParallelConfig,
+    TransformerPipelineTrainModuleConfig,
     TransformerTrainModuleConfig,
 )
 
 log = logging.getLogger(__name__)
+
+
+PIPELINE_PARALLEL = True
+DEFAULT_NUM_NODES = 8 if PIPELINE_PARALLEL else 4
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -44,8 +51,17 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
-    return TransformerTrainModuleConfig(
-        rank_microbatch_size=1 * 4096,
+    config_cls = (
+        TransformerPipelineTrainModuleConfig if PIPELINE_PARALLEL else TransformerTrainModuleConfig
+    )
+    kwargs = {}
+    if PIPELINE_PARALLEL:
+        kwargs["pp_config"] = TransformerPipelineParallelConfig(
+            degree=DEFAULT_NUM_NODES,
+            schedule=PipelineScheduleType.interleaved_1F1B,
+        )
+    return config_cls(
+        rank_microbatch_size=(2 if PIPELINE_PARALLEL else 1) * 4096,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=AdamWConfig(
             lr=3e-4,
@@ -60,15 +76,17 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
-            reduce_dtype=DType.float32,
+            reduce_dtype=DType.bfloat16,
             num_replicas=1,  # to enable full-way expert parallel
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
+            prefetch_factor=1,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
         ep_config=TransformerExpertParallelConfig(degree=-1),
-        float8_config=Float8Config(enabled=False),
+        float8_config=Float8Config(enabled=True),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
+        **kwargs,
     )
 
 
@@ -117,4 +135,9 @@ if __name__ == "__main__":
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
+        include_default_evals=False,
+        # nightly needed right now for FP8 to work with PP
+        # https://github.com/pytorch/pytorch/issues/143194
+        beaker_image=OLMoCoreBeakerImage.nightly,
+        num_nodes=DEFAULT_NUM_NODES,
     )

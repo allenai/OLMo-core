@@ -1,7 +1,9 @@
 import logging
+from functools import lru_cache
 from typing import List, Optional
 
-from beaker import Beaker
+import torch
+from beaker import Beaker, BeakerError
 
 from olmo_core.io import is_url
 from olmo_core.launch.beaker import (
@@ -14,26 +16,23 @@ from olmo_core.launch.beaker import (
 from olmo_core.utils import generate_uuid
 
 log = logging.getLogger(__name__)
-_BEAKER_CLIENT: Optional[Beaker] = None
-_BEAKER_USERNAME: Optional[str] = None
 
 
-def get_beaker_client() -> Beaker:
-    global _BEAKER_CLIENT
+@lru_cache()
+def get_beaker_client() -> Optional[Beaker]:
+    try:
+        return Beaker.from_env(check_for_upgrades=False)
+    except BeakerError:
+        return None
 
-    if _BEAKER_CLIENT is None:
-        _BEAKER_CLIENT = Beaker.from_env(check_for_upgrades=False)
 
-    return _BEAKER_CLIENT
-
-
-def get_beaker_username() -> str:
-    global _BEAKER_USERNAME
-
-    if _BEAKER_USERNAME is None:
-        _BEAKER_USERNAME = get_beaker_client().account.whoami().name
-
-    return _BEAKER_USERNAME
+@lru_cache()
+def get_beaker_username() -> Optional[str]:
+    beaker = get_beaker_client()
+    if beaker is not None:
+        return beaker.account.whoami().name
+    else:
+        return None
 
 
 def get_root_dir(cluster: str) -> str:
@@ -48,11 +47,12 @@ def get_root_dir(cluster: str) -> str:
 
 
 def get_work_dir(root_dir: str) -> str:
-    return (
-        "./dataset-cache"
-        if is_url(root_dir)
-        else f"{root_dir}/checkpoints/{get_beaker_username().lower()}/dataset-cache"
-    )
+    if is_url(root_dir):
+        return "./dataset-cache"
+    elif (beaker_username := get_beaker_username()) is not None:
+        return f"{root_dir}/checkpoints/{beaker_username.lower()}/dataset-cache"
+    else:
+        return f"{root_dir}/checkpoints/dataset-cache"
 
 
 def build_launch_config(
@@ -65,12 +65,18 @@ def build_launch_config(
     workspace: str = "ai2/OLMo-core",
     budget: str = "ai2/oe-training",
     nccl_debug: bool = False,
+    beaker_image: str = OLMoCoreBeakerImage.stable,
+    num_nodes: int = 1,
 ) -> BeakerLaunchConfig:
     weka_buckets: List[BeakerWekaBucket] = []
     if root_dir.startswith("/weka/"):
         weka_buckets.append(BeakerWekaBucket("oe-training-default", "/weka/oe-training-default"))
 
     beaker_user = get_beaker_username()
+    if beaker_user is None:
+        raise RuntimeError(
+            "Environment not configured correctly for Beaker, you may be missing the BEAKER_TOKEN env var."
+        )
 
     return BeakerLaunchConfig(
         name=f"{name}-{generate_uuid()[:8]}",
@@ -80,8 +86,8 @@ def build_launch_config(
         workspace=workspace,
         clusters=[cluster],
         weka_buckets=weka_buckets,
-        beaker_image=OLMoCoreBeakerImage.stable,
-        num_nodes=1,
+        beaker_image=beaker_image,
+        num_nodes=num_nodes,
         num_gpus=8,
         shared_filesystem=not is_url(root_dir),
         allow_dirty=False,
@@ -127,9 +133,12 @@ CLUSTER_TO_GPU_TYPE = {
 def get_gpu_type(cluster: str) -> str:
     if cluster in CLUSTER_TO_GPU_TYPE:
         return CLUSTER_TO_GPU_TYPE[cluster]
+    elif cluster == "local":
+        return torch.get_default_device().type
     else:
         log.warning(f"Missing cluster '{cluster}' in CLUSTER_TO_GPU_TYPE mapping")
         beaker = get_beaker_client()
+        assert beaker is not None
         nodes = beaker.cluster.nodes(cluster)
         assert nodes and nodes[0].limits.gpu_type
         return nodes[0].limits.gpu_type

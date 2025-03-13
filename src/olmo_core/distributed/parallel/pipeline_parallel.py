@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional, Tuple
+from functools import cached_property
+from typing import Any, Callable, Iterable, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -16,9 +17,19 @@ from olmo_core.config import Config, StrEnum
 from olmo_core.exceptions import OLMoConfigurationError
 
 
+class PipelineSplitStyle(StrEnum):
+    loop = "loop"
+    v = "v"
+
+
 class PipelineScheduleType(StrEnum):
     """
     An enumeration of the different pipeline schedules available.
+
+    .. warning::
+        The zero-bubble variants have several issues at the moment including not being compatible
+        with ``torch.compile``.
+
     """
 
     # See torch.distributed.pipelining.schedules.get_schedule_class for a list of available.
@@ -28,6 +39,7 @@ class PipelineScheduleType(StrEnum):
     gpipe = "GPipe"
     looped_bfs = "LoopedBFS"
     interleaved_zero_bubble = "InterleavedZeroBubble"
+    zbv_zero_bubble = "ZBVZeroBubble"
 
     @property
     def is_single_stage(self) -> bool:
@@ -39,6 +51,13 @@ class PipelineScheduleType(StrEnum):
     @property
     def is_multi_stage(self) -> bool:
         return not self.is_single_stage
+
+    @property
+    def default_style(self) -> PipelineSplitStyle:
+        if self == self.zbv_zero_bubble:
+            return PipelineSplitStyle.v
+        else:
+            return PipelineSplitStyle.loop
 
 
 @dataclass
@@ -52,27 +71,58 @@ class PipelineParallelConfig(Config):
     The PP degree.
     """
 
-    schedule: PipelineScheduleType
+    schedule: PipelineScheduleType = PipelineScheduleType.interleaved_1F1B
     """
     The name of the schedule.
     """
 
-    def stage_ids_this_rank(
-        self, pp_rank: int, num_stages: int, style: str = "loop"
-    ) -> Tuple[int, ...]:
+    style: Optional[PipelineSplitStyle] = None
+    """
+    The split style.
+    """
+
+    def infer_style(self) -> PipelineSplitStyle:
+        if self.style is not None:
+            return self.style
+        else:
+            return self.schedule.default_style
+
+    def final_stage_rank(self) -> int:
+        style = self.infer_style()
+        if style == PipelineSplitStyle.loop:
+            return self.degree - 1
+        elif style == PipelineSplitStyle.v:
+            return 0
+        else:
+            raise NotImplementedError(style)
+
+    def rank_completion_order(self) -> Iterable[int]:
+        """
+        The order that ranks within the PP group will complete a batch.
+        """
+        style = self.infer_style()
+        if style == PipelineSplitStyle.loop:
+            return range(self.degree - 1, -1, -1)
+        elif style == PipelineSplitStyle.v:
+            return range(self.degree)
+        else:
+            raise NotImplementedError(style)
+
+    def stage_ids_this_rank(self, pp_rank: int, num_stages: int) -> Tuple[int, ...]:
         """
         Compute the stage ids for the stages that will run on this pp rank for either a looped or
         V style schedule.
         """
+        style = self.infer_style()
         if num_stages % self.degree != 0:
             raise OLMoConfigurationError(
                 f"num_stages {num_stages} must be evenly divisible by pipeline size {self.degree}"
             )
 
         stages_per_rank = num_stages // self.degree
-        if style == "loop":
+        if style == PipelineSplitStyle.loop:
             return tuple(pp_rank + s * self.degree for s in range(stages_per_rank))
-        elif style == "v":
+        elif style == PipelineSplitStyle.v:
             assert (
                 stages_per_rank == 2
             ), f"v schedules assume 2 stages per rank, got {stages_per_rank}"
@@ -137,13 +187,19 @@ class PipelineSchedule:
         self.base_schedule = schedule
         self.num_microbatches = num_microbatches
 
-    @property
-    def is_first_stage(self) -> bool:
-        return self.pp_mesh.get_local_rank() == 0
+    @cached_property
+    def has_first_stage(self) -> bool:
+        for stage in self.stages:
+            if stage.is_first:
+                return True
+        return False
 
-    @property
-    def is_last_stage(self) -> bool:
-        return self.pp_mesh.get_local_rank() == self.pp_mesh.size() - 1
+    @cached_property
+    def has_last_stage(self) -> bool:
+        for stage in self.stages:
+            if stage.is_last:
+                return True
+        return False
 
     def step(
         self,
@@ -151,13 +207,15 @@ class PipelineSchedule:
         target: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[Any, Optional[torch.Tensor]]:
-        if self.is_first_stage:
-            self.base_schedule.step(*args, **kwargs)
-            return None, None
-        elif self.is_last_stage:
-            losses: Optional[List[torch.Tensor]] = [] if self.loss_fn is not None else None
-            output = self.base_schedule.step(target=target, losses=losses)
-            return output, None if losses is None else torch.stack(losses)
+        """
+        :param args: Only passed to first stage.
+        :param kwargs: Passed to all stages.
+        """
+        losses: Optional[List[torch.Tensor]] = None
+        if self.has_last_stage and self.loss_fn is not None:
+            losses = []
         else:
-            self.base_schedule.step()
-            return None, None
+            target = None
+
+        output = self.base_schedule.step(*args, target=target, losses=losses, **kwargs)
+        return output, None if losses is None else torch.stack(losses)

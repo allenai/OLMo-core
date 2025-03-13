@@ -47,6 +47,9 @@ __all__ = [
 
 BeakerPriority = Priority
 
+_DEFAULT_TORCH = "2.6.0".replace(".", "")
+_DEFAULT_TORCH_NIGHTLY = "2.7.0.dev20250202".replace(".", "")
+
 
 class OLMoCoreBeakerImage(StrEnum):
     """
@@ -57,14 +60,66 @@ class OLMoCoreBeakerImage(StrEnum):
     includes *versioned* images that are published with each release of the OLMo-core package.
     """
 
-    stable = "olmo-core-tch260cu124"
+    stable = f"olmo-core-tch{_DEFAULT_TORCH}cu124"
     """
     Built with the latest compatible stable version of PyTorch.
     """
 
-    nightly = "olmo-core-tch270dev20250202cu124"
+    stable_cu124 = f"olmo-core-tch{_DEFAULT_TORCH}cu124"
     """
-    Built with the latest compatible nightly version of PyTorch.
+    The stable image with CUDA pinned to 12.4.
+    """
+
+    stable_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126"
+    """
+    The stable image with CUDA pinned to 12.6.
+    """
+
+    stable_dev = f"olmo-core-tch{_DEFAULT_TORCH}cu124-devel"
+    """
+    Built with the latest compatible stable version of PyTorch and includes all the usual CUDA development
+    dependencies for building CUDA extensions.
+    """
+
+    stable_dev_cu124 = f"olmo-core-tch{_DEFAULT_TORCH}cu124-devel"
+    """
+    The stable development image with CUDA pinned to 12.4.
+    """
+
+    stable_dev_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126-devel"
+    """
+    The stable development image with CUDA pinned to 12.6.
+    """
+
+    nightly = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124"
+    """
+    Built with a recent compatible nightly version of PyTorch.
+    """
+
+    nightly_cu124 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124"
+    """
+    The nighlty image with CUDA pinned to 12.4.
+    """
+
+    nightly_cu126 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu126"
+    """
+    The nighlty image with CUDA pinned to 12.6.
+    """
+
+    nightly_dev = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124-devel"
+    """
+    Built with a recent compatible nightly version of PyTorch and includes all the usual CUDA development
+    dependencies for building CUDA extensions.
+    """
+
+    nightly_dev_cu124 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124-devel"
+    """
+    The nightly development image with CUDA pinned to 12.4.
+    """
+
+    nightly_dev_cu126 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu126-devel"
+    """
+    The nightly development image with CUDA pinned to 12.6.
     """
 
 
@@ -334,15 +389,16 @@ class BeakerLaunchConfig(Config):
         ]
 
         if torchrun:
-            if any(["augusta" in cluster for cluster in self.clusters]):
+            if self.num_nodes > 1 and any(["augusta" in cluster for cluster in self.clusters]):
                 entrypoint_script.append(
-                    "export BEAKER_REPLICA_RANK=$("
+                    "BEAKER_REPLICA_RANK=$("
                     "python -m olmo_core.launch.reorder_ranks_in_gcp "
                     "${BEAKER_REPLICA_RANK} "
                     "${BEAKER_REPLICA_COUNT} "
                     "${BEAKER_LEADER_REPLICA_HOSTNAME}"
                     ")"
                 )
+                entrypoint_script.append("export BEAKER_REPLICA_RANK=$BEAKER_REPLICA_RANK")
             entrypoint_script.append(" ".join(self._get_torchrun_cmd()) + ' "$@"')
         else:
             entrypoint = entrypoint or "python"
@@ -440,7 +496,7 @@ class BeakerLaunchConfig(Config):
                 f"see {self.beaker.experiment.url(experiment)} for details"
             )
         else:
-            log.info("Experiment completed successfully")
+            log.info(f"Experiment completed successfully: {self.beaker.experiment.url(experiment)}")
 
     def launch(
         self, follow: bool = False, torchrun: bool = True, entrypoint: Optional[str] = None

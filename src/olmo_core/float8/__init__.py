@@ -9,8 +9,8 @@ from typing import List, Optional, Set, Union
 import torch
 import torch.nn as nn
 
-from .config import Config, StrEnum
-from .exceptions import OLMoConfigurationError
+from ..config import Config, StrEnum
+from ..exceptions import OLMoConfigurationError
 
 __all__ = ["Float8Handler", "Float8ScalingType", "Float8Config"]
 
@@ -74,7 +74,19 @@ class Float8Handler:
         if not self.enabled:
             return
 
+        # NOTE: there's a bug with `Float8Linear.from_float()` where it will override `requires_grad=False`
+        # when `enable_fsdp_float8_all_gather=True`. So we have to reset frozen params after the fact.
+        # https://github.com/pytorch/ao/issues/1871
+        frozen_params: Set[str] = set()
+        for n, p in model.named_parameters():
+            if not p.requires_grad:
+                frozen_params.add(n)
+
         self.config.convert_to_float8_training(model, modules_to_ignore=modules_to_ignore)
+
+        for n in frozen_params:
+            p = model.get_parameter(n)
+            p.requires_grad = False
 
     def precompute_float8_dynamic_scale_for_fsdp(self, model: Union[nn.Module, List[nn.Module]]):
         if not self.enabled:

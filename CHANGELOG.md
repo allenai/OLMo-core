@@ -5,14 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v2
+## Unreleased
 
-This major release introduces a few breaking changes. As such, we've provided an upgrade guide here: [OLMo-core upgrade guide](https://docs.google.com/document/d/1LvANhNzA-MdtiD2pLniLTqB9wxSSuqY435WuJIADeFM/edit?usp=sharing).
+### Added
+
+- Added information about the official 32B training run.
+
+### Fixed
+
+- The official config for the 32B had unrealistic batch size settings.
+
+## [v2.0.0](https://github.com/allenai/OLMo-core/releases/tag/v2.0.0) - 2025-03-12
+
+This major release introduces a few breaking changes. We've provided more information here: [OLMo-core v2 design and upgrade guide](https://docs.google.com/document/d/1LvANhNzA-MdtiD2pLniLTqB9wxSSuqY435WuJIADeFM/edit?usp=sharing).
 
 ### Added
 
 - Added `TrainModule` abstraction with `TransformerTrainModule` implementation, which encapsulates both a model and optimizer.
 - Added `namespace` argument to `Trainer.record_metric()`.
+- Added support for context parallelism.
+- Added support for expert parallelism with MoE models.
+- Added in-loop evals for Minerva, GSM, HumanEval, MBPP (`ai2-olmo-eval==0.7.0`)
+- Added `CosWithWarmupAndLinearDecay` learning rate scheduler
+- Added `WSD` learning rate scheduler
 
 ### Changed
 
@@ -25,13 +40,22 @@ This major release introduces a few breaking changes. As such, we've provided an
   The functionality from all of those callbacks has been moved to the `TransformerTrainModule` class.
 - Removed the callback methods `.pre_eval_batch()` and `.post_eval_batch()`.
 
-## Unreleased
+### Fixed
+
+- Fixed the model ladder code when training on mps or cpu device
+
+## [v1.9.0](https://github.com/allenai/OLMo-core/releases/tag/v1.9.0) - 2025-03-10
+
+### Fixed
+
+- Ensure certain optimizer param group fields are not overridden by the values in a checkpoint.
 
 ### Added
 
 - Added `instance_filter_config` field to `NumpyDatasetConfig`.
 - Added conversion script for OLMo 2 checkpoints to Huggingface format.
 - Added `BeakerCallback`.
+- Added logging for in-loop eval throughput
 
 ### Fixed
 
