@@ -132,17 +132,15 @@ def validate_conversion(
 
 def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
     if not file_exists(f"{checkpoint_input_dir}/config.json"):
-        log.warning(f"Config file not found at {checkpoint_input_dir}")
-        return None
+        raise RuntimeError(f"Config file not found at {checkpoint_input_dir}")
 
     with cached_path(f"{checkpoint_input_dir}/config.json").open("r", encoding="utf-8") as f:
         config_dict = json.load(f)
 
     if "model" not in config_dict:
-        log.warning(
+        raise RuntimeError(
             f"Config file at {checkpoint_input_dir} is not an OLMo core experiment config, ignoring"
         )
-        return None
 
     return config_dict
 
@@ -150,7 +148,6 @@ def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
 def parse_args():
     parser = ArgumentParser(description=__doc__)
     parser.add_argument("-i", "--checkpoint-input-path", type=str, required=True)
-    parser.add_argument("-c", "--config-path", type=str, required=True)
 
     parser.add_argument("-o", "--huggingface-output-dir", type=Path, required=True)
     parser.add_argument("-s", "--max-sequence-length", type=int, required=True)
@@ -161,7 +158,7 @@ def parse_args():
 def main():
     args = parse_args()
 
-    experiment_config = load_config(args.config_path)
+    experiment_config = load_config(args.checkpoint_input_path)
     if experiment_config is None:
         raise RuntimeError("Experiment config not found, cannot convert to HF checkpoint")
 
