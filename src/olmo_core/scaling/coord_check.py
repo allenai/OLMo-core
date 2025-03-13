@@ -1,7 +1,8 @@
-from typing import List
+from typing import List, Optional
 
 from mup.coord_check import _record_coords
-
+from mup import set_base_shapes
+from mup import load_base_shapes as mup_load
 from olmo_core.data.utils import get_labels
 
 
@@ -37,6 +38,7 @@ def _get_coord_data(
     models,
     dataloader,
     optcls,
+    load_base_shapes: Optional[str] = None,
     nsteps=3,
     lossfn="xent",
     filter_module_by_name=None,
@@ -118,26 +120,28 @@ def _get_coord_data(
             model = model.train()
             if cuda:
                 model = model.cuda()
-                print("✓ Successfully applied base shapes to model")
-                print("\nChecking parameters for infshape attribute...")
-                missing_infshape = []
-                total_params = 0
+                base_shapes = mup_load(load_base_shapes)
+                set_base_shapes(model, base_shapes, rescale_params=False)
+                # print("✓ Successfully applied base shapes to model")
+                # print("\nChecking parameters for infshape attribute...")
+                # missing_infshape = []
+                # total_params = 0
                 
-                for name, param in model.named_parameters():
-                    total_params += 1
-                    if not hasattr(param, 'infshape'):
-                        missing_infshape.append((name, param.shape))
+                # for name, param in model.named_parameters():
+                #     total_params += 1
+                #     if not hasattr(param, 'infshape'):
+                #         missing_infshape.append((name, param.shape))
                 
-                if missing_infshape:
-                    print(f"✗ ISSUE: {len(missing_infshape)}/{total_params} parameters missing infshape attribute")
-                    print("\nSample parameters missing infshape:")
-                    for i, (name, shape) in enumerate(missing_infshape[:5]):
-                        print(f"  - {name}: {shape}")
-                    if len(missing_infshape) > 5:
-                        print(f"  ... and {len(missing_infshape) - 5} more")
-                    return False
-                else:
-                    print(f"✓ All {total_params} parameters have infshape attribute") 
+                # if missing_infshape:
+                #     print(f"✗ ISSUE: {len(missing_infshape)}/{total_params} parameters missing infshape attribute")
+                #     print("\nSample parameters missing infshape:")
+                #     for i, (name, shape) in enumerate(missing_infshape[:5]):
+                #         print(f"  - {name}: {shape}")
+                #     if len(missing_infshape) > 5:
+                #         print(f"  ... and {len(missing_infshape) - 5} more")
+                #     return False
+                # else:
+                #     print(f"✓ All {total_params} parameters have infshape attribute") 
 
             optimizer = optcls(model)
             for batch_idx, batch in enumerate(dataloader, 1):
@@ -186,7 +190,7 @@ def _get_coord_data(
 
 
 def get_coord_data(
-    models, dataloader, optimizer="adamw", lr=None, mup=True, filter_trainable_by_name=None, **kwargs
+    models, dataloader, load_base_shapes, optimizer="adamw", lr=None, mup=True, filter_trainable_by_name=None, **kwargs
 ):
     """Get coord data for coord check.
 
@@ -274,7 +278,36 @@ def get_coord_data(
     elif optimizer is None:
         raise ValueError("optimizer should be sgd|adam|adamw or a custom function")
 
-    data = _get_coord_data(models, dataloader, optcls, **kwargs)
+    data = _get_coord_data(models, dataloader, optcls, load_base_shapes, **kwargs)
     data["optimizer"] = optimizer
     data["lr"] = lr
     return data
+    # try:
+    #     # Call the inner function
+    #     data = _get_coord_data(models, dataloader, optcls, **kwargs)
+        
+    #     # Check if data is a DataFrame or dictionary before trying to modify it
+    #     import pandas as pd
+    #     if isinstance(data, (dict, pd.DataFrame)):
+    #         data["optimizer"] = optimizer
+    #         data["lr"] = lr
+    #         return data
+    #     elif data is True or data is False:
+    #         # Handle the case where _get_coord_data returns a boolean
+    #         print(f"WARNING: _get_coord_data returned a boolean ({data}) instead of a DataFrame")
+    #         # Create an empty DataFrame with expected columns
+    #         import pandas as pd
+    #         empty_df = pd.DataFrame(columns=["width", "module", "t", "l1"])
+    #         empty_df["optimizer"] = optimizer
+    #         empty_df["lr"] = lr
+    #         return empty_df
+    #     else:
+    #         # For other unexpected return types
+    #         print(f"WARNING: Unexpected return type from _get_coord_data: {type(data)}")
+    #         import pandas as pd
+    #         return pd.DataFrame({"optimizer": [optimizer], "lr": [lr]})
+    # except Exception as e:
+    #     print(f"ERROR in get_coord_data: {e}")
+    #     # Return empty DataFrame on error
+    #     import pandas as pd
+    #     return pd.DataFrame({"optimizer": [optimizer], "lr": [lr]})

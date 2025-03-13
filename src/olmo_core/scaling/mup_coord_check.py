@@ -21,6 +21,12 @@ from olmo_core.scaling.coord_check import get_coord_data
 from olmo_core.scaling.mup_utils import load_mu_model, save_base_shapes
 from olmo_core.nn.functional import cross_entropy_loss
 
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
+# or to disable completely:
+torch._dynamo.disable()
+
+
 def get_dataloader(data_paths, batch_size: int):
 
     tokenizer_config = TokenizerConfig.dolma2()
@@ -70,13 +76,14 @@ def coord_check(
 ):
     def model_generator(d_model, standparam=False):
         def f():
-            base_shapes = mup_load(load_base_shapes)
+            # base_shapes = mup_load(load_base_shapes)
             config = TransformerConfig.olmo2_190M(
                 vocab_size=TokenizerConfig.dolma2().padded_vocab_size(),
-                compile=True,
+                
+                compile=False,
                 d_model=d_model,
                 dp_config=TransformerDataParallelConfig(
-                    name=DataParallelType.fsdp,
+                    name=DataParallelType.hsdp,
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
@@ -85,29 +92,7 @@ def coord_check(
             config.use_mup = True
             device = torch.device('cuda')
             model = config.build(device=device)
-            set_base_shapes(model, base_shapes)
-            # print("✓ Successfully applied base shapes to model")
-            # optimizer = mupo.optim.MuSGD(model.parameters(), lr=0.1)
-            # print("✓ Successfully created muP optimizer")
-            # print("\nChecking parameters for infshape attribute...")
-            # missing_infshape = []
-            # total_params = 0
-            
-            # for name, param in model.named_parameters():
-            #     total_params += 1
-            #     if not hasattr(param, 'infshape'):
-            #         missing_infshape.append((name, param.shape))
-            
-            # if missing_infshape:
-            #     print(f"✗ ISSUE: {len(missing_infshape)}/{total_params} parameters missing infshape attribute")
-            #     print("\nSample parameters missing infshape:")
-            #     for i, (name, shape) in enumerate(missing_infshape[:5]):
-            #         print(f"  - {name}: {shape}")
-            #     if len(missing_infshape) > 5:
-            #         print(f"  ... and {len(missing_infshape) - 5} more")
-            #     return False
-            # else:
-            #     print(f"✓ All {total_params} parameters have infshape attribute")                        
+            # set_base_shapes(model, base_shapes)                      
             return model
         return f
 
@@ -116,12 +101,35 @@ def coord_check(
     
     models = {width: model_generator(width, standparam=not mup) for width in widths}
 
+    model_instances = {width: model_fn() for width, model_fn in models.items()}
+    
+    # If we have a file to load base shapes from, load them
+    if load_base_shapes and os.path.exists(load_base_shapes):
+        base_shapes = mup_load(load_base_shapes)
+        # Apply the base shapes to all models
+        for model in model_instances.values():
+            set_base_shapes(model, base_shapes)
+    else:
+        # Otherwise, create base shapes from the smallest model
+        smallest_width = min(widths)
+        base_model = model_instances[smallest_width]
+        
+        # Set base shapes for all other models
+        for width, model in model_instances.items():
+            if width != smallest_width:
+                mupo.set_base_shapes(base_model, model)
+                
+        # Optionally save the base shapes if needed
+        if load_base_shapes:
+            mupo.save_base_shapes(base_model, load_base_shapes)
+
     data_loader = get_dataloader(data_paths='sample-tokens.npy', batch_size=batch_size)
     if hasattr(data_loader, 'reshuffle'):
             data_loader.reshuffle()
     df = get_coord_data(
         models,
         data_loader,
+        load_base_shapes,
         mup=True,
         # lr=lr,
         optimizer=optimizer,
@@ -131,6 +139,7 @@ def coord_check(
         cuda=cuda,
         compute_z_loss=True,
         show_progress=True,
+        
     )
 
     prm = "mup" if mup else "sp"
@@ -163,7 +172,7 @@ if __name__ == "__main__":
     parser.add_argument("--load_base_shapes", type=str, default="", help="file location to load base shapes from")
 
     parser.add_argument("--batch_size", type=int, default=20, metavar="N", help="batch size")
-    parser.add_argument("--widths", type=int, nargs="+", default=[2 ** i for i in range(4, 10)], help="widths to use for coord check")
+    parser.add_argument("--widths", type=int, nargs="+", default=[12 * 2 ** i for i in range(1, 7)], help="widths to use for coord check")
 
     parser.add_argument("--cuda", action="store_true", help="use CUDA")
     parser.add_argument("--legend", type=str, help="'auto', 'brief', 'full', or False. This is passed to `seaborn.lineplot`.")
@@ -208,6 +217,7 @@ if __name__ == "__main__":
         os.environ["LOCAL_RANK"] = "0"
         os.environ["MASTER_ADDR"] = "localhost"
         os.environ["MASTER_PORT"] = "29600"
+        os.environ["LOCAL_WORLD_SIZE"] = "1"
 
         for use_mup in [True, False]:
             coord_check(

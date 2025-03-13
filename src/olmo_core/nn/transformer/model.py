@@ -218,6 +218,13 @@ class Transformer(nn.Module):
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
 
+        # In model.py forward method, before line 222
+        print("Input IDs shape:", input_ids.shape)
+        print("Input IDs min/max:", input_ids.min().item(), input_ids.max().item())
+        print("Embeddings vocab size:", self.embeddings.weight.shape[0])
+        # # Before passing to model
+        max_vocab_size = 100352
+        input_ids = torch.clamp(input_ids, 0, max_vocab_size - 1)
         # passthrough for non-existent layers, allows easy pipeline parallel configuration
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 

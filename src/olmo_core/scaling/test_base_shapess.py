@@ -86,7 +86,7 @@ def validate_base_shapes(base_shapes_path, d_model=768, verbose=True):
         tokenizer_config = TokenizerConfig.dolma2()
         config = TransformerConfig.olmo2_190M(
             vocab_size=tokenizer_config.padded_vocab_size(),
-            compile=True,
+            compile=False,
             d_model=d_model,
             dp_config=TransformerDataParallelConfig(
                 name=DataParallelType.fsdp,
