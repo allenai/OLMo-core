@@ -16,7 +16,10 @@ from olmo_core.data import (
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_world_size
-from olmo_core.nn.transformer import TransformerConfig, TransformerActivationCheckpointingMode
+from olmo_core.nn.transformer import (
+    TransformerActivationCheckpointingMode,
+    TransformerConfig,
+)
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import (
     Duration,
@@ -34,8 +37,9 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
-    TransformerTrainModuleConfig, TransformerActivationCheckpointingConfig,
+    TransformerTrainModuleConfig,
 )
 from olmo_core.utils import seed_all
 
@@ -100,7 +104,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             reduce_dtype=DType.float32,
             num_replicas=128 // 32,  # NOTE: tune this
         ),
-        ac_config=TransformerActivationCheckpointingConfig(TransformerActivationCheckpointingMode.full),
+        ac_config=TransformerActivationCheckpointingConfig(
+            TransformerActivationCheckpointingMode.full
+        ),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
     )
