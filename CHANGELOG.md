@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Added information about the official 32B training run.
+
 ### Fixed
 
 - The official config for the 32B had unrealistic batch size settings.
