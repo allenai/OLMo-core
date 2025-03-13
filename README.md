@@ -1,20 +1,47 @@
 <div align="center">
+  <!-- <img src="https://github.com/allenai/OLMo/assets/8812459/774ac485-a535-4768-8f7c-db7be20f5cc3" width="300"/> -->
+  <img src="https://allenai.org/olmo/olmo-7b-animation.gif" alt="OLMo Logo" width="600" style="margin-left:'auto' margin-right:'auto' display:'block'"/>
+  <br>
+  <br>
   <h1>OLMo-core</h1>
-  <p>Building blocks for OLMo modeling and training</p>
+  <h4>Building blocks for OLMo modeling and training</h4>
 </div>
 <p align="center">
-  <a href="https://github.com/allenai/OLMo-core/tree/main/src/examples">Examples</a> ||
-  <a href="https://olmo-core.readthedocs.io/en/latest/">Docs</a> ||
-  <a href="https://pypi.org/project/ai2-olmo-core/">PyPI</a> ||
-  <a href="https://github.com/orgs/allenai/packages?repo_name=OLMo-core">Docker Images</a> ||
-  <a href="https://beaker.org/ws/ai2/OLMo-core/images">Beaker Images</a> ||
-  <a href="https://github.com/allenai/OLMo-core/blob/main/LICENSE">License</a> ||
-  <a href="https://github.com/allenai/OLMo-core/blob/main/CHANGELOG.md">Changelog</a>
+  <a href="https://olmo-core.readthedocs.io/en/latest/">
+    <img alt="Docs" src="https://img.shields.io/badge/API-docs-red">
+  </a>
+  <a href="https://github.com/allenai/OLMo-core/tree/main/src/examples">
+    <img alt="Examples" src="https://img.shields.io/badge/API-examples-994B00">
+  </a>
+  <a href="https://github.com/allenai/OLMo-core/releases/tag/v1.9.0">
+    <img alt="Pypi" src="https://img.shields.io/pypi/v/ai2-olmo-core.svg">
+  </a>  
+  <a href="https://github.com/allenai/OLMo-core/blob/main/LICENSE">
+    <img alt="GitHub License" src="https://img.shields.io/github/license/allenai/OLMo">
+  </a>
+  <a href="https://arxiv.org/pdf/2501.00656.pdf">
+    <img alt="Paper URL" src="https://img.shields.io/badge/arxiv-2402.00838-orange">
+  </a>
+  <a href="https://playground.allenai.org">
+    <img alt="Playground" src="https://img.shields.io/badge/Ai2-Playground-F0529C">
+  </a>
+  <a href="https://discord.gg/sZq3jTNVNG">
+    <img alt="Discord" src="https://img.shields.io/badge/Discord%20-%20blue?style=flat&logo=discord&label=Ai2&color=%235B65E9">
+  </a>
 </p>
 
 ## Installation
 
-First install [PyTorch](https://pytorch.org) according to the instructions specific to your operating system and hardware. Then you can install from PyPI with:
+First install [PyTorch](https://pytorch.org) according to the instructions specific to your operating system and hardware.
+
+For development, we recommend installing from source:
+
+```bash
+git clone https://github.com/allenai/OLMo-core.git
+cd OLMo-core
+pip install -e .[all]
+```
+Or you can install from PyPI with:
 
 ```bash
 pip install ai2-olmo-core
@@ -33,12 +60,6 @@ But there are several things to keep in mind if you intend to use these images:
 
 If the published images do not work for your use-case for any of the above reasons, you could adapt our [Dockerfile](https://github.com/allenai/OLMo-core/blob/main/src/Dockerfile) to build your own images.
 
-## API stability
-
-Even though this library is under rapid development we are trying hard to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with every release except for features that are explicitly marked as beta features. Those features will be tagged like this in the [API docs](https://olmo-core.readthedocs.io/en/latest/):
-
-![image](https://github.com/user-attachments/assets/c666686d-3ae6-4c88-8381-befd698d3fd0)
-
 ## Official training scripts
 
 Official training scripts for released models can be found in [`src/scripts/official/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/official).
@@ -54,13 +75,40 @@ You can override most configuration options from the command-line. For example, 
 torchrun --nproc-per-node=8 ./src/scripts/train/OLMo2-0325-32B-train.py run01 --train_module.optim.lr=6e-3
 ```
 
-## Development
+## Inference
 
-After cloning OLMo-core and setting up a Python virtual environment, install the codebase from source with:
+You can use our Hugging Face integration to run inference on the OLMo transformers checkpoints:
 
-```bash
-pip install -e .[all]
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+olmo = AutoModelForCausalLM.from_pretrained("allenai/OLMo-2-0325-32B")
+tokenizer = AutoTokenizer.from_pretrained("allenai/OLMo-2-0325-32B")
+message = ["Language modeling is "]
+inputs = tokenizer(message, return_tensors='pt', return_token_type_ids=False)
+# inputs = {k: v.to('cuda') for k,v in inputs.items()} # optional verifying cuda
+# olmo = olmo.to('cuda')
+response = olmo.generate(**inputs, max_new_tokens=100, do_sample=True, top_k=50, top_p=0.95)
+print(tokenizer.batch_decode(response, skip_special_tokens=True)[0])
 ```
+
+Alternatively, with the Hugging Face pipeline abstraction:
+
+```python
+from transformers import pipeline
+olmo_pipe = pipeline("text-generation", model="allenai/OLMo-2-0325-32B")
+print(olmo_pipe("Language modeling is"))
+```
+### Quantization
+
+```python
+olmo = AutoModelForCausalLM.from_pretrained("allenai/OLMo-2-0325-32B", torch_dtype=torch.float16, load_in_8bit=True)  # requires bitsandbytes
+```
+
+## Evaluation
+
+Additional tools for evaluating OLMo models are available at the [OLMo Eval](https://github.com/allenai/OLMo-eval) and [olmes](https://github.com/allenai/olmes) repositories.
+
+## Development
 
 The Python library source code is located in `src/olmo_core`. The corresponding tests are located in `src/test`. The library docs are located in `docs`. You can build the docs locally with `make docs`.
 
@@ -73,11 +121,13 @@ Code checks:
 ## Citing
 
 ```bibtex
-@article{OLMo2,
-  title={2 OLMo 2 Furious},
-  author={Team OLMo and Pete Walsh and Luca Soldaini and Dirk Groeneveld and Kyle Lo and Shane Arora and Akshita Bhagia and Yuling Gu and Shengyi Huang and Matt Jordan and Nathan Lambert and Dustin Schwenk and Oyvind Tafjord and Taira Anderson and David Atkinson and Faeze Brahman and Christopher Clark and Pradeep Dasigi and Nouha Dziri and Michal Guerquin and Hamish Ivison and Pang Wei Koh and Jiacheng Liu and Saumya Malik and William Merrill and Lester James Validad Miranda and Jacob Daniel Morrison and Tyler C. Murray and Crystal Nam and Valentina Pyatkin and Aman Rangapur and Michael Schmitz and Sam Skjonsberg and David Wadden and Chris Wilhelm and Michael Wilson and Luke S. Zettlemoyer and Ali Farhadi and Noah A. Smith and Hanna Hajishirzi},
-  year={2024},
-  url={https://api.semanticscholar.org/CorpusID:275213098},
-  journal={arXiv preprint},
+@misc{olmo20242olmo2furious,
+      title={2 OLMo 2 Furious}, 
+      author={Team OLMo and Pete Walsh and Luca Soldaini and Dirk Groeneveld and Kyle Lo and Shane Arora and Akshita Bhagia and Yuling Gu and Shengyi Huang and Matt Jordan and Nathan Lambert and Dustin Schwenk and Oyvind Tafjord and Taira Anderson and David Atkinson and Faeze Brahman and Christopher Clark and Pradeep Dasigi and Nouha Dziri and Michal Guerquin and Hamish Ivison and Pang Wei Koh and Jiacheng Liu and Saumya Malik and William Merrill and Lester James V. Miranda and Jacob Morrison and Tyler Murray and Crystal Nam and Valentina Pyatkin and Aman Rangapur and Michael Schmitz and Sam Skjonsberg and David Wadden and Christopher Wilhelm and Michael Wilson and Luke Zettlemoyer and Ali Farhadi and Noah A. Smith and Hannaneh Hajishirzi},
+      year={2024},
+      eprint={2501.00656},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2501.00656}, 
 }
 ```
