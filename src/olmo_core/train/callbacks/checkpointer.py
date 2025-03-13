@@ -15,7 +15,9 @@ from olmo_core.distributed.utils import (
     scatter_object,
 )
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.io import clear_directory, is_url
+from olmo_core.io import clear_directory, is_url, join_path
+from olmo_core.nn.hf.checkpoint import save_hf_model
+from olmo_core.train.train_module.transformer import TransformerTrainModule
 from olmo_core.utils import wait_for
 
 from ..checkpoint import Checkpointer
@@ -255,3 +257,47 @@ class CheckpointerCallback(Callback):
             self._checkpoints.append(self._save_checkpoint(save_async=False))
 
         self._await_last_checkpoint()
+
+
+@dataclass
+class HuggingFaceCheckpointerCallback(CheckpointerCallback):
+    def __post_init__(self):
+        super().__post_init__()
+
+        if self.save_async:
+            raise OLMoConfigurationError(
+                "Hugging Face checkpointing does not support async checkpointing"
+            )
+        self.save_async = False
+
+        if not isinstance(self.trainer.train_module, TransformerTrainModule):
+            raise OLMoConfigurationError(
+                f"Hugging Face checkpointing is only supported with {TransformerTrainModule.__name__}"
+            )
+
+        if self.remove != CheckpointRemovalStrategy.never:
+            raise OLMoConfigurationError(
+                "Hugging Face checkpointing does not support removing old checkpoints"
+            )
+
+    def _save_checkpoint(self, save_async: Optional[bool] = None) -> str:
+        if save_async:
+            raise RuntimeError("Hugging Face checkpointing does not support async checkpointing")
+
+        dirname = self.checkpointer.checkpoint_dirname(self.step) + "-hf"
+        save_path = join_path(self.save_folder, dirname)
+
+        assert isinstance(self.trainer.train_module, TransformerTrainModule)
+
+        save_hf_model(
+            save_path,
+            self.trainer.train_module.state_dict_to_save(optim=False)["model"],
+            self.trainer.train_module.model,
+            process_group=self.trainer.checkpointer.process_group,
+            work_dir=self.trainer.checkpointer.work_dir,
+            save_overwrite=self.trainer.checkpointer.save_overwrite,
+        )
+
+        self._latest_checkpoint_step = self.step
+        self._latest_checkpoint_path = str(save_path)
+        return str(save_path)
