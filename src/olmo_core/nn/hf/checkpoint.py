@@ -93,6 +93,8 @@ def load_hf_model(
 
     key_mapping = get_key_mapping_from_hf(hf_model.config, model_id=model_id)
 
+    unupdated_keys = set(model_state_dict.keys())
+
     for hf_key, hf_state in hf_state_dict.items():
         olmo_core_key = key_mapping[hf_key]
         olmo_core_state = model_state_dict[olmo_core_key]
@@ -106,6 +108,12 @@ def load_hf_model(
             olmo_core_state = hf_state
 
         model_state_dict[olmo_core_key] = olmo_core_state
+        unupdated_keys.remove(olmo_core_key)
+
+    if len(unupdated_keys) > 0:
+        raise RuntimeError(
+            f"Some OLMo core state keys were not set when loading HF model: {unupdated_keys}"
+        )
 
 
 @beta_feature
