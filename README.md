@@ -85,10 +85,10 @@ Below is a comprehensive table showing the Stage 1 and 2 training details for OL
 
 | Stage | Model Size | Training | Checkpoint | Monitoring |
 |------------|----------|------------|------------|------------|
-| Stage 1 | **32B** | 6T tokens | [stage1-step721901-tokens6056B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage1-step721901-tokens6056B) | coming soon |
-| Stage 2 | **32B** | random seed 1110, 100B tokens | [stage2-ingredient1-step11921-tokens100B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage2-ingredient1-step11921-tokens101B) | coming soon |
-| |  | random seed 2662, 100B tokens | [stage2-ingredient2-step11921-tokens100B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage2-ingredient2-step11921-tokens101B) | coming soon |
-|  |  | random seed 6209, 100B tokens | [stage2-ingredient3-step11921-tokens300B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage2-ingredient3-step11921-tokens101B) | coming soon |
+| stage 1 | **32B** | 6T tokens | [stage1-step721901-tokens6056B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage1-step721901-tokens6056B) | coming soon |
+| stage 2 | **32B** | random seed 1110, 100B tokens | upload in progress | coming soon |
+| |  | random seed 2662, 100B tokens | upload in progress | coming soon |
+|  |  | random seed 2662, 300B tokens | upload in progress | coming soon |
 |  |  | **Final Souped Model** | [main](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/main) | No config, weights averaged in Python | - |
 
 The table below lists the checkpoints for Stage 1 and Stage 2 of OLMo-2, along with their corresponding Hugging Face format.
@@ -96,7 +96,7 @@ The table below lists the checkpoints for Stage 1 and Stage 2 of OLMo-2, along w
 
 | Variant         | OLMo Format (Stage 1)                                                                                         | OLMo Format (Stage 2) | Hugging Face Format                                                               |
 |----------------|-----------------------------------------------------------------------------------------------------|--------|----------------------------------------------------------------------------------|
-| **OLMo-2 32B**  | [OLMo-2 32B](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo2-0325-32B.csv)     | [OLMo-2 32B](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo2-0325-32B-stage2.csv)      | [Hugging Face for the 32B variant](https://huggingface.co/allenai/OLMo-2-0325-32B)  |
+| **OLMo-2 32B**  | [OLMo-2 32B](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo2-0325-32B.csv)     | Upload in progress      | [Hugging Face for the 32B variant](https://huggingface.co/allenai/OLMo-2-0325-32B)  |
 
 
 #### OLMo 7B and 13B models were trained using our previous training infrastructure. All related checkpoints, configs, and scripts for these models (training/fine-tuning) can be found in the [OLMo](https://github.com/allenai/OLMo) repository. Our new 32B model was trained using our updated training infrastructure. While you can also train 7B and 13B models on this new trainer, please note that the released checkpoints and configs for those models use a different format than the new 32B model.
