@@ -131,10 +131,22 @@ def save_hf_model(
 
     hf_state_dict = {}
     for key, value in model_state_dict.items():
+        # One OLMo core key can correspond to many HF keys. We assume that the value needs to
+        # be split equally across dim 0 in this case.
+        mapped_keys = key_mapping[key]
+
         if isinstance(value, torch.Tensor):
             value = get_full_tensor(value)
 
-        hf_state_dict[key_mapping[key]] = value
+            values = torch.chunk(value, chunks=len(mapped_keys))
+            for mapped_key, v in zip(mapped_keys, values):
+                hf_state_dict[mapped_key] = v
+        else:
+            if len(mapped_keys) > 1:
+                raise RuntimeError(f"Key {key} of non-tensor state is mapped one-to-many")
+            assert len(mapped_keys) == 1
+
+            hf_state_dict[mapped_keys[0]] = value
 
     with init_empty_weights():
         log.info("Initializing HF model with empty weights...")

@@ -1,10 +1,11 @@
-from typing import Dict
+from typing import Any, Dict
 
 from transformers import PretrainedConfig
 
 from olmo_core.doc_utils import beta_feature
 
 BLOCK_STR = "[block]"
+EXPERT_STR = "[expert]"
 
 # Map of Hugging Face keys to olmo_core keys. Different HF models may use different
 # names for a given olmo_core state, but we assume for now that the same HF name does not
@@ -56,6 +57,18 @@ OLMO_CORE_TO_HF_MAPPINGS: Dict[str, str] = {
     f"blocks.{BLOCK_STR}.feed_forward_norm.weight": f"model.layers.{BLOCK_STR}.post_feedforward_layernorm.weight",
     f"blocks.{BLOCK_STR}.attention.q_norm.weight": f"model.layers.{BLOCK_STR}.self_attn.q_norm.weight",
     f"blocks.{BLOCK_STR}.attention.k_norm.weight": f"model.layers.{BLOCK_STR}.self_attn.k_norm.weight",
+    # MoEMLP.
+    f"blocks.{BLOCK_STR}.feed_forward_moe.router.w_score": f"model.layers.{BLOCK_STR}.mlp.gate.weight",
+    f"blocks.{BLOCK_STR}.feed_forward_moe.experts.w1.weight": f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.gate_proj.weight",
+    f"blocks.{BLOCK_STR}.feed_forward_moe.experts.w2.weight": f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.down_proj.weight",
+    f"blocks.{BLOCK_STR}.feed_forward_moe.experts.w3.weight": f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.up_proj.weight",
+}
+
+
+OLMO_CORE_TO_HF_ONE_TO_MANY_MAPPING: Dict[str, str] = {
+    f"blocks.{BLOCK_STR}.feed_forward_moe.experts.w1.weight": EXPERT_STR,
+    f"blocks.{BLOCK_STR}.feed_forward_moe.experts.w2.weight": EXPERT_STR,
+    f"blocks.{BLOCK_STR}.feed_forward_moe.experts.w3.weight": EXPERT_STR,
 }
 
 
@@ -84,14 +97,57 @@ def get_key_mapping_from_hf(
     return mapping
 
 
+def _get_olmo_core_to_hf_mapping(
+    key_template: str,
+    value_template: str,
+    i_layer: int,
+    n_layers: int,
+    i_expert: int | None = None,
+    n_experts: int = 0,
+) -> tuple[str, tuple[str, ...]]:
+    # We assume a one-to-many mapping from OLMo Core to HF for now
+
+    if key_template in OLMO_CORE_TO_HF_ONE_TO_MANY_MAPPING:
+        chunking_key = OLMO_CORE_TO_HF_ONE_TO_MANY_MAPPING[key_template]
+
+        if chunking_key == EXPERT_STR:
+            assert n_experts > 0
+            n_chunks = n_experts
+        elif chunking_key == BLOCK_STR:
+            n_chunks = n_layers
+        else:
+            raise NotImplementedError(chunking_key)
+
+        value_templates = [value_template.replace(chunking_key, str(i)) for i in range(n_chunks)]
+    else:
+        value_templates = [value_template]
+
+    key = key_template.replace(BLOCK_STR, str(i_layer)).replace(EXPERT_STR, str(i_expert))
+    values = tuple(
+        v.replace(BLOCK_STR, str(i_layer)).replace(EXPERT_STR, str(i_expert))
+        for v in value_templates
+    )
+
+    return key, values
+
+
 @beta_feature
-def get_key_mapping_to_hf(config: PretrainedConfig) -> Dict[str, str]:
+def get_key_mapping_to_hf(config: PretrainedConfig) -> Dict[str, tuple[str, ...]]:
     if not hasattr(config, "num_hidden_layers"):
         raise ValueError(f"Number of hidden layers missing in HF config: {config}")
     n_layers: int = config.num_hidden_layers
+    n_experts: int = getattr(config, "num_experts", 0)
 
-    return {
-        k.replace(BLOCK_STR, str(i)): v.replace(BLOCK_STR, str(i))
-        for i in range(n_layers)
+    return dict(
+        _get_olmo_core_to_hf_mapping(
+            k,
+            v,
+            i_layer,
+            n_layers,
+            i_expert=None if n_experts == 0 else i_expert,
+            n_experts=n_experts,
+        )
+        for i_layer in range(n_layers)
+        for i_expert in range(n_experts or 1)
         for k, v in OLMO_CORE_TO_HF_MAPPINGS.items()
-    }
+    )
