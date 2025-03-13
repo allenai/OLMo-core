@@ -131,6 +131,17 @@ def convert_checkpoint_from_hf(
         checkpointer.save(output_path, train_module, train_state={})
         log.info(f"Successfully saved converted model to '{output_path}'")
 
+        log.info(f"Writing partial experiment config to '{output_path}'")
+        experiment_config_dict = {
+            "model": transformer_config_dict,
+            "dataset": {
+                "tokenizer": tokenizer_config_dict,
+            },
+        }
+        log.info(f"Successfully wrote partial experiment config to '{output_path}'")
+
+        checkpointer.write_file(output_path, "config.json", json.dumps(experiment_config_dict))
+
     if validate:
         log.info("Validating converted model")
         validate_conversion(hf_checkpoint_path, model, tokenizer_config.vocab_size)
