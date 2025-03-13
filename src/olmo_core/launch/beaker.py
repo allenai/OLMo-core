@@ -385,8 +385,10 @@ class BeakerLaunchConfig(Config):
             "mkdir -p /root/.cache/torch/kernels && export PYTORCH_KERNEL_CACHE_PATH=/root/.cache/torch/kernels",
             "mkdir -p /olmo-core-runtime",
             "cd /olmo-core-runtime",
-            *self.setup_steps,
         ]
+        if any(["titan" in cluster for cluster in self.clusters]):
+            entrypoint_script.append("pip install --pre --upgrade torch --index-url https://download.pytorch.org/whl/nightly/cu128")
+        entrypoint_script.extend(self.setup_steps)
 
         if torchrun:
             if self.num_nodes > 1 and any(["augusta" in cluster for cluster in self.clusters]):
