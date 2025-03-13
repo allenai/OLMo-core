@@ -116,13 +116,15 @@ def convert_checkpoint_from_hf(
         checkpointer = checkpointer_config.build()
 
         log.info(f"Loading HF checkpoint from '{hf_checkpoint_path}'")
+        model_state_dict = train_module.state_dict_to_save(optim=False)["model"]
         load_hf_model(
             hf_checkpoint_path,
-            train_module.state_dict_to_save(optim=False)["model"],
+            model_state_dict,
             train_module.model.n_layers,
             process_group=checkpointer.process_group,
             work_dir=checkpointer.work_dir,
         )
+        model.load_state_dict(model_state_dict)
         log.info(f"Saving OLMo core checkpoint to '{output_path}'")
         checkpointer.save(output_path, train_module, train_state={})
         log.info(f"Successfully saved converted model to '{output_path}'")
