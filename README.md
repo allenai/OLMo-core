@@ -7,17 +7,17 @@
   <h4>Building blocks for OLMo modeling and training</h4>
 </div>
 <p align="center">
+  <a href="https://olmo-core.readthedocs.io/en/latest/">
+    <img alt="Docs" src="https://img.shields.io/badge/API-docs-red">
+  </a>
   <a href="https://github.com/allenai/OLMo-core/tree/main/src/examples">
-    <img alt="Examples" src="https://img.shields.io/badge/Train-Examples-994B00">
+    <img alt="Examples" src="https://img.shields.io/badge/API-examples-994B00">
   </a>
   <a href="https://github.com/allenai/OLMo-core/releases/tag/v1.9.0">
     <img alt="Pypi" src="https://img.shields.io/pypi/v/ai2-olmo-core.svg">
   </a>  
   <a href="https://github.com/allenai/OLMo-core/blob/main/LICENSE">
     <img alt="GitHub License" src="https://img.shields.io/github/license/allenai/OLMo">
-  </a>
-  <a href="https://olmo-core.readthedocs.io/en/latest/">
-    <img alt="Docs" src="https://img.shields.io/badge/OLMocore-docs-red">
   </a>
   <a href="https://arxiv.org/pdf/2501.00656.pdf">
     <img alt="Paper URL" src="https://img.shields.io/badge/arxiv-2402.00838-orange">
@@ -74,10 +74,6 @@ You can override most configuration options from the command-line. For example, 
 ```bash
 torchrun --nproc-per-node=8 ./src/scripts/train/OLMo2-0325-32B-train.py run01 --train_module.optim.lr=6e-3
 ```
-
-You can find list of all the checkpoints of 32B in [`src/scripts/official/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/official).
-
-#### OLMo 7B and 13B models were trained using our previous training infrastructure. All related checkpoints, configs, and scripts for these models (training/fine-tuning) can be found in the [OLMo](https://github.com/allenai/OLMo) repository. Our new 32B model was trained using our updated training infrastructure. While you can also train 7B and 13B models on this new trainer, please note that the released checkpoints and configs for those models use a different format than the new 32B model.
 
 ## Inference
 
