@@ -58,7 +58,7 @@ OLMO_CORE_TO_HF_MAPPINGS: Dict[str, str] = {
     f"blocks.{BLOCK_STR}.attention.q_norm.weight": f"model.layers.{BLOCK_STR}.self_attn.q_norm.weight",
     f"blocks.{BLOCK_STR}.attention.k_norm.weight": f"model.layers.{BLOCK_STR}.self_attn.k_norm.weight",
     # MoEMLP.
-    f"blocks.{BLOCK_STR}.feed_forward_moe.router.w_score": f"model.layers.{BLOCK_STR}.mlp.gate.weight",
+    f"blocks.{BLOCK_STR}.feed_forward_moe.router.weight": f"model.layers.{BLOCK_STR}.mlp.gate.weight",
     f"blocks.{BLOCK_STR}.feed_forward_moe.experts.w1.weight": f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.gate_proj.weight",
     f"blocks.{BLOCK_STR}.feed_forward_moe.experts.w2.weight": f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.down_proj.weight",
     f"blocks.{BLOCK_STR}.feed_forward_moe.experts.w3.weight": f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.up_proj.weight",
