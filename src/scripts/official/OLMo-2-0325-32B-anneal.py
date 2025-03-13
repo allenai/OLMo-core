@@ -96,13 +96,6 @@ class AnnealingDataMix(DataMixBase):
                 labels.append(line.split("/")[1])
 
         return paths, labels
-    
-    # def _process_mix_line(self, line: str, base_dir: str, paths: List[str], labels: List[str]):
-    #     line = line.strip()
-    #     if not line or line.startswith("#"):
-    #         return
-    #     paths.append(f"{base_dir}{line}")
-    #     labels.append(line.split("/")[1])
 
 
 @dataclass
@@ -133,7 +126,7 @@ class AnnealingConfig(Config):
     ) -> "AnnealingConfig":
         tokenizer_config = TokenizerConfig.dolma2()
 
-        # Get step number and max steps to infer where the learning rate left off
+        # Get step number and max steps to infer where the learning rate left off.
         try:
             train_state = torch.load(
                 resource_path(f"{checkpoint}/train", "rank0.pt"), weights_only=False
@@ -152,6 +145,7 @@ class AnnealingConfig(Config):
             assert scheduler_config.pop("_CLASS_") == CosWithWarmup.__name__
             scheduler = CosWithWarmup(**scheduler_config)
             starting_lr = float(scheduler.get_lr(base_lr, last_pretrain_step, max_pretrain_steps))
+
             run_name = f"peteish32-from{last_pretrain_step}-{run_name}"
             
         except (FileNotFoundError, KeyError, json.JSONDecodeError) as e:
@@ -161,7 +155,6 @@ class AnnealingConfig(Config):
             max_pretrain_steps = 774861
             starting_lr = 1e-5
         
-        # Compute num_replicas based on world size
         world_size = get_world_size()
         num_nodes = int(os.environ.get("WORLD_SIZE", "1")) // int(os.environ.get("LOCAL_WORLD_SIZE", "1"))
         if num_nodes == 0:
@@ -339,23 +332,23 @@ class AnnealingConfig(Config):
 
 
 def train(checkpoint: str, config: AnnealingConfig):
-    # Set RNG states on all devices
+    # Set RNG states on all devices.
     seed_all(config.init_seed)
 
-    # Build components
+    # Build components.
     model = config.model.build(init_device="meta")
     train_module = config.train_module.build(model)
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
     trainer = config.trainer.build(train_module, data_loader)
 
-    # Record the config to WandB/Comet and each checkpoint dir
+    # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
     cast(CometCallback, trainer.callbacks["comet"]).config = config_dict
     cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
-    # Try loading a checkpoint from the save folder, otherwise start from the pretraining checkpoint
+    # Try loading a checkpoint from the save folder, otherwise start from the pretraining checkpoint.
     if not trainer.maybe_load_checkpoint(trainer.save_folder):
         trainer.load_checkpoint(checkpoint, load_trainer_state=False)
 
@@ -365,49 +358,17 @@ def train(checkpoint: str, config: AnnealingConfig):
 
 def main():
     if len(sys.argv) < 3:
-        print(f"""
-        Arguments:
-        RUN_NAME    Name for this annealing run (used for checkpoint saving)
-        CHECKPOINT  Path to the pretrained model checkpoint to start from
-        
-        Examples:
-        # Basic usage with 8 GPUs on a single node
-        torchrun --nproc_per_node=8 {sys.argv[0]} my_anneal_run /path/to/checkpoint
-        
-        # Running with custom settings
-        torchrun --nproc_per_node=8 {sys.argv[0]} lr_experiment /path/to/checkpoint \\
-            --train_module.optim.lr=5e-6 --trainer.max_duration.tokens=50000000000
-        """)
+        print(f"Usage: torchrun [OPTS..] {sys.argv[0]} run_name [OVERRIDES...]")
         sys.exit(1)
 
     run_name, checkpoint, *overrides = sys.argv[1:]
-    
-    # Convert CLI args to the right format if they don't have --
-    formatted_overrides = []
-    for override in overrides:
-        if not override.startswith("--"):
-            formatted_overrides.append(f"--{override}")
-        else:
-            formatted_overrides.append(override)
-
     prepare_training_environment()
     try:
         config = AnnealingConfig.build(
             run_name=run_name,
             checkpoint=checkpoint,
-            overrides=formatted_overrides,
+            overrides=overrides,
         )
-        
-        # Print configuration summary
-        if get_local_rank() == 0:
-            print("\n" + "=" * 50)
-            print(f"Annealing Run: {config.run_name}")
-            print(f"Starting from checkpoint: {checkpoint}")
-            print(f"Data mix: {config.dataset.mix}")
-            print(f"Saving to: {config.trainer.save_folder}")
-            print(f"Training duration: {config.trainer.max_duration}")
-            print("=" * 50 + "\n")
-        
         train(checkpoint, config)
     finally:
         teardown_training_environment()
