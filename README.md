@@ -75,7 +75,7 @@ You can override most configuration options from the command-line. For example, 
 torchrun --nproc-per-node=8 ./src/scripts/train/OLMo2-0325-32B-train.py run01 --train_module.optim.lr=6e-3
 ```
 
-You can find list of all the checkpoints of 32B in [`src/scripts/train/official-0325/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/train/official-0325).
+You can find list of all the checkpoints of 32B in [`src/scripts/official/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/official).
 
 #### OLMo 7B and 13B models were trained using our previous training infrastructure. All related checkpoints, configs, and scripts for these models (training/fine-tuning) can be found in the [OLMo](https://github.com/allenai/OLMo) repository. Our new 32B model was trained using our updated training infrastructure. While you can also train 7B and 13B models on this new trainer, please note that the released checkpoints and configs for those models use a different format than the new 32B model.
 
@@ -117,6 +117,36 @@ Even though this library is under rapid development we are trying hard to adhere
 
 ![image](https://github.com/user-attachments/assets/c666686d-3ae6-4c88-8381-befd698d3fd0)
 
+## Official training scripts
+
+Official training scripts for released models can be found in [`src/scripts/official/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/official).
+These scripts are meant to be launched with ``torchrun``. For example:
+
+```bash
+torchrun --nproc-per-node=8 ./src/scripts/official/OLMo2-0325-32B-train.py run01
+```
+
+You can override most configuration options from the command-line. For example, to override the learning rate you could launch the script like this:
+
+```bash
+torchrun --nproc-per-node=8 ./src/scripts/train/OLMo2-0325-32B-train.py run01 --train_module.optim.lr=6e-3
+```
+
+## Development
+
+After cloning OLMo-core and setting up a Python virtual environment, install the codebase from source with:
+
+```bash
+pip install -e .[all]
+```
+
+The Python library source code is located in `src/olmo_core`. The corresponding tests are located in `src/test`. The library docs are located in `docs`. You can build the docs locally with `make docs`.
+
+Code checks:
+- We use `pytest` to run tests. You can run all tests with `pytest -v src/test`. You can also point `pytest` at a specific test file to run it individually.
+- We use `isort` and `black` for code formatting. Ideally you should integrate these into your editor, but you can also run them manually or configure them with a pre-commit hook. To validate that all files are formatted correctly, run `make style-check`.
+- We use `ruff` as our primary linter. You can run it with `make lint-check`.
+- We use `mypy` as our type checker. You can run it with `make type-check`.
 
 ## Citing
 

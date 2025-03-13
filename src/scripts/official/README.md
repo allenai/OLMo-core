@@ -10,3 +10,6 @@ Below is a comprehensive table showing the Stage 2 training details for all OLMo
 |  | **Final Souped Model** | [main](https://huggingface.co/allenai/OLMo-2-1124-13B/tree/main) | No config, weights averaged in Python | - |
 
 Note: You can find all the configs and checkpoints for 7B and 13B in the [OLMo](https://github.com/allenai/OLMo) repository.
+## Official public training scripts
+
+Please read the scripts carefully before attempting to run them. You may need to adjust hyperparameters based on your hardware.
