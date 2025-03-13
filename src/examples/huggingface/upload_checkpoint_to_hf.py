@@ -1,6 +1,7 @@
 import argparse
 import math
 import os
+import sys
 
 from huggingface_hub import HfApi, login
 from tqdm import tqdm
@@ -64,6 +65,7 @@ if __name__ == "__main__":
     print("Starting upload process...")
     if not os.path.exists(args.local_checkpoint_dir):
         print("Error: Directory not found!")
+        sys.exit(1)
     else:
         print(f"Found directory. Contents: {os.listdir(args.local_checkpoint_dir)}")
         upload_to_branch(
