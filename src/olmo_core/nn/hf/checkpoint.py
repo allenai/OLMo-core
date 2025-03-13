@@ -46,8 +46,10 @@ def load_hf_model(
             "Load path provided is a remote Hugging Face directory. This may not be suitable for unshared file systems."
         )
         assert work_dir is not None
-        assert file_exists(f"{dir}/model.safetensors.index.json") or file_exists(
-            f"{dir}/pytorch_model.bin"
+        assert (
+            file_exists(f"{dir}/generation_config.json")
+            or file_exists(f"{dir}/model.safetensors.index.json")
+            or file_exists(f"{dir}/pytorch_model.bin")
         )
         model_name_or_path = dir
         model_id = None
@@ -57,8 +59,10 @@ def load_hf_model(
             copy_dir(dir, work_dir)
         barrier(group=process_group)
     elif Path(dir).is_dir():
-        assert file_exists(f"{dir}/model.safetensors.index.json") or file_exists(
-            f"{dir}/pytorch_model.bin"
+        assert (
+            file_exists(f"{dir}/generation_config.json")
+            or file_exists(f"{dir}/model.safetensors.index.json")
+            or file_exists(f"{dir}/pytorch_model.bin")
         )
         model_name_or_path = dir
         model_id = None
