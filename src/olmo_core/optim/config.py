@@ -114,7 +114,9 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
                 if matches == 0:
                     for name in frozen_params:
                         if fnmatch(name, pattern):
-                            log.warning(f"optim group {g_idx} override pattern '{pattern}' matches a frozen parameter and will be ignored")
+                            log.warning(
+                                f"optim group {g_idx} override pattern '{pattern}' matches a frozen parameter and will be ignored"
+                            )
                             break
                     else:
                         msg = f"optim group {g_idx} override pattern '{pattern}' does not match any parameters"
