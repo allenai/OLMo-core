@@ -113,7 +113,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     # If you have 1024 GPUs, you can run slightly faster with a different config.
     if get_world_size() >= 1024:
-        train_module_config.rank_microbatch_size /= 2
+        train_module_config.rank_microbatch_size //= 2
         train_module_config.ac_config = TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.selected_modules,
             modules=[f"blocks.{i}.feed_forward" for i in range(64)],
