@@ -81,8 +81,6 @@ OLMo2 32B pretraining follows a two-stage training procedure.
 In the first stage, we train on large amounts of mostly web-based data: [OLMo-mix-1124](https://huggingface.co/datasets/allenai/olmo-mix-1124)
 In the second stage, we train on a smaller amount of high-quality, targeted data: Dolmino-mix-0324 (releasing soon).
 
-Below is a comprehensive table showing the Stage 1 and 2 training details for OLMo2-32B.
-
 | Stage | Model Size | Training | Checkpoint | Monitoring |
 |------------|----------|------------|------------|------------|
 | stage 1 | **32B** | 6T tokens | [stage1-step721901-tokens6056B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage1-step721901-tokens6056B) | coming soon |
@@ -92,7 +90,6 @@ Below is a comprehensive table showing the Stage 1 and 2 training details for OL
 |  |  | **Final Souped Model** | [main](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/main) | No config, weights averaged in Python | - |
 
 The table below lists the checkpoints for Stage 1 and Stage 2 of OLMo-2, along with their corresponding Hugging Face format.
-
 
 | Variant         | OLMo Format (Stage 1)                                                                                         | OLMo Format (Stage 2) | Hugging Face Format                                                               |
 |----------------|-----------------------------------------------------------------------------------------------------|--------|----------------------------------------------------------------------------------|
