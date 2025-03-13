@@ -412,6 +412,35 @@ class TransformerConfig(Config):
         )
 
     @classmethod
+    def olmoe_4X7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        d_model = 4096
+        dropless = False  # Possibly more OOM due to imbalance with dropless=True
+        return TransformerConfig.llama_like_moe(
+            vocab_size=vocab_size,
+            d_model=d_model,
+            n_layers=32,
+            n_heads=32,
+            num_experts=4,
+            top_k=4,
+            expert_hidden_size=11008,
+            dropless=dropless,
+            capacity_factor=None if dropless else 1.2,  # adjust as needed
+            lb_loss_weight=0.01,
+            z_loss_weight=0.001,
+            reordered_norm=True,
+            qk_norm=True,
+            rope_theta=500_000,
+            layer_norm_eps=1e-6,
+            freeze_params=[
+                "embeddings.*",
+                "blocks.*.attention*",
+                "blocks.*.feed_forward_norm.*",
+                "lm_head.*",
+                "blocks.*.feed_forward_moe.experts*",  # TODO: comment if you also want to train the expert weights.
+            ],
+        )
+
+    @classmethod
     def ngpt_271M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 271M nGPT model config.
