@@ -146,12 +146,12 @@ def convert_to_hf_checkpoint(
 
         if has_qk_norm:
             # Non-Llama model
-            hf_state_dict[
-                f"model.layers.{block}.post_attention_layernorm.weight"
-            ] = olmo_state_dict.pop(f"blocks.{block}.attention_norm.weight")
-            hf_state_dict[
-                f"model.layers.{block}.post_feedforward_layernorm.weight"
-            ] = olmo_state_dict.pop(f"blocks.{block}.feed_forward_norm.weight")
+            hf_state_dict[f"model.layers.{block}.post_attention_layernorm.weight"] = (
+                olmo_state_dict.pop(f"blocks.{block}.attention_norm.weight")
+            )
+            hf_state_dict[f"model.layers.{block}.post_feedforward_layernorm.weight"] = (
+                olmo_state_dict.pop(f"blocks.{block}.feed_forward_norm.weight")
+            )
             hf_state_dict[f"model.layers.{block}.self_attn.q_norm.weight"] = olmo_state_dict.pop(
                 f"blocks.{block}.attention.q_norm.weight"
             )
@@ -160,9 +160,9 @@ def convert_to_hf_checkpoint(
             )
         else:
             # Llama model
-            hf_state_dict[
-                f"model.layers.{block}.post_attention_layernorm.weight"
-            ] = olmo_state_dict.pop(f"blocks.{block}.feed_forward_norm.weight")
+            hf_state_dict[f"model.layers.{block}.post_attention_layernorm.weight"] = (
+                olmo_state_dict.pop(f"blocks.{block}.feed_forward_norm.weight")
+            )
             hf_state_dict[f"model.layers.{block}.input_layernorm.weight"] = olmo_state_dict.pop(
                 f"blocks.{block}.attention_norm.weight"
             )
