@@ -279,7 +279,9 @@ def main():
         if shards_dir.exists() and shards_dir.is_dir():
             logging.info(f"Unsharding checkpoint from {shards_dir} to {_unsharded_dir}")
             (unsharded_dir := Path(_unsharded_dir)).mkdir(parents=True, exist_ok=True)
-            unshard_checkpoint(dir=shards_dir, target_dir=unsharded_dir, optim=False)
+            unshard_checkpoint(
+                dir=shards_dir, target_dir=unsharded_dir, optim=False, save_overwrite=True
+            )
 
             logging.info("Copying config.json to unsharded directory")
             shutil.copy(args.checkpoint_input_dir / "config.json", unsharded_dir / "config.json")

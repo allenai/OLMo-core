@@ -9,8 +9,8 @@ from typing import List, Optional, Set, Union
 import torch
 import torch.nn as nn
 
-from .config import Config, StrEnum
-from .exceptions import OLMoConfigurationError
+from ..config import Config, StrEnum
+from ..exceptions import OLMoConfigurationError
 
 __all__ = ["Float8Handler", "Float8ScalingType", "Float8Config"]
 
