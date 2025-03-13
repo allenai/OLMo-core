@@ -807,16 +807,18 @@ class TransformerPipelineTrainModule(TrainModule):
                 stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
             yield
 
-    def _get_state_dict(self, sd_options: dist_cp_sd.StateDictOptions) -> Dict[str, Any]:
-        return {
+    def _get_state_dict(self, sd_options: dist_cp_sd.StateDictOptions, optim: bool = True) -> Dict[str, Any]:
+        state_dict: Dict[str, Any] = {
             "model": {
                 k: v
                 for sd in map(
                     partial(dist_cp_sd.get_model_state_dict, options=sd_options), self.model_parts
                 )
                 for k, v in sd.items()
-            },
-            "optim": {
+            }
+        }
+        if optim:
+            state_dict["optim"] = {
                 k: v
                 for sd in map(
                     partial(dist_cp_sd.get_optimizer_state_dict, options=sd_options),
@@ -825,6 +827,7 @@ class TransformerPipelineTrainModule(TrainModule):
                 )
                 for k, v in sd.items()
             }
+
         return state_dict
 
     def _clip_grad_norm(
