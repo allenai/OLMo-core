@@ -7,23 +7,21 @@ import logging
 import os
 import sys
 from dataclasses import dataclass
-from typing import List, Tuple, Optional, cast
+from typing import List, Tuple, cast
 
 import torch
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 from olmo_core.config import Config, DType
 from olmo_core.data import (
     DataMixBase,
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
-    NumpyDatasetType,
     TokenizerConfig,
     TokenizerName,
 )
-
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.distributed.utils import get_local_rank, get_world_size
+
+# from olmo_core.distributed.utils import get_world_size
 from olmo_core.io import resource_path
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import (
@@ -46,7 +44,6 @@ from olmo_core.train.callbacks import (
     DownstreamEvaluatorCallbackConfig,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
-    LMEvaluatorCallbackConfig,
     WandBCallback,
 )
 from olmo_core.train.checkpoint import CheckpointerConfig
@@ -75,9 +72,9 @@ class AnnealingDataMix(DataMixBase):
     name (without the '.txt' extension) below.
     """
 
-    dolmino100 = "dolmino100"  
-    dolmino300 = "dolmino300"  
-    jallyrun = "jallyrun"       
+    dolmino100 = "dolmino100"
+    dolmino300 = "dolmino300"
+    jallyrun = "jallyrun"
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
@@ -127,40 +124,34 @@ class AnnealingConfig(Config):
         tokenizer_config = TokenizerConfig.dolma2()
 
         # Get step number and max steps to infer where the learning rate left off.
-        try:
-            train_state = torch.load(
-                resource_path(f"{checkpoint}/train", "rank0.pt"), weights_only=False
-            )
-            last_pretrain_step: int = train_state["global_step"]
-            max_pretrain_steps: int = train_state.get("max_steps", 774861)  # default found in logs
-            log.info(
-                f"Will anneal from checkpoint at step {last_pretrain_step:,d} of {max_pretrain_steps:,d}"
-            )
-            
-            # Now infer the learning rate.
-            with resource_path(checkpoint, "config.json").open() as f:
-                config = json.load(f)
-            base_lr = config["optim"]["lr"]
-            scheduler_config = config["trainer"]["callbacks"]["lr_scheduler"]["scheduler"]
-            assert scheduler_config.pop("_CLASS_") == CosWithWarmup.__name__
-            scheduler = CosWithWarmup(**scheduler_config)
-            starting_lr = float(scheduler.get_lr(base_lr, last_pretrain_step, max_pretrain_steps))
+        train_state = torch.load(
+            resource_path(f"{checkpoint}/train", "rank0.pt"), weights_only=False
+        )
+        last_pretrain_step: int = train_state["global_step"]
+        max_pretrain_steps: int = train_state.get("max_steps", 774861)  # default found in logs
+        log.info(
+            f"Will anneal from checkpoint at step {last_pretrain_step:,d} of {max_pretrain_steps:,d}"
+        )
 
-            run_name = f"peteish32-from{last_pretrain_step}-{run_name}"
-            
-        except (FileNotFoundError, KeyError, json.JSONDecodeError) as e:
-            log.warning(f"Could not determine exact checkpoint state: {e}")
-            log.warning("Falling back to default values for continued training")
-            last_pretrain_step = 0
-            max_pretrain_steps = 774861
-            starting_lr = 1e-5
-        
-        world_size = get_world_size()
-        num_nodes = int(os.environ.get("WORLD_SIZE", "1")) // int(os.environ.get("LOCAL_WORLD_SIZE", "1"))
+        # Now infer the learning rate.
+        with resource_path(checkpoint, "config.json").open() as f:
+            config = json.load(f)
+        base_lr = config["optim"]["lr"]
+        scheduler_config = config["trainer"]["callbacks"]["lr_scheduler"]["scheduler"]
+        assert scheduler_config.pop("_CLASS_") == CosWithWarmup.__name__
+        scheduler = CosWithWarmup(**scheduler_config)
+        starting_lr = float(scheduler.get_lr(base_lr, last_pretrain_step, max_pretrain_steps))
+
+        run_name = f"peteish32-from{last_pretrain_step}-{run_name}"
+
+        # world_size = get_world_size()
+        num_nodes = int(os.environ.get("WORLD_SIZE", "1")) // int(
+            os.environ.get("LOCAL_WORLD_SIZE", "1")
+        )
         if num_nodes == 0:
             num_nodes = 1
         num_replicas = max(1, num_nodes // 2)
-        
+
         config = AnnealingConfig(
             run_name=f"olmo2-anneal-{run_name}",
             model=TransformerConfig.olmo2_32B(vocab_size=tokenizer_config.padded_vocab_size()),
@@ -172,12 +163,14 @@ class AnnealingConfig(Config):
                 work_dir=WORK_DIR,
             ),
             data_loader=NumpyDataLoaderConfig(
-                global_batch_size=2048 * SEQUENCE_LENGTH,  # NOTE: this is specified in TOKENS, not instances.
+                global_batch_size=2048
+                * SEQUENCE_LENGTH,  # NOTE: this is specified in TOKENS, not instances.
                 seed=34521,  # NOTE: can update this to change data order.
                 num_workers=4,
             ),
             train_module=TransformerTrainModuleConfig(
-                rank_microbatch_size=2 * SEQUENCE_LENGTH,  # NOTE: again this is specified in tokens.
+                rank_microbatch_size=2
+                * SEQUENCE_LENGTH,  # NOTE: again this is specified in tokens.
                 max_sequence_length=SEQUENCE_LENGTH,
                 z_loss_multiplier=1e-5,
                 compile_model=True,
@@ -193,7 +186,7 @@ class AnnealingConfig(Config):
                     compile=True,
                 ),
                 dp_config=TransformerDataParallelConfig(
-                    name=DataParallelType.hsdp,
+                    name=DataParallelType.fsdp,
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
                     num_replicas=num_replicas,
@@ -323,10 +316,10 @@ class AnnealingConfig(Config):
                     tokenizer=tokenizer_config,
                     eval_interval=1000,
                 ),
-            )
+            ),
         ).merge(overrides)
 
-        # Make sure this is an 'AnnealingDataMix' instance.        
+        # Make sure this is an 'AnnealingDataMix' instance.
         config.dataset.mix = AnnealingDataMix(config.dataset.mix)
         return config
 
