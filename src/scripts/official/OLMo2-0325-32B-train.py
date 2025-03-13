@@ -15,7 +15,11 @@ from olmo_core.data import (
     TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.distributed.utils import get_world_size
+from olmo_core.nn.transformer import (
+    TransformerActivationCheckpointingMode,
+    TransformerConfig,
+)
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import (
     Duration,
@@ -33,6 +37,7 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
 )
@@ -80,7 +85,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     )
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=16 * SEQUENCE_LENGTH,
+        rank_microbatch_size=4 * SEQUENCE_LENGTH,
         max_sequence_length=dataset_config.effective_sequence_length,
         optim=SkipStepAdamWConfig(
             lr=6e-4,
@@ -99,9 +104,20 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             reduce_dtype=DType.float32,
             num_replicas=128 // 32,  # NOTE: tune this
         ),
+        ac_config=TransformerActivationCheckpointingConfig(
+            TransformerActivationCheckpointingMode.full
+        ),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
     )
+
+    # If you have 1024 GPUs, you can run slightly faster with a different config.
+    if get_world_size() >= 1024:
+        train_module_config.rank_microbatch_size //= 2
+        train_module_config.ac_config = TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.selected_modules,
+            modules=[f"blocks.{i}.feed_forward" for i in range(64)],
+        )
 
     trainer_config = (
         TrainerConfig(
