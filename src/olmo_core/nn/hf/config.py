@@ -1,8 +1,8 @@
-from transformers import Olmoe2Config, Olmo2Config, PretrainedConfig
+from transformers import Olmo2Config, Olmoe2Config, PretrainedConfig
 
 from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.attention import Attention
-from olmo_core.nn.transformer.block import TransformerBlock, MoETransformerBlock
+from olmo_core.nn.transformer.block import MoETransformerBlock, TransformerBlock
 from olmo_core.nn.transformer.model import (
     MoETransformer,
     NormalizedTransformer,

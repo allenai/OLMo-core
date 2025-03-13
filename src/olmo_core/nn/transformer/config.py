@@ -580,7 +580,9 @@ class TransformerConfig(Config):
     @classmethod
     def olmoe_tiny_test(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         d_model = kwargs.pop("d_model", 256)
-        dropless = kwargs.pop("dropless", False)  # Possibly more OOM due to imbalance with dropless=True
+        dropless = kwargs.pop(
+            "dropless", False
+        )  # Possibly more OOM due to imbalance with dropless=True
         return cls.llama_like_moe(
             vocab_size=vocab_size,
             d_model=d_model,
@@ -590,26 +592,33 @@ class TransformerConfig(Config):
             top_k=kwargs.pop("top_k", 2),
             expert_hidden_size=kwargs.pop("expert_hidden_size", 512),
             dropless=dropless,
-            capacity_factor=None if dropless else kwargs.pop("capacity_factor", 1.2),  # adjust as needed
+            capacity_factor=None
+            if dropless
+            else kwargs.pop("capacity_factor", 1.2),  # adjust as needed
             lb_loss_weight=kwargs.pop("lb_loss_weight", 0.01),
             z_loss_weight=kwargs.pop("z_loss_weight", 0.001),
             reordered_norm=kwargs.pop("reordered_norm", True),
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             layer_norm_eps=kwargs.pop("layer_norm_eps", 1e-6),
-            freeze_params=kwargs.pop("freeze_params", [
-                "embeddings.*",
-                "blocks.*.attention*",
-                "blocks.*.feed_forward_norm.*",
-                "lm_head.*",
-                "blocks.*.feed_forward_moe.experts*",  # TODO: comment if you also want to train the expert weights.
-            ]),
+            freeze_params=kwargs.pop(
+                "freeze_params",
+                [
+                    "embeddings.*",
+                    "blocks.*.attention*",
+                    "blocks.*.feed_forward_norm.*",
+                    "lm_head.*",
+                    "blocks.*.feed_forward_moe.experts*",  # TODO: comment if you also want to train the expert weights.
+                ],
+            ),
         )
 
     @classmethod
     def olmoe_4X7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         d_model = kwargs.pop("d_model", 4096)
-        dropless = kwargs.pop("dropless", False)  # Possibly more OOM due to imbalance with dropless=True
+        dropless = kwargs.pop(
+            "dropless", False
+        )  # Possibly more OOM due to imbalance with dropless=True
         return cls.llama_like_moe(
             vocab_size=vocab_size,
             d_model=d_model,
@@ -619,20 +628,25 @@ class TransformerConfig(Config):
             top_k=kwargs.pop("top_k", 4),
             expert_hidden_size=kwargs.pop("expert_hidden_size", 11008),
             dropless=dropless,
-            capacity_factor=None if dropless else kwargs.pop("capacity_factor", 1.2),  # adjust as needed
+            capacity_factor=None
+            if dropless
+            else kwargs.pop("capacity_factor", 1.2),  # adjust as needed
             lb_loss_weight=kwargs.pop("lb_loss_weight", 0.01),
             z_loss_weight=kwargs.pop("z_loss_weight", 0.001),
             reordered_norm=kwargs.pop("reordered_norm", True),
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             layer_norm_eps=kwargs.pop("layer_norm_eps", 1e-6),
-            freeze_params=kwargs.pop("freeze_params", [
-                "embeddings.*",
-                "blocks.*.attention*",
-                "blocks.*.feed_forward_norm.*",
-                "lm_head.*",
-                "blocks.*.feed_forward_moe.experts*",  # TODO: comment if you also want to train the expert weights.
-            ]),
+            freeze_params=kwargs.pop(
+                "freeze_params",
+                [
+                    "embeddings.*",
+                    "blocks.*.attention*",
+                    "blocks.*.feed_forward_norm.*",
+                    "lm_head.*",
+                    "blocks.*.feed_forward_moe.experts*",  # TODO: comment if you also want to train the expert weights.
+                ],
+            ),
         )
 
     @classmethod

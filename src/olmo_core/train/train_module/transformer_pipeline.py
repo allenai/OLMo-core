@@ -807,7 +807,9 @@ class TransformerPipelineTrainModule(TrainModule):
                 stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
             yield
 
-    def _get_state_dict(self, sd_options: dist_cp_sd.StateDictOptions, optim: bool = True) -> Dict[str, Any]:
+    def _get_state_dict(
+        self, sd_options: dist_cp_sd.StateDictOptions, optim: bool = True
+    ) -> Dict[str, Any]:
         state_dict: Dict[str, Any] = {
             "model": {
                 k: v
