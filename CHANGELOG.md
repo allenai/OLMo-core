@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The official config for the 32B had unrealistic batch size settings.
+- Ignore `group_overrides` for frozen parameters instead of throwing an error.
 
 ## [v2.0.0](https://github.com/allenai/OLMo-core/releases/tag/v2.0.0) - 2025-03-12
 
