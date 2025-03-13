@@ -2,7 +2,6 @@
   <!-- <img src="https://github.com/allenai/OLMo/assets/8812459/774ac485-a535-4768-8f7c-db7be20f5cc3" width="300"/> -->
   <img src="https://huggingface.co/datasets/allenai/blog-images/resolve/main/olmo2/olmo.png" alt="OLMo Logo" width="280" style="margin-left:'auto' margin-right:'auto' display:'block'"/>
   <br>
-  <br>
   <h1>OLMo-core</h1>
   <h4>Building blocks for OLMo modeling and training</h4>
 </div>
