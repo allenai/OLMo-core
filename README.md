@@ -81,7 +81,7 @@ You can find list of all the checkpoints of 32B in [`src/scripts/official/`](htt
 
 ## Inference
 
-You can use our Hugging Face integration to run inference on the OLMo Transformers checkpoints:
+You can use our Hugging Face integration to run inference on the OLMo transformers checkpoints:
 
 ```python
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -109,36 +109,10 @@ olmo = AutoModelForCausalLM.from_pretrained("allenai/OLMo-2-0325-32B", torch_dty
 ```
 
 ## Evaluation
+
 Additional tools for evaluating OLMo models are available at the [OLMo Eval](https://github.com/allenai/OLMo-eval) and [olmes](https://github.com/allenai/olmes) repositories.
 
-## API stability
-
-Even though this library is under rapid development we are trying hard to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with every release except for features that are explicitly marked as beta features. Those features will be tagged like this in the [API docs](https://olmo-core.readthedocs.io/en/latest/):
-
-![image](https://github.com/user-attachments/assets/c666686d-3ae6-4c88-8381-befd698d3fd0)
-
-## Official training scripts
-
-Official training scripts for released models can be found in [`src/scripts/official/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/official).
-These scripts are meant to be launched with ``torchrun``. For example:
-
-```bash
-torchrun --nproc-per-node=8 ./src/scripts/official/OLMo2-0325-32B-train.py run01
-```
-
-You can override most configuration options from the command-line. For example, to override the learning rate you could launch the script like this:
-
-```bash
-torchrun --nproc-per-node=8 ./src/scripts/train/OLMo2-0325-32B-train.py run01 --train_module.optim.lr=6e-3
-```
-
 ## Development
-
-After cloning OLMo-core and setting up a Python virtual environment, install the codebase from source with:
-
-```bash
-pip install -e .[all]
-```
 
 The Python library source code is located in `src/olmo_core`. The corresponding tests are located in `src/test`. The library docs are located in `docs`. You can build the docs locally with `make docs`.
 
