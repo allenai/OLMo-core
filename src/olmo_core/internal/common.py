@@ -127,6 +127,7 @@ CLUSTER_TO_GPU_TYPE = {
     "ai2/jupiter-cirrascale-2": "NVIDIA H100 80GB HBM3",
     "ai2/pluto-cirrascale": "NVIDIA H100",
     "ai2/augusta-google-1": "NVIDIA H100",
+    "ai2/titan-cirrascale": "NVIDIA B200",
 }
 
 
