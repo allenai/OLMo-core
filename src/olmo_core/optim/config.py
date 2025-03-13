@@ -90,9 +90,12 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
             match any parameter.
         """
         all_params: Dict[str, torch.Tensor] = OrderedDict()
+        frozen_params: set = set()
         for n, p in model.named_parameters():
             if p.requires_grad:
                 all_params[n] = p
+            else:
+                frozen_params.add(n)
 
         if self.group_overrides is None:
             return all_params.values()
@@ -109,11 +112,20 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
                         matches += 1
 
                 if matches == 0:
-                    msg = f"optim group {g_idx} override pattern '{pattern}' does not match any parameters"
-                    if strict:
-                        raise OLMoConfigurationError(msg)
-                    else:
+                    frozen_param_matches = False
+                    for name in frozen_params:
+                        if fnmatch(name, pattern):
+                            frozen_param_matches = True
+                            break
+                    if frozen_param_matches:
+                        msg = f"optim group {g_idx} override pattern '{pattern}' matches a frozen parameter and will be ignored"
                         log.warning(msg)
+                    else:
+                        msg = f"optim group {g_idx} override pattern '{pattern}' does not match any parameters"
+                        if strict:
+                            raise OLMoConfigurationError(msg)
+                        else:
+                            log.warning(msg)
 
             if len(group["params"]) > 0:
                 param_groups.append(group)
