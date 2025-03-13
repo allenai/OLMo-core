@@ -88,7 +88,7 @@ Below is a comprehensive table showing the Stage 1 and 2 training details for OL
 | Stage 1 | **32B** | 6T tokens | [stage1-step721901-tokens6056B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage1-step721901-tokens6056B) | coming soon |
 | Stage 2 | **32B** | random seed 1110, 100B tokens | [stage2-ingredient1-step11921-tokens100B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage2-ingredient1-step11921-tokens101B) | coming soon |
 | |  | random seed 2662, 100B tokens | [stage2-ingredient2-step11921-tokens100B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage2-ingredient2-step11921-tokens101B) | coming soon |
-|  |  | random seed 6209, 100B tokens | [stage2-ingredient3-step11921-tokens300B](https://huggingface.co/allenai/OLMo-2-1124-13B/tree/stage2-ingredient3-step11931-tokens100B) | coming soon |
+|  |  | random seed 6209, 100B tokens | [stage2-ingredient3-step11921-tokens300B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage2-ingredient3-step11921-tokens101B) | coming soon |
 |  |  | **Final Souped Model** | [main](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/main) | No config, weights averaged in Python | - |
 
 The table below lists the checkpoints for Stage 1 and Stage 2 of OLMo-2, along with their corresponding Hugging Face format.
