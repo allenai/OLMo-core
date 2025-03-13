@@ -66,19 +66,19 @@ Official training scripts for released models can be found in [`src/scripts/offi
 These scripts are meant to be launched with ``torchrun``. For example:
 
 ```bash
-torchrun --nproc-per-node=8 ./src/scripts/official/OLMo2-0325-32B-train.py run01
+torchrun --nproc-per-node=8 ./src/scripts/official/OLMo-2-0325-32B-train.py run01
 ```
 
 You can override most configuration options from the command-line. For example, to override the learning rate you could launch the script like this:
 
 ```bash
-torchrun --nproc-per-node=8 ./src/scripts/train/OLMo2-0325-32B-train.py run01 --train_module.optim.lr=6e-3
+torchrun --nproc-per-node=8 ./src/scripts/train/OLMo-2-0325-32B-train.py run01 --train_module.optim.lr=6e-3
 ```
 
-## OLMo2 Model Training
+## OLMo-2 Model Training
 
-OLMo2 32B pretraining follows a two-stage training procedure.
-In the first stage, we train on large amounts of mostly web-based data: [OLMo-mix-1124](https://huggingface.co/datasets/allenai/olmo-mix-1124)
+OLMo-2 32B pretraining follows a two-stage training procedure.
+In the first stage, we train on large amounts of mostly web-based data: [OLMo-mix-1124](https://huggingface.co/datasets/allenai/olmo-mix-1124).
 In the second stage, we train on a smaller amount of high-quality, targeted data: Dolmino-mix-0324 (releasing soon).
 
 | Stage | Model Size | Training | Checkpoint | Monitoring |
@@ -93,10 +93,10 @@ The table below lists the checkpoints for Stage 1 and Stage 2 of OLMo-2, along w
 
 | Variant         | OLMo Format (Stage 1)                                                                                         | OLMo Format (Stage 2) | Hugging Face Format                                                               |
 |----------------|-----------------------------------------------------------------------------------------------------|--------|----------------------------------------------------------------------------------|
-| **OLMo-2 32B**  | [OLMo-2 32B](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo2-0325-32B.csv)     | Upload in progress      | [Hugging Face for the 32B variant](https://huggingface.co/allenai/OLMo-2-0325-32B)  |
+| **OLMo-2 32B**  | [OLMo-2 32B](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo-2-0325-32B.csv)     | Upload in progress      | [Hugging Face for the 32B variant](https://huggingface.co/allenai/OLMo-2-0325-32B)  |
 
 
-> Note: OLMo-2 7B and 13B models were trained using [the old OLMo trainer](https://github.com/allenai/OLMo). All related checkpoints, configs, and scripts for these models can be found there. While you can train 7B and 13B models on this trainer, please note that the configs for those models use a different format than the 32B model.
+> Note: OLMo-2 7B and 13B models were trained using [the old OLMo trainer](https://github.com/allenai/OLMo). All related checkpoints, configs, and scripts for these models can be found there. While you can train 7B and 13B models with this trainer, please note that the configs and script in the old training codebase are not compatible with this repo.
 
 ## Inference
 
