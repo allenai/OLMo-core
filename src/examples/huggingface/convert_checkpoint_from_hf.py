@@ -225,6 +225,8 @@ def validate_conversion(
             if len(mapping.source_keys) == 1 and len(mapping.dest_keys) == 1
         }
 
+        log.info(f"mapping: {simple_key_mapping}")
+
         for hf_state_name, (_, hf_tensor) in sorted(hf_state.items(), key=lambda item: item[1][0]):
             hf_key, state_type = hf_state_name.split("|")
             if hf_key in simple_key_mapping:
