@@ -111,7 +111,7 @@ class ParallelMLPBase(nn.Module):
         # NOTE: if we wanted to keep the batch dimension here like for sequence-level load balancing
         # loss, we could use `opts.batched_histc`.
         batch_size_per_expert = torch.histc(
-            expert_indices, bins=self.num_experts, min=0, max=self.num_experts - 1
+            expert_indices.float(), bins=self.num_experts, min=0, max=self.num_experts - 1
         )
 
         expert_indices = expert_indices.int()
