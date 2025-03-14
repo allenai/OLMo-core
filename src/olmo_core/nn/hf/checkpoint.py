@@ -177,9 +177,7 @@ def save_hf_model(
                 olmo_core_state, chunks=len(hf_keys), dim=mapping.dest_chunk_dim
             )
             for hf_key, state_chunk in zip(hf_keys, state_chunks):
-                hf_state_dict[hf_key] = state_chunk
-        elif len(olmo_core_keys) == 1 and len(hf_keys) == 1:
-            hf_state_dict[hf_keys[0]] = model_state_dict[olmo_core_keys[0]]
+                hf_state_dict[hf_key] = state_chunk.contiguous()
         else:
             raise RuntimeError(
                 f"Attempting to map {len(olmo_core_keys)} non-tensor states to {len(hf_keys)} HF keys"
