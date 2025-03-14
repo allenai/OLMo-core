@@ -13,7 +13,7 @@ from torch.distributed.tensor.parallel import (
 
 from olmo_core.distributed.utils import get_local_tensor
 
-from .functional import cross_entropy_loss, fused_cross_entropy_loss
+from .functional import cross_entropy_loss
 
 log = logging.getLogger(__name__)
 
@@ -24,13 +24,12 @@ class _CELossFnWrapper(nn.Module):
         ignore_index: int = -100,
         reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
-        fused: bool = False,
     ):
         super().__init__()
         self.ignore_index = ignore_index
         self.reduction: Literal["mean", "sum", "none"] = reduction
         self.z_loss_multiplier = z_loss_multiplier
-        self.base_loss_fn = fused_cross_entropy_loss if fused else cross_entropy_loss
+        self.base_loss_fn = cross_entropy_loss
         self.tp_enabled = False
 
     def forward(
@@ -82,18 +81,13 @@ class CrossEntropyLoss(nn.Module):
         reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
         compile: bool = False,
-        fused: bool = False,
     ):
         super().__init__()
-
-        if compile and fused:
-            log.warning(f"{self.__class__.__name__} with fused+compile is experimental")
 
         self.loss_fn = _CELossFnWrapper(
             ignore_index=ignore_index,
             reduction=reduction,
             z_loss_multiplier=z_loss_multiplier,
-            fused=fused,
         )
         self._tp_enabled = False
 

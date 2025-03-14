@@ -5,6 +5,11 @@ import torch.distributed as dist
 
 from olmo_core.utils import move_to_device
 
+try:
+    from olmo_core.kernels import moe as kernels
+except ImportError:
+    kernels = None  # type: ignore
+
 
 def _is_eligible(x):
     return x.is_floating_point() and x.is_cuda and (x.dtype is not torch.float64)
@@ -31,8 +36,7 @@ class GatherOp(torch.autograd.Function):
         bins: torch.Tensor,
         top_k: int,
     ):
-        from . import kernels
-
+        assert kernels is not None
         ctx.save_for_backward(indices, bin_ids, bins)
         ctx.top_k = top_k
         return kernels.gather(x, indices, bin_ids, None, bins, top_k)
@@ -40,8 +44,7 @@ class GatherOp(torch.autograd.Function):
     @staticmethod
     @torch.amp.custom_bwd(device_type="cuda")
     def backward(ctx: Any, grad: torch.Tensor):
-        from . import kernels
-
+        assert kernels is not None
         grad = grad.contiguous()
         indices, bin_ids, bins = ctx.saved_tensors
         out = kernels.scatter(grad, indices, bin_ids, None, bins, ctx.top_k)
@@ -70,8 +73,7 @@ class ScatterOp(torch.autograd.Function):
         bins: torch.Tensor,
         top_k: int,
     ) -> torch.Tensor:
-        from . import kernels
-
+        assert kernels is not None
         maybe_x = [x] if ctx.needs_input_grad[3] else []
         ctx.save_for_backward(indices, bin_ids, weights, bins, *maybe_x)
         ctx.top_k = top_k
@@ -81,7 +83,7 @@ class ScatterOp(torch.autograd.Function):
     @staticmethod
     @torch.amp.custom_bwd(device_type="cuda")
     def backward(ctx: Any, grad: torch.Tensor):
-        from . import kernels
+        assert kernels is not None
 
         grad = grad.contiguous()
         saved_tensors = ctx.saved_tensors
@@ -134,8 +136,7 @@ class BinnedGatherOp(torch.autograd.Function):
         bin_size: int,
         top_k: int,
     ):
-        from . import kernels
-
+        assert kernels is not None
         ctx.save_for_backward(indices, bins)
         ctx.top_k = top_k
         return kernels.binned_gather(x, indices, None, bins, bin_size, top_k)
@@ -143,8 +144,7 @@ class BinnedGatherOp(torch.autograd.Function):
     @staticmethod
     @torch.amp.custom_bwd(device_type="cuda")
     def backward(ctx: Any, grad: torch.Tensor):
-        from . import kernels
-
+        assert kernels is not None
         grad = grad.contiguous()
         indices, bins = ctx.saved_tensors
         out = kernels.binned_scatter(grad, indices, None, bins, ctx.top_k)
@@ -168,13 +168,13 @@ class BinnedScatterOp(torch.autograd.Function):
         bins: torch.Tensor,
         top_k: int,
     ):
-        from . import kernels
+        assert kernels is not None
 
         assert len(x.size()) == 3
         ctx.bin_size = x.size(1)
         ctx.top_k = top_k
 
-        # TODO(tgale): Don't save 'x' for backwards if we don't need to
+        # TODO: Don't save 'x' for backwards if we don't need to
         # calculate the gradient w.r.t. 'weights'.
         ctx.save_for_backward(x, indices, weights, bins)
         return kernels.binned_scatter(x, indices, weights, bins, top_k)
@@ -182,7 +182,7 @@ class BinnedScatterOp(torch.autograd.Function):
     @staticmethod
     @torch.amp.custom_bwd(device_type="cuda")
     def backward(ctx: Any, grad: torch.Tensor):
-        from . import kernels
+        assert kernels is not None
 
         grad = grad.contiguous()
         x, indices, weights, bins = ctx.saved_tensors
