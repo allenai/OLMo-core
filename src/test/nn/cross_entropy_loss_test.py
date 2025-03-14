@@ -34,7 +34,6 @@ def compute_loss(
 
 
 def run_cross_entropy_loss_parallel(
-    fused: bool,
     compile: bool,
     reduction: Literal["sum", "mean", "none"],
     z_loss_multiplier: Optional[float],
@@ -64,7 +63,7 @@ def run_cross_entropy_loss_parallel(
 
     # Initialize loss and apply parallelism.
     loss_fn = CrossEntropyLoss(
-        reduction=reduction, compile=compile, fused=fused, z_loss_multiplier=z_loss_multiplier
+        reduction=reduction, compile=compile, z_loss_multiplier=z_loss_multiplier
     )
     loss_fn.apply_tp(tp_mesh, use_local_output=True)
 
@@ -83,15 +82,14 @@ def run_cross_entropy_loss_parallel(
 
 
 @pytest.mark.parametrize(
-    "fused, compile, reduction",
+    "compile, reduction",
     [
-        pytest.param(False, False, "sum", id="default-sum"),
-        pytest.param(False, False, "none", id="default-none"),
+        pytest.param(False, "sum", id="default-sum"),
+        pytest.param(False, "none", id="default-none"),
     ],
 )
 @requires_multi_gpu
 def test_cross_entropy_loss_parallel(
-    fused: bool,
     compile: bool,
     reduction: Literal["sum", "mean", "none"],
     z_loss_multiplier: Optional[float] = None,
@@ -99,7 +97,7 @@ def test_cross_entropy_loss_parallel(
     B, S, V = 4, 16, 256
 
     loss_fn = CrossEntropyLoss(
-        reduction=reduction, compile=compile, fused=fused, z_loss_multiplier=z_loss_multiplier
+        reduction=reduction, compile=compile, z_loss_multiplier=z_loss_multiplier
     )
 
     labels = torch.randint(0, V, (B, S), device="cuda")
@@ -122,7 +120,6 @@ def test_cross_entropy_loss_parallel(
         backend="nccl",
         start_method="spawn",
         func_args=(
-            fused,
             compile,
             reduction,
             z_loss_multiplier,

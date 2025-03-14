@@ -10,10 +10,10 @@ import torch.nn as nn
 from torch.distributed import DeviceMesh
 
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
+from olmo_core.ops import moe as ops
 from olmo_core.utils import ensure_multiple_of, get_default_device, move_to_device
 
 from ..buffer_cache import BufferCache
-from . import ops
 from .mlp import DroplessMoEMLP, MoEMLP, MoEMLPBase
 
 __all__ = ["ParallelMLPBase", "ParallelMLP", "ParallelDroplessMLP"]
