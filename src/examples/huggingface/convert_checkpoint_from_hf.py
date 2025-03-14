@@ -16,12 +16,13 @@ from typing import Any, Dict, Optional
 
 import torch
 from cached_path import cached_path
-from transformers import AutoModelForCausalLM
+from transformers import AutoConfig, AutoModelForCausalLM
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.io import file_exists
 from olmo_core.nn.hf.checkpoint import load_hf_model
+from olmo_core.nn.hf.key_mapping import get_key_mapping_from_hf
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.optim.adamw import AdamWConfig
@@ -156,21 +157,21 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
     olmo_core_state = {}
     hf_state = {}
 
-    def module_hook(state: Dict, name: str, module: torch.nn.Module, input, output):
+    def module_hook(state: Dict, name: str, _: torch.nn.Module, input, output):
         # if isinstance()
         # log.info(f"{name}")
         if isinstance(input, torch.Tensor):
-            state_name = f"{name}_input_{len(state)}"
+            state_name = f"{name}_input"
             input = input.detach()
             for i, size in enumerate(input.shape):
                 input = input.narrow(i, 0, min(size, MAX_DIM_SIZE))
-            state[state_name] = input
+            state[state_name] = (len(state), input)
         if isinstance(output, torch.Tensor):
             state_name = f"{name}_output_{len(state)}"
             output = output.detach()
             for i, size in enumerate(output.shape):
                 output = output.narrow(i, 0, min(size, MAX_DIM_SIZE))
-            state[state_name] = output
+            state[state_name] = (len(state), output)
 
     for name, module in model.named_modules():
         module.register_forward_hook(partial(module_hook, olmo_core_state, name))
@@ -198,8 +199,12 @@ def validate_conversion(
     hf_model: torch.nn.Module = AutoModelForCausalLM.from_pretrained(hf_path).to(device).eval()
 
     olmo_core_state, hf_state = {}, {}
+    key_mapping = None
     if debug:
         olmo_core_state, hf_state = _register_debug_hooks(hf_model, model)
+        key_mapping = get_key_mapping_from_hf(
+            AutoConfig.from_pretrained(hf_path), hf_model.state_dict()
+        )
 
     log.info("Running OLMo core and HF models for validation...")
     with torch.no_grad():
@@ -212,8 +217,24 @@ def validate_conversion(
         logits = model(input_ids=input_ids)
 
     if debug:
-        print(olmo_core_state)
-        print(hf_state)
+        assert key_mapping is not None
+
+        simple_key_mapping = {
+            mapping.source_keys[0]: mapping.dest_keys[0]
+            for mapping in key_mapping
+            if len(mapping.source_keys) == 1 and len(mapping.dest_keys) == 1
+        }
+
+        for hf_state_name, (_, hf_tensor) in sorted(hf_state.items(), key=lambda item: item[1][0]):
+            hf_key, state_type = hf_state_name.split("_")
+            if hf_key in simple_key_mapping:
+                olmo_state_name = f"{simple_key_mapping[hf_key]}_{state_type}"
+                _, olmo_core_tensor = olmo_core_state[olmo_state_name]
+
+                log.info(f"{hf_state_name}, {olmo_state_name} norm diff: {torch.norm(hf_tensor - olmo_core_tensor)}")
+
+        # print(olmo_core_state)
+        # print(hf_state)
 
     torch.testing.assert_close(hf_logits, logits)
 
