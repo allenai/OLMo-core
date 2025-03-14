@@ -435,10 +435,6 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-        if x.get_device() == -1:
-            raise RuntimeError("x On CPU")
-        if h.get_device() == -1:
-            raise RuntimeError("h On CPU")
         return h + self.dropout(self.feed_forward_norm(self.feed_forward_moe(h)))
 
     def apply_fsdp(
