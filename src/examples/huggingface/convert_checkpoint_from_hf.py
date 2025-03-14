@@ -157,12 +157,12 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
     olmo_core_state = {}
     hf_state = {}
 
-    def module_hook(state: Dict, name: str, _: torch.nn.Module, input, output):
+    def module_hook(state: Dict, name: str, _: torch.nn.Module, args, output):
         # if isinstance()
         # log.info(f"{name}")
-        if isinstance(input, torch.Tensor):
+        if len(args) >= 1 and isinstance(args[0], torch.Tensor):
             state_name = f"{name}|input"
-            input = input.detach()
+            input = args[0].detach()
             for i, size in enumerate(input.shape):
                 input = input.narrow(i, 0, min(size, MAX_DIM_SIZE))
             state[state_name] = (len(state), input)
