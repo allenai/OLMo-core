@@ -9,6 +9,7 @@ HuggingFace.
 import json
 import logging
 from argparse import ArgumentParser
+from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Dict, Optional
@@ -81,6 +82,7 @@ def convert_checkpoint_from_hf(
     *,
     max_sequence_length: int = -1,
     validate: bool = True,
+    debug: bool = False,
 ) -> None:
     """
     Convert a HF checkpoint to an OLMo core checkpoint.
@@ -144,14 +146,45 @@ def convert_checkpoint_from_hf(
 
     if validate:
         log.info("Validating converted model")
-        validate_conversion(hf_checkpoint_path, model, tokenizer_config.vocab_size)
+        validate_conversion(hf_checkpoint_path, model, tokenizer_config.vocab_size, debug=debug)
         log.info("Validation completed successful")
+
+
+def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
+    MAX_DIM_SIZE = 10
+
+    olmo_core_state = {}
+    hf_state = {}
+
+    def module_hook(state: Dict, name: str, module: torch.nn.Module, input, output):
+        # if isinstance()
+        # log.info(f"{name}")
+        if isinstance(input, torch.Tensor):
+            state_name = f"{name}_input_{len(state)}"
+            input = input.detach()
+            for i, size in enumerate(input.shape):
+                input = input.narrow(i, 0, min(size, MAX_DIM_SIZE))
+            state[state_name] = input
+        if isinstance(output, torch.Tensor):
+            state_name = f"{name}_output_{len(state)}"
+            output = output.detach()
+            for i, size in enumerate(output.shape):
+                output = output.narrow(i, 0, min(size, MAX_DIM_SIZE))
+            state[state_name] = output
+
+    for name, module in model.named_modules():
+        module.register_forward_hook(partial(module_hook, olmo_core_state, name))
+    for name, module in hf_model.named_modules():
+        module.register_forward_hook(partial(module_hook, hf_state, name))
+
+    return olmo_core_state, hf_state
 
 
 def validate_conversion(
     hf_path: str | Path,
     model: Transformer,
     vocab_size: int,
+    debug: bool = False,
 ):
     if torch.cuda.is_available():
         torch.cuda.init()
@@ -162,7 +195,11 @@ def validate_conversion(
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
 
     log.info("Loading converted checkpoint for validation...")
-    hf_model = AutoModelForCausalLM.from_pretrained(hf_path).to(device).eval()
+    hf_model: torch.nn.Module = AutoModelForCausalLM.from_pretrained(hf_path).to(device).eval()
+
+    olmo_core_state, hf_state = {}, {}
+    if debug:
+        olmo_core_state, hf_state = _register_debug_hooks(hf_model, model)
 
     log.info("Running OLMo core and HF models for validation...")
     with torch.no_grad():
@@ -173,6 +210,10 @@ def validate_conversion(
     model = model.to(device).eval()
     with torch.no_grad():
         logits = model(input_ids=input_ids)
+
+    if debug:
+        print(olmo_core_state)
+        print(hf_state)
 
     torch.testing.assert_close(hf_logits, logits)
 
@@ -205,6 +246,7 @@ def parse_args():
     parser.add_argument("-o", "--huggingface-output-dir", type=Path, required=True)
     parser.add_argument("-s", "--max-sequence-length", type=int, required=True)
     parser.add_argument("--skip-validation", dest="validate", action="store_false")
+    parser.add_argument("--debug", dest="debug", action="store_true")
     return parser.parse_args()
 
 
@@ -235,6 +277,7 @@ def main():
         tokenizer_config_dict=tokenizer_config_dict,
         max_sequence_length=args.max_sequence_length,
         validate=args.validate,
+        debug=args.debug,
     )
 
 
