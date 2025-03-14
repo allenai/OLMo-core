@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- Removed the "fused" cross-entropy loss variant. It was buggy and consistently under-performed the native PyTorch version when compiled.
+- Removed the "fused" cross-entropy loss variant. It had a bug and consistently under-performed the native PyTorch version when compiled. See [Post Incident Report: bug with fused CE loss](https://docs.google.com/document/d/1IK6q2gX6mH7eQO_IItCZAYYlm4g4htL4mNWbTQuPKf4/edit?usp=sharing) for more information.
 
 ## [v2.0.0](https://github.com/allenai/OLMo-core/releases/tag/v2.0.0) - 2025-03-12
 
