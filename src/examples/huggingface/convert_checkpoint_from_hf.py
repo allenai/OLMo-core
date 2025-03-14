@@ -153,6 +153,9 @@ def validate_conversion(
     model: Transformer,
     vocab_size: int,
 ):
+    if torch.cuda.is_available():
+        torch.cuda.init()
+
     device = get_default_device()
 
     B, T = 1, 120
