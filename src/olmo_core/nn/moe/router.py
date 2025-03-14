@@ -179,9 +179,6 @@ class MoERouter(nn.Module):
             the expert weights of shape ``(N, top_k)``,
             and the expert indices of shape ``(N, top_k)``.
         """
-        if x.get_device() == -1:
-            raise RuntimeError("On CPU")
-
         # shape: (batch_size, seq_len, d_model)
         x = self.jitter(x)
 
