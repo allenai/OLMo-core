@@ -165,13 +165,13 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
             input = args[0].detach()
             for i, size in enumerate(input.shape):
                 input = input.narrow(i, 0, min(size, MAX_DIM_SIZE))
-            state[state_name] = (len(state), input)
+            state[state_name] = (len(state), input.float())
         if isinstance(output, torch.Tensor):
             state_name = f"{name}|output"
             output = output.detach()
             for i, size in enumerate(output.shape):
                 output = output.narrow(i, 0, min(size, MAX_DIM_SIZE))
-            state[state_name] = (len(state), output)
+            state[state_name] = (len(state), output.float())
 
     for name, module in model.named_modules():
         module.register_forward_hook(partial(module_hook, olmo_core_state, name))
