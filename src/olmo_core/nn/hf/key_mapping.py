@@ -1,4 +1,6 @@
-from typing import Any, Dict
+import copy
+from dataclasses import dataclass
+from typing import Dict, Iterable, List, Tuple
 
 from transformers import PretrainedConfig
 
@@ -31,7 +33,13 @@ HF_TO_OLMO_CORE_MAPPINGS: Dict[str, str] = {
     f"model.layers.{BLOCK_STR}.post_feedforward_layernorm.weight": f"blocks.{BLOCK_STR}.feed_forward_norm.weight",
     f"model.layers.{BLOCK_STR}.self_attn.q_norm.weight": f"blocks.{BLOCK_STR}.attention.q_norm.weight",
     f"model.layers.{BLOCK_STR}.self_attn.k_norm.weight": f"blocks.{BLOCK_STR}.attention.k_norm.weight",
+    # MoEMLP.
+    f"model.layers.{BLOCK_STR}.mlp.gate.weight": f"blocks.{BLOCK_STR}.feed_forward_moe.router.weight",
+    f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.gate_proj.weight": f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w1",
+    f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.down_proj.weight": f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w2",
+    f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.up_proj.weight": f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w3",
 }
+
 
 MODEL_SPECIFIC_HF_TO_OLMO_CORE_MAPPINGS: Dict[str, Dict[str, str]] = {
     "meta-llama/Llama-3.2-1B": {
@@ -59,95 +67,296 @@ OLMO_CORE_TO_HF_MAPPINGS: Dict[str, str] = {
     f"blocks.{BLOCK_STR}.attention.k_norm.weight": f"model.layers.{BLOCK_STR}.self_attn.k_norm.weight",
     # MoEMLP.
     f"blocks.{BLOCK_STR}.feed_forward_moe.router.weight": f"model.layers.{BLOCK_STR}.mlp.gate.weight",
-    f"blocks.{BLOCK_STR}.feed_forward_moe.experts.w1.weight": f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.gate_proj.weight",
-    f"blocks.{BLOCK_STR}.feed_forward_moe.experts.w2.weight": f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.down_proj.weight",
-    f"blocks.{BLOCK_STR}.feed_forward_moe.experts.w3.weight": f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.up_proj.weight",
+    f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w1": f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.gate_proj.weight",
+    f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w2": f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.down_proj.weight",
+    f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w3": f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.up_proj.weight",
 }
 
 
-OLMO_CORE_TO_HF_ONE_TO_MANY_MAPPING: Dict[str, str] = {
-    f"blocks.{BLOCK_STR}.feed_forward_moe.experts.w1.weight": EXPERT_STR,
-    f"blocks.{BLOCK_STR}.feed_forward_moe.experts.w2.weight": EXPERT_STR,
-    f"blocks.{BLOCK_STR}.feed_forward_moe.experts.w3.weight": EXPERT_STR,
+@dataclass
+class TemplateMapping:
+    source_template_keys: str | Tuple[str, ...]
+    dest_template_keys: str | Tuple[str, ...]
+
+    source_key_per_block: bool = False
+    source_key_per_expert: bool = False
+    dest_key_per_block: bool = False
+    dest_key_per_expert: bool = False
+
+    source_concat_dim: int = 0
+    dims_permutation: Tuple[int, ...] | None = None
+    flatten_dims: Tuple[int, int] | None = None
+    dest_chunk_dim: int = 0
+
+    def __post_init__(self):
+        if (self.source_key_per_block or self.source_key_per_expert) and isinstance(
+            self.source_template_keys, tuple
+        ):
+            raise ValueError(
+                "Having a key per block or expert is not supported with multiple template keys"
+            )
+
+        if self.source_key_per_block and self.source_key_per_expert:
+            raise ValueError("Can only have a key per block or per expert, not both")
+
+        if (self.dest_key_per_block or self.dest_key_per_expert) and isinstance(
+            self.dest_template_keys, tuple
+        ):
+            raise ValueError(
+                "Having a key per block or expert is not supported with multiple template keys"
+            )
+
+        if self.dest_key_per_block and self.dest_key_per_expert:
+            raise ValueError("Can only have a key per block or per expert, not both")
+
+    def _templates_to_keys(
+        self,
+        templates: str | Tuple[str, ...],
+        key_per_block: bool,
+        key_per_expert: bool,
+        i_block: int,
+        n_blocks: int,
+        i_expert: int | None = None,
+        n_experts: int = 0,
+    ) -> Tuple[str, ...]:
+        if key_per_block:
+            assert isinstance(templates, str)
+            templates = tuple(templates.replace(BLOCK_STR, str(i)) for i in range(n_blocks))
+        elif key_per_expert:
+            assert isinstance(templates, str)
+            templates = tuple(templates.replace(EXPERT_STR, str(i)) for i in range(n_experts))
+        elif isinstance(templates, str):
+            templates = (templates,)
+
+        assert isinstance(templates, tuple)
+
+        return tuple(
+            template.replace(BLOCK_STR, str(i_block)).replace(EXPERT_STR, str(i_expert))
+            for template in templates
+        )
+
+    def to_mapping(
+        self, i_block: int, n_blocks: int, i_expert: int | None = None, n_experts: int = 0
+    ):
+        source_keys = self._templates_to_keys(
+            self.source_template_keys,
+            self.source_key_per_block,
+            self.source_key_per_expert,
+            i_block,
+            n_blocks,
+            i_expert,
+            n_experts,
+        )
+        dest_keys = self._templates_to_keys(
+            self.dest_template_keys,
+            self.dest_key_per_block,
+            self.dest_key_per_expert,
+            i_block,
+            n_blocks,
+            i_expert,
+            n_experts,
+        )
+
+        return Mapping(
+            source_keys,
+            dest_keys,
+            self.source_concat_dim,
+            self.dims_permutation,
+            self.flatten_dims,
+            self.dest_chunk_dim,
+        )
+
+
+HF_TO_OLMO_CORE_TEMPLATE_MAPPING: Dict[str, TemplateMapping] = {
+    f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.gate_proj.weight": TemplateMapping(
+        f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.gate_proj.weight",
+        f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w1",
+        source_key_per_expert=True,
+        source_concat_dim=1,
+        dims_permutation=(1, 0),
+        dest_chunk_dim=0,
+    ),
+    f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.down_proj.weight": TemplateMapping(
+        f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.down_proj.weight",
+        f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w2",
+        source_key_per_expert=True,
+        source_concat_dim=1,
+        dims_permutation=(1, 0),
+        dest_chunk_dim=0,
+    ),
+    f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.up_proj.weight": TemplateMapping(
+        f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.up_proj.weight",
+        f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w3",
+        source_key_per_expert=True,
+        source_concat_dim=1,
+        dims_permutation=(1, 0),
+        dest_chunk_dim=0,
+    ),
+    f"model.layers.{BLOCK_STR}.mlp.gate.weight": TemplateMapping(
+        f"model.layers.{BLOCK_STR}.mlp.gate.weight",
+        f"blocks.{BLOCK_STR}.feed_forward_moe.router.weight",
+        flatten_dims=(0, 1),
+    ),
+}
+
+OLMO_CORE_TO_HF_TEMPLATE_MAPPING: Dict[str, TemplateMapping] = {
+    f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w1": TemplateMapping(
+        f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w1",
+        f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.gate_proj.weight",
+        dest_key_per_expert=True,
+    ),
+    f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w2": TemplateMapping(
+        f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w2",
+        f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.down_proj.weight",
+        dest_key_per_expert=True,
+    ),
+    f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w3": TemplateMapping(
+        f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w3",
+        f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.up_proj.weight",
+        dest_key_per_expert=True,
+    ),
+    f"blocks.{BLOCK_STR}.feed_forward_moe.router.weight": TemplateMapping(
+        f"blocks.{BLOCK_STR}.feed_forward_moe.router.weight",
+        f"model.layers.{BLOCK_STR}.mlp.gate.weight",
+    ),
 }
 
 
-@beta_feature
-def get_key_mapping_from_hf(
-    config: PretrainedConfig, *, model_id: str | None = None
-) -> Dict[str, str]:
-    if not hasattr(config, "num_hidden_layers"):
-        raise ValueError(f"Number of hidden layers missing in HF config: {config}")
-    n_layers: int = config.num_hidden_layers
+@dataclass
+class Mapping:
+    source_keys: Tuple[str, ...]
+    dest_keys: Tuple[str, ...]
 
-    mapping = {
-        k.replace(BLOCK_STR, str(i)): v.replace(BLOCK_STR, str(i))
-        for i in range(n_layers)
-        for k, v in HF_TO_OLMO_CORE_MAPPINGS.items()
-    }
+    source_concat_dim: int = 0
+    dims_permutation: Tuple[int, ...] | None = None
+    flatten_dims: Tuple[int, int] | None = None
+    dest_chunk_dim: int = 0
 
-    if model_id is not None:
-        model_specific_mapping = {
-            k.replace(BLOCK_STR, str(i)): v.replace(BLOCK_STR, str(i))
-            for i in range(n_layers)
-            for k, v in MODEL_SPECIFIC_HF_TO_OLMO_CORE_MAPPINGS.get(model_id, {}).items()
-        }
-        mapping.update(model_specific_mapping)
+
+# def _get_keys(
+#     key_template: str,
+#     chunking_key: str | None,
+#     i_block: int,
+#     n_blocks: int,
+#     i_expert: int | None = None,
+#     n_experts: int = 0,
+# ) -> Tuple[str, ...]:
+#     if chunking_key is None:
+#         return (key_template.replace(BLOCK_STR, str(i_block)).replace(EXPERT_STR, str(i_expert)),)
+
+#     if chunking_key == EXPERT_STR:
+#         n_chunks = n_experts or 1
+#     elif chunking_key == BLOCK_STR:
+#         n_chunks = n_blocks
+#     else:
+#         raise NotImplementedError(chunking_key)
+
+#     key_templates = [key_template.replace(chunking_key, str(i)) for i in range(n_chunks)]
+#     return tuple(
+#         template.replace(BLOCK_STR, str(i_block)).replace(EXPERT_STR, str(i_expert))
+#         for template in key_templates
+#     )
+
+
+def _get_hf_to_olmo_core_mapping(
+    hf_key_template: str,
+    olmo_core_key_template: str,
+    i_block: int,
+    n_blocks: int,
+    i_expert: int | None = None,
+    n_experts: int = 0,
+) -> Mapping | None:
+    template_mapping = HF_TO_OLMO_CORE_TEMPLATE_MAPPING.get(
+        hf_key_template, TemplateMapping(hf_key_template, olmo_core_key_template)
+    )
+
+    mapping = template_mapping.to_mapping(i_block, n_blocks, i_expert, n_experts)
+    if len(mapping.source_keys) == 0 or len(mapping.dest_keys) == 0:
+        return None
 
     return mapping
 
 
-def _get_olmo_core_to_hf_mapping(
-    key_template: str,
-    value_template: str,
-    i_layer: int,
-    n_layers: int,
-    i_expert: int | None = None,
-    n_experts: int = 0,
-) -> tuple[str, tuple[str, ...]]:
-    # We assume a one-to-many mapping from OLMo Core to HF for now
-
-    if key_template in OLMO_CORE_TO_HF_ONE_TO_MANY_MAPPING:
-        chunking_key = OLMO_CORE_TO_HF_ONE_TO_MANY_MAPPING[key_template]
-
-        if chunking_key == EXPERT_STR:
-            assert n_experts > 0
-            n_chunks = n_experts
-        elif chunking_key == BLOCK_STR:
-            n_chunks = n_layers
-        else:
-            raise NotImplementedError(chunking_key)
-
-        value_templates = [value_template.replace(chunking_key, str(i)) for i in range(n_chunks)]
-    else:
-        value_templates = [value_template]
-
-    key = key_template.replace(BLOCK_STR, str(i_layer)).replace(EXPERT_STR, str(i_expert))
-    values = tuple(
-        v.replace(BLOCK_STR, str(i_layer)).replace(EXPERT_STR, str(i_expert))
-        for v in value_templates
-    )
-
-    return key, values
-
-
 @beta_feature
-def get_key_mapping_to_hf(config: PretrainedConfig) -> Dict[str, tuple[str, ...]]:
+def get_key_mapping_from_hf(
+    config: PretrainedConfig, hf_state_keys: Iterable[str], *, model_id: str | None = None
+) -> List[Mapping]:
     if not hasattr(config, "num_hidden_layers"):
         raise ValueError(f"Number of hidden layers missing in HF config: {config}")
-    n_layers: int = config.num_hidden_layers
+    n_blocks: int = config.num_hidden_layers
     n_experts: int = getattr(config, "num_experts", 0)
 
-    return dict(
-        _get_olmo_core_to_hf_mapping(
+    template_mappings = copy.deepcopy(HF_TO_OLMO_CORE_MAPPINGS)
+    if model_id is not None and model_id in MODEL_SPECIFIC_HF_TO_OLMO_CORE_MAPPINGS:
+        template_mappings.update(copy.deepcopy(MODEL_SPECIFIC_HF_TO_OLMO_CORE_MAPPINGS[model_id]))
+
+    mappings = [
+        _get_hf_to_olmo_core_mapping(
             k,
             v,
-            i_layer,
-            n_layers,
+            i_block,
+            n_blocks,
             i_expert=None if n_experts == 0 else i_expert,
             n_experts=n_experts,
         )
-        for i_layer in range(n_layers)
+        for i_block in range(n_blocks)
+        for i_expert in range(n_experts or 1)
+        for k, v in template_mappings.items()
+    ]
+
+    hf_state_keys = set(hf_state_keys)
+    return [
+        mapping
+        for mapping in mappings
+        if mapping and all(k in hf_state_keys for k in mapping.source_keys)
+    ]
+
+
+def _get_olmo_core_to_hf_mapping(
+    olmo_core_key_template: str,
+    hf_key_template: str,
+    i_block: int,
+    n_blocks: int,
+    i_expert: int | None = None,
+    n_experts: int = 0,
+) -> Mapping | None:
+    template_mapping = OLMO_CORE_TO_HF_TEMPLATE_MAPPING.get(
+        olmo_core_key_template, TemplateMapping(olmo_core_key_template, hf_key_template)
+    )
+
+    mapping = template_mapping.to_mapping(i_block, n_blocks, i_expert, n_experts)
+    if len(mapping.source_keys) == 0 or len(mapping.dest_keys) == 0:
+        return None
+
+    return mapping
+
+
+@beta_feature
+def get_key_mapping_to_hf(
+    config: PretrainedConfig, olmo_state_keys: Iterable[str]
+) -> List[Mapping]:
+    if not hasattr(config, "num_hidden_layers"):
+        raise ValueError(f"Number of hidden layers missing in HF config: {config}")
+    n_blocks: int = config.num_hidden_layers
+    n_experts: int = getattr(config, "num_experts", 0)
+
+    mappings = [
+        _get_olmo_core_to_hf_mapping(
+            k,
+            v,
+            i_block,
+            n_blocks,
+            i_expert=None if n_experts == 0 else i_expert,
+            n_experts=n_experts,
+        )
+        for i_block in range(n_blocks)
         for i_expert in range(n_experts or 1)
         for k, v in OLMO_CORE_TO_HF_MAPPINGS.items()
-    )
+    ]
+
+    olmo_state_keys = set(olmo_state_keys)
+    return [
+        mapping
+        for mapping in mappings
+        if mapping and all(k in olmo_state_keys for k in mapping.source_keys)
+    ]
