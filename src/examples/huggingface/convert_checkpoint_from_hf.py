@@ -161,13 +161,13 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
         # if isinstance()
         # log.info(f"{name}")
         if isinstance(input, torch.Tensor):
-            state_name = f"{name}_input"
+            state_name = f"{name}|input"
             input = input.detach()
             for i, size in enumerate(input.shape):
                 input = input.narrow(i, 0, min(size, MAX_DIM_SIZE))
             state[state_name] = (len(state), input)
         if isinstance(output, torch.Tensor):
-            state_name = f"{name}_output_{len(state)}"
+            state_name = f"{name}|output"
             output = output.detach()
             for i, size in enumerate(output.shape):
                 output = output.narrow(i, 0, min(size, MAX_DIM_SIZE))
@@ -226,9 +226,9 @@ def validate_conversion(
         }
 
         for hf_state_name, (_, hf_tensor) in sorted(hf_state.items(), key=lambda item: item[1][0]):
-            hf_key, state_type = hf_state_name.split("_")
+            hf_key, state_type = hf_state_name.split("|")
             if hf_key in simple_key_mapping:
-                olmo_state_name = f"{simple_key_mapping[hf_key]}_{state_type}"
+                olmo_state_name = f"{simple_key_mapping[hf_key]}|{state_type}"
                 _, olmo_core_tensor = olmo_core_state[olmo_state_name]
 
                 log.info(f"{hf_state_name}, {olmo_state_name} norm diff: {torch.norm(hf_tensor - olmo_core_tensor)}")
