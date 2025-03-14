@@ -204,20 +204,30 @@ OLMO_CORE_TO_HF_TEMPLATE_MAPPING: Dict[str, TemplateMapping] = {
         f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w1",
         f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.gate_proj.weight",
         dest_key_per_expert=True,
+        source_concat_dim=0,
+        dims_permutation=(1, 0),
+        dest_chunk_dim=1,
     ),
     f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w2": TemplateMapping(
         f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w2",
         f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.down_proj.weight",
         dest_key_per_expert=True,
+        source_concat_dim=0,
+        dims_permutation=(1, 0),
+        dest_chunk_dim=1,
     ),
     f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w3": TemplateMapping(
         f"blocks.{BLOCK_STR}.feed_forward_moe.experts.mlp.w3",
         f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.up_proj.weight",
         dest_key_per_expert=True,
+        source_concat_dim=0,
+        dims_permutation=(1, 0),
+        dest_chunk_dim=1,
     ),
     f"blocks.{BLOCK_STR}.feed_forward_moe.router.weight": TemplateMapping(
         f"blocks.{BLOCK_STR}.feed_forward_moe.router.weight",
         f"model.layers.{BLOCK_STR}.mlp.gate.weight",
+        flatten_dims=(0, 1),
     ),
 }
 
