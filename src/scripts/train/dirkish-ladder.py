@@ -1,20 +1,21 @@
-import copy
 from dataclasses import dataclass
 from typing import Any, ClassVar, Dict
-
-import olmo_eval.tasks
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.common import get_beaker_username, get_work_dir, get_root_dir
-from olmo_core.internal.model_ladder import SubCmd, build_config
+from olmo_core.internal.model_ladder import RunDuration, main, SubCmd, build_config
 from olmo_core.io import join_path
-from olmo_core.model_ladder import ModelLadder, ModelSize, RunDuration
-from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelConfig
+from olmo_core.model_ladder import ModelLadder, ModelSize
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, OptimConfig, OptimGroupOverride
 from olmo_core.optim.scheduler import CosWithWarmupAndLinearDecay
 from olmo_core.train import TrainerConfig
-from olmo_core.train.callbacks import SchedulerCallback, DownstreamEvaluatorCallbackConfig
+from olmo_core.train.callbacks import DownstreamEvaluatorCallbackConfig
+from olmo_core.train.train_module import (
+    TransformerDataParallelConfig,
+    TransformerTrainModuleConfig,
+)
 
 
 @dataclass
@@ -41,14 +42,9 @@ class DirkishModelLadder(ModelLadder):
     }
 
     def _get_model_config(self, *, size: ModelSize) -> TransformerConfig:
-        data_parallel_type = DataParallelType.hsdp
         return getattr(TransformerConfig, f"olmo2_{size}")(
             vocab_size=self.tokenizer.padded_vocab_size(),
             init_seed=self.init_seed,
-            compile=True,
-            dp_config=TransformerDataParallelConfig(
-                name=data_parallel_type, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
-            ),
             **self.MODEL_OVERRIDES.get(size, {}),
         )
 
@@ -66,6 +62,20 @@ class DirkishModelLadder(ModelLadder):
             ],
             fused=True,
         )
+
+    def get_train_module_config(
+        self, *, size: ModelSize, run_duration: RunDuration, gpu_type: str, dp_world_size: int
+    ) -> TransformerTrainModuleConfig:
+        config = super().get_train_module_config(
+            size=size, run_duration=run_duration, gpu_type=gpu_type, dp_world_size=dp_world_size
+        )
+        config.compile_model = True
+        config.dp_config = TransformerDataParallelConfig(
+            name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
+        )
+        config.scheduler = CosWithWarmupAndLinearDecay(warmup_steps=round(self.model_size / self.get_global_batch_size()))
+
+        return config
 
     def get_rank_microbatch_size(self, *, size: ModelSize, gpu_type: str) -> int:
         if gpu_type.lower() in ("mps", "cpu"):
@@ -183,13 +193,7 @@ class DirkishModelLadder(ModelLadder):
         )
         config.callbacks['checkpointer'].ephemeral_save_interval = 1000
 
-        # Set a modified cosine schedule with decay to 0 at the end
-        config.callbacks['lr_scheduler'] = SchedulerCallback(
-            scheduler=CosWithWarmupAndLinearDecay(warmup_steps=round(self.model_size / self.get_global_batch_size()))
-        )
-
         return config
-
 
 def build_ladder(name: str, root_dir: str) -> DirkishModelLadder:
     save_folder = str(join_path(root_dir, f"checkpoints/{get_beaker_username().lower()}/ladder"))
