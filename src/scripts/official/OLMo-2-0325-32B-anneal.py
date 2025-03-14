@@ -351,7 +351,7 @@ def train(checkpoint: str, config: AnnealingConfig):
 
 def main():
     if len(sys.argv) < 3:
-        print(f"Usage: torchrun [OPTS..] {sys.argv[0]} run_name [OVERRIDES...]")
+        print(f"Usage: torchrun [OPTS..] {sys.argv[0]} run_name checkpoint [OVERRIDES...]")
         sys.exit(1)
 
     run_name, checkpoint, *overrides = sys.argv[1:]
