@@ -234,13 +234,18 @@ def validate_conversion(
 
         for hf_state_name, (_, hf_tensor) in sorted(hf_state.items(), key=lambda item: item[1][0]):
             hf_key, state_type = hf_state_name.split("|")
-            if hf_key in simple_key_mapping:
-                olmo_state_name = f"{simple_key_mapping[hf_key]}|{state_type}"
-                _, olmo_core_tensor = olmo_core_state[olmo_state_name]
+            if hf_key not in simple_key_mapping:
+                continue
 
-                log.info(
-                    f"{hf_state_name}, {olmo_state_name} norm diff: {torch.norm(hf_tensor - olmo_core_tensor)}"
-                )
+            olmo_state_name = f"{simple_key_mapping[hf_key]}|{state_type}"
+            if olmo_state_name not in olmo_core_state:
+                continue
+
+            _, olmo_core_tensor = olmo_core_state[olmo_state_name]
+
+            log.info(
+                f"{hf_state_name}, {olmo_state_name} norm diff: {torch.norm(hf_tensor - olmo_core_tensor)}"
+            )
 
         # print(olmo_core_state)
         # print(hf_state)
