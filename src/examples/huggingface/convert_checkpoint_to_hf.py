@@ -7,6 +7,7 @@ have support in the `transformers` library.
 
 import json
 import logging
+import types
 from argparse import ArgumentParser
 from functools import partial
 from pathlib import Path
@@ -15,6 +16,7 @@ from typing import Any, Dict, Optional
 
 import torch
 from cached_path import cached_path
+from torch.distributed import DeviceMesh
 from transformers import AutoConfig, AutoModelForCausalLM
 
 from olmo_core.aliases import PathOrStr
@@ -66,9 +68,44 @@ def convert_checkpoint_to_hf(
     if "float8_config" in transformer_config_dict:
         del transformer_config_dict["float8_config"]
 
-    device = device or get_default_device()
-
     model = TransformerConfig.from_dict(transformer_config_dict).build()
+
+    # Replace weight init with an efficient alternative that just allocates memory
+    @torch.no_grad()
+    def init_weights(
+        self: Transformer,
+        *,
+        max_seq_len: Optional[int] = None,
+        max_local_microbatch_size: Optional[int] = None,
+        device: Optional[torch.device] = None,
+        pp_mesh: Optional[DeviceMesh] = None,
+    ) -> torch.Generator:
+        """
+        Initialize the model weights.
+
+        :param max_seq_len: The maximum sequence length expected. This is used
+            to warm up the RoPE cache.
+        :param max_local_microbatch_size: The maximum local (rank) micro-batch size (in tokens)
+            expected. This is used to warm-up some MoE cache.
+        :param device: The device the local copy of the model will be trained on.
+        :param pp_mesh: Pipeline parallel mesh. Pass this when using pipeline parallelism
+            to ensure the weights are initialized differently for different stages.
+        """
+        device = device or self.device
+        self.to_empty(device=device)
+
+        for module in self.modules():
+            if hasattr(module, "reset_parameters"):
+                module.to_empty(device=device)  # type: ignore
+
+        seed = self.init_seed
+        if pp_mesh is not None:
+            seed += pp_mesh.get_local_rank()
+        return torch.Generator(device).manual_seed(seed)
+
+    model.init_weights = types.MethodType(init_weights, model)
+
+    device = device or get_default_device()
     train_module = TransformerTrainModuleConfig(
         rank_microbatch_size=max_sequence_length,
         max_sequence_length=max_sequence_length,
