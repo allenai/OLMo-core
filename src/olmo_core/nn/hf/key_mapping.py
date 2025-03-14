@@ -174,7 +174,7 @@ HF_TO_OLMO_CORE_TEMPLATE_MAPPING: Dict[str, TemplateMapping] = {
         source_key_per_expert=True,
         source_concat_dim=0,
         dims_permutation=(1, 0),
-        dest_chunk_dim=1,
+        dest_chunk_dim=0,
     ),
     f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.down_proj.weight": TemplateMapping(
         f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.down_proj.weight",
@@ -182,7 +182,7 @@ HF_TO_OLMO_CORE_TEMPLATE_MAPPING: Dict[str, TemplateMapping] = {
         source_key_per_expert=True,
         source_concat_dim=0,
         dims_permutation=(1, 0),
-        dest_chunk_dim=1,
+        dest_chunk_dim=0,
     ),
     f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.up_proj.weight": TemplateMapping(
         f"model.layers.{BLOCK_STR}.mlp.experts.{EXPERT_STR}.up_proj.weight",
@@ -190,7 +190,7 @@ HF_TO_OLMO_CORE_TEMPLATE_MAPPING: Dict[str, TemplateMapping] = {
         source_key_per_expert=True,
         source_concat_dim=0,
         dims_permutation=(1, 0),
-        dest_chunk_dim=1,
+        dest_chunk_dim=0,
     ),
     f"model.layers.{BLOCK_STR}.mlp.gate.weight": TemplateMapping(
         f"model.layers.{BLOCK_STR}.mlp.gate.weight",
