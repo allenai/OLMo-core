@@ -66,12 +66,14 @@ def convert_checkpoint_to_hf(
     if "float8_config" in transformer_config_dict:
         del transformer_config_dict["float8_config"]
 
+    device = device or get_default_device()
+
     model = TransformerConfig.from_dict(transformer_config_dict).build()
     train_module = TransformerTrainModuleConfig(
         rank_microbatch_size=max_sequence_length,
         max_sequence_length=max_sequence_length,
         optim=AdamWConfig(),
-    ).build(model)
+    ).build(model, device=device)
 
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
 
