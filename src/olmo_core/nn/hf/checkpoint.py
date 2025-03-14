@@ -165,9 +165,9 @@ def save_hf_model(
             )
 
             if mapping.unflatten_dim is not None:
-                olmo_core_state = olmo_core_state.unflatten(*mapping.unflatten_dim).contiguous()
+                olmo_core_state = olmo_core_state.unflatten(*mapping.unflatten_dim)
             if mapping.dims_permutation is not None:
-                olmo_core_state = olmo_core_state.permute(*mapping.dims_permutation).contiguous()
+                olmo_core_state = olmo_core_state.permute(*mapping.dims_permutation)
             if mapping.flatten_dims is not None:
                 olmo_core_state = olmo_core_state.flatten(*mapping.flatten_dims)
 
@@ -175,7 +175,7 @@ def save_hf_model(
                 olmo_core_state, chunks=len(hf_keys), dim=mapping.dest_chunk_dim
             )
             for hf_key, state_chunk in zip(hf_keys, state_chunks):
-                hf_state_dict[hf_key] = state_chunk
+                hf_state_dict[hf_key] = state_chunk.contiguous()
         else:
             raise RuntimeError(
                 f"Attempting to map {len(olmo_core_keys)} non-tensor states to {len(hf_keys)} HF keys"
