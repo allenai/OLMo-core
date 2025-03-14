@@ -85,6 +85,7 @@ class TemplateMapping:
 
     source_concat_dim: int = 0
     dims_permutation: Tuple[int, ...] | None = None
+    unflatten_dim: Tuple[int, Tuple[str | int, ...]] | None = None
     flatten_dims: Tuple[int, int] | None = None
     dest_chunk_dim: int = 0
 
@@ -157,11 +158,20 @@ class TemplateMapping:
             n_experts,
         )
 
+        unflatten_dim = None
+        if self.unflatten_dim is not None:
+            unflatten_dim_shape = tuple(
+                n_blocks if dim == BLOCK_STR else n_experts if dim == EXPERT_STR else int(dim)
+                for dim in self.unflatten_dim[1]
+            )
+            unflatten_dim = (self.unflatten_dim[0], unflatten_dim_shape)
+
         return Mapping(
             source_keys,
             dest_keys,
             self.source_concat_dim,
             self.dims_permutation,
+            unflatten_dim,
             self.flatten_dims,
             self.dest_chunk_dim,
         )
@@ -238,6 +248,7 @@ class Mapping:
 
     source_concat_dim: int = 0
     dims_permutation: Tuple[int, ...] | None = None
+    unflatten_dim: Tuple[int, Tuple[int, ...]] | None = None
     flatten_dims: Tuple[int, int] | None = None
     dest_chunk_dim: int = 0
 
