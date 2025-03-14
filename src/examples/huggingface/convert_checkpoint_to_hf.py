@@ -8,6 +8,7 @@ have support in the `transformers` library.
 import json
 import logging
 from argparse import ArgumentParser
+from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Dict, Optional
@@ -20,6 +21,7 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.io import file_exists
 from olmo_core.nn.hf.checkpoint import save_hf_model
+from olmo_core.nn.hf.key_mapping import get_key_mapping_to_hf
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.optim.adamw import AdamWConfig
@@ -30,7 +32,7 @@ from olmo_core.utils import get_default_device, prepare_cli_environment
 log = logging.getLogger(__name__)
 
 
-def convert_checkpoint(
+def convert_checkpoint_to_hf(
     original_checkpoint_path: str | Path,
     output_path: str | Path,
     transformer_config_dict: Dict[str, Any],
@@ -38,6 +40,8 @@ def convert_checkpoint(
     *,
     max_sequence_length: int = -1,
     validate: bool = True,
+    debug: bool = False,
+    device: torch.device | None = None,
 ) -> None:
     """
     Convert a checkpoint to a different OLMo core compatible format.
@@ -100,22 +104,67 @@ def convert_checkpoint(
 
     if validate:
         log.info("Validating converted model")
-        validate_conversion(output_path, model, tokenizer_config.vocab_size)
+        validate_conversion(
+            output_path, model, tokenizer_config.vocab_size, debug=debug, device=device
+        )
         log.info("Validation completed successful")
+
+
+def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
+    MAX_DIM_SIZE = 100_000
+
+    olmo_core_state = {}
+    hf_state = {}
+
+    def module_hook(state: Dict, name: str, _: torch.nn.Module, args, output):
+        # if isinstance()
+        # log.info(f"{name}")
+        if len(args) >= 1 and isinstance(args[0], torch.Tensor):
+            state_name = f"{name}|input"
+            input = args[0].detach()
+            for i, size in enumerate(input.shape):
+                input = input.narrow(i, 0, min(size, MAX_DIM_SIZE))
+            state[state_name] = (len(state), input.float())
+        if isinstance(output, torch.Tensor):
+            state_name = f"{name}|output"
+            output = output.detach()
+            for i, size in enumerate(output.shape):
+                output = output.narrow(i, 0, min(size, MAX_DIM_SIZE))
+            state[state_name] = (len(state), output.float())
+
+    for name, module in model.named_modules():
+        module.register_forward_hook(partial(module_hook, olmo_core_state, name))
+    for name, module in hf_model.named_modules():
+        module.register_forward_hook(partial(module_hook, hf_state, name))
+
+    return olmo_core_state, hf_state
 
 
 def validate_conversion(
     hf_path: str | Path,
     model: Transformer,
     vocab_size: int,
+    debug: bool = False,
+    device: torch.device | None = None,
 ):
-    device = get_default_device()
+    if torch.cuda.is_available():
+        torch.cuda.init()
+
+    device = device or get_default_device()
 
     B, T = 1, 120
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
 
     log.info("Loading converted checkpoint for validation...")
     hf_model = AutoModelForCausalLM.from_pretrained(hf_path).to(device).eval()
+
+    olmo_core_state, hf_state = {}, {}
+    key_mapping = None
+    if debug:
+        olmo_core_state, hf_state = _register_debug_hooks(hf_model, model)
+        key_mapping = get_key_mapping_to_hf(
+            AutoConfig.from_pretrained(hf_path), hf_model.state_dict()
+        )
 
     log.info("Running OLMo core and HF models for validation...")
     with torch.no_grad():
@@ -126,6 +175,39 @@ def validate_conversion(
     model.eval()
     with torch.no_grad():
         logits = model(input_ids=input_ids)
+
+    if debug:
+        assert key_mapping is not None
+
+        simple_key_mapping = {
+            mapping.source_keys[0]
+            .replace(".weight", ""): mapping.dest_keys[0]
+            .replace(".weight", "")
+            for mapping in key_mapping
+            if len(mapping.source_keys) == 1
+            and len(mapping.dest_keys) == 1
+            and mapping.source_keys[0].endswith(".weight")
+            and mapping.dest_keys[0].endswith(".weight")
+        }
+
+        log.info(f"mapping: {simple_key_mapping}")
+        log.info(f"hf_state keys: {hf_state.keys()}")
+        log.info(f"olmo_core_state keys: {olmo_core_state.keys()}")
+
+        for hf_state_name, (_, hf_tensor) in sorted(hf_state.items(), key=lambda item: item[1][0]):
+            hf_key, state_type = hf_state_name.split("|")
+            if hf_key not in simple_key_mapping:
+                continue
+
+            olmo_state_name = f"{simple_key_mapping[hf_key]}|{state_type}"
+            if olmo_state_name not in olmo_core_state:
+                continue
+
+            _, olmo_core_tensor = olmo_core_state[olmo_state_name]
+
+            log.info(
+                f"{hf_state_name}, {olmo_state_name} norm diff: {torch.norm(hf_tensor - olmo_core_tensor)}"
+            )
 
     torch.testing.assert_close(hf_logits, logits)
 
@@ -152,6 +234,8 @@ def parse_args():
     parser.add_argument("-o", "--huggingface-output-dir", type=Path, required=True)
     parser.add_argument("-s", "--max-sequence-length", type=int, required=True)
     parser.add_argument("--skip-validation", dest="validate", action="store_false")
+    parser.add_argument("--debug", dest="debug", action="store_true")
+    parser.add_argument("--device", type=torch.device)
     return parser.parse_args()
 
 
@@ -168,13 +252,15 @@ def main():
     assert transformer_config_dict is not None
     assert tokenizer_config_dict is not None
 
-    convert_checkpoint(
+    convert_checkpoint_to_hf(
         original_checkpoint_path=args.checkpoint_input_path,
         output_path=args.huggingface_output_dir,
         transformer_config_dict=transformer_config_dict,
         tokenizer_config_dict=tokenizer_config_dict,
         max_sequence_length=args.max_sequence_length,
         validate=args.validate,
+        debug=args.debug,
+        device=args.device,
     )
 
 
