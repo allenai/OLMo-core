@@ -126,8 +126,6 @@ def load_hf_model(
                     olmo_core_state = state_chunk
 
                 model_state_dict[olmo_core_key] = olmo_core_state
-        elif len(hf_keys) == 1 and len(olmo_core_keys) == 1:
-            model_state_dict[olmo_core_keys[0]] = hf_state_dict[hf_keys[0]]
         else:
             raise RuntimeError(
                 f"Attempting to map {len(hf_keys)} non-tensor HF states to {len(olmo_core_keys)} OLMo core keys"
