@@ -95,9 +95,6 @@ def load_hf_model(
 
     unused_hf_keys = set(hf_state_dict.keys())
 
-    log.info(key_mapping)
-    log.info(model_state_dict.keys())
-
     for mapping in key_mapping:
         # hf_states = [hf_state_dict[key] for key in hf_keys]
         hf_keys = mapping.source_keys
@@ -111,8 +108,6 @@ def load_hf_model(
                 hf_state = hf_state.permute(*mapping.dims_permutation)
             if mapping.flatten_dims is not None:
                 hf_state = hf_state.flatten(*mapping.flatten_dims)
-
-            log.info(f"Keys {hf_keys}, shape {hf_state.shape}")
 
             state_chunks = torch.chunk(
                 hf_state, chunks=len(olmo_core_keys), dim=mapping.dest_chunk_dim
