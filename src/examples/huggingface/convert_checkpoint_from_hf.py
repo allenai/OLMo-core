@@ -84,6 +84,7 @@ def convert_checkpoint_from_hf(
     max_sequence_length: int = -1,
     validate: bool = True,
     debug: bool = False,
+    device: torch.device | None = None,
 ) -> None:
     """
     Convert a HF checkpoint to an OLMo core checkpoint.
@@ -107,12 +108,14 @@ def convert_checkpoint_from_hf(
     if "float8_config" in transformer_config_dict:
         del transformer_config_dict["float8_config"]
 
+    device = device or get_default_device()
+
     model = TransformerConfig.from_dict(transformer_config_dict).build()
     train_module = TransformerTrainModuleConfig(
         rank_microbatch_size=max_sequence_length,
         max_sequence_length=max_sequence_length,
         optim=AdamWConfig(),
-    ).build(model)
+    ).build(model, device=device)
 
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
 
@@ -147,12 +150,14 @@ def convert_checkpoint_from_hf(
 
     if validate:
         log.info("Validating converted model")
-        validate_conversion(hf_checkpoint_path, model, tokenizer_config.vocab_size, debug=debug)
+        validate_conversion(
+            hf_checkpoint_path, model, tokenizer_config.vocab_size, debug=debug, device=device
+        )
         log.info("Validation completed successful")
 
 
 def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
-    MAX_DIM_SIZE = 10
+    MAX_DIM_SIZE = 100_000
 
     olmo_core_state = {}
     hf_state = {}
@@ -186,11 +191,12 @@ def validate_conversion(
     model: Transformer,
     vocab_size: int,
     debug: bool = False,
+    device: torch.device | None = None,
 ):
     if torch.cuda.is_available():
         torch.cuda.init()
 
-    device = get_default_device()
+    device = device or get_default_device()
 
     B, T = 1, 120
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
@@ -284,6 +290,7 @@ def parse_args():
     parser.add_argument("-s", "--max-sequence-length", type=int, required=True)
     parser.add_argument("--skip-validation", dest="validate", action="store_false")
     parser.add_argument("--debug", dest="debug", action="store_true")
+    parser.add_argument("--device", type=torch.device)
     return parser.parse_args()
 
 
@@ -315,6 +322,7 @@ def main():
         max_sequence_length=args.max_sequence_length,
         validate=args.validate,
         debug=args.debug,
+        device=args.device,
     )
 
 
