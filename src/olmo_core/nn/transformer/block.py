@@ -362,10 +362,6 @@ class MoETransformerBlock(TransformerBlockBase):
         Parameters are the same as :meth:`TransformerBlock.forward()`.
         """
         h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
-        if x.get_device() == -1:
-            raise RuntimeError("x On CPU")
-        if h.get_device() == -1:
-            raise RuntimeError("h On CPU")
         return h + self.dropout(self.feed_forward_moe(self.feed_forward_norm(h)))
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
@@ -439,6 +435,10 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+        if x.get_device() == -1:
+            raise RuntimeError("x On CPU")
+        if h.get_device() == -1:
+            raise RuntimeError("h On CPU")
         return h + self.dropout(self.feed_forward_norm(self.feed_forward_moe(h)))
 
     def apply_fsdp(
