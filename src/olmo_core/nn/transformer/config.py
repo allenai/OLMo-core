@@ -581,7 +581,7 @@ class TransformerConfig(Config):
     def olmoe_tiny_test(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         d_model = kwargs.pop("d_model", 256)
         dropless = kwargs.pop(
-            "dropless", True
+            "dropless", False
         )  # Possibly more OOM due to imbalance with dropless=True
         return cls.llama_like_moe(
             vocab_size=vocab_size,
@@ -594,7 +594,7 @@ class TransformerConfig(Config):
             dropless=dropless,
             capacity_factor=None
             if dropless
-            else kwargs.pop("capacity_factor", 1.2),  # adjust as needed
+            else kwargs.pop("capacity_factor", 10),  # adjust as needed
             lb_loss_weight=kwargs.pop("lb_loss_weight", 0.01),
             z_loss_weight=kwargs.pop("z_loss_weight", 0.001),
             reordered_norm=kwargs.pop("reordered_norm", True),
