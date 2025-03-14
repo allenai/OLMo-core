@@ -223,8 +223,7 @@ def validate_conversion(
             .replace(".weight", ""): mapping.dest_keys[0]
             .replace(".weight", "")
             for mapping in key_mapping
-            if len(mapping.source_keys) == 1
-            and len(mapping.dest_keys) == 1
+            if len(mapping.source_keys) == 1 and len(mapping.dest_keys) == 1
         }
 
         log.info(f"mapping: {simple_key_mapping}")
