@@ -29,6 +29,8 @@ jobs:
     timeout-minutes: 60
     env:
       BEAKER_TOKEN: ${{ secrets.BEAKER_TOKEN }}
+      DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
+      DOCKER_HUB_USER: ${{ secrets.DOCKER_HUB_USER }}
     strategy:
       fail-fast: false
       matrix:
@@ -43,6 +45,11 @@ jobs:
         with:
           token: ${{ env.BEAKER_TOKEN }}
           workspace: ${{ env.BEAKER_WORKSPACE }}
+
+      - name: Authenticate with Docker Hub
+        if: env.DOCKER_HUB_TOKEN != ''
+        run: |
+          echo ${{ env.DOCKER_HUB_TOKEN }} | docker login -u ${{ env.DOCKER_HUB_USER }} --password-stdin
 
       - name: Setup Python
         uses: actions/setup-python@v5
