@@ -2,6 +2,7 @@ from transformers import Olmo2Config, Olmoe2Config, PretrainedConfig
 
 from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.attention import Attention
+from olmo_core.nn.moe.mlp import MoEMLP
 from olmo_core.nn.transformer.block import MoETransformerBlock, TransformerBlock
 from olmo_core.nn.transformer.model import (
     MoETransformer,
@@ -15,6 +16,11 @@ def _get_moe_hf_config(model: MoETransformer) -> PretrainedConfig:
     if not isinstance(block, MoETransformerBlock):
         raise NotImplementedError(
             f"Block is not a {MoETransformerBlock.__name__}, unable to build HF config for {model.__class__.__name__}"
+        )
+
+    if not isinstance(block.experts.mlp, MoEMLP):
+        raise NotImplementedError(
+            f"MoE mlp is not a {MoEMLP.__name__}, unable to build HF config for {model.__class__.__name__}"
         )
 
     if not isinstance(block.attention, Attention):
