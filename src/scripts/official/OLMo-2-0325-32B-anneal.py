@@ -4,7 +4,6 @@ Official training script for OLMo-2-0325-32B-anneal, meant to be launched with t
 
 import json
 import logging
-import os
 import sys
 from dataclasses import dataclass
 from typing import List, Tuple, cast
@@ -21,7 +20,7 @@ from olmo_core.data import (
 )
 from olmo_core.distributed.parallel import DataParallelType
 
-# from olmo_core.distributed.utils import get_world_size
+from olmo_core.distributed.utils import get_world_size
 from olmo_core.io import resource_path
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import (
@@ -144,14 +143,6 @@ class AnnealingConfig(Config):
 
         run_name = f"peteish32-from{last_pretrain_step}-{run_name}"
 
-        # world_size = get_world_size()
-        num_nodes = int(os.environ.get("WORLD_SIZE", "1")) // int(
-            os.environ.get("LOCAL_WORLD_SIZE", "1")
-        )
-        if num_nodes == 0:
-            num_nodes = 1
-        num_replicas = max(1, num_nodes // 2)
-
         config = AnnealingConfig(
             run_name=f"olmo2-anneal-{run_name}",
             model=TransformerConfig.olmo2_32B(vocab_size=tokenizer_config.padded_vocab_size()),
@@ -189,7 +180,7 @@ class AnnealingConfig(Config):
                     name=DataParallelType.fsdp,
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
-                    num_replicas=num_replicas,
+                    num_replicas=get_world_size() // 64,  # NOTE: tune this,
                 ),
                 ac_config=TransformerActivationCheckpointingConfig(
                     mode=TransformerActivationCheckpointingMode.selected_modules,
