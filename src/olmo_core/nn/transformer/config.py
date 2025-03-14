@@ -588,7 +588,7 @@ class TransformerConfig(Config):
             d_model=d_model,
             n_layers=kwargs.pop("n_layers", 4),
             n_heads=kwargs.pop("n_heads", 4),
-            num_experts=kwargs.pop("n_experts", 2),
+            num_experts=kwargs.pop("n_experts", 4),
             top_k=kwargs.pop("top_k", 2),
             expert_hidden_size=kwargs.pop("expert_hidden_size", 512),
             dropless=dropless,
