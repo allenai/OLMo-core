@@ -105,7 +105,12 @@ def load_hf_model(
             )
 
             if mapping.unflatten_dim is not None:
-                hf_state = hf_state.contiguous().unflatten(*mapping.unflatten_dim)
+                new_shape = (
+                    hf_state.shape[: mapping.unflatten_dim[0]]
+                    + mapping.unflatten_dim[1]
+                    + hf_state.shape[mapping.unflatten_dim[0] + 1 :]
+                )
+                hf_state = hf_state.reshape(new_shape)
             if mapping.dims_permutation is not None:
                 hf_state = hf_state.permute(*mapping.dims_permutation)
             if mapping.flatten_dims is not None:
@@ -167,7 +172,12 @@ def save_hf_model(
             )
 
             if mapping.unflatten_dim is not None:
-                olmo_core_state = olmo_core_state.contiguous().unflatten(*mapping.unflatten_dim)
+                new_shape = (
+                    olmo_core_state.shape[: mapping.unflatten_dim[0]]
+                    + mapping.unflatten_dim[1]
+                    + olmo_core_state.shape[mapping.unflatten_dim[0] + 1 :]
+                )
+                olmo_core_state = olmo_core_state.reshape(new_shape)
             if mapping.dims_permutation is not None:
                 olmo_core_state = olmo_core_state.permute(*mapping.dims_permutation)
             if mapping.flatten_dims is not None:
