@@ -70,9 +70,10 @@ class DirkishModelLadder(ModelLadder):
     def get_rank_microbatch_size(self, *, size: ModelSize, gpu_type: str) -> int:
         if gpu_type.lower() in ("mps", "cpu"):
             return 4096
-        else:
-            assert "h100" in gpu_type.lower()
-            return self.MBZ_SIZES[size]
+        result = self.MBZ_SIZES[size]
+        if "b200" in gpu_type.lower():
+            result *= 2
+        return result
 
     def get_trainer_config(
         self,
