@@ -227,7 +227,6 @@ OLMO_CORE_TO_HF_TEMPLATE_MAPPING: Dict[str, TemplateMapping] = {
     f"blocks.{BLOCK_STR}.feed_forward_moe.router.weight": TemplateMapping(
         f"blocks.{BLOCK_STR}.feed_forward_moe.router.weight",
         f"model.layers.{BLOCK_STR}.mlp.gate.weight",
-        flatten_dims=(0, 1),
     ),
 }
 
