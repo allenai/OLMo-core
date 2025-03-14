@@ -33,7 +33,7 @@ Changelog = "https://github.com/allenai/OLMo-core/blob/main/CHANGELOG.md"
 [project.optional-dependencies]
 dev = [
     "ruff",
-    "mypy>=1.0,<1.4",
+    "mypy>=1.0,<1.16",
     "black>=23.1,<24.0",
     "isort>=5.12,<5.14",
     "pytest",
