@@ -220,9 +220,12 @@ def validate_conversion(
         assert key_mapping is not None
 
         simple_key_mapping = {
-            mapping.source_keys[0]: mapping.dest_keys[0]
+            mapping.source_keys[0].replace("weight", ""): mapping.dest_keys[0].replace("weight", "")
             for mapping in key_mapping
-            if len(mapping.source_keys) == 1 and len(mapping.dest_keys) == 1
+            if len(mapping.source_keys) == 1
+            and len(mapping.dest_keys) == 1
+            and "weight" in mapping.source_keys[0]
+            and "weight" in mapping.dest_keys[0]
         }
 
         log.info(f"mapping: {simple_key_mapping}")
@@ -235,7 +238,9 @@ def validate_conversion(
                 olmo_state_name = f"{simple_key_mapping[hf_key]}|{state_type}"
                 _, olmo_core_tensor = olmo_core_state[olmo_state_name]
 
-                log.info(f"{hf_state_name}, {olmo_state_name} norm diff: {torch.norm(hf_tensor - olmo_core_tensor)}")
+                log.info(
+                    f"{hf_state_name}, {olmo_state_name} norm diff: {torch.norm(hf_tensor - olmo_core_tensor)}"
+                )
 
         # print(olmo_core_state)
         # print(hf_state)
