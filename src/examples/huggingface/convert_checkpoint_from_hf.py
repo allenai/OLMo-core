@@ -226,6 +226,8 @@ def validate_conversion(
         }
 
         log.info(f"mapping: {simple_key_mapping}")
+        log.info(f"hf_state keys: {hf_state.keys()}")
+        log.info(f"olmo_core_state keys: {olmo_core_state.keys()}")
 
         for hf_state_name, (_, hf_tensor) in sorted(hf_state.items(), key=lambda item: item[1][0]):
             hf_key, state_type = hf_state_name.split("|")
