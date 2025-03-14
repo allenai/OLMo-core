@@ -167,7 +167,7 @@ def validate_conversion(
 
     del hf_model
 
-    model.eval()
+    model = model.to(device).eval()
     with torch.no_grad():
         logits = model(input_ids=input_ids)
 
