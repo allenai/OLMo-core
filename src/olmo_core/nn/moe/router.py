@@ -185,6 +185,9 @@ class MoERouter(nn.Module):
         # shape: (batch_size * seq_len, num_experts)
         logits = self.get_expert_logits(x).view(-1, self.num_experts)
 
+        if logits.get_device() == -1:
+            raise RuntimeError("On CPU")
+
         # shape: (batch_size * seq_len, num_experts)
         scores = logits.softmax(dim=-1)
 
