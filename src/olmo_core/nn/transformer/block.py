@@ -549,6 +549,7 @@ class MoEParallelTransformerBlockBase(MoETransformerBlock):
             bins=bins,
         )
 
+        x_moe = x_moe.view(x_att.shape)
         if shared_out is not None:
             shared_out = shared_out / (self.top_k + 1)
             x_moe = shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
@@ -562,7 +563,7 @@ class MoEParallelTransformerBlockBase(MoETransformerBlock):
                 batch_size_per_expert=batch_size_per_expert,
             )
 
-        return x_moe.view(x_att.shape), x_att
+        return x_moe, x_att
 
 
 @beta_feature
