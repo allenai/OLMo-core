@@ -690,95 +690,95 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
     def _fwd_sparse(self, x: torch.Tensor) -> torch.Tensor:
         return self.dropout(self.feed_forward_moe(self.feed_forward_moe_norm(x)))
 
-    #  def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-    #      in_shape = x.shape
+    def parallel_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        in_shape = x.shape
 
-    #      if not self.ep_enabled and not self.tp_enabled:
-    #          h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
-    #          h = h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
-    #          return h + self.dropout(self.feed_forward_moe(self.feed_forward_moe_norm(x)))
+        if not self.ep_enabled and not self.tp_enabled:
+            h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
+            h = h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
+            return h + self.dropout(self.feed_forward_moe(self.feed_forward_moe_norm(x)))
 
-    #      # NOTE: this follows the same code path as the MoE's forward pass, except that we run
-    #      # dense operations while we wait on expert parallel all-to-all comms.
-    #      x_moe = self.feed_forward_moe_norm(x)
-    #      expert_logits, expert_scores, expert_weights, expert_indices = self.router(x_moe)
-    #      # shape: (batch_size * top_k,)
-    #      expert_weights = expert_weights.flatten()
-    #      # shape: (batch_size * top_k,)
-    #      expert_indices = expert_indices.flatten()
+        # NOTE: this follows the same code path as the MoE's forward pass, except that we run
+        # dense operations while we wait on expert parallel all-to-all comms.
+        x_moe = self.feed_forward_moe_norm(x)
+        expert_logits, expert_scores, expert_weights, expert_indices = self.router(x_moe)
+        # shape: (batch_size * top_k,)
+        expert_weights = expert_weights.flatten()
+        # shape: (batch_size * top_k,)
+        expert_indices = expert_indices.flatten()
 
-    #      with torch.no_grad():
-    #          indices, bin_ids, bins, batch_size_per_expert = self.experts.indices_and_bins(
-    #              expert_indices
-    #          )
+        with torch.no_grad():
+            indices, bin_ids, bins, batch_size_per_expert = self.experts.indices_and_bins(
+                expert_indices
+            )
 
-    #      (
-    #          parallel_x,
-    #          parallel_indices,
-    #          parallel_bin_ids,
-    #          parallel_bins,
-    #          parallel_batch_size_per_expert,
-    #          recv_counts,
-    #          send_counts,
-    #          expert_capacity,
-    #          parallel_x_handle,
-    #      ) = self.experts.permute_and_all_to_all(
-    #          x_moe.view(-1, x.shape[-1]),
-    #          indices=indices,
-    #          bin_ids=bin_ids,
-    #          bins=bins,
-    #          batch_size_per_expert=batch_size_per_expert,
-    #      )
+        (
+            parallel_x,
+            parallel_indices,
+            parallel_bin_ids,
+            parallel_bins,
+            parallel_batch_size_per_expert,
+            recv_counts,
+            send_counts,
+            expert_capacity,
+            handle,
+        ) = self.experts.permute_and_all_to_all(
+            x_moe.view(-1, x_moe.shape[-1]),
+            indices=indices,
+            bin_ids=bin_ids,
+            bins=bins,
+            batch_size_per_expert=batch_size_per_expert,
+        )
 
-    #      # Compute attention while all-to-all is in progress.
-    #      h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
+        # Compute attention while all-to-all is in progress.
+        h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
 
-    #      # Maybe compute MoE shared out while all-to-all is in progress.
-    #      moe_shared_out: Optional[torch.Tensor] = None
-    #      if self.shared_mlp is not None:
-    #          moe_shared_out = self.shared_mlp(x_moe)
+        # Maybe compute MoE shared out while all-to-all is in progress.
+        moe_shared_out: Optional[torch.Tensor] = None
+        if self.shared_mlp is not None:
+            moe_shared_out = self.shared_mlp(x_moe)
 
-    #      parallel_x_handle.wait()
-    #      parallel_x = self.experts.compute_local_experts(
-    #          parallel_x,
-    #          parallel_indices=parallel_indices,
-    #          parallel_bin_ids=parallel_bin_ids,
-    #          parallel_bins=parallel_bins,
-    #          parallel_batch_size_per_expert=parallel_batch_size_per_expert,
-    #          expert_capacity=expert_capacity,
-    #      )
+        handle.wait()
+        parallel_x = self.experts.compute_local_experts(
+            parallel_x,
+            parallel_indices=parallel_indices,
+            parallel_bin_ids=parallel_bin_ids,
+            parallel_bins=parallel_bins,
+            parallel_batch_size_per_expert=parallel_batch_size_per_expert,
+            expert_capacity=expert_capacity,
+        )
 
-    #      x_moe, x_handle = self.experts.reverse_all_to_all(
-    #          parallel_x, send_counts=send_counts, recv_counts=recv_counts
-    #      )
+        x_moe, handle = self.experts.reverse_all_to_all(
+            parallel_x, send_counts=send_counts, recv_counts=recv_counts
+        )
 
-    #      # Compute feed-forward while all-to-all is in progress.
-    #      h = h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
+        # Compute feed-forward while all-to-all is in progress.
+        h = h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
-    #      x_handle.wait()
-    #      x_moe = self.experts.unpermute(
-    #          x_moe,
-    #          expert_weights=expert_weights,
-    #          expert_indices=expert_indices,
-    #          indices=indices,
-    #          bin_ids=bin_ids,
-    #          bins=bins,
-    #      ).view(in_shape)
+        handle.wait()
+        x_moe = self.experts.unpermute(
+            x_moe,
+            expert_weights=expert_weights,
+            expert_indices=expert_indices,
+            indices=indices,
+            bin_ids=bin_ids,
+            bins=bins,
+        ).view(in_shape)
 
-    #      if moe_shared_out is not None:
-    #          moe_shared_out = moe_shared_out / (self.top_k + 1)
-    #          x_moe = moe_shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
+        if moe_shared_out is not None:
+            moe_shared_out = moe_shared_out / (self.top_k + 1)
+            x_moe = moe_shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
 
-    #      if self.training:
-    #          self.feed_forward_moe.update_losses_and_metrics(
-    #              expert_logits=expert_logits,
-    #              expert_scores=expert_scores,
-    #              expert_weights=expert_weights,
-    #              expert_indices=expert_indices,
-    #              batch_size_per_expert=batch_size_per_expert,
-    #          )
+        if self.training:
+            self.feed_forward_moe.update_losses_and_metrics(
+                expert_logits=expert_logits,
+                expert_scores=expert_scores,
+                expert_weights=expert_weights,
+                expert_indices=expert_indices,
+                batch_size_per_expert=batch_size_per_expert,
+            )
 
-    #      return h + x_moe
+        return h + self.dropout(x_moe)
 
 
 @beta_feature
@@ -790,91 +790,92 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
     def _fwd_sparse(self, x: torch.Tensor) -> torch.Tensor:
         return self.dropout(self.feed_forward_moe_norm(self.feed_forward_moe(x)))
 
-    #  def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-    #      in_shape = x.shape
+    def parallel_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        in_shape = x.shape
 
-    #      if not self.ep_enabled and not self.tp_enabled:
-    #          h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-    #          h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
-    #          return h + self.dropout(self.feed_forward_moe_norm(self.feed_forward_moe(x)))
+        if not self.ep_enabled and not self.tp_enabled:
+            h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+            h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+            return h + self.dropout(self.feed_forward_moe_norm(self.feed_forward_moe(x)))
 
-    #      # NOTE: this follows the same code path as the MoE's forward pass, except that we run
-    #      # dense operations while we wait on expert parallel all-to-all comms.
-    #      expert_logits, expert_scores, expert_weights, expert_indices = self.router(x)
-    #      # shape: (batch_size * top_k,)
-    #      expert_weights = expert_weights.flatten()
-    #      # shape: (batch_size * top_k,)
-    #      expert_indices = expert_indices.flatten()
+        # NOTE: this follows the same code path as the MoE's forward pass, except that we run
+        # dense operations while we wait on expert parallel all-to-all comms.
+        x_moe = x
+        expert_logits, expert_scores, expert_weights, expert_indices = self.router(x_moe)
+        # shape: (batch_size * top_k,)
+        expert_weights = expert_weights.flatten()
+        # shape: (batch_size * top_k,)
+        expert_indices = expert_indices.flatten()
 
-    #      with torch.no_grad():
-    #          indices, bin_ids, bins, batch_size_per_expert = self.experts.indices_and_bins(
-    #              expert_indices
-    #          )
+        with torch.no_grad():
+            indices, bin_ids, bins, batch_size_per_expert = self.experts.indices_and_bins(
+                expert_indices
+            )
 
-    #      (
-    #          parallel_x,
-    #          parallel_indices,
-    #          parallel_bin_ids,
-    #          parallel_bins,
-    #          parallel_batch_size_per_expert,
-    #          recv_counts,
-    #          send_counts,
-    #          expert_capacity,
-    #          parallel_x_handle,
-    #      ) = self.experts.permute_and_all_to_all(
-    #          x.view(-1, x.shape[-1]),
-    #          indices=indices,
-    #          bin_ids=bin_ids,
-    #          bins=bins,
-    #          batch_size_per_expert=batch_size_per_expert,
-    #      )
+        (
+            parallel_x,
+            parallel_indices,
+            parallel_bin_ids,
+            parallel_bins,
+            parallel_batch_size_per_expert,
+            recv_counts,
+            send_counts,
+            expert_capacity,
+            handle,
+        ) = self.experts.permute_and_all_to_all(
+            x_moe.view(-1, x_moe.shape[-1]),
+            indices=indices,
+            bin_ids=bin_ids,
+            bins=bins,
+            batch_size_per_expert=batch_size_per_expert,
+        )
 
-    #      # Compute attention while all-to-all is in progress.
-    #      h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+        # Compute attention while all-to-all is in progress.
+        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
 
-    #      # Maybe compute MoE shared out while all-to-all is in progress.
-    #      moe_shared_out: Optional[torch.Tensor] = None
-    #      if self.shared_mlp is not None:
-    #          moe_shared_out = self.shared_mlp(x)
+        # Maybe compute MoE shared out while all-to-all is in progress.
+        moe_shared_out: Optional[torch.Tensor] = None
+        if self.shared_mlp is not None:
+            moe_shared_out = self.shared_mlp(x_moe)
 
-    #      parallel_x_handle.wait()
-    #      parallel_x = self.experts.compute_local_experts(
-    #          parallel_x,
-    #          parallel_indices=parallel_indices,
-    #          parallel_bin_ids=parallel_bin_ids,
-    #          parallel_bins=parallel_bins,
-    #          parallel_batch_size_per_expert=parallel_batch_size_per_expert,
-    #          expert_capacity=expert_capacity,
-    #      )
+        handle.wait()
+        parallel_x = self.experts.compute_local_experts(
+            parallel_x,
+            parallel_indices=parallel_indices,
+            parallel_bin_ids=parallel_bin_ids,
+            parallel_bins=parallel_bins,
+            parallel_batch_size_per_expert=parallel_batch_size_per_expert,
+            expert_capacity=expert_capacity,
+        )
 
-    #      x, x_handle = self.experts.reverse_all_to_all(
-    #          parallel_x, send_counts=send_counts, recv_counts=recv_counts
-    #      )
+        x_moe, handle = self.experts.reverse_all_to_all(
+            parallel_x, send_counts=send_counts, recv_counts=recv_counts
+        )
 
-    #      # Compute feed-forward while all-to-all is in progress.
-    #      h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+        # Compute feed-forward while all-to-all is in progress.
+        h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
-    #      x_handle.wait()
-    #      x = self.experts.unpermute(
-    #          x,
-    #          expert_weights=expert_weights,
-    #          expert_indices=expert_indices,
-    #          indices=indices,
-    #          bin_ids=bin_ids,
-    #          bins=bins,
-    #      ).view(in_shape)
+        handle.wait()
+        x_moe = self.experts.unpermute(
+            x_moe,
+            expert_weights=expert_weights,
+            expert_indices=expert_indices,
+            indices=indices,
+            bin_ids=bin_ids,
+            bins=bins,
+        ).view(in_shape)
 
-    #      if moe_shared_out is not None:
-    #          moe_shared_out = moe_shared_out / (self.top_k + 1)
-    #          x = moe_shared_out.add(x, alpha=self.top_k / (self.top_k + 1))
+        if moe_shared_out is not None:
+            moe_shared_out = moe_shared_out / (self.top_k + 1)
+            x_moe = moe_shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
 
-    #      if self.training:
-    #          self.feed_forward_moe.update_losses_and_metrics(
-    #              expert_logits=expert_logits,
-    #              expert_scores=expert_scores,
-    #              expert_weights=expert_weights,
-    #              expert_indices=expert_indices,
-    #              batch_size_per_expert=batch_size_per_expert,
-    #          )
+        if self.training:
+            self.feed_forward_moe.update_losses_and_metrics(
+                expert_logits=expert_logits,
+                expert_scores=expert_scores,
+                expert_weights=expert_weights,
+                expert_indices=expert_indices,
+                batch_size_per_expert=batch_size_per_expert,
+            )
 
-    #      return h + self.dropout(self.feed_forward_moe_norm(x))
+        return h + self.dropout(self.feed_forward_moe_norm(x_moe))
