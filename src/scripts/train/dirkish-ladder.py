@@ -26,10 +26,10 @@ class DirkishModelLadder(ModelLadder):
 
     MBZ_SIZES: ClassVar[Dict[ModelSize, int]] = {
         # ===============================
-        ModelSize.size_190M: 8 * 4096,
-        ModelSize.size_370M: 8 * 4096,
-        ModelSize.size_600M: 8 * 4096,
-        ModelSize.size_760M: 8 * 4096,
+        ModelSize.size_190M: 16 * 4096,
+        ModelSize.size_370M: 16 * 4096,
+        ModelSize.size_600M: 10 * 4096,
+        ModelSize.size_760M: 10 * 4096,
         # ===============================
         ModelSize.size_1B: 8 * 4096,
         ModelSize.size_3B: 4 * 4096,
@@ -82,7 +82,7 @@ class DirkishModelLadder(ModelLadder):
             return 4096
         result = self.MBZ_SIZES[size]
         if "b200" in gpu_type.lower():
-            result *= 2
+            result = int((result // self.sequence_length) * 2.4) * self.sequence_length
         return result
 
     def get_trainer_config(
