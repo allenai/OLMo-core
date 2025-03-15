@@ -691,8 +691,6 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
         return self.dropout(self.feed_forward_moe(self.feed_forward_moe_norm(x)))
 
     def parallel_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        in_shape = x.shape
-
         if not self.ep_enabled and not self.tp_enabled:
             h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
             h = h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
@@ -700,7 +698,9 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
 
         # NOTE: this follows the same code path as the MoE's forward pass, except that we run
         # dense operations while we wait on expert parallel all-to-all comms.
+        in_shape = x.shape
         x_moe = self.feed_forward_moe_norm(x)
+
         expert_logits, expert_scores, expert_weights, expert_indices = self.router(x_moe)
         # shape: (batch_size * top_k,)
         expert_weights = expert_weights.flatten()
@@ -791,8 +791,6 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         return self.dropout(self.feed_forward_moe_norm(self.feed_forward_moe(x)))
 
     def parallel_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        in_shape = x.shape
-
         if not self.ep_enabled and not self.tp_enabled:
             h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
             h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
@@ -800,7 +798,9 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
 
         # NOTE: this follows the same code path as the MoE's forward pass, except that we run
         # dense operations while we wait on expert parallel all-to-all comms.
+        in_shape = x.shape
         x_moe = x
+
         expert_logits, expert_scores, expert_weights, expert_indices = self.router(x_moe)
         # shape: (batch_size * top_k,)
         expert_weights = expert_weights.flatten()
