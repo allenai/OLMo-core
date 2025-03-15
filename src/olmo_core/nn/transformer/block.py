@@ -623,9 +623,6 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         super().__init__(d_model=d_model, layer_norm=layer_norm, init_device=init_device, **kwargs)
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
         self.feed_forward_moe_norm = layer_norm.build(d_model, init_device=init_device)
-        self.stream: Optional[torch.cuda.Stream] = None
-        if torch.cuda.is_available():
-            self.stream = get_or_init_stream()
 
     @abstractmethod
     def _fwd_dense(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
@@ -636,17 +633,18 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         raise NotImplementedError
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        if self.stream is None:
+        stream = get_or_init_stream()
+        if stream is None:
             return self._fwd_sparse(x) + self._fwd_dense(x, **kwargs)
         else:
-            self.stream.wait_stream(torch.cuda.default_stream())
+            stream.wait_stream(torch.cuda.default_stream())
 
             h_sparse = self._fwd_sparse(x)
 
-            with torch.cuda.stream(self.stream):
+            with torch.cuda.stream(stream):
                 h_dense = self._fwd_dense(x)
 
-            torch.cuda.default_stream().wait_stream(self.stream)
+            torch.cuda.default_stream().wait_stream(stream)
 
             return h_sparse + h_dense
 
