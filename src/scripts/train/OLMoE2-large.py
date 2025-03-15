@@ -25,7 +25,7 @@ from olmo_core.train.train_module import (
 log = logging.getLogger(__name__)
 
 
-PIPELINE_PARALLEL = True
+PIPELINE_PARALLEL = False
 DEFAULT_NUM_NODES = 8 if PIPELINE_PARALLEL else 4
 
 
