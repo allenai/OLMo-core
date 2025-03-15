@@ -815,8 +815,8 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
             h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
             return h + self.dropout(self.feed_forward_moe_norm(self.feed_forward_moe(x)))
 
-        stream = get_or_init_stream()
-        stream.wait_stream(torch.cuda.default_stream())
+        #  stream = get_or_init_stream()
+        #  stream.wait_stream(torch.cuda.default_stream())
 
         # NOTE: this follows the same code path as the MoE's forward pass, except that we run
         # dense operations while we wait on expert parallel all-to-all comms.
@@ -853,9 +853,9 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         )
 
         # Compute attention while all-to-all is in progress.
-        with torch.cuda.stream(stream):
-            h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-            h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+        #  with torch.cuda.stream(stream):
+        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+        h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
         handle.wait()
         parallel_x = self.experts.compute_local_experts(
@@ -901,6 +901,6 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
                 batch_size_per_expert=batch_size_per_expert,
             )
 
-        torch.cuda.default_stream().wait_stream(stream)
+        #  torch.cuda.default_stream().wait_stream(stream)
 
         return h + self.dropout(self.feed_forward_moe_norm(x_moe))
