@@ -624,26 +624,26 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
         self.feed_forward_moe_norm = layer_norm.build(d_model, init_device=init_device)
 
-    @abstractmethod
-    def _fwd_dense(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        raise NotImplementedError
+    #  @abstractmethod
+    #  def _fwd_dense(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    #      raise NotImplementedError
 
-    @abstractmethod
-    def _fwd_sparse(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError
+    #  @abstractmethod
+    #  def _fwd_sparse(self, x: torch.Tensor) -> torch.Tensor:
+    #      raise NotImplementedError
 
-    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        stream = get_or_init_stream()
-        stream.wait_stream(torch.cuda.default_stream())
+    #  def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    #      stream = get_or_init_stream()
+    #      stream.wait_stream(torch.cuda.default_stream())
 
-        h_sparse = self._fwd_sparse(x)
+    #      h_sparse = self._fwd_sparse(x)
 
-        with torch.cuda.stream(stream):
-            h_dense = self._fwd_dense(x, **kwargs)
+    #      with torch.cuda.stream(stream):
+    #          h_dense = self._fwd_dense(x, **kwargs)
 
-        torch.cuda.default_stream().wait_stream(stream)
+    #      torch.cuda.default_stream().wait_stream(stream)
 
-        return h_sparse + h_dense
+    #      return h_sparse + h_dense
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         super().apply_tp(tp_mesh, float8_enabled=float8_enabled)
@@ -666,31 +666,50 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         **fsdp_kwargs,
     ):
         if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
+            #  fsdp_att = cast(FSDPModule, fully_shard(self.attention, **fsdp_kwargs))
+            #  fsdp_mlp = cast(FSDPModule, fully_shard(self.feed_forward, **fsdp_kwargs))
+            #  fsdp_moe = cast(FSDPModule, fully_shard(self.feed_forward_moe, **fsdp_kwargs))
+            #  fsdp_root = cast(FSDPModule, fully_shard(self, **fsdp_kwargs))
+            #  if prefetch_factor > 0:
+            #      fsdp_root.set_modules_to_forward_prefetch([fsdp_moe, fsdp_att])
+            #      fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp])
+
             fsdp_att = cast(FSDPModule, fully_shard(self.attention, **fsdp_kwargs))
             fsdp_mlp = cast(FSDPModule, fully_shard(self.feed_forward, **fsdp_kwargs))
-            fsdp_moe = cast(FSDPModule, fully_shard(self.feed_forward_moe, **fsdp_kwargs))
+            fsdp_moe = cast(FSDPModule, fully_shard(self.feed_forward_moe.experts, **fsdp_kwargs))
+            fsdp_shared_mlp = (
+                None
+                if self.feed_forward_moe.shared_mlp is None
+                else cast(FSDPModule, fully_shard(self.feed_forward_moe.shared_mlp, **fsdp_kwargs))
+            )
             fsdp_root = cast(FSDPModule, fully_shard(self, **fsdp_kwargs))
+
             if prefetch_factor > 0:
-                fsdp_root.set_modules_to_forward_prefetch([fsdp_moe, fsdp_att])
                 fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp])
+                if fsdp_shared_mlp is not None:
+                    fsdp_root.set_modules_to_forward_prefetch([fsdp_att, fsdp_shared_mlp])
+                    fsdp_shared_mlp.set_modules_to_forward_prefetch([fsdp_moe])
+                else:
+                    fsdp_root.set_modules_to_forward_prefetch([fsdp_att, fsdp_moe])
+                fsdp_moe.set_modules_to_forward_prefetch([fsdp_mlp])
         else:
             fully_shard(self, **fsdp_kwargs)
 
-    def apply_compile(self):
-        self._fwd_dense = torch.compile(self._fwd_dense, fullgraph=False)  # type: ignore[method-assign]
-        self._fwd_sparse = torch.compile(self._fwd_sparse, fullgraph=False)  # type: ignore[method-assign]
+    #  def apply_compile(self):
+    #      self._fwd_dense = torch.compile(self._fwd_dense, fullgraph=False)  # type: ignore[method-assign]
+    #      self._fwd_sparse = torch.compile(self._fwd_sparse, fullgraph=False)  # type: ignore[method-assign]
 
 
 @beta_feature
 class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
-    def _fwd_dense(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
-        return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
+    #  def _fwd_dense(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    #      h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
+    #      return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
-    def _fwd_sparse(self, x: torch.Tensor) -> torch.Tensor:
-        return self.dropout(self.feed_forward_moe(self.feed_forward_moe_norm(x)))
+    #  def _fwd_sparse(self, x: torch.Tensor) -> torch.Tensor:
+    #      return self.dropout(self.feed_forward_moe(self.feed_forward_moe_norm(x)))
 
-    def parallel_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         if not self.ep_enabled and not self.tp_enabled:
             h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
             h = h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
@@ -783,14 +802,14 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
 
 @beta_feature
 class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
-    def _fwd_dense(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-        return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+    #  def _fwd_dense(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    #      h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+    #      return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
-    def _fwd_sparse(self, x: torch.Tensor) -> torch.Tensor:
-        return self.dropout(self.feed_forward_moe_norm(self.feed_forward_moe(x)))
+    #  def _fwd_sparse(self, x: torch.Tensor) -> torch.Tensor:
+    #      return self.dropout(self.feed_forward_moe_norm(self.feed_forward_moe(x)))
 
-    def parallel_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         if not self.ep_enabled and not self.tp_enabled:
             h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
             h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
