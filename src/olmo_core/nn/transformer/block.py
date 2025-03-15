@@ -634,19 +634,16 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         stream = get_or_init_stream()
-        if stream is None:
-            return self._fwd_sparse(x) + self._fwd_dense(x, **kwargs)
-        else:
-            stream.wait_stream(torch.cuda.default_stream())
+        stream.wait_stream(torch.cuda.default_stream())
 
-            h_sparse = self._fwd_sparse(x)
+        h_sparse = self._fwd_sparse(x)
 
-            with torch.cuda.stream(stream):
-                h_dense = self._fwd_dense(x)
+        with torch.cuda.stream(stream):
+            h_dense = self._fwd_dense(x, **kwargs)
 
-            torch.cuda.default_stream().wait_stream(stream)
+        torch.cuda.default_stream().wait_stream(stream)
 
-            return h_sparse + h_dense
+        return h_sparse + h_dense
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         super().apply_tp(tp_mesh, float8_enabled=float8_enabled)
