@@ -855,7 +855,11 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         # Compute attention while all-to-all is in progress.
         #  with torch.cuda.stream(stream):
         h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-        h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+
+        # Maybe compute MoE shared out while all-to-all is in progress.
+        moe_shared_out: Optional[torch.Tensor] = None
+        if self.shared_mlp is not None:
+            moe_shared_out = self.shared_mlp(x_moe)
 
         handle.wait()
         parallel_x = self.experts.compute_local_experts(
@@ -872,11 +876,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         )
 
         # Compute feed-forward while all-to-all is in progress.
-        #  h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
-        # Maybe compute MoE shared out while all-to-all is in progress.
-        moe_shared_out: Optional[torch.Tensor] = None
-        if self.shared_mlp is not None:
-            moe_shared_out = self.shared_mlp(x_moe)
+        h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
         handle.wait()
         x_moe = self.experts.unpermute(
