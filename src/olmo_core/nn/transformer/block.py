@@ -815,6 +815,9 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
             h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
             return h + self.dropout(self.feed_forward_moe_norm(self.feed_forward_moe(x)))
 
+        stream = get_or_init_stream()
+        stream.wait_stream(torch.cuda.default_stream())
+
         # NOTE: this follows the same code path as the MoE's forward pass, except that we run
         # dense operations while we wait on expert parallel all-to-all comms.
         in_shape = x.shape
@@ -850,12 +853,9 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         )
 
         # Compute attention while all-to-all is in progress.
-        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-
-        # Maybe compute MoE shared out while all-to-all is in progress.
-        moe_shared_out: Optional[torch.Tensor] = None
-        if self.shared_mlp is not None:
-            moe_shared_out = self.shared_mlp(x_moe)
+        with torch.cuda.stream(stream):
+            h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+            h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
         handle.wait()
         parallel_x = self.experts.compute_local_experts(
@@ -872,7 +872,11 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         )
 
         # Compute feed-forward while all-to-all is in progress.
-        h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+        #  h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+        # Maybe compute MoE shared out while all-to-all is in progress.
+        moe_shared_out: Optional[torch.Tensor] = None
+        if self.shared_mlp is not None:
+            moe_shared_out = self.shared_mlp(x_moe)
 
         handle.wait()
         x_moe = self.experts.unpermute(
@@ -896,5 +900,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
                 expert_indices=expert_indices,
                 batch_size_per_expert=batch_size_per_expert,
             )
+
+        torch.cuda.default_stream().wait_stream(stream)
 
         return h + self.dropout(self.feed_forward_moe_norm(x_moe))
