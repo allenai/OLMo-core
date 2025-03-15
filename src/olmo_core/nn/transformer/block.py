@@ -677,8 +677,8 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
             fully_shard(self, **fsdp_kwargs)
 
     def apply_compile(self):
-        self._fwd_dense = torch.compile(self._fwd_dense, fullgraph=False)
-        self._fwd_sparse = torch.compile(self._fwd_sparse, fullgraph=False)
+        self._fwd_dense = torch.compile(self._fwd_dense, fullgraph=False)  # type: ignore[method-assign]
+        self._fwd_sparse = torch.compile(self._fwd_sparse, fullgraph=False)  # type: ignore[method-assign]
 
 
 @beta_feature
