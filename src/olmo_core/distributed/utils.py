@@ -56,7 +56,7 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             # need host networking enabled so that the ethernet interface names don't change.
             set_env_var("NCCL_CROSS_NIC", "0")
             set_env_var("NCCL_ALGO", "Ring,Tree")
-            set_env_var("NCCL_PROTO", "Simple")
+            set_env_var("NCCL_PROTO", "Simple,LL128")
             set_env_var("NCCL_MIN_NCHANNELS", "4")
             set_env_var("NCCL_P2P_NET_CHUNKSIZE", "524288")
             set_env_var("NCCL_P2P_PCI_CHUNKSIZE", "524288")
@@ -81,11 +81,11 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             #  )
             set_env_var("NCCL_TUNER_PLUGIN", "libnccl-tuner.so")
             set_env_var(
-                "NCCL_TUNER_CONFIG_PATH", "/var/lib/tcpxo/lib64/a3plus_tuner_config.textproto"
+                "NCCL_TUNER_CONFIG_PATH", "/var/lib/tcpxo/lib64/a3plus_tuner_config_ll128.textproto"
             )
             set_env_var(
                 "NCCL_SHIMNET_GUEST_CONFIG_CHECKER_CONFIG_FILE",
-                "/var/lib/tcpxo/lib64/a3plus_guest_config.textproto",
+                "/var/lib/tcpxo/lib64/a3plus_guest_config_ll128.textproto",
             )
             set_env_var("NCCL_FASTRAK_CTRL_DEV", "enp0s12")
             set_env_var(
