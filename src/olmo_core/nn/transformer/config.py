@@ -122,6 +122,16 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`MoEParallelReorderedNormTransformerBlock`
     """
 
+    moe_hybrid = "moe_hybrid"
+    """
+    ➡️ :class:`MoEHybridTransformerBlock`
+    """
+
+    moe_hybrid_reordered_norm = "moe_hybrid_reordered_norm"
+    """
+    ➡️ :class:`MoEHybridReorderedNormTransformerBlock`
+    """
+
 
 @dataclass
 class TransformerBlockConfig(Config):
@@ -163,6 +173,8 @@ class TransformerBlockConfig(Config):
         cache: Optional[BufferCache] = None,
     ) -> "TransformerBlockBase":
         from .block import (
+            MoEHybridReorderedNormTransformerBlock,
+            MoEHybridTransformerBlock,
             MoEParallelReorderedNormTransformerBlock,
             MoEParallelTransformerBlock,
             MoEReorderedNormTransformerBlock,
@@ -196,6 +208,10 @@ class TransformerBlockConfig(Config):
                 return MoEParallelTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe_parallel_reordered_norm:
                 return MoEParallelReorderedNormTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.moe_hybrid:
+                return MoEHybridTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.moe_hybrid_reordered_norm:
+                return MoEHybridReorderedNormTransformerBlock(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:

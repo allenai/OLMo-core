@@ -253,7 +253,9 @@ class Transformer(nn.Module):
                     num_blocks=self.n_layers,
                     generator=generator,
                 )
-            else:
+
+            # MoE weights.
+            if hasattr(block, "feed_forward_moe"):
                 block = cast(MoETransformerBlock, block)
                 if max_local_microbatch_size is not None:
                     block.feed_forward_moe.warmup_cache(max_local_microbatch_size)
