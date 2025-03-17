@@ -242,7 +242,9 @@ def validate_conversion(
         log.info(f"hf_state keys: {hf_state.keys()}")
         log.info(f"olmo_core_state keys: {olmo_core_state.keys()}")
 
-        for olmo_core_state_name, (_, olmo_core_tensor) in sorted(olmo_core_state.items(), key=lambda item: item[1][0]):
+        for olmo_core_state_name, (_, olmo_core_tensor) in sorted(
+            olmo_core_state.items(), key=lambda item: item[1][0]
+        ):
             olmo_core_key, state_type = olmo_core_state_name.split("|")
             if olmo_core_key not in simple_key_mapping:
                 continue
