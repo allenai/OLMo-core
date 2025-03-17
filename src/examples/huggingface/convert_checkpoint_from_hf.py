@@ -18,13 +18,15 @@ from typing import Any, Dict, Optional
 import torch
 from cached_path import cached_path
 from torch.distributed import DeviceMesh
-from transformers import AutoConfig, AutoModelForCausalLM
+from transformers import AutoModelForCausalLM
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.io import file_exists
+from olmo_core.nn.conversion.state_mapping import TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import load_hf_model
-from olmo_core.nn.hf.key_mapping import get_key_mapping_from_hf
+
+from olmo_core.nn.hf.convert import get_converter_from_hf
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.optim.adamw import AdamWConfig
@@ -240,15 +242,26 @@ def validate_conversion(
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
 
     log.info("Loading converted checkpoint for validation...")
-    hf_model: torch.nn.Module = AutoModelForCausalLM.from_pretrained(hf_path).to(device).eval()
+    hf_model = AutoModelForCausalLM.from_pretrained(hf_path).to(device).eval()
 
     olmo_core_state, hf_state = {}, {}
-    key_mapping = None
+    state_mapping = None
     if debug:
         olmo_core_state, hf_state = _register_debug_hooks(hf_model, model)
-        key_mapping = get_key_mapping_from_hf(
-            AutoConfig.from_pretrained(hf_path), hf_model.state_dict()
-        )
+        state_converter = get_converter_from_hf()
+
+        if not hasattr(hf_model.config, "num_hidden_layers"):
+            raise ValueError(f"Number of hidden layers missing in HF config: {hf_model.config}")
+        n_layers: int = hf_model.config.num_hidden_layers
+        n_experts: int | None = getattr(hf_model.config, "num_experts", None)
+
+        placeholder_bounds = {
+            TemplatePlaceholder.LAYER: n_layers,
+        }
+        if n_experts:
+            placeholder_bounds[TemplatePlaceholder.EXPERT] = n_experts
+
+        state_mapping = state_converter.get_mappings(hf_model.state_dict(), placeholder_bounds)
 
     log.info("Running OLMo core and HF models for validation...")
     with torch.no_grad():
@@ -261,13 +274,13 @@ def validate_conversion(
         logits = model(input_ids=input_ids)
 
     if debug:
-        assert key_mapping is not None
+        assert state_mapping is not None
 
         simple_key_mapping = {
             mapping.source_keys[0]
             .replace(".weight", ""): mapping.dest_keys[0]
             .replace(".weight", "")
-            for mapping in key_mapping
+            for mapping in state_mapping
             if len(mapping.source_keys) == 1
             and len(mapping.dest_keys) == 1
             and mapping.source_keys[0].endswith(".weight")

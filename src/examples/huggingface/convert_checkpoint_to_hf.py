@@ -22,8 +22,9 @@ from transformers import AutoConfig, AutoModelForCausalLM
 from olmo_core.aliases import PathOrStr
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.io import file_exists
+from olmo_core.nn.conversion.state_mapping import TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import save_hf_model
-from olmo_core.nn.hf.key_mapping import get_key_mapping_to_hf
+from olmo_core.nn.hf.convert import get_converter_to_hf
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.optim.adamw import AdamWConfig
@@ -198,12 +199,23 @@ def validate_conversion(
     hf_model = AutoModelForCausalLM.from_pretrained(hf_path).to(device).eval()
 
     olmo_core_state, hf_state = {}, {}
-    key_mapping = None
+    state_mapping = None
     if debug:
         olmo_core_state, hf_state = _register_debug_hooks(hf_model, model)
-        key_mapping = get_key_mapping_to_hf(
-            AutoConfig.from_pretrained(hf_path), hf_model.state_dict()
-        )
+        state_converter = get_converter_to_hf()
+
+        if not hasattr(hf_model.config, "num_hidden_layers"):
+            raise ValueError(f"Number of hidden layers missing in HF config: {hf_model.config}")
+        n_layers: int = hf_model.config.num_hidden_layers
+        n_experts: int | None = getattr(hf_model.config, "num_experts", None)
+
+        placeholder_bounds = {
+            TemplatePlaceholder.LAYER: n_layers,
+        }
+        if n_experts:
+            placeholder_bounds[TemplatePlaceholder.EXPERT] = n_experts
+
+        state_mapping = state_converter.get_mappings(model.state_dict(), placeholder_bounds)
 
     log.info("Running OLMo core and HF models for validation...")
     with torch.no_grad():
@@ -216,36 +228,34 @@ def validate_conversion(
         logits = model(input_ids=input_ids)
 
     if debug:
-        assert key_mapping is not None
+        assert state_mapping is not None
 
         simple_key_mapping = {
             mapping.source_keys[0]
             .replace(".weight", ""): mapping.dest_keys[0]
             .replace(".weight", "")
-            for mapping in key_mapping
+            for mapping in state_mapping
             if len(mapping.source_keys) == 1 and len(mapping.dest_keys) == 1
         }
 
-        log.info(f"mapping: {simple_key_mapping}")
+        log.info(f"simple mapping: {simple_key_mapping}")
         log.info(f"hf_state keys: {hf_state.keys()}")
         log.info(f"olmo_core_state keys: {olmo_core_state.keys()}")
 
-        for hf_state_name, (_, hf_tensor) in sorted(hf_state.items(), key=lambda item: item[1][0]):
-            hf_key, state_type = hf_state_name.split("|")
-            if hf_key not in simple_key_mapping:
+        for olmo_core_state_name, (_, olmo_core_tensor) in sorted(olmo_core_state.items(), key=lambda item: item[1][0]):
+            olmo_core_key, state_type = olmo_core_state_name.split("|")
+            if olmo_core_key not in simple_key_mapping:
                 continue
 
-            olmo_state_name = f"{simple_key_mapping[hf_key]}|{state_type}"
-            if olmo_state_name not in olmo_core_state:
+            hf_state_name = f"{simple_key_mapping[olmo_core_key]}|{state_type}"
+            if hf_state_name not in hf_state:
                 continue
 
-            _, olmo_core_tensor = olmo_core_state[olmo_state_name]
+            _, hf_tensor = hf_state[hf_state_name]
 
             log.info(
-                f"{hf_state_name}, {olmo_state_name} norm diff: {torch.norm(hf_tensor - olmo_core_tensor)}"
+                f"{olmo_core_state_name}, {hf_state_name} norm diff: {torch.norm(olmo_core_tensor - hf_tensor)}"
             )
-
-        log.info(f"olmo_ keys: {olmo_core_state.keys()}")
 
     torch.testing.assert_close(hf_logits, logits)
 
