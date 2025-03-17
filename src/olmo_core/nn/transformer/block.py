@@ -624,26 +624,26 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
         self.feed_forward_moe_norm = layer_norm.build(d_model, init_device=init_device)
 
-    #  @abstractmethod
-    #  def _fwd_dense(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-    #      raise NotImplementedError
+    @abstractmethod
+    def _fwd_dense(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        raise NotImplementedError
 
-    #  @abstractmethod
-    #  def _fwd_sparse(self, x: torch.Tensor) -> torch.Tensor:
-    #      raise NotImplementedError
+    @abstractmethod
+    def _fwd_sparse(self, x: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError
 
-    #  def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-    #      stream = get_or_init_stream()
-    #      stream.wait_stream(torch.cuda.default_stream())
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        stream = get_or_init_stream()
+        stream.wait_stream(torch.cuda.default_stream())
 
-    #      h_sparse = self._fwd_sparse(x)
+        h_sparse = self._fwd_sparse(x)
 
-    #      with torch.cuda.stream(stream):
-    #          h_dense = self._fwd_dense(x, **kwargs)
+        with torch.cuda.stream(stream):
+            h_dense = self._fwd_dense(x, **kwargs)
 
-    #      torch.cuda.default_stream().wait_stream(stream)
+        torch.cuda.default_stream().wait_stream(stream)
 
-    #      return h_sparse + h_dense
+        return h_sparse + h_dense
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         super().apply_tp(tp_mesh, float8_enabled=float8_enabled)
@@ -695,9 +695,9 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         else:
             fully_shard(self, **fsdp_kwargs)
 
-    #  def apply_compile(self):
-    #      self._fwd_dense = torch.compile(self._fwd_dense, fullgraph=False)  # type: ignore[method-assign]
-    #      self._fwd_sparse = torch.compile(self._fwd_sparse, fullgraph=False)  # type: ignore[method-assign]
+    def apply_compile(self):
+        self._fwd_dense = torch.compile(self._fwd_dense, fullgraph=False)  # type: ignore[method-assign]
+        self._fwd_sparse = torch.compile(self._fwd_sparse, fullgraph=False)  # type: ignore[method-assign]
 
 
 @beta_feature
@@ -802,14 +802,14 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
 
 @beta_feature
 class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
-    #  def _fwd_dense(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-    #      h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-    #      return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+    def _fwd_dense(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+        return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
-    #  def _fwd_sparse(self, x: torch.Tensor) -> torch.Tensor:
-    #      return self.dropout(self.feed_forward_moe_norm(self.feed_forward_moe(x)))
+    def _fwd_sparse(self, x: torch.Tensor) -> torch.Tensor:
+        return self.dropout(self.feed_forward_moe_norm(self.feed_forward_moe(x)))
 
-    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    def _forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         if not self.ep_enabled and not self.tp_enabled:
             h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
             h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
