@@ -137,8 +137,9 @@ class AnnealingConfig(Config):
             config = json.load(f)
         base_lr = config["optim"]["lr"]
         scheduler_config = config["trainer"]["callbacks"]["lr_scheduler"]["scheduler"]
-        assert scheduler_config.pop("_CLASS_") == CosWithWarmup.__name__
-        scheduler = CosWithWarmup(**scheduler_config)
+        # assert scheduler_config.pop("_CLASS_") == LinearWithWarmup.__name__
+        assert scheduler_config.pop("_CLASS_").endswith(LinearWithWarmup.__name__)
+        scheduler = LinearWithWarmup(**scheduler_config)
         starting_lr = float(scheduler.get_lr(base_lr, last_pretrain_step, max_pretrain_steps))
 
         run_name = f"peteish32-from{last_pretrain_step}-{run_name}"
