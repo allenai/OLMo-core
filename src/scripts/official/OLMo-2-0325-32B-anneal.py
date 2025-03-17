@@ -19,16 +19,10 @@ from olmo_core.data import (
     TokenizerName,
 )
 from olmo_core.distributed.parallel import DataParallelType
-
 from olmo_core.distributed.utils import get_world_size
 from olmo_core.io import resource_path
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import (
-    CosWithWarmup,
-    LinearWithWarmup,
-    OptimGroupOverride,
-    SkipStepAdamWConfig,
-)
+from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import (
     Duration,
     LoadStrategy,
