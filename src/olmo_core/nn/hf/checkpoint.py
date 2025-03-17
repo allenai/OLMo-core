@@ -14,7 +14,7 @@ from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_full_ten
 from olmo_core.doc_utils import beta_feature
 from olmo_core.io import copy_dir, file_exists, is_url, upload
 from olmo_core.nn.hf.config import get_hf_config
-from olmo_core.nn.hf.key_mapping import get_key_mapping_from_hf, get_key_mapping_to_hf
+from olmo_core.nn.hf.convert import convert_state_from_hf, convert_state_to_hf
 from olmo_core.nn.transformer.model import Transformer
 
 try:
@@ -89,54 +89,20 @@ def load_hf_model(
             f"Trying to load a HF model with {len(hf_model.model.layers)} layers into a model with {n_layers} layers."
         )
 
-    hf_state_dict: Dict[str, Any] = hf_model.state_dict()
+    converted_state_dict: Dict[str, torch.Tensor] = convert_state_from_hf(
+        hf_model.config, hf_model.state_dict(), model_id=model_id
+    )
 
-    key_mapping = get_key_mapping_from_hf(hf_model.config, hf_state_dict.keys(), model_id=model_id)
-
-    unused_hf_keys = set(hf_state_dict.keys())
-
-    for mapping in key_mapping:
-        # hf_states = [hf_state_dict[key] for key in hf_keys]
-        hf_keys = mapping.source_keys
-        olmo_core_keys = mapping.dest_keys
-        if isinstance(hf_state_dict[hf_keys[0]], torch.Tensor):
-            hf_state = torch.cat(
-                [hf_state_dict[key] for key in hf_keys], dim=mapping.source_concat_dim
+    for key, state in converted_state_dict.items():
+        olmo_core_state = model_state_dict[key]
+        if isinstance(olmo_core_state, DTensor):
+            olmo_core_state = distribute_tensor(
+                state, olmo_core_state.device_mesh, olmo_core_state.placements
             )
-
-            if mapping.unflatten_dim is not None:
-                hf_state = hf_state.unflatten(*mapping.unflatten_dim)
-            if mapping.dims_permutation is not None:
-                hf_state = hf_state.permute(*mapping.dims_permutation)
-            if mapping.flatten_dims is not None:
-                hf_state = hf_state.flatten(*mapping.flatten_dims)
-
-            state_chunks = torch.chunk(
-                hf_state, chunks=len(olmo_core_keys), dim=mapping.dest_chunk_dim
-            )
-
-            for olmo_core_key, state_chunk in zip(olmo_core_keys, state_chunks):
-                olmo_core_state = model_state_dict[olmo_core_key]
-                # Initialize DTensor state from the global HF state tensors
-                if isinstance(olmo_core_state, DTensor):
-                    olmo_core_state = distribute_tensor(
-                        state_chunk, olmo_core_state.device_mesh, olmo_core_state.placements
-                    )
-                else:
-                    olmo_core_state = state_chunk
-
-                model_state_dict[olmo_core_key] = olmo_core_state
         else:
-            raise RuntimeError(
-                f"Attempting to map {len(hf_keys)} non-tensor HF states to {len(olmo_core_keys)} OLMo core keys"
-            )
+            olmo_core_state = state
 
-        unused_hf_keys -= set(hf_keys)
-
-    if len(unused_hf_keys) > 0:
-        raise RuntimeError(
-            f"Some HF state keys were not used when loading HF model: {sorted(unused_hf_keys)}"
-        )
+        model_state_dict[key] = olmo_core_state
 
 
 @beta_feature
@@ -150,43 +116,13 @@ def save_hf_model(
     save_overwrite: bool = False,
 ):
     hf_config = get_hf_config(model)
-    key_mapping = get_key_mapping_to_hf(hf_config, model_state_dict.keys())
 
-    unused_olmo_core_keys = set(model_state_dict.keys())
+    model_state_dict = {key: get_full_tensor(state) for key, state in model_state_dict.items()}
+    hf_state_dict: Dict[str, torch.Tensor] = convert_state_to_hf(hf_config, model_state_dict)
 
-    hf_state_dict = {}
-    for mapping in key_mapping:
-        olmo_core_keys = mapping.source_keys
-        hf_keys = mapping.dest_keys
-        if isinstance(model_state_dict[olmo_core_keys[0]], torch.Tensor):
-            olmo_core_state = torch.cat(
-                [get_full_tensor(model_state_dict[key]) for key in olmo_core_keys],
-                dim=mapping.source_concat_dim,
-            )
-
-            if mapping.unflatten_dim is not None:
-                olmo_core_state = olmo_core_state.unflatten(*mapping.unflatten_dim)
-            if mapping.dims_permutation is not None:
-                olmo_core_state = olmo_core_state.permute(*mapping.dims_permutation)
-            if mapping.flatten_dims is not None:
-                olmo_core_state = olmo_core_state.flatten(*mapping.flatten_dims)
-
-            state_chunks = torch.chunk(
-                olmo_core_state, chunks=len(hf_keys), dim=mapping.dest_chunk_dim
-            )
-            for hf_key, state_chunk in zip(hf_keys, state_chunks):
-                hf_state_dict[hf_key] = state_chunk.contiguous()
-        else:
-            raise RuntimeError(
-                f"Attempting to map {len(olmo_core_keys)} non-tensor states to {len(hf_keys)} HF keys"
-            )
-
-        unused_olmo_core_keys -= set(olmo_core_keys)
-
-    if len(unused_olmo_core_keys) > 0:
-        raise RuntimeError(
-            f"Some OLMo core state keys were unused when saving to HF model: {sorted(unused_olmo_core_keys)}"
-        )
+    # model.save_pretrained fails says `tensor.reshape()` should be used instead of `tensor.view()`
+    # if we do not make the state contiguous. Unfortunately this is bad for perf.
+    hf_state_dict = {key: state.contiguous() for key, state in hf_state_dict.items()}
 
     with init_empty_weights():
         log.info("Initializing HF model with empty weights...")
