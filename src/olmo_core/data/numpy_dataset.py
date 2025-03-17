@@ -593,12 +593,6 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         self._seed = seed
         self.instance_filter_config = instance_filter_config
 
-    @property
-    def indices_dtype(
-        self,
-    ) -> NumpyUIntTypes:
-        return np.uint32
-
     def prepare(self):
         if self.fs_local_rank == 0:
             log.info("Gathering indices...")
@@ -610,7 +604,6 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         sha256_hash = hashlib.sha256()
         sha256_hash.update(str(path).encode())
         sha256_hash.update(str(self._get_file_size(path)).encode())
-        sha256_hash.update(self.indices_dtype.__name__.encode())
         path_hash = sha256_hash.hexdigest()
         return (
             self.work_dir
@@ -637,22 +630,18 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                     max_instances = (
                         self._path_offset_index[(str(path), idx)] // self.sequence_length
                     )
-
-                    # Sampling from small npy files can result in 0 instance indices.
-                    # We skip processing these to avoid writing empty mmapped files.
-                    if max_instances > 0:
-                        future = executor.submit(
-                            run_worker_func,
-                            segment_documents_into_instances,
-                            path,
-                            indices_path,
-                            max_sequence_length=self.sequence_length,
-                            eos_token_id=self.eos_token_id,
-                            dtype=self.dtype,
-                            indices_dtype=self.indices_dtype,
-                            sample=(max_instances, self._seed),
-                        )
-                        futures.append(future)
+                    future = executor.submit(
+                        run_worker_func,
+                        segment_documents_into_instances,
+                        path,
+                        indices_path,
+                        max_sequence_length=self.sequence_length,
+                        eos_token_id=self.eos_token_id,
+                        dtype=self.dtype,
+                        indices_dtype=self.dtype,
+                        sample=(max_instances, self._seed),
+                    )
+                    futures.append(future)
 
                 concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
 
@@ -663,15 +652,6 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                         f"Created {total_instances:,d} instances of sequence length up to "
                         f"{self.sequence_length} from '{path}'"
                     )
-
-    def _read_chunk_from_array(self, path: PathOrStr, index: int) -> torch.Tensor:
-        indices_path = self._get_indices_path(path)
-        indices = load_array_slice_into_tensor(
-            indices_path, index * 2, index * 2 + 2, self.indices_dtype
-        )
-        start_idx, end_idx = indices
-        data = load_array_slice_into_tensor(path, int(start_idx), int(end_idx), self.dtype)
-        return data
 
     def _get_file_size_and_length(
         self, path: PathOrStr, idx: int, dtype: Optional[NumpyUIntTypes] = None
