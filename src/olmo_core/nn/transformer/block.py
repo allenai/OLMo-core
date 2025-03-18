@@ -10,6 +10,7 @@ from torch.distributed.tensor import Shard
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
+from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
 
 from ..attention import AttentionConfig, RingAttentionLoadBalancerType
@@ -479,6 +480,10 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
 
     @use_combined_forward.setter
     def use_combined_forward(self, should_use: bool):
+        if should_use and not (self.tp_enabled or self.ep_enabled):
+            raise RuntimeError(
+                "combined forward can only be used when expert parallelism is enabled"
+            )
         self._use_combined_forward = should_use
 
     @abstractmethod
@@ -574,8 +579,9 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
     def combined_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         # NOTE: this follows the same code path as the MoE's forward pass, except that we run
         # dense operations while we wait on expert parallel all-to-all comms.
-        in_shape = x.shape
-        x_moe = self.feed_forward_moe_norm(x)
+        in_shape = get_local_tensor(x).shape
+
+        x_moe = get_local_tensor(self.feed_forward_moe_norm(x)).view(-1, in_shape[-1])
 
         expert_logits, expert_scores, expert_weights, expert_indices = self.router(x_moe)
         # shape: (batch_size * top_k,)
@@ -599,7 +605,7 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
             expert_capacity,
             handle,
         ) = self.experts.permute_and_all_to_all(
-            x_moe.view(-1, x_moe.shape[-1]),
+            x_moe,
             indices=indices,
             bin_ids=bin_ids,
             bins=bins,
@@ -629,7 +635,7 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
         # Maybe compute MoE shared out while all-to-all is in progress.
         moe_shared_out: Optional[torch.Tensor] = None
         if self.shared_mlp is not None:
-            moe_shared_out = self.shared_mlp(x_moe)
+            moe_shared_out = self.shared_mlp(x_moe.view(in_shape))
 
         handle.wait()
         x_moe = self.experts.unpermute(
@@ -669,14 +675,16 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
     def combined_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         # NOTE: this follows the same code path as the MoE's forward pass, except that we run
         # dense operations while we wait on expert parallel all-to-all comms.
-        in_shape = x.shape
-        x_moe = x
+        in_shape = get_local_tensor(x).shape
 
-        expert_logits, expert_scores, expert_weights, expert_indices = self.router(x_moe)
-        # shape: (batch_size * top_k,)
-        expert_weights = expert_weights.flatten()
-        # shape: (batch_size * top_k,)
-        expert_indices = expert_indices.flatten()
+        expert_logits, expert_scores, expert_weights, expert_indices = self.router(x)
+
+        # shape: (batch_size * seq_len, d_model)
+        x_moe = get_local_tensor(x).view(-1, in_shape[-1])
+        # shape: (batch_size * seq_len * top_k,)
+        expert_weights = get_local_tensor(expert_weights).flatten()
+        # shape: (batch_size * seq_len * top_k,)
+        expert_indices = get_local_tensor(expert_indices).flatten()
 
         with torch.no_grad():
             indices, bin_ids, bins, batch_size_per_expert = self.experts.indices_and_bins(
@@ -694,7 +702,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
             expert_capacity,
             handle,
         ) = self.experts.permute_and_all_to_all(
-            x_moe.view(-1, x_moe.shape[-1]),
+            x_moe,
             indices=indices,
             bin_ids=bin_ids,
             bins=bins,
@@ -724,7 +732,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         # Maybe compute MoE shared out while all-to-all is in progress.
         moe_shared_out: Optional[torch.Tensor] = None
         if self.shared_mlp is not None:
-            moe_shared_out = self.shared_mlp(x_moe)
+            moe_shared_out = self.shared_mlp(x_moe.view(in_shape))
 
         handle.wait()
         x_moe = self.experts.unpermute(
