@@ -5,9 +5,9 @@ import numpy as np
 import pytest
 import torch
 
-from olmo_core.nn.moe import ops
+from olmo_core.ops import moe as ops
 
-from ...utils import DEVICES, requires_gpu
+from ..utils import DEVICES, requires_gpu
 
 
 @requires_gpu

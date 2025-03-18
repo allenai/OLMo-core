@@ -2,7 +2,7 @@
 # It has since changed substantially.
 
 from abc import abstractmethod
-from typing import Any, List, NamedTuple, Optional, Tuple
+from typing import List, NamedTuple, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -10,10 +10,10 @@ import torch.nn as nn
 from torch.distributed import DeviceMesh
 
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
+from olmo_core.ops import moe as ops
 from olmo_core.utils import ensure_multiple_of, get_default_device, move_to_device
 
 from ..buffer_cache import BufferCache
-from . import ops
 from .mlp import DroplessMoEMLP, MoEMLP, MoEMLPBase
 
 __all__ = ["ParallelMLPBase", "ParallelMLP", "ParallelDroplessMLP"]
@@ -28,7 +28,7 @@ class PermutedAllToAllOutput(NamedTuple):
     recv_counts: Optional[List[int]]
     send_counts: Optional[List[int]]
     expert_capacity: int
-    handle: Any
+    handle: dist.Work
 
 
 class ParallelMLPBase(nn.Module):
@@ -320,7 +320,7 @@ class ParallelMLPBase(nn.Module):
         *,
         send_counts: Optional[List[int]],
         recv_counts: Optional[List[int]],
-    ) -> Tuple[torch.Tensor, Any]:
+    ) -> Tuple[torch.Tensor, dist.Work]:
         raise NotImplementedError
 
     @abstractmethod
@@ -566,7 +566,7 @@ class ParallelMLP(ParallelMLPBase):
         *,
         send_counts: Optional[List[int]],
         recv_counts: Optional[List[int]],
-    ) -> Tuple[torch.Tensor, Any]:
+    ) -> Tuple[torch.Tensor, dist.Work]:
         assert send_counts is None
         assert recv_counts is None
 
@@ -805,7 +805,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
         *,
         send_counts: Optional[List[int]],
         recv_counts: Optional[List[int]],
-    ) -> Tuple[torch.Tensor, Any]:
+    ) -> Tuple[torch.Tensor, dist.Work]:
         assert send_counts is not None
         assert recv_counts is not None
 
