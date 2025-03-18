@@ -25,7 +25,7 @@ from olmo_core.train.train_module import (
 log = logging.getLogger(__name__)
 
 
-PIPELINE_PARALLEL = True
+PIPELINE_PARALLEL = False
 DEFAULT_NUM_NODES = 8 if PIPELINE_PARALLEL else 4
 
 
@@ -138,6 +138,6 @@ if __name__ == "__main__":
         include_default_evals=False,
         # nightly needed right now for FP8 to work with PP
         # https://github.com/pytorch/pytorch/issues/143194
-        beaker_image=OLMoCoreBeakerImage.nightly,
+        beaker_image=OLMoCoreBeakerImage.nightly_cu126,
         num_nodes=DEFAULT_NUM_NODES,
     )

@@ -14,7 +14,7 @@ from functools import lru_cache
 from itertools import cycle, islice
 from queue import Queue
 from threading import Thread
-from typing import Any, Callable, Dict, List, Optional, Sequence, TypeVar, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, TypeVar, Union, cast
 
 import rich
 import torch
@@ -715,3 +715,16 @@ def min_value_of_dtype(dtype: torch.dtype):
     Returns the minimum value of a given PyTorch data type. Does not allow torch.bool.
     """
     return info_value_of_dtype(dtype).min
+
+
+_CUDA_STREAMS: Dict[int, torch.cuda.Stream] = {}
+
+
+def get_or_init_stream(id: int = 0, priority: int = 0) -> torch.cuda.Stream:
+    global _CUDA_STREAMS
+    if id in _CUDA_STREAMS:
+        return _CUDA_STREAMS[id]
+    else:
+        stream = cast(torch.cuda.Stream, torch.cuda.Stream(priority=priority))
+        _CUDA_STREAMS[id] = stream
+        return stream

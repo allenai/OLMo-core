@@ -272,7 +272,7 @@ def all_to_all(
     input_split_sizes: Optional[List[int]] = None,
     group: Optional[dist.ProcessGroup] = None,
     async_op: bool = False,
-) -> Tuple[torch.Tensor, Any]:
+) -> Tuple[torch.Tensor, dist.Work]:
     return AllToAllOp.apply(  # type: ignore
         x,
         output_split_sizes,
