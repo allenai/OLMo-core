@@ -39,7 +39,6 @@ from ..moe import MoEBase
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
 from ..utils import selective_checkpointing_context_fn
 from .block import (
-    MoEParallelTransformerBlockBase,
     MoETransformerBlock,
     NormalizedTransformerBlock,
     TransformerBlock,
@@ -863,20 +862,6 @@ class MoETransformer(Transformer):
         for block in self.blocks.values():
             block = cast(MoETransformerBlock, block)
             block.apply_ep(ep_mesh, **kwargs)
-        #  self._add_secondary_stream_to_blocks()
-
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
-        super().apply_tp(tp_mesh, float8_enabled=float8_enabled)
-        #  self._add_secondary_stream_to_blocks()
-
-    def _add_secondary_stream_to_blocks(self):
-        secondary_cuda_stream: Optional[torch.cuda.Stream] = None
-        for block in self.blocks.values():
-            if isinstance(block, MoEParallelTransformerBlockBase):
-                if torch.cuda.is_available() and secondary_cuda_stream is None:
-                    log.info("Creating secondary CUDA stream for MoE parallel block")
-                    secondary_cuda_stream = torch.cuda.Stream()
-                block.secondary_stream = secondary_cuda_stream  # type: ignore
 
     def prepare_experts_for_fsdp(
         self,
