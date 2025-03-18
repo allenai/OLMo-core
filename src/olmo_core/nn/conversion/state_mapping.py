@@ -48,9 +48,13 @@ class StateMappingTemplate:
         *,
         key_per_placeholder: TemplatePlaceholder | None = None,
         key_per_placeholder_values: List[Any] | None = None,
-    ) -> Tuple[str, ...]:
+    ) -> Tuple[str, ...] | None:
         if key_per_placeholder:
+            if key_per_placeholder_values is None:
+                return None
+
             assert isinstance(templates, str)
+            assert key_per_placeholder in templates
             assert key_per_placeholder_values is not None
             templates = tuple(
                 templates.replace(key_per_placeholder, str(value))
@@ -61,15 +65,28 @@ class StateMappingTemplate:
 
         assert isinstance(templates, tuple)
 
-        return tuple(
-            template.replace(placeholder, str(value))
-            for template in templates
-            for placeholder, value in placeholder_values.items()
-        )
+        keys = []
+        for template in templates:
+            key = template
+            for placeholder, value in placeholder_values.items():
+                if placeholder in template and value is not None:
+                    key = key.replace(placeholder, str(value))
+                elif placeholder not in template and value is None:
+                    pass
+                else:
+                    # If a placeholder is given a value but is not present,
+                    # we treat the placeholder values as invalid.
+                    # Similarly, if a placeholder is not given a value but is present,
+                    # we treat the placeholder values as invalid.
+                    return None
+
+            keys.append(key)
+
+        return tuple(keys)
 
     def to_mapping(
         self,
-        placeholder_values: Dict[TemplatePlaceholder, int],
+        placeholder_values: Dict[TemplatePlaceholder, int | None],
         placeholder_bounds: Dict[TemplatePlaceholder, int],
     ) -> Optional["StateMapping"]:
         required_placeholders: Set[TemplatePlaceholder | None] = set()
@@ -94,6 +111,7 @@ class StateMappingTemplate:
                 range(placeholder_bounds[self.source_key_per_placeholder])
             )
             if self.source_key_per_placeholder
+            and placeholder_values[self.source_key_per_placeholder] is None
             else None,
         )
         dest_keys = self._templates_to_keys(
@@ -104,8 +122,12 @@ class StateMappingTemplate:
                 range(placeholder_bounds[self.dest_key_per_placeholder])
             )
             if self.dest_key_per_placeholder
+            and placeholder_values[self.dest_key_per_placeholder] is None
             else None,
         )
+
+        if source_keys is None or dest_keys is None:
+            return None
 
         unflatten_dim = None
         if self.unflatten_dim is not None:
@@ -145,7 +167,7 @@ class StateConverter:
     def _fill_placeholders(
         self,
         mapping: StateMappingTemplate,
-        placeholder_values: Dict[TemplatePlaceholder, int],
+        placeholder_values: Dict[TemplatePlaceholder, int | None],
         placeholder_bounds: Dict[TemplatePlaceholder, int],
     ) -> StateMapping | None:
         return mapping.to_mapping(placeholder_values, placeholder_bounds)
@@ -153,18 +175,22 @@ class StateConverter:
     def _get_mappings(
         self, state_dict: Dict[str, Any], placeholder_bounds: Dict[TemplatePlaceholder, int]
     ) -> List[StateMapping]:
-        # Fill in the placeholders in the mapping templates
-        placeholder_value_combinations: List[Dict[TemplatePlaceholder, int]] = list(
+        # We consider all combinations of placeholders, including allowing each placeholder to not be set.
+        # If a placeholder is set when not need, the combination will be treated as invalid
+        # and so ignored.
+        placeholder_value_combinations: List[Dict[TemplatePlaceholder, int | None]] = list(
             map(
                 dict,
                 itertools.product(
                     *[
-                        [(placeholder, i) for i in range(bound)]
+                        [(placeholder, i) for i in range(bound)] + [(placeholder, None)]
                         for placeholder, bound in placeholder_bounds.items()
                     ]
                 ),
             )
         )
+
+        # Fill in the placeholders in the mapping templates
         state_mappings = [
             self._fill_placeholders(
                 mapping_template,
