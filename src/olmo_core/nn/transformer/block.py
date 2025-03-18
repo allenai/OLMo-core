@@ -579,11 +579,13 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
     def combined_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         # NOTE: this follows the same code path as the MoE's forward pass, except that we run
         # dense operations while we wait on expert parallel all-to-all comms.
-        in_shape = get_local_tensor(x).shape
+        B, _, D = x.shape
 
-        x_moe = get_local_tensor(self.feed_forward_moe_norm(x)).view(-1, in_shape[-1])
-
+        x_moe = get_local_tensor(self.feed_forward_moe_norm(x))
         expert_logits, expert_scores, expert_weights, expert_indices = self.router(x_moe)
+
+        # shape: (batch_size * seq_len, d_model)
+        x_moe = x_moe.view(-1, D)
         # shape: (batch_size * top_k,)
         expert_weights = expert_weights.flatten()
         # shape: (batch_size * top_k,)
@@ -618,7 +620,8 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
         # Maybe compute MoE shared out while all-to-all is in progress.
         moe_shared_out: Optional[torch.Tensor] = None
         if self.shared_mlp is not None:
-            moe_shared_out = self.shared_mlp(x_moe.view(in_shape))
+            # NOTE: -1 on seq dim in case of TP
+            moe_shared_out = self.shared_mlp(x_moe.view(B, -1, D))
 
         handle.wait()
         parallel_x = self.experts.compute_local_experts(
@@ -645,7 +648,7 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
             indices=indices,
             bin_ids=bin_ids,
             bins=bins,
-        ).view(in_shape)
+        ).view(B, -1, D)
 
         if moe_shared_out is not None:
             moe_shared_out = moe_shared_out / (self.top_k + 1)
@@ -675,12 +678,12 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
     def combined_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         # NOTE: this follows the same code path as the MoE's forward pass, except that we run
         # dense operations while we wait on expert parallel all-to-all comms.
-        in_shape = get_local_tensor(x).shape
+        B, _, D = x.shape
 
         expert_logits, expert_scores, expert_weights, expert_indices = self.router(x)
 
         # shape: (batch_size * seq_len, d_model)
-        x_moe = get_local_tensor(x).view(-1, in_shape[-1])
+        x_moe = get_local_tensor(x).view(-1, D)
         # shape: (batch_size * seq_len * top_k,)
         expert_weights = get_local_tensor(expert_weights).flatten()
         # shape: (batch_size * seq_len * top_k,)
@@ -715,7 +718,8 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         # Maybe compute MoE shared out while all-to-all is in progress.
         moe_shared_out: Optional[torch.Tensor] = None
         if self.shared_mlp is not None:
-            moe_shared_out = self.shared_mlp(x_moe.view(in_shape))
+            # NOTE: -1 on seq dim in case of TP
+            moe_shared_out = self.shared_mlp(x_moe.view(B, -1, D))
 
         handle.wait()
         parallel_x = self.experts.compute_local_experts(
@@ -742,7 +746,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
             indices=indices,
             bin_ids=bin_ids,
             bins=bins,
-        ).view(in_shape)
+        ).view(B, -1, D)
 
         if moe_shared_out is not None:
             moe_shared_out = moe_shared_out / (self.top_k + 1)
