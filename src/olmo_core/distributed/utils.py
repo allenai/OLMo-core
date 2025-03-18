@@ -419,7 +419,14 @@ def get_reduce_divide_factor(world_size: int) -> float:
 
 def get_local_tensor(x: torch.Tensor) -> torch.Tensor:
     if isinstance(x, DTensor):
-        return x.to_local()
+        x = x.to_local()
+        # When an `AsyncCollectiveTensor` object is returned,
+        # it means the local tensor is not ready yet (i.e. communication is not finished). In this
+        # case, user needs to call ``wait`` to wait the local tensor to be ready.
+        if hasattr(x, "wait"):
+            return x.wait()  # type: ignore
+        else:
+            return x
     else:
         return x
 
