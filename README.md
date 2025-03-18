@@ -71,9 +71,9 @@ torchrun --nproc-per-node=8 ./src/scripts/official/OLMo-2-0325-32B-train.py run0
 You can override most configuration options from the command-line. For example, to override the learning rate you could launch the script like this:
 
 ```bash
-torchrun --nproc-per-node=8 ./src/scripts/train/OLMo-2-0325-32B-train.py run01
+torchrun --nproc-per-node=8 ./src/scripts/train/OLMo-2-0325-32B-train.py run01 --train_module.optim.lr=6e-3
 ```
-To continue annealing from a checkpoint, launch the script like this:
+To continue annealing from a checkpoint, we use a separate script which can be launched like this:
 
 ```bash
 torchrun --nproc-per-node=8 ./src/scripts/train/OLMo-2-0325-32B-anneal.py anneal_run01 https://olmo-checkpoints.org/ai2-llm/peteish32/step721901/

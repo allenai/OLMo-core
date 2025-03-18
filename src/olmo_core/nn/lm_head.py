@@ -22,7 +22,6 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from .functional import (
     cross_entropy_loss,
-    fused_cross_entropy_loss,
     fused_linear_cross_entropy_loss,
     l2_normalize,
 )
@@ -65,11 +64,6 @@ class LMLossImplementation(StrEnum):
     default = "default"
     """
     Uses native PyTorch's operations.
-    """
-
-    fused = "fused"
-    """
-    Uses a fused triton implementation.
     """
 
     fused_linear = "fused_linear"
@@ -232,17 +226,6 @@ class LMHead(nn.Module):
                 compute_z_loss=z_loss_multiplier is not None,
                 z_loss_multiplier=z_loss_multiplier or 1e-4,
             )
-        elif self.loss_implementation == LMLossImplementation.fused:
-            logits = self.w_out(h)
-            assert logits is not None
-            ce_loss, z_loss = fused_cross_entropy_loss(
-                get_local_tensor(logits).view(-1, self.vocab_size),
-                get_local_tensor(labels).view(-1),
-                ignore_index=ignore_index,
-                reduction=loss_reduction,
-                compute_z_loss=z_loss_multiplier is not None,
-                z_loss_multiplier=z_loss_multiplier or 1e-4,
-            )
         elif self.loss_implementation == LMLossImplementation.fused_linear:
             logits = None
             ce_loss, z_loss = fused_linear_cross_entropy_loss(
@@ -294,15 +277,6 @@ class LMHead(nn.Module):
         z_loss: Optional[torch.Tensor]
         if self.loss_implementation == LMLossImplementation.default:
             ce_loss, z_loss = cross_entropy_loss(
-                get_local_tensor(logits).view(-1, self.vocab_size),
-                get_local_tensor(labels).view(-1),
-                ignore_index=ignore_index,
-                reduction=loss_reduction,
-                compute_z_loss=z_loss_multiplier is not None,
-                z_loss_multiplier=z_loss_multiplier or 1e-4,
-            )
-        elif self.loss_implementation == LMLossImplementation.fused:
-            ce_loss, z_loss = fused_cross_entropy_loss(
                 get_local_tensor(logits).view(-1, self.vocab_size),
                 get_local_tensor(labels).view(-1),
                 ignore_index=ignore_index,

@@ -39,7 +39,6 @@ from ..moe import MoEBase
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
 from ..utils import selective_checkpointing_context_fn
 from .block import (
-    MoEParallelTransformerBlockBase,
     MoETransformerBlock,
     NormalizedTransformerBlock,
     TransformerBlock,
@@ -253,7 +252,9 @@ class Transformer(nn.Module):
                     num_blocks=self.n_layers,
                     generator=generator,
                 )
-            else:
+
+            # MoE weights.
+            if hasattr(block, "feed_forward_moe"):
                 block = cast(MoETransformerBlock, block)
                 if max_local_microbatch_size is not None:
                     block.feed_forward_moe.warmup_cache(max_local_microbatch_size)
@@ -455,6 +456,7 @@ class Transformer(nn.Module):
                 device_mesh=tp_mesh,
                 parallelize_plan=RowwiseParallel(
                     input_layouts=Replicate(),
+                    output_layouts=Shard(1),
                     use_local_output=False,
                 ),
             )
@@ -465,7 +467,7 @@ class Transformer(nn.Module):
         #       Examples can be found at https://github.com/pytorch/torchtitan/pull/437
         for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)
-            block.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+            block.apply_tp(tp_mesh, input_layout=Shard(1), float8_enabled=float8_enabled)
 
         if self.lm_head is not None:
             self.lm_head.apply_tp(tp_mesh, input_layouts=(Shard(1), Replicate()))
@@ -861,20 +863,6 @@ class MoETransformer(Transformer):
         for block in self.blocks.values():
             block = cast(MoETransformerBlock, block)
             block.apply_ep(ep_mesh, **kwargs)
-        #  self._add_secondary_stream_to_blocks()
-
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
-        super().apply_tp(tp_mesh, float8_enabled=float8_enabled)
-        #  self._add_secondary_stream_to_blocks()
-
-    def _add_secondary_stream_to_blocks(self):
-        secondary_cuda_stream: Optional[torch.cuda.Stream] = None
-        for block in self.blocks.values():
-            if isinstance(block, MoEParallelTransformerBlockBase):
-                if torch.cuda.is_available() and secondary_cuda_stream is None:
-                    log.info("Creating secondary CUDA stream for MoE parallel block")
-                    secondary_cuda_stream = torch.cuda.Stream()
-                block.secondary_stream = secondary_cuda_stream  # type: ignore
 
     def prepare_experts_for_fsdp(
         self,

@@ -238,17 +238,6 @@ class TransformerPipelineTrainModule(TrainModule):
     :param cp_config: Context parallel configuration for the model.
     :param pp_config: Pipeline parallel configuration for the model.
     :param ac_config: Activation checkpointing configuration for the model.
-    :param compile_loss: Compile the loss function. This can provide a small speedup while also
-        reducing GPU memory usage, especially when using Z-loss.
-
-        .. important::
-            This is incompatible with ``fused_loss=True``.
-    :param fused_loss: Use the fused cross-entropy loss function (:func:`~olmo_core.nn.functional.fused_cross_entropy_loss`)
-        instead the PyTorch built-in. This can help reduce GPU memory usage when ``compile_loss=False``.
-        Relative performance will depend on the input sizes.
-
-        .. important::
-            This is incompatible with ``compile_loss=True``.
     :param z_loss_multiplier: Use Z-loss with this multiplier.
     :param autocast_precision: Enable AMP with this data type.
     :param max_grad_norm: Clip gradient norms to this value.
