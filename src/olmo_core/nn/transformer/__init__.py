@@ -1,4 +1,7 @@
 from .block import (
+    MoEHybridReorderedNormTransformerBlock,
+    MoEHybridTransformerBlock,
+    MoEHybridTransformerBlockBase,
     MoEReorderedNormTransformerBlock,
     MoETransformerBlock,
     NormalizedTransformerBlock,
@@ -23,6 +26,9 @@ __all__ = [
     "Transformer",
     "NormalizedTransformer",
     "MoETransformer",
+    "MoEHybridTransformerBlockBase",
+    "MoEHybridTransformerBlock",
+    "MoEHybridReorderedNormTransformerBlock",
     "TransformerBlockType",
     "TransformerBlockConfig",
     "TransformerBlockBase",
