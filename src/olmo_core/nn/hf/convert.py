@@ -189,7 +189,7 @@ def _get_hf_model_to_olmo_core_one_to_one_templates(
 
 def _get_converter_from_hf(model_id: str | None = None) -> StateConverter:
     mapping_templates = _get_hf_model_to_olmo_core_one_to_one_templates(model_id)
-    mapping_templates += list(OLMO_CORE_TO_HF_TEMPLATE_MAPPING.values())
+    mapping_templates += list(HF_TO_OLMO_CORE_TEMPLATE_MAPPING.values())
     return StateConverter(mapping_templates)
 
 
