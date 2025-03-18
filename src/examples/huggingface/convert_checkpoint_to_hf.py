@@ -14,10 +14,10 @@ from typing import Generator
 
 import torch
 from safetensors.torch import load_file
-from transformers import AutoModelForCausalLM, AutoTokenizer, GPT2Tokenizer, Olmo2Config
 
 from olmo_core.distributed.checkpoint import unshard_checkpoint
 from olmo_core.utils import prepare_cli_environment
+from transformers import AutoModelForCausalLM, AutoTokenizer, GPT2Tokenizer, Olmo2Config
 
 log = logging.getLogger(__name__)
 
@@ -137,9 +137,9 @@ def convert_to_hf_checkpoint(
         hf_state_dict[f"model.layers.{block}.mlp.down_proj.weight"] = olmo_state_dict.pop(
             f"blocks.{block}.feed_forward.w2.weight"
         )
-        hf_state_dict[f"model.layers.{block}.mlp.up_proj.weight"] = olmo_state_dict.pop(
-            f"blocks.{block}.feed_forward.w3.weight"
-        )
+        # hf_state_dict[f"model.layers.{block}.mlp.up_proj.weight"] = olmo_state_dict.pop(
+        #    f"blocks.{block}.feed_forward.w3.weight"
+        # )
 
         # Check if we have q_norm and k_norm (non-Llama model)
         has_qk_norm = f"blocks.{block}.attention.q_norm.weight" in olmo_state_dict
@@ -205,7 +205,7 @@ def convert_to_hf_checkpoint(
         num_key_value_heads=(
             olmo_core_config["model"]["block"]["attention"].get("n_kv_heads") or n_heads
         ),
-        hidden_act="silu",
+        hidden_act="gelu_pytorch_tanh",
         max_position_embeddings=max_sequence_length,
         rope_theta=olmo_core_config["model"]["block"]["attention"]["rope"]["theta"],
         attention_bias=olmo_core_config["model"]["block"]["attention"].get("bias") or False,
