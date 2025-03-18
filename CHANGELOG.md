@@ -12,7 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added information about the official 32B training run.
+- Added information about the official 32B anneal training run.
 - Added automatic support for LL128 when running on Augusta.
+- Added information about 32B training logs.
 
 ### Fixed
 
