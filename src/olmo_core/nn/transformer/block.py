@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, fully_shard
-from torch.distributed.tensor import Shard
+from torch.distributed.tensor import Placement, Shard
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
@@ -41,7 +41,9 @@ class TransformerBlockBase(nn.Module):
         raise NotImplementedError
 
     @abstractmethod
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
+    def apply_tp(
+        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+    ):
         raise NotImplementedError
 
     @abstractmethod
@@ -99,11 +101,14 @@ class TransformerBlock(TransformerBlockBase):
         h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
         return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
+    def apply_tp(
+        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+    ):
         parallelize_module(
             self,
             device_mesh=tp_mesh,
             parallelize_plan=PrepareModuleInput(
+                input_layouts=(input_layout,),
                 desired_input_layouts=(Shard(1),),
             ),
         )
@@ -239,8 +244,10 @@ class NormalizedTransformerBlock(TransformerBlockBase):
             )
         )
 
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
-        del tp_mesh, float8_enabled
+    def apply_tp(
+        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+    ):
+        del tp_mesh, input_layout, float8_enabled
 
         raise NotImplementedError(
             "TP is not implemented yet for the normalized transformer block variant"
@@ -369,11 +376,14 @@ class MoETransformerBlock(TransformerBlockBase):
         self.feed_forward_moe.apply_ep(ep_mesh, **kwargs)
         self._ep_enabled = True
 
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
+    def apply_tp(
+        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+    ):
         parallelize_module(
             self,
             device_mesh=tp_mesh,
             parallelize_plan=PrepareModuleInput(
+                input_layouts=(input_layout,),
                 desired_input_layouts=(Shard(1),),
             ),
         )
@@ -513,8 +523,10 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
             # return h_sparse + h_dense
             return self.combined_forward(x, **kwargs)
 
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
-        super().apply_tp(tp_mesh, float8_enabled=float8_enabled)
+    def apply_tp(
+        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+    ):
+        super().apply_tp(tp_mesh, input_layout=input_layout, float8_enabled=float8_enabled)
 
         self.feed_forward.apply_tp(
             tp_mesh,

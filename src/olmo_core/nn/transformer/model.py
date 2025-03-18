@@ -456,6 +456,7 @@ class Transformer(nn.Module):
                 device_mesh=tp_mesh,
                 parallelize_plan=RowwiseParallel(
                     input_layouts=Replicate(),
+                    output_layouts=Shard(1),
                     use_local_output=False,
                 ),
             )
@@ -466,7 +467,7 @@ class Transformer(nn.Module):
         #       Examples can be found at https://github.com/pytorch/torchtitan/pull/437
         for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)
-            block.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+            block.apply_tp(tp_mesh, input_layout=Shard(1), float8_enabled=float8_enabled)
 
         if self.lm_head is not None:
             self.lm_head.apply_tp(tp_mesh, input_layouts=(Shard(1), Replicate()))
