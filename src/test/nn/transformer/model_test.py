@@ -23,6 +23,7 @@ from olmo_core.nn.transformer import (
     TransformerBlockConfig,
     TransformerBlockType,
     TransformerConfig,
+    TransformerType,
 )
 from olmo_core.utils import get_default_device
 
@@ -222,6 +223,7 @@ def run_moe_hybrid_combined_forward(
 ):
     layer_norm = LayerNormConfig(name=LayerNormType.rms, bias=False)
     config = TransformerConfig(
+        name=TransformerType.moe,
         d_model=512,
         vocab_size=16_000,
         n_layers=2,
@@ -275,10 +277,17 @@ def run_moe_hybrid_combined_forward(
 
 
 @requires_multi_gpu
-@pytest.mark.parametrize("dropless", [True, False])
-@pytest.mark.parametrize("shared_experts", [True, False])
-@pytest.mark.parametrize("reordered_norm", [True, False])
-@pytest.mark.parametrize("tp", [True, False])
+@pytest.mark.parametrize(
+    "dropless", [pytest.param(True, id="dropless"), pytest.param(False, id="default-router")]
+)
+@pytest.mark.parametrize(
+    "shared_experts", [pytest.param(True, id="shared-experts"), pytest.param(False, id="no-shared")]
+)
+@pytest.mark.parametrize(
+    "reordered_norm",
+    [pytest.param(True, id="reordered-norm"), pytest.param(False, id="default-block")],
+)
+@pytest.mark.parametrize("tp", [pytest.param(True, id="TP"), pytest.param(False, id="EP")])
 def test_moe_hybrid_combined_forward(
     dropless: bool, shared_experts: bool, reordered_norm: bool, tp: bool
 ):
