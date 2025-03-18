@@ -680,10 +680,11 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         # dense operations while we wait on expert parallel all-to-all comms.
         B, _, D = x.shape
 
-        expert_logits, expert_scores, expert_weights, expert_indices = self.router(x)
+        x_moe = get_local_tensor(x)
+        expert_logits, expert_scores, expert_weights, expert_indices = self.router(x_moe)
 
         # shape: (batch_size * seq_len, d_model)
-        x_moe = get_local_tensor(x).view(-1, D)
+        x_moe = x_moe.view(-1, D)
         # shape: (batch_size * seq_len * top_k,)
         expert_weights = get_local_tensor(expert_weights).flatten()
         # shape: (batch_size * seq_len * top_k,)
