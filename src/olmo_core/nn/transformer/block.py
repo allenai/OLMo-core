@@ -615,6 +615,11 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
         # Compute attention while all-to-all is in progress.
         h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
 
+        # Maybe compute MoE shared out while all-to-all is in progress.
+        moe_shared_out: Optional[torch.Tensor] = None
+        if self.shared_mlp is not None:
+            moe_shared_out = self.shared_mlp(x_moe.view(in_shape))
+
         handle.wait()
         parallel_x = self.experts.compute_local_experts(
             parallel_x,
@@ -631,11 +636,6 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
 
         # Compute feed-forward while all-to-all is in progress.
         h = h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
-
-        # Maybe compute MoE shared out while all-to-all is in progress.
-        moe_shared_out: Optional[torch.Tensor] = None
-        if self.shared_mlp is not None:
-            moe_shared_out = self.shared_mlp(x_moe.view(in_shape))
 
         handle.wait()
         x_moe = self.experts.unpermute(
@@ -712,6 +712,11 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         # Compute attention while all-to-all is in progress.
         h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
 
+        # Maybe compute MoE shared out while all-to-all is in progress.
+        moe_shared_out: Optional[torch.Tensor] = None
+        if self.shared_mlp is not None:
+            moe_shared_out = self.shared_mlp(x_moe.view(in_shape))
+
         handle.wait()
         parallel_x = self.experts.compute_local_experts(
             parallel_x,
@@ -728,11 +733,6 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
 
         # Compute feed-forward while all-to-all is in progress.
         h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
-
-        # Maybe compute MoE shared out while all-to-all is in progress.
-        moe_shared_out: Optional[torch.Tensor] = None
-        if self.shared_mlp is not None:
-            moe_shared_out = self.shared_mlp(x_moe.view(in_shape))
 
         handle.wait()
         x_moe = self.experts.unpermute(
