@@ -261,9 +261,8 @@ def run_moe_hybrid_combined_forward(
     else:
         model.apply_ep(mesh["ep"])
 
-    model.init_weights(device=device, max_seq_len=512)
-
     input_ids = get_transformer_inputs().to(device)
+    model.init_weights(device=device, max_seq_len=512, max_local_microbatch_size=input_ids.numel())
 
     for block in model.blocks.values():
         cast(MoEHybridTransformerBlockBase, block).use_combined_forward = False
