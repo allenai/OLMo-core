@@ -15,20 +15,67 @@ class TemplatePlaceholder(StrEnum):
 @dataclass
 class StateMappingTemplate:
     """
-    A
+    The template for a mapping from state from one format to another format (e.g. OLMo Core to HF).
+    These mappings are 'templates' since they support keys and other metadata having placeholders
+    for information like the layer number or number of MoE experts. This class can be converted
+    to a `StateMapping` by providing the placeholder information information.
+
+    The most standard mapping is a one-to-one state mapping, which corresponds to a single
+    string entry for both `source_template_keys` and `dest_template_keys`. The class also supports
+    more complicated mappings, like many-to-many mappings or mappings that also require further
+    manipulations of state like permuting dimensions.
     """
 
     source_template_keys: str | Tuple[str, ...]
+    """
+    The key or keys of the state(s) being mapping from.
+    """
     dest_template_keys: str | Tuple[str, ...]
+    """
+    The key or keys of the state(s) being mapping to.
+    """
 
     source_key_per_placeholder: TemplatePlaceholder | None = None
+    """
+    A placeholder in `source_template_keys` for which this mapping should map all valid placeholder
+    values, rather than 1 specific value. For example, this enables mapping states from all experts
+    (using `TemplatePlaceholder.EXPERT`) to a single state.
+
+    When provided, `source_template_keys` must be a string.
+    """
     dest_key_per_placeholder: TemplatePlaceholder | None = None
+    """
+    A placeholder in `dest_template_keys` for which this mapping should map all valid placeholder
+    values, rather than 1 specific value. For example, this enables mapping from a single state to
+    states from all experts (using `TemplatePlaceholder.EXPERT`).
+
+    When provided, `dest_template_keys` must be a string.
+    """
 
     source_concat_dim: int = 0
-    dims_permutation: Tuple[int, ...] | None = None
+    """
+    When many states are being mapping from, this specifies the dimension on which to combine them.
+    """
     unflatten_dim: Tuple[int, Tuple[TemplatePlaceholder | int, ...]] | None = None
+    """
+    This specifies that the given dimension (`unflatten_dim[0]`) should be unflattened using the shape
+    given in `unflatten_dim[1]`. A placeholder can be given instead of a number, to represent its
+    corresponding upper bound (e.g. `TemplatePlaceholder.EXPERT` represents the number of experts). 
+    """
+    dims_permutation: Tuple[int, ...] | None = None
+    """
+    This specifies the permutation that should be applied to the dimensions of the state after any
+    unflattening from `unflatten_dim` has occurred.
+    """
     flatten_dims: Tuple[int, int] | None = None
+    """
+    This specifies that all the dimensions between the 2 given dimensions (inclusive) should be flattened,
+    after any permutations from `dims_permutation` have been applied.
+    """
     dest_chunk_dim: int = 0
+    """
+    When many states are being mapping to, this specifies the dimension on which to (evenly) chunk them.
+    """
 
     def __post_init__(self):
         if self.source_key_per_placeholder and isinstance(self.source_template_keys, tuple):
@@ -140,27 +187,65 @@ class StateMappingTemplate:
         return StateMapping(
             source_keys,
             dest_keys,
-            self.source_concat_dim,
-            self.dims_permutation,
-            unflatten_dim,
-            self.flatten_dims,
-            self.dest_chunk_dim,
+            source_concat_dim=self.source_concat_dim,
+            unflatten_dim=unflatten_dim,
+            dims_permutation=self.dims_permutation,
+            flatten_dims=self.flatten_dims,
+            dest_chunk_dim=self.dest_chunk_dim,
         )
 
 
 @dataclass
 class StateMapping:
+    """
+    A mapping from state from one format to another format (e.g. OLMo Core to HF).
+
+    The most standard mapping is a one-to-one state mapping, which corresponds to a single
+    string entry for both `source_template_keys` and `dest_template_keys`. The class also supports
+    more complicated mappings, like many-to-many mappings or mappings that also require further
+    manipulations of state like permuting dimensions.
+    """
+
     source_keys: Tuple[str, ...]
+    """
+    The key(s) of the state(s) being mapping from.
+    """
+
     dest_keys: Tuple[str, ...]
+    """
+    The key or keys of the state(s) being mapping to.
+    """
 
     source_concat_dim: int = 0
-    dims_permutation: Tuple[int, ...] | None = None
+    """
+    When many states are being mapping from, this specifies the dimension on which to combine them.
+    """
     unflatten_dim: Tuple[int, Tuple[int, ...]] | None = None
+    """
+    This specifies that the given dimension (`unflatten_dim[0]`) should be unflattened using the shape
+    given in `unflatten_dim[1]`.
+    """
+    dims_permutation: Tuple[int, ...] | None = None
+    """
+    This specifies the permutation that should be applied to the dimensions of the state after any
+    unflattening from `unflatten_dim` has occurred.
+    """
     flatten_dims: Tuple[int, int] | None = None
+    """
+    This specifies that all the dimensions between the 2 given dimensions (inclusive) should be flattened,
+    after any permutations from `dims_permutation` have been applied.
+    """
     dest_chunk_dim: int = 0
+    """
+    When many states are being mapping to, this specifies the dimension on which to (evenly) chunk them.
+    """
 
 
 class StateConverter:
+    """
+    A class for converting state from one format to another format (e.g. OLMo Core to HF).
+    """
+
     def __init__(self, mapping_templates: List[StateMappingTemplate]) -> None:
         self.mapping_templates = mapping_templates
 
@@ -215,11 +300,28 @@ class StateConverter:
     def get_mappings(
         self, state_dict: Dict[str, Any], placeholder_bounds: Dict[TemplatePlaceholder, int]
     ) -> List[StateMapping]:
+        """
+        Gets the state mapping from the given state dict to the converted format,
+        without performing conversion.
+
+        :param state_dict: The state dictionary in unconverted format.
+        :param placeholder_bounds: Upper bound values for any relevant placeholders
+            (e.g. for `TemplatePlaceholder.EXPERT`, the number of experts).
+        """
+
         return self._get_mappings(state_dict, placeholder_bounds)
 
     def convert(
         self, state_dict: Dict[str, Any], placeholder_bounds: Dict[TemplatePlaceholder, int]
     ) -> Dict[str, Any]:
+        """
+        Converts a state dict to another format.
+
+        :param state_dict: The state dictionary to convert.
+        :param placeholder_bounds: Upper bound values for any relevant placeholders
+            (e.g. for `TemplatePlaceholder.EXPERT`, the number of experts).
+        """
+
         state_mappings = self._get_mappings(state_dict, placeholder_bounds)
 
         unused_original_keys = set(state_dict.keys())
