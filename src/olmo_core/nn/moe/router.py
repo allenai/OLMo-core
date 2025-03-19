@@ -189,19 +189,17 @@ class MoERouter(nn.Module):
         score_bias = cast(torch.Tensor, self.score_bias)
         batch_size_per_expert = self._cache["batch_size_per_expert"]
 
+        # Maybe reduce across the process group.
+        if is_distributed():
+            dist.all_reduce(batch_size_per_expert, group=self.pp_group)
+
+        ideal_batch_size_per_expert = batch_size_per_expert.sum() / self.num_experts
+        bias_delta = self.bias_gamma * (ideal_batch_size_per_expert - batch_size_per_expert).sign()
+
+        # NOTE: have to be careful here to manage the case where `score_bias` is a DTensor.
+        bias_delta = get_local_tensor(distribute_like(score_bias, bias_delta))
+        score_bias = get_local_tensor(score_bias)
         if not dry_run:
-            # Maybe reduce across the process group.
-            if is_distributed():
-                dist.all_reduce(batch_size_per_expert, group=self.pp_group)
-
-            ideal_batch_size_per_expert = batch_size_per_expert.sum() / self.num_experts
-            bias_delta = (
-                self.bias_gamma * (ideal_batch_size_per_expert - batch_size_per_expert).sign()
-            )
-
-            # NOTE: have to be careful here to manage the case where `score_bias` is a DTensor.
-            bias_delta = get_local_tensor(distribute_like(score_bias, bias_delta))
-            score_bias = get_local_tensor(score_bias)
             score_bias += bias_delta
 
         # Reset the accumulator.
