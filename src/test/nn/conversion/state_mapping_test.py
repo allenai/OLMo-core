@@ -107,7 +107,9 @@ def test_template_to_mapping_invalid_dest_template(dest_templates, dest_key_per_
 def test_template_to_mapping_invalid_source_values(
     source_templates, source_key_per_placeholder, placeholder_values, placeholder_bounds
 ):
-    mapping_template = StateMappingTemplate(source_templates, "b", source_key_per_placeholder=source_key_per_placeholder)
+    mapping_template = StateMappingTemplate(
+        source_templates, "b", source_key_per_placeholder=source_key_per_placeholder
+    )
     mapping = mapping_template.to_mapping(placeholder_values, placeholder_bounds)
 
     assert mapping is None
@@ -125,7 +127,9 @@ def test_template_to_mapping_invalid_source_values(
 def test_template_to_mapping_invalid_dest_values(
     dest_templates, dest_key_per_placeholder, placeholder_values, placeholder_bounds
 ):
-    mapping_template = StateMappingTemplate("a", dest_templates, dest_key_per_placeholder=dest_key_per_placeholder)
+    mapping_template = StateMappingTemplate(
+        "a", dest_templates, dest_key_per_placeholder=dest_key_per_placeholder
+    )
     mapping = mapping_template.to_mapping(placeholder_values, placeholder_bounds)
 
     assert mapping is None
