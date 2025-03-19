@@ -205,6 +205,15 @@ def convert_state_from_hf(
     *,
     model_id: str | None = None,
 ) -> Dict[str, Any]:
+    """
+    Converts a model state dict in Hugging Face transformers format into an unsharded state dict of
+    OLMo Core format.
+
+    :param config: The Hugging Face config for the model
+    :param hf_state: A model state dict in HF format.
+    :param model_id: The model id of the HF model in HF Hub.
+    """
+
     converter = _get_converter_from_hf(model_id=model_id)
 
     if not hasattr(config, "num_hidden_layers"):
@@ -236,7 +245,17 @@ def get_converter_to_hf() -> StateConverter:
 
 
 @beta_feature
-def convert_state_to_hf(config: PretrainedConfig, olmo_state: Dict[str, Any]) -> Dict[str, Any]:
+def convert_state_to_hf(
+    config: PretrainedConfig, olmo_core_state: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Converts an *unsharded* model state dict of OLMo Core format into Hugging Face transformers format.
+
+    :param config: The Hugging Face config for the model
+    :param olmo_core_state: An unsharded OLMo Core model state dict. None of the states can be
+        :class:`DTensor` or :class:`ShardedTensor`
+    """
+
     converter = _get_converter_to_hf()
 
     if not hasattr(config, "num_hidden_layers"):
@@ -250,4 +269,4 @@ def convert_state_to_hf(config: PretrainedConfig, olmo_state: Dict[str, Any]) ->
     if n_experts:
         placeholder_bounds[TemplatePlaceholder.EXPERT] = n_experts
 
-    return converter.convert(olmo_state, placeholder_bounds)
+    return converter.convert(olmo_core_state, placeholder_bounds)

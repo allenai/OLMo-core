@@ -12,7 +12,7 @@ from transformers import AutoModelForCausalLM
 from olmo_core.aliases import PathOrStr
 from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_full_tensor
 from olmo_core.doc_utils import beta_feature
-from olmo_core.io import copy_dir, file_exists, is_url, upload
+from olmo_core.io import clear_directory, copy_dir, file_exists, is_url, upload
 from olmo_core.nn.hf.config import get_hf_config
 from olmo_core.nn.hf.convert import convert_state_from_hf, convert_state_to_hf
 from olmo_core.nn.transformer.model import Transformer
@@ -32,45 +32,51 @@ log = logging.getLogger(__name__)
 
 @beta_feature
 def load_hf_model(
-    dir: PathOrStr,
+    model_name_or_path: PathOrStr,
     model_state_dict: Dict[str, Any],
-    n_layers: int,
     *,
     process_group: Optional[dist.ProcessGroup] = None,
     work_dir: Optional[PathOrStr] = None,
 ):
+    """
+    Loads an OLMo Core model state dict using a model in Hugging Face transformers format.
+
+    :param model_name_or_path: The name of a model in HF Hub or the path to a model saved in HF format.
+    :param model_state_dict: The OLMo Core model state dict in which to load HF state.
+    :param process_group: The process group to use for distributed communication.
+    :param work_dir: A local directory that can be used for holding temporary state. Required when
+        downloading a model from a cloud directory.
+    """
+
     work_dir = f"{work_dir}/hf-tmp" if work_dir is not None else None
 
-    if is_url(dir):
+    if is_url(model_name_or_path):
         log.warning(
-            "Load path provided is a remote Hugging Face directory. This may not be suitable for unshared file systems."
+            "Model id or path provided is a remote Hugging Face directory. This may not be suitable for unshared file systems."
         )
         assert work_dir is not None
         assert (
-            file_exists(f"{dir}/generation_config.json")
-            or file_exists(f"{dir}/model.safetensors.index.json")
-            or file_exists(f"{dir}/pytorch_model.bin")
+            file_exists(f"{model_name_or_path}/generation_config.json")
+            or file_exists(f"{model_name_or_path}/model.safetensors.index.json")
+            or file_exists(f"{model_name_or_path}/pytorch_model.bin")
         )
-        model_name_or_path = dir
         model_id = None
 
         # Download model to local FS
         if get_fs_local_rank() == 0:
-            copy_dir(dir, work_dir)
+            copy_dir(model_name_or_path, work_dir)
         barrier(group=process_group)
-    elif Path(dir).is_dir():
+    elif Path(model_name_or_path).is_dir():
         assert (
-            file_exists(f"{dir}/generation_config.json")
-            or file_exists(f"{dir}/model.safetensors.index.json")
-            or file_exists(f"{dir}/pytorch_model.bin")
+            file_exists(f"{model_name_or_path}/generation_config.json")
+            or file_exists(f"{model_name_or_path}/model.safetensors.index.json")
+            or file_exists(f"{model_name_or_path}/pytorch_model.bin")
         )
-        model_name_or_path = dir
         model_id = None
-    elif repo_exists(str(dir)):
+    elif repo_exists(str(model_name_or_path)):
         log.warning(
-            "Load path provided is a Hugging Face model id. This may not be suitable for unshared file systems."
+            "Model id or path provided is a Hugging Face model id. This may not be suitable for unshared file systems."
         )
-        model_name_or_path = dir
         model_id = str(model_name_or_path)
     else:
         raise NotImplementedError
@@ -83,11 +89,6 @@ def load_hf_model(
 
     hf_model = AutoModelForCausalLM.from_pretrained(model_name_or_path)
     log.info(f"Loaded hf model: {hf_model}")
-
-    if n_layers != len(hf_model.model.layers):
-        raise RuntimeError(
-            f"Trying to load a HF model with {len(hf_model.model.layers)} layers into a model with {n_layers} layers."
-        )
 
     converted_state_dict: Dict[str, torch.Tensor] = convert_state_from_hf(
         hf_model.config, hf_model.state_dict(), model_id=model_id
@@ -104,10 +105,13 @@ def load_hf_model(
 
         model_state_dict[key] = olmo_core_state
 
+    if work_dir:
+        clear_directory(work_dir)
+
 
 @beta_feature
 def save_hf_model(
-    dir: PathOrStr,
+    save_dir: PathOrStr,
     model_state_dict: Dict[str, Any],
     model: Transformer,
     *,
@@ -115,6 +119,17 @@ def save_hf_model(
     work_dir: Optional[PathOrStr] = None,
     save_overwrite: bool = False,
 ):
+    """
+    Save an OLMo Core model state dict in Hugging Face transformers format.
+
+    :param save_dir: Directory in which to save model.
+    :param model_state_dict: The OLMo Core model state dict being saved in HF format.
+    :param process_group: The process group to use for distributed communication.
+    :param work_dir: A local directory that can be used for holding temporary state. Required when
+        downloading a model from a cloud directory.
+    :param save_overwrite: Overwrite existing files in `save_dir`.
+    """
+
     hf_config = get_hf_config(model)
 
     model_state_dict = {key: get_full_tensor(state) for key, state in model_state_dict.items()}
@@ -131,14 +146,13 @@ def save_hf_model(
     hf_model.load_state_dict(hf_state_dict, assign=True)
 
     if get_fs_local_rank(process_group) == 0:
-        if is_url(dir):
+        if is_url(save_dir):
             assert work_dir is not None
             hf_model.save_pretrained(work_dir)
 
-            target = f"{dir}"
-            upload(work_dir, target, save_overwrite=save_overwrite)
+            upload(work_dir, str(save_dir), save_overwrite=save_overwrite)
         else:
-            target = Path(dir)
+            target = Path(save_dir)
             if target.is_dir() and not save_overwrite:
                 raise FileExistsError(target)
             target.parent.mkdir(exist_ok=True, parents=True)

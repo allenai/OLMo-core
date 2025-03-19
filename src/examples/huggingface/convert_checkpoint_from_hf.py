@@ -167,7 +167,6 @@ def convert_checkpoint_from_hf(
         load_hf_model(
             hf_checkpoint_path,
             model_state_dict,
-            train_module.model.n_layers,
             process_group=checkpointer.process_group,
             work_dir=checkpointer.work_dir,
         )
