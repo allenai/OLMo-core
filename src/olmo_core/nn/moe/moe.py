@@ -254,13 +254,19 @@ class MoEBase(nn.Module):
         :returns: The output of the MoE layer, the optional load-balancing loss, and the optional
             router Z-loss.
         """
-        expert_logits, expert_scores, expert_weights, expert_indices = self.router(x)
+        (
+            expert_logits,
+            expert_scores,
+            expert_weights,
+            expert_indices,
+            batch_size_per_expert,
+        ) = self.router(x)
 
         shared_out: Optional[torch.Tensor] = None
         if self.shared_mlp is not None:
             shared_out = self.shared_mlp(x)
 
-        out, batch_size_per_expert = self.experts(x, expert_weights, expert_indices)
+        out = self.experts(x, expert_weights, expert_indices, batch_size_per_expert)
 
         if shared_out is not None:
             shared_out = shared_out / (self.top_k + 1)

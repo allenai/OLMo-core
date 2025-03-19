@@ -169,7 +169,7 @@ class MoERouter(nn.Module):
 
     def forward(
         self, x: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Given the input ``x`` of shape ``(*, d_model)``, compute the
         experts assignment.
@@ -177,7 +177,8 @@ class MoERouter(nn.Module):
         :returns: The unnormalized scores (logits) of shape ``(N, num_experts)``,
             the normalized scores of shape ``(N, num_experts)``,
             the expert weights of shape ``(N, top_k)``,
-            and the expert indices of shape ``(N, top_k)``.
+            the expert indices of shape ``(N, top_k)``,
+            and the number of items routed to each expert, with shape ``(num_experts,)``.
         """
         # shape: (batch_size, seq_len, d_model)
         x = self.jitter(x)
@@ -190,6 +191,16 @@ class MoERouter(nn.Module):
 
         # shape: (batch_size * seq_len, top_k)
         expert_weights, expert_indices = self.get_top_k(scores)
+
+        with torch.no_grad():
+            # Histogram the expert ids to identify the number of
+            # items/tokens routed to each expert.
+            # shape: (num_experts,), LongTensor
+            # NOTE: if we wanted to keep the batch dimension here like for sequence-level load balancing
+            # loss, we could use `opts.batched_histc`.
+            batch_size_per_expert = torch.histc(
+                expert_indices, bins=self.num_experts, min=0, max=self.num_experts - 1
+            )
 
         if self.normalize_expert_weights is not None:
             expert_weights = expert_weights.div(
@@ -204,7 +215,7 @@ class MoERouter(nn.Module):
         if self.uniform_expert_assignment:
             expert_indices = _uniform_expert_assignment(expert_indices, self.num_experts)
 
-        return logits, scores, expert_weights, expert_indices
+        return logits, scores, expert_weights, expert_indices, batch_size_per_expert
 
     @abstractmethod
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):

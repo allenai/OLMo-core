@@ -594,7 +594,14 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
         B, _, D = x.shape
 
         x_moe = get_local_tensor(self.feed_forward_moe_norm(x))
-        expert_logits, expert_scores, expert_weights, expert_indices = self.router(x_moe)
+
+        (
+            expert_logits,
+            expert_scores,
+            expert_weights,
+            expert_indices,
+            batch_size_per_expert,
+        ) = self.router(x_moe)
 
         # shape: (batch_size * seq_len, d_model)
         x_moe = x_moe.view(-1, D)
@@ -604,8 +611,8 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
         expert_indices = expert_indices.flatten()
 
         with torch.no_grad():
-            indices, bin_ids, bins, batch_size_per_expert = self.experts.indices_and_bins(
-                expert_indices
+            indices, bin_ids, bins = self.experts.indices_and_bins(
+                expert_indices, batch_size_per_expert
             )
 
         (
@@ -693,7 +700,14 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         B, _, D = x.shape
 
         x_moe = get_local_tensor(x)
-        expert_logits, expert_scores, expert_weights, expert_indices = self.router(x_moe)
+
+        (
+            expert_logits,
+            expert_scores,
+            expert_weights,
+            expert_indices,
+            batch_size_per_expert,
+        ) = self.router(x_moe)
 
         # shape: (batch_size * seq_len, d_model)
         x_moe = x_moe.view(-1, D)
@@ -703,8 +717,8 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         expert_indices = get_local_tensor(expert_indices).flatten()
 
         with torch.no_grad():
-            indices, bin_ids, bins, batch_size_per_expert = self.experts.indices_and_bins(
-                expert_indices
+            indices, bin_ids, bins = self.experts.indices_and_bins(
+                expert_indices, batch_size_per_expert
             )
 
         (
