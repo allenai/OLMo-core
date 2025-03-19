@@ -261,14 +261,16 @@ class BasicTrainModule(TrainModule):
                 f"micro-batch size ({self.rank_microbatch_size:,d}) x DP world size ({ws})"
             )
 
-    def state_dict(self) -> Dict[str, Any]:
+    def state_dict(self, *, optim: bool = True) -> Dict[str, Any]:
         sd_options = dist_cp_sd.StateDictOptions(full_state_dict=False, cpu_offload=True)
-        return {
+        state_dict: Dict[str, Any] = {
             "model": dist_cp_sd.get_model_state_dict(self.model, options=sd_options),
-            "optim": dist_cp_sd.get_optimizer_state_dict(
-                self.model, self.optim, options=sd_options
-            ),
         }
+        if optim:
+            state_dict["optim"] = dist_cp_sd.get_optimizer_state_dict(
+                self.model, self.optim, options=sd_options
+            )
+        return state_dict
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         dist_cp_sd.set_model_state_dict(
