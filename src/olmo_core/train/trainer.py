@@ -624,7 +624,6 @@ class Trainer:
         barrier()
         gc_cuda()
 
-        gc_cuda()
         log.info("Training complete")
 
     def state_dict(self) -> TrainerStateDict:
