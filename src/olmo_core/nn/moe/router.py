@@ -11,7 +11,11 @@ from torch.distributed.tensor import Replicate, Shard, distribute_tensor
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
 from olmo_core.config import Config, DType, StrEnum
-from olmo_core.distributed.utils import get_local_tensor, is_distributed
+from olmo_core.distributed.utils import (
+    distribute_like,
+    get_local_tensor,
+    is_distributed,
+)
 from olmo_core.exceptions import OLMoConfigurationError
 
 from ..buffer_cache import BufferCache
@@ -182,6 +186,7 @@ class MoERouter(nn.Module):
 
         assert self.score_bias is not None
         assert self._cache is not None
+        score_bias = cast(torch.Tensor, self.score_bias)
 
         batch_size_per_expert = self._cache["batch_size_per_expert"]
 
@@ -190,9 +195,8 @@ class MoERouter(nn.Module):
             dist.all_reduce(batch_size_per_expert, group=self.pp_group)
 
         ideal_batch_size_per_expert = batch_size_per_expert.sum() / self.num_experts
-        self.score_bias += (
-            self.bias_gamma * (ideal_batch_size_per_expert - batch_size_per_expert).sign()
-        )
+        bias_delta = self.bias_gamma * (ideal_batch_size_per_expert - batch_size_per_expert).sign()
+        score_bias += distribute_like(score_bias, bias_delta)
 
         # Reset the accumulator.
         batch_size_per_expert.zero_()
