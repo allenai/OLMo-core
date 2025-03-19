@@ -272,6 +272,8 @@ class MoERouter(nn.Module):
 
             if self.training and self.bias_gamma is not None:
                 assert self._cache is not None
+                # NOTE: as long as '.reset_parameters()' was called, this will be initialized
+                # and on the right device.
                 self._cache["batch_size_per_expert"] += batch_size_per_expert
 
         if self.normalize_expert_weights is not None:
