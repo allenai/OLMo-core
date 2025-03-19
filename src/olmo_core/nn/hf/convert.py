@@ -3,8 +3,8 @@ from typing import Any, Dict, List
 from transformers import PretrainedConfig
 
 from olmo_core.doc_utils import beta_feature
+from olmo_core.nn.conversion.state_converter import StateConverter
 from olmo_core.nn.conversion.state_mapping import (
-    StateConverter,
     StateMappingTemplate,
     TemplatePlaceholder,
 )
