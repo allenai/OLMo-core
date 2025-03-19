@@ -196,7 +196,11 @@ class MoERouter(nn.Module):
 
         ideal_batch_size_per_expert = batch_size_per_expert.sum() / self.num_experts
         bias_delta = self.bias_gamma * (ideal_batch_size_per_expert - batch_size_per_expert).sign()
-        score_bias += distribute_like(score_bias, bias_delta)
+
+        # NOTE: have to be careful here to manage the case where `score_bias` is a DTensor.
+        bias_delta = get_local_tensor(distribute_like(score_bias, bias_delta))
+        score_bias = get_local_tensor(score_bias)
+        score_bias += bias_delta
 
         # Reset the accumulator.
         batch_size_per_expert.zero_()
