@@ -90,21 +90,38 @@ class StateMappingTemplate:
 
     def _templates_to_keys(
         self,
-        templates: str | Tuple[str, ...],
         placeholder_values: Dict[TemplatePlaceholder, Any],
+        placeholder_bounds: Dict[TemplatePlaceholder, int],
         *,
-        key_per_placeholder: TemplatePlaceholder | None = None,
-        key_per_placeholder_values: List[Any] | None = None,
+        source: bool,
     ) -> Tuple[str, ...] | None:
-        if key_per_placeholder:
-            if key_per_placeholder_values is None:
-                return None
+        if source:
+            templates = self.source_template_keys
+            key_per_placeholder = self.source_key_per_placeholder
+        else:
+            templates = self.dest_template_keys
+            key_per_placeholder = self.dest_key_per_placeholder
 
-            assert isinstance(templates, str)
-            assert key_per_placeholder in templates
-            assert key_per_placeholder_values is not None
+        if key_per_placeholder:
+            if not isinstance(templates, str):
+                raise ValueError(
+                    "Invalid template; template must be a string when expanding a placeholder"
+                )
+            template = templates
+
+            if key_per_placeholder not in template:
+                raise ValueError(
+                    f"Invalid template; placeholder {key_per_placeholder} is being expanded but is not present in template {template}"
+                )
+
+            if key_per_placeholder not in placeholder_bounds:
+                raise ValueError(
+                    f"Invalid bounds; placeholder {key_per_placeholder} does not have a bound"
+                )
+            key_per_placeholder_values = list(range(placeholder_bounds[key_per_placeholder]))
+
             templates = tuple(
-                templates.replace(key_per_placeholder, str(value))
+                template.replace(key_per_placeholder, str(value))
                 for value in key_per_placeholder_values
             )
         elif isinstance(templates, str):
@@ -129,6 +146,11 @@ class StateMappingTemplate:
 
             keys.append(key)
 
+        for key in keys:
+            if any(placeholder in key for placeholder in TemplatePlaceholder):
+                # If a placeholder has not been filled, its key was not provided.
+                return None
+
         return tuple(keys)
 
     def to_mapping(
@@ -148,29 +170,19 @@ class StateMappingTemplate:
 
         missing_required_placeholders = required_placeholders.difference(placeholder_bounds.keys())
         if missing_required_placeholders:
+            # This may be, say, an MoE mapping for which we do not have any expert values.
+            # This is ok; we simply discard this mapping.
             return None
 
         source_keys = self._templates_to_keys(
-            self.source_template_keys,
             placeholder_values,
-            key_per_placeholder=self.source_key_per_placeholder,
-            key_per_placeholder_values=list(
-                range(placeholder_bounds[self.source_key_per_placeholder])
-            )
-            if self.source_key_per_placeholder
-            and placeholder_values[self.source_key_per_placeholder] is None
-            else None,
+            placeholder_bounds,
+            source=True,
         )
         dest_keys = self._templates_to_keys(
-            self.dest_template_keys,
             placeholder_values,
-            key_per_placeholder=self.dest_key_per_placeholder,
-            key_per_placeholder_values=list(
-                range(placeholder_bounds[self.dest_key_per_placeholder])
-            )
-            if self.dest_key_per_placeholder
-            and placeholder_values[self.dest_key_per_placeholder] is None
-            else None,
+            placeholder_bounds,
+            source=False,
         )
 
         if source_keys is None or dest_keys is None:
