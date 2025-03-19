@@ -83,7 +83,7 @@ class StateConverter:
         self, state_dict: Dict[str, Any], placeholder_bounds: Dict[TemplatePlaceholder, int]
     ) -> Dict[str, Any]:
         """
-        Converts a state dict to another format.
+        Converts a state dict to another format. This currently only supports tensor values.
 
         :param state_dict: The state dictionary to convert.
         :param placeholder_bounds: Upper bound values for any relevant placeholders
