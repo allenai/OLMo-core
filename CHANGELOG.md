@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added automatic support for LL128 when running on Augusta.
 - Added information about 32B training logs.
 
+### Changed
+
+- Several state dict methods in `TrainModule` now take an `optim` option, which can disable the use of optimizer state.
+
 ### Fixed
 
 - The official config for the 32B had unrealistic batch size settings.
