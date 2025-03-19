@@ -211,12 +211,9 @@ class MoEBase(nn.Module):
     def compute_losses(
         self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, torch.Tensor]:
-        self.router.maybe_update_score_bias()
-
         out: Dict[str, torch.Tensor] = {}
         for loss_fn in self.losses:
             out.update(loss_fn.compute(total_bz, reset=reset))
-
         return out
 
     def reset_losses(self):
@@ -234,6 +231,12 @@ class MoEBase(nn.Module):
     def reset_metrics(self):
         for metric in self.metrics:
             metric.reset()
+
+    def post_batch(self, dry_run: bool = False):
+        """
+        Should be called right after the final backward of a complete batch but before the optimizer step.
+        """
+        self.router.post_batch(dry_run=dry_run)
 
     @abstractmethod
     def _init_parallel_mlp(
