@@ -18,7 +18,7 @@ from olmo_core.train.train_module import (
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    return TransformerConfig.smallmoe(vocab_size=common.tokenizer.padded_vocab_size())
+    return TransformerConfig.small_hybrid_moe(vocab_size=common.tokenizer.padded_vocab_size())
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
