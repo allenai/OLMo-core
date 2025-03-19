@@ -1,4 +1,5 @@
 import logging
+from typing import cast
 
 import pytest
 import torch
@@ -10,8 +11,20 @@ from olmo_core.distributed.checkpoint import (
     save_model_and_optim_state,
 )
 from olmo_core.distributed.utils import get_full_tensor, get_world_size
-from olmo_core.nn.layer_norm import LayerNorm
-from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.attention import AttentionConfig
+from olmo_core.nn.feed_forward import FeedForwardConfig
+from olmo_core.nn.layer_norm import LayerNorm, LayerNormConfig, LayerNormType
+from olmo_core.nn.lm_head import LMHeadConfig
+from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
+from olmo_core.nn.rope import RoPEConfig
+from olmo_core.nn.transformer import (
+    MoEHybridTransformerBlockBase,
+    MoETransformer,
+    TransformerBlockConfig,
+    TransformerBlockType,
+    TransformerConfig,
+    TransformerType,
+)
 from olmo_core.utils import get_default_device
 
 from ...distributed.utils import BACKENDS, requires_multi_gpu, run_distributed_test
@@ -201,5 +214,90 @@ def test_tensor_parallel_transformer(backend: str, architecture: str, tmp_path):
             checkpoint_dir,
             outputs_path,
             architecture,
+        ),
+    )
+
+
+def run_moe_hybrid_combined_forward(
+    dropless: bool, shared_experts: bool, reordered_norm: bool, tp: bool
+):
+    layer_norm = LayerNormConfig(name=LayerNormType.rms, bias=False)
+    config = TransformerConfig(
+        name=TransformerType.moe,
+        d_model=512,
+        vocab_size=16_000,
+        n_layers=2,
+        block=TransformerBlockConfig(
+            name=TransformerBlockType.moe_hybrid_reordered_norm
+            if reordered_norm
+            else TransformerBlockType.moe_hybrid,
+            attention=AttentionConfig(n_heads=8, rope=RoPEConfig(), qk_norm=layer_norm),
+            layer_norm=layer_norm,
+            feed_forward=FeedForwardConfig(hidden_size=1024, bias=False),
+            feed_forward_moe=MoEConfig(
+                name=MoEType.dropless if dropless else MoEType.default,
+                num_experts=4,
+                hidden_size=256,
+                shared_mlp=FeedForwardConfig(hidden_size=512, bias=False)
+                if shared_experts
+                else None,
+                router=MoERouterConfig(uniform_expert_assignment=True),
+            ),
+        ),
+        lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False),
+    )
+
+    device = get_default_device()
+    model = config.build(init_device=device.type)
+    assert isinstance(model, MoETransformer)
+    mesh = init_device_mesh(
+        device.type,
+        (get_world_size(),),
+        mesh_dim_names=("tp" if tp else "ep",),
+    )
+
+    if tp:
+        model.apply_tp(mesh["tp"])
+    else:
+        model.apply_ep(mesh["ep"])
+
+    input_ids = get_transformer_inputs().to(device)
+    model.init_weights(device=device, max_seq_len=512, max_local_microbatch_size=input_ids.numel())
+
+    for block in model.blocks.values():
+        cast(MoEHybridTransformerBlockBase, block).use_combined_forward = False
+    output1 = model(input_ids)
+
+    for block in model.blocks.values():
+        cast(MoEHybridTransformerBlockBase, block).use_combined_forward = True
+    output2 = model(input_ids)
+
+    torch.testing.assert_close(output1, output2)
+
+
+@requires_multi_gpu
+@pytest.mark.parametrize(
+    "dropless", [pytest.param(True, id="dropless"), pytest.param(False, id="default-router")]
+)
+@pytest.mark.parametrize(
+    "shared_experts", [pytest.param(True, id="shared-experts"), pytest.param(False, id="no-shared")]
+)
+@pytest.mark.parametrize(
+    "reordered_norm",
+    [pytest.param(True, id="reordered-norm"), pytest.param(False, id="default-block")],
+)
+@pytest.mark.parametrize("tp", [pytest.param(True, id="TP"), pytest.param(False, id="EP")])
+def test_moe_hybrid_combined_forward(
+    dropless: bool, shared_experts: bool, reordered_norm: bool, tp: bool
+):
+    run_distributed_test(
+        run_moe_hybrid_combined_forward,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(
+            dropless,
+            shared_experts,
+            reordered_norm,
+            tp,
         ),
     )

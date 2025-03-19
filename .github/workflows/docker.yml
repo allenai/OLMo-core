@@ -23,14 +23,33 @@ on:
       - 'v*.*.*'
 
 jobs:
-  beaker:
-    name: Beaker images
+  docker:
+    name: CUDA ${{ matrix.cuda }} ${{ matrix.target }}
     runs-on: ubuntu-latest-m
     timeout-minutes: 60
     env:
       BEAKER_TOKEN: ${{ secrets.BEAKER_TOKEN }}
+      DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
+      DOCKER_HUB_USER: ${{ secrets.DOCKER_HUB_USER }}
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: ["12.4", "12.6"]
+        target: ["stable", "nightly", "stable-dev", "nightly-dev"]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Authenticate with Beaker
+        uses: allenai/setup-beaker@v2
+        if: env.BEAKER_TOKEN != ''
+        with:
+          token: ${{ env.BEAKER_TOKEN }}
+          workspace: ${{ env.BEAKER_WORKSPACE }}
+
+      - name: Authenticate with Docker Hub
+        if: env.DOCKER_HUB_TOKEN != ''
+        run: |
+          echo ${{ env.DOCKER_HUB_TOKEN }} | docker login -u ${{ env.DOCKER_HUB_USER }} --password-stdin
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -40,44 +59,19 @@ jobs:
       - name: Set env vars
         run: |
           echo "BEAKER_WORKSPACE=$(make get-beaker-workspace)" >> $GITHUB_ENV
-          rm -rf /opt/hostedtoolcache  # clear up some disk space
+          #rm -rf /opt/hostedtoolcache  # clear up some disk space
 
-      - name: Build stable image
+      - name: Build image
         run: |
-          make stable-image
+          make ${{ matrix.target }}-image CUDA_VERSION=${{ matrix.cuda }}
 
-      - name: Build nightly image
-        run: |
-          make nightly-image
-
-      - name: Authenticate with GHCR
+      - name: Push to GHCR
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          make ghcr-image-${{ matrix.target }} CUDA_VERSION=${{ matrix.cuda }}
 
-      - name: Authenticate with Beaker
-        uses: allenai/setup-beaker@v2
-        if: env.BEAKER_TOKEN != ''
-        with:
-          token: ${{ env.BEAKER_TOKEN }}
-          workspace: ${{ env.BEAKER_WORKSPACE }}
-
-      - name: Push stable image to GHCR
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          make ghcr-image-stable
-
-      - name: Push nightly image to GHCR
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          make ghcr-image-nightly
-
-      - name: Push stable image to Beaker
+      - name: Push to Beaker
         if: env.BEAKER_TOKEN != '' && startsWith(github.ref, 'refs/tags/')
         run: |
-          make beaker-image-stable
-
-      - name: Push nightly image to Beaker
-        if: env.BEAKER_TOKEN != '' && startsWith(github.ref, 'refs/tags/')
-        run: |
-          make beaker-image-nightly
+          make beaker-image-${{ matrix.target }} CUDA_VERSION=${{ matrix.cuda }}

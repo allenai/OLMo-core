@@ -1,6 +1,17 @@
 import logging
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+    cast,
+)
 
 import torch
 import torch.nn as nn
@@ -24,10 +35,10 @@ from ..attention import (
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..lm_head import LMHeadConfig, LMOutputWithLoss
+from ..moe import MoEBase
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
 from ..utils import selective_checkpointing_context_fn
 from .block import (
-    MoEParallelTransformerBlockBase,
     MoETransformerBlock,
     NormalizedTransformerBlock,
     TransformerBlock,
@@ -241,7 +252,9 @@ class Transformer(nn.Module):
                     num_blocks=self.n_layers,
                     generator=generator,
                 )
-            else:
+
+            # MoE weights.
+            if hasattr(block, "feed_forward_moe"):
                 block = cast(MoETransformerBlock, block)
                 if max_local_microbatch_size is not None:
                     block.feed_forward_moe.warmup_cache(max_local_microbatch_size)
@@ -443,6 +456,7 @@ class Transformer(nn.Module):
                 device_mesh=tp_mesh,
                 parallelize_plan=RowwiseParallel(
                     input_layouts=Replicate(),
+                    output_layouts=Shard(1),
                     use_local_output=False,
                 ),
             )
@@ -453,7 +467,7 @@ class Transformer(nn.Module):
         #       Examples can be found at https://github.com/pytorch/torchtitan/pull/437
         for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)
-            block.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+            block.apply_tp(tp_mesh, input_layout=Shard(1), float8_enabled=float8_enabled)
 
         if self.lm_head is not None:
             self.lm_head.apply_tp(tp_mesh, input_layouts=(Shard(1), Replicate()))
@@ -507,6 +521,7 @@ class Transformer(nn.Module):
             from fnmatch import fnmatch
 
             assert modules is not None
+            wrapped_modules: Set[str] = set()
             for name, module in self.named_modules():
                 for pattern in modules:
                     if fnmatch(name, pattern):
@@ -514,18 +529,37 @@ class Transformer(nn.Module):
                 else:
                     continue
 
+                if isinstance(module, MoEBase):
+                    raise OLMoConfigurationError(
+                        "Wrapping an entire MoE module for activation checkpointing is not supported. "
+                        "Please try a finer-grained wrapping strategy."
+                    )
+
+                # NOTE: have to be careful not to try to wrap submodules of modules that have been wrapped.
                 parent_name = ".".join(name.split(".")[:-1])
+                if parent_name in wrapped_modules:
+                    continue
+
                 parent = self if not parent_name else self.get_submodule(parent_name)
                 module = ptd_checkpoint_wrapper(module, preserve_rng_state=preserve_rng_state)
                 parent.register_module(name.split(".")[-1], module)
                 log.info(f"Wrapped '{name}' for activation checkpointing")
+                wrapped_modules.add(name)
         else:
             for block_idx, block in enumerate(self.blocks.values()):
                 if mode == TransformerActivationCheckpointingMode.selected_blocks:
                     assert block_interval is not None
                     if block_idx % block_interval == 0:
+                        if isinstance(block, MoETransformerBlock):
+                            raise OLMoConfigurationError(
+                                "Wrapping MoE blocks for activation checkpointing is not supported."
+                            )
                         block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
                 elif mode == TransformerActivationCheckpointingMode.full:
+                    if isinstance(block, MoETransformerBlock):
+                        raise OLMoConfigurationError(
+                            "Wrapping MoE blocks for activation checkpointing is not supported."
+                        )
                     block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
                 elif mode == TransformerActivationCheckpointingMode.selected_ops:
                     block = ptd_checkpoint_wrapper(
@@ -829,20 +863,6 @@ class MoETransformer(Transformer):
         for block in self.blocks.values():
             block = cast(MoETransformerBlock, block)
             block.apply_ep(ep_mesh, **kwargs)
-        #  self._add_secondary_stream_to_blocks()
-
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
-        super().apply_tp(tp_mesh, float8_enabled=float8_enabled)
-        #  self._add_secondary_stream_to_blocks()
-
-    def _add_secondary_stream_to_blocks(self):
-        secondary_cuda_stream: Optional[torch.cuda.Stream] = None
-        for block in self.blocks.values():
-            if isinstance(block, MoEParallelTransformerBlockBase):
-                if torch.cuda.is_available() and secondary_cuda_stream is None:
-                    log.info("Creating secondary CUDA stream for MoE parallel block")
-                    secondary_cuda_stream = torch.cuda.Stream()
-                block.secondary_stream = secondary_cuda_stream  # type: ignore
 
     def prepare_experts_for_fsdp(
         self,

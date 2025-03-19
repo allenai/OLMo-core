@@ -620,7 +620,9 @@ class Trainer:
         # Wait for any bookkeeping tasks to finish.
         self.thread_pool.shutdown(wait=True, cancel_futures=False)
         self._thread_pool = None
+
         barrier()
+        gc_cuda()
 
         gc_cuda()
         log.info("Training complete")
