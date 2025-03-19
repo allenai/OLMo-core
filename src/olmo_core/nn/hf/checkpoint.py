@@ -126,14 +126,14 @@ def save_hf_model(
 
     with init_empty_weights():
         log.info("Initializing HF model with empty weights...")
-        model = AutoModelForCausalLM.from_config(hf_config)
+        hf_model = AutoModelForCausalLM.from_config(hf_config)
 
-    model.load_state_dict(hf_state_dict, assign=True)
+    hf_model.load_state_dict(hf_state_dict, assign=True)
 
     if get_fs_local_rank(process_group) == 0:
         if is_url(dir):
             assert work_dir is not None
-            model.save_pretrained(work_dir)
+            hf_model.save_pretrained(work_dir)
 
             target = f"{dir}"
             upload(work_dir, target, save_overwrite=save_overwrite)
@@ -142,4 +142,4 @@ def save_hf_model(
             if target.is_dir() and not save_overwrite:
                 raise FileExistsError(target)
             target.parent.mkdir(exist_ok=True, parents=True)
-            model.save_pretrained(target)
+            hf_model.save_pretrained(target)
