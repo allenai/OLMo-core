@@ -37,7 +37,7 @@ def ensure_repo(allow_dirty: bool = False) -> Tuple[str, str, str, bool]:
     if branch is not None:
         branch = branch.tracking_branch()
     if branch is not None:
-        remote = branch.remote_name
+        remote = repo.remote(branch.remote_name)
 
     account, repo = parse_git_remote_url(remote.url)
     response = requests.get(f"https://github.com/{account}/{repo}")
