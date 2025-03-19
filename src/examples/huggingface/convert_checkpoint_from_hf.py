@@ -13,7 +13,7 @@ from argparse import ArgumentParser
 from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 from cached_path import cached_path
@@ -49,8 +49,6 @@ def _get_transformer_config(model_arch: str, vocab_size: int) -> TransformerConf
         "olmo2_32b": TransformerConfig.olmo2_32B,
         "smallmoe": TransformerConfig.smallmoe,
         "olmoe_1b_7b": TransformerConfig.olmoe_1B_7B,
-        "olmoe_4x7b": TransformerConfig.olmoe_4X7B,
-        "olmoe_tiny_test": TransformerConfig.olmoe_tiny_test,
         "ngpt_271m": TransformerConfig.ngpt_271M,
         "ngpt_1b": TransformerConfig.ngpt_1B,
         "llama2_271m": TransformerConfig.llama2_271M,
@@ -197,29 +195,35 @@ def convert_checkpoint_from_hf(
 def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
     MAX_DIM_SIZE = 100_000
 
-    olmo_core_state = {}
-    hf_state = {}
+    olmo_core_debug_state: Dict[str, Tuple[int, torch.Tensor]] = {}
+    hf_debug_state: Dict[str, Tuple[int, torch.Tensor]] = {}
 
-    def module_hook(state: Dict, name: str, _: torch.nn.Module, args, output):
+    def module_hook(
+        debug_state: Dict[str, Tuple[int, torch.Tensor]],
+        name: str,
+        _: torch.nn.Module,
+        args,
+        output,
+    ):
         if len(args) >= 1 and isinstance(args[0], torch.Tensor):
             state_name = f"{name}|input"
             input = args[0].detach()
             for i, size in enumerate(input.shape):
                 input = input.narrow(i, 0, min(size, MAX_DIM_SIZE))
-            state[state_name] = (len(state), input.float())
+            debug_state[state_name] = (len(debug_state), input.float())
         if isinstance(output, torch.Tensor):
             state_name = f"{name}|output"
             output = output.detach()
             for i, size in enumerate(output.shape):
                 output = output.narrow(i, 0, min(size, MAX_DIM_SIZE))
-            state[state_name] = (len(state), output.float())
+            debug_state[state_name] = (len(debug_state), output.float())
 
     for name, module in model.named_modules():
-        module.register_forward_hook(partial(module_hook, olmo_core_state, name))
+        module.register_forward_hook(partial(module_hook, olmo_core_debug_state, name))
     for name, module in hf_model.named_modules():
-        module.register_forward_hook(partial(module_hook, hf_state, name))
+        module.register_forward_hook(partial(module_hook, hf_debug_state, name))
 
-    return olmo_core_state, hf_state
+    return olmo_core_debug_state, hf_debug_state
 
 
 def validate_conversion(

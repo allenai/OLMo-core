@@ -285,17 +285,16 @@ class StateConverter:
             for mapping_template in self.mapping_templates
             for placeholder_value_combination in placeholder_value_combinations
         ]
-        state_mappings = [mapping for mapping in state_mappings if mapping is not None]
 
         # Filter for mappings that are relevant to the given state dict
         state_keys = set(state_dict.keys())
-        state_mappings = [
+        relevant_state_mappings = [
             mapping
             for mapping in state_mappings
-            if mapping and all(k in state_keys for k in mapping.source_keys)
+            if mapping is not None and all(k in state_keys for k in mapping.source_keys)
         ]
 
-        return state_mappings
+        return relevant_state_mappings
 
     def get_mappings(
         self, state_dict: Dict[str, Any], placeholder_bounds: Dict[TemplatePlaceholder, int]
