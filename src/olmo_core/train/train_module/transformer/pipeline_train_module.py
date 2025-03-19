@@ -1,8 +1,7 @@
 import contextlib
-import copy
 import logging
 import math
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from functools import cached_property, partial
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union, cast
 
@@ -10,17 +9,14 @@ import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
-from torch.distributed import DeviceMesh
 from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.pipelining import PipelineStage
 from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
-from olmo_core.config import DType
 from olmo_core.data.utils import get_labels
 from olmo_core.distributed.checkpoint import _swap_param_keys
 from olmo_core.distributed.parallel import (
-    PipelineParallelConfig,
     PipelineSchedule,
     build_world_mesh,
     get_device_mesh_info,
@@ -43,173 +39,19 @@ from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
 
-from ..common import TRAIN_CE_LOSS_METRIC, TRAIN_Z_LOSS_METRIC, ReduceType
-from .train_module import EvalBatchSizeUnit, EvalBatchSpec, TrainModule
-from .transformer import (
+from ...common import TRAIN_CE_LOSS_METRIC, TRAIN_Z_LOSS_METRIC, ReduceType
+from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TrainModule
+from .common import parallelize_model
+from .config import (
     TransformerActivationCheckpointingConfig,
     TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerExpertParallelConfig,
+    TransformerPipelineParallelConfig,
     TransformerTensorParallelConfig,
-    TransformerTrainModuleConfig,
-    parallelize_model,
 )
 
 log = logging.getLogger(__name__)
-
-
-@beta_feature
-@dataclass
-class TransformerPipelineParallelConfig(PipelineParallelConfig):
-    """
-    Transformer-specific pipeline parallel config.
-    """
-
-    split_points: Optional[List[int]] = None
-    """
-    A list of unique, increasing block indices that define how to split the model into stages.
-
-    For example, ``split_points = [0, 2]`` with a 4-layer model means the model will be split into
-    3 stages, with the first containing just the embedding, the second containing blocks 0 and 1,
-    and the third containing blocks 2 and 3 and the language modeling head.
-
-    If not specified the split points are determined automatically based on the schedule type.
-    """
-
-    def get_split_points(self, n_layers: int) -> List[int]:
-        if self.split_points is not None:
-            return self.split_points
-
-        # Multi-stage schedules support more than 2 stages per rank, but this is the default if
-        # no pipeline split is specified.
-        num_stages_per_rank = 1 if self.schedule.is_single_stage else 2
-        total_stages = self.degree * num_stages_per_rank
-        num_layers = n_layers
-        if total_stages > num_layers:
-            raise OLMoConfigurationError("Total stages cannot be greater than the number of layers")
-
-        base_interval = num_layers // total_stages
-        extra_layers = num_layers % total_stages
-
-        splits: List[int] = []
-        current_layer = 0
-        for i in range(total_stages - 1):
-            if i == 0:
-                current_layer += base_interval
-            else:
-                # Middle stages get an extra layer if there are any remaining
-                if extra_layers > 0:
-                    current_layer += base_interval + 1
-                    extra_layers -= 1
-                else:
-                    current_layer += base_interval
-            splits.append(current_layer)
-        log.info(f"Auto generated pipeline split points will be {splits}")
-        return splits
-
-    def split_model(
-        self, model: Transformer, *, pp_mesh: DeviceMesh, device: torch.device
-    ) -> Tuple[List[PipelineStage], List[Transformer]]:
-        split_points = self.get_split_points(model.n_layers)
-        pp_rank = pp_mesh.get_local_rank()
-
-        def build_stage(
-            stage_idx: int,
-            start_layer: Optional[int],
-            stop_layer: Optional[int],
-            is_first: bool = False,
-            is_last: bool = False,
-        ) -> Tuple[PipelineStage, Transformer]:
-            model_chunk = copy.deepcopy(model)
-            if not is_first:
-                model_chunk.embeddings = None  # type: ignore
-
-            drop_layers = start_layer is not None
-            for block_idx in range(model.n_layers):
-                # we keep layers in a contiguous region between start (inclusive) and stop (exclusive)
-                if block_idx == start_layer:
-                    drop_layers = False
-                if block_idx == stop_layer:
-                    drop_layers = True
-                if drop_layers:
-                    del model_chunk.blocks[str(block_idx)]
-
-            if not is_last:
-                model_chunk.lm_head = None  # type: ignore
-
-            stage = PipelineStage(
-                model_chunk,
-                stage_idx,
-                num_stages,
-                device,
-                group=pp_mesh.get_group("pp"),
-            )
-            return stage, model_chunk
-
-        num_stages = len(split_points) + 1
-        stage_idx = pp_rank
-
-        stages = []
-        models = []
-        for stage_idx in self.stage_ids_this_rank(pp_rank, num_stages):
-            start_layer = split_points[stage_idx - 1] if stage_idx > 0 else None
-            stop_layer = split_points[stage_idx] if stage_idx < num_stages - 1 else None
-            stage, model_chunk = build_stage(
-                stage_idx,
-                start_layer,
-                stop_layer,
-                is_first=stage_idx == 0,
-                is_last=stage_idx == num_stages - 1,
-            )
-            log.info(
-                f"PP rank {pp_rank} is building stage {stage_idx} with start layer "
-                f"{start_layer}, stop layer {stop_layer}: {model_chunk}"
-            )
-            stages.append(stage)
-            models.append(model_chunk)
-
-        return stages, models
-
-
-@beta_feature
-@dataclass
-class TransformerPipelineTrainModuleConfig(TransformerTrainModuleConfig):
-    """
-    A configuration class for building :class:`TransformerPipelineTrainModule` instances.
-
-    .. seealso::
-        See the :class:`TransformerPipelineTrainModule` documentation for a description of the fields.
-    """
-
-    pp_config: Optional[TransformerPipelineParallelConfig] = None
-
-    def __post_init__(self):
-        if self.pp_config is None:
-            raise OLMoConfigurationError("'pp_config' is required")
-
-    def build(
-        self,
-        model: Transformer,
-        device: Optional[torch.device] = None,
-    ) -> "TransformerPipelineTrainModule":
-        """
-        Build the corresponding :class:`TransformerPipelineTrainModule`.
-
-        :param model: The :class:`~olmo_core.nn.transformer.Transformer` model to train.
-        :param device: The device to train on.
-        """
-        kwargs = self.as_dict(exclude_none=True, recurse=False)
-        if (autocast_precision := kwargs.pop("autocast_precision", None)) is not None:
-            kwargs["autocast_precision"] = cast(DType, autocast_precision).as_pt()
-        if (state_dict_save_opts := kwargs.pop("state_dict_save_opts", None)) is not None:
-            kwargs["state_dict_save_opts"] = dist_cp_sd.StateDictOptions(**state_dict_save_opts)
-        if (state_dict_load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
-            kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
-        return TransformerPipelineTrainModule(
-            model=model,
-            device=device,
-            **kwargs,
-        )
 
 
 @beta_feature
@@ -238,17 +80,6 @@ class TransformerPipelineTrainModule(TrainModule):
     :param cp_config: Context parallel configuration for the model.
     :param pp_config: Pipeline parallel configuration for the model.
     :param ac_config: Activation checkpointing configuration for the model.
-    :param compile_loss: Compile the loss function. This can provide a small speedup while also
-        reducing GPU memory usage, especially when using Z-loss.
-
-        .. important::
-            This is incompatible with ``fused_loss=True``.
-    :param fused_loss: Use the fused cross-entropy loss function (:func:`~olmo_core.nn.functional.fused_cross_entropy_loss`)
-        instead the PyTorch built-in. This can help reduce GPU memory usage when ``compile_loss=False``.
-        Relative performance will depend on the input sizes.
-
-        .. important::
-            This is incompatible with ``compile_loss=True``.
     :param z_loss_multiplier: Use Z-loss with this multiplier.
     :param autocast_precision: Enable AMP with this data type.
     :param max_grad_norm: Clip gradient norms to this value.
