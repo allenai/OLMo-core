@@ -211,9 +211,12 @@ class MoEBase(nn.Module):
     def compute_losses(
         self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, torch.Tensor]:
+        self.router.maybe_update_score_bias()
+
         out: Dict[str, torch.Tensor] = {}
         for loss_fn in self.losses:
             out.update(loss_fn.compute(total_bz, reset=reset))
+
         return out
 
     def reset_losses(self):
@@ -282,6 +285,9 @@ class MoEBase(nn.Module):
             )
 
         return out
+
+    def apply_pp(self, pp_mesh: DeviceMesh):
+        self.router.pp_group = pp_mesh.get_group()
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         """

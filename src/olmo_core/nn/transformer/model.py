@@ -443,6 +443,14 @@ class Transformer(nn.Module):
         else:
             return h
 
+    def apply_pp(self, pp_mesh: DeviceMesh):
+        """
+        Prepare the model for pipeline parallelism after it's been split into stages.
+        """
+        for block in self.blocks.values():
+            block = cast(TransformerBlockBase, block)
+            block.apply_pp(pp_mesh)
+
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         """
         Apply tensor parallelism to the model.

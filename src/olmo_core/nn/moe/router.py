@@ -1,8 +1,9 @@
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple, cast
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
@@ -10,8 +11,10 @@ from torch.distributed.tensor import Replicate, Shard, distribute_tensor
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
 from olmo_core.config import Config, DType, StrEnum
-from olmo_core.distributed.utils import get_local_tensor
+from olmo_core.distributed.utils import get_local_tensor, is_distributed
 from olmo_core.exceptions import OLMoConfigurationError
+
+from ..buffer_cache import BufferCache
 
 __all__ = ["MoERouter", "MoELinearRouter", "MoERouterConfig", "MoERouterType"]
 
@@ -59,6 +62,7 @@ class MoERouterConfig(Config):
     jitter_eps: Optional[float] = None
     normalize_expert_weights: Optional[float] = None
     uniform_expert_assignment: bool = False
+    bias_gamma: Optional[float] = None
     dtype: Optional[DType] = None
 
     def num_params(self, d_model: int, num_experts: int) -> int:
@@ -124,6 +128,8 @@ class MoERouter(nn.Module):
     :param normalize_expert_weights: The type of norm (e.g. ``2.0`` for L2 norm) to use to normalize
         the expert weights.
     :param uniform_expert_assignment: Force uniform assignment. Useful for benchmarking.
+    :param bias_gamma: If set to a positive float, experts scores for top-k routing will be adjusted
+        by a bias following the "auxiliary-loss-free load balancing" strategy from DeepSeek-v3.
     """
 
     def __init__(
@@ -135,6 +141,8 @@ class MoERouter(nn.Module):
         jitter_eps: Optional[float] = None,
         normalize_expert_weights: Optional[float] = None,
         uniform_expert_assignment: bool = False,
+        bias_gamma: Optional[float] = None,
+        init_device: str = "cpu",
     ):
         super().__init__()
         self.d_model = d_model
@@ -143,6 +151,51 @@ class MoERouter(nn.Module):
         self.jitter_eps = jitter_eps
         self.normalize_expert_weights = normalize_expert_weights
         self.uniform_expert_assignment = uniform_expert_assignment
+        self.bias_gamma = bias_gamma
+        self._cache: Optional[BufferCache] = None
+        self.pp_group: Optional[dist.ProcessGroup] = None
+        if self.bias_gamma is not None:
+            assert self.bias_gamma > 0
+            self.register_buffer("score_bias", torch.zeros(self.num_experts, device=init_device))
+            # NOTE: use buffer cache to accumulate 'batch_size_per_expert' and "hide" it from FSDP
+            # so that FSDP doesn't try to distribute it. We also don't take the 'BufferCache' as an
+            # argument to ensure it's not a shared cache.
+            self._cache = BufferCache()
+            self._cache["batch_size_per_expert"] = torch.zeros(self.num_experts)
+        else:
+            self.register_buffer("score_bias", None)
+
+    def reset_parameters(self):
+        if self.bias_gamma is not None:
+            assert self.score_bias is not None
+            assert self._cache is not None
+            score_bias = cast(torch.Tensor, self.score_bias)
+            score_bias.zero_()
+            self._cache["batch_size_per_expert"] = torch.zeros(
+                self.num_experts, device=score_bias.device
+            )
+
+    @torch.no_grad()
+    def maybe_update_score_bias(self):
+        if self.bias_gamma is None or not self.training:
+            return
+
+        assert self.score_bias is not None
+        assert self._cache is not None
+
+        batch_size_per_expert = self._cache["batch_size_per_expert"]
+
+        # Maybe reduce across the process group.
+        if is_distributed():
+            dist.all_reduce(batch_size_per_expert, group=self.pp_group)
+
+        ideal_batch_size_per_expert = batch_size_per_expert.sum() / self.num_experts
+        self.score_bias += (
+            self.bias_gamma * (ideal_batch_size_per_expert - batch_size_per_expert).sign()
+        )
+
+        # Reset the accumulator.
+        batch_size_per_expert.zero_()
 
     def jitter(self, x: torch.Tensor) -> torch.Tensor:
         if self.jitter_eps is None or not self.training:
@@ -154,9 +207,18 @@ class MoERouter(nn.Module):
             return x * (low + noise * (high - low))
 
     def get_top_k(self, scores: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        if self.top_k == 1:
-            return scores.max(dim=-1, keepdim=True)
-        return torch.topk(scores, self.top_k, dim=-1)
+        if self.bias_gamma is None:
+            if self.top_k == 1:
+                return scores.max(dim=-1, keepdim=True)
+            return torch.topk(scores, self.top_k, dim=-1)
+        else:
+            assert self.score_bias is not None
+            with torch.no_grad():
+                _, expert_indices = torch.topk(
+                    scores + self.score_bias.unsqueeze(0), self.top_k, dim=-1  # type: ignore
+                )
+            expert_weights = scores.gather(-1, expert_indices)
+            return expert_weights, expert_indices
 
     @abstractmethod
     def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
@@ -171,8 +233,7 @@ class MoERouter(nn.Module):
         self, x: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Given the input ``x`` of shape ``(*, d_model)``, compute the
-        experts assignment.
+        Given the input ``x`` of shape ``(*, d_model)``, compute the experts assignment.
 
         :returns: The unnormalized scores (logits) of shape ``(N, num_experts)``,
             the normalized scores of shape ``(N, num_experts)``,
@@ -193,14 +254,17 @@ class MoERouter(nn.Module):
         expert_weights, expert_indices = self.get_top_k(scores)
 
         with torch.no_grad():
-            # Histogram the expert ids to identify the number of
-            # items/tokens routed to each expert.
-            # shape: (num_experts,), LongTensor
+            # Histogram the expert ids to identify the number of items/tokens routed to each expert.
+            # shape: (num_experts,)
             # NOTE: if we wanted to keep the batch dimension here like for sequence-level load balancing
             # loss, we could use `opts.batched_histc`.
             batch_size_per_expert = torch.histc(
                 expert_indices, bins=self.num_experts, min=0, max=self.num_experts - 1
             )
+
+            if self.training and self.bias_gamma is not None:
+                assert self._cache is not None
+                self._cache["batch_size_per_expert"] += batch_size_per_expert
 
         if self.normalize_expert_weights is not None:
             expert_weights = expert_weights.div(
@@ -234,7 +298,7 @@ class MoELinearRouter(MoERouter):
         init_device: str = "cpu",
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(init_device=init_device, **kwargs)
         # NOTE: this parameter needs to have a large enough first dimension (which would be num experts)
         # in order to be sharded over big world sizes with FSDP. So we flatten it to a single dimension tensor.
         # And for that reason we don't support a 'bias' option.

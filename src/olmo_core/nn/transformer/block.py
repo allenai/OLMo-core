@@ -40,6 +40,9 @@ class TransformerBlockBase(nn.Module):
         """
         raise NotImplementedError
 
+    def apply_pp(self, pp_mesh: DeviceMesh):
+        del pp_mesh
+
     @abstractmethod
     def apply_tp(
         self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
@@ -371,6 +374,9 @@ class MoETransformerBlock(TransformerBlockBase):
         """
         h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
         return h + self.dropout(self.feed_forward_moe(self.feed_forward_norm(h)))
+
+    def apply_pp(self, pp_mesh: DeviceMesh):
+        self.feed_forward_moe.apply_pp(pp_mesh)
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         self.feed_forward_moe.apply_ep(ep_mesh, **kwargs)
