@@ -316,6 +316,7 @@ class MoELinearRouter(MoERouter):
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
+        super().reset_parameters()
         nn.init.trunc_normal_(self.weight, std=0.02, a=-3 * 0.02, b=3 * 0.02)
 
     def extra_repr(self):
