@@ -139,10 +139,11 @@ class ParallelMLPBase(nn.Module):
 
         :returns: The output with the same shape as ``x``.
         """
-        x, expert_weights, expert_indices = (
+        x, expert_weights, expert_indices, batch_size_per_expert = (
             get_local_tensor(x),
             get_local_tensor(expert_weights),
             get_local_tensor(expert_indices),
+            get_local_tensor(batch_size_per_expert),
         )
 
         in_shape = x.size()
