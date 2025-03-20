@@ -75,7 +75,7 @@ RUN pip install --upgrade --no-cache-dir pip wheel packaging
 
 # Install torchao.
 ARG TORCH_CUDA_VERSION
-ARG TORCHAO_VERSION="0.8.0"
+ARG TORCHAO_VERSION="0.9.0"
 RUN pip install --no-cache-dir \
     --extra-index-url https://download.pytorch.org/whl/cu${TORCH_CUDA_VERSION} \
     torchao==${TORCHAO_VERSION}

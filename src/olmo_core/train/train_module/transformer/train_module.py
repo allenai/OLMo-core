@@ -30,7 +30,7 @@ from olmo_core.distributed.utils import (
     is_distributed,
 )
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.float8 import Float8Config, Float8Handler
+from olmo_core.float8 import Float8Config
 from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.transformer import Transformer
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
@@ -138,11 +138,6 @@ class TransformerTrainModule(TrainModule):
                 "Training parallelism configs are only valid for distributed training"
             )
 
-        self.float8_handler: Optional[Float8Handler] = None
-        if float8_config is not None:
-            float8_config.compile = compile_model
-            self.float8_handler = float8_config.build()
-
         # Parallelize model.
         self.model = parallelize_model(
             model,
@@ -151,7 +146,7 @@ class TransformerTrainModule(TrainModule):
             max_sequence_length=max_sequence_length,
             rank_microbatch_size=rank_microbatch_size,
             compile_model=compile_model,
-            float8_handler=self.float8_handler,
+            float8_config=float8_config,
             dp_config=dp_config,
             tp_config=tp_config,
             cp_config=cp_config,
@@ -461,10 +456,6 @@ class TransformerTrainModule(TrainModule):
             if isinstance(self.optim, SkipStepOptimizer):
                 self.optim.latest_grad_norm = grad_norm
 
-        # Sync Float8 AMAXs (argmax of abs(max)) and scales.
-        if self.float8_handler is not None:
-            self.float8_handler.sync_float8_amax_and_scale_history(self.model)
-
         # Maybe adjust learning rate.
         if self.scheduler is not None:
             for group_idx, group in enumerate(self.optim.param_groups):
@@ -507,11 +498,6 @@ class TransformerTrainModule(TrainModule):
             self.record_metric("step skipped", self.optim.step_skipped, namespace="optim")
 
         self.model.post_optim_step()
-
-        # Calculate Float8 dynamic AMAX/scale for all parameters.
-        # For FSDP2 this issues a single all-reduce for all parameters at once.
-        if self.float8_handler is not None:
-            self.float8_handler.precompute_float8_dynamic_scale_for_fsdp(self.model)
 
     def zero_grads(self):
         self.optim.zero_grad(set_to_none=True)
