@@ -134,6 +134,7 @@ class MoERouter(nn.Module):
     :param uniform_expert_assignment: Force uniform assignment. Useful for benchmarking.
     :param bias_gamma: If set to a positive float, experts scores for top-k routing will be adjusted
         by a bias following the "auxiliary-loss-free load balancing" strategy from DeepSeek-v3.
+        A reasonable value is on the order of 0.0001.
     """
 
     def __init__(
@@ -178,6 +179,21 @@ class MoERouter(nn.Module):
             self._cache["batch_size_per_expert"] = torch.zeros(
                 self.num_experts, device=score_bias.device
             )
+
+    def _accumulate_batch_size_per_expert(self, batch_size_per_expert: torch.Tensor):
+        if self.bias_gamma is None or not self.training:
+            return
+
+        assert self._cache is not None
+
+        if "batch_size_per_expert" not in self._cache:
+            self._cache["batch_size_per_expert"] = torch.zeros_like(batch_size_per_expert)
+        elif self._cache["batch_size_per_expert"].device != batch_size_per_expert.device:
+            self._cache["batch_size_per_expert"] = self._cache["batch_size_per_expert"].to(
+                batch_size_per_expert.device
+            )
+
+        self._cache["batch_size_per_expert"] += batch_size_per_expert
 
     @torch.no_grad()
     def post_batch(self, dry_run: bool = False):
@@ -266,15 +282,8 @@ class MoERouter(nn.Module):
             # shape: (num_experts,)
             # NOTE: if we wanted to keep the batch dimension here like for sequence-level load balancing
             # loss, we could use `opts.batched_histc`.
-            batch_size_per_expert = torch.histc(
-                expert_indices, bins=self.num_experts, min=0, max=self.num_experts - 1
-            )
-
-            if self.training and self.bias_gamma is not None:
-                assert self._cache is not None
-                # NOTE: as long as '.reset_parameters()' was called, this will be initialized
-                # and on the right device.
-                self._cache["batch_size_per_expert"] += batch_size_per_expert
+            batch_size_per_expert = histc(expert_indices, num_experts=self.num_experts)
+            self._accumulate_batch_size_per_expert(batch_size_per_expert)
 
         if self.normalize_expert_weights is not None:
             expert_weights = expert_weights.div(
@@ -342,3 +351,11 @@ class MoELinearRouter(MoERouter):
         self.register_parameter(
             "weight", nn.Parameter(distribute_tensor(self.weight, tp_mesh, [Replicate()]))
         )
+
+
+def histc(indices: torch.Tensor, *, num_experts: int) -> torch.Tensor:
+    # NOTE: 'torch.histc' not implemented for integers on CPU, so convert to float then back to ints on CPU.
+    if indices.device.type == "cpu":
+        return torch.histc(indices.float(), bins=num_experts, min=0, max=num_experts - 1).int()
+    else:
+        return torch.histc(indices, bins=num_experts, min=0, max=num_experts - 1)
