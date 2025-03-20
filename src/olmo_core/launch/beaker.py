@@ -386,7 +386,7 @@ class BeakerLaunchConfig(Config):
             "mkdir -p /olmo-core-runtime",
             "cd /olmo-core-runtime",
         ]
-        if any(["titan" in cluster for cluster in self.clusters]):
+        if any(["titan" in cluster for cluster in self.clusters]) or True:  # force this version of torch
             entrypoint_script.append("pip install torch==2.7.0 --index-url https://download.pytorch.org/whl/test/cu128")
         entrypoint_script.extend(self.setup_steps)
 
