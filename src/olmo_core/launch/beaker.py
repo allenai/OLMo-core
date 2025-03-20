@@ -387,7 +387,7 @@ class BeakerLaunchConfig(Config):
             "cd /olmo-core-runtime",
         ]
         if any(["titan" in cluster for cluster in self.clusters]):
-            entrypoint_script.append("pip install https://download.pytorch.org/whl/nightly/cu128/torch-2.8.0.dev20250319%2Bcu128-cp311-cp311-manylinux_2_28_x86_64.whl")
+            entrypoint_script.append("pip install torch==2.7.0 --index-url https://download.pytorch.org/whl/test/cu128")
         entrypoint_script.extend(self.setup_steps)
 
         if torchrun:
