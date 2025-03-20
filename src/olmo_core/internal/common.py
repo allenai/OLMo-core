@@ -114,6 +114,7 @@ def build_launch_config(
             "pip install --upgrade beaker-py",
             # Quickly try a new version of PyTorch like this
             #  "pip install --upgrade --pre torch==2.6.0.dev20241112+cu121 --index-url https://download.pytorch.org/whl/nightly/cu121",
+            "pip install torchao==0.9.0  --index-url https://download.pytorch.org/whl/nightly/cu126",
             "pip freeze",
             # Move AWS credentials from env to relevant files
             "mkdir -p ~/.aws",
