@@ -277,14 +277,6 @@ class MoERouter(nn.Module):
         # shape: (batch_size * seq_len, top_k)
         expert_weights, expert_indices = self.get_top_k(scores)
 
-        with torch.no_grad():
-            # Histogram the expert ids to identify the number of items/tokens routed to each expert.
-            # shape: (num_experts,)
-            # NOTE: if we wanted to keep the batch dimension here like for sequence-level load balancing
-            # loss, we could use `opts.batched_histc`.
-            batch_size_per_expert = histc(expert_indices, num_experts=self.num_experts)
-            self._accumulate_batch_size_per_expert(batch_size_per_expert)
-
         if self.normalize_expert_weights is not None:
             expert_weights = expert_weights.div(
                 torch.norm(
@@ -297,6 +289,14 @@ class MoERouter(nn.Module):
 
         if self.uniform_expert_assignment:
             expert_indices = _uniform_expert_assignment(expert_indices, self.num_experts)
+
+        with torch.no_grad():
+            # Histogram the expert ids to identify the number of items/tokens routed to each expert.
+            # shape: (num_experts,)
+            # NOTE: if we wanted to keep the batch dimension here like for sequence-level load balancing
+            # loss, we could use `opts.batched_histc`.
+            batch_size_per_expert = histc(expert_indices, num_experts=self.num_experts)
+            self._accumulate_batch_size_per_expert(batch_size_per_expert)
 
         return logits, scores, expert_weights, expert_indices, batch_size_per_expert
 
