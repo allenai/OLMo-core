@@ -443,6 +443,14 @@ class Transformer(nn.Module):
         else:
             return h
 
+    def apply_pp(self, pp_mesh: DeviceMesh):
+        """
+        Prepare the model for pipeline parallelism after it's been split into stages.
+        """
+        for block in self.blocks.values():
+            block = cast(TransformerBlockBase, block)
+            block.apply_pp(pp_mesh)
+
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         """
         Apply tensor parallelism to the model.
@@ -717,6 +725,18 @@ class Transformer(nn.Module):
 
         return flop_per_token
 
+    def post_batch(self, dry_run: bool = False):
+        """
+        Should be called right after the final backward of a complete batch but before the optimizer step.
+        """
+        del dry_run
+
+    def post_optim_step(self):
+        """
+        Should be called right after an optimizer step.
+        """
+        pass
+
 
 @beta_feature
 class NormalizedTransformer(Transformer):
@@ -800,6 +820,9 @@ class NormalizedTransformer(Transformer):
     def apply_compile(self):
         super().apply_compile()
         self.normalize_matrices = torch.compile(self.normalize_matrices)
+
+    def post_optim_step(self):
+        self.normalize_matrices()
 
 
 @beta_feature
@@ -885,6 +908,11 @@ class MoETransformer(Transformer):
             cast(MoETransformerBlock, block).feed_forward_moe.prepare_experts_for_ddp(
                 world_mesh=world_mesh,
             )
+
+    def post_batch(self, dry_run: bool = False):
+        for block in self.blocks.values():
+            block = cast(MoETransformerBlock, block)
+            block.feed_forward_moe.post_batch(dry_run=dry_run)
 
 
 def _hide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
