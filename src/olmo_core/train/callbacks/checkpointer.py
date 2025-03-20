@@ -153,6 +153,7 @@ class CheckpointerCallback(Callback):
 
     def _remove_checkpoint(self, path: str):
         log.info(f"Removing old checkpoint at '{path}'...")
+
         if is_url(path):
             if get_rank() == 0:
                 self.trainer.thread_pool.submit(clear_directory, path)
