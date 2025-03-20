@@ -61,7 +61,7 @@ class DirkishModelLadder(ModelLadder):
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
-            fused=True,
+            fused=True
         )
 
     def get_train_module_config(
@@ -75,6 +75,7 @@ class DirkishModelLadder(ModelLadder):
             name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         )
         config.scheduler = CosWithWarmupAndLinearDecay(warmup_steps=round(self.model_size / self.get_global_batch_size()))
+        config.z_loss_multiplier = 1e-05
 
         return config
 
