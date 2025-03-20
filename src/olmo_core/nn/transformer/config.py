@@ -10,7 +10,7 @@ from olmo_core.utils import ensure_multiple_of
 
 from ..attention import AttentionConfig, AttentionType
 from ..buffer_cache import BufferCache
-from ..feed_forward import FeedForwardConfig, FeedForwardType
+from ..feed_forward import FeedForwardConfig, FeedForwardType, StarCoder2FeedForward
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
@@ -293,6 +293,7 @@ class TransformerConfig(Config):
                     log.info(f"Param '{name}' will be trainable")
 
         log.info("%s", model)
+
         log.info(
             f"Built model with:\n"
             f"- {model.num_params:,d} total params\n"
@@ -942,5 +943,26 @@ class TransformerConfig(Config):
             lm_head=LMHeadConfig(name=LMHeadType.normalized, dtype=dtype),
             dtype=dtype,
             init_method=InitMethod.normalized,
+            **kwargs,
+        )
+
+    @classmethod
+    def starcoder2_3b(
+        cls,
+        vocab_size: int,
+        **kwargs,
+    ) -> "TransformerConfig":
+        ff_config = FeedForwardConfig(
+            hidden_size=3072 * 4, bias=False, dtype=DType.float32, name=FeedForwardType.starcoder
+        )
+        return cls.llama_like(
+            d_model=3072,
+            hidden_size_multiplier=1.5,
+            vocab_size=vocab_size,
+            n_layers=30,
+            n_kv_heads=2,
+            n_heads=24,
+            rope_theta=int(1e5),
+            feed_forward=ff_config,
             **kwargs,
         )

@@ -752,8 +752,10 @@ class Trainer:
 
         :returns: The path/URL to the checkpoint.
         """
+
         dirname = self.checkpointer.checkpoint_dirname(self.global_step)
         path = join_path(self.save_folder, dirname)
+
         log.info(f"Saving checkpoint for step {self.global_step} to '{path}'...")
         self.checkpointer.save(path, self.train_module, cast(Dict[str, Any], self.state_dict()))
         for callback in self._iter_callbacks():
