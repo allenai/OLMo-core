@@ -1,4 +1,4 @@
-from transformers import Olmo2Config, PretrainedConfig
+from transformers import OlmoConfig, PretrainedConfig
 
 from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.attention import Attention
@@ -39,7 +39,7 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
             f"Attention does not use rope, unable to build HF config for {model.__class__.__name__}"
         )
 
-    return Olmo2Config(
+    return OlmoConfig(
         vocab_size=model.vocab_size,
         hidden_size=model.d_model,
         intermediate_size=block.feed_forward.hidden_size,
