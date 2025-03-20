@@ -19,7 +19,12 @@ from olmo_core.exceptions import OLMoConfigurationError
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..layer_norm import LayerNorm, LayerNormConfig
-from ..rope import ComplexRotaryEmbedding, FusedRotaryEmbedding, RoPEConfig, RotaryEmbedding
+from ..rope import (
+    ComplexRotaryEmbedding,
+    FusedRotaryEmbedding,
+    RoPEConfig,
+    RotaryEmbedding,
+)
 from ..utils import get_tp_wrappers
 from .flash_attn_api import (
     dispatch_flash_attn,
