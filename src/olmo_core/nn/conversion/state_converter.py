@@ -1,4 +1,5 @@
 import itertools
+from dataclasses import dataclass
 from typing import Any, Dict, List
 
 import torch
@@ -10,13 +11,13 @@ from olmo_core.nn.conversion.state_mapping import (
 )
 
 
+@dataclass
 class StateConverter:
     """
     A class for converting state from one format to another format (e.g. OLMo Core to HF).
     """
 
-    def __init__(self, mapping_templates: List[StateMappingTemplate]) -> None:
-        self.mapping_templates = mapping_templates
+    mapping_templates: List[StateMappingTemplate]
 
     def _fill_placeholders(
         self,
