@@ -12,10 +12,10 @@ class TemplatePlaceholder(StrEnum):
 @dataclass
 class StateMappingTemplate:
     """
-    The template for a mapping from state from one format to another format (e.g. OLMo Core to HF).
+    The template for a mapping state from one format to another format (e.g. OLMo Core to HF).
     These mappings are 'templates' since they support keys and other metadata having placeholders
     for information like the layer number or number of MoE experts. This class can be converted
-    to a `StateMapping` by providing the placeholder information information.
+    to a `StateMapping` by providing the placeholder information.
 
     The most standard mapping is a one-to-one state mapping, which corresponds to a single
     string entry for both `source_template_keys` and `dest_template_keys`. The class also supports
@@ -34,7 +34,7 @@ class StateMappingTemplate:
 
     source_key_per_placeholder: TemplatePlaceholder | None = None
     """
-    A placeholder in `source_template_keys` for which this mapping should map all valid placeholder
+    A placeholder in ``source_template_keys`` for which this mapping should map all valid placeholder
     values, rather than 1 specific value. For example, this enables mapping states from all experts
     (using `TemplatePlaceholder.EXPERT`) to a single state.
 

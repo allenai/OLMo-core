@@ -94,7 +94,8 @@ def load_hf_model(
         hf_model.config, hf_model.state_dict(), model_id=model_id
     )
 
-    for key, state in converted_state_dict.items():
+    for key in sorted(converted_state_dict.keys()):
+        state = converted_state_dict[key]
         olmo_core_state = model_state_dict[key]
         if isinstance(olmo_core_state, DTensor):
             olmo_core_state = distribute_tensor(
