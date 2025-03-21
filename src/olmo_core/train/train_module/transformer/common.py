@@ -53,6 +53,8 @@ def parallelize_model(
     if pp_enabled:
         assert world_mesh is not None
         pp_mesh = get_pp_mesh(world_mesh)
+        for m in model_parts:
+            m.apply_pp(pp_mesh)
 
     # Maybe convert linear layers to FP8 linear.
     float8_enabled = False

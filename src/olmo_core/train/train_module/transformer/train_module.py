@@ -2,7 +2,7 @@ import contextlib
 import logging
 from dataclasses import replace
 from functools import cached_property
-from typing import Any, Dict, Generator, Optional, Tuple, Union, cast
+from typing import Any, Dict, Generator, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -32,7 +32,7 @@ from olmo_core.distributed.utils import (
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
 from olmo_core.nn.lm_head import LMOutputWithLoss
-from olmo_core.nn.transformer import NormalizedTransformer, Transformer
+from olmo_core.nn.transformer import Transformer
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
@@ -374,6 +374,8 @@ class TransformerTrainModule(TrainModule):
 
         del batch  # In case this helps with memory utilization.
 
+        self.model.post_batch(dry_run=dry_run)
+
         if dry_run:
             self.model.reset_auxiliary_losses()
             self.model.reset_auxiliary_metrics()
@@ -504,12 +506,7 @@ class TransformerTrainModule(TrainModule):
         if isinstance(self.optim, SkipStepOptimizer):
             self.record_metric("step skipped", self.optim.step_skipped, namespace="optim")
 
-        # Maybe re-normalize matrices for nGPT-type models.
-        # NOTE: sometimes 'isinstance' checks fail when the model is wrapped in some way.
-        if isinstance(self.model, NormalizedTransformer) or hasattr(
-            self.model, "normalize_matrices"
-        ):
-            cast(NormalizedTransformer, self.model).normalize_matrices()
+        self.model.post_optim_step()
 
         # Calculate Float8 dynamic AMAX/scale for all parameters.
         # For FSDP2 this issues a single all-reduce for all parameters at once.

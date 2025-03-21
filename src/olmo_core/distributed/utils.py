@@ -11,7 +11,7 @@ from typing import Callable, List, Optional, TypeVar, Union, cast
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import DTensor
+from torch.distributed.tensor import DTensor, distribute_tensor
 
 from ..exceptions import OLMoEnvironmentError
 from ..utils import logging_configured, move_to_device, set_env_var
@@ -436,6 +436,19 @@ def get_full_tensor(x: torch.Tensor) -> torch.Tensor:
         return x.full_tensor()
     else:
         return x
+
+
+def distribute_like(source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    if not isinstance(source, DTensor):
+        return get_full_tensor(target)
+
+    if isinstance(target, DTensor):
+        if target.device_mesh == source.device_mesh and target.placements == source.placements:
+            return target
+        else:
+            return target.redistribute(device_mesh=source.device_mesh, placements=source.placements)
+
+    return distribute_tensor(target, device_mesh=source.device_mesh, placements=source.placements)
 
 
 def do_n_at_a_time(

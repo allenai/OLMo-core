@@ -34,7 +34,7 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config, Float8Handler
 from olmo_core.nn.lm_head import LMOutputWithLoss
-from olmo_core.nn.transformer import NormalizedTransformer, Transformer
+from olmo_core.nn.transformer import Transformer
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
@@ -367,6 +367,9 @@ class TransformerPipelineTrainModule(TrainModule):
             **model_kwargs,
         )
 
+        for model in self.model_parts:
+            model.post_batch(dry_run=dry_run)
+
         if dry_run:
             for model in self.model_parts:
                 model.reset_auxiliary_losses()
@@ -504,11 +507,8 @@ class TransformerPipelineTrainModule(TrainModule):
             if isinstance(optim, SkipStepOptimizer):
                 self.record_metric("step skipped", optim.step_skipped, namespace="optim")
 
-        # Maybe re-normalize matrices for nGPT-type models.
-        # NOTE: sometimes 'isinstance' checks fail when the model is wrapped in some way.
         for model in self.model_parts:
-            if isinstance(model, NormalizedTransformer) or hasattr(model, "normalize_matrices"):
-                cast(NormalizedTransformer, model).normalize_matrices()
+            model.post_optim_step()
 
         # Calculate Float8 dynamic AMAX/scale for all parameters.
         # For FSDP2 this issues a single all-reduce for all parameters at once.
