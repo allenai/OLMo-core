@@ -14,7 +14,7 @@ from olmo_core.distributed.parallel import (
     get_tp_mesh,
 )
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.float8 import Float8Handler
+from olmo_core.float8 import Float8Config
 from olmo_core.nn.transformer import MoETransformer, Transformer
 
 from .config import (
@@ -39,7 +39,7 @@ def parallelize_model(
     max_sequence_length: int,
     rank_microbatch_size: int,
     compile_model: bool = False,
-    float8_handler: Optional[Float8Handler] = None,
+    float8_config: Optional[Float8Config] = None,
     dp_config: Optional[TransformerDataParallelConfig] = None,
     tp_config: Optional[TransformerTensorParallelConfig] = None,
     cp_config: Optional[TransformerContextParallelConfig] = None,
@@ -56,15 +56,10 @@ def parallelize_model(
         for m in model_parts:
             m.apply_pp(pp_mesh)
 
-    # Maybe convert linear layers to FP8 linear.
-    float8_enabled = False
-    if float8_handler is not None and float8_handler.enabled:
-        float8_enabled = True
+    # Maybe apply FP8 training.
+    if float8_config is not None and float8_config.enabled:
         for m in model_parts:
-            modules_to_ignore = set()
-            if m.lm_head is not None:
-                modules_to_ignore.add("lm_head.w_out")
-            float8_handler.convert_to_float8_training(m, modules_to_ignore=modules_to_ignore)
+            m.apply_fp8(float8_config)
             log.info("Swapped linear layers to Float8 linear layers\n%s", m)
 
     # Maybe apply context parallelism.
@@ -75,20 +70,18 @@ def parallelize_model(
             m.apply_cp(cp_mesh, load_balancer=cp_config.load_balancer)
         log.info(f"Applied context parallelism to the model with {get_device_mesh_info(cp_mesh)}")
 
-    # Maybe apply tensor/expert parallelism.
-    if tp_config is not None and ep_config is not None:
-        raise NotImplementedError("TP + EP is not implemented yet")
+    # Maybe apply tensor.
     if tp_config is not None:
+        if ep_config is not None:
+            raise NotImplementedError("TP + EP is not implemented yet")
         assert world_mesh is not None
         tp_mesh = get_tp_mesh(world_mesh)
         for m in model_parts:
-            m.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+            m.apply_tp(tp_mesh)
         tp_config.maybe_enable_async_tp(tp_mesh)
-        log.info(
-            f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model "
-            f"with {get_device_mesh_info(tp_mesh)}"
-        )
+        log.info(f"Applied tensor parallelism to the model with {get_device_mesh_info(tp_mesh)}")
 
+    # Maybe apply expert parallelism.
     if ep_config is not None:
         assert world_mesh is not None
         ep_mesh = get_ep_mesh(world_mesh)
