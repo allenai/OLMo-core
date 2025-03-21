@@ -7,7 +7,6 @@ have support in the `transformers` library.
 
 import json
 import logging
-import types
 from argparse import ArgumentParser
 from functools import partial
 from pathlib import Path
@@ -15,21 +14,19 @@ from tempfile import TemporaryDirectory
 from typing import Any, Dict, Optional, Tuple
 
 import torch
+import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from cached_path import cached_path
-from torch.distributed import DeviceMesh
 from transformers import AutoConfig, AutoModelForCausalLM
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.data.tokenizer import TokenizerConfig
+from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.io import file_exists
 from olmo_core.nn.conversion.state_mapping import TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import save_hf_model
 from olmo_core.nn.hf.convert import get_converter_to_hf
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
-from olmo_core.optim.adamw import AdamWConfig
-from olmo_core.train.checkpoint import CheckpointerConfig
-from olmo_core.train.train_module.transformer import TransformerTrainModuleConfig
 from olmo_core.utils import get_default_device, prepare_cli_environment
 
 log = logging.getLogger(__name__)
@@ -70,65 +67,30 @@ def convert_checkpoint_to_hf(
         del transformer_config_dict["float8_config"]
 
     model = TransformerConfig.from_dict(transformer_config_dict).build()
-
-    # Replace weight init with an efficient alternative that just allocates memory
-    @torch.no_grad()
-    def init_weights(
-        self: Transformer,
-        *,
-        max_seq_len: Optional[int] = None,
-        max_local_microbatch_size: Optional[int] = None,
-        device: Optional[torch.device] = None,
-        pp_mesh: Optional[DeviceMesh] = None,
-    ) -> torch.Generator:
-        """
-        Initialize the model weights.
-
-        :param max_seq_len: The maximum sequence length expected. This is used
-            to warm up the RoPE cache.
-        :param max_local_microbatch_size: The maximum local (rank) micro-batch size (in tokens)
-            expected. This is used to warm-up some MoE cache.
-        :param device: The device the local copy of the model will be trained on.
-        :param pp_mesh: Pipeline parallel mesh. Pass this when using pipeline parallelism
-            to ensure the weights are initialized differently for different stages.
-        """
-        device = device or self.device
-        self.to_empty(device=device)
-
-        for module in self.modules():
-            if hasattr(module, "reset_parameters"):
-                module.to_empty(device=device)  # type: ignore
-
-        seed = self.init_seed
-        if pp_mesh is not None:
-            seed += pp_mesh.get_local_rank()
-        return torch.Generator(device).manual_seed(seed)
-
-    model.init_weights = types.MethodType(init_weights, model)
-
     device = device or get_default_device()
-    train_module = TransformerTrainModuleConfig(
-        rank_microbatch_size=max_sequence_length,
-        max_sequence_length=max_sequence_length,
-        optim=AdamWConfig(),
-    ).build(model, device=device)
+    model.to_empty(device=device)
+
+    state_dict_options = dist_cp_sd.StateDictOptions(
+        flatten_optimizer_state_dict=True, cpu_offload=True
+    )
+    model_state_dict = dist_cp_sd.get_model_state_dict(model, options=state_dict_options)
 
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
 
     with TemporaryDirectory() as work_dir:
-        checkpointer_config = CheckpointerConfig(work_dir=work_dir, save_overwrite=True)
-        checkpointer = checkpointer_config.build()
-
         log.info(f"Loading checkpoint from '{original_checkpoint_path}'")
-        checkpointer.load(original_checkpoint_path, train_module, load_trainer_state=False)
+        load_model_and_optim_state(
+            original_checkpoint_path,
+            model,
+            work_dir=work_dir,
+        )
         log.info(f"Saving checkpoint to '{output_path}'")
         save_hf_model(
             output_path,
-            train_module.state_dict_to_save(optim=False)["model"],
-            train_module.model,
-            process_group=checkpointer.process_group,
-            work_dir=checkpointer.work_dir,
-            save_overwrite=checkpointer.save_overwrite,
+            model_state_dict,
+            model,
+            work_dir=work_dir,
+            save_overwrite=True,
         )
         # checkpointer.save(output_path, train_module, train_state={}, format=output_format)
         log.info(f"Successfully saved converted model to '{output_path}'")
