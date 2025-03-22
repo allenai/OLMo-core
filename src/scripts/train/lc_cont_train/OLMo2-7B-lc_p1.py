@@ -77,7 +77,7 @@ class AnnealingDataMix(DataMixBase):
     name (without the '.txt' extension) below.
     """
 
-    dolmino = "dolmino"
+    pl_lb_mix = "prolong_phase1_mix_lb"
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
@@ -202,7 +202,7 @@ class LcContTrain(Config):
             #     fused=True,
             # ),
             dataset=NumpyDatasetConfig.from_data_mix(
-                AnnealingDataMix.dolmino,
+                AnnealingDataMix.pl_lb_mix,
                 tokenizer=tokenizer_config,
                 mix_base_dir=root_dir,
                 generate_doc_lengths=True,
