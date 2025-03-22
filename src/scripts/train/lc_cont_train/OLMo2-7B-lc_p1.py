@@ -173,7 +173,7 @@ class LcContTrain(Config):
                 ac_config=TransformerActivationCheckpointingConfig(),
                 float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
                 max_grad_norm=1.0,
-                scheduler=CosWithWarmup(warmup_steps=475, alpha_f=0.1),
+                scheduler=CosWithWarmup(warmup_steps=475, alpha_f=0.0),
             ),
             model=TransformerConfig.olmo2_7B(
                 vocab_size=tokenizer_config.padded_vocab_size(),
