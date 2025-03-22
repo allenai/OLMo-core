@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Several state dict methods in `TrainModule` now take an `optim` option, which can disable the use of optimizer state.
 - Updated `Float8Config` for latest version of `torchao`.
 
+### Fixed
+
+- Fixed a bug where the trainer might try to save a duplicate final checkpoint if the run that already completed was restarted.
+
 ## [v2.0.1](https://github.com/allenai/OLMo-core/releases/tag/v2.0.1) - 2025-03-18
 
 ### Added
