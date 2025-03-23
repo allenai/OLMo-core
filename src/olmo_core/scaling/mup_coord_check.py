@@ -18,12 +18,11 @@ from olmo_core.nn.transformer import (
     TransformerDataParallelWrappingStrategy,
 )
 from olmo_core.scaling.coord_check import get_coord_data
-from olmo_core.scaling.mup_utils import load_mu_model, save_base_shapes
+from olmo_core.scaling.mup_utils import save_base_shapes
 from olmo_core.nn.functional import cross_entropy_loss
 
 import torch._dynamo
 torch._dynamo.config.suppress_errors = True
-# or to disable completely:
 torch._dynamo.disable()
 
 
@@ -62,9 +61,8 @@ def get_dataloader(data_paths, batch_size: int):
 
 
 def coord_check(
-    mup: bool,
+    using_mup: bool,
     widths: List,
-    config_path: str,
     batch_size: int,
     nsteps: int,
     nseeds: int,
@@ -74,63 +72,58 @@ def coord_check(
     legend: str = "brief",
     plot: bool = True,
 ):
-    def model_generator(d_model, standparam=False):
+    
+    def model_generator(d_model, standparam):
         def f():
-            # base_shapes = mup_load(load_base_shapes)
             config = TransformerConfig.olmo2_190M(
+                mup=using_mup, 
                 vocab_size=TokenizerConfig.dolma2().padded_vocab_size(),
-                
-                compile=False,
+                compile=True,
                 d_model=d_model,
-                dp_config=TransformerDataParallelConfig(
-                    name=DataParallelType.hsdp,
-                    param_dtype=DType.bfloat16,
-                    reduce_dtype=DType.float32,
-                    wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
-                ),
+                dp_config=None,
             )
-            config.use_mup = True
             device = torch.device('cuda')
             model = config.build(device=device)
-            # set_base_shapes(model, base_shapes)                      
+            if not standparam:
+                base_shapes = mup_load(load_base_shapes)
+                set_base_shapes(model, base_shapes)
+            
             return model
         return f
 
-    optimizer = "adam"
-    optimizer = optimizer.replace("mu", "")
-    
-    models = {width: model_generator(width, standparam=not mup) for width in widths}
 
-    model_instances = {width: model_fn() for width, model_fn in models.items()}
-    
-    # If we have a file to load base shapes from, load them
-    if load_base_shapes and os.path.exists(load_base_shapes):
-        base_shapes = mup_load(load_base_shapes)
-        # Apply the base shapes to all models
-        for model in model_instances.values():
-            set_base_shapes(model, base_shapes)
+    optimizer = "adamw"
+    if using_mup:
+        optimizer = optimizer.replace("mu", "")
     else:
-        # Otherwise, create base shapes from the smallest model
-        smallest_width = min(widths)
-        base_model = model_instances[smallest_width]
-        
-        # Set base shapes for all other models
-        for width, model in model_instances.items():
-            if width != smallest_width:
-                mupo.set_base_shapes(base_model, model)
-                
-        # Optionally save the base shapes if needed
-        if load_base_shapes:
-            mupo.save_base_shapes(base_model, load_base_shapes)
+        optimizer = "adamw"
+    
+    models = {width: model_generator(width, standparam=not using_mup) for width in widths}
+    model_instances = {width: model_fn() for width, model_fn in models.items()}
+
+    if using_mup: 
+        if load_base_shapes and os.path.exists(load_base_shapes):
+            base_shapes = mup_load(load_base_shapes)
+            for model in model_instances.values():
+                set_base_shapes(model, base_shapes, rescale_params=False)
+        else:
+            smallest_width = min(widths)
+            base_model = model_instances[smallest_width]
+            for width, model in model_instances.items():
+                if width != smallest_width:
+                    mupo.set_base_shapes(base_model, model)
+            if load_base_shapes:
+                mupo.save_base_shapes(base_model, load_base_shapes)
 
     data_loader = get_dataloader(data_paths='sample-tokens.npy', batch_size=batch_size)
     if hasattr(data_loader, 'reshuffle'):
             data_loader.reshuffle()
+            
     df = get_coord_data(
         models,
         data_loader,
         load_base_shapes,
-        mup=True,
+        mup=using_mup,
         # lr=lr,
         optimizer=optimizer,
         nseeds=nseeds,
@@ -142,7 +135,7 @@ def coord_check(
         
     )
 
-    prm = "mup" if mup else "sp"
+    prm = "mup" if using_mup else "sp"
     os.makedirs(output_dir, exist_ok=True)
     coords_file = os.path.join(output_dir, f"{prm}_olmo_{optimizer}_coord.csv")
     df.to_csv(coords_file, index=False)
@@ -157,7 +150,7 @@ def coord_check(
             legend=legend,
             save_to=os.path.join(output_dir, f"{prm}_olmo_{optimizer}_coord.png"),
             suptitle=f"{prm} Transformer {optimizer} nseeds={nseeds}",
-            face_color="xkcd:light grey" if not mup else None,
+            face_color="xkcd:light grey" if not using_mup else None,
         )
 
 
@@ -165,8 +158,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Run coord check for OLMo model with muP",
     )
-
-    parser.add_argument("config_path")
 
     parser.add_argument("--save_base_shapes", type=str, default="", help="file location to save base shapes at")
     parser.add_argument("--load_base_shapes", type=str, default="", help="file location to load base shapes from")
@@ -219,16 +210,15 @@ if __name__ == "__main__":
         os.environ["MASTER_PORT"] = "29600"
         os.environ["LOCAL_WORLD_SIZE"] = "1"
 
-        for use_mup in [True, False]:
-            coord_check(
-                mup=use_mup,
-                widths=args.widths,
-                config_path=args.config_path,
-                batch_size=args.batch_size,
-                nsteps=args.coord_check_nsteps,
-                nseeds=args.coord_check_nseeds,
-                cuda=args.cuda,
-                output_dir=args.coord_check_save_path,
-                legend=args.legend,
-                load_base_shapes=args.load_base_shapes,
-            )
+        # for mup_usage in [True, False]:
+        coord_check(
+            using_mup=True,
+            widths=args.widths,
+            batch_size=args.batch_size,
+            nsteps=args.coord_check_nsteps,
+            nseeds=args.coord_check_nseeds,
+            cuda=args.cuda,
+            output_dir=args.coord_check_save_path,
+            legend=args.legend,
+            load_base_shapes=args.load_base_shapes,
+        )

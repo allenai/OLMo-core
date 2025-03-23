@@ -85,8 +85,9 @@ def validate_base_shapes(base_shapes_path, d_model=768, verbose=True):
         # Configure the model
         tokenizer_config = TokenizerConfig.dolma2()
         config = TransformerConfig.olmo2_190M(
+            mup=True,
             vocab_size=tokenizer_config.padded_vocab_size(),
-            compile=False,
+            compile=True,
             d_model=d_model,
             dp_config=TransformerDataParallelConfig(
                 name=DataParallelType.fsdp,
@@ -95,7 +96,7 @@ def validate_base_shapes(base_shapes_path, d_model=768, verbose=True):
                 wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
             ),
         )
-        config.use_mup = True
+        # config.mup = True
         
         # Create the model (use CPU for testing)
         device = torch.device('cuda')

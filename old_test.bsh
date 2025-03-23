@@ -352,8 +352,6 @@ blocks.9._orig_mod.feed_forward_norm.weight:
 embeddings.weight:
 - null
 - 768
-lm_head._orig_mod.norm.weight:
-- 768
 lm_head._orig_mod.w_out.weight:
 - null
 - 768

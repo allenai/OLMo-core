@@ -161,6 +161,77 @@ class FeedForward(nn.Module):
         )
 
 
+class muPFeedForward(FeedForward):
+    """
+    Feed-forward module with muP.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        hidden_size: int,
+        bias: bool = True,
+        dtype: torch.dtype = torch.float32,
+        init_device: str = "cpu",
+        mup_base_shapes: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(
+            d_model=d_model,
+            hidden_size=hidden_size,
+            dtype=dtype,
+            init_device=init_device,
+            bias=False,
+        )
+        self.mup_base_shapes = mup_base_shapes
+
+        self.w1 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
+        self.w2 = nn.Linear(hidden_size, d_model, bias=bias, dtype=dtype, device=init_device)
+        self.w3 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
+
+        nn.init.normal_(self.w1.weight, mean=0.0, std=math.sqrt(1 / self.d_model))
+        nn.init.normal_(self.w3.weight, mean=0.0, std=math.sqrt(1 / self.d_model))
+
+        nn.init.normal_(self.w2.weight, mean=0.0, std=math.sqrt(1 / self.hidden_size))
+
+        # nn.init.normal_(self.w1.weight, mean=0.0, std=(self.d_model ** -0.5) / math.sqrt(self.d_model))
+        # nn.init.normal_(self.w3.weight, mean=0.0, std=(self.d_model ** -0.5) / math.sqrt(self.d_model))
+
+        # nn.init.normal_(self.w2.weight, mean=0.0, std=(self.hidden_size ** -0.5) / math.sqrt(self.d_model))
+
+        if bias:
+            nn.init.zeros_(self.w1.bias)
+            nn.init.zeros_(self.w2.bias)
+            nn.init.zeros_(self.w3.bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        :param x: The input of shape ``(*, d_model)``.
+        """
+        # return self.w2(F.silu(self.w1(x)) * self.w3(x)) / math.sqrt(self.d_model)
+        return self.w2(F.silu(self.w1(x)) * self.w3(x)) / self.d_model
+
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        output_layouts: Optional[Placement] = None,
+        use_local_output: bool = True,
+        float8_enabled: bool = False,
+    ):
+        rowwise_parallel, colwise_parallel, _ = get_tp_wrappers(float8_enabled=float8_enabled)
+
+        parallelize_module(
+            module=self,
+            device_mesh=tp_mesh,
+            parallelize_plan={
+                "w1": colwise_parallel(),
+                "w2": rowwise_parallel(
+                    output_layouts=output_layouts, use_local_output=use_local_output
+                ),
+                "w3": colwise_parallel(),
+            },
+        )
+
 @beta_feature
 class NormalizedFeedForward(FeedForward):
     """
@@ -230,72 +301,4 @@ class NormalizedFeedForward(FeedForward):
         w.copy_(l2_normalize(w, dim=dim))
 
 
-class muPFeedForward(FeedForward):
-    """
-    Feed-forward module with muP.
-    """
 
-    def __init__(
-        self,
-        *,
-        d_model: int,
-        hidden_size: int,
-        bias: bool = True,
-        dtype: torch.dtype = torch.float32,
-        init_device: str = "cpu",
-        mup_base_shapes: Optional[Dict[str, Any]] = None,
-    ):
-        super().__init__(
-            d_model=d_model,
-            hidden_size=hidden_size,
-            dtype=dtype,
-            init_device=init_device,
-            bias=False,
-        )
-        self.mup_base_shapes = mup_base_shapes
-
-        # from mup import MuReadout, set_base_shapes
-
-        self.w1 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
-        self.w2 = nn.Linear(hidden_size, d_model, bias=bias, dtype=dtype, device=init_device)
-        self.w3 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
-
-        # if mup_base_shapes:
-        #     self.set_base_shapes()
-
-    # def set_base_shapes(self):
-    #     """
-    #     Applies muP base shapes.
-    #     """
-    #     from mup import set_base_shapes
-    #     log.info("Applying muP base shapes to MuPFeedForward layers...")
-    #     set_base_shapes(self, self.mup_base_shapes)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Run the feed-forward on the input ``x`` with MuReadout.
-
-        :param x: The input of shape ``(*, d_model)``.
-        """
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
-
-    def apply_tp(
-        self,
-        tp_mesh: DeviceMesh,
-        output_layouts: Optional[Placement] = None,
-        use_local_output: bool = True,
-        float8_enabled: bool = False,
-    ):
-        rowwise_parallel, colwise_parallel, _ = get_tp_wrappers(float8_enabled=float8_enabled)
-
-        parallelize_module(
-            module=self,
-            device_mesh=tp_mesh,
-            parallelize_plan={
-                "w1": colwise_parallel(),
-                "w2": rowwise_parallel(
-                    output_layouts=output_layouts, use_local_output=use_local_output
-                ),
-                "w3": colwise_parallel(),
-            },
-        )

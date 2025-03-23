@@ -12,13 +12,6 @@ from olmo_core.nn.transformer import (
 import torch
 from olmo_core.distributed.utils import OLMO_LOCAL_WORLD_SIZE_ENV_VAR
 
-
-def load_mu_model(config: TransformerConfig):
-    config.use_mup = True
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return config.build(device=device)
-
-
 def save_base_shapes(output_path: str, d_model: int = 768):
     os.environ[OLMO_LOCAL_WORLD_SIZE_ENV_VAR] = "1"
     if 'RANK' not in os.environ:
@@ -30,6 +23,7 @@ def save_base_shapes(output_path: str, d_model: int = 768):
 
     tokenizer_config = TokenizerConfig.dolma2()
     config_use = TransformerConfig.olmo2_190M(
+        mup=True,
         vocab_size=tokenizer_config.padded_vocab_size(),
         compile=True,
         d_model=d_model,
@@ -40,16 +34,15 @@ def save_base_shapes(output_path: str, d_model: int = 768):
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),
     )
-    config_use.use_mup = True
+    # config_use.use_mup = True
     device = torch.device('cuda')
     base_model = config_use.build(device=device)
     base_shapes = get_shapes(base_model)
-
-    # base_shapes = get_shapes(load_mu_model(config_use))
     config_scaled = TransformerConfig.olmo2_190M(
+        mup=True,
         vocab_size=tokenizer_config.padded_vocab_size(),
         compile=True,
-        d_model=d_model * 2,  # Double d_model
+        d_model=d_model * 2,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp,
             param_dtype=DType.bfloat16,
@@ -57,11 +50,7 @@ def save_base_shapes(output_path: str, d_model: int = 768):
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),
     )
-    config_scaled.use_mup = True
+    # config_scaled.use_mup = True
     scaled_model = config_scaled.build(device=device)
     delta_shapes = get_shapes(scaled_model)
-    # delta_shapes = get_shapes(load_mu_model(config_scaled))
     make_base_shapes(base_shapes, delta_shapes, savefile=output_path)
-
-    # delta_shapes = get_shapes(load_mu_model(config_scaled))
-    # make_base_shapes(base_shapes, delta_shapes, savefile=output_path)

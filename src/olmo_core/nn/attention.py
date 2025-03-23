@@ -23,7 +23,6 @@ from .rope import (
     RoPEConfig,
     RotaryEmbedding,
 )
-from mup import MuReadout, set_base_shapes
 from .utils import get_tp_wrappers
 
 __all__ = ["AttentionType", "AttentionConfig", "Attention", "FusedAttention", "NormalizedAttention", "muPAttention"]
@@ -391,6 +390,139 @@ class Attention(nn.Module):
             parallelize_plan=plan,
         )
 
+@beta_feature
+class muPAttention(Attention):
+    """
+    A Multi-Head Self-Attention implementation with muP scaling.
+
+    Instead of scaling queries by `1/sqrt(d)`, we scale by `n_heads/d` as per the muP parameterization.
+
+    :param d_model: The model hidden size.
+    :param n_heads: The number of attention heads.
+    :param n_kv_heads: The number of key and value heads, if different.
+    :param bias: Include biases with linear layers.
+    :param rope: The config for RoPE, if RoPE should be used.
+    :param clip_qkv: Clip QKV to this value, if set.
+    :param qk_norm: Configuration a layer norm for queries and keys.
+    :param dropout: Dropout probability.
+    :param use_flash: Use flash attention.
+        This requires `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ to be installed.
+    :param dtype: The default data type to use for parameters.
+    :param init_device: The device to initialize weights on.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        n_heads: int,
+        n_kv_heads: Optional[int] = None,
+        bias: bool = True,
+        rope: Optional[RoPEConfig] = None,
+        clip_qkv: Optional[float] = None,
+        qk_norm: Optional[LayerNormConfig] = None,
+        dropout: float = 0.0,
+        use_flash: bool = False,
+        dtype: torch.dtype = torch.float32,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ):
+
+        super().__init__(
+            d_model=d_model,
+            n_heads=n_heads,
+            n_kv_heads=n_kv_heads,
+            bias=bias,
+            rope=rope,
+            clip_qkv=clip_qkv,
+            qk_norm=qk_norm,
+            dropout=dropout,
+            use_flash=use_flash,
+            dtype=dtype,
+            init_device=init_device,
+            cache=cache,
+        )
+        self.d_model = d_model
+        # self.mup_scale_factor = math.sqrt(self.n_heads) / d_model #) ** 0.5
+        self.mup_scale_factor = 1.0 / self.head_dim
+        nn.init.normal_(self.w_q.weight, mean=0.0, std=math.sqrt(1.0/d_model))
+        nn.init.normal_(self.w_k.weight, mean=0.0, std=math.sqrt(1.0/d_model))
+        nn.init.normal_(self.w_v.weight, mean=0.0, std=math.sqrt(1.0/d_model))
+        nn.init.normal_(self.w_out.weight, mean=0.0, std=math.sqrt(1.0/d_model))
+        # nn.init.normal_(self.w_q.weight, mean=0.0, std=1.0/d_model)
+        # nn.init.normal_(self.w_k.weight, mean=0.0, std=1.0/d_model)
+        # nn.init.normal_(self.w_v.weight, mean=0.0, std=1.0/d_model)
+        # nn.init.normal_(self.w_out.weight, mean=0.0, std=1.0/d_model)
+
+    def sdpa(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        max_doc_len: Optional[int] = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        scale: Optional[float] = None,
+    ) -> torch.Tensor:
+
+        return super().sdpa(q, k, v, max_doc_len, cu_doc_lens, scale=self.mup_scale_factor)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        max_doc_len: Optional[int] = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Apply muP Attention with scaled dot-product attention.
+
+        :param x: The input of shape ``(batch_size, seq_len, d_model)``.
+        :param max_doc_len: The maximum document length in the input ``x``.
+            Required together with ``cu_doc_lens`` when using intra-document masking.
+        :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D
+            :class:`torch.int32` tensor that should always have one more element than there
+            are documents (the first element in the tensor should always be ``0``).
+            Required together with ``max_doc_len`` when using intra-document masking.
+
+        :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
+        """
+        B, T, _ = x.shape
+
+        # shape: (batch_size, seq_len, n_heads * head_dim),
+        #        (batch_size, seq_len, n_kv_heads * head_dim),
+        #        (batch_size, seq_len, n_kv_heads * head_dim)
+        q, k, v = self.w_q(x), self.w_k(x), self.w_v(x)
+
+        if self.clip_qkv is not None:
+            q.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
+            k.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
+            v.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
+
+        if self.q_norm is not None:
+            q = self.q_norm(q)
+        if self.k_norm is not None:
+            k = self.k_norm(k)
+
+        # NOTE: use -1 instead of `n_heads` / `n_kv_heads` to infer actual local size when
+        # using tensor parallelism.
+        # shape: (batch_size, seq_len, n_heads, head_dim)
+        q = q.view(B, T, -1, self.head_dim)
+        # shape: (batch_size, seq_len, n_kv_heads, head_dim)
+        k = k.view(B, T, -1, self.head_dim)
+        # shape: (batch_size, seq_len, n_kv_heads, head_dim)
+        v = v.view(B, T, -1, self.head_dim)
+
+        if self.rope is not None:
+            q, k = self.rope(q, k, head_first=False)
+
+        # shape: (batch_size, seq_len, n_heads, head_dim)
+        att = self.sdpa(q, k, v, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
+
+        # shape: (batch_size, seq_len, d_model)
+        att = att.view(B, T, -1)
+
+        # shape: (batch_size, seq_len, d_model)
+        # Scale output by 1/sqrt(d_model) for proper muP behavior
+        return self.w_out(att) / math.sqrt(self.d_model)
 
 @beta_feature
 class NormalizedAttention(Attention):
@@ -636,132 +768,6 @@ class FusedAttention(nn.Module):
         del tp_mesh, output_layouts, use_local_output, float8_enabled
 
         raise NotImplementedError("TP is not implemented yet for the fused attention variant")
-
-
-@beta_feature
-class muPAttention(Attention):
-    """
-    A Multi-Head Self-Attention implementation with muP scaling.
-
-    Instead of scaling queries by `1/sqrt(d)`, we scale by `1/d` as per the muP parameterization.
-
-    :param d_model: The model hidden size.
-    :param n_heads: The number of attention heads.
-    :param n_kv_heads: The number of key and value heads, if different.
-    :param bias: Include biases with linear layers.
-    :param rope: The config for RoPE, if RoPE should be used.
-    :param clip_qkv: Clip QKV to this value, if set.
-    :param qk_norm: Configuration a layer norm for queries and keys.
-    :param dropout: Dropout probability.
-    :param use_flash: Use flash attention.
-        This requires `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ to be installed.
-    :param dtype: The default data type to use for parameters.
-    :param init_device: The device to initialize weights on.
-    """
-
-    def __init__(
-        self,
-        *,
-        d_model: int,
-        n_heads: int,
-        n_kv_heads: Optional[int] = None,
-        bias: bool = True,
-        rope: Optional[RoPEConfig] = None,
-        clip_qkv: Optional[float] = None,
-        qk_norm: Optional[LayerNormConfig] = None,
-        dropout: float = 0.0,
-        use_flash: bool = False,
-        dtype: torch.dtype = torch.float32,
-        init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
-    ):
-
-        super().__init__(
-            d_model=d_model,
-            n_heads=n_heads,
-            n_kv_heads=n_kv_heads,
-            bias=bias,
-            rope=rope,
-            clip_qkv=clip_qkv,
-            qk_norm=qk_norm,
-            dropout=dropout,
-            use_flash=use_flash,
-            dtype=dtype,
-            init_device=init_device,
-            cache=cache,
-        )
-        self.mup_scale_factor = 1 / d_model
-
-    def sdpa(
-        self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        max_doc_len: Optional[int] = None,
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        scale: Optional[float] = None,
-    ) -> torch.Tensor:
-        """
-        Instead of `scale = 1/sqrt(d)`, we use `scale = 1/d`.
-        """
-        return super().sdpa(q, k, v, max_doc_len, cu_doc_lens, scale=self.mup_scale_factor)
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        max_doc_len: Optional[int] = None,
-        cu_doc_lens: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        """
-        Apply muP Attention with scaled dot-product attention.
-
-        :param x: The input of shape ``(batch_size, seq_len, d_model)``.
-        :param max_doc_len: The maximum document length in the input ``x``.
-            Required together with ``cu_doc_lens`` when using intra-document masking.
-        :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D
-            :class:`torch.int32` tensor that should always have one more element than there
-            are documents (the first element in the tensor should always be ``0``).
-            Required together with ``max_doc_len`` when using intra-document masking.
-
-        :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
-        """
-        B, T, _ = x.shape
-
-        # shape: (batch_size, seq_len, n_heads * head_dim),
-        #        (batch_size, seq_len, n_kv_heads * head_dim),
-        #        (batch_size, seq_len, n_kv_heads * head_dim)
-        q, k, v = self.w_q(x), self.w_k(x), self.w_v(x)
-
-        if self.clip_qkv is not None:
-            q.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
-            k.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
-            v.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
-
-        if self.q_norm is not None:
-            q = self.q_norm(q)
-        if self.k_norm is not None:
-            k = self.k_norm(k)
-
-        # NOTE: use -1 instead of `n_heads` / `n_kv_heads` to infer actual local size when
-        # using tensor parallelism.
-        # shape: (batch_size, seq_len, n_heads, head_dim)
-        q = q.view(B, T, -1, self.head_dim)
-        # shape: (batch_size, seq_len, n_kv_heads, head_dim)
-        k = k.view(B, T, -1, self.head_dim)
-        # shape: (batch_size, seq_len, n_kv_heads, head_dim)
-        v = v.view(B, T, -1, self.head_dim)
-
-        if self.rope is not None:
-            q, k = self.rope(q, k, head_first=False)
-
-        # shape: (batch_size, seq_len, n_heads, head_dim)
-        att = self.sdpa(q, k, v, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
-
-        # shape: (batch_size, seq_len, d_model)
-        att = att.view(B, T, -1)
-
-        # shape: (batch_size, seq_len, d_model)
-        return self.w_out(att)
 
 
 def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:

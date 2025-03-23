@@ -140,16 +140,6 @@ class TransformerConfig(Config):
     tp_config: Optional[TensorParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
     float8_config: Optional[Float8Config] = None
-    use_mup: bool = False
-    mup_base_shapes: Optional[Dict[str, Any]] = None  
-
-    # def set_base_shapes(self, base_shapes: Dict[str, Any]):
-    #     """
-    #     Stores muP base shapes for scaling.
-    #     """
-    #     if self.use_mup:
-    #         log.info("Applying muP.")
-    #         self.mup_base_shapes = base_shapes
 
     def build(
         self,
@@ -313,10 +303,10 @@ class TransformerConfig(Config):
         The total number of parameters that a model from this config would have.
         """
 
-        if self.use_mup and self.mup_base_shapes:
-            base_d_model = self.mup_base_shapes.get("d_model", self.d_model)
-        else:
-            base_d_model = self.d_model
+        # if self.use_mup and self.mup_base_shapes:
+        #     base_d_model = self.mup_base_shapes.get("d_model", self.d_model)
+        # else:
+        base_d_model = self.d_model
 
         num_params = 0
 
@@ -382,20 +372,35 @@ class TransformerConfig(Config):
         return flop_per_token
 
     @classmethod
-    def olmo2_190M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
-        return cls.llama_like_mup(
-            # d_model=768,
-            d_model = kwargs.pop("d_model", 768),
-            hidden_size_multiplier=1.5,
-            n_layers=kwargs.pop("n_layers", 12),
-            n_heads=kwargs.pop("n_heads", 12),
-            vocab_size=vocab_size,
-            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
-            qk_norm=kwargs.pop("qk_norm", True),
-            rope_theta=kwargs.pop("rope_theta", 500_000),
-            layer_norm_eps=1e-6,
-            **kwargs,
-        )
+    def olmo2_190M(cls, mup, vocab_size: int, **kwargs) -> "TransformerConfig":
+        if mup == True:
+            return cls.llama_like_mup(
+                # d_model=768,
+                d_model = kwargs.pop("d_model", 768),
+                hidden_size_multiplier=1.5,
+                n_layers=kwargs.pop("n_layers", 12),
+                n_heads=kwargs.pop("n_heads", 12),
+                vocab_size=vocab_size,
+                block_name=kwargs.pop("block_name", TransformerBlockType.mup),
+                qk_norm=kwargs.pop("qk_norm", True),
+                rope_theta=kwargs.pop("rope_theta", 500_000),
+                layer_norm_eps=1e-6,
+                **kwargs,
+            )
+        else:
+            return cls.llama_like(
+                # d_model=768,
+                d_model = kwargs.pop("d_model", 768),
+                hidden_size_multiplier=1.5,
+                n_layers=kwargs.pop("n_layers", 12),
+                n_heads=kwargs.pop("n_heads", 12),
+                vocab_size=vocab_size,
+                block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+                qk_norm=kwargs.pop("qk_norm", True),
+                rope_theta=kwargs.pop("rope_theta", 500_000),
+                layer_norm_eps=1e-6,
+                **kwargs,
+            ) 
 
     @classmethod
     def olmo2_370M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
@@ -781,7 +786,7 @@ class TransformerConfig(Config):
                 use_flash=use_flash,
                 dtype=dtype,
             ),
-            feed_forward=FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype),
+            feed_forward=FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype, name=FeedForwardType.default),
             layer_norm=layer_norm,
         )
 
@@ -790,7 +795,7 @@ class TransformerConfig(Config):
             vocab_size=vocab_size,
             n_layers=n_layers,
             block=block,
-            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype, name=LMHeadType.default),
             dtype=dtype,
             compile=compile,
             **kwargs,
@@ -881,7 +886,7 @@ class TransformerConfig(Config):
             vocab_size=vocab_size,
             n_layers=n_layers,
             block=block,
-            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype, name=LMHeadType.mup),
             dtype=dtype,
             compile=compile,
             **kwargs,

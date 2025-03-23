@@ -4,12 +4,12 @@ from mup.coord_check import _record_coords
 from mup import set_base_shapes
 from mup import load_base_shapes as mup_load
 from olmo_core.data.utils import get_labels
-
+import torch
 
 def get_batch_loss(model, batch, lossfn, compute_z_loss):
     # TODO: move and import instead
     outputs = model(input_ids=batch["input_ids"])
-    logits = outputs.logits
+    logits = outputs
 
     logits_for_loss = logits[..., :-1, :].contiguous()
     # shape: (batch_size * seq_len, vocab_size)
@@ -33,11 +33,11 @@ def get_batch_loss(model, batch, lossfn, compute_z_loss):
         loss = ce_loss
     return loss
 
-
 def _get_coord_data(
     models,
     dataloader,
     optcls,
+    mup,
     load_base_shapes: Optional[str] = None,
     nsteps=3,
     lossfn="xent",
@@ -51,54 +51,6 @@ def _get_coord_data(
     show_progress=True,
     compute_z_loss=False,
 ):
-    """Inner method for `get_coord_data`.
-
-    Train the models in `models` with optimizer given by `optcls` and data from
-    `dataloader` for `nsteps` steps, and record coordinate statistics specified
-    by `output_fdict`, `input_fdict`, `param_fdict`. By default, only `l1` is
-    computed for output activations of each module.
-
-    Inputs:
-        models:
-            a dict of lazy models, where the keys are numbers indicating width.
-            Each entry of `models` is a function that instantiates a model given
-            nothing.
-        dataloader:
-            an iterator whose elements are either Huggingface style dicts, if
-            `dict_in_out` is True, or (input, label). If `fix_data` is True
-            (which is the default), then only the first element of `dataloader`
-            is used in a loop and the rest of `dataloder` is ignored.
-        optcls:
-            a function so that `optcls(model)` gives an optimizer used to train
-            the model.
-        nsteps:
-            number of steps to train the model
-        lossfn:
-            loss function to use if not `dict_in_out`. Can be either a string from
-            [`xent`, 'mse', 'nll', 'l1'] or a python `callable` such that
-            `lossfn(output, target)` returns the loss value. Examples of valid
-            `callable`s are `F.cross_entropy`, `F.mse_loss`, etc, where `F` is
-            `torch.nn.functional`. Default: 'xent'
-        filter_module_by_name:
-            a function that returns a bool given module names (from
-            `model.named_modules()`), or None. If not None, then only modules
-            whose name yields True will be recorded.
-        cuda:
-            whether to use cuda or not. Default: True
-        nseeds:
-            number of times to repeat the training, each with different seeds.
-        output_fdict, input_fdict, param_fdict:
-            function dicts to be used in `_record_coords`. By default, only `l1`
-            is computed for output activations of each module.
-        show_progress:
-            show progress using tqdm. Default: True
-    Output:
-        a pandas DataFrame containing recorded results. The column names are
-        `'width', 'module', 't'` as well as names of statistics recorded, such
-        as `'l1'` (see `FDICT` for other premade statistics that can be
-        collected).
-
-    """
     coordinates: List = []
     if fix_data:
         batch = next(iter(dataloader))
@@ -108,11 +60,6 @@ def _get_coord_data(
 
         pbar = tqdm(total=nseeds * len(models))
 
-    import torch
-
-    # for i in range(nseeds):
-    #     torch.manual_seed(i)
-    #     for width, model in models.items():
     for width, model_ in models.items():
         for i in range(nseeds):
             torch.manual_seed(i)
@@ -120,28 +67,9 @@ def _get_coord_data(
             model = model.train()
             if cuda:
                 model = model.cuda()
+            if mup:
                 base_shapes = mup_load(load_base_shapes)
                 set_base_shapes(model, base_shapes, rescale_params=False)
-                # print("✓ Successfully applied base shapes to model")
-                # print("\nChecking parameters for infshape attribute...")
-                # missing_infshape = []
-                # total_params = 0
-                
-                # for name, param in model.named_parameters():
-                #     total_params += 1
-                #     if not hasattr(param, 'infshape'):
-                #         missing_infshape.append((name, param.shape))
-                
-                # if missing_infshape:
-                #     print(f"✗ ISSUE: {len(missing_infshape)}/{total_params} parameters missing infshape attribute")
-                #     print("\nSample parameters missing infshape:")
-                #     for i, (name, shape) in enumerate(missing_infshape[:5]):
-                #         print(f"  - {name}: {shape}")
-                #     if len(missing_infshape) > 5:
-                #         print(f"  ... and {len(missing_infshape) - 5} more")
-                #     return False
-                # else:
-                #     print(f"✓ All {total_params} parameters have infshape attribute") 
 
             optimizer = optcls(model)
             for batch_idx, batch in enumerate(dataloader, 1):
@@ -190,70 +118,12 @@ def _get_coord_data(
 
 
 def get_coord_data(
-    models, dataloader, load_base_shapes, optimizer="adamw", lr=None, mup=True, filter_trainable_by_name=None, **kwargs
+    models, dataloader, load_base_shapes, mup, optimizer="adamw", lr=None, filter_trainable_by_name=None, **kwargs
 ):
-    """Get coord data for coord check.
-
-    Train the models in `models` with data from `dataloader` and optimizer
-    specified by `optimizer` and `lr` for `nsteps` steps, and record coordinate
-    statistics specified by `output_fdict`, `input_fdict`, `param_fdict`. By
-    default, only `l1` is computed for output activations of each module.
-
-    This function wraps around `_get_coord_data`, with the main difference being
-    user can specify common optimizers via a more convenient interface.
-
-    Inputs:
-        models:
-            a dict of lazy models, where the keys are numbers indicating width.
-            Each entry of `models` is a function that instantiates a model given
-            nothing.
-        dataloader:
-            an iterator whose elements are either Huggingface style dicts, if
-            `dict_in_out` is True, or (input, label). If `fix_data` is True
-            (which is the default), then only the first element of `dataloader`
-            is used in a loop and the rest of `dataloder` is ignored.
-        optimizer:
-            a string in `['sgd', 'adam', 'adamw']`, with default being `'sgd'`.
-        lr:
-            learning rate. By default is 0.1 for `'sgd'` and 1e-3 for others.
-        mup:
-            If True, then use the optimizer from `mup.optim`; otherwise, use the
-            one from `torch.optim`.
-        filter_trainable_by_name:
-            a function that returns a bool given module names (from
-            `model.named_modules()`), or None. If not None, then only modules
-            whose name yields True will be trained.
-        nsteps:
-            number of steps to train the model
-        lossfn:
-            loss function to use if not `dict_in_out`. Can be either a string from
-            [`xent`, 'mse', 'nll', 'l1'] or a python `callable` such that
-            `lossfn(output, target)` returns the loss value. Examples of valid
-            `callable`s are `F.cross_entropy`, `F.mse_loss`, etc, where `F` is
-            `torch.nn.functional`. Default: 'xent'
-        filter_module_by_name:
-            a function that returns a bool given module names (from
-            `model.named_modules()`), or None. If not None, then only modules
-            whose name yields True will be recorded.
-        cuda:
-            whether to use cuda or not. Default: True
-        nseeds:
-            number of times to repeat the training, each with different seeds.
-        output_fdict, input_fdict, param_fdict:
-            function dicts to be used in `_record_coords`. By default, only `l1`
-            is computed for output activations of each module.
-        show_progress:
-            show progress using tqdm. Default: True
-    Output:
-        a pandas DataFrame containing recorded results. The column names are
-        `'width', 'module', 't'` as well as names of statistics recorded, such
-        as `'l1'` (see `FDICT` for other premade statistics that can be
-        collected).
-
-    """
     if lr is None:
         lr = 0.1 if optimizer == "sgd" else 1e-3
     if mup:
+        print('get_coord_data muP: ', mup)
         from mup.optim import MuAdam as Adam
         from mup.optim import MuAdamW as AdamW
         from mup.optim import MuSGD as SGD
@@ -278,36 +148,7 @@ def get_coord_data(
     elif optimizer is None:
         raise ValueError("optimizer should be sgd|adam|adamw or a custom function")
 
-    data = _get_coord_data(models, dataloader, optcls, load_base_shapes, **kwargs)
+    data = _get_coord_data(models, dataloader, optcls, mup, load_base_shapes, **kwargs)
     data["optimizer"] = optimizer
     data["lr"] = lr
     return data
-    # try:
-    #     # Call the inner function
-    #     data = _get_coord_data(models, dataloader, optcls, **kwargs)
-        
-    #     # Check if data is a DataFrame or dictionary before trying to modify it
-    #     import pandas as pd
-    #     if isinstance(data, (dict, pd.DataFrame)):
-    #         data["optimizer"] = optimizer
-    #         data["lr"] = lr
-    #         return data
-    #     elif data is True or data is False:
-    #         # Handle the case where _get_coord_data returns a boolean
-    #         print(f"WARNING: _get_coord_data returned a boolean ({data}) instead of a DataFrame")
-    #         # Create an empty DataFrame with expected columns
-    #         import pandas as pd
-    #         empty_df = pd.DataFrame(columns=["width", "module", "t", "l1"])
-    #         empty_df["optimizer"] = optimizer
-    #         empty_df["lr"] = lr
-    #         return empty_df
-    #     else:
-    #         # For other unexpected return types
-    #         print(f"WARNING: Unexpected return type from _get_coord_data: {type(data)}")
-    #         import pandas as pd
-    #         return pd.DataFrame({"optimizer": [optimizer], "lr": [lr]})
-    # except Exception as e:
-    #     print(f"ERROR in get_coord_data: {e}")
-    #     # Return empty DataFrame on error
-    #     import pandas as pd
-    #     return pd.DataFrame({"optimizer": [optimizer], "lr": [lr]})

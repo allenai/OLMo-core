@@ -217,14 +217,6 @@ class Transformer(nn.Module):
         if doc_lens is not None and max_doc_lens is not None:
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
-
-        # In model.py forward method, before line 222
-        print("Input IDs shape:", input_ids.shape)
-        print("Input IDs min/max:", input_ids.min().item(), input_ids.max().item())
-        print("Embeddings vocab size:", self.embeddings.weight.shape[0])
-        # # Before passing to model
-        max_vocab_size = 100352
-        input_ids = torch.clamp(input_ids, 0, max_vocab_size - 1)
         # passthrough for non-existent layers, allows easy pipeline parallel configuration
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
@@ -492,90 +484,6 @@ class Transformer(nn.Module):
 
         return flop_per_token
 
-
-@beta_feature
-class NormalizedTransformer(Transformer):
-    """
-    A nGPT transformer implementation, to be used with the :class:`NormalizedTransformerBlock` block
-    type.
-
-    .. warning::
-        When training this model you should use the :class:`~olmo_core.train.callbacks.MatrixNormalizerCallback`
-        to re-normalize the weight matrices after each optimizer step.
-    """
-
-    def __init__(
-        self,
-        *,
-        d_model: int,
-        vocab_size: int,
-        n_layers: int,
-        block: TransformerBlockConfig,
-        lm_head: LMHeadConfig,
-        dtype: torch.dtype = torch.float32,
-        init_method: InitMethod = InitMethod.normalized,
-        init_device: str = "cpu",
-        init_seed: int = 0,
-    ):
-        super().__init__(
-            d_model=d_model,
-            vocab_size=vocab_size,
-            n_layers=n_layers,
-            block=block,
-            lm_head=lm_head,
-            dtype=dtype,
-            init_method=init_method,
-            init_device=init_device,
-            init_seed=init_seed,
-        )
-
-    @torch.no_grad()
-    def init_weights(
-        self,
-        *,
-        max_seq_len: Optional[int] = None,
-        device: Optional[torch.device] = None,
-    ) -> torch.Generator:
-        generator = super().init_weights(max_seq_len=max_seq_len, device=device)
-        self.normalize_matrices()
-        return generator
-
-    @torch.no_grad()
-    def normalize_matrices(self):
-        """
-        Normalize the weights in all matrices. This should be called after each optimizer step, which
-        the :class:`~olmo_core.train.callbacks.MatrixNormalizerCallback` will handle for you.
-        """
-        if self.embeddings is not None:
-            self._normalize_matrix(self.embeddings.weight)
-
-        for block in self.blocks:
-            if hasattr(block, "normalize_matrices"):
-                block.normalize_matrices()
-
-        self.lm_head.normalize_matrices()
-
-    def _normalize_matrix(self, w: torch.Tensor, dim: int = -1):
-        w.copy_(l2_normalize(w, dim=dim))
-
-    def apply_tp(
-        self,
-        tp_mesh: DeviceMesh,
-        loss_parallel: bool = False,
-        float8_enabled: bool = False,
-        async_tp: bool = False,
-    ):
-        del tp_mesh, loss_parallel, float8_enabled, async_tp
-
-        raise NotImplementedError(
-            "TP is not implemented yet for the normalized transformer variant"
-        )
-
-    def apply_compile(self):
-        super().apply_compile()
-        self.normalize_matrices = torch.compile(self.normalize_matrices)
-
-
 @beta_feature
 class muPTransformer(Transformer):
     """
@@ -633,10 +541,8 @@ class muPTransformer(Transformer):
         device: Optional[torch.device] = None,
     ) -> torch.Generator:
         device = device or self.device
-        from mup import set_base_shapes
-        # set_base_shapes(self, self.mup_base_shapes, rescale_params=True)
-        # return super().init_weights(max_seq_len=max_seq_len, device=device)
         generator = super().init_weights(max_seq_len=max_seq_len, device=device)
+        from mup import set_base_shapes
         set_base_shapes(self, self.mup_base_shapes, rescale_params=True)
         return generator
 
@@ -931,3 +837,85 @@ class muPTransformer(Transformer):
         flop_per_token = 6 * self.num_non_embedding_params + 12 * n * h * q * t
 
         return flop_per_token
+
+@beta_feature
+class NormalizedTransformer(Transformer):
+    """
+    A nGPT transformer implementation, to be used with the :class:`NormalizedTransformerBlock` block
+    type.
+
+    .. warning::
+        When training this model you should use the :class:`~olmo_core.train.callbacks.MatrixNormalizerCallback`
+        to re-normalize the weight matrices after each optimizer step.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        vocab_size: int,
+        n_layers: int,
+        block: TransformerBlockConfig,
+        lm_head: LMHeadConfig,
+        dtype: torch.dtype = torch.float32,
+        init_method: InitMethod = InitMethod.normalized,
+        init_device: str = "cpu",
+        init_seed: int = 0,
+    ):
+        super().__init__(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=n_layers,
+            block=block,
+            lm_head=lm_head,
+            dtype=dtype,
+            init_method=init_method,
+            init_device=init_device,
+            init_seed=init_seed,
+        )
+
+    @torch.no_grad()
+    def init_weights(
+        self,
+        *,
+        max_seq_len: Optional[int] = None,
+        device: Optional[torch.device] = None,
+    ) -> torch.Generator:
+        generator = super().init_weights(max_seq_len=max_seq_len, device=device)
+        self.normalize_matrices()
+        return generator
+
+    @torch.no_grad()
+    def normalize_matrices(self):
+        """
+        Normalize the weights in all matrices. This should be called after each optimizer step, which
+        the :class:`~olmo_core.train.callbacks.MatrixNormalizerCallback` will handle for you.
+        """
+        if self.embeddings is not None:
+            self._normalize_matrix(self.embeddings.weight)
+
+        for block in self.blocks:
+            if hasattr(block, "normalize_matrices"):
+                block.normalize_matrices()
+
+        self.lm_head.normalize_matrices()
+
+    def _normalize_matrix(self, w: torch.Tensor, dim: int = -1):
+        w.copy_(l2_normalize(w, dim=dim))
+
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        loss_parallel: bool = False,
+        float8_enabled: bool = False,
+        async_tp: bool = False,
+    ):
+        del tp_mesh, loss_parallel, float8_enabled, async_tp
+
+        raise NotImplementedError(
+            "TP is not implemented yet for the normalized transformer variant"
+        )
+
+    def apply_compile(self):
+        super().apply_compile()
+        self.normalize_matrices = torch.compile(self.normalize_matrices)

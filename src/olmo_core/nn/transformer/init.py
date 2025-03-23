@@ -36,11 +36,7 @@ class InitMethod(StrEnum):
 
     mup = "mup"
     """
-    Apply muP, where:
-    - Linear layers are initialized with variance ~ `1/d_model`
-    - Embedding layers are initialized with variance ~ `1/d_model`
-    - Output layers follow the same scaling
-    - Bias terms are zero-initialized
+    Apply muP
     """
 
     def _init_linear(
@@ -57,8 +53,11 @@ class InitMethod(StrEnum):
     ):
         if self in (InitMethod.llama, InitMethod.llama_depth):
             nn.init.normal_(m.weight, generator=generator)
-        elif self in (InitMethod.normalized, InitMethod.mup):
-            nn.init.normal_(m.weight, std=d_model**-0.5)        
+        elif self in InitMethod.normalized:
+            nn.init.normal_(m.weight, std=d_model**-0.5) 
+        elif self == InitMethod.mup:
+            # nn.init.normal_(m.weight, std=d_model ** -0.5) 
+            nn.init.normal_(m.weight, std=1)       
         else:
             nn.init.trunc_normal_(
                 m.weight, mean=0.0, std=0.02, a=-3 * 0.02, b=3 * 0.02, generator=generator
@@ -68,8 +67,11 @@ class InitMethod(StrEnum):
         self, m: nn.Linear, *, d_model: int, generator: Optional[torch.Generator] = None
     ):
         std = 0.02
-        if self in (InitMethod.llama, InitMethod.llama_depth, InitMethod.normalized, InitMethod.mup):
+        if self in (InitMethod.llama, InitMethod.llama_depth, InitMethod.normalized):
             std = d_model**-0.5
+        elif self == InitMethod.mup:
+            std = d_model**-0.5
+        
         self._init_linear(m, std=std, generator=generator)
 
     def init_attention(
@@ -81,26 +83,44 @@ class InitMethod(StrEnum):
         num_blocks: int,
         generator: Optional[torch.Generator] = None,
     ):
-        std = 0.02
-        if self in (InitMethod.normalized, InitMethod.mup):
-            std = d_model**-0.5
+        if self == InitMethod.mup:
+            std_qkv = d_model ** -0.5
+            std_out = d_model ** -0.5
 
-        if isinstance(m, Attention):
-            for w in (m.w_q, m.w_k, m.w_v):
-                self._init_linear(w, std=std, generator=generator)
-        elif isinstance(m, FusedAttention):
-            self._init_linear(m.w_qkv, std=std, generator=generator)
+            if isinstance(m, Attention):
+                for w in (m.w_q, m.w_k, m.w_v):
+                    self._init_linear(w, std=std_qkv, generator=generator)
+                self._init_linear(m.w_out, std=std_out, generator=generator)
+
+            elif isinstance(m, FusedAttention):
+                self._init_linear(m.w_qkv, std=std_qkv, generator=generator)
+                self._init_linear(m.w_out, std=std_out, generator=generator)
+
+            else:
+                raise NotImplementedError(m)
+
         else:
-            raise NotImplementedError(m)
+            std = 0.02
+            if self in InitMethod.normalized:
+                std = d_model ** -0.5
+                if isinstance(m, Attention):
+                    for w in (m.w_q, m.w_k, m.w_v):
+                        self._init_linear(w, std=std, generator=generator)
 
-        if self == InitMethod.llama:
-            std = std / (2 * num_blocks) ** 0.5
-        elif self == InitMethod.llama_depth:
-            std = std / (2 * (block_idx + 1)) ** 0.5
-        elif self in (InitMethod.normalized, InitMethod.mup):
-            std = std / (2 * num_blocks) ** 0.5
+                elif isinstance(m, FusedAttention):
+                    self._init_linear(m.w_qkv, std=std, generator=generator)
 
-        self._init_linear(m.w_out, std=std, generator=generator)
+                else:
+                    raise NotImplementedError(m)
+
+            if self == InitMethod.llama:
+                std = std / (2 * num_blocks) ** 0.5
+            elif self == InitMethod.llama_depth:
+                std = std / (2 * (block_idx + 1)) ** 0.5
+            elif self == InitMethod.normalized:
+                std = std / (2 * num_blocks) ** 0.5
+
+            self._init_linear(m.w_out, std=std, generator=generator)
 
     def init_feed_forward(
         self,
@@ -111,26 +131,35 @@ class InitMethod(StrEnum):
         num_blocks: int,
         generator: Optional[torch.Generator] = None,
     ):
-        std = 0.02
-        if self in (InitMethod.normalized, InitMethod.mup):
-            std = d_model**-0.5
+        if self == InitMethod.mup:
+            std_in = d_model ** -0.5
+            std_out = m.hidden_size ** -0.5
 
-        self._init_linear(m.w1, std=std, generator=generator)
+            self._init_linear(m.w1, std=std_in, generator=generator)
+            self._init_linear(m.w3, std=std_in, generator=generator)
+            self._init_linear(m.w2, std=std_out, generator=generator)
 
-        std = 0.02
-        if self == InitMethod.llama:
-            std = 0.02 / (2 * num_blocks) ** 0.5
-        elif self == InitMethod.llama_depth:
-            std = 0.02 / (2 * (block_idx + 1)) ** 0.5
-        elif self in (InitMethod.normalized, InitMethod.mup):
-            std = d_model**-0.5
+        else:
+            std = 0.02
+            if self in InitMethod.normalized:
+                std = d_model**-0.5
 
-        self._init_linear(m.w3, std=std, generator=generator)
+            self._init_linear(m.w1, std=std, generator=generator)
 
-        if self == InitMethod.normalized:
-            std = std / (2 * num_blocks) ** 0.5
+            std = 0.02
+            if self == InitMethod.llama:
+                std = 0.02 / (2 * num_blocks) ** 0.5
+            elif self == InitMethod.llama_depth:
+                std = 0.02 / (2 * (block_idx + 1)) ** 0.5
+            elif self in InitMethod.normalized:
+                std = d_model**-0.5
 
-        self._init_linear(m.w2, std=std, generator=generator)
+            self._init_linear(m.w3, std=std, generator=generator)
+
+            if self == InitMethod.normalized:
+                std = std / (2 * num_blocks) ** 0.5
+
+            self._init_linear(m.w2, std=std, generator=generator)
 
     def init_feed_forward_moe(
         self,
