@@ -889,6 +889,7 @@ class TransformerConfig(Config):
             lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype, name=LMHeadType.mup),
             dtype=dtype,
             compile=compile,
+            init_method=InitMethod.mup,
             **kwargs,
         )
 

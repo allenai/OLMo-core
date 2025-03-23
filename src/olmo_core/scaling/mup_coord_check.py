@@ -9,6 +9,7 @@ from mup.coord_check import plot_coord_data
 from mup import set_base_shapes
 from mup import load_base_shapes as mup_load
 import mup as mupo
+import torch.nn as nn
 
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.data import TokenizerConfig, NumpyFSLDataset, NumpyFSLDataLoader, DataCollator
@@ -84,9 +85,9 @@ def coord_check(
             )
             device = torch.device('cuda')
             model = config.build(device=device)
-            if not standparam:
-                base_shapes = mup_load(load_base_shapes)
-                set_base_shapes(model, base_shapes)
+            # if not standparam:
+            #     base_shapes = mup_load(load_base_shapes)
+            #     set_base_shapes(model, base_shapes)
             
             return model
         return f
@@ -101,11 +102,31 @@ def coord_check(
     models = {width: model_generator(width, standparam=not using_mup) for width in widths}
     model_instances = {width: model_fn() for width, model_fn in models.items()}
 
+    # After model creation but before using it:
+    # if using_mup:
+    #     for width, model in model_instances.items():
+    #         if width >= 384:  # For your largest models
+    #             print(f"Applying direct initialization for width {width}")
+    #             # Loop through blocks
+    #             for i in range(len(model.blocks)):
+    #                 # Fix feed-forward components
+    #                 nn.init.normal_(model.blocks[i].feed_forward.w1.weight, std=1.0/math.sqrt(model.d_model))
+    #                 nn.init.normal_(model.blocks[i].feed_forward.w3.weight, std=1.0/math.sqrt(model.d_model))
+    #                 nn.init.normal_(model.blocks[i].feed_forward.w2.weight, std=1.0/math.sqrt(model.blocks[i].feed_forward.hidden_size))
+                    
+    #                 # Fix attention components, especially for deeper blocks
+    #                 if i > 0:  # Blocks 1 and later
+    #                     nn.init.normal_(model.blocks[i].attention.w_out.weight, std=1.0/math.sqrt(model.d_model))
+                        
+    #             # Fix LM head
+    #             nn.init.normal_(model.lm_head.w_out.weight, std=1.0/math.sqrt(model.d_model))
+
+
     if using_mup: 
         if load_base_shapes and os.path.exists(load_base_shapes):
             base_shapes = mup_load(load_base_shapes)
             for model in model_instances.values():
-                set_base_shapes(model, base_shapes, rescale_params=False)
+                set_base_shapes(model, base_shapes, rescale_params=True)
         else:
             smallest_width = min(widths)
             base_model = model_instances[smallest_width]

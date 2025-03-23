@@ -66,12 +66,16 @@ class InitMethod(StrEnum):
     def init_final_w_out(
         self, m: nn.Linear, *, d_model: int, generator: Optional[torch.Generator] = None
     ):
-        std = 0.02
-        if self in (InitMethod.llama, InitMethod.llama_depth, InitMethod.normalized):
-            std = d_model**-0.5
-        elif self == InitMethod.mup:
+        if self == InitMethod.mup:
+            # std = d_model**-0.5
+            std = 1.0
+        
+        elif self in (InitMethod.llama, InitMethod.llama_depth, InitMethod.normalized):
             std = d_model**-0.5
         
+        else:
+            std = 0.02
+
         self._init_linear(m, std=std, generator=generator)
 
     def init_attention(

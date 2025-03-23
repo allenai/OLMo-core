@@ -277,13 +277,9 @@ class muPTransformerBlock(TransformerBlockBase):
             max_doc_len=max_doc_len, 
             cu_doc_lens=cu_doc_lens
         )
-        h = x + self.dropout(attention_out * self.scale_factor)
+        h = (x + self.dropout(attention_out)) * self.scale_factor
         feed_forward_out = self.feed_forward(self.feed_forward_norm(h))
-        return h + self.dropout(feed_forward_out * self.scale_factor)
-        # h = x + self.dropout(
-        #     self.attention(self.attention_norm(x), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
-        # )
-        # return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
+        return (h + self.dropout(feed_forward_out)) * self.scale_factor
 
     @property
     def tp_input_layouts(self) -> Union[Placement, Tuple[Placement, ...]]:

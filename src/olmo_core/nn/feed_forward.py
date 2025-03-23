@@ -208,8 +208,8 @@ class muPFeedForward(FeedForward):
         """
         :param x: The input of shape ``(*, d_model)``.
         """
-        # return self.w2(F.silu(self.w1(x)) * self.w3(x)) / math.sqrt(self.d_model)
-        return self.w2(F.silu(self.w1(x)) * self.w3(x)) / self.d_model
+        return self.w2(F.silu(self.w1(x)) * self.w3(x)) / math.sqrt(self.d_model)
+        # return self.w2(F.silu(self.w1(x)) * self.w3(x)) / self.d_model
 
     def apply_tp(
         self,

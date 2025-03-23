@@ -1,6 +1,7 @@
 import logging
 from functools import cached_property
 from typing import List, Optional, Sequence, cast, Dict, Any
+import math
 
 import torch
 import torch.nn as nn
@@ -533,17 +534,50 @@ class muPTransformer(Transformer):
                 return p.device
         return get_default_device()
 
-    @torch.no_grad()    
-    def init_weights(
-        self,
-        *,
-        max_seq_len: Optional[int] = None,
-        device: Optional[torch.device] = None,
-    ) -> torch.Generator:
+    # @torch.no_grad()    
+    # def init_weights(
+    #     self,
+    #     *,
+    #     max_seq_len: Optional[int] = None,
+    #     device: Optional[torch.device] = None,
+    # ) -> torch.Generator:
+    #     device = device or self.device
+    #     generator = super().init_weights(max_seq_len=max_seq_len, device=device)
+    #     from mup import set_base_shapes
+    #     set_base_shapes(self, self.mup_base_shapes, rescale_params=True)
+    #     return generator
+    
+    @torch.no_grad()
+    def init_weights(self, *, max_seq_len: Optional[int] = None, device: Optional[torch.device] = None):
         device = device or self.device
-        generator = super().init_weights(max_seq_len=max_seq_len, device=device)
+        generator = torch.Generator(device).manual_seed(self.init_seed)
+        
+        # Don't call super().init_weights() at all!
+        # Instead, directly initialize with muP-compatible initialization:
+        
+        # Initialize embeddings
+        nn.init.normal_(self.embeddings.weight, std=1.0)  # muP-style init
+        
+        # Initialize each block directly with muP-compatible initialization
+        for block in self.blocks:
+            # Attention components
+            nn.init.normal_(block.attention.w_q.weight, std=1.0/math.sqrt(self.d_model))
+            nn.init.normal_(block.attention.w_k.weight, std=1.0/math.sqrt(self.d_model))
+            nn.init.normal_(block.attention.w_v.weight, std=1.0/math.sqrt(self.d_model))
+            nn.init.normal_(block.attention.w_out.weight, std=1.0/math.sqrt(self.d_model))
+            
+            # Feed-forward components
+            nn.init.normal_(block.feed_forward.w1.weight, std=1.0/math.sqrt(self.d_model))
+            nn.init.normal_(block.feed_forward.w3.weight, std=1.0/math.sqrt(self.d_model))
+            nn.init.normal_(block.feed_forward.w2.weight, std=1.0/math.sqrt(block.feed_forward.hidden_size))
+        
+        # Initialize LM head
+        nn.init.normal_(self.lm_head.w_out.weight, std=1.0/math.sqrt(self.d_model))
+        
+        # Set base shapes without rescaling
         from mup import set_base_shapes
-        set_base_shapes(self, self.mup_base_shapes, rescale_params=True)
+        set_base_shapes(self, self.mup_base_shapes, rescale_params=False)
+        
         return generator
 
 
@@ -571,7 +605,6 @@ class muPTransformer(Transformer):
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
 
-        # passthrough for non-existent layers, allows easy pipeline parallel configuration
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
         for block in self.blocks:
