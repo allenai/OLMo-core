@@ -52,7 +52,7 @@ class DirkishModelLadder(ModelLadder):
         # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838
         assert self.sequence_length in {2048, 4096}
         lr = 0.0047 * (self.model_size / 108000000) ** (-1 / 3)
-        lr /= 4
+        lr /= 8
 
         return AdamWConfig(
             lr=lr,
