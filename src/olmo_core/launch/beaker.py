@@ -427,15 +427,7 @@ class BeakerLaunchConfig(Config):
                 resources=TaskResources(gpu_count=self.num_gpus, shared_memory=self.shared_memory),
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
-            #  .with_constraint(cluster=self.clusters)
-            .with_constraint(
-                hostname=[
-                    "jupiter-cs-aus-437.reviz.ai2.in",
-                    "jupiter-cs-aus-229.reviz.ai2.in",
-                    "jupiter-cs-aus-226.reviz.ai2.in",
-                    "jupiter-cs-aus-194.reviz.ai2.in",
-                ]
-            )
+            .with_constraint(cluster=self.clusters)
             .with_env_var("REPO_URL", f"https://github.com/{github_account}/{github_repo}")
             .with_env_var("GIT_REF", git_ref)
         )
