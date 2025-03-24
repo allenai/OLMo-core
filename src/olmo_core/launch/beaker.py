@@ -433,7 +433,7 @@ class BeakerLaunchConfig(Config):
                     "jupiter-cs-aus-437.reviz.ai2.in",
                     "jupiter-cs-aus-229.reviz.ai2.in",
                     "jupiter-cs-aus-226.reviz.ai2.in",
-                    "jupiter-cs-aus-138.reviz.ai2.in",
+                    "jupiter-cs-aus-194.reviz.ai2.in",
                 ]
             )
             .with_env_var("REPO_URL", f"https://github.com/{github_account}/{github_repo}")
