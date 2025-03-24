@@ -16,7 +16,6 @@ from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandB
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
-    TransformerExpertParallelConfig,
     TransformerTrainModuleConfig,
 )
 
@@ -62,11 +61,11 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.bfloat16,
-            #  num_replicas=1,  # to enable full-way expert parallel
+            shard_degree=16,
             prefetch_factor=1,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
-        ep_config=TransformerExpertParallelConfig(degree=-1),
+        #  ep_config=TransformerExpertParallelConfig(degree=-1),
         float8_config=Float8Config(
             ao=AOFloat8LinearConfig(
                 enable_fsdp_float8_all_gather=True,
@@ -130,5 +129,5 @@ if __name__ == "__main__":
         # nightly needed right now for FP8 to work with PP
         # https://github.com/pytorch/pytorch/issues/143194
         beaker_image=OLMoCoreBeakerImage.nightly_cu126,
-        num_nodes=8,
+        num_nodes=4,
     )

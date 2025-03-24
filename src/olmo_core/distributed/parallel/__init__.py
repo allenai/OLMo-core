@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple
 from torch.distributed import DeviceMesh, ProcessGroup, init_device_mesh
 
 from olmo_core.config import StrEnum
-from olmo_core.distributed.utils import get_num_nodes, get_world_size
+from olmo_core.distributed.utils import get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device
 
@@ -192,13 +192,7 @@ def build_world_mesh(
 
     # Then data parallel.
     if dp.name == DataParallelType.hsdp:
-        num_replicas = dp.num_replicas or get_num_nodes()
-        if dp_world_size % num_replicas != 0:
-            raise OLMoConfigurationError(
-                f"HSDP requires DP world size ({dp_world_size}) to be divisible by 'num_replicas' ({num_replicas})"
-            )
-        shard_degree = dp_world_size // num_replicas
-
+        num_replicas, shard_degree = dp.get_replicate_and_shard_degree(dp_world_size)
         names.append(MeshDimName.dp_replicate)
         dims.append(num_replicas)
         names.append(MeshDimName.dp_shard)
