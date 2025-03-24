@@ -62,7 +62,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.bfloat16,
-            num_replicas=1,  # to enable full-way expert parallel
+            #  num_replicas=1,  # to enable full-way expert parallel
             prefetch_factor=1,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
