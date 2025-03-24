@@ -61,7 +61,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.bfloat16,
-            shard_degree=16,
+            shard_degree=32,
             prefetch_factor=1,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
