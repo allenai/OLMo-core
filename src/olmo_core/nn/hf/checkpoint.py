@@ -35,6 +35,7 @@ def load_hf_model(
     model_name_or_path: PathOrStr,
     model_state_dict: Dict[str, Any],
     *,
+    num_embeddings: Optional[int] = None,
     process_group: Optional[dist.ProcessGroup] = None,
     work_dir: Optional[PathOrStr] = None,
 ):
@@ -43,6 +44,8 @@ def load_hf_model(
 
     :param model_name_or_path: The name of a model in HF Hub or the path to a model saved in HF format.
     :param model_state_dict: The OLMo Core model state dict in which to load HF state.
+    :param num_embeddings: The number of embeddings in the OLMo Core model being loaded into,
+        defaults to the number of embeddings in the HF model.
     :param process_group: The process group to use for distributed communication.
     :param work_dir: A local directory that can be used for holding temporary state. Required when
         downloading a model from a cloud directory.
@@ -89,6 +92,7 @@ def load_hf_model(
 
     hf_model = AutoModelForCausalLM.from_pretrained(model_name_or_path)
     log.info(f"Loaded hf model: {hf_model}")
+    hf_model.resize_token_embeddings(num_embeddings)
 
     converted_state_dict: Dict[str, torch.Tensor] = convert_state_from_hf(
         hf_model.config, hf_model.state_dict(), model_id=model_id
@@ -116,6 +120,7 @@ def save_hf_model(
     model_state_dict: Dict[str, Any],
     model: Transformer,
     *,
+    vocab_size: Optional[int] = None,
     process_group: Optional[dist.ProcessGroup] = None,
     work_dir: Optional[PathOrStr] = None,
     save_overwrite: bool = False,
@@ -125,6 +130,7 @@ def save_hf_model(
 
     :param save_dir: Directory in which to save model.
     :param model_state_dict: The OLMo Core model state dict being saved in HF format.
+    :param vocab_size: The size of the vocab, defaults to the number of embeddings in the OLMo Core model.
     :param process_group: The process group to use for distributed communication.
     :param work_dir: A local directory that can be used for holding temporary state. Required when
         downloading a model from a cloud directory.
@@ -143,8 +149,12 @@ def save_hf_model(
     with init_empty_weights():
         log.info("Initializing HF model with empty weights...")
         hf_model = AutoModelForCausalLM.from_config(hf_config)
+        del hf_config
 
     hf_model.load_state_dict(hf_state_dict, assign=True)
+
+    hf_model.config.vocab_size = vocab_size or model.vocab_size
+    hf_model.resize_token_embeddings(hf_model.config.vocab_size)
 
     if get_fs_local_rank(process_group) == 0:
         if is_url(save_dir):

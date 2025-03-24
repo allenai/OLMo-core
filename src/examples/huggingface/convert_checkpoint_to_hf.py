@@ -76,6 +76,7 @@ def convert_checkpoint_to_hf(
     model_state_dict = dist_cp_sd.get_model_state_dict(model, options=state_dict_options)
 
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
+    vocab_size = tokenizer_config.vocab_size
 
     with TemporaryDirectory() as work_dir:
         log.info(f"Loading checkpoint from '{original_checkpoint_path}'")
@@ -89,6 +90,7 @@ def convert_checkpoint_to_hf(
             output_path,
             model_state_dict,
             model,
+            vocab_size=vocab_size,
             work_dir=work_dir,
             save_overwrite=True,
         )
@@ -113,7 +115,7 @@ def convert_checkpoint_to_hf(
 
 
 def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
-    MAX_DIM_SIZE = 100_000
+    MAX_DIM_SIZE = 1_000_000
 
     olmo_core_debug_state: Dict[str, Tuple[int, torch.Tensor]] = {}
     hf_debug_state: Dict[str, Tuple[int, torch.Tensor]] = {}
@@ -221,11 +223,16 @@ def validate_conversion(
 
             _, hf_tensor = hf_state[hf_state_name]
 
-            log.info(
-                f"{olmo_core_state_name}, {hf_state_name} norm diff: {torch.norm(olmo_core_tensor - hf_tensor)}"
-            )
+            if olmo_core_tensor.shape != hf_tensor.shape:
+                log.info(
+                    f"{olmo_core_state_name}, {hf_state_name} shape mismatch: {olmo_core_tensor.shape} {hf_tensor.shape}"
+                )
+            else:
+                log.info(
+                    f"{olmo_core_state_name}, {hf_state_name} norm diff: {torch.norm(olmo_core_tensor - hf_tensor)}"
+                )
 
-    torch.testing.assert_close(hf_logits, logits)
+    torch.testing.assert_close(hf_logits[..., :vocab_size], logits[..., :vocab_size])
 
 
 def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
