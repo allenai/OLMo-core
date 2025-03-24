@@ -56,7 +56,7 @@ class InitMethod(StrEnum):
         elif self in InitMethod.normalized:
             nn.init.normal_(m.weight, std=d_model**-0.5) 
         elif self == InitMethod.mup:
-            # nn.init.normal_(m.weight, std=d_model ** -0.5) 
+            # nn.init.normal_(m.weight, std=1/d_model)# ** -0.5) 
             nn.init.normal_(m.weight, std=1)       
         else:
             nn.init.trunc_normal_(

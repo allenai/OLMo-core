@@ -232,18 +232,6 @@ class TransformerBlock(TransformerBlockBase):
 
 
 class muPTransformerBlock(TransformerBlockBase):
-    """
-    A typical "Llama-style" transformer block for muP implementation.
-
-    :param d_model: The model dimensionality.
-    :param block_idx: The index/position of the block within the model. Ranges from 0 to ``n_layers - 1``.
-    :param attention: The attention module config.
-    :param feed_forward: The feed forward module config.
-    :param layer_norm: The layer norm config for both the attention LN and the feed forward LN.
-    :param dropout: Dropout probability.
-    :param init_device: The device used when initializing parameters.
-    """
-
     def __init__(
         self,
         *,
@@ -264,7 +252,6 @@ class muPTransformerBlock(TransformerBlockBase):
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
         self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
-        self.scale_factor = 1.0 / math.sqrt(d_model)
 
     def forward(
         self,
@@ -277,9 +264,9 @@ class muPTransformerBlock(TransformerBlockBase):
             max_doc_len=max_doc_len, 
             cu_doc_lens=cu_doc_lens
         )
-        h = (x + self.dropout(attention_out)) * self.scale_factor
+        h = (x + self.dropout(attention_out))
         feed_forward_out = self.feed_forward(self.feed_forward_norm(h))
-        return (h + self.dropout(feed_forward_out)) * self.scale_factor
+        return (h + self.dropout(feed_forward_out))
 
     @property
     def tp_input_layouts(self) -> Union[Placement, Tuple[Placement, ...]]:

@@ -487,19 +487,6 @@ class Transformer(nn.Module):
 
 @beta_feature
 class muPTransformer(Transformer):
-    """
-    A Transformer model with muP scaling support.
-
-    :param d_model: The model dimensionality.
-    :param vocab_size: The vocab size.
-    :param n_layers: The number of transformer layers/blocks.
-    :param block: The block configuration.
-    :param lm_head: The LM head configuration.
-    :param dtype: The datatype to use for the linear output layer.
-    :param init_device: The device used when initializing parameters.
-    :param mup_base_shapes: Dictionary of muP base shapes for scaling.
-    """
-
     def __init__(
         self,
         *,
@@ -534,52 +521,18 @@ class muPTransformer(Transformer):
                 return p.device
         return get_default_device()
 
-    # @torch.no_grad()    
-    # def init_weights(
-    #     self,
-    #     *,
-    #     max_seq_len: Optional[int] = None,
-    #     device: Optional[torch.device] = None,
-    # ) -> torch.Generator:
-    #     device = device or self.device
-    #     generator = super().init_weights(max_seq_len=max_seq_len, device=device)
-    #     from mup import set_base_shapes
-    #     set_base_shapes(self, self.mup_base_shapes, rescale_params=True)
-    #     return generator
-    
-    @torch.no_grad()
-    def init_weights(self, *, max_seq_len: Optional[int] = None, device: Optional[torch.device] = None):
+    @torch.no_grad()    
+    def init_weights(
+        self,
+        *,
+        max_seq_len: Optional[int] = None,
+        device: Optional[torch.device] = None,
+    ) -> torch.Generator:
         device = device or self.device
-        generator = torch.Generator(device).manual_seed(self.init_seed)
-        
-        # Don't call super().init_weights() at all!
-        # Instead, directly initialize with muP-compatible initialization:
-        
-        # Initialize embeddings
-        nn.init.normal_(self.embeddings.weight, std=1.0)  # muP-style init
-        
-        # Initialize each block directly with muP-compatible initialization
-        for block in self.blocks:
-            # Attention components
-            nn.init.normal_(block.attention.w_q.weight, std=1.0/math.sqrt(self.d_model))
-            nn.init.normal_(block.attention.w_k.weight, std=1.0/math.sqrt(self.d_model))
-            nn.init.normal_(block.attention.w_v.weight, std=1.0/math.sqrt(self.d_model))
-            nn.init.normal_(block.attention.w_out.weight, std=1.0/math.sqrt(self.d_model))
-            
-            # Feed-forward components
-            nn.init.normal_(block.feed_forward.w1.weight, std=1.0/math.sqrt(self.d_model))
-            nn.init.normal_(block.feed_forward.w3.weight, std=1.0/math.sqrt(self.d_model))
-            nn.init.normal_(block.feed_forward.w2.weight, std=1.0/math.sqrt(block.feed_forward.hidden_size))
-        
-        # Initialize LM head
-        nn.init.normal_(self.lm_head.w_out.weight, std=1.0/math.sqrt(self.d_model))
-        
-        # Set base shapes without rescaling
+        generator = super().init_weights(max_seq_len=max_seq_len, device=device)
         from mup import set_base_shapes
-        set_base_shapes(self, self.mup_base_shapes, rescale_params=False)
-        
+        set_base_shapes(self, self.mup_base_shapes, rescale_params=True)
         return generator
-
 
     def forward(
         self,
@@ -587,18 +540,6 @@ class muPTransformer(Transformer):
         doc_lens: Optional[torch.Tensor] = None,
         max_doc_lens: Optional[Sequence[int]] = None,
     ) -> torch.Tensor:
-        """
-        Run the transformer on the token input IDs.
-
-        :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
-        :param doc_lens: Document lengths to use in attention for intra-document masking.
-            Shape ``(batch_size, max_docs)``.
-            Required together with ``max_doc_lens`` when using intra-document masking.
-        :param max_doc_lens: Maximum document length for each instance in the batch.
-            Required together with ``doc_lens`` when using intra-document masking.
-
-        :returns: The output logits.
-        """
         max_doc_len: Optional[int] = None
         cu_doc_lens: Optional[torch.Tensor] = None
         if doc_lens is not None and max_doc_lens is not None:
@@ -618,16 +559,6 @@ class muPTransformer(Transformer):
         loss_parallel: bool = False,
         float8_enabled: bool = False,
     ):
-        """
-        Apply tensor parallelism to the model.
-
-        .. warning::
-            Usually this does not need to be called directly, as :meth:`TransformerConfig.build()`
-            will call it for you.
-
-        :param loss_parallel: Set to ``True`` if parallelizing the loss function as well.
-        :param float8_enabled: Set this to ``True`` if training with float8 linear layers.
-        """
         from torch.distributed._tensor import Replicate
         from torch.distributed.tensor.parallel import (
             PrepareModuleInput,

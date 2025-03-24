@@ -194,11 +194,6 @@ class muPFeedForward(FeedForward):
 
         nn.init.normal_(self.w2.weight, mean=0.0, std=math.sqrt(1 / self.hidden_size))
 
-        # nn.init.normal_(self.w1.weight, mean=0.0, std=(self.d_model ** -0.5) / math.sqrt(self.d_model))
-        # nn.init.normal_(self.w3.weight, mean=0.0, std=(self.d_model ** -0.5) / math.sqrt(self.d_model))
-
-        # nn.init.normal_(self.w2.weight, mean=0.0, std=(self.hidden_size ** -0.5) / math.sqrt(self.d_model))
-
         if bias:
             nn.init.zeros_(self.w1.bias)
             nn.init.zeros_(self.w2.bias)
@@ -208,8 +203,7 @@ class muPFeedForward(FeedForward):
         """
         :param x: The input of shape ``(*, d_model)``.
         """
-        return self.w2(F.silu(self.w1(x)) * self.w3(x)) / math.sqrt(self.d_model)
-        # return self.w2(F.silu(self.w1(x)) * self.w3(x)) / self.d_model
+        return self.w2(F.silu(self.w1(x)) * self.w3(x)) / self.d_model
 
     def apply_tp(
         self,
