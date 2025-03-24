@@ -148,7 +148,7 @@ class LcContTrain(Config):
             train_module = TransformerTrainModuleConfig(
                 rank_microbatch_size=1 * CONTEXT_LENGTH,
                  optim=AdamWConfig(
-                    lr=1e-5,
+                    lr= 0.5 * 1e-5,
                     weight_decay=0.1,
                     betas=(0.9, 0.95),
                     group_overrides=[
@@ -180,7 +180,7 @@ class LcContTrain(Config):
                 # compile=True,
             #     fused_ops=False,
                 use_flash=True,
-                rope_theta = 4 * 10 **6,
+                rope_theta = 8 * 10 **6,
             #     dp_config=TransformerDataParallelConfig(
             #         name=DataParallelType.fsdp,
             #         param_dtype=DType.bfloat16,
