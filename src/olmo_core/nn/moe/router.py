@@ -223,7 +223,9 @@ class MoERouter(nn.Module):
         if is_distributed():
             dist.all_reduce(batch_size_per_expert, group=self.pp_group)
 
-        ideal_batch_size_per_expert = batch_size_per_expert.sum() / self.num_experts
+        ideal_batch_size_per_expert = batch_size_per_expert.mean(
+            dim=0, keepdim=True, dtype=torch.float32
+        )
         bias_delta = self.bias_gamma * (ideal_batch_size_per_expert - batch_size_per_expert).sign()
 
         # NOTE: have to be careful here to manage the case where `score_bias` is a DTensor.
