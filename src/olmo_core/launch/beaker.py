@@ -17,6 +17,7 @@ from beaker import (
     DatasetNotFound,
     Experiment,
     ExperimentSpec,
+    ImageNotFound,
     Job,
     Priority,
     RetrySpec,
@@ -362,6 +363,21 @@ class BeakerLaunchConfig(Config):
 
         return dataset
 
+    def _resolve_beaker_image(self) -> str:
+        image = self.beaker_image
+        try:
+            return self.beaker.image.get(image).id
+        except ImageNotFound as exc:
+            # Image name was already a full name, so it probably doesn't exist.
+            if "/" in image:
+                raise
+
+            # Try pre-pending 'petew', since that's the account that we usually build the images from.
+            try:
+                return self.beaker.image.get(f"petew/{image}").id
+            except ImageNotFound:
+                raise exc
+
     def build_experiment_spec(
         self, torchrun: bool = True, entrypoint: Optional[str] = None
     ) -> ExperimentSpec:
@@ -412,7 +428,7 @@ class BeakerLaunchConfig(Config):
         task_spec = (
             TaskSpec.new(
                 self.task_name,
-                beaker_image=self.beaker.image.get(self.beaker_image).id,
+                beaker_image=self._resolve_beaker_image(),
                 priority=self.priority,
                 preemptible=self.preemptible,
                 arguments=self.cmd,
