@@ -20,7 +20,13 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from ..buffer_cache import BufferCache
 
-__all__ = ["MoERouter", "MoELinearRouter", "MoERouterConfig", "MoERouterType"]
+__all__ = [
+    "MoERouter",
+    "MoELinearRouter",
+    "MoERouterConfig",
+    "MoERouterType",
+    "MoERouterGatingFunction",
+]
 
 
 # NOTE: To enable end-to-end benchmarking without convergence we
@@ -52,6 +58,11 @@ class MoERouterType(StrEnum):
     """
 
 
+class MoERouterGatingFunction(StrEnum):
+    softmax = "softmax"
+    sigmoid = "sigmoid"
+
+
 @dataclass
 class MoERouterConfig(Config):
     """
@@ -67,6 +78,7 @@ class MoERouterConfig(Config):
     normalize_expert_weights: Optional[float] = None
     uniform_expert_assignment: bool = False
     bias_gamma: Optional[float] = None
+    gating_function: MoERouterGatingFunction = MoERouterGatingFunction.softmax
     dtype: Optional[DType] = None
 
     def num_params(self, d_model: int, num_experts: int) -> int:
@@ -147,6 +159,7 @@ class MoERouter(nn.Module):
         normalize_expert_weights: Optional[float] = None,
         uniform_expert_assignment: bool = False,
         bias_gamma: Optional[float] = None,
+        gating_function: MoERouterGatingFunction = MoERouterGatingFunction.softmax,
         init_device: str = "cpu",
     ):
         super().__init__()
@@ -157,6 +170,7 @@ class MoERouter(nn.Module):
         self.normalize_expert_weights = normalize_expert_weights
         self.uniform_expert_assignment = uniform_expert_assignment
         self.bias_gamma = bias_gamma
+        self.gating_function = gating_function
         self._cache: Optional[BufferCache] = None
         self.pp_group: Optional[dist.ProcessGroup] = None
         if self.bias_gamma is not None:
@@ -272,7 +286,12 @@ class MoERouter(nn.Module):
         logits = self.get_expert_logits(x).view(-1, self.num_experts)
 
         # shape: (batch_size * seq_len, num_experts)
-        scores = logits.softmax(dim=-1)
+        if self.gating_function == MoERouterGatingFunction.softmax:
+            scores = logits.softmax(dim=-1)
+        elif self.gating_function == MoERouterGatingFunction.sigmoid:
+            scores = F.sigmoid(logits)
+        else:
+            raise NotImplementedError(self.gating_function)
 
         # shape: (batch_size * seq_len, top_k)
         expert_weights, expert_indices = self.get_top_k(scores)
