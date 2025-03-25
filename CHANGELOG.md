@@ -9,12 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added information about the official 32B training run.
+- Added support for auxiliary-loss-free MoE load-balancing, similar to DeepSeek-v3. You can activate this by setting `bias_gamma` to a non-zero float in your `MoERouter` config.
 - Compatibility with B200s
+
+### Changed
+
+- `TransformerTrainModuleConfig` can now be used to build a `TransformerPipelineTrainModule` by adding a `pp_config` spec. This makes the `TransformerPipelineTrainModuleConfig` redundant, but it will be kept around for backwards compatibility until the next major release.
+- Several state dict methods in `TrainModule` now take an `optim` option, which can disable the use of optimizer state.
+- Updated `Float8Config` for latest version of `torchao`.
+- Undo a fix applied to `olmo_core.data.numpy_dataset.NumpyFSLDatasetMixture` that was generating a mismatch between the shape of instances in the dataset and the shape of instances in the data loader.
+
+### Fixed
+
+- Fixed a bug where the trainer might try to save a duplicate final checkpoint if the run that already completed was restarted.
+
+### Fixed
+
+- When submitting a Beaker job from a branch that's tracking a GitHub fork, OLMo-core now instructs Beaker to pull from the fork instead of from the main repo.
+
+
+## [v2.0.1](https://github.com/allenai/OLMo-core/releases/tag/v2.0.1) - 2025-03-18
+
+### Added
+
+- Added information about the official 32B training run.
+- Added information about the official 32B anneal training run.
+- Added automatic support for LL128 when running on Augusta.
+- Added information about 32B training logs.
 
 ### Fixed
 
 - The official config for the 32B had unrealistic batch size settings.
+- Ignore `group_overrides` for frozen parameters instead of throwing an error.
+
+### Removed
+
+- Removed the "fused" cross-entropy loss variant. It had a bug and consistently under-performed the native PyTorch version when compiled. See [Post Incident Report: bug with fused CE loss](https://docs.google.com/document/d/1IK6q2gX6mH7eQO_IItCZAYYlm4g4htL4mNWbTQuPKf4/edit?usp=sharing) for more information.
 
 ## [v2.0.0](https://github.com/allenai/OLMo-core/releases/tag/v2.0.0) - 2025-03-12
 

@@ -1,10 +1,4 @@
-from .train_module import (
-    BasicTrainModule,
-    EvalBatchSizeUnit,
-    EvalBatchSpec,
-    TrainModule,
-)
-from .transformer import (
+from .config import (
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
     TransformerContextParallelConfig,
@@ -12,18 +6,14 @@ from .transformer import (
     TransformerDataParallelWrappingStrategy,
     TransformerExpertParallelConfig,
     TransformerPipelineParallelConfig,
-    TransformerPipelineTrainModule,
     TransformerPipelineTrainModuleConfig,
     TransformerTensorParallelConfig,
-    TransformerTrainModule,
     TransformerTrainModuleConfig,
 )
+from .pipeline_train_module import TransformerPipelineTrainModule
+from .train_module import TransformerTrainModule
 
 __all__ = [
-    "TrainModule",
-    "EvalBatchSpec",
-    "EvalBatchSizeUnit",
-    "BasicTrainModule",
     "TransformerTrainModule",
     "TransformerTrainModuleConfig",
     "TransformerPipelineTrainModule",

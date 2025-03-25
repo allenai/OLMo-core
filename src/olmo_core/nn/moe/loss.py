@@ -50,7 +50,7 @@ class MoELoadBalancingLoss(MoELoss):
         **kwargs,
     ):
         del kwargs
-        # shape: (batch_size, num_local_experts) -> (num_local_experts,)
+        # shape: (batch_size, num_experts) -> (num_experts,)
         expert_scores = expert_scores.mean(dim=0)
         loss = torch.dot(batch_size_per_expert.type_as(expert_scores), expert_scores)
         if self.loss is None:

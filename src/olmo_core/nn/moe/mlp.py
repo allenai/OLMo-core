@@ -287,7 +287,8 @@ class DroplessMoEMLP(MoEMLPBase):
         self, x: torch.Tensor, w: torch.Tensor, batch_sizes: torch.Tensor, trans_b: bool = False
     ) -> torch.Tensor:
         if self._gmm is not None:
-            return self._gmm(x, w, batch_sizes, trans_b=trans_b)  # type: ignore
+            # grouped-gemm only accepts BF16
+            return self._gmm(x.to(torch.bfloat16), w.to(torch.bfloat16), batch_sizes, trans_b=trans_b)  # type: ignore
         else:
             out = []
             start = 0

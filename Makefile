@@ -1,12 +1,13 @@
+# NOTE: When upgrading dependency versions (like for torch) make sure:
+#  * The corresponding versions specified in 'pyproject.toml' include the new version.
+#  * The versions installed in '.github/actions/setup-venv/action.yml' match if necessary.
 CUDA_VERSION = "12.4"
 TORCH_CUDA_VERSION = $(shell echo $(CUDA_VERSION) | tr -d .)
 TORCH_VERSION = "2.6.0"
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
-# NOTE: when upgrading the nightly version you also need to upgrade the torch version specification
-# in 'pyproject.toml' to include that nightly version.
 TORCH_NIGHTLY_VERSION = "2.7.0.dev20250202"
 TORCH_NIGHTLY_VERSION_SHORT = $(shell echo $(TORCH_NIGHTLY_VERSION) | tr -d .)
-TORCHAO_VERSION = "0.8.0"
+TORCHAO_VERSION = "0.9.0"
 GROUPED_GEMM_VERSION = "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
 FLASH_ATTN_WHEEL = https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
 

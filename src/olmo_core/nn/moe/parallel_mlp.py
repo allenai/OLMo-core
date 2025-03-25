@@ -2,7 +2,7 @@
 # It has since changed substantially.
 
 from abc import abstractmethod
-from typing import Any, List, NamedTuple, Optional, Tuple
+from typing import List, NamedTuple, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -10,10 +10,10 @@ import torch.nn as nn
 from torch.distributed import DeviceMesh
 
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
+from olmo_core.ops import moe as ops
 from olmo_core.utils import ensure_multiple_of, get_default_device, move_to_device
 
 from ..buffer_cache import BufferCache
-from . import ops
 from .mlp import DroplessMoEMLP, MoEMLP, MoEMLPBase
 
 __all__ = ["ParallelMLPBase", "ParallelMLP", "ParallelDroplessMLP"]
@@ -28,7 +28,7 @@ class PermutedAllToAllOutput(NamedTuple):
     recv_counts: Optional[List[int]]
     send_counts: Optional[List[int]]
     expert_capacity: int
-    handle: Any
+    handle: dist.Work
 
 
 class ParallelMLPBase(nn.Module):
@@ -100,20 +100,14 @@ class ParallelMLPBase(nn.Module):
         self.mlp.prepare_experts_for_ddp(**kwargs)
 
     def indices_and_bins(
-        self, expert_indices: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        self,
+        expert_indices: torch.Tensor,
+        batch_size_per_expert: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         :param expert_indices: A 1D tensor.
+        :param batch_size_per_expert: A 1D tensor.
         """
-        # Histogram the expert ids to identify the number of
-        # items/tokens routed to each expert.
-        # shape: (num_experts,), LongTensor
-        # NOTE: if we wanted to keep the batch dimension here like for sequence-level load balancing
-        # loss, we could use `opts.batched_histc`.
-        batch_size_per_expert = torch.histc(
-            expert_indices, bins=self.num_experts, min=0, max=self.num_experts - 1
-        )
-
         expert_indices = expert_indices.int()
 
         # Sort the expert ids to produce the scatter/gather
@@ -128,26 +122,28 @@ class ParallelMLPBase(nn.Module):
         bins = torch.empty_like(batch_size_per_expert, dtype=torch.int32)
         torch.cumsum(batch_size_per_expert, 0, out=bins)
 
-        return indices.int(), bin_ids, bins, batch_size_per_expert
+        return indices.int(), bin_ids, bins
 
     def forward(
         self,
         x: torch.Tensor,
         expert_weights: torch.Tensor,
         expert_indices: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        batch_size_per_expert: torch.Tensor,
+    ) -> torch.Tensor:
         """
         :param x: The input of shape ``(N, d_model)``.
         :param expert_weights: Expert weights of shape ``(N, top_k)``.
         :param expert_indices: The indices of the top-k experts, shape ``(N, top_k)``.
+        :param batch_size_per_expert: The number of items routed to each expert, shape ``(num_experts,)``.
 
-        :returns: The output with the same shape as ``x`` and a tensor with shape ``(num_local_experts,)``
-            containing the number of items/tokens routed to each (local) expert.
+        :returns: The output with the same shape as ``x``.
         """
-        x, expert_weights, expert_indices = (
+        x, expert_weights, expert_indices, batch_size_per_expert = (
             get_local_tensor(x),
             get_local_tensor(expert_weights),
             get_local_tensor(expert_indices),
+            get_local_tensor(batch_size_per_expert),
         )
 
         in_shape = x.size()
@@ -160,7 +156,7 @@ class ParallelMLPBase(nn.Module):
         expert_indices = expert_indices.flatten()
 
         with torch.no_grad():
-            indices, bin_ids, bins, batch_size_per_expert = self.indices_and_bins(expert_indices)
+            indices, bin_ids, bins = self.indices_and_bins(expert_indices, batch_size_per_expert)
 
         # Compute the experts.
         if not self._expert_parallel_enabled:
@@ -184,7 +180,7 @@ class ParallelMLPBase(nn.Module):
                 batch_size_per_expert=batch_size_per_expert,
             )
 
-        return x.view(in_shape), batch_size_per_expert
+        return x.view(in_shape)
 
     @abstractmethod
     def forward_once(
@@ -320,7 +316,7 @@ class ParallelMLPBase(nn.Module):
         *,
         send_counts: Optional[List[int]],
         recv_counts: Optional[List[int]],
-    ) -> Tuple[torch.Tensor, Any]:
+    ) -> Tuple[torch.Tensor, dist.Work]:
         raise NotImplementedError
 
     @abstractmethod
@@ -356,8 +352,6 @@ class ParallelMLP(ParallelMLPBase):
 
     def warmup_cache(self, max_local_microbatch_size: int):
         self.max_local_microbatch_size = max_local_microbatch_size
-        # TODO: call `_get_parallel_indices_and_bins()` up-front to warm the cache so
-        # torch.compile() doesn't try to trace that.
         expert_capacity = self.expert_capacity(self.max_local_microbatch_size // self.tp_degree)
         local_expert_capacity = expert_capacity // self.ep_world_size
         self._get_parallel_indices_and_bins(
@@ -566,7 +560,7 @@ class ParallelMLP(ParallelMLPBase):
         *,
         send_counts: Optional[List[int]],
         recv_counts: Optional[List[int]],
-    ) -> Tuple[torch.Tensor, Any]:
+    ) -> Tuple[torch.Tensor, dist.Work]:
         assert send_counts is None
         assert recv_counts is None
 
@@ -805,7 +799,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
         *,
         send_counts: Optional[List[int]],
         recv_counts: Optional[List[int]],
-    ) -> Tuple[torch.Tensor, Any]:
+    ) -> Tuple[torch.Tensor, dist.Work]:
         assert send_counts is not None
         assert recv_counts is not None
 

@@ -1,8 +1,7 @@
 import contextlib
-import copy
 import logging
 import math
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from functools import cached_property, partial
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union, cast
 
@@ -10,17 +9,14 @@ import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
-from torch.distributed import DeviceMesh
 from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.pipelining import PipelineStage
 from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
-from olmo_core.config import DType
 from olmo_core.data.utils import get_labels
 from olmo_core.distributed.checkpoint import _swap_param_keys
 from olmo_core.distributed.parallel import (
-    PipelineParallelConfig,
     PipelineSchedule,
     build_world_mesh,
     get_device_mesh_info,
@@ -36,180 +32,26 @@ from olmo_core.distributed.utils import (
 )
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.float8 import Float8Config, Float8Handler
+from olmo_core.float8 import Float8Config
 from olmo_core.nn.lm_head import LMOutputWithLoss
-from olmo_core.nn.transformer import NormalizedTransformer, Transformer
+from olmo_core.nn.transformer import Transformer
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
 
-from ..common import TRAIN_CE_LOSS_METRIC, TRAIN_Z_LOSS_METRIC, ReduceType
-from .train_module import EvalBatchSizeUnit, EvalBatchSpec, TrainModule
-from .transformer import (
+from ...common import TRAIN_CE_LOSS_METRIC, TRAIN_Z_LOSS_METRIC, ReduceType
+from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TrainModule
+from .common import parallelize_model
+from .config import (
     TransformerActivationCheckpointingConfig,
     TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerExpertParallelConfig,
+    TransformerPipelineParallelConfig,
     TransformerTensorParallelConfig,
-    TransformerTrainModuleConfig,
-    parallelize_model,
 )
 
 log = logging.getLogger(__name__)
-
-
-@beta_feature
-@dataclass
-class TransformerPipelineParallelConfig(PipelineParallelConfig):
-    """
-    Transformer-specific pipeline parallel config.
-    """
-
-    split_points: Optional[List[int]] = None
-    """
-    A list of unique, increasing block indices that define how to split the model into stages.
-
-    For example, ``split_points = [0, 2]`` with a 4-layer model means the model will be split into
-    3 stages, with the first containing just the embedding, the second containing blocks 0 and 1,
-    and the third containing blocks 2 and 3 and the language modeling head.
-
-    If not specified the split points are determined automatically based on the schedule type.
-    """
-
-    def get_split_points(self, n_layers: int) -> List[int]:
-        if self.split_points is not None:
-            return self.split_points
-
-        # Multi-stage schedules support more than 2 stages per rank, but this is the default if
-        # no pipeline split is specified.
-        num_stages_per_rank = 1 if self.schedule.is_single_stage else 2
-        total_stages = self.degree * num_stages_per_rank
-        num_layers = n_layers
-        if total_stages > num_layers:
-            raise OLMoConfigurationError("Total stages cannot be greater than the number of layers")
-
-        base_interval = num_layers // total_stages
-        extra_layers = num_layers % total_stages
-
-        splits: List[int] = []
-        current_layer = 0
-        for i in range(total_stages - 1):
-            if i == 0:
-                current_layer += base_interval
-            else:
-                # Middle stages get an extra layer if there are any remaining
-                if extra_layers > 0:
-                    current_layer += base_interval + 1
-                    extra_layers -= 1
-                else:
-                    current_layer += base_interval
-            splits.append(current_layer)
-        log.info(f"Auto generated pipeline split points will be {splits}")
-        return splits
-
-    def split_model(
-        self, model: Transformer, *, pp_mesh: DeviceMesh, device: torch.device
-    ) -> Tuple[List[PipelineStage], List[Transformer]]:
-        split_points = self.get_split_points(model.n_layers)
-        pp_rank = pp_mesh.get_local_rank()
-
-        def build_stage(
-            stage_idx: int,
-            start_layer: Optional[int],
-            stop_layer: Optional[int],
-            is_first: bool = False,
-            is_last: bool = False,
-        ) -> Tuple[PipelineStage, Transformer]:
-            model_chunk = copy.deepcopy(model)
-            if not is_first:
-                model_chunk.embeddings = None  # type: ignore
-
-            drop_layers = start_layer is not None
-            for block_idx in range(model.n_layers):
-                # we keep layers in a contiguous region between start (inclusive) and stop (exclusive)
-                if block_idx == start_layer:
-                    drop_layers = False
-                if block_idx == stop_layer:
-                    drop_layers = True
-                if drop_layers:
-                    del model_chunk.blocks[str(block_idx)]
-
-            if not is_last:
-                model_chunk.lm_head = None  # type: ignore
-
-            stage = PipelineStage(
-                model_chunk,
-                stage_idx,
-                num_stages,
-                device,
-                group=pp_mesh.get_group("pp"),
-            )
-            return stage, model_chunk
-
-        num_stages = len(split_points) + 1
-        stage_idx = pp_rank
-
-        stages = []
-        models = []
-        for stage_idx in self.stage_ids_this_rank(pp_rank, num_stages):
-            start_layer = split_points[stage_idx - 1] if stage_idx > 0 else None
-            stop_layer = split_points[stage_idx] if stage_idx < num_stages - 1 else None
-            stage, model_chunk = build_stage(
-                stage_idx,
-                start_layer,
-                stop_layer,
-                is_first=stage_idx == 0,
-                is_last=stage_idx == num_stages - 1,
-            )
-            log.info(
-                f"PP rank {pp_rank} is building stage {stage_idx} with start layer "
-                f"{start_layer}, stop layer {stop_layer}: {model_chunk}"
-            )
-            stages.append(stage)
-            models.append(model_chunk)
-
-        return stages, models
-
-
-@beta_feature
-@dataclass
-class TransformerPipelineTrainModuleConfig(TransformerTrainModuleConfig):
-    """
-    A configuration class for building :class:`TransformerPipelineTrainModule` instances.
-
-    .. seealso::
-        See the :class:`TransformerPipelineTrainModule` documentation for a description of the fields.
-    """
-
-    pp_config: Optional[TransformerPipelineParallelConfig] = None
-
-    def __post_init__(self):
-        if self.pp_config is None:
-            raise OLMoConfigurationError("'pp_config' is required")
-
-    def build(
-        self,
-        model: Transformer,
-        device: Optional[torch.device] = None,
-    ) -> "TransformerPipelineTrainModule":
-        """
-        Build the corresponding :class:`TransformerPipelineTrainModule`.
-
-        :param model: The :class:`~olmo_core.nn.transformer.Transformer` model to train.
-        :param device: The device to train on.
-        """
-        kwargs = self.as_dict(exclude_none=True, recurse=False)
-        if (autocast_precision := kwargs.pop("autocast_precision", None)) is not None:
-            kwargs["autocast_precision"] = cast(DType, autocast_precision).as_pt()
-        if (state_dict_save_opts := kwargs.pop("state_dict_save_opts", None)) is not None:
-            kwargs["state_dict_save_opts"] = dist_cp_sd.StateDictOptions(**state_dict_save_opts)
-        if (state_dict_load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
-            kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
-        return TransformerPipelineTrainModule(
-            model=model,
-            device=device,
-            **kwargs,
-        )
 
 
 @beta_feature
@@ -238,17 +80,6 @@ class TransformerPipelineTrainModule(TrainModule):
     :param cp_config: Context parallel configuration for the model.
     :param pp_config: Pipeline parallel configuration for the model.
     :param ac_config: Activation checkpointing configuration for the model.
-    :param compile_loss: Compile the loss function. This can provide a small speedup while also
-        reducing GPU memory usage, especially when using Z-loss.
-
-        .. important::
-            This is incompatible with ``fused_loss=True``.
-    :param fused_loss: Use the fused cross-entropy loss function (:func:`~olmo_core.nn.functional.fused_cross_entropy_loss`)
-        instead the PyTorch built-in. This can help reduce GPU memory usage when ``compile_loss=False``.
-        Relative performance will depend on the input sizes.
-
-        .. important::
-            This is incompatible with ``compile_loss=True``.
     :param z_loss_multiplier: Use Z-loss with this multiplier.
     :param autocast_precision: Enable AMP with this data type.
     :param max_grad_norm: Clip gradient norms to this value.
@@ -303,11 +134,6 @@ class TransformerPipelineTrainModule(TrainModule):
         self.dp_world_size = get_world_size(self.dp_process_group)
         log.info(f"Data parallel world size = {self.dp_world_size:,d}")
 
-        self.float8_handler: Optional[Float8Handler] = None
-        if float8_config is not None:
-            float8_config.compile = compile_model
-            self.float8_handler = float8_config.build()
-
         self._pp_config = pp_config
         # We'll initialize this lazily when the trainer is attached, since we need to know
         # the global batch size in order to determine the number of pipeline micro-batches.
@@ -336,7 +162,7 @@ class TransformerPipelineTrainModule(TrainModule):
             max_sequence_length=max_sequence_length,
             rank_microbatch_size=rank_microbatch_size,
             compile_model=compile_model,
-            float8_handler=self.float8_handler,
+            float8_config=float8_config,
             dp_config=dp_config,
             tp_config=tp_config,
             cp_config=cp_config,
@@ -439,10 +265,10 @@ class TransformerPipelineTrainModule(TrainModule):
             num_microbatches=num_microbatches,
         )
 
-    def state_dict(self) -> Dict[str, Any]:
-        return self._get_state_dict(self.state_dict_save_opts)
+    def state_dict(self, *, optim: bool = True) -> Dict[str, Any]:
+        return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
-    def state_dict_to_load(self, metadata: Metadata) -> Dict[str, Any]:
+    def state_dict_to_load(self, metadata: Metadata, *, optim: bool = True) -> Dict[str, Any]:
         load_opts = self.state_dict_load_opts
 
         if "optim.param_groups.0.params" in metadata.state_dict_metadata:
@@ -464,24 +290,24 @@ class TransformerPipelineTrainModule(TrainModule):
                 )
                 load_opts = replace(load_opts, flatten_optimizer_state_dict=True)
 
-        state_dict = self._get_state_dict(load_opts)
-        if self.load_key_mapping is not None:
-            _swap_param_keys(state_dict, self.load_key_mapping, metadata=metadata)
-
         has_optim_state: bool = False
         for key in metadata.state_dict_metadata.keys():
             if key.startswith("optim."):
                 has_optim_state = True
                 break
 
-        if not has_optim_state:
-            del state_dict["optim"]
+        if optim and not has_optim_state:
             log.warning("No optimizer state found in checkpoint")
+            optim = False
+
+        state_dict = self._get_state_dict(load_opts, optim=optim)
+        if self.load_key_mapping is not None:
+            _swap_param_keys(state_dict, self.load_key_mapping, metadata=metadata)
 
         return state_dict
 
-    def state_dict_to_save(self) -> Dict[str, Any]:
-        return self._get_state_dict(self.state_dict_save_opts)
+    def state_dict_to_save(self, *, optim: bool = True) -> Dict[str, Any]:
+        return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         if self.load_key_mapping is not None:
@@ -535,6 +361,9 @@ class TransformerPipelineTrainModule(TrainModule):
             return_logits=False,
             **model_kwargs,
         )
+
+        for model in self.model_parts:
+            model.post_batch(dry_run=dry_run)
 
         if dry_run:
             for model in self.model_parts:
@@ -624,12 +453,6 @@ class TransformerPipelineTrainModule(TrainModule):
                 if isinstance(optim, SkipStepOptimizer):
                     optim.latest_grad_norm = grad_norm
 
-        # Sync Float8 AMAXs (argmax of abs(max)) and scales.
-        if self.float8_handler is not None:
-            self.float8_handler.sync_float8_amax_and_scale_history(
-                cast(List[nn.Module], self.model_parts)
-            )
-
         # Maybe adjust learning rate.
         if self.scheduler is not None:
             for optim in self.optimizers:
@@ -673,18 +496,8 @@ class TransformerPipelineTrainModule(TrainModule):
             if isinstance(optim, SkipStepOptimizer):
                 self.record_metric("step skipped", optim.step_skipped, namespace="optim")
 
-        # Maybe re-normalize matrices for nGPT-type models.
-        # NOTE: sometimes 'isinstance' checks fail when the model is wrapped in some way.
         for model in self.model_parts:
-            if isinstance(model, NormalizedTransformer) or hasattr(model, "normalize_matrices"):
-                cast(NormalizedTransformer, model).normalize_matrices()
-
-        # Calculate Float8 dynamic AMAX/scale for all parameters.
-        # For FSDP2 this issues a single all-reduce for all parameters at once.
-        if self.float8_handler is not None:
-            self.float8_handler.precompute_float8_dynamic_scale_for_fsdp(
-                cast(List[nn.Module], self.model_parts)
-            )
+            model.post_optim_step()
 
     def zero_grads(self):
         for optim in self.optimizers:
@@ -807,16 +620,20 @@ class TransformerPipelineTrainModule(TrainModule):
                 stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
             yield
 
-    def _get_state_dict(self, sd_options: dist_cp_sd.StateDictOptions) -> Dict[str, Any]:
-        return {
+    def _get_state_dict(
+        self, sd_options: dist_cp_sd.StateDictOptions, optim: bool = True
+    ) -> Dict[str, Any]:
+        state_dict: Dict[str, Any] = {
             "model": {
                 k: v
                 for sd in map(
                     partial(dist_cp_sd.get_model_state_dict, options=sd_options), self.model_parts
                 )
                 for k, v in sd.items()
-            },
-            "optim": {
+            }
+        }
+        if optim:
+            state_dict["optim"] = {
                 k: v
                 for sd in map(
                     partial(dist_cp_sd.get_optimizer_state_dict, options=sd_options),
@@ -824,8 +641,9 @@ class TransformerPipelineTrainModule(TrainModule):
                     self.optimizers,
                 )
                 for k, v in sd.items()
-            },
-        }
+            }
+
+        return state_dict
 
     def _clip_grad_norm(
         self, max_grad_norm: float, norm_type: float = 2.0, foreach: Optional[bool] = None

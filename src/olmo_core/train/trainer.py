@@ -40,7 +40,7 @@ from ..distributed.utils import (
 )
 from ..exceptions import OLMoConfigurationError
 from ..io import copy_file, file_exists, is_url, join_path, normalize_path
-from ..utils import cuda_sync_debug_mode
+from ..utils import cuda_sync_debug_mode, gc_cuda
 from .callbacks import (
     Callback,
     CheckpointerCallback,
@@ -583,6 +583,13 @@ class Trainer:
 
         barrier()
 
+        # It's possible that we tried restarting a run that had already finished.
+        if self.training_complete:
+            log.warning("Training already complete, ending run now")
+            self._shutdown_bookkeeping()
+            gc_cuda()
+            return
+
         log.info("Callback order:")
         for i, callback_name in enumerate(self.callbacks.keys()):
             log.info(f"  - Callback {i+1}: {callback_name}")
@@ -618,11 +625,14 @@ class Trainer:
             callback.post_train()
 
         # Wait for any bookkeeping tasks to finish.
+        self._shutdown_bookkeeping()
+        gc_cuda()
+        log.info("Training complete")
+
+    def _shutdown_bookkeeping(self):
         self.thread_pool.shutdown(wait=True, cancel_futures=False)
         self._thread_pool = None
         barrier()
-
-        log.info("Training complete")
 
     def state_dict(self) -> TrainerStateDict:
         """

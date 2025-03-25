@@ -1,9 +1,9 @@
 """
-Example of how to train a Llama transformer language model with pipeline parallelism.
+Example of how to train an MoE transformer language model with pipeline parallelism.
 
 Launch this with torchrun:
 
-    torchrun --nproc-per-node=4 src/examples/llama/train_pipeline.py run_name [OVERRIDES...]
+    torchrun --nproc-per-node=4 src/examples/moe/train_pipeline.py run_name [OVERRIDES...]
 """
 
 import os
@@ -20,7 +20,12 @@ from olmo_core.data import (
 )
 from olmo_core.distributed.parallel import DataParallelType, PipelineScheduleType
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
+from olmo_core.optim import (
+    AdamWConfig,
+    CosWithWarmup,
+    OptimGroupOverride,
+    SkipStepAdamWConfig,
+)
 from olmo_core.train import (
     TrainerConfig,
     prepare_training_environment,
@@ -34,10 +39,10 @@ from olmo_core.train.callbacks import (
     ProfilerCallback,
     WandBCallback,
 )
-from olmo_core.train.train_module import TransformerDataParallelConfig
-from olmo_core.train.train_module.transformer_pipeline import (
+from olmo_core.train.train_module import (
+    TransformerDataParallelConfig,
     TransformerPipelineParallelConfig,
-    TransformerPipelineTrainModuleConfig,
+    TransformerTrainModuleConfig,
 )
 from olmo_core.utils import seed_all
 
@@ -66,15 +71,22 @@ class ExperimentConfig(Config):
     model: TransformerConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
-    train_module: TransformerPipelineTrainModuleConfig
+    train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
     init_seed: int = 12536
 
 
 def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
+    skip_step_optim = False
+    try:
+        overrides.remove("--skip_step_optim")
+        skip_step_optim = True
+    except ValueError:
+        pass
+
     tokenizer_config = TokenizerConfig.gpt2()
 
-    model_config = TransformerConfig.llama2_271M(
+    model_config = TransformerConfig.smallmoe(
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
     )
 
@@ -93,7 +105,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         num_workers=4,
     )
 
-    train_module_config = TransformerPipelineTrainModuleConfig(
+    train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=16 * SEQUENCE_LENGTH,
         max_sequence_length=dataset_config.effective_sequence_length,
         optim=AdamWConfig(
@@ -101,10 +113,20 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
+            fused=True,
+        )
+        if not skip_step_optim
+        else SkipStepAdamWConfig(
+            lr=1e-3,
+            group_overrides=[
+                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+            ],
+            compile=True,
         ),
         compile_model=True,
         pp_config=TransformerPipelineParallelConfig(
-            degree=2, schedule=PipelineScheduleType.interleaved_1F1B
+            degree=2,
+            schedule=PipelineScheduleType.interleaved_1F1B,
         ),
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32

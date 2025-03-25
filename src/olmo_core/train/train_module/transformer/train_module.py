@@ -1,8 +1,8 @@
 import contextlib
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from functools import cached_property
-from typing import Any, Dict, Generator, List, Optional, Tuple, TypeVar, Union, cast
+from typing import Any, Dict, Generator, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -16,23 +16,12 @@ from torch.distributed.tensor import DTensor
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 
-from olmo_core.config import Config, DType
 from olmo_core.data.utils import get_labels, split_batch
 from olmo_core.distributed.checkpoint import _swap_param_keys
 from olmo_core.distributed.parallel import (
-    ContextParallelConfig,
-    DataParallelConfig,
     DataParallelType,
-    ExpertParallelConfig,
-    TensorParallelConfig,
     build_world_mesh,
-    get_cp_mesh,
-    get_device_mesh_info,
-    get_dp_model_mesh,
     get_dp_process_group,
-    get_ep_mesh,
-    get_pp_mesh,
-    get_tp_mesh,
 )
 from olmo_core.distributed.utils import (
     get_local_tensor,
@@ -40,318 +29,26 @@ from olmo_core.distributed.utils import (
     get_world_size,
     is_distributed,
 )
-from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.float8 import Float8Config, Float8Handler
-from olmo_core.nn.attention import RingAttentionLoadBalancerType
+from olmo_core.float8 import Float8Config
 from olmo_core.nn.lm_head import LMOutputWithLoss
-from olmo_core.nn.transformer import (
-    MoETransformer,
-    NormalizedTransformer,
-    Transformer,
-    TransformerActivationCheckpointingMode,
-    TransformerDataParallelWrappingStrategy,
-)
+from olmo_core.nn.transformer import Transformer
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
 
-from ..common import ReduceType
-from .train_module import EvalBatchSpec, TrainModule
+from ...common import ReduceType
+from ..train_module import EvalBatchSpec, TrainModule
+from .common import parallelize_model
+from .config import (
+    TransformerActivationCheckpointingConfig,
+    TransformerContextParallelConfig,
+    TransformerDataParallelConfig,
+    TransformerExpertParallelConfig,
+    TransformerTensorParallelConfig,
+)
 
 log = logging.getLogger(__name__)
-
-
-@dataclass
-class TransformerDataParallelConfig(DataParallelConfig):
-    """
-    Transformer-specific data parallel config.
-    """
-
-    wrapping_strategy: TransformerDataParallelWrappingStrategy = (
-        TransformerDataParallelWrappingStrategy.full
-    )
-    """
-    The wrapping strategy.
-    """
-
-    prefetch_factor: int = 0
-
-
-@dataclass
-class TransformerTensorParallelConfig(TensorParallelConfig):
-    """
-    Transformer-specific tensor parallel config.
-    """
-
-
-@dataclass
-class TransformerContextParallelConfig(ContextParallelConfig):
-    """
-    Transformer-specific context parallel config.
-    """
-
-    load_balancer: RingAttentionLoadBalancerType = RingAttentionLoadBalancerType.zig_zag
-    """
-    The type of load balancer to use for ring attention.
-    """
-
-    @classmethod
-    def zig_zag(cls, degree: int) -> "TransformerContextParallelConfig":
-        return cls(degree=degree, load_balancer=RingAttentionLoadBalancerType.zig_zag)
-
-    @classmethod
-    def llama3(cls, degree: int) -> "TransformerContextParallelConfig":
-        return cls(degree=degree, load_balancer=RingAttentionLoadBalancerType.llama3)
-
-
-@dataclass
-class TransformerExpertParallelConfig(ExpertParallelConfig):
-    """
-    Transformer-specific expert parallel config.
-    """
-
-
-@beta_feature
-@dataclass
-class TransformerActivationCheckpointingConfig(Config):
-    """
-    Defines the activation checkpointing strategy for a transformer model.
-    """
-
-    mode: TransformerActivationCheckpointingMode = TransformerActivationCheckpointingMode.full
-    """
-    The activation checkpointing mode.
-    """
-
-    block_interval: Optional[int] = None
-    """
-    Required when :data:`mode` is "selected_blocks". Determines which blocks are wrapped.
-    """
-
-    modules: Optional[List[str]] = None
-    """
-    Required when :data:`mode` is "selected_modules". A list of modules names to wrap for
-    activation checkpointing. Globs are supported.
-    """
-
-    def __post_init__(self):
-        if (
-            self.mode == TransformerActivationCheckpointingMode.selected_blocks
-            and self.block_interval is None
-        ):
-            raise OLMoConfigurationError(
-                "'block_interval' is required for 'selected_blocks' activation checkpointing"
-            )
-        elif (
-            self.mode == TransformerActivationCheckpointingMode.selected_modules
-            and self.modules is None
-        ):
-            raise OLMoConfigurationError(
-                "'modules' is required for 'selected_modules' activation checkpointing"
-            )
-
-
-@dataclass
-class TransformerTrainModuleConfig(Config):
-    """
-    A configuration class for building :class:`TransformerTrainModule` instances.
-
-    .. seealso::
-        See the :class:`TransformerTrainModule` documentation for a description of the fields.
-    """
-
-    rank_microbatch_size: int
-    max_sequence_length: int
-
-    # Optimizer settings.
-
-    optim: OptimConfig
-    max_grad_norm: Optional[float] = None
-    scheduler: Optional[Scheduler] = None
-
-    # Model settings.
-
-    compile_model: bool = False
-    float8_config: Optional[Float8Config] = None
-    dp_config: Optional[TransformerDataParallelConfig] = None
-    tp_config: Optional[TransformerTensorParallelConfig] = None
-    cp_config: Optional[TransformerContextParallelConfig] = None
-    ep_config: Optional[TransformerExpertParallelConfig] = None
-    ac_config: Optional[TransformerActivationCheckpointingConfig] = None
-
-    # Loss function settings.
-
-    z_loss_multiplier: Optional[float] = None
-
-    # Checkpoint settings.
-
-    state_dict_save_opts: Optional[Dict[str, Any]] = None
-    state_dict_load_opts: Optional[Dict[str, Any]] = None
-    load_key_mapping: Optional[Dict[str, str]] = None
-
-    # Other train settings.
-
-    autocast_precision: Optional[DType] = None
-    label_ignore_index: int = -100
-
-    def build(
-        self,
-        model: Transformer,
-        device: Optional[torch.device] = None,
-    ) -> "TransformerTrainModule":
-        """
-        Build the corresponding :class:`TransformerTrainModule`.
-
-        :param model: The :class:`~olmo_core.nn.transformer.Transformer` model to train.
-        :param device: The device to train on.
-        """
-        kwargs = self.as_dict(exclude_none=True, recurse=False)
-        if (autocast_precision := kwargs.pop("autocast_precision", None)) is not None:
-            kwargs["autocast_precision"] = cast(DType, autocast_precision).as_pt()
-        if (state_dict_save_opts := kwargs.pop("state_dict_save_opts", None)) is not None:
-            kwargs["state_dict_save_opts"] = dist_cp_sd.StateDictOptions(**state_dict_save_opts)
-        if (state_dict_load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
-            kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
-        return TransformerTrainModule(
-            model=model,
-            device=device,
-            **kwargs,
-        )
-
-
-M = TypeVar("M", Transformer, List[Transformer])
-
-
-def parallelize_model(
-    model: M,
-    *,
-    world_mesh: Optional[DeviceMesh],
-    device: torch.device,
-    max_sequence_length: int,
-    rank_microbatch_size: int,
-    compile_model: bool = False,
-    float8_handler: Optional[Float8Handler] = None,
-    dp_config: Optional[TransformerDataParallelConfig] = None,
-    tp_config: Optional[TransformerTensorParallelConfig] = None,
-    cp_config: Optional[TransformerContextParallelConfig] = None,
-    ep_config: Optional[TransformerExpertParallelConfig] = None,
-    ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
-    pp_enabled: bool = False,
-) -> M:
-    model_parts: List[Transformer] = [model] if isinstance(model, Transformer) else model
-
-    pp_mesh: Optional[DeviceMesh] = None
-    if pp_enabled:
-        assert world_mesh is not None
-        pp_mesh = get_pp_mesh(world_mesh)
-
-    # Maybe convert linear layers to FP8 linear.
-    float8_enabled = False
-    if float8_handler is not None and float8_handler.enabled:
-        float8_enabled = True
-        for m in model_parts:
-            modules_to_ignore = set()
-            if m.lm_head is not None:
-                modules_to_ignore.add("lm_head.w_out")
-            float8_handler.convert_to_float8_training(m, modules_to_ignore=modules_to_ignore)
-            log.info("Swapped linear layers to Float8 linear layers\n%s", m)
-
-    # Maybe apply context parallelism.
-    if cp_config is not None:
-        assert world_mesh is not None
-        cp_mesh = get_cp_mesh(world_mesh)
-        for m in model_parts:
-            m.apply_cp(cp_mesh, load_balancer=cp_config.load_balancer)
-        log.info(f"Applied context parallelism to the model with {get_device_mesh_info(cp_mesh)}")
-
-    # Maybe apply tensor/expert parallelism.
-    if tp_config is not None and ep_config is not None:
-        raise NotImplementedError("TP + EP is not implemented yet")
-    if tp_config is not None:
-        assert world_mesh is not None
-        tp_mesh = get_tp_mesh(world_mesh)
-        for m in model_parts:
-            m.apply_tp(tp_mesh, float8_enabled=float8_enabled)
-        tp_config.maybe_enable_async_tp(tp_mesh)
-        log.info(
-            f"Applied {'Float8 ' if float8_enabled else ''}tensor parallelism to the model "
-            f"with {get_device_mesh_info(tp_mesh)}"
-        )
-
-    if ep_config is not None:
-        assert world_mesh is not None
-        ep_mesh = get_ep_mesh(world_mesh)
-        for m in model_parts:
-            if not m.is_moe:
-                raise OLMoConfigurationError("Expert parallelism is only valid for MoE models")
-            cast(MoETransformer, m).apply_ep(ep_mesh)
-        log.info(f"Applied expert parallelism to the model with {get_device_mesh_info(ep_mesh)}")
-
-    # Maybe apply activation checkpointing.
-    if ac_config is not None:
-        for m in model_parts:
-            m.apply_activation_checkpointing(
-                ac_config.mode,
-                block_interval=ac_config.block_interval,
-                modules=ac_config.modules,
-            )
-        log.info(f"Applied '{ac_config.mode}' activation checkpointing to the model")
-
-    # Maybe compile.
-    if compile_model:
-        if torch.cuda.is_available():
-            for m in model_parts:
-                m.apply_compile()
-            log.info("Applied torch.compile() to the model")
-        else:
-            log.warning("Skipping model compilation since CUDA is not available")
-
-    # Maybe shard/replicate according to data parallel config.
-    if dp_config is not None:
-        assert world_mesh is not None
-        dp_mesh = get_dp_model_mesh(world_mesh)
-        if dp_config.name in (DataParallelType.fsdp, DataParallelType.hsdp):
-            param_dtype = (
-                dp_config.param_dtype.as_pt() if dp_config.param_dtype is not None else None
-            )
-            for m in model_parts:
-                if m.is_moe:
-                    cast(MoETransformer, m).prepare_experts_for_fsdp(
-                        world_mesh,
-                        param_dtype=param_dtype,
-                        reduce_dtype=dp_config.reduce_dtype.as_pt(),
-                        pp_enabled=pp_enabled,
-                    )
-                m.apply_fsdp(
-                    dp_mesh=dp_mesh,
-                    param_dtype=param_dtype,
-                    reduce_dtype=dp_config.reduce_dtype.as_pt(),
-                    wrapping_strategy=dp_config.wrapping_strategy,
-                    pp_enabled=pp_enabled,
-                    prefetch_factor=dp_config.prefetch_factor,
-                )
-            log.info(f"Applied FSDP to the model with {get_device_mesh_info(dp_mesh)}")
-        elif dp_config.name == DataParallelType.ddp:
-            for m in model_parts:
-                if m.is_moe:
-                    cast(MoETransformer, m).prepare_experts_for_ddp(world_mesh)
-                m.apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model)
-            log.info(f"Applied DDP to the model with {get_device_mesh_info(dp_mesh)}")
-        else:
-            raise NotImplementedError(dp_config.name)
-
-    # Materialize and init parameters.
-    log.info("Initializing model weights...")
-    for m in model_parts:
-        m.init_weights(
-            max_seq_len=max_sequence_length,
-            max_local_microbatch_size=rank_microbatch_size,
-            device=device,
-            pp_mesh=pp_mesh,
-        )
-
-    return model
 
 
 class TransformerTrainModule(TrainModule):
@@ -441,11 +138,6 @@ class TransformerTrainModule(TrainModule):
                 "Training parallelism configs are only valid for distributed training"
             )
 
-        self.float8_handler: Optional[Float8Handler] = None
-        if float8_config is not None:
-            float8_config.compile = compile_model
-            self.float8_handler = float8_config.build()
-
         # Parallelize model.
         self.model = parallelize_model(
             model,
@@ -454,7 +146,7 @@ class TransformerTrainModule(TrainModule):
             max_sequence_length=max_sequence_length,
             rank_microbatch_size=rank_microbatch_size,
             compile_model=compile_model,
-            float8_handler=self.float8_handler,
+            float8_config=float8_config,
             dp_config=dp_config,
             tp_config=tp_config,
             cp_config=cp_config,
@@ -530,10 +222,10 @@ class TransformerTrainModule(TrainModule):
                 f"micro-batch size ({self.rank_microbatch_size:,d}) x DP world size ({dp_ws})"
             )
 
-    def state_dict(self) -> Dict[str, Any]:
-        return self._get_state_dict(self.state_dict_save_opts)
+    def state_dict(self, *, optim: bool = True) -> Dict[str, Any]:
+        return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
-    def state_dict_to_load(self, metadata: Metadata) -> Dict[str, Any]:
+    def state_dict_to_load(self, metadata: Metadata, *, optim: bool = True) -> Dict[str, Any]:
         load_opts = self.state_dict_load_opts
 
         if "optim.param_groups.0.params" in metadata.state_dict_metadata:
@@ -555,24 +247,24 @@ class TransformerTrainModule(TrainModule):
                 )
                 load_opts = replace(load_opts, flatten_optimizer_state_dict=True)
 
-        state_dict = self._get_state_dict(load_opts)
-        if self.load_key_mapping is not None:
-            _swap_param_keys(state_dict, self.load_key_mapping, metadata=metadata)
-
         has_optim_state: bool = False
         for key in metadata.state_dict_metadata.keys():
             if key.startswith("optim."):
                 has_optim_state = True
                 break
 
-        if not has_optim_state:
-            del state_dict["optim"]
+        if optim and not has_optim_state:
             log.warning("No optimizer state found in checkpoint")
+            optim = False
+
+        state_dict = self._get_state_dict(load_opts, optim=optim)
+        if self.load_key_mapping is not None:
+            _swap_param_keys(state_dict, self.load_key_mapping, metadata=metadata)
 
         return state_dict
 
-    def state_dict_to_save(self) -> Dict[str, Any]:
-        return self._get_state_dict(self.state_dict_save_opts)
+    def state_dict_to_save(self, *, optim: bool = True) -> Dict[str, Any]:
+        return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         if self.load_key_mapping is not None:
@@ -677,6 +369,8 @@ class TransformerTrainModule(TrainModule):
 
         del batch  # In case this helps with memory utilization.
 
+        self.model.post_batch(dry_run=dry_run)
+
         if dry_run:
             self.model.reset_auxiliary_losses()
             self.model.reset_auxiliary_metrics()
@@ -762,10 +456,6 @@ class TransformerTrainModule(TrainModule):
             if isinstance(self.optim, SkipStepOptimizer):
                 self.optim.latest_grad_norm = grad_norm
 
-        # Sync Float8 AMAXs (argmax of abs(max)) and scales.
-        if self.float8_handler is not None:
-            self.float8_handler.sync_float8_amax_and_scale_history(self.model)
-
         # Maybe adjust learning rate.
         if self.scheduler is not None:
             for group_idx, group in enumerate(self.optim.param_groups):
@@ -807,17 +497,7 @@ class TransformerTrainModule(TrainModule):
         if isinstance(self.optim, SkipStepOptimizer):
             self.record_metric("step skipped", self.optim.step_skipped, namespace="optim")
 
-        # Maybe re-normalize matrices for nGPT-type models.
-        # NOTE: sometimes 'isinstance' checks fail when the model is wrapped in some way.
-        if isinstance(self.model, NormalizedTransformer) or hasattr(
-            self.model, "normalize_matrices"
-        ):
-            cast(NormalizedTransformer, self.model).normalize_matrices()
-
-        # Calculate Float8 dynamic AMAX/scale for all parameters.
-        # For FSDP2 this issues a single all-reduce for all parameters at once.
-        if self.float8_handler is not None:
-            self.float8_handler.precompute_float8_dynamic_scale_for_fsdp(self.model)
+        self.model.post_optim_step()
 
     def zero_grads(self):
         self.optim.zero_grad(set_to_none=True)
@@ -868,13 +548,17 @@ class TransformerTrainModule(TrainModule):
                 stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
             yield
 
-    def _get_state_dict(self, sd_options: dist_cp_sd.StateDictOptions) -> Dict[str, Any]:
-        return {
+    def _get_state_dict(
+        self, sd_options: dist_cp_sd.StateDictOptions, optim: bool = True
+    ) -> Dict[str, Any]:
+        state_dict: Dict[str, Any] = {
             "model": dist_cp_sd.get_model_state_dict(self.model, options=sd_options),
-            "optim": dist_cp_sd.get_optimizer_state_dict(
-                self.model, self.optim, options=sd_options
-            ),
         }
+        if optim:
+            state_dict["optim"] = dist_cp_sd.get_optimizer_state_dict(
+                self.model, self.optim, options=sd_options
+            )
+        return state_dict
 
     def _clip_grad_norm(
         self, max_grad_norm: float, norm_type: float = 2.0, foreach: Optional[bool] = None
