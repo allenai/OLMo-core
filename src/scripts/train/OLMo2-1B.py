@@ -35,7 +35,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
     gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
     if all("B200" in g for g in gpus):
         rank_microbatch_size *= 2
-    if GLOBAL_BATCH_SIZE // rank_microbatch_size < common.launch.num_gpus:
+    if GLOBAL_BATCH_SIZE // rank_microbatch_size < common.launch.num_gpus * common.launch.num_nodes:
         rank_microbatch_size /= 2
         hsdp_num_replicas = common.launch.num_gpus  # data parallel
 
