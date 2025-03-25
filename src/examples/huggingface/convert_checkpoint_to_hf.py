@@ -70,11 +70,6 @@ def convert_checkpoint_to_hf(
     device = device or get_default_device()
     model.to_empty(device=device)
 
-    state_dict_options = dist_cp_sd.StateDictOptions(
-        flatten_optimizer_state_dict=True, cpu_offload=True
-    )
-    model_state_dict = dist_cp_sd.get_model_state_dict(model, options=state_dict_options)
-
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
     vocab_size = tokenizer_config.vocab_size
 
@@ -86,6 +81,11 @@ def convert_checkpoint_to_hf(
             work_dir=work_dir,
         )
         log.info(f"Saving checkpoint to '{output_path}'")
+        state_dict_options = dist_cp_sd.StateDictOptions(
+            flatten_optimizer_state_dict=True, cpu_offload=True
+        )
+        model_state_dict = dist_cp_sd.get_model_state_dict(model, options=state_dict_options)
+
         save_hf_model(
             output_path,
             model_state_dict,
