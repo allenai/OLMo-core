@@ -1,8 +1,6 @@
 """
 Train a 1B OLMo model. Run this script without any arguments to see usage info.
 """
-from typing import Optional
-
 from olmo_core.config import DType
 from olmo_core.data import NumpyDatasetConfig, DataMix, NumpyDatasetType
 from olmo_core.distributed.parallel import DataParallelType
@@ -31,13 +29,9 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     rank_microbatch_size = 8 * SEQUENCE_LENGTH
-    hsdp_num_replicas: Optional[int] = None
     gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
     if all("B200" in g for g in gpus):
         rank_microbatch_size *= 2
-    if GLOBAL_BATCH_SIZE // rank_microbatch_size < common.launch.num_gpus:
-        rank_microbatch_size /= 2
-        hsdp_num_replicas = common.launch.num_gpus  # data parallel
 
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
@@ -53,10 +47,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.hsdp,
-            param_dtype=DType.bfloat16,
-            reduce_dtype=DType.float32,
-            num_replicas=hsdp_num_replicas,
+            name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
