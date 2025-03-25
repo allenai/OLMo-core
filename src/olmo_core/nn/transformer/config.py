@@ -647,12 +647,11 @@ class TransformerConfig(Config):
         Note: Llama2 doesn't have a 1B. We made this up.
         """
         return cls.llama_like(
-            d_model=kwargs.pop("d_model", 2048),
+            d_model=2048,
             vocab_size=vocab_size,
-            n_layers=kwargs.pop("n_layers", 16),
+            n_layers=kwargs.pop("n_layers", 18),
             n_heads=kwargs.pop("n_heads", 16),
             rope_theta=kwargs.pop("rope_theta", 10_000),
-            hidden_size_multiplier=kwargs.pop("hidden_size_multiplier", 1.5),
             **kwargs,
         )
 
