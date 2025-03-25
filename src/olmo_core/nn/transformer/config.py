@@ -643,13 +643,17 @@ class TransformerConfig(Config):
     def llama2_1B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 1B Llama2-like model config.
+
+        Note: Llama2 doesn't have a 1B. We made this up.
         """
+        d_model = kwargs.pop("d_model", 2048)
         return cls.llama_like(
-            d_model=2048,
+            d_model=d_model,
             vocab_size=vocab_size,
-            n_layers=kwargs.pop("n_layers", 18),
+            n_layers=kwargs.pop("n_layers", 16),
             n_heads=kwargs.pop("n_heads", 16),
             rope_theta=kwargs.pop("rope_theta", 10_000),
+            hidden_size_multiplier=kwargs.pop("hidden_size_multiplier", 8192 / (8 * d_model / 3)),
             **kwargs,
         )
 
