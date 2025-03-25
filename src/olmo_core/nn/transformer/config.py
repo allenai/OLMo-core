@@ -653,7 +653,7 @@ class TransformerConfig(Config):
             n_layers=kwargs.pop("n_layers", 16),
             n_heads=kwargs.pop("n_heads", 16),
             rope_theta=kwargs.pop("rope_theta", 10_000),
-            hidden_size_multiplier=kwargs.pop("hidden_size_multiplier", 8192 / (8 * d_model / 3)),
+            hidden_size_multiplier=kwargs.pop("hidden_size_multiplier", 1.5),
             **kwargs,
         )
 
