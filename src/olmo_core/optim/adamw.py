@@ -147,6 +147,7 @@ class SkipStepAdamWConfig(OptimConfig):
     betas: Tuple[float, float] = (0.9, 0.999)
     eps: float = 1e-8
     weight_decay: float = 1e-2
+    fused: Optional[bool] = None
     rolling_interval_length: int = 128
     sigma_factor: int = 6
     dtype: Optional[DType] = None
