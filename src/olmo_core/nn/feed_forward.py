@@ -192,18 +192,17 @@ class muPFeedForward(FeedForward):
         nn.init.normal_(self.w1.weight, mean=0.0, std=math.sqrt(1 / self.d_model))
         nn.init.normal_(self.w3.weight, mean=0.0, std=math.sqrt(1 / self.d_model))
 
-        nn.init.normal_(self.w2.weight, mean=0.0, std=math.sqrt(1 / self.hidden_size))
+        nn.init.normal_(self.w2.weight, mean=0.0, std=1.0)#math.sqrt(1 / self.hidden_size))
 
-        if bias:
-            nn.init.zeros_(self.w1.bias)
-            nn.init.zeros_(self.w2.bias)
-            nn.init.zeros_(self.w3.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         :param x: The input of shape ``(*, d_model)``.
         """
-        return self.w2(F.silu(self.w1(x)) * self.w3(x)) / self.d_model
+        scaled_w1 = self.w1(x)/math.sqrt(self.d_model)
+        scaled_w3 = self.w1(x)/math.sqrt(self.d_model)
+        intermediate = F.silu(scaled_w1) * scaled_w3
+        return self.w2(intermediate)#/math.sqrt(self.d_model)
 
     def apply_tp(
         self,

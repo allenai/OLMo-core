@@ -102,26 +102,6 @@ def coord_check(
     models = {width: model_generator(width, standparam=not using_mup) for width in widths}
     model_instances = {width: model_fn() for width, model_fn in models.items()}
 
-    # After model creation but before using it:
-    # if using_mup:
-    #     for width, model in model_instances.items():
-    #         if width >= 384:  # For your largest models
-    #             print(f"Applying direct initialization for width {width}")
-    #             # Loop through blocks
-    #             for i in range(len(model.blocks)):
-    #                 # Fix feed-forward components
-    #                 nn.init.normal_(model.blocks[i].feed_forward.w1.weight, std=1.0/math.sqrt(model.d_model))
-    #                 nn.init.normal_(model.blocks[i].feed_forward.w3.weight, std=1.0/math.sqrt(model.d_model))
-    #                 nn.init.normal_(model.blocks[i].feed_forward.w2.weight, std=1.0/math.sqrt(model.blocks[i].feed_forward.hidden_size))
-                    
-    #                 # Fix attention components, especially for deeper blocks
-    #                 if i > 0:  # Blocks 1 and later
-    #                     nn.init.normal_(model.blocks[i].attention.w_out.weight, std=1.0/math.sqrt(model.d_model))
-                        
-    #             # Fix LM head
-    #             nn.init.normal_(model.lm_head.w_out.weight, std=1.0/math.sqrt(model.d_model))
-
-
     if using_mup: 
         if load_base_shapes and os.path.exists(load_base_shapes):
             base_shapes = mup_load(load_base_shapes)
@@ -184,7 +164,7 @@ if __name__ == "__main__":
     parser.add_argument("--load_base_shapes", type=str, default="", help="file location to load base shapes from")
 
     parser.add_argument("--batch_size", type=int, default=20, metavar="N", help="batch size")
-    parser.add_argument("--widths", type=int, nargs="+", default=[12 * 2 ** i for i in range(1, 7)], help="widths to use for coord check")
+    parser.add_argument("--widths", type=int, nargs="+", default=[12 * 2 ** i for i in range(1, 9)], help="widths to use for coord check")
 
     parser.add_argument("--cuda", action="store_true", help="use CUDA")
     parser.add_argument("--legend", type=str, help="'auto', 'brief', 'full', or False. This is passed to `seaborn.lineplot`.")
@@ -194,7 +174,7 @@ if __name__ == "__main__":
         action="store_true",
         help="test μ parametrization is correctly implemented by collecting statistics on coordinate distributions for a few steps of training.",
     )
-    parser.add_argument("--coord_check_nsteps", type=int, default=3, help="Do coord check with this many steps.")
+    parser.add_argument("--coord_check_nsteps", type=int, default=20, help="Do coord check with this many steps.")
     parser.add_argument(
         "--coord_check_nseeds",
         type=int,
@@ -211,6 +191,14 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     print(args)
+
+    seed = 42
+    import random
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
     if args.save_base_shapes:
         save_base_shapes(args.save_base_shapes)

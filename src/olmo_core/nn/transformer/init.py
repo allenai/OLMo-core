@@ -1,5 +1,5 @@
 from typing import Optional, Union
-
+import math
 import torch
 import torch.nn as nn
 
@@ -54,10 +54,9 @@ class InitMethod(StrEnum):
         if self in (InitMethod.llama, InitMethod.llama_depth):
             nn.init.normal_(m.weight, generator=generator)
         elif self in InitMethod.normalized:
-            nn.init.normal_(m.weight, std=d_model**-0.5) 
+            nn.init.normal_(m.weight, std=d_model**-0.5)
         elif self == InitMethod.mup:
-            # nn.init.normal_(m.weight, std=1/d_model)# ** -0.5) 
-            nn.init.normal_(m.weight, std=1)       
+            nn.init.normal_(m.weight, std=1.0 / math.sqrt(d_model))
         else:
             nn.init.trunc_normal_(
                 m.weight, mean=0.0, std=0.02, a=-3 * 0.02, b=3 * 0.02, generator=generator
@@ -67,7 +66,6 @@ class InitMethod(StrEnum):
         self, m: nn.Linear, *, d_model: int, generator: Optional[torch.Generator] = None
     ):
         if self == InitMethod.mup:
-            # std = d_model**-0.5
             std = 1.0
         
         elif self in (InitMethod.llama, InitMethod.llama_depth, InitMethod.normalized):

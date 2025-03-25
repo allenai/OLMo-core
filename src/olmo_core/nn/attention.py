@@ -429,7 +429,7 @@ class muPAttention(Attention):
         nn.init.normal_(self.w_q.weight, mean=0.0, std=math.sqrt(1.0/d_model))
         nn.init.normal_(self.w_k.weight, mean=0.0, std=math.sqrt(1.0/d_model))
         nn.init.normal_(self.w_v.weight, mean=0.0, std=math.sqrt(1.0/d_model))
-        nn.init.normal_(self.w_out.weight, mean=0.0, std=math.sqrt(1.0/d_model))
+        nn.init.normal_(self.w_out.weight, mean=0.0, std=1.0)#/d_model)
 
     def sdpa(
         self,

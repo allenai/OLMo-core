@@ -192,7 +192,7 @@ class muPLMHead(LMHead):
         Apply the LM head to the hidden state ``x``, returning the logits.
         """
         h = self.norm(x) if self.norm is not None else x
-        return self.w_out(h) / math.sqrt(self.d_model)
+        return self.w_out(h)
 
     @property
     def tp_input_layouts(self) -> Union[Placement, Tuple[Placement, ...]]:
