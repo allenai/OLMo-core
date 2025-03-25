@@ -404,7 +404,9 @@ class BeakerLaunchConfig(Config):
         ]
         # TODO: remove once we have a base image with CUDA 12.8
         if any(["titan" in cluster for cluster in self.clusters]):
-            entrypoint_script.append("pip install torch==2.7.0 torchaudio torchvision --index-url https://download.pytorch.org/whl/test/cu128")
+            entrypoint_script.append(
+                "pip install torch==2.7.0 torchaudio torchvision --index-url https://download.pytorch.org/whl/test/cu128"
+            )
         entrypoint_script.extend(self.setup_steps)
 
         if torchrun:
@@ -435,10 +437,13 @@ class BeakerLaunchConfig(Config):
                 command=["bash", "/olmo-core/entrypoint.sh"],
                 replicas=self.num_nodes if self.num_nodes > 1 else None,
                 leader_selection=self.num_nodes > 1,
-                host_networking=self.host_networking
-                if self.host_networking is not None
-                else (
-                    self.num_nodes > 1 or any(["augusta" in cluster for cluster in self.clusters])
+                host_networking=(
+                    self.host_networking
+                    if self.host_networking is not None
+                    else (
+                        self.num_nodes > 1
+                        or any(["augusta" in cluster for cluster in self.clusters])
+                    )
                 ),
                 propagate_failure=False if self.num_nodes > 1 else None,
                 propagate_preemption=True if self.num_nodes > 1 else None,
