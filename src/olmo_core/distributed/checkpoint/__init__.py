@@ -27,30 +27,39 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import Future
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Generator, Iterable, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint as dist_cp
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
-from torch.distributed.checkpoint.metadata import Metadata
+from rich.progress import track
+from torch.distributed.checkpoint.default_planner import DefaultSavePlanner
+from torch.distributed.checkpoint.metadata import Metadata, TensorStorageMetadata
 
 from olmo_core.aliases import PathOrStr
+from olmo_core.config import StrEnum
 from olmo_core.io import clear_directory, dir_is_empty, is_url, normalize_path
-from olmo_core.utils import gc_cuda, wait_for
+from olmo_core.utils import gc_cuda, get_element_size, wait_for
 
 from ..utils import barrier, get_fs_local_rank, is_distributed
 from .filesystem import RemoteFileSystemReader, RemoteFileSystemWriter
 
 __all__ = [
     "save_state_dict",
+    "async_save_state_dict",
+    "load_state_dict",
     "save_model_and_optim_state",
     "async_save_model_and_optim_state",
     "load_model_and_optim_state",
     "unshard_checkpoint",
+    "load_keys",
     "get_checkpoint_metadata",
+    "UnshardStrategy",
+    "UnshardStrategyType",
 ]
 
 log = logging.getLogger(__name__)
@@ -60,8 +69,11 @@ log = logging.getLogger(__name__)
 def save_state_dict(
     dir: PathOrStr,
     state_dict: Dict[str, Any],
+    *,
     process_group: Optional[dist.ProcessGroup] = None,
     save_overwrite: bool = False,
+    thread_count: Optional[int] = None,
+    throttle_uploads: bool = False,
 ):
     """
     Save an arbitrary state dictionary to a distributed format that can loaded again with
@@ -75,11 +87,81 @@ def save_state_dict(
     :param state_dict: The state dict to save.
     :param process_group: The process group to use for distributed collectives.
     :param save_overwrite: Overwrite existing files.
+    :param thread_count: Set this to override the number of threads used while writing data.
+    :param throttle_uploads: If this is set to ``True`` and ``dir`` is a URL then only one
+        rank from each node will upload data at a time.
     """
     dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
+    planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
     dist_cp.state_dict_saver.save(
         state_dict,
-        storage_writer=RemoteFileSystemWriter(dir),
+        storage_writer=RemoteFileSystemWriter(
+            dir,
+            thread_count=thread_count,
+            process_group=process_group,
+            throttle_uploads=throttle_uploads,
+        ),
+        process_group=process_group,
+        planner=planner,
+    )
+
+
+@torch.no_grad()
+def async_save_state_dict(
+    dir: PathOrStr,
+    state_dict: Dict[str, Any],
+    *,
+    process_group: Optional[dist.ProcessGroup] = None,
+    save_overwrite: bool = False,
+    thread_count: Optional[int] = None,
+    throttle_uploads: bool = False,
+) -> Future[None]:
+    """
+    An async version of :func:`save_state_dict()`.
+
+    This code first de-stages the state dict on the CPU, then writes it in a separate thread.
+    """
+    dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
+    planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
+    return dist_cp.state_dict_saver.async_save(
+        state_dict,
+        storage_writer=RemoteFileSystemWriter(
+            dir,
+            thread_count=thread_count,
+            process_group=process_group,
+            throttle_uploads=throttle_uploads,
+        ),
+        process_group=process_group,
+        planner=planner,
+    )
+
+
+@torch.no_grad()
+def load_state_dict(
+    dir: PathOrStr,
+    state_dict: Dict[str, Any],
+    *,
+    process_group: Optional[dist.ProcessGroup] = None,
+    pre_download: bool = False,
+    work_dir: Optional[PathOrStr] = None,
+    thread_count: Optional[int] = None,
+):
+    """
+    Load an arbitrary state dict in-place from a checkpoint saved with :func:`save_state_dict()`.
+
+    :param dir: Path/URL to the checkpoint saved via :func:`save_state_dict()`.
+    :param state_dict: The state dict to load the state into.
+    :param process_group: The process group to use for distributed collectives.
+    :param thread_count: Set the number of threads used for certain operations.
+    """
+    dir = normalize_path(dir)
+    reader = RemoteFileSystemReader(
+        dir, thread_count=thread_count, pre_download=pre_download, work_dir=work_dir
+    )
+    dist_cp.load(
+        state_dict,
+        checkpoint_id=dir,
+        storage_reader=reader,
         process_group=process_group,
     )
 
@@ -92,6 +174,9 @@ def save_model_and_optim_state(
     *,
     process_group: Optional[dist.ProcessGroup] = None,
     save_overwrite: bool = False,
+    flatten_optimizer_state: bool = False,
+    thread_count: Optional[int] = None,
+    throttle_uploads: bool = False,
 ) -> None:
     """
     Save model and optimizer state dictionaries. The model state can be a sharded model, in which
@@ -114,15 +199,33 @@ def save_model_and_optim_state(
     :param optim: The optimizer to save state from.
     :param process_group: The process group to use for distributed collectives.
     :param save_overwrite: Overwrite existing files.
+    :param flatten_optimizer_state: Flatten the optimizer state before saving. This should match
+        the setting used when loading the state dict and is needed in a distributed setting when
+        the params in some param groups may differ between ranks, such as with pipeline parallelism.
+    :param thread_count: Set this to override the number of threads used while writing data.
+    :param throttle_uploads: If this is set to ``True`` and ``dir`` is a URL then only one
+        rank from each node will upload data at a time.
 
     :raises FileExistsError: If the checkpoint dir exists and is non-empty unless ``save_overwrite=True``.
     """
     dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
-    state_dict = _prepare_state_dict(model, optim=optim, process_group=process_group)
+    state_dict = _prepare_state_dict(
+        model,
+        optim=optim,
+        process_group=process_group,
+        flatten_optimizer_state=flatten_optimizer_state,
+    )
+    planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
     dist_cp.state_dict_saver.save(
         state_dict,
-        storage_writer=RemoteFileSystemWriter(dir),
+        storage_writer=RemoteFileSystemWriter(
+            dir,
+            thread_count=thread_count,
+            process_group=process_group,
+            throttle_uploads=throttle_uploads,
+        ),
         process_group=process_group,
+        planner=planner,
     )
 
 
@@ -134,6 +237,9 @@ def async_save_model_and_optim_state(
     *,
     process_group: Optional[dist.ProcessGroup] = None,
     save_overwrite: bool = False,
+    flatten_optimizer_state: bool = False,
+    thread_count: Optional[int] = None,
+    throttle_uploads: bool = False,
 ) -> Future[None]:
     """
     An async version of :func:`save_model_and_optim_state()`.
@@ -141,11 +247,23 @@ def async_save_model_and_optim_state(
     This code first de-stages the state dict on the CPU, then writes it in a separate thread.
     """
     dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
-    state_dict = _prepare_state_dict(model, optim=optim, process_group=process_group)
+    state_dict = _prepare_state_dict(
+        model,
+        optim=optim,
+        process_group=process_group,
+        flatten_optimizer_state=flatten_optimizer_state,
+    )
+    planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
     return dist_cp.state_dict_saver.async_save(
         state_dict,
-        storage_writer=RemoteFileSystemWriter(dir),
+        storage_writer=RemoteFileSystemWriter(
+            dir,
+            thread_count=thread_count,
+            process_group=process_group,
+            throttle_uploads=throttle_uploads,
+        ),
         process_group=process_group,
+        planner=planner,
     )
 
 
@@ -157,6 +275,11 @@ def load_model_and_optim_state(
     *,
     process_group: Optional[dist.ProcessGroup] = None,
     key_mapping: Optional[Dict[str, str]] = None,
+    pre_download: bool = False,
+    work_dir: Optional[PathOrStr] = None,
+    strict: bool = True,
+    flatten_optimizer_state: bool = False,
+    thread_count: Optional[int] = None,
 ):
     """
     Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
@@ -192,31 +315,25 @@ def load_model_and_optim_state(
     :param process_group: The process group to use for distributed collectives.
     :param key_mapping: Can be used to load a checkpoint where certain parameter have different names.
         This dictionary should map current keys to keys in the checkpoint to be loaded.
+    :param pre_download: Download and cache relevant remote checkpoint files before trying to read from them.
+    :param work_dir: A working directory for caching files/directories.
+    :param strict: Load keys strictly.
+    :param flatten_optimizer_state: Flatten the optimizer state when loading. This should match
+        the setting used when saving the state dict and is needed in a distributed setting when
+        the params in some param groups may differ between ranks, such as with pipeline parallelism.
+    :param thread_count: Set the number of threads used for certain operations.
     """
     dir = normalize_path(dir)
-    state_dict = _prepare_state_dict(model, optim, process_group=process_group)
-    reader = RemoteFileSystemReader(dir)
+    state_dict = _prepare_state_dict(
+        model, optim, process_group=process_group, flatten_optimizer_state=flatten_optimizer_state
+    )
+    reader = RemoteFileSystemReader(
+        dir, thread_count=thread_count, pre_download=pre_download, work_dir=work_dir
+    )
+    metadata = reader.read_metadata()
 
     if key_mapping is not None:
-        metadata = reader.read_metadata()
-        for current_key, original_key in key_mapping.items():
-            if f"model.{original_key}" not in metadata.state_dict_metadata:
-                continue
-
-            log.info(f"Mapping current param '{current_key}' to '{original_key}' in checkpoint")
-            state_dict["model"][original_key] = state_dict["model"].pop(current_key)
-
-            if optim is None:
-                continue
-
-            state_dict["optim"]["state"][original_key] = state_dict["optim"]["state"].pop(
-                current_key
-            )
-            for group in state_dict["optim"]["param_groups"]:
-                if current_key in group["params"]:
-                    idx = group["params"].index(current_key)
-                    group["params"][idx] = original_key
-                    break
+        _swap_param_keys(state_dict, key_mapping, metadata=metadata)
 
     dist_cp.load(
         state_dict,
@@ -226,35 +343,92 @@ def load_model_and_optim_state(
     )
 
     if key_mapping is not None:
-        metadata = reader.read_metadata()
-        for current_key, original_key in key_mapping.items():
-            if f"model.{original_key}" not in metadata.state_dict_metadata:
-                continue
-
-            state_dict["model"][current_key] = state_dict["model"].pop(original_key)
-
-            if optim is None:
-                continue
-
-            state_dict["optim"]["state"][current_key] = state_dict["optim"]["state"].pop(
-                original_key
-            )
-            for group in state_dict["optim"]["param_groups"]:
-                if original_key in group["params"]:
-                    idx = group["params"].index(original_key)
-                    group["params"][idx] = current_key
-                    break
+        _swap_param_keys(state_dict, key_mapping, reverse=True, quiet=True)
 
     dist_cp_sd.set_model_state_dict(
-        model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=True)
+        model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=strict)
     )
     gc_cuda()
 
     if optim is not None:
         dist_cp_sd.set_optimizer_state_dict(
-            model, optim, state_dict["optim"], options=dist_cp_sd.StateDictOptions(strict=True)
+            model,
+            optim,
+            state_dict["optim"],
+            options=dist_cp_sd.StateDictOptions(
+                strict=strict, flatten_optimizer_state_dict=flatten_optimizer_state
+            ),
         )
         gc_cuda()
+
+
+class UnshardStrategyType(StrEnum):
+    """
+    An enumeration of the unsharding strategies that can be used with :func:`unshard_checkpoint`.
+    """
+
+    one_file = "one_file"
+    """
+    Save the unsharded model state into a one file, and optionally the optimizer state into
+    another file. The bigger the model, the more memory this requires. For very big models,
+    :data:`one_file_per_tensor` will scale better.
+    """
+
+    one_file_per_tensor = "one_file_per_tensor"
+    """
+    Save each unsharded tensor to its own file. Currently this is not compatible with optimizer
+    state.
+    """
+
+    chunks = "chunks"
+    """
+    Like :data:`one_file_per_tensor` but multiple tensors and objects may be grouped into the same file
+    up to the limit defined by :data:`UnshardStrategy.chunk_size_bytes`.
+    """
+
+
+@dataclass
+class UnshardStrategy:
+    """
+    Unsharding strategy config for :func:`unshard_checkpoint`.
+    """
+
+    name: UnshardStrategyType = UnshardStrategyType.one_file
+    """
+    The strategy type.
+    """
+
+    chunk_size_bytes: Optional[int] = None
+    """
+    The approximate max chunk size (per file size), in bytes, for the :data:`UnshardStrategyType.chunks` strategy.
+    """
+
+    def __post_init__(self):
+        if self.name == UnshardStrategyType.chunks and self.chunk_size_bytes is None:
+            raise ValueError("'chunk_size_bytes' is required for the 'chunks' strategy")
+        if self.chunk_size_bytes is not None and self.name != UnshardStrategyType.chunks:
+            raise ValueError("'chunk_size_bytes' is only valid for the 'chunks' strategy")
+
+    @classmethod
+    def one_file(cls) -> "UnshardStrategy":
+        """
+        Use the :data:`UnshardStrategy.one_file` strategy.
+        """
+        return cls(name=UnshardStrategyType.one_file)
+
+    @classmethod
+    def one_file_per_tensor(cls) -> "UnshardStrategy":
+        """
+        Use the :data:`UnshardStrategy.one_file_per_tensor` strategy.
+        """
+        return cls(name=UnshardStrategyType.one_file_per_tensor)
+
+    @classmethod
+    def chunks(cls, chunk_size_in_bytes: int) -> "UnshardStrategy":
+        """
+        Use the :data:`UnshardStrategy.chunks` strategy.
+        """
+        return cls(name=UnshardStrategyType.chunks, chunk_size_bytes=chunk_size_in_bytes)
 
 
 def unshard_checkpoint(
@@ -264,6 +438,10 @@ def unshard_checkpoint(
     optim: Optional[bool] = None,
     save_overwrite: bool = False,
     use_safetensors: bool = False,
+    unshard_strategy: Optional[UnshardStrategy] = None,
+    pre_download: bool = False,
+    work_dir: Optional[PathOrStr] = None,
+    quiet: bool = False,
 ) -> Tuple[Path, Optional[Path]]:
     """
     Convert a checkpoint saved via :func:`save_model_and_optim_state()` into unsharded
@@ -278,6 +456,9 @@ def unshard_checkpoint(
     .. warning::
         This should only be called in a non-distributed context. Otherwise a :class:`RuntimeError` is raised.
 
+    .. seealso::
+        :func:`load_keys()` if you only need to load and unshard certain keys in the checkpoint.
+
     :param dir: The path/URL to the original checkpoint created via :func:`save_model_and_optim_state()`.
     :param target_dir: The directory to save the unsharded model/optimizer checkpoint files to.
         This must be a local directory. URLs are not supported.
@@ -286,30 +467,51 @@ def unshard_checkpoint(
     :param save_overwrite: Overwrite any existing files in ``target_dir``.
     :param use_safetensors: Save the unsharded files with :func:`safetensors.torch.save_file()` instead
         of :func:`torch.save()`.
+    :param unshard_strategy: The strategy to use. Defaults to :meth:`UnshardStrategy.one_file`.
+    :param pre_download: Download and cache relevant remote checkpoint files before trying to read from them.
+    :param work_dir: A working directory for caching files/directories.
+    :param quiet: Do not show progress messages.
 
     :return: The path to the unsharded model checkpoint and the path to the unsharded
-        optimizer checkpoint if ``optim=True``.
+        optimizer checkpoint if ``optim=True``. These paths may represent files or directories
+        depending on the ``unshard_strategy``.
 
     :raises FileExistsError: If the ``target_dir`` is non-empty and ``save_overwrite=False``.
     """
     # Adapted from `torch.distributed.checkpoint.format_utils.dcp_to_torch_save()`.
 
-    from torch.distributed.checkpoint.default_planner import _EmptyStateDictLoadPlanner
-    from torch.distributed.checkpoint.state_dict_loader import _load_state_dict
+    if unshard_strategy is None:
+        unshard_strategy = UnshardStrategy.one_file()
 
     if optim is None:
-        optim = not use_safetensors
+        optim = (not use_safetensors) and (unshard_strategy.name == UnshardStrategyType.one_file)
     elif optim and use_safetensors:
         raise NotImplementedError("`optim=True` is incompatible with `use_safetensors=True`")
+    elif optim and unshard_strategy.name != UnshardStrategyType.one_file:
+        raise NotImplementedError(
+            f"`optim=True` is incompatible with `unshard_strategy={unshard_strategy}`"
+        )
 
     if is_distributed():
         raise RuntimeError("'unshard_checkpoint' cannot be called in a distributed context")
+
+    dir = normalize_path(dir)
+
+    if is_url(target_dir):
+        raise ValueError("'target_dir' must be a local directory")
+    target_dir = Path(normalize_path(target_dir))
+    target_dir.mkdir(exist_ok=True, parents=True)
+
+    ext = "pt" if not use_safetensors else "safetensors"
+    metadata = get_checkpoint_metadata(dir)
 
     def save(state_dict: Dict[str, Any], path: Path):
         if path.is_file() and not save_overwrite:
             raise FileExistsError(
                 f"'{path}' already exists, use `save_overwrite=True` to overwrite it"
             )
+
+        path.parent.mkdir(parents=True, exist_ok=True)
 
         if use_safetensors:
             from safetensors.torch import save_file
@@ -318,44 +520,107 @@ def unshard_checkpoint(
         else:
             torch.save(state_dict, path)
 
-    dir = normalize_path(dir)
-    if is_url(target_dir):
-        raise ValueError("'target_dir' must be a local directory")
-    target_dir = Path(normalize_path(target_dir))
-    target_dir.mkdir(exist_ok=True, parents=True)
+    def get_chunks(prefix: str) -> Tuple[Path, List[Tuple[Path, List[str]]]]:
+        assert unshard_strategy is not None
+        assert isinstance(target_dir, Path)
 
-    ext = "pt" if not use_safetensors else "safetensors"
-    model_path = target_dir / f"model.{ext}"
-    optim_path = target_dir / f"optim.{ext}" if optim else None
+        if unshard_strategy.name == UnshardStrategyType.one_file:
+            path = target_dir / f"{prefix}.{ext}"
+            return path, [(path, [prefix])]
+        elif unshard_strategy.name == UnshardStrategyType.one_file_per_tensor:
+            path = target_dir / prefix
+            chunks = []
+            for key in metadata.state_dict_metadata.keys():
+                if key.startswith(f"{prefix}."):
+                    chunks.append((path / f"{key.replace('.', '-')}.{ext}", [key]))
+            return path, chunks
+        elif unshard_strategy.name == UnshardStrategyType.chunks:
+            assert unshard_strategy.chunk_size_bytes is not None
+            path = target_dir / prefix
+            chunks = []
+            current_size = 0
+            current_keys: List[str] = []
+            for key, meta in metadata.state_dict_metadata.items():
+                if key.startswith(f"{prefix}."):
+                    if isinstance(meta, TensorStorageMetadata):
+                        size = meta.size.numel() * get_element_size(meta.properties.dtype)
+                        if current_keys and current_size + size > unshard_strategy.chunk_size_bytes:
+                            chunks.append((path / f"chunk-{len(chunks):05d}.{ext}", current_keys))
+                            current_size = 0
+                            current_keys = []
+                        current_size += size
+                        current_keys.append(key)
+                    else:
+                        # This is a pickled Python object, which is probably pretty small,
+                        # so we don't worry about recording the size.
+                        current_keys.append(key)
+            if current_keys:
+                chunks.append((path / f"chunk-{len(chunks):05d}.{ext}", current_keys))
+            return path, chunks
+        else:
+            raise NotImplementedError(unshard_strategy.name)
 
-    model_sd: Dict[str, Any] = {}
-    _load_state_dict(
-        model_sd,
-        storage_reader=RemoteFileSystemReader(dir),
-        planner=_EmptyStateDictLoadPlanner(keys=["model"]),
-        no_dist=True,
-    )
-    if not model_sd:
-        raise RuntimeError("no model state found in checkpoint")
-    save(model_sd["model"], model_path)
-    del model_sd
-    gc_cuda()
-
-    if optim_path is not None:
-        optim_sd: Dict[str, Any] = {}
-        _load_state_dict(
-            optim_sd,
-            storage_reader=RemoteFileSystemReader(dir),
-            planner=_EmptyStateDictLoadPlanner(keys=["optim"]),
-            no_dist=True,
+    def unshard_chunk(prefix: str, path: Path, keys: List[str]):
+        state_dict: Dict[str, Any] = _load_unsharded_keys(
+            dir, keys, pre_download=pre_download, work_dir=work_dir
         )
-        if not optim_sd:
-            raise RuntimeError("no optimizer state found in checkpoint")
-        save(optim_sd["optim"], optim_path)
-        del optim_sd
+        if not state_dict:
+            raise RuntimeError(f"missing keys '{keys}' in checkpoint")
+
+        save(state_dict[prefix], path)
+        del state_dict
         gc_cuda()
 
+    model_path, model_chunks = get_chunks("model")
+    for chunk_path, chunk_keys in track(
+        model_chunks, description="Unsharding model chunks...", disable=quiet
+    ):
+        unshard_chunk("model", chunk_path, chunk_keys)
+
+    optim_path: Optional[Path] = None
+    if optim:
+        optim_path, optim_chunks = get_chunks("optim")
+        for chunk_path, chunk_keys in track(
+            optim_chunks, description="Unsharding optim chunks...", disable=quiet
+        ):
+            unshard_chunk("optim", chunk_path, chunk_keys)
+
     return model_path, optim_path
+
+
+def load_keys(
+    dir: PathOrStr,
+    keys: Iterable[str],
+    *,
+    pre_download: bool = False,
+    work_dir: Optional[PathOrStr] = None,
+) -> Generator[Any, None, None]:
+    """
+    Load specific keys from a checkpoint.
+
+    .. warning::
+        This should only be called in a non-distributed context. Otherwise a :class:`RuntimeError` is raised.
+
+    :param dir: The path/URL to the original checkpoint created via :func:`save_model_and_optim_state()`,
+        :func:`save_state_dict`, or one of the other functions in this module.
+    :param keys: The keys to load.
+    :param pre_download: Download and cache relevant remote checkpoint files before trying to read from them.
+    :param work_dir: A working directory for caching files/directories.
+
+    :returns: The (unsharded) objects from the checkpoint corresponding to the given keys, in the
+        same order as the keys.
+    """
+    if is_distributed():
+        raise RuntimeError("'load_keys' cannot be called in a distributed context")
+
+    dir = normalize_path(dir)
+    # validate checkpoint.
+    get_checkpoint_metadata(dir)
+
+    keys = list(keys)
+    state_dict = _load_unsharded_keys(dir, keys, pre_download=pre_download, work_dir=work_dir)
+    for key in keys:
+        yield _get_key(state_dict, key, pop=True)
 
 
 def get_checkpoint_metadata(dir: PathOrStr) -> Metadata:
@@ -400,9 +665,14 @@ def _prepare_state_dict(
     model: nn.Module,
     optim: Optional[torch.optim.Optimizer] = None,
     process_group: Optional[dist.ProcessGroup] = None,
+    flatten_optimizer_state: bool = False,
 ) -> Dict[str, Any]:
     del process_group  # I feel like these torch functions should take a process group argument.
-    sd_options = dist_cp_sd.StateDictOptions(full_state_dict=False, cpu_offload=True)
+    sd_options = dist_cp_sd.StateDictOptions(
+        full_state_dict=False,
+        cpu_offload=True,
+        flatten_optimizer_state_dict=flatten_optimizer_state,
+    )
 
     state_dict: Dict[str, Any] = {
         "model": dist_cp_sd.get_model_state_dict(model, options=sd_options)
@@ -410,6 +680,72 @@ def _prepare_state_dict(
     if optim is not None:
         state_dict["optim"] = dist_cp_sd.get_optimizer_state_dict(model, optim, options=sd_options)
 
+    return state_dict
+
+
+def _swap_param_keys(
+    state_dict: Dict[str, Any],
+    key_mapping: Dict[str, str],
+    metadata: Optional[Metadata] = None,
+    reverse: bool = False,
+    quiet: bool = False,
+):
+    for current_key, original_key in key_mapping.items():
+        if metadata is not None and f"model.{original_key}" not in metadata.state_dict_metadata:
+            continue
+
+        if reverse:
+            current_key, original_key = original_key, current_key
+
+        if current_key not in state_dict["model"]:
+            continue
+
+        if not quiet:
+            log.info(f"Mapping current param '{current_key}' to '{original_key}' in checkpoint")
+
+        state_dict["model"][original_key] = state_dict["model"].pop(current_key)
+
+        if "optim" not in state_dict:
+            continue
+
+        if "state" in state_dict["optim"]:  # unflattened optim state dict
+            state_dict["optim"]["state"][original_key] = state_dict["optim"]["state"].pop(
+                current_key
+            )
+            for group in state_dict["optim"]["param_groups"]:
+                if current_key in group["params"]:
+                    idx = group["params"].index(current_key)
+                    group["params"][idx] = original_key
+                    break
+        else:  # flattened optim state dict
+            for key in list(state_dict["optim"].keys()):
+                if key.startswith(f"state.{current_key}."):
+                    new_key = key.replace(f"state.{current_key}.", f"state.{original_key}.", 1)
+                    state_dict["optim"][new_key] = state_dict["optim"].pop(key)
+                elif key.startswith(f"param_groups.{current_key}."):
+                    new_key = key.replace(
+                        f"param_groups.{current_key}.", f"param_groups.{original_key}.", 1
+                    )
+                    state_dict["optim"][new_key] = state_dict["optim"].pop(key)
+
+
+def _load_unsharded_keys(
+    dir: PathOrStr,
+    keys: List[str],
+    *,
+    pre_download: bool = False,
+    work_dir: Optional[PathOrStr] = None,
+) -> Dict[str, Any]:
+    from torch.distributed.checkpoint.default_planner import _EmptyStateDictLoadPlanner
+    from torch.distributed.checkpoint.state_dict_loader import _load_state_dict
+
+    state_dict: Dict[str, Any] = {}
+    _load_state_dict(
+        state_dict,
+        storage_reader=RemoteFileSystemReader(dir, pre_download=pre_download, work_dir=work_dir),
+        planner=_EmptyStateDictLoadPlanner(keys=keys),
+        no_dist=True,
+    )
     return state_dict
 
 

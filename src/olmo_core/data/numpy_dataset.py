@@ -37,12 +37,13 @@ from ..aliases import PathOrStr
 from ..config import Config, StrEnum
 from ..distributed.utils import barrier, get_fs_local_rank
 from ..io import _get_s3_client, get_file_size
-from .mixes import DataMixBase
+from .mixes import DataMix, DataMixBase
 from .tokenizer import TokenizerConfig
 from .utils import (
     bucket_documents,
     chunk_array,
     divide_into_buckets,
+    find_periodic_sequences,
     get_doc_lengths_from_indices,
     get_document_lengths,
     get_rng,
@@ -305,6 +306,25 @@ class NumpyDatasetBase(ABC):
         """
         raise NotImplementedError
 
+    def _validate_instance(
+        self, input_ids: torch.Tensor, instance_filter_config: InstanceFilterConfig
+    ) -> bool:
+        for m in find_periodic_sequences(
+            input_ids.numpy(),
+            max_period=instance_filter_config.repetition_max_period,
+            min_period=instance_filter_config.repetition_min_period,
+        ):
+            if m.times >= instance_filter_config.repetition_max_count:
+                return False
+        return True
+
+
+@dataclass
+class InstanceFilterConfig(Config):
+    repetition_max_period: int = 13
+    repetition_min_period: int = 1
+    repetition_max_count: int = 32
+
 
 class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     """
@@ -352,6 +372,7 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         include_instance_metadata: Optional[bool] = None,
         generate_doc_lengths: bool = False,
         max_target_sequence_length: Optional[int] = None,
+        instance_filter_config: Optional[InstanceFilterConfig] = None,
     ):
         if max_target_sequence_length is not None and (
             max_target_sequence_length < sequence_length
@@ -386,6 +407,7 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         self._num_instances: Optional[int] = None
         self._include_instance_metadata = include_instance_metadata
         self._generate_doc_lengths = generate_doc_lengths
+        self.instance_filter_config = instance_filter_config
 
     @property
     def num_tokens(self) -> int:
@@ -449,6 +471,9 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         # Read the data from file.
         input_ids = self._read_chunk_from_array(self.paths[array_index], array_local_index)
         out: Dict[str, Any] = {"input_ids": input_ids}
+
+        if self.instance_filter_config is not None:
+            out["instance_mask"] = self._validate_instance(input_ids, self.instance_filter_config)
 
         if self._include_instance_metadata:
             metadata = self._metadata[array_index]
@@ -525,6 +550,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         include_instance_metadata: Optional[bool] = None,
         generate_doc_lengths: bool = False,
         max_target_sequence_length: Optional[int] = None,
+        instance_filter_config: Optional[InstanceFilterConfig] = None,
     ):
         if max_target_sequence_length is not None and (
             max_target_sequence_length < sequence_length
@@ -565,6 +591,13 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         self._instances_per_bucket: Optional[Tuple[Tuple[int, int], ...]] = None
         self._path_offset_index = path_offset_index
         self._seed = seed
+        self.instance_filter_config = instance_filter_config
+
+    @property
+    def indices_dtype(
+        self,
+    ) -> NumpyUIntTypes:
+        return np.uint32
 
     def prepare(self):
         if self.fs_local_rank == 0:
@@ -577,6 +610,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         sha256_hash = hashlib.sha256()
         sha256_hash.update(str(path).encode())
         sha256_hash.update(str(self._get_file_size(path)).encode())
+        sha256_hash.update(self.indices_dtype.__name__.encode())
         path_hash = sha256_hash.hexdigest()
         return (
             self.work_dir
@@ -603,20 +637,24 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                     max_instances = (
                         self._path_offset_index[(str(path), idx)] // self.sequence_length
                     )
-                    future = executor.submit(
-                        run_worker_func,
-                        segment_documents_into_instances,
-                        path,
-                        indices_path,
-                        max_sequence_length=self.sequence_length,
-                        eos_token_id=self.eos_token_id,
-                        dtype=self.dtype,
-                        indices_dtype=self.dtype,
-                        sample=(max_instances, self._seed),
-                    )
-                    futures.append(future)
 
-                concurrent.futures.wait(futures, return_when="ALL_COMPLETED")
+                    # Sampling from small npy files can result in 0 instance indices.
+                    # We skip processing these to avoid writing empty mmapped files.
+                    if max_instances > 0:
+                        future = executor.submit(
+                            run_worker_func,
+                            segment_documents_into_instances,
+                            path,
+                            indices_path,
+                            max_sequence_length=self.sequence_length,
+                            eos_token_id=self.eos_token_id,
+                            dtype=self.dtype,
+                            indices_dtype=self.indices_dtype,
+                            sample=(max_instances, self._seed),
+                        )
+                        futures.append(future)
+
+                concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
 
                 # Log results.
                 for path, future in zip([item[0] for item in paths_needed], futures):
@@ -625,6 +663,15 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                         f"Created {total_instances:,d} instances of sequence length up to "
                         f"{self.sequence_length} from '{path}'"
                     )
+
+    # def _read_chunk_from_array(self, path: PathOrStr, index: int) -> torch.Tensor:
+    #     indices_path = self._get_indices_path(path)
+    #     indices = load_array_slice_into_tensor(
+    #         indices_path, index * 2, index * 2 + 2, self.indices_dtype
+    #     )
+    #     start_idx, end_idx = indices
+    #     data = load_array_slice_into_tensor(path, int(start_idx), int(end_idx), self.dtype)
+    #     return data
 
     def _get_file_size_and_length(
         self, path: PathOrStr, idx: int, dtype: Optional[NumpyUIntTypes] = None
@@ -672,6 +719,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         dtype: NumpyUIntTypes = np.uint16,
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
+        instance_filter_config: Optional[InstanceFilterConfig] = None,
     ):
         super().__init__(
             *paths,
@@ -682,6 +730,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
             dtype=dtype,
             metadata=metadata,
             include_instance_metadata=include_instance_metadata,
+            instance_filter_config=instance_filter_config,
         )
         self._array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
 
@@ -770,7 +819,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                     )
                     futures.append(future)
 
-                concurrent.futures.wait(futures, return_when="ALL_COMPLETED")
+                concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
 
                 # Log results.
                 for path, future in zip(paths_needed, futures):
@@ -816,11 +865,13 @@ class VSLCurriculum:
             num_natural_batches = natural_batches_per_bucket[i][1]
             if num_batches != num_natural_batches:
                 log.info(
-                    f"- bucket {i}: sequence length {seq_len}, using {num_batches:,d} batches out of "
-                    f"{num_natural_batches:,d} total"
+                    f"- bucket {i}:   sequence length {seq_len:>6d} => {num_batches:>6d} batches "
+                    f"used ({num_natural_batches:d} total)"
                 )
             else:
-                log.info(f"- bucket {i}: sequence length {seq_len}, {num_batches:,d} batches")
+                log.info(
+                    f"- bucket {i}:   sequence length {seq_len:>6d} => {num_batches:>6d} batches"
+                )
 
     @property
     @abstractmethod
@@ -1102,6 +1153,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         dtype: NumpyUIntTypes = np.uint16,
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
+        instance_filter_config: Optional[InstanceFilterConfig] = None,
     ):
         if math.log(max_sequence_length, 2) % 1 != 0:
             raise OLMoConfigurationError("'max_sequence_length' must be a power of 2")
@@ -1141,6 +1193,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         self._array_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
         self._lengths_dtype: Optional[NumpyUIntTypes] = None
         self._instances_per_bucket: Optional[Tuple[Tuple[int, int], ...]] = None
+        self.instance_filter_config = instance_filter_config
 
     @property
     def fingerprint_version(self) -> str:
@@ -1231,6 +1284,9 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         input_ids = self._read_chunk_from_array(self.paths[array_index], array_local_index)
         out: Dict[str, Any] = {"input_ids": input_ids}
 
+        if self.instance_filter_config is not None:
+            out["instance_mask"] = self._validate_instance(input_ids, self.instance_filter_config)
+
         if self._include_instance_metadata:
             metadata = self._metadata[array_index]
             out["metadata"] = deepcopy(metadata)
@@ -1288,7 +1344,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                     )
                     futures.append(future)
 
-                concurrent.futures.wait(futures, return_when="ALL_COMPLETED")
+                concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
 
                 # Log results.
                 for path, future in zip(paths_needed, futures):
@@ -1511,7 +1567,7 @@ class NumpyDatasetConfig(Config):
     """
     The paths/URLs to the numpy token ID arrays.
     """
-    mix: Optional[DataMixBase] = None
+    mix: Optional[Union[str, DataMixBase]] = None
     """
     The name of a data mix.
     """
@@ -1550,6 +1606,7 @@ class NumpyDatasetConfig(Config):
         You can save a lot of time and disk space by setting this to a common directory across
         all of you runs.
     """
+    instance_filter_config: Optional[InstanceFilterConfig] = None
 
     def validate(self):
         if self.name in (NumpyDatasetType.fsl, NumpyDatasetType.padded_fsl):
@@ -1660,7 +1717,10 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "Missing tokenizer identifier required to construct data mix"
                 )
-            paths, labels = self.mix.build(self.mix_base_dir, self.tokenizer.identifier)
+            mix = self.mix
+            if not isinstance(mix, DataMixBase):
+                mix = DataMix(mix)
+            paths, labels = mix.build(self.mix_base_dir, self.tokenizer.identifier)
             if metadata is None:
                 metadata = [{"label": label} for label in labels]
 
@@ -1701,6 +1761,7 @@ class NumpyDatasetConfig(Config):
                     include_instance_metadata=self.include_instance_metadata,
                     generate_doc_lengths=self.generate_doc_lengths,
                     path_offset_index=mixture.to_index(),
+                    instance_filter_config=self.instance_filter_config,
                 )
             else:
                 dataset = NumpyFSLDataset(
@@ -1714,6 +1775,7 @@ class NumpyDatasetConfig(Config):
                     metadata=metadata,
                     include_instance_metadata=self.include_instance_metadata,
                     generate_doc_lengths=self.generate_doc_lengths,
+                    instance_filter_config=self.instance_filter_config,
                 )
         elif self.name == NumpyDatasetType.padded_fsl:
             if self.sequence_length is None:
@@ -1753,6 +1815,7 @@ class NumpyDatasetConfig(Config):
                 dtype=self.get_dtype(),
                 metadata=metadata,
                 include_instance_metadata=self.include_instance_metadata,
+                instance_filter_config=self.instance_filter_config,
             )
         elif self.name == NumpyDatasetType.vsl:
             if self.max_sequence_length is None:
@@ -1778,6 +1841,7 @@ class NumpyDatasetConfig(Config):
                 dtype=self.get_dtype(),
                 metadata=metadata,
                 include_instance_metadata=self.include_instance_metadata,
+                instance_filter_config=self.instance_filter_config,
             )
         else:
             raise NotImplementedError(self.name)

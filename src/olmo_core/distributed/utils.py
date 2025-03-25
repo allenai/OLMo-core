@@ -3,18 +3,18 @@ Distributed helpers, most of which work in a non-distributed context as well for
 """
 
 import logging
+import math
 import os
 from datetime import timedelta
-from typing import List, Optional, TypeVar
+from typing import Callable, List, Optional, TypeVar, Union, cast
 
 import torch
 import torch.distributed as dist
-from torch.distributed._tensor import DTensor
-from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor, distribute_tensor
 
-from ..config import StrEnum
-from ..exceptions import OLMoConfigurationError, OLMoEnvironmentError
-from ..utils import get_default_device, logging_configured, move_to_device, set_env_var
+from ..exceptions import OLMoEnvironmentError
+from ..utils import logging_configured, move_to_device, set_env_var
 
 OLMO_SHARED_FS_ENV_VAR = "OLMO_SHARED_FS"
 OLMO_FS_LOCAL_RANK_ENV_VAR = "FS_LOCAL_RANK"
@@ -27,7 +27,7 @@ BEAKER_HOSTNAME_ENV_VAR = "BEAKER_NODE_HOSTNAME"
 log = logging.getLogger(__name__)
 
 
-def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minutes=30)):
+def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minutes=30), **kwargs):
     """
     Initialize the distributed process group with the given backend(s) and check/set the
     relevant environment variables.
@@ -56,7 +56,7 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             # need host networking enabled so that the ethernet interface names don't change.
             set_env_var("NCCL_CROSS_NIC", "0")
             set_env_var("NCCL_ALGO", "Ring,Tree")
-            set_env_var("NCCL_PROTO", "Simple")
+            set_env_var("NCCL_PROTO", "Simple,LL128")
             set_env_var("NCCL_MIN_NCHANNELS", "4")
             set_env_var("NCCL_P2P_NET_CHUNKSIZE", "524288")
             set_env_var("NCCL_P2P_PCI_CHUNKSIZE", "524288")
@@ -81,11 +81,11 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             #  )
             set_env_var("NCCL_TUNER_PLUGIN", "libnccl-tuner.so")
             set_env_var(
-                "NCCL_TUNER_CONFIG_PATH", "/var/lib/tcpxo/lib64/a3plus_tuner_config.textproto"
+                "NCCL_TUNER_CONFIG_PATH", "/var/lib/tcpxo/lib64/a3plus_tuner_config_ll128.textproto"
             )
             set_env_var(
                 "NCCL_SHIMNET_GUEST_CONFIG_CHECKER_CONFIG_FILE",
-                "/var/lib/tcpxo/lib64/a3plus_guest_config.textproto",
+                "/var/lib/tcpxo/lib64/a3plus_guest_config_ll128.textproto",
             )
             set_env_var("NCCL_FASTRAK_CTRL_DEV", "enp0s12")
             set_env_var(
@@ -93,6 +93,7 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
                 "enp6s0,enp7s0,enp13s0,enp14s0,enp134s0,enp135s0,enp141s0,enp142s0",
             )
             set_env_var("NCCL_SOCKET_IFNAME", "enp0s12")
+            set_env_var("NCCL_DEBUG_SUBSYS", "INIT,NET")
 
     if backend_supports_cuda(backend):
         # Set CUDA device.
@@ -101,7 +102,7 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
         device = torch.device(f"cuda:{int(os.environ[OLMO_LOCAL_RANK_ENV_VAR])}")
         torch.cuda.set_device(device)
 
-    dist.init_process_group(backend, timeout=timeout)
+    dist.init_process_group(backend, timeout=timeout, **kwargs)
 
     validate_env_vars()
 
@@ -182,6 +183,16 @@ def get_rank(group: Optional[dist.ProcessGroup] = None) -> int:
         return 0
 
 
+def get_global_rank(group_rank: int, group: Optional[dist.ProcessGroup] = None) -> int:
+    """
+    Translate a rank within a group into it's global rank.
+    """
+    if group is None or not is_distributed():
+        return group_rank
+    else:
+        return dist.get_global_rank(group, group_rank)
+
+
 def get_local_rank() -> int:
     """
     Get the local rank within the current node.
@@ -232,7 +243,7 @@ def get_world_size(group: Optional[dist.ProcessGroup] = None) -> int:
     if is_distributed():
         return dist.get_world_size(group)
     else:
-        return 0
+        return 1
 
 
 def get_local_world_size() -> int:
@@ -399,36 +410,6 @@ def backend_supports_cpu(backend: Optional[str] = None) -> bool:
         return False
 
 
-class HybridShardMeshDimName(StrEnum):
-    replicas = "replicas"
-    shards = "shards"
-
-
-def init_hybrid_shard_mesh(
-    num_replicas: Optional[int] = None, device_type: Optional[str] = None
-) -> DeviceMesh:
-    """
-    Initialize a device mesh for FSDP hybrid sharding.
-
-    :param num_replicas: The number of model replicas. Defaults to the number of nodes in the main
-        process group.
-    :param device_type: The device type for the mesh.
-    """
-    num_replicas = num_replicas or get_num_nodes()
-    device_type = device_type or get_default_device().type
-
-    if get_world_size() % num_replicas != 0:
-        raise OLMoConfigurationError(
-            "hybrid mesh requires world size to be divisible by 'num_replicas'"
-        )
-
-    return init_device_mesh(
-        device_type,
-        (num_replicas, get_world_size() // num_replicas),
-        mesh_dim_names=(HybridShardMeshDimName.replicas, HybridShardMeshDimName.shards),
-    )
-
-
 def get_reduce_divide_factor(world_size: int) -> float:
     factor: int = 1
     while world_size % factor == 0 and world_size / factor > factor:
@@ -438,6 +419,82 @@ def get_reduce_divide_factor(world_size: int) -> float:
 
 def get_local_tensor(x: torch.Tensor) -> torch.Tensor:
     if isinstance(x, DTensor):
-        return x.to_local()
+        x = x.to_local()
+        # An `AsyncCollectiveTensor` might be returned, which means the local tensor is not ready
+        # yet (i.e. communication is not finished). In this case we need to call `.wait()`
+        # to wait the local tensor to be ready.
+        if hasattr(x, "wait"):
+            return x.wait()  # type: ignore
+        else:
+            return x
+    else:
+        return x
+
+
+def get_full_tensor(x: torch.Tensor) -> torch.Tensor:
+    if isinstance(x, DTensor):
+        return x.full_tensor()
+    else:
+        return x
+
+
+def distribute_like(source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    if not isinstance(source, DTensor):
+        return get_full_tensor(target)
+
+    if isinstance(target, DTensor):
+        if target.device_mesh == source.device_mesh and target.placements == source.placements:
+            return target
+        else:
+            return target.redistribute(device_mesh=source.device_mesh, placements=source.placements)
+
+    return distribute_tensor(target, device_mesh=source.device_mesh, placements=source.placements)
+
+
+def do_n_at_a_time(
+    f: Callable[[], T],
+    *,
+    n: Optional[int] = None,
+    process_group: Optional[dist.ProcessGroup] = None,
+    world_size: Optional[int] = None,
+    local_rank: Optional[int] = None,
+) -> T:
+    """
+    Call a function ``f`` in a distributed context from at most ``n`` ranks at a time.
+
+    All ranks will eventually call the given function exactly once, at which point this function
+    will return.
+
+    :param f: The function to call from each rank.
+    :param n: The level of concurrency, i.e. how many ranks are allowed to call ``f`` at once.
+        This defaults to the number of nodes, in which case one rank from each node will
+        call ``f`` at a time.
+    :param process_group: The process group to use.
+    """
+    world_size = world_size if world_size is not None else get_world_size(process_group)
+    local_rank = local_rank if local_rank is not None else get_rank(process_group)
+    n = n if n is not None else get_num_nodes()
+    group_count = math.ceil(world_size / n)
+    group_rank = local_rank % group_count
+    result: Optional[T] = None
+    for active_group in range(group_count):
+        if group_rank == active_group:
+            result = f()
+        barrier(process_group)
+    return cast(T, result)
+
+
+class _HiddenTensor:
+    def __init__(self, x: torch.Tensor):
+        self.x = x
+
+
+def hide_from_torch(x: torch.Tensor) -> _HiddenTensor:
+    return _HiddenTensor(x)
+
+
+def unhide_from_torch(x: Union[torch.Tensor, _HiddenTensor]) -> torch.Tensor:
+    if isinstance(x, _HiddenTensor):
+        return x.x
     else:
         return x

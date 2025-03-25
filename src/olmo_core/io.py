@@ -5,6 +5,8 @@ import pickle
 import re
 import shutil
 import time
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Generator, Optional, Tuple, Type, Union
@@ -18,6 +20,7 @@ import requests
 import torch
 from cached_path import cached_path
 from cached_path.schemes import S3Client, SchemeClient, add_scheme_client
+from rich.progress import track
 
 from .aliases import PathOrStr
 from .exceptions import OLMoEnvironmentError, OLMoNetworkError
@@ -136,7 +139,7 @@ def get_bytes_range(path: PathOrStr, bytes_start: int, num_bytes: int) -> bytes:
             return f.read(num_bytes)
 
 
-def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
+def upload(source: PathOrStr, target: str, save_overwrite: bool = False, quiet: bool = False):
     """
     Upload source file to a target location on GCS or S3.
 
@@ -149,7 +152,8 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
     source = Path(normalize_path(source))
     assert source.is_file()
     num_bytes = get_file_size(source)
-    log.info(f"Uploading {_format_bytes(num_bytes)} from '{source}' to '{target}'...")
+    if not quiet:
+        log.info(f"Uploading {_format_bytes(num_bytes)} from '{source}' to '{target}'...")
     parsed = urlparse(target)
     if parsed.scheme == "gs":
         _gcs_upload(source, parsed.netloc, parsed.path.strip("/"), save_overwrite=save_overwrite)
@@ -163,9 +167,13 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
         )
     else:
         raise NotImplementedError(f"Upload not implemented for '{parsed.scheme}' scheme")
+    if not quiet:
+        log.info(f"Uploaded {_format_bytes(num_bytes)} to '{target}'")
 
 
-def copy_file(source: PathOrStr, target: PathOrStr, save_overwrite: bool = False):
+def copy_file(
+    source: PathOrStr, target: PathOrStr, save_overwrite: bool = False, quiet: bool = False
+):
     """
     Copy a file from ``source`` to ``target``.
 
@@ -176,13 +184,80 @@ def copy_file(source: PathOrStr, target: PathOrStr, save_overwrite: bool = False
     :raises FileNotFoundError: If the ``source`` file doesn't exist.
     :raises FileExistsError: If the ``target`` already exists and ``save_overwrite=False``.
     """
+    source = normalize_path(source)
+    target = normalize_path(target)
     local_source = cached_path(source, quiet=True)
     if is_url(target):
-        upload(local_source, str(target), save_overwrite=save_overwrite)
+        upload(local_source, target, save_overwrite=save_overwrite, quiet=quiet)
     else:
-        if not save_overwrite and file_exists(target):
-            raise FileExistsError(target)
-        shutil.copyfile(source, target, follow_symlinks=True)
+        target = Path(target)
+        if file_exists(target):
+            if not save_overwrite:
+                raise FileExistsError(target)
+            else:
+                target.unlink(missing_ok=True)
+        else:
+            target.parent.mkdir(exist_ok=True, parents=True)
+        try:
+            os.link(local_source, target, follow_symlinks=True)
+        except OSError:
+            # Can't hard link across devices, so copy instead.
+            shutil.copyfile(local_source, target, follow_symlinks=True)
+
+
+def copy_dir(
+    source: PathOrStr,
+    target: PathOrStr,
+    save_overwrite: bool = False,
+    num_threads: Optional[int] = None,
+    quiet: bool = False,
+):
+    """
+    Copy a directory from ``source`` to ``target``.
+
+    :param source: The path/URL to the source file.
+    :param target: The path/URL to the target location.
+    :param save_overwrite: Overwrite any existing files.
+    :param num_threads: The number of threads to use.
+
+    :raises FileNotFoundError: If the ``source`` dir doesn't exist.
+    :raises FileExistsError: If any source files already exist in the ``target`` and ``save_overwrite=False``.
+    """
+    source = normalize_path(source)
+    target = normalize_path(target)
+
+    if num_threads is None:
+        from .utils import get_default_thread_count
+
+        num_threads = get_default_thread_count()
+
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        if not quiet:
+            log.info(f"Collecting source files from '{source}' to copy to '{target}'...")
+
+        futures = []
+        for source_path in list_directory(source, recurse=True, include_dirs=False):
+            assert source_path.startswith(source)
+            relative_source_path = source_path.replace(source, "", 1).lstrip("/")
+            target_path = join_path(target, relative_source_path)
+            futures.append(
+                executor.submit(
+                    copy_file, source_path, target_path, save_overwrite=save_overwrite, quiet=True
+                )
+            )
+
+        if not quiet:
+            log.info(f"Collected {len(futures)} source files to copy")
+
+        deque(
+            track(
+                (f.result() for f in as_completed(futures)),
+                description="Copying source files...",
+                disable=quiet,
+                total=len(futures),
+            ),
+            maxlen=0,
+        )
 
 
 def dir_is_empty(dir: PathOrStr) -> bool:
@@ -276,25 +351,55 @@ def clear_directory(dir: PathOrStr, force: bool = False):
         shutil.rmtree(dir, ignore_errors=True)
 
 
-def list_directory(dir: PathOrStr) -> Generator[str, None, None]:
+def list_directory(
+    dir: PathOrStr, recurse: bool = False, include_files: bool = True, include_dirs: bool = True
+) -> Generator[str, None, None]:
     """
-    List the immediate contents of a local or remote directory.
+    List the contents of a local or remote directory.
+    If ``recurse=False``, only the immediate children of the directory are returned, otherwise
+    every sub-folder is recursed into.
 
     :param dir: Path/URL to the directory.
+    :param recurse: Whether to recurse into sub-folders.
+    :param include_files: Include regular files in the results.
+    :param include_dirs: Include directories in the results.
+
+    :returns: A generator over paths in the directory. If the ``dir`` is a URL, the results will be
+        full URLs. If the ``dir`` is a local path, the results will be of the form ``join_path(dir, p)``.
+
+    :raises FileNotFoundError: If the ``source`` file doesn't exist.
     """
     dir = normalize_path(dir)
 
     if not is_url(dir):
         for p in Path(dir).iterdir():
-            yield str(p)
+            if (p.is_file() and include_files) or (p.is_dir() and include_dirs):
+                yield str(p)
+            if recurse and p.is_dir():
+                yield from list_directory(
+                    p, recurse=True, include_files=include_files, include_dirs=include_dirs
+                )
     else:
         from urllib.parse import urlparse
 
         parsed = urlparse(dir)
         if parsed.scheme == "gs":
-            yield from _gcs_list_directory(parsed.netloc, parsed.path.strip("/"))
+            yield from _gcs_list_directory(
+                parsed.netloc,
+                parsed.path.strip("/"),
+                recurse=recurse,
+                include_files=include_files,
+                include_dirs=include_dirs,
+            )
         elif parsed.scheme in ("s3", "r2", "weka"):
-            yield from _s3_list_directory(parsed.scheme, parsed.netloc, parsed.path.strip("/"))
+            yield from _s3_list_directory(
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path.strip("/"),
+                recurse=recurse,
+                include_files=include_files,
+                include_dirs=include_dirs,
+            )
         else:
             raise NotImplementedError(
                 f"list_directory size not implemented for '{parsed.scheme}' URLs"
@@ -451,16 +556,25 @@ def _get_gcs_client():
 
 
 def _gcs_is_retriable(exc: Exception) -> bool:
+    from google.api_core.exceptions import BadRequest
     from google.api_core.retry import if_transient_error
 
-    return if_transient_error(exc) or isinstance(exc, requests.exceptions.Timeout)
+    return (
+        if_transient_error(exc)
+        or isinstance(exc, requests.exceptions.Timeout)
+        or isinstance(exc, BadRequest)  # Weird choice, but Google throws this transiently
+    )
 
 
 def _get_gcs_retry():
     from google.api_core.retry import Retry
 
     return Retry(
-        predicate=_gcs_is_retriable, initial=1.0, maximum=10.0, multiplier=2.0, timeout=600.0
+        predicate=_gcs_is_retriable,  # NOTE: it appears google might ignore this
+        initial=1.0,
+        maximum=10.0,
+        multiplier=2.0,
+        timeout=600.0,
     )
 
 
@@ -473,7 +587,7 @@ def _get_gcs_conditional_retry():
     return ConditionalRetryPolicy(_get_gcs_retry(), is_generation_specified, ["query_params"])
 
 
-@retriable()
+@retriable(retry_condition=_gcs_is_retriable)
 def _gcs_file_size(bucket_name: str, key: str) -> int:
     from google.api_core.exceptions import NotFound
 
@@ -488,7 +602,7 @@ def _gcs_file_size(bucket_name: str, key: str) -> int:
     return blob.size
 
 
-@retriable()
+@retriable(retry_condition=_gcs_is_retriable)
 def _gcs_get_bytes_range(bucket_name: str, key: str, bytes_start: int, num_bytes: int) -> bytes:
     from google.api_core.exceptions import NotFound
 
@@ -496,27 +610,43 @@ def _gcs_get_bytes_range(bucket_name: str, key: str, bytes_start: int, num_bytes
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(key)
     try:
-        blob.reload()
+        blob.reload(retry=_get_gcs_retry())
     except NotFound:
         raise FileNotFoundError(f"gs://{bucket_name}/{key}")
     return blob.download_as_bytes(
-        start=bytes_start, end=bytes_start + num_bytes - 1, retry=_get_gcs_retry()
+        start=bytes_start,
+        end=bytes_start + num_bytes - 1,
+        retry=_get_gcs_retry(),
+        checksum=None,  # type: ignore
     )
 
 
-@retriable()
+@retriable(retry_condition=_gcs_is_retriable)
 def _gcs_upload(source: Path, bucket_name: str, key: str, save_overwrite: bool = False):
     storage_client = _get_gcs_client()
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(key)
-    if not save_overwrite and blob.exists():
-        raise FileExistsError(
-            f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
-        )
-    blob.upload_from_filename(source, retry=_get_gcs_conditional_retry())
+
+    generation: int = 0
+    if blob.exists(retry=_get_gcs_retry()):
+        if not save_overwrite:
+            raise FileExistsError(
+                f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
+            )
+
+        blob.reload(retry=_get_gcs_retry())
+        assert blob.generation is not None
+        generation = blob.generation
+
+    blob.upload_from_filename(
+        source,
+        if_generation_match=generation,
+        retry=_get_gcs_conditional_retry(),
+        checksum=None,
+    )
 
 
-@retriable()
+@retriable(retry_condition=_gcs_is_retriable)
 def _gcs_clear_directory(bucket_name: str, prefix: str):
     from google.api_core.exceptions import NotFound
 
@@ -535,7 +665,13 @@ def _gcs_clear_directory(bucket_name: str, prefix: str):
         return
 
 
-def _gcs_list_directory(bucket_name: str, prefix: str) -> Generator[str, None, None]:
+def _gcs_list_directory(
+    bucket_name: str,
+    prefix: str,
+    recurse: bool = False,
+    include_files: bool = True,
+    include_dirs: bool = True,
+) -> Generator[str, None, None]:
     from google.api_core.exceptions import NotFound
 
     storage_client = _get_gcs_client()
@@ -559,11 +695,21 @@ def _gcs_list_directory(bucket_name: str, prefix: str) -> Generator[str, None, N
         except NotFound:
             raise FileNotFoundError(f"gs://{bucket_name}/{prefix}")
 
-        for blob in blobs:
-            yield f"gs://{bucket_name}/{blob.name}"
+        if include_files:
+            for blob in blobs:
+                yield f"gs://{bucket_name}/{blob.name}"
 
         for folder in blobs.prefixes:
-            yield f"gs://{bucket_name}/{folder.strip('/')}"
+            if include_dirs:
+                yield f"gs://{bucket_name}/{folder.strip('/')}"
+            if recurse:
+                yield from _gcs_list_directory(
+                    bucket_name,
+                    folder,
+                    recurse=True,
+                    include_files=include_files,
+                    include_dirs=include_dirs,
+                )
 
 
 ###################
@@ -721,16 +867,34 @@ def _s3_clear_directory(scheme: str, bucket_name: str, prefix: str):
         return
 
 
-def _s3_list_directory(scheme: str, bucket_name: str, prefix: str) -> Generator[str, None, None]:
+def _s3_list_directory(
+    scheme: str,
+    bucket_name: str,
+    prefix: str,
+    recurse: bool = False,
+    include_files: bool = True,
+    include_dirs: bool = True,
+) -> Generator[str, None, None]:
     client = _get_s3_client(scheme)
     paginator = client.get_paginator("list_objects_v2")
     if not prefix.endswith("/"):
         prefix = prefix + "/"
     for page in paginator.paginate(Bucket=bucket_name, Prefix=prefix, MaxKeys=50, Delimiter="/"):
-        for file_item in page.get("Contents", []):
-            yield f"{scheme}://{bucket_name}/{file_item['Key']}"
+        if include_files:
+            for file_item in page.get("Contents", []):
+                yield f"{scheme}://{bucket_name}/{file_item['Key']}"
         for dir_item in page.get("CommonPrefixes", []):
-            yield f"{scheme}://{bucket_name}/{dir_item['Prefix'].strip('/')}"
+            if include_dirs:
+                yield f"{scheme}://{bucket_name}/{dir_item['Prefix'].strip('/')}"
+            if recurse:
+                yield from _s3_list_directory(
+                    scheme,
+                    bucket_name,
+                    dir_item["Prefix"],
+                    recurse=True,
+                    include_files=include_files,
+                    include_dirs=include_dirs,
+                )
 
 
 #############################################

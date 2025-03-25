@@ -5,11 +5,15 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.distributed import DeviceMesh
+from torch.distributed.tensor.parallel import parallelize_module
+from torch.distributed.tensor.placement_types import Placement, Replicate
 
 from ..config import Config, DType, StrEnum
 from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
 from .functional import l2_normalize
+from .utils import get_tp_wrappers
 
 __all__ = ["FeedForwardType", "FeedForwardConfig", "FeedForward", "NormalizedFeedForward"]
 
@@ -42,7 +46,7 @@ class FeedForwardConfig(Config):
     The name of the implementation.
     """
     bias: Optional[bool] = None
-    dtype: DType = DType.float32
+    dtype: Optional[DType] = None
 
     def num_params(self, d_model: int) -> int:
         """
@@ -64,7 +68,9 @@ class FeedForwardConfig(Config):
 
         return params
 
-    def build(self, d_model: int, *, init_device: str = "cpu") -> "FeedForward":
+    def build(
+        self, d_model: int, *, dtype: Optional[torch.dtype] = None, init_device: str = "cpu"
+    ) -> "FeedForward":
         """
         Build the corresponding feed-forward module.
 
@@ -73,7 +79,11 @@ class FeedForwardConfig(Config):
         """
         kwargs = self.as_dict(exclude_none=True)
         kwargs.pop("name")
-        kwargs.update(d_model=d_model, init_device=init_device, dtype=kwargs.pop("dtype").as_pt())
+        kwargs.update(d_model=d_model, init_device=init_device)
+        if self.dtype is not None:
+            kwargs["dtype"] = self.dtype.as_pt()
+        elif dtype is not None:
+            kwargs["dtype"] = dtype
 
         try:
             if self.name == FeedForwardType.default:
@@ -117,6 +127,39 @@ class FeedForward(nn.Module):
         """
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        input_layout: Optional[Placement] = None,
+        output_layout: Optional[Placement] = None,
+        use_local_output: bool = True,
+        float8_enabled: bool = False,
+    ):
+        rowwise_parallel, colwise_parallel, prepare_module_input = get_tp_wrappers(
+            float8_enabled=float8_enabled
+        )
+
+        parallelize_module(
+            module=self,
+            device_mesh=tp_mesh,
+            parallelize_plan=prepare_module_input(
+                input_layouts=None if input_layout is None else (input_layout,),
+                desired_input_layouts=(Replicate(),),
+            ),
+        )
+
+        parallelize_module(
+            module=self,
+            device_mesh=tp_mesh,
+            parallelize_plan={
+                "w1": colwise_parallel(),
+                "w2": rowwise_parallel(
+                    output_layouts=output_layout, use_local_output=use_local_output
+                ),
+                "w3": colwise_parallel(),
+            },
+        )
+
 
 @beta_feature
 class NormalizedFeedForward(FeedForward):
@@ -141,30 +184,42 @@ class NormalizedFeedForward(FeedForward):
         )
         self.sw_init_value = 1.0
         self.sw_init_scaling = 1.0
-        self.sw1 = torch.nn.Parameter(
-            self.sw_init_scaling * torch.ones(hidden_size, dtype=dtype, device=init_device)
-        )
-        self.sw3 = torch.nn.Parameter(
-            self.sw_init_scaling * torch.ones(hidden_size, dtype=dtype, device=init_device)
-        )
+        self.sw1 = torch.nn.Parameter(torch.empty(hidden_size, dtype=dtype, device=init_device))
+        self.sw3 = torch.nn.Parameter(torch.empty(hidden_size, dtype=dtype, device=init_device))
         self.sqrt_d_model = math.sqrt(d_model)
+        self.reset_parameters()
 
     def reset_parameters(self):
         nn.init.ones_(self.sw1)
-        self.sw1.mul_(self.sw_init_scaling)
         nn.init.ones_(self.sw3)
-        self.sw3.mul_(self.sw_init_scaling)
+        with torch.no_grad():
+            self.sw1.mul_(self.sw_init_scaling)
+            self.sw3.mul_(self.sw_init_scaling)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         sw1 = self.sw1 * ((self.sw_init_value / self.sw_init_scaling) * self.sqrt_d_model)
         sw3 = self.sw3 * (self.sw_init_value / self.sw_init_scaling)
         return self.w2(F.silu(sw1 * self.w1(x)) * (sw3 * self.w3(x)))
 
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        input_layout: Optional[Placement] = None,
+        output_layout: Optional[Placement] = None,
+        use_local_output: bool = True,
+        float8_enabled: bool = False,
+    ):
+        del tp_mesh, input_layout, output_layout, use_local_output, float8_enabled
+
+        raise NotImplementedError(
+            "TP is not implemented yet for the normalized feed-forward variant"
+        )
+
     @torch.no_grad()
     def normalize_matrices(self):
         """
         Normalize the weights in all matrices. This should be called after each optimizer step, which
-        the :class:`~olmo_core.train.callbacks.MatrixNormalizerCallback` will handle for you.
+        the :class:`~olmo_core.train.train_module.TransformerTrainModule` will handle for you.
         """
         self._normalize_matrix(self.w1.weight)
         self._normalize_matrix(self.w2.weight, dim=0)

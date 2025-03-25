@@ -1,8 +1,20 @@
 """
-MoE layers. Requires `megablocks <https://github.com/databricks/megablocks>`_.
+MoE layers.
 """
 
-from .config import MoEActivationFn, MoEConfig, MoEMLPImplementation, MoEType
-from .layers import MoE
+from .mlp import DroplessMoEMLP, MoEMLP
+from .moe import DroplessMoE, MoEBase, MoEConfig, MoEType
+from .router import MoELinearRouter, MoERouter, MoERouterConfig, MoERouterType
 
-__all__ = ["MoE", "MoEConfig", "MoEType", "MoEActivationFn", "MoEMLPImplementation"]
+__all__ = [
+    "MoEBase",
+    "DroplessMoE",
+    "MoEConfig",
+    "MoEType",
+    "MoEMLP",
+    "DroplessMoEMLP",
+    "MoERouter",
+    "MoELinearRouter",
+    "MoERouterConfig",
+    "MoERouterType",
+]

@@ -1,85 +1,64 @@
 import logging
 from dataclasses import dataclass
-from typing import List, Optional
-
-import torch
-from torch.distributed import DeviceMesh
+from fnmatch import fnmatch
+from typing import TYPE_CHECKING, List, Optional
 
 from olmo_core.config import Config, DType, StrEnum
-from olmo_core.distributed.parallel import DataParallelConfig, DataParallelType
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.float8 import Float8Config
-from olmo_core.utils import get_default_device, has_flash_attn
+from olmo_core.utils import ensure_multiple_of
 
 from ..attention import AttentionConfig, AttentionType
+from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
+from ..moe import MoEConfig, MoERouterConfig, MoEType
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
-from .block import TransformerBlockConfig, TransformerBlockType
 from .init import InitMethod
-from .model import (
-    NormalizedTransformer,
-    Transformer,
-    TransformerActivationCheckpointingMode,
-    TransformerDataParallelWrappingStrategy,
-)
 
-__all__ = [
-    "TransformerDataParallelConfig",
-    "TransformerActivationCheckpointingConfig",
-]
-
+if TYPE_CHECKING:
+    from .block import TransformerBlockBase
+    from .model import Transformer
 
 log = logging.getLogger(__name__)
 
 
-@dataclass
-class TransformerDataParallelConfig(DataParallelConfig):
-    wrapping_strategy: TransformerDataParallelWrappingStrategy = (
-        TransformerDataParallelWrappingStrategy.full
-    )
+class TransformerDataParallelWrappingStrategy(StrEnum):
     """
-    Wrapping strategy.
+    An enumeration of the different wrapping strategy for the data parallel implementations.
+    """
+
+    full = "full"
+    """
+    Wrap each block and the LM head (only applies to FSDP).
+    """
+
+    blocks = "blocks"
+    """
+    Like full but the LM head is not wrapped separately (only applies to FSDP).
+    """
+
+    fine_grained = "fine_grained"
+    """
+    Wrap certain modules within each block in addition to wrapping each block (only applies to FSDP).
     """
 
 
 @beta_feature
-@dataclass
-class TransformerActivationCheckpointingConfig(Config):
+class TransformerActivationCheckpointingMode(StrEnum):
     """
-    Defines the activation checkpointing strategy for a transformer model.
-    """
-
-    mode: TransformerActivationCheckpointingMode = TransformerActivationCheckpointingMode.full
-
-    block_interval: Optional[int] = None
-    """
-    Required when :data:`mode` is "selected_blocks". Determines which blocks are wrapped.
+    An enumeration of the different activation checkpointing modes.
     """
 
-    modules: Optional[List[str]] = None
-    """
-    Required when :data:`mode` is "selected_modules". A list of modules names to wrap for
-    activation checkpointing. Globs are supported.
-    """
-
-    def __post_init__(self):
-        if (
-            self.mode == TransformerActivationCheckpointingMode.selected_blocks
-            and self.block_interval is None
-        ):
-            raise OLMoConfigurationError(
-                "'block_interval' is required for 'selected_blocks' activation checkpointing"
-            )
-        elif (
-            self.mode == TransformerActivationCheckpointingMode.selected_modules
-            and self.modules is None
-        ):
-            raise OLMoConfigurationError(
-                "'modules' is required for 'selected_modules' activation checkpointing"
-            )
+    full = "full"
+    """Checkpoint every block."""
+    selected_blocks = "selected_blocks"
+    """Checkpoint only selected blocks."""
+    selected_modules = "selected_modules"
+    """Checkpoint only selected modules."""
+    selected_ops = "selected_ops"
+    """Checkpoint only a specific set of operations."""
 
 
 class TransformerType(StrEnum):
@@ -97,6 +76,133 @@ class TransformerType(StrEnum):
     ➡️ :class:`NormalizedTransformer` (nGPT)
     """
 
+    moe = "moe"
+    """
+    ➡️ :class:`MoETransformer`
+    """
+
+
+class TransformerBlockType(StrEnum):
+    """
+    An enumeration of the different transformer block implementations.
+    """
+
+    default = "default"
+    """
+    ➡️ :class:`TransformerBlock`
+    """
+
+    reordered_norm = "reordered_norm"
+    """
+    ➡️ :class:`ReorderedNormTransformerBlock`
+    """
+
+    normalized = "normalized"
+    """
+    ➡️ :class:`NormalizedTransformerBlock`
+    """
+
+    moe = "moe"
+    """
+    ➡️ :class:`MoETransformerBlock`
+    """
+
+    moe_reordered_norm = "moe_reordered_norm"
+    """
+    ➡️ :class:`MoEReorderedNormTransformerBlock`
+    """
+
+    moe_hybrid = "moe_hybrid"
+    """
+    ➡️ :class:`MoEHybridTransformerBlock`
+    """
+
+    moe_hybrid_reordered_norm = "moe_hybrid_reordered_norm"
+    """
+    ➡️ :class:`MoEHybridReorderedNormTransformerBlock`
+    """
+
+
+@dataclass
+class TransformerBlockConfig(Config):
+    """
+    A configuration class for easily building transformer blocks.
+    """
+
+    attention: AttentionConfig
+    """
+    The attention config.
+    """
+    layer_norm: Optional[LayerNormConfig] = None
+    """
+    The layer norm config.
+    """
+    feed_forward: Optional[FeedForwardConfig] = None
+    """
+    The feed-forward config, required for non-MoE blocks.
+    """
+    feed_forward_moe: Optional[MoEConfig] = None
+    """
+    The config for the MoE feed-forward layer. Required for MoE blocks.
+    """
+    name: TransformerBlockType = TransformerBlockType.default
+    """
+    The block type.
+    """
+    dropout: Optional[float] = None
+    """
+    Dropout probability.
+    """
+
+    def build(
+        self,
+        *,
+        d_model: int,
+        block_idx: int,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ) -> "TransformerBlockBase":
+        from .block import (
+            MoEHybridReorderedNormTransformerBlock,
+            MoEHybridTransformerBlock,
+            MoEReorderedNormTransformerBlock,
+            MoETransformerBlock,
+            NormalizedTransformerBlock,
+            ReorderedNormTransformerBlock,
+            TransformerBlock,
+        )
+
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
+        kwargs.pop("name")
+        kwargs.update(
+            d_model=d_model,
+            block_idx=block_idx,
+            init_device=init_device,
+            cache=cache,
+        )
+
+        try:
+            if self.name == TransformerBlockType.default:
+                return TransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.reordered_norm:
+                return ReorderedNormTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.normalized:
+                return NormalizedTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.moe:
+                return MoETransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.moe_reordered_norm:
+                return MoEReorderedNormTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.moe_hybrid:
+                return MoEHybridTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.moe_hybrid_reordered_norm:
+                return MoEHybridReorderedNormTransformerBlock(**kwargs)
+            else:
+                raise NotImplementedError(self.name)
+        except TypeError as e:
+            raise OLMoConfigurationError(
+                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+            ) from e
+
 
 @dataclass
 class TransformerConfig(Config):
@@ -104,10 +210,6 @@ class TransformerConfig(Config):
     A config for easily building transformer models.
 
     :param name: The name of the implementation.
-    :param compile: Whether to compile the model with ``torch.compile``.
-    :param dp_config: Data parallel configuration.
-    :param ac_config: Activation checkpointing configuration.
-    :param float8_config: Float8 training configuration.
 
     See :class:`Transformer` for a description of the other parameters.
     """
@@ -121,32 +223,20 @@ class TransformerConfig(Config):
     dtype: DType = DType.float32
     init_method: InitMethod = InitMethod.normal
     init_seed: int = 0
-    compile: bool = False
-    dp_config: Optional[TransformerDataParallelConfig] = None
-    ac_config: Optional[TransformerActivationCheckpointingConfig] = None
-    float8_config: Optional[Float8Config] = None
+    freeze_params: Optional[List[str]] = None
 
     def build(
         self,
         *,
         init_device: str = "cpu",
-        device: Optional[torch.device] = None,
-        dp_mesh: Optional[DeviceMesh] = None,
-        max_seq_len: Optional[int] = None,
-    ) -> Transformer:
+    ) -> "Transformer":
         """
-        Build the model corresponding to this config, potentially applying activation checkpointing,
-        compilation, FSDP or DDP, etc, and eventually calling :meth:`Transformer.init_weights()`.
+        Build the model corresponding to this config.
 
         :param init_device: The device to put the parameters on during initialization. In a
             distributed setting it usually makes sense to set this to "meta".
-        :param device: The device to put the model on after initialization.
-        :param dp_mesh: Data parallel device mesh. This can be used to configure hybrid sharding
-            with FSDP. See :func:`~olmo_core.distributed.utils.init_hybrid_shard_mesh()` for
-            easily creating such a mesh.
-        :param max_seq_len: The maximum sequence length expected.
         """
-        device = device or get_default_device()
+        from .model import MoETransformer, NormalizedTransformer, Transformer
 
         log.info(
             f"Building transformer with {self.num_params:,d} total params, "
@@ -177,49 +267,38 @@ class TransformerConfig(Config):
                 init_device=init_device,
                 init_seed=self.init_seed,
             )
+        elif self.name == TransformerType.moe:
+            model = MoETransformer(
+                d_model=self.d_model,
+                vocab_size=self.vocab_size,
+                n_layers=self.n_layers,
+                block=self.block,
+                lm_head=self.lm_head,
+                dtype=self.dtype.as_pt(),
+                init_method=self.init_method,
+                init_device=init_device,
+                init_seed=self.init_seed,
+            )
         else:
             raise NotImplementedError(self.name)
 
-        # Maybe convert linear layers to Float8 linear layers.
-        if self.float8_config is not None and self.float8_config.enabled:
-            if self.float8_config.compile is None and self.compile:
-                self.float8_config.compile = True
-            self.float8_config.convert_to_float8_training(model, modules_to_ignore={"w_out"})
+        if self.freeze_params:
+            for name, param in model.named_parameters():
+                for pattern in self.freeze_params:
+                    if fnmatch(name, pattern):
+                        param.requires_grad = False
+                        log.info(f"Param '{name}' will be frozen")
+                        break
+                else:
+                    log.info(f"Param '{name}' will be trainable")
 
         log.info("%s", model)
-
-        # Maybe apply activation checkpointing.
-        if self.ac_config is not None:
-            model.apply_activation_checkpointing(
-                self.ac_config.mode,
-                block_interval=self.ac_config.block_interval,
-                modules=self.ac_config.modules,
-            )
-
-        # Maybe compile.
-        if self.compile:
-            model.apply_compile()
-
-        # Maybe wrap for data parallel.
-        if self.dp_config is not None:
-            if self.dp_config.name == DataParallelType.fsdp:
-                model.apply_fsdp(
-                    dp_mesh=dp_mesh,
-                    param_dtype=self.dp_config.param_dtype.as_pt()
-                    if self.dp_config.param_dtype is not None
-                    else None,
-                    reduce_dtype=self.dp_config.reduce_dtype.as_pt(),
-                    wrapping_strategy=self.dp_config.wrapping_strategy,
-                )
-            elif self.dp_config.name == DataParallelType.ddp:
-                model.apply_ddp(dp_mesh=dp_mesh, compile_enabled=self.compile)
-            else:
-                raise NotImplementedError(self.dp_config.name)
-
-        # Materialize and init parameters.
-        if device != torch.device(init_device):
-            model.to_empty(device=device)
-        model.init_weights(max_seq_len=max_seq_len, device=device)
+        log.info(
+            f"Built model with:\n"
+            f"- {model.num_params:,d} total params\n"
+            f"- {model.num_non_embedding_params:,d} non-embedding params\n"
+            f"- {model.num_trainable_params:,d} trainable params"
+        )
 
         return model
 
@@ -242,20 +321,18 @@ class TransformerConfig(Config):
 
         # Block attention params.
         block_params += self.block.attention.num_params(self.d_model)
-
-        # Block attention norm.
         if self.block.layer_norm is not None:
             block_params += self.block.layer_norm.num_params(self.d_model)
 
-        # Block feed forward.
+        # Block feed forward (dense and/or sparse).
         if self.block.feed_forward is not None:
             block_params += self.block.feed_forward.num_params(self.d_model)
-        elif self.block.feed_forward_moe is not None:
+            if self.block.layer_norm is not None:
+                block_params += self.block.layer_norm.num_params(self.d_model)
+        if self.block.feed_forward_moe is not None:
             block_params += self.block.feed_forward_moe.num_params(self.d_model)
-
-        # Block feed forward norm.
-        if self.block.layer_norm is not None:
-            block_params += self.block.layer_norm.num_params(self.d_model)
+            if self.block.layer_norm is not None:
+                block_params += self.block.layer_norm.num_params(self.d_model)
 
         # All block params.
         num_params += self.n_layers * block_params
@@ -266,11 +343,32 @@ class TransformerConfig(Config):
         return num_params
 
     @property
+    def num_active_params(self) -> int:
+        """
+        The total number of active parameters that a model from this config would have.
+        """
+        num_params = self.num_params
+        if self.block.feed_forward_moe is None:
+            return num_params
+        diff_per_block = self.block.feed_forward_moe.num_params(
+            self.d_model
+        ) - self.block.feed_forward_moe.num_active_params(self.d_model)
+        total_diff = self.n_layers * diff_per_block
+        return num_params - total_diff
+
+    @property
     def num_non_embedding_params(self) -> int:
         """
         The number of parameters excluding embedding parameters.
         """
         return self.num_params - self.d_model * self.vocab_size
+
+    @property
+    def num_active_non_embedding_params(self) -> int:
+        """
+        The number of active parameters excluding embedding parameters.
+        """
+        return self.num_active_params - self.d_model * self.vocab_size
 
     def num_flops_per_token(self, seq_len: int) -> int:
         """
@@ -293,7 +391,67 @@ class TransformerConfig(Config):
         return flop_per_token
 
     @classmethod
-    def olmo_1B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+    def olmo2_190M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=768,
+            hidden_size_multiplier=1.5,
+            n_layers=kwargs.pop("n_layers", 12),
+            n_heads=kwargs.pop("n_heads", 12),
+            vocab_size=vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
+    def olmo2_370M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=1024,
+            hidden_size_multiplier=1.4,
+            n_layers=kwargs.pop("n_layers", 16),
+            n_heads=kwargs.pop("n_heads", 16),
+            vocab_size=vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
+    def olmo2_600M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=1344,
+            hidden_size_multiplier=1.5,
+            n_layers=kwargs.pop("n_layers", 16),
+            n_heads=kwargs.pop("n_heads", 16),
+            vocab_size=vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
+    def olmo2_760M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=1536,
+            hidden_size_multiplier=1.5,
+            n_layers=kwargs.pop("n_layers", 16),
+            n_heads=kwargs.pop("n_heads", 16),
+            vocab_size=vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
+    def olmo2_1B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 1B OLMo model config.
         """
@@ -307,7 +465,22 @@ class TransformerConfig(Config):
         )
 
     @classmethod
-    def olmo_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+    def olmo2_3B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=3328,
+            hidden_size_multiplier=1.4,
+            n_layers=kwargs.pop("n_layers", 16),
+            n_heads=kwargs.pop("n_heads", 16),
+            vocab_size=vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
+    def olmo2_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 7B OLMo model config.
         """
@@ -321,7 +494,7 @@ class TransformerConfig(Config):
         )
 
     @classmethod
-    def olmo_13B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+    def olmo2_13B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 13B OLMo model config.
         """
@@ -332,6 +505,98 @@ class TransformerConfig(Config):
             rope_theta=kwargs.pop("rope_theta", 500_000),
             layer_norm_eps=1e-6,
             **kwargs,
+        )
+
+    @classmethod
+    def olmo2_32B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 32B OLMo model config.
+        """
+        d_model = 5120
+        return cls.llama_like(
+            vocab_size=vocab_size,
+            d_model=d_model,
+            n_layers=kwargs.pop("n_layers", 64),
+            n_heads=kwargs.pop("n_heads", 40),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            hidden_size_multiple_of=kwargs.pop("hidden_size_multiple_of", 512),
+            hidden_size_multiplier=kwargs.pop("hidden_size_multiplier", 27648 / (8 * d_model / 3)),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
+    def smallmoe(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        d_model = kwargs.pop("d_model", 768)
+        return cls.llama_like(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 12),
+            n_heads=kwargs.pop("n_heads", 12),
+            name=kwargs.pop("name", TransformerType.moe),
+            block_name=kwargs.pop("block_name", TransformerBlockType.moe_reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            feed_forward_moe=MoEConfig(
+                name=MoEType.default,
+                num_experts=32,
+                hidden_size=int(0.5 * d_model),
+                router=MoERouterConfig(top_k=4),
+                shared_mlp=FeedForwardConfig(hidden_size=d_model * 2),
+                lb_loss_weight=0.01,
+                z_loss_weight=0.001,
+            ),
+        )
+
+    @classmethod
+    def small_hybrid_moe(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        d_model = kwargs.pop("d_model", 768)
+        return cls.llama_like(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 12),
+            n_heads=kwargs.pop("n_heads", 12),
+            name=kwargs.pop("name", TransformerType.moe),
+            block_name=kwargs.pop("block_name", TransformerBlockType.moe_hybrid_reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            feed_forward=FeedForwardConfig(hidden_size=d_model * 2, bias=False),
+            feed_forward_moe=MoEConfig(
+                name=MoEType.default,
+                num_experts=32,
+                hidden_size=int(0.5 * d_model),
+                router=MoERouterConfig(top_k=4),
+                lb_loss_weight=0.01,
+                z_loss_weight=0.001,
+            ),
+        )
+
+    @classmethod
+    def olmoe_1B_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        d_model = kwargs.pop("d_model", 2048)
+        return cls.llama_like(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 16),
+            n_heads=kwargs.pop("n_heads", 16),
+            name=kwargs.pop("name", TransformerType.moe),
+            block_name=kwargs.pop("block_name", TransformerBlockType.moe_reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            feed_forward_moe=MoEConfig(
+                name=MoEType.dropless,
+                num_experts=64,
+                hidden_size=int(0.5 * d_model),
+                router=MoERouterConfig(top_k=8),
+                lb_loss_weight=0.01,
+                z_loss_weight=0.001,
+            ),
         )
 
     @classmethod
@@ -533,12 +798,13 @@ class TransformerConfig(Config):
         rope_type: Optional[RoPEType] = None,
         hidden_size_multiple_of: int = 256,
         hidden_size_multiplier: Optional[float] = None,
-        fused_ops: Optional[bool] = None,
-        use_flash: Optional[bool] = None,
+        fused_ops: bool = False,
+        use_flash: bool = False,
         block_name: TransformerBlockType = TransformerBlockType.default,
         dtype: DType = DType.float32,
-        compile: bool = False,
         rope_scaling: Optional[RoPEScalingConfig] = None,
+        feed_forward: Optional[FeedForwardConfig] = None,
+        feed_forward_moe: Optional[MoEConfig] = None,
         **kwargs,
     ) -> "TransformerConfig":
         """
@@ -546,24 +812,15 @@ class TransformerConfig(Config):
 
         :param hidden_size_multiple_of: Ensure the FFN hidden size is a multiple of this value.
         :param hidden_size_multiplier: Custom multiplier for the FFN hidden size.
-        :param fused_ops: Use fused operations where possible. Defaults to ``True`` if flash-attn is
-            installed and ``compile=False``, otherwise ``False``.
-        :param use_flash: Use flash-attn. Defaults to ``True`` if flash-attn is
-            installed and ``compile=False``, otherwise ``False``.
+        :param fused_ops: Use fused operations where possible.
+        :param use_flash: Use flash-attn.
         :param dtype: The default data type to use for all parameters.
         """
-        if fused_ops is None:
-            fused_ops = False if compile else has_flash_attn()
-        if use_flash is None:
-            use_flash = False if compile else has_flash_attn()
-
         # Resolve hidden size of FFN in blocks.
         hidden_size = int(8 * d_model / 3)
         if hidden_size_multiplier is not None:
             hidden_size = int(hidden_size_multiplier * hidden_size)
-        hidden_size = hidden_size_multiple_of * (
-            (hidden_size + hidden_size_multiple_of - 1) // hidden_size_multiple_of
-        )
+        hidden_size = ensure_multiple_of(hidden_size, hidden_size_multiple_of)
 
         # Configure global layer norm.
         layer_norm = LayerNormConfig(
@@ -581,6 +838,10 @@ class TransformerConfig(Config):
                 att_type = AttentionType.fused
                 rope_type = RoPEType.fused
 
+        # Feed-forward.
+        if feed_forward is None and feed_forward_moe is None:
+            feed_forward = FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype)
+
         # Configure blocks.
         block = TransformerBlockConfig(
             name=block_name,
@@ -594,7 +855,8 @@ class TransformerConfig(Config):
                 use_flash=use_flash,
                 dtype=dtype,
             ),
-            feed_forward=FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype),
+            feed_forward=feed_forward,
+            feed_forward_moe=feed_forward_moe,
             layer_norm=layer_norm,
         )
 
@@ -605,7 +867,50 @@ class TransformerConfig(Config):
             block=block,
             lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
             dtype=dtype,
-            compile=compile,
+            **kwargs,
+        )
+
+    @classmethod
+    def llama_like_moe(
+        cls,
+        *,
+        d_model: int,
+        vocab_size: int,
+        n_layers: int,
+        n_heads: int,
+        num_experts: int,
+        top_k: int,
+        expert_hidden_size: int,
+        shared_expert_hidden_size: Optional[int] = None,
+        dropless: bool = False,
+        capacity_factor: Optional[float] = None,
+        lb_loss_weight: float = 0.01,
+        z_loss_weight: Optional[float] = 0.001,
+        reordered_norm: bool = False,
+        **kwargs,
+    ) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=n_layers,
+            n_heads=n_heads,
+            name=TransformerType.moe,
+            block_name=TransformerBlockType.moe
+            if not reordered_norm
+            else TransformerBlockType.moe_reordered_norm,
+            qk_norm=kwargs.pop("qk_norm", reordered_norm),
+            feed_forward_moe=MoEConfig(
+                name=MoEType.default if not dropless else MoEType.dropless,
+                num_experts=num_experts,
+                hidden_size=expert_hidden_size,
+                capacity_factor=capacity_factor,
+                router=MoERouterConfig(top_k=top_k),
+                shared_mlp=None
+                if shared_expert_hidden_size is None
+                else FeedForwardConfig(hidden_size=shared_expert_hidden_size, bias=False),
+                lb_loss_weight=lb_loss_weight,
+                z_loss_weight=z_loss_weight,
+            ),
             **kwargs,
         )
 
@@ -622,24 +927,18 @@ class TransformerConfig(Config):
         rope_theta: int = 500_000,
         hidden_size_multiple_of: int = 256,
         hidden_size_multiplier: Optional[float] = None,
-        use_flash: Optional[bool] = None,
+        use_flash: bool = False,
         dtype: DType = DType.float32,
-        compile: bool = False,
         **kwargs,
     ) -> "TransformerConfig":
         """
         Create an nGPT-like model configuration.
         """
-        if use_flash is None:
-            use_flash = False if compile else has_flash_attn()
-
         # Resolve hidden size of FFN in blocks.
         hidden_size = int(8 * d_model / 3)
         if hidden_size_multiplier is not None:
             hidden_size = int(hidden_size_multiplier * hidden_size)
-        hidden_size = hidden_size_multiple_of * (
-            (hidden_size + hidden_size_multiple_of - 1) // hidden_size_multiple_of
-        )
+        hidden_size = ensure_multiple_of(hidden_size, hidden_size_multiple_of)
 
         # Configure blocks.
         block = TransformerBlockConfig(
@@ -666,7 +965,6 @@ class TransformerConfig(Config):
             block=block,
             lm_head=LMHeadConfig(name=LMHeadType.normalized, dtype=dtype),
             dtype=dtype,
-            compile=compile,
             init_method=InitMethod.normalized,
             **kwargs,
         )

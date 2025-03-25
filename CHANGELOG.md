@@ -9,12 +9,131 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added support for auxiliary-loss-free MoE load-balancing, similar to DeepSeek-v3. You can activate this by setting `bias_gamma` to a non-zero float in your `MoERouter` config.
+
+### Changed
+
+- `TransformerTrainModuleConfig` can now be used to build a `TransformerPipelineTrainModule` by adding a `pp_config` spec. This makes the `TransformerPipelineTrainModuleConfig` redundant, but it will be kept around for backwards compatibility until the next major release.
+- Several state dict methods in `TrainModule` now take an `optim` option, which can disable the use of optimizer state.
+- Updated `Float8Config` for latest version of `torchao`.
+- Undo a fix applied to `olmo_core.data.numpy_dataset.NumpyFSLDatasetMixture` that was generating a mismatch between the shape of instances in the dataset and the shape of instances in the data loader.
+
+### Fixed
+
+- Fixed a bug where the trainer might try to save a duplicate final checkpoint if the run that already completed was restarted.
+
+### Fixed
+
+- When submitting a Beaker job from a branch that's tracking a GitHub fork, OLMo-core now instructs Beaker to pull from the fork instead of from the main repo.
+
+
+## [v2.0.1](https://github.com/allenai/OLMo-core/releases/tag/v2.0.1) - 2025-03-18
+
+### Added
+
+- Added information about the official 32B training run.
+- Added information about the official 32B anneal training run.
+- Added automatic support for LL128 when running on Augusta.
+- Added information about 32B training logs.
+
+### Fixed
+
+- The official config for the 32B had unrealistic batch size settings.
+- Ignore `group_overrides` for frozen parameters instead of throwing an error.
+
+### Removed
+
+- Removed the "fused" cross-entropy loss variant. It had a bug and consistently under-performed the native PyTorch version when compiled. See [Post Incident Report: bug with fused CE loss](https://docs.google.com/document/d/1IK6q2gX6mH7eQO_IItCZAYYlm4g4htL4mNWbTQuPKf4/edit?usp=sharing) for more information.
+
+## [v2.0.0](https://github.com/allenai/OLMo-core/releases/tag/v2.0.0) - 2025-03-12
+
+This major release introduces a few breaking changes. We've provided more information here: [OLMo-core v2 design and upgrade guide](https://docs.google.com/document/d/1LvANhNzA-MdtiD2pLniLTqB9wxSSuqY435WuJIADeFM/edit?usp=sharing).
+
+### Added
+
+- Added `TrainModule` abstraction with `TransformerTrainModule` implementation, which encapsulates both a model and optimizer.
+- Added `namespace` argument to `Trainer.record_metric()`.
+- Added support for context parallelism.
+- Added support for expert parallelism with MoE models.
+- Added in-loop evals for Minerva, GSM, HumanEval, MBPP (`ai2-olmo-eval==0.7.0`)
+- Added `CosWithWarmupAndLinearDecay` learning rate scheduler
+- Added `WSD` learning rate scheduler
+
+### Changed
+
+- The `Trainer` now takes a `TrainModule` instead of a model and optimizer, and several configuration options have been moved to `TransformerTrainModule`, including `rank_microbatch_size`, `fused_loss`, `compile_loss`, `z_loss_multiplier`, and `autocast_precision`.
+- Several `TransformerModelConfig` options have been to `TransformerTrainModule` / `TransformerTrainModuleConfig`, including `dp_config`, `tp_config`, `float8_config`, and `compile`.
+
+### Removed
+
+- Removed the following callbacks: `MoEHandlerCallback`, `SchedulerCallback`, `MatrixNormalizerCallback`, `GradClipperCallback`, and `Float8HandlerCallback`.
+  The functionality from all of those callbacks has been moved to the `TransformerTrainModule` class.
+- Removed the callback methods `.pre_eval_batch()` and `.post_eval_batch()`.
+
+### Fixed
+
+- Fixed the model ladder code when training on mps or cpu device
+
+## [v1.9.0](https://github.com/allenai/OLMo-core/releases/tag/v1.9.0) - 2025-03-10
+
+### Fixed
+
+- Ensure certain optimizer param group fields are not overridden by the values in a checkpoint.
+
+### Added
+
+- Added `instance_filter_config` field to `NumpyDatasetConfig`.
+- Added conversion script for OLMo 2 checkpoints to Huggingface format.
+- Added `BeakerCallback`.
+- Added logging for in-loop eval throughput
+
+### Fixed
+
+- Ensure certain optimizer param group fields are not overridden by the values in a checkpoint.
+- Fixed issue where non-zero ranks would report partially-reduced values for training metrics.
+
+## [v1.8.0](https://github.com/allenai/OLMo-core/releases/tag/v1.8.0) - 2025-01-29
+
+### Added
+
+- Added support for tensor parallelism. See the `TransformerConfig` class for usage.
+- Added more downstream tasks from the model ladder.
+- Added `io.copy_dir()` function.
+- Added new LR schedulers: `LinearWithWarmup`, `InvSqrtWithWarmup`, `ConstantWithWarmup`, `SequentialScheduler`.
+- Added option to pre-download checkpoint files from remote storage before trying to load a checkpoint.
+- Added a callback for sending Slack notifications.
+- Makes the MPS device work on Apple Silicon
+- Added `SkipStepAdamW` optimizer.
+- The trainer can load model-only checkpoints now.
+- Added the option to throttle checkpoint uploads to one rank from each node at a time.
+- Added support for logging rich Table objects as text in source mixture datasets.
+- Added `unshard_strategy` parameter to `unshard_checkpoint()` function in `olmo_core.distributed.checkpoint`.
+- Added function `load_keys()` to `olmo_core.distributed.checkpoint`.
+- Added support for low precision optim state in `SkipStepAdamW`.
+
+### Changed
+
+- Changed storage of shared shard state in sharded checkpoints from smallest shard to lowest rank (normally 0).
+- Changed how the trainer handles loading a checkpoint when `load_path` is provided. Now `load_path` is only used if no checkpoint is found in the `save_folder`.
+
+### Fixed
+
+- Added missing `weights_only=False` argument to fix loading train checkpoints with newer versions of PyTorch.
+- Fixed bug where GCS upload does not retry on transient failures.
+- Fixed bug where source mixture datasets were truncating source files instead of randomly sampling.
+- Fixed bug in source mixture datsets where sampling from small npy files raised an mmap exception due to 0 instances in the sampled index.
+
+## [v1.7.0](https://github.com/allenai/OLMo-core/releases/tag/v1.7.0) - 2024-11-27
+
+### Added
+
 - Added `key_mapping` argument to `olmo_core.distributed.checkpoint.load_model_and_optim_state()`
   for loading checkpoints with different key names.
 - Added `load_key_mapping` field to the trainer, same idea as the new `key_mapping` argument above.
 - Added an implementation of nGPT called `NormalizedTransformer`.
 - Added an example showing how to convert a HuggingFace Llama 3.2 checkpoint into the right format for OLMo-core.
 - Added an API for scaling RoPE embeddings.
+- Added a `ModelLadder` API.
 
 ### Changed
 

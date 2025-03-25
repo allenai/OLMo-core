@@ -1,7 +1,8 @@
 import logging
 from concurrent.futures import Future
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from datetime import timedelta
+from typing import ClassVar, List, Optional, Tuple
 
 import torch.distributed as dist
 
@@ -57,6 +58,8 @@ class CheckpointerCallback(Callback):
         If you want to override this callback you should subclass it.
     """
 
+    priority: ClassVar[int] = 1
+
     save_interval: int = 250
     """
     The interval, in steps, with which to save permanent checkoints.
@@ -85,6 +88,8 @@ class CheckpointerCallback(Callback):
     """
     The strategy for removing old checkpoints found in the save folder.
     """
+
+    enabled: bool = True
 
     # Bookkeeping
 
@@ -163,6 +168,9 @@ class CheckpointerCallback(Callback):
         self._checkpoints_to_remove.clear()
 
     def pre_train(self):
+        if not self.enabled:
+            return
+
         if self.save_async is None:
             self.save_async = backend_supports_cpu()
 
@@ -174,7 +182,7 @@ class CheckpointerCallback(Callback):
             log.info(
                 "Creating new process group for checkpointing (needed for async checkpointing)"
             )
-            self.checkpointer.process_group = dist.new_group()
+            self.checkpointer.process_group = dist.new_group(timeout=timedelta(minutes=30))
 
         # Maybe save a pre-train checkpoint.
         if self.step == 0 and (
@@ -215,9 +223,15 @@ class CheckpointerCallback(Callback):
                 path for _, path in sorted(ephemeral_checkpoints, key=lambda x: x[0])
             ]
             for path in self._ephemeral_checkpoints:
-                log.info(f"Collected existing ephemeral checkpoint at '{path}'")
+                log.info(
+                    f"Found existing ephemeral checkpoint at '{path}' which will "
+                    "be removed when the next checkpoint is saved"
+                )
 
     def post_train_batch(self):
+        if not self.enabled:
+            return
+
         self._await_last_checkpoint(blocking=False)
         if not self.checkpoint_pending:
             self._remove_old_checkpoints()
@@ -234,6 +248,10 @@ class CheckpointerCallback(Callback):
                 self._schedule_for_removal(oldest_path)
 
     def post_train(self):
+        if not self.enabled:
+            return
+
         if self.step > self._latest_checkpoint_step:
             self._checkpoints.append(self._save_checkpoint(save_async=False))
+
         self._await_last_checkpoint()

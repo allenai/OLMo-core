@@ -23,10 +23,10 @@ For example::
     if __name__ == "__main__":
         prepare_training_environment()
         try:
-            # Build model, optimizer, dataset...
+            # Build train module and data loader...
 
             # Build trainer.
-            trainer = trainer_config.build(model, optim, dataset)
+            trainer = trainer_config.build(train_module, data_loader)
 
             # Run the trainer.
             trainer.fit()
@@ -43,12 +43,14 @@ import logging
 from datetime import timedelta
 from typing import Optional
 
+import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
 from ..distributed.utils import init_distributed, is_distributed
 from ..io import add_cached_path_clients
-from ..utils import LogFilterType, prepare_cli_environment, seed_all
+from ..utils import LogFilterType, get_default_device, prepare_cli_environment, seed_all
+from .checkpoint import Checkpointer, CheckpointerConfig
 from .common import Duration, DurationUnit, LoadStrategy, ReduceType
 from .config import TrainerConfig
 from .trainer import Trainer
@@ -58,6 +60,8 @@ __all__ = [
     "teardown_training_environment",
     "TrainerConfig",
     "Trainer",
+    "CheckpointerConfig",
+    "Checkpointer",
     "LoadStrategy",
     "Duration",
     "DurationUnit",
@@ -72,7 +76,7 @@ def prepare_training_environment(
     *,
     seed: Optional[int] = None,
     backend: Optional[str] = "cpu:gloo,cuda:nccl",
-    timeout: timedelta = timedelta(minutes=10),
+    timeout: timedelta = timedelta(minutes=30),
     log_filter_type: Optional[LogFilterType] = None,
 ):
     """
@@ -83,7 +87,7 @@ def prepare_training_environment(
         Internally this calls:
 
         - :func:`~olmo_core.distributed.utils.init_distributed()`, which also calls :func:`torch.cuda.set_device()`
-          for backends that support CUDA.
+          for backends that support CUDA, otherwise :func:`torch.set_default_device()`.
         - :func:`~olmo_core.utils.prepare_cli_environment()`
 
         So there's no need to call those separately.
@@ -114,6 +118,8 @@ def prepare_training_environment(
     # Initialize process group.
     if backend is not None:
         init_distributed(backend=backend, timeout=timeout)
+    else:
+        torch.set_default_device(get_default_device())
 
     # Configure logging, warning filters, exception hooks, and other CLI settings.
     prepare_cli_environment(log_filter_type=log_filter_type)

@@ -2,6 +2,7 @@
 Trainer :class:`Callback` implementations.
 """
 
+from .beaker import BeakerCallback
 from .callback import Callback, CallbackConfig
 from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy
 from .comet import CometCallback, CometNotificationSetting
@@ -12,15 +13,11 @@ from .evaluator_callback import (
     EvaluatorCallback,
     LMEvaluatorCallbackConfig,
 )
-from .float8_handler import Float8HandlerCallback
 from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
-from .grad_clipper import GradClipperCallback
-from .matrix_normalizer import MatrixNormalizerCallback
-from .moe_handler import MoEHandlerCallback
 from .profiler import ProfilerCallback
-from .scheduler import SchedulerCallback
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
+from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
 from .wandb import WandBCallback
 
@@ -34,19 +31,17 @@ __all__ = [
     "ConfigSaverCallback",
     "ConsoleLoggerCallback",
     "EvaluatorCallback",
-    "Float8HandlerCallback",
     "LMEvaluatorCallbackConfig",
     "DownstreamEvaluatorCallbackConfig",
-    "MoEHandlerCallback",
     "GarbageCollectorCallback",
     "GPUMemoryMonitorCallback",
-    "GradClipperCallback",
-    "MatrixNormalizerCallback",
     "ProfilerCallback",
-    "SchedulerCallback",
+    "SlackNotifierCallback",
+    "SlackNotificationSetting",
     "SequenceLengthSchedulerCallback",
     "SpeedMonitorCallback",
     "WandBCallback",
+    "BeakerCallback",
 ]
 
 __doc__ += "\n"

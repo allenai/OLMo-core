@@ -4,11 +4,13 @@ import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from itertools import chain
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, cast
 
 import numpy as np
+from rich.console import Console
 from rich.progress import Progress
 from rich.table import Table
+from rich.text import Text
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
@@ -39,7 +41,7 @@ class SourceMixtureConfig(Config):
     """
     The target ratio of the source in the mixture.
     """
-    paths: List[PathOrStr]
+    paths: List[str]
     """
     A list of paths to the source data.
     """
@@ -104,7 +106,7 @@ class SourceTokenDetails:
 
 @dataclass
 class SourcePathTokens:
-    path: PathOrStr
+    path: str
     tokens: int
 
 
@@ -186,6 +188,10 @@ class SourceMixtureDatasetConfig(Config):
     """
     The seed used to generate the dataset.
     """
+    render_tables: bool = True
+    """
+    Whether to render tables of the mixture outcome.
+    """
 
     def validate(self):
         if self.max_tokens <= 0:
@@ -212,7 +218,8 @@ class SourceMixtureDatasetConfig(Config):
         for source_config in self.source_configs:
             log.info(f"Counting tokens for source: {source_config.source_name}")
             available_tokens_by_source[source_config.source_name] = self._count_tokens_for_paths(
-                paths=source_config.paths, source=source_config.source_name
+                paths=cast(List[PathOrStr], source_config.paths),
+                source=source_config.source_name,
             )
 
         tokens_details_by_source: List[SourceTokenDetails] = []
@@ -252,7 +259,8 @@ class SourceMixtureDatasetConfig(Config):
                 )
             )
 
-        self.render_mixture_outcome_tables(tokens_details_by_source)
+        if self.render_tables:
+            self.render_mixture_outcome_tables(tokens_details_by_source)
 
         for outcome in completed:
             for item in outcome.path_tokens:
@@ -341,7 +349,7 @@ class SourceMixtureDatasetConfig(Config):
         for row in source_rows:
             source_table.add_row(*[row[header] for header in source_headers])
 
-        log.info(source_table)
+        log.info(self.table_to_text(source_table))
 
         total_tokens = sum([item.population for item in results])
         selected_tokens = sum([item.num_selected for item in results])
@@ -358,4 +366,15 @@ class SourceMixtureDatasetConfig(Config):
             global_table.add_column(header)
 
         global_table.add_row(f"{total_tokens:.2e}", f"{selected_tokens:.2e}", observed_global_ratio)
-        log.info(global_table)
+        log.info(self.table_to_text(global_table))
+
+    def table_to_text(self, table: Table) -> Text:
+        """Generate an ascii formatted presentation of a Rich table
+        Eliminates column styling
+        """
+        console = Console(width=250)
+        with console.capture() as capture:
+            table.width = 250
+            console.print(table)
+
+        return Text.from_ansi(capture.get())

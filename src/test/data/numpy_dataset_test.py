@@ -77,7 +77,7 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
     npdtype = np.uint16
     seed = 42
     mmap1 = mk_mmaps(tmp_path, "mmap1", 1, 20 * 1000, npdtype, eos=0, seed=seed)
-    mmap2 = mk_mmaps(tmp_path, "mmap2", 1, 20 * 1000, npdtype, eos=0, seed=seed)
+    mmap2 = mk_mmaps(tmp_path, "mmap2", 1, 20 * 1000, npdtype, eos=0, seed=seed * 2)
 
     sequence_length = 4
     tokenizer = TokenizerConfig(
@@ -87,17 +87,18 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
     )
 
     mixture_config = SourceMixtureDatasetConfig(
+        render_tables=False,
         max_tokens=10_000,
         sequence_length=sequence_length,
         source_configs=[
             SourceMixtureConfig(
                 source_name="mmap1",
-                paths=[i[0] for i in mmap1],
+                paths=[str(i[0]) for i in mmap1],
                 target_ratio=0.8,
             ),
             SourceMixtureConfig(
                 source_name="mmap2",
-                paths=[i[0] for i in mmap2],
+                paths=[str(i[0]) for i in mmap2],
                 target_ratio=0.2,
             ),
         ],
@@ -114,17 +115,18 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
     ).build()
     ds.prepare()
 
+    first_ds_item = ds[0]["input_ids"].tolist()
+
+    # NOTE: This is commented out until we fix behavior of the source mixture dataset
+    # first_src_sequence = mmap1[0][1][:sequence_length].tolist()
+    # Note that changing the seed here could result in the inclusion of the first sequence from the mock data.
+    # assert not np.array_equal(first_src_sequence, first_ds_item)
     expected = "68144f"
     assert ds.fingerprint.endswith(
         expected
     ), f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
-    assert ds[0]["input_ids"].tolist() == [
-        56423,
-        24546,
-        15796,
-        52203,
-    ]  # stable because we pass a seed
-    assert ds.num_tokens == 10000
+    assert first_ds_item == [56423, 24546, 15796, 52203]  # stable because we pass a seed
+    assert ds.num_tokens == 10_000
     assert len(ds) == 2500
 
 
@@ -132,8 +134,25 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
     # NOTE: At small token counts the take_ratio can be finicky so we test at small but real world-ish scale
     npdtype = np.uint16
     seed = 42
-    mmap1 = mk_mmaps(tmp_path, "mmap1", 1, 10 * 1000, npdtype, eos=0, seed=seed)
-    mmap2 = mk_mmaps(tmp_path, "mmap2", 1, 20 * 1000, npdtype, eos=0, seed=seed)
+    # Only 10k tokens in mmap1 so we have to upsample to meet 0.8 target below
+    mmap1 = mk_mmaps(
+        tmp_path=tmp_path,
+        prefix="mmap1",
+        num_files=1,
+        size=10 * 1000,
+        dtype=npdtype,
+        eos=0,
+        seed=72,
+    )
+    mmap2 = mk_mmaps(
+        tmp_path=tmp_path,
+        prefix="mmap2",
+        num_files=1,
+        size=20 * 1000,
+        dtype=npdtype,
+        eos=0,
+        seed=27,
+    )
 
     sequence_length = 4
     tokenizer = TokenizerConfig(
@@ -142,20 +161,19 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
         pad_token_id=-1,
     )
 
-    source1_paths = [i[0] for i in mmap1] * 2  # duplicate the paths
+    source1_paths = [str(i[0]) for i in mmap1] * 2  # duplicate the paths
 
     mixture_config = SourceMixtureDatasetConfig(
-        max_tokens=10_000,
+        render_tables=False,
+        max_tokens=40_000,
         sequence_length=sequence_length,
         source_configs=[
             SourceMixtureConfig(
-                source_name="mmap1",
-                paths=source1_paths,
-                target_ratio=0.8,
+                source_name="mmap1", paths=source1_paths, target_ratio=0.8, max_repetition_ratio=2.0
             ),
             SourceMixtureConfig(
                 source_name="mmap2",
-                paths=[i[0] for i in mmap2],
+                paths=[str(i[0]) for i in mmap2],
                 target_ratio=0.2,
             ),
         ],
@@ -172,18 +190,25 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
     ).build()
     ds.prepare()
 
-    expected = "190cd0"
+    expected_fingerprint = "0b10f2"
+    first_ds_item = ds[0]["input_ids"].tolist()
+
+    # NOTE: This is commented out until we fix behavior of the source mixture dataset
+    # first_src_sequence = mmap1[0][1][:sequence_length].tolist()
+    # Note that changing the seed here could result in the inclusion of the first sequence from the mock data.
+    # assert not np.array_equal(first_src_sequence, first_ds_item)
+
     assert ds.fingerprint.endswith(
-        expected
-    ), f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
-    assert ds[0]["input_ids"].tolist() == [
-        56423,
-        24546,
-        15796,
-        52203,
+        expected_fingerprint
+    ), f"Fingerprint mismatch, expected {expected_fingerprint}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
+    assert first_ds_item == [
+        12761,
+        6996,
+        63252,
+        65373,
     ]  # stable because we pass a seed
-    assert ds.num_tokens == 10000
-    assert len(ds) == 2500
+    assert ds.num_tokens == 40_000
+    assert len(ds) == 10000
 
 
 def write_data_file(data: List[int], path: Path, dtype, eos_token_id: int):

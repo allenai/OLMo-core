@@ -47,6 +47,9 @@ __all__ = [
 
 BeakerPriority = Priority
 
+_DEFAULT_TORCH = "2.6.0".replace(".", "")
+_DEFAULT_TORCH_NIGHTLY = "2.7.0.dev20250202".replace(".", "")
+
 
 class OLMoCoreBeakerImage(StrEnum):
     """
@@ -57,14 +60,66 @@ class OLMoCoreBeakerImage(StrEnum):
     includes *versioned* images that are published with each release of the OLMo-core package.
     """
 
-    stable = "olmo-core"
+    stable = f"olmo-core-tch{_DEFAULT_TORCH}cu124"
     """
     Built with the latest compatible stable version of PyTorch.
     """
 
-    nightly = "olmo-core-nightly"
+    stable_cu124 = f"olmo-core-tch{_DEFAULT_TORCH}cu124"
     """
-    Built with the latest compatible nightly version of PyTorch.
+    The stable image with CUDA pinned to 12.4.
+    """
+
+    stable_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126"
+    """
+    The stable image with CUDA pinned to 12.6.
+    """
+
+    stable_dev = f"olmo-core-tch{_DEFAULT_TORCH}cu124-devel"
+    """
+    Built with the latest compatible stable version of PyTorch and includes all the usual CUDA development
+    dependencies for building CUDA extensions.
+    """
+
+    stable_dev_cu124 = f"olmo-core-tch{_DEFAULT_TORCH}cu124-devel"
+    """
+    The stable development image with CUDA pinned to 12.4.
+    """
+
+    stable_dev_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126-devel"
+    """
+    The stable development image with CUDA pinned to 12.6.
+    """
+
+    nightly = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124"
+    """
+    Built with a recent compatible nightly version of PyTorch.
+    """
+
+    nightly_cu124 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124"
+    """
+    The nighlty image with CUDA pinned to 12.4.
+    """
+
+    nightly_cu126 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu126"
+    """
+    The nighlty image with CUDA pinned to 12.6.
+    """
+
+    nightly_dev = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124-devel"
+    """
+    Built with a recent compatible nightly version of PyTorch and includes all the usual CUDA development
+    dependencies for building CUDA extensions.
+    """
+
+    nightly_dev_cu124 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124-devel"
+    """
+    The nightly development image with CUDA pinned to 12.4.
+    """
+
+    nightly_dev_cu126 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu126-devel"
+    """
+    The nightly development image with CUDA pinned to 12.6.
     """
 
 
@@ -155,6 +210,11 @@ class BeakerLaunchConfig(Config):
     The number of GPUs to use per node.
     """
 
+    shared_memory: str = "10GiB"
+    """
+    The amount of shared memory to use.
+    """
+
     clusters: List[str] = field(default_factory=lambda: ["ai2/jupiter-cirrascale-2"])
     """
     The allowed clusters to run on.
@@ -205,6 +265,8 @@ class BeakerLaunchConfig(Config):
     """
     Allow running with uncommitted changed.
     """
+
+    host_networking: Optional[bool] = None
 
     # NOTE: don't assign a type here because omegaconf can't validate arbitrary classes
     #  _beaker: Optional[Beaker] = None
@@ -300,7 +362,9 @@ class BeakerLaunchConfig(Config):
 
         return dataset
 
-    def build_experiment_spec(self, torchrun: bool = True) -> ExperimentSpec:
+    def build_experiment_spec(
+        self, torchrun: bool = True, entrypoint: Optional[str] = None
+    ) -> ExperimentSpec:
         """
         Get the Beaker experiment spec corresponding to this config instance.
         """
@@ -317,15 +381,28 @@ class BeakerLaunchConfig(Config):
             "#!/usr/bin/env bash",
             "set -exuo pipefail",
             "[[ -d /var/lib/tcpxo/lib64 ]] && export LD_LIBRARY_PATH=/var/lib/tcpxo/lib64:$LD_LIBRARY_PATH",
+            # Setup the kernel cache directory used by pytorch
+            "mkdir -p /root/.cache/torch/kernels && export PYTORCH_KERNEL_CACHE_PATH=/root/.cache/torch/kernels",
             "mkdir -p /olmo-core-runtime",
             "cd /olmo-core-runtime",
             *self.setup_steps,
         ]
 
         if torchrun:
+            if self.num_nodes > 1 and any(["augusta" in cluster for cluster in self.clusters]):
+                entrypoint_script.append(
+                    "BEAKER_REPLICA_RANK=$("
+                    "python -m olmo_core.launch.reorder_ranks_in_gcp "
+                    "${BEAKER_REPLICA_RANK} "
+                    "${BEAKER_REPLICA_COUNT} "
+                    "${BEAKER_LEADER_REPLICA_HOSTNAME}"
+                    ")"
+                )
+                entrypoint_script.append("export BEAKER_REPLICA_RANK=$BEAKER_REPLICA_RANK")
             entrypoint_script.append(" ".join(self._get_torchrun_cmd()) + ' "$@"')
         else:
-            entrypoint_script.append('python "$@"')
+            entrypoint = entrypoint or "python"
+            entrypoint_script.append(f'{entrypoint} "$@"')
 
         entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
 
@@ -339,12 +416,15 @@ class BeakerLaunchConfig(Config):
                 command=["bash", "/olmo-core/entrypoint.sh"],
                 replicas=self.num_nodes if self.num_nodes > 1 else None,
                 leader_selection=self.num_nodes > 1,
-                host_networking=self.num_nodes > 1
-                or any(["augusta" in cluster for cluster in self.clusters]),
-                propagate_failure=True if self.num_nodes > 1 else None,
+                host_networking=self.host_networking
+                if self.host_networking is not None
+                else (
+                    self.num_nodes > 1 or any(["augusta" in cluster for cluster in self.clusters])
+                ),
+                propagate_failure=False if self.num_nodes > 1 else None,
                 propagate_preemption=True if self.num_nodes > 1 else None,
                 synchronized_start_timeout="90m" if self.num_nodes > 1 else None,
-                resources=TaskResources(gpu_count=self.num_gpus, shared_memory="10GiB"),
+                resources=TaskResources(gpu_count=self.num_gpus, shared_memory=self.shared_memory),
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
             .with_constraint(cluster=self.clusters)
@@ -416,9 +496,11 @@ class BeakerLaunchConfig(Config):
                 f"see {self.beaker.experiment.url(experiment)} for details"
             )
         else:
-            log.info("Experiment completed successfully")
+            log.info(f"Experiment completed successfully: {self.beaker.experiment.url(experiment)}")
 
-    def launch(self, follow: bool = False, torchrun: bool = True) -> Experiment:
+    def launch(
+        self, follow: bool = False, torchrun: bool = True, entrypoint: Optional[str] = None
+    ) -> Experiment:
         """
         Launch a Beaker experiment using this config.
 
@@ -428,10 +510,12 @@ class BeakerLaunchConfig(Config):
 
         :param follow: Stream the logs and follow the experiment until completion.
         :param torchrun: Launch the target command with ``torchrun``.
+        :param entrypoint: Provide an optional entrypoint program if ``torchrun`` is ``False``.
+            Defaults to 'python'.
 
         :returns: The Beaker experiment.
         """
-        spec = self.build_experiment_spec(torchrun=torchrun)
+        spec = self.build_experiment_spec(torchrun=torchrun, entrypoint=entrypoint)
         experiment = self.beaker.experiment.create(self.name, spec)
         log.info(f"Experiment submitted, see progress at {self.beaker.experiment.url(experiment)}")
 

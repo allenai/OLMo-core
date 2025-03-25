@@ -3,7 +3,7 @@ from typing import Callable, Literal, Optional, Tuple
 import torch
 import torch.nn.functional as F
 
-__all__ = ["cross_entropy_loss", "fused_cross_entropy_loss"]
+__all__ = ["cross_entropy_loss", "fused_linear_cross_entropy_loss"]
 
 
 def cross_entropy_loss(
@@ -17,9 +17,6 @@ def cross_entropy_loss(
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     """
     Cross entropy loss that optionally computes the softmax auxiliary loss (z-loss) as well.
-
-    .. seealso::
-        :func:`fused_cross_entropy_loss()`.
 
     :param logits: Predicted unnormalized logits with shape ``(N, vocab_size)``.
     :param labels: Ground truth class indices with shape ``(N,)``.
@@ -50,32 +47,40 @@ def cross_entropy_loss(
     return loss, z_loss
 
 
-_fused_cross_entropy_loss: Optional[Callable] = None
+_fused_linear_cross_entropy_loss: Optional[Callable] = None
 
 try:
-    import olmo_core.triton.cross_entropy_loss as triton_ce_loss
+    from liger_kernel.ops.fused_linear_cross_entropy import (  # type: ignore
+        LigerFusedLinearCrossEntropyFunction,
+    )
 
-    #  import flash_attn.ops.triton.cross_entropy as flash_attn_ce  # type: ignore
-
-    _fused_cross_entropy_loss = triton_ce_loss.cross_entropy_loss
-except ModuleNotFoundError:
+    _fused_linear_cross_entropy_loss = LigerFusedLinearCrossEntropyFunction.apply
+except ImportError:
     pass
 
 
-def fused_cross_entropy_loss(
-    logits,
-    labels,
+@torch._dynamo.disable()
+def fused_linear_cross_entropy_loss(
+    _input: torch.Tensor,
+    weight: torch.Tensor,
+    labels: torch.Tensor,
     *,
+    bias: Optional[torch.Tensor] = None,
     ignore_index: int = -100,
     reduction: Literal["mean", "sum", "none"] = "mean",
     compute_z_loss: bool = False,
     z_loss_multiplier: float = 1e-4,
+    ce_weight: Optional[torch.Tensor] = None,
+    label_smoothing: float = 0.0,
+    softcap: Optional[float] = None,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     """
-    A "fused" triton-based implementation of :func:`cross_entropy_loss`.
+    Cross entropy loss fused with the linear layer that computes the logits.
 
-    :param logits: Predicted unnormalized logits with shape ``(N, vocab_size)``.
+    :param _input: The inputs to pass through the linear layer to produce the logits ``(N, D)``.
+    :param weight: The weight of the linear layer.
     :param labels: Ground truth class indices with shape ``(N,)``.
+    :param bias: Optional bias for the linear layer.
     :param ignore_index: Specifies a target value that is ignored and does not contribute to
         the input gradient.
     :param reduction: Specifies the reduction to apply to the output.
@@ -85,39 +90,22 @@ def fused_cross_entropy_loss(
 
     :returns: The cross entropy loss and optionally the z-loss.
     """
-    if _fused_cross_entropy_loss is None:
-        raise RuntimeError("triton is required for fused_cross_entropy_loss")
-
-    logits = logits.float()
-
-    loss, z_loss = _fused_cross_entropy_loss(
-        logits,
+    if _fused_linear_cross_entropy_loss is None:
+        raise RuntimeError("'fused_linear_cross_entropy_loss' requires liger-kernel")
+    ce_loss, z_loss = _fused_linear_cross_entropy_loss(
+        _input,
+        weight,
         labels,
-        label_smoothing=0.0,
-        logit_scale=1.0,
-        lse_square_scale=z_loss_multiplier,
-        inplace_backward=False,
-        process_group=None,
-        ignore_index=ignore_index,
+        bias,
+        ce_weight,
+        ignore_index,
+        z_loss_multiplier,
+        label_smoothing,
+        reduction,
+        softcap,
+        compute_z_loss,
     )
-
-    mask = labels != ignore_index
-
-    if reduction == "mean":
-        loss = loss.sum() / mask.sum()
-    elif reduction == "sum":
-        loss = loss.sum()
+    if compute_z_loss:
+        return ce_loss, z_loss
     else:
-        loss = loss
-
-    if not compute_z_loss:
-        return loss, None
-
-    if reduction == "mean":
-        z_loss = z_loss.sum() / mask.sum()
-    elif reduction == "sum":
-        z_loss = z_loss.sum()
-    else:
-        z_loss = z_loss
-
-    return loss, z_loss
+        return ce_loss, None

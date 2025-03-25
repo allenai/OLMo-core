@@ -6,65 +6,44 @@ Run this script without any arguments to see usage info.
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.experiment import CommonComponents, main
-from olmo_core.nn.moe import MoEActivationFn, MoEConfig, MoEMLPImplementation, MoEType
-from olmo_core.nn.transformer import (
-    TransformerBlockType,
-    TransformerConfig,
+from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
+from olmo_core.train import TrainerConfig
+from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
+from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
-)
-from olmo_core.optim import AdamWConfig, OptimGroupOverride
-from olmo_core.train import TrainerConfig
-from olmo_core.train.callbacks import (
-    CheckpointerCallback,
-    CometCallback,
-    MoEHandlerCallback,
-    WandBCallback,
+    TransformerTrainModuleConfig,
 )
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    model_config = TransformerConfig.olmo_1B(
-        vocab_size=common.tokenizer.padded_vocab_size(),
-        n_layers=16,
-        n_heads=16,
-        compile=True,
-        fused_ops=False,
-        block_name=TransformerBlockType.moe_reordered_norm,
+    return TransformerConfig.olmoe_1B_7B(vocab_size=common.tokenizer.padded_vocab_size())
+
+
+def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
+    return TransformerTrainModuleConfig(
+        rank_microbatch_size=2 * 4096,
+        max_sequence_length=common.dataset.effective_sequence_length,
+        optim=AdamWConfig(
+            lr=4e-4,
+            weight_decay=0.1,
+            betas=(0.9, 0.95),
+            group_overrides=[
+                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+            ],
+            fused=True,
+        ),
+        compile_model=True,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
-    )
-    model_config.block.feed_forward = None
-    model_config.block.feed_forward_moe = MoEConfig(
-        name=MoEType.dropless,
-        hidden_size=int(0.5 * model_config.d_model),
-        activation_fn=MoEActivationFn.swiglu,
-        mlp_implementation=MoEMLPImplementation.grouped,
-        num_experts=64,
-        top_k=8,
-        num_layers=model_config.n_layers,
-        zloss_weight=0.001,
-        loss_weight=0.01,
-        bias=False,
-        dtype=model_config.dtype,
-    )
-    return model_config
-
-
-def build_optim_config(common: CommonComponents) -> AdamWConfig:
-    del common
-    return AdamWConfig(
-        lr=4e-4,
-        weight_decay=0.1,
-        betas=(0.9, 0.95),
-        group_overrides=[
-            OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-        ],
-        fused=True,
+        z_loss_multiplier=1e-5,
+        max_grad_norm=1.0,
+        scheduler=CosWithWarmup(warmup_steps=2000),
     )
 
 
@@ -72,12 +51,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=common.save_folder,
-            rank_microbatch_size=2 * 4096,
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
-            z_loss_multiplier=1e-5,
-            compile_loss=True,
         )
         .with_callback(
             "checkpointer",
@@ -86,10 +62,6 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 ephemeral_save_interval=1000,
                 save_async=True,
             ),
-        )
-        .with_callback(
-            "moe",
-            MoEHandlerCallback(),
         )
         .with_callback(
             "comet",
@@ -118,6 +90,6 @@ if __name__ == "__main__":
     main(
         global_batch_size=1024 * 4096,
         model_config_builder=build_model_config,
-        optim_config_builder=build_optim_config,
+        train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
     )

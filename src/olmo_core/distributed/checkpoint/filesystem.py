@@ -7,10 +7,12 @@ import tempfile
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, cast
 
 import torch
+import torch.distributed as dist
 import torch.distributed.checkpoint as dist_cp
 from torch.distributed.checkpoint.filesystem import WriteResult
 from torch.distributed.checkpoint.metadata import Metadata, MetadataIndex, StorageMeta
@@ -25,16 +27,19 @@ from torch.distributed.checkpoint.planner import (
 from torch.futures import Future
 
 from olmo_core.aliases import PathOrStr
+from olmo_core.distributed.utils import do_n_at_a_time, get_num_nodes
 from olmo_core.exceptions import OLMoCheckpointError
 from olmo_core.io import (
+    file_exists,
     get_bytes_range,
     init_client,
     is_url,
+    join_path,
     normalize_path,
     resource_path,
     upload,
 )
-from olmo_core.utils import generate_uuid, get_default_thread_count
+from olmo_core.utils import generate_uuid, get_default_thread_count, get_element_size
 
 log = logging.getLogger(__name__)
 
@@ -61,7 +66,7 @@ def _item_size(item: WriteItem) -> int:
         size *= s
 
     dtype = item.tensor_data.properties.dtype
-    return size * torch._utils._element_size(dtype)
+    return size * get_element_size(dtype)
 
 
 def _split_by_size_and_type(bins: int, items: List[WriteItem]) -> List[List[WriteItem]]:
@@ -101,15 +106,17 @@ def _write_items(
             for write_item in items:
                 offset = tmp_file.tell()
                 data = planner.resolve_data(write_item)
-                if isinstance(data, torch.Tensor):
-                    data = data.cpu()
-                    if data.storage().size() != data.numel():
-                        data = data.clone()
-                    torch.save(data, tmp_file)
-                else:
+
+                if write_item.type == WriteItemType.BYTE_IO:
+                    assert isinstance(data, io.BytesIO)
                     tmp_file.write(data.getbuffer())
+                else:
+                    assert isinstance(data, torch.Tensor)
+                    data = data.cpu()  # should already be on CPU, but just in case
+                    torch.save(data, tmp_file)
 
                 length = tmp_file.tell() - offset
+
                 results.append(
                     WriteResult(
                         index=write_item.index,
@@ -154,12 +161,16 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
         self,
         path: PathOrStr,
         thread_count: Optional[int] = None,
+        process_group: Optional[dist.ProcessGroup] = None,
+        throttle_uploads: bool = False,
     ) -> None:
         super().__init__()
         if thread_count is not None and thread_count <= 0:
             raise ValueError("thread count must be at least 1")
         self.path = normalize_path(path)
         self.thread_count = thread_count or get_default_thread_count()
+        self.process_group = process_group
+        self.throttle_uploads = throttle_uploads
         self.save_id = generate_uuid()
 
     def reset(self, checkpoint_id: Optional[PathOrStr] = None) -> None:
@@ -201,22 +212,37 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
             file_count += 1
             return file_name
 
-        with ThreadPoolExecutor(max_workers=self.thread_count) as executor:
-            futures = []
-            for bucket in _split_by_size_and_type(self.thread_count, plan.items):
+        def write_items(buckets: List[List[WriteItem]]) -> List[WriteResult]:
+            results: List[WriteResult] = []
+            for bucket in buckets:
                 file_name = gen_file_name()
                 path = f"{self.path}/{file_name}"
-                futures.append(executor.submit(_write_items, path, file_name, bucket, planner))
-
-            results = []
-            for f in as_completed(futures):
                 try:
-                    results += f.result()
+                    results.extend(_write_items(path, file_name, bucket, planner))
                 except BaseException:
                     # NOTE: we might get an error here that can't be pickled, which causes a different failure
                     # later when PyTorch tries to reduce that error across ranks. So here we just make
                     # sure we're raising a simple error type that can be pickled.
                     raise OLMoCheckpointError(f"Original error:\n{traceback.format_exc()}")
+            return results
+
+        results: List[WriteResult]
+        if self.throttle_uploads and is_url(self.path):
+            buckets = _split_by_size_and_type(1, plan.items)
+            results = do_n_at_a_time(
+                partial(write_items, buckets),
+                process_group=self.process_group,
+                n=max(get_num_nodes() // 4, 1),
+            )
+        else:
+            buckets = _split_by_size_and_type(self.thread_count, plan.items)
+            results = []
+            with ThreadPoolExecutor(max_workers=self.thread_count) as executor:
+                futures = []
+                for bucket in buckets:
+                    futures.append(executor.submit(write_items, [bucket]))
+                for f in as_completed(futures):
+                    results.extend(f.result())
 
         fut: Future[List[WriteResult]] = Future()
         fut.set_result(results)
@@ -272,18 +298,31 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
     that can read data directly from cloud storage as well as a local directory.
     """
 
-    def __init__(self, path: PathOrStr, *, thread_count: Optional[int] = None):
+    def __init__(
+        self,
+        path: PathOrStr,
+        *,
+        thread_count: Optional[int] = None,
+        pre_download: bool = False,
+        work_dir: Optional[PathOrStr] = None,
+    ):
         super().__init__()
         if thread_count is not None and thread_count <= 0:
             raise ValueError("thread count must be at least 1")
         self.path = normalize_path(path)
         self.thread_count = thread_count or get_default_thread_count()
+        self.pre_download = pre_download
+        self.work_dir = normalize_path(work_dir) if work_dir is not None else None
         self.storage_data: Dict[MetadataIndex, _StorageInfo] = dict()
         self.load_id = generate_uuid()
         self._metadata: Optional[Metadata] = None
 
     def _get_bytes(self, relative_path: str, offset: int, length: int) -> bytes:
-        return get_bytes_range(f"{self.path}/{relative_path}", offset, length)
+        if self.pre_download:
+            full_path = str(resource_path(self.path, relative_path, local_cache=self.work_dir))
+        else:
+            full_path = f"{self.path}/{relative_path}"
+        return get_bytes_range(full_path, offset, length)
 
     def _get_content_for_read(self, read_item: ReadItem) -> Tuple[ReadItem, bytes]:
         sinfo = self.storage_data[read_item.storage_index]
@@ -345,8 +384,17 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
 
     def read_metadata(self) -> Metadata:
         if self._metadata is None:
-            with resource_path(self.path, ".metadata").open("rb") as metadata_file:
-                metadata = pickle.load(metadata_file)
+            try:
+                with resource_path(self.path, ".metadata", local_cache=self.work_dir).open(
+                    "rb"
+                ) as metadata_file:
+                    metadata = pickle.load(metadata_file)
+            except FileNotFoundError as exc:
+                msg = f"'{self.path}' is not a distributed checkpoint folder."
+                suggested_dir = join_path(self.path, "model_and_optim")
+                if file_exists(join_path(suggested_dir, ".metadata")):
+                    msg += f" Did you mean to use '{suggested_dir}'?"
+                raise FileNotFoundError(msg) from exc
 
             if getattr(metadata, "storage_meta", None) is None:
                 metadata.storage_meta = StorageMeta()

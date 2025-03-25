@@ -2,7 +2,7 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Dict, Optional
 
-import torch
+from torch.distributed.checkpoint.stateful import Stateful
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class Callback:
+class Callback(Stateful):
     """
     Trainer callback base class.
 
@@ -44,11 +44,17 @@ class Callback:
     def step(self) -> int:
         return self.trainer.global_step
 
-    #  def state_dict(self) -> Dict[str, Any]:
-    #      return {}
+    def state_dict(self) -> Dict[str, Any]:
+        """
+        Get the state dict to save.
+        """
+        return {}
 
-    #  def load_state_dict(self, state_dict: Dict[str, Any]):
-    #      del state_dict
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        """
+        Load a state dict.
+        """
+        del state_dict
 
     def post_attach(self):
         """
@@ -88,23 +94,6 @@ class Callback:
         """
         del batch
 
-    def pre_backward(
-        self,
-        *,
-        batch: Dict[str, Any],
-        micro_batch: Dict[str, Any],
-        loss: torch.Tensor,
-    ):
-        """
-        Runs right before the backward pass on a micro-batch. This can be used to modify the
-        ``loss`` before ``loss.backward()`` is called.
-
-        :param batch: The full batch.
-        :param micro_batch: The micro-batch just used.
-        :param loss: The combined loss from the micro-batch (``ce_loss`` plus the optional ``z_loss``).
-        """
-        del batch, micro_batch, loss
-
     def pre_optim_step(self):
         """
         Runs right after the forward-backward passes, right before the optimizer step.
@@ -114,20 +103,6 @@ class Callback:
     def post_train_batch(self):
         """
         Runs after a training batch is processed.
-        """
-        pass
-
-    def pre_eval_batch(self, batch: Dict[str, Any]):
-        """
-        Runs right before an eval batch is processed with :meth:`~olmo_core.train.Trainer.eval_batch()`.
-
-        :param batch: The eval batch.
-        """
-        del batch
-
-    def post_eval_batch(self):
-        """
-        Runs after after an eval batch is processed with :meth:`~olmo_core.train.Trainer.eval_batch()`.
         """
         pass
 

@@ -1,7 +1,17 @@
+from typing import Optional
+
+import pytest
 import torch
 import torch.nn as nn
 
-from olmo_core.optim import AdamWConfig, OptimGroupOverride
+from olmo_core.config import DType
+from olmo_core.distributed.checkpoint import (
+    load_model_and_optim_state,
+    save_model_and_optim_state,
+)
+from olmo_core.optim import AdamWConfig, OptimGroupOverride, SkipStepAdamWConfig
+
+from ..utils import DEVICES
 
 
 class MyModel(nn.Module):
@@ -43,3 +53,45 @@ def test_adamw_config_to_optim_with_group_overrides():
 
     for group in optim.param_groups:
         assert "initial_lr" in group
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_adamw(device: torch.device, tmp_path):
+    config = AdamWConfig()
+    model = MyModel().train().to(device)
+    optim = config.build(model)
+
+    for group in optim.param_groups:
+        assert "initial_lr" in group
+
+    # Take a step.
+    optim.zero_grad(set_to_none=True)
+    model(torch.randint(0, 1024, (2, 8), device=device).int()).sum().backward()
+    optim.step()
+
+    # Save and then restore a checkpoint, and make sure fixed fields reset.
+    for group in optim.param_groups:
+        group["initial_lr"] = 1e-8
+    save_model_and_optim_state(tmp_path, model, optim)
+    load_model_and_optim_state(tmp_path, model, optim)
+    for group in optim.param_groups:
+        assert group["initial_lr"] == config.lr
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("dtype", [None, DType.bfloat16])
+def test_skip_step_adamw(device: torch.device, dtype: Optional[DType]):
+    if dtype == DType.bfloat16 and device.type == "cpu":
+        pytest.skip("bfloat16 dtype requires cuda")
+
+    config = SkipStepAdamWConfig(dtype=dtype)
+    model = MyModel().train().to(device)
+    optim = config.build(model)
+
+    for group in optim.param_groups:
+        assert "initial_lr" in group
+
+    # Take a step.
+    optim.zero_grad(set_to_none=True)
+    model(torch.randint(0, 1024, (2, 8), device=device).int()).sum().backward()
+    optim.step()
