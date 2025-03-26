@@ -150,7 +150,12 @@ def convert_checkpoint_from_hf(
     if validate:
         log.info("Validating converted model")
         validate_conversion(
-            hf_checkpoint_path, model, tokenizer_config.vocab_size, debug=debug, device=device
+            hf_checkpoint_path,
+            model,
+            tokenizer_config.vocab_size,
+            model_id=model_id,
+            debug=debug,
+            device=device,
         )
         log.info("Validation completed successful")
 
@@ -193,6 +198,7 @@ def validate_conversion(
     hf_path: str | Path,
     model: Transformer,
     vocab_size: int,
+    model_id: str | None = None,
     debug: bool = False,
     device: torch.device | None = None,
 ):
@@ -211,7 +217,7 @@ def validate_conversion(
     state_mapping = None
     if debug:
         olmo_core_state, hf_state = _register_debug_hooks(hf_model, model)
-        state_converter = get_converter_from_hf()
+        state_converter = get_converter_from_hf(model_id=model_id)
 
         if not hasattr(hf_model.config, "num_hidden_layers"):
             raise ValueError(f"Number of hidden layers missing in HF config: {hf_model.config}")
