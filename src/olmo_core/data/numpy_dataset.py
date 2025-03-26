@@ -56,6 +56,7 @@ from .utils import (
 __all__ = [
     "NumpyDatasetBase",
     "NumpyFSLDataset",
+    "NumpyFSLDatasetMixture",
     "NumpyPaddedFSLDataset",
     "VSLCurriculum",
     "VSLNaturalCurriculum",
