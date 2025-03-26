@@ -243,7 +243,7 @@ class MoERouter(nn.Module):
             get_local_tensor(score_bias).add_(get_local_tensor(bias_delta))
             bias_delta = get_full_tensor(bias_delta)
             score_bias = get_full_tensor(score_bias)
-            if dist.get_rank() == 0 and self.layer == 0:
+            if dist.get_rank() == 0 and self.layer == 11:
                 debug_score_bias(
                     batch_size_per_expert.tolist(), bias_delta.tolist(), score_bias.tolist()
                 )
