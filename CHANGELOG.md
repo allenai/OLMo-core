@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed calculation of total steps based on epochs at the end of a training job.
 - Fixed a bug where the trainer might try to save a duplicate final checkpoint if the run that already completed was restarted.
 - When submitting a Beaker job from a branch that's tracking a GitHub fork, OLMo-core now instructs Beaker to pull from the fork instead of from the main repo.
 - Made Beaker image resolution more robust.
