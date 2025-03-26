@@ -127,7 +127,7 @@ def save_hf_model(
     save_overwrite: bool = False,
 ):
     """
-    Save an OLMo Core model state dict in Hugging Face transformers format.
+    Saves an OLMo Core model state dict in Hugging Face transformers format.
 
     :param save_dir: Directory in which to save model.
     :param model_state_dict: The OLMo Core model state dict being saved in HF format.
@@ -135,7 +135,7 @@ def save_hf_model(
     :param process_group: The process group to use for distributed communication.
     :param work_dir: A local directory that can be used for holding temporary state. Required when
         downloading a model from a cloud directory.
-    :param save_overwrite: Overwrite existing files in `save_dir`.
+    :param save_overwrite: Overwrite existing files in ``save_dir``.
     """
 
     hf_config = get_hf_config(model)

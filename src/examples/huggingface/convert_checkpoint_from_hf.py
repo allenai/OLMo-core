@@ -1,9 +1,10 @@
 """
-Example script showing how you could convert model weights on HuggingFace for an OLMo2 or Llama-3.*
+Example script showing how you could convert model weights on HuggingFace for an OLMo2
 model into a format that can be loaded by OLMo-core for fine-tuning.
 
-Note that this script is architecture-dependent, meaning it may only work for OLMo2/Llama models on
-HuggingFace.
+Note that this script is architecture-dependent, meaning it may only work for OLMo2 models on
+HuggingFace. Support for other models can be added by updating the constants in
+:mod:`olmo_core.nn.hf.convert`.
 """
 
 import json

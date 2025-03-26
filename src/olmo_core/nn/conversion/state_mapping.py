@@ -5,8 +5,15 @@ from olmo_core.config import StrEnum
 
 
 class TemplatePlaceholder(StrEnum):
+    """
+    A placeholder that can be used in the templates of :class:`StateMappingTemplate`.
+    """
+
     LAYER = "[layer]"
+    """"""
+
     EXPERT = "[expert]"
+    """"""
 
 
 @dataclass
@@ -15,10 +22,10 @@ class StateMappingTemplate:
     The template for a mapping state from one format to another format (e.g. OLMo Core to HF).
     These mappings are 'templates' since they support keys and other metadata having placeholders
     for information like the layer number or number of MoE experts. This class can be converted
-    to a `StateMapping` by providing the placeholder information.
+    to a :class:`StateMapping` by providing the placeholder information.
 
     The most standard mapping is a one-to-one state mapping, which corresponds to a single
-    string entry for both `source_template_keys` and `dest_template_keys`. The class also supports
+    string entry for both :data:`source_template_keys` and :data:`dest_template_keys`. The class also supports
     more complicated mappings, like many-to-many mappings or mappings that also require further
     manipulations of state like permuting dimensions.
     """
@@ -34,19 +41,19 @@ class StateMappingTemplate:
 
     source_key_per_placeholder: TemplatePlaceholder | None = None
     """
-    A placeholder in ``source_template_keys`` for which this mapping should map all valid placeholder
+    A placeholder in :data:`source_template_keys` for which this mapping should map all valid placeholder
     values, rather than 1 specific value. For example, this enables mapping states from all experts
-    (using `TemplatePlaceholder.EXPERT`) to a single state.
+    (using ``TemplatePlaceholder.EXPERT``) to a single state.
 
-    When provided, `source_template_keys` must be a string.
+    When provided, :data:`source_template_keys` must be a string.
     """
     dest_key_per_placeholder: TemplatePlaceholder | None = None
     """
-    A placeholder in `dest_template_keys` for which this mapping should map all valid placeholder
+    A placeholder in :data:`dest_template_keys` for which this mapping should map all valid placeholder
     values, rather than 1 specific value. For example, this enables mapping from a single state to
-    states from all experts (using `TemplatePlaceholder.EXPERT`).
+    states from all experts (using ``TemplatePlaceholder.EXPERT``).
 
-    When provided, `dest_template_keys` must be a string.
+    When provided, :data:`dest_template_keys` must be a string.
     """
 
     source_concat_dim: int = 0
@@ -55,19 +62,19 @@ class StateMappingTemplate:
     """
     unflatten_dim: Tuple[int, Tuple[TemplatePlaceholder | int, ...]] | None = None
     """
-    This specifies that the given dimension (`unflatten_dim[0]`) should be unflattened using the shape
-    given in `unflatten_dim[1]`. A placeholder can be given instead of a number, to represent its
-    corresponding upper bound (e.g. `TemplatePlaceholder.EXPERT` represents the number of experts). 
+    This specifies that the given dimension (``unflatten_dim[0]``) should be unflattened using the shape
+    given in ``unflatten_dim[1]``. A placeholder can be given instead of a number, to represent its
+    corresponding upper bound (e.g. ``TemplatePlaceholder.EXPERT`` represents the number of experts). 
     """
     dims_permutation: Tuple[int, ...] | None = None
     """
     This specifies the permutation that should be applied to the dimensions of the state after any
-    unflattening from `unflatten_dim` has occurred.
+    unflattening from :data:`unflatten_dim` has occurred.
     """
     flatten_dims: Tuple[int, int] | None = None
     """
     This specifies that all the dimensions between the 2 given dimensions (inclusive) should be flattened,
-    after any permutations from `dims_permutation` have been applied.
+    after any permutations from :data:`dims_permutation` have been applied.
     """
     dest_chunk_dim: int = 0
     """
@@ -210,7 +217,7 @@ class StateMapping:
     A mapping from state from one format to another format (e.g. OLMo Core to HF).
 
     The most standard mapping is a one-to-one state mapping, which corresponds to a single
-    string entry for both `source_template_keys` and `dest_template_keys`. The class also supports
+    string entry for both :data:`source_keys` and :data:`dest_keys`. The class also supports
     more complicated mappings, like many-to-many mappings or mappings that also require further
     manipulations of state like permuting dimensions.
     """
@@ -231,18 +238,18 @@ class StateMapping:
     """
     unflatten_dim: Tuple[int, Tuple[int, ...]] | None = None
     """
-    This specifies that the given dimension (`unflatten_dim[0]`) should be unflattened using the shape
-    given in `unflatten_dim[1]`.
+    This specifies that the given dimension (``unflatten_dim[0]``) should be unflattened using the shape
+    given in ``unflatten_dim[1]``.
     """
     dims_permutation: Tuple[int, ...] | None = None
     """
     This specifies the permutation that should be applied to the dimensions of the state after any
-    unflattening from `unflatten_dim` has occurred.
+    unflattening from :data:`unflatten_dim` has occurred.
     """
     flatten_dims: Tuple[int, int] | None = None
     """
     This specifies that all the dimensions between the 2 given dimensions (inclusive) should be flattened,
-    after any permutations from `dims_permutation` have been applied.
+    after any permutations from :data:`dims_permutation` have been applied.
     """
     dest_chunk_dim: int = 0
     """

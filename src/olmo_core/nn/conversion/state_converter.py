@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 
 import torch
 
+from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.conversion.state_mapping import (
     StateMapping,
     StateMappingTemplate,
@@ -11,6 +12,7 @@ from olmo_core.nn.conversion.state_mapping import (
 )
 
 
+@beta_feature
 @dataclass
 class StateConverter:
     """
@@ -75,7 +77,7 @@ class StateConverter:
 
         :param state_dict: The state dictionary in unconverted format.
         :param placeholder_bounds: Upper bound values for any relevant placeholders
-            (e.g. for `TemplatePlaceholder.EXPERT`, the number of experts).
+            (e.g. for ``TemplatePlaceholder.EXPERT``, the number of experts).
         """
 
         return self._get_mappings(state_dict, placeholder_bounds)
@@ -88,7 +90,7 @@ class StateConverter:
 
         :param state_dict: The state dictionary to convert.
         :param placeholder_bounds: Upper bound values for any relevant placeholders
-            (e.g. for `TemplatePlaceholder.EXPERT`, the number of experts).
+            (e.g. for ``TemplatePlaceholder.EXPERT``, the number of experts).
         """
 
         state_mappings = self._get_mappings(state_dict, placeholder_bounds)

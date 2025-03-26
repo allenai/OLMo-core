@@ -1,5 +1,5 @@
 """
-Common logic for converting OLMo Core `nn` features to/from other formats (like Hugging Face).
+Common logic for converting :mod:`olmo_core.nn` features to/from other formats (like Hugging Face).
 """
 
 from .state_converter import StateConverter

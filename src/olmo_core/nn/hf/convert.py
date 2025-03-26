@@ -13,14 +13,14 @@ LAYER = TemplatePlaceholder.LAYER
 EXPERT = TemplatePlaceholder.EXPERT
 
 
-# Map of Hugging Face keys to OLMo Core keys, that is used to determine how HF state
-# maps to OLMo Core state. Different HF models may use different names for a given OLMo
-# Core state.
-#
-# This map only captures one-to-one mappings from HF to OLMo Core. For many-to-many mappings
-# or mappings that require additional manipulation of state, see
-# `HF_TO_OLMO_CORE_TEMPLATE_MAPPING`. If a given HF key can refer to different OLMo Core
-# states depending on the HF model, see `MODEL_SPECIFIC_HF_TO_OLMO_CORE_MAPPINGS`.
+#: Map of Hugging Face keys to OLMo Core keys, that is used to determine how HF state
+#: maps to OLMo Core state. Different HF models may use different names for a given OLMo
+#: Core state. You may configure this to change how HF state maps to OLMo Core state.
+#:
+#: This map only captures one-to-one mappings from HF to OLMo Core. For many-to-many mappings
+#: or mappings that require additional manipulation of state, see
+#: :data:`HF_TO_OLMO_CORE_TEMPLATE_MAPPING`. If a given HF key can refer to different OLMo Core
+#: states depending on the HF model, see :data:`MODEL_SPECIFIC_HF_TO_OLMO_CORE_MAPPINGS`.
 HF_TO_OLMO_CORE_MAPPINGS: Dict[str, str] = {
     "model.embed_tokens.weight": "embeddings.weight",
     "model.norm.weight": "lm_head.norm.weight",
@@ -48,9 +48,10 @@ HF_TO_OLMO_CORE_MAPPINGS: Dict[str, str] = {
 }
 
 
-# Map of Hugging Face keys to OLMo Core keys. This map captures overrides of the standard
-# one-to-one mappings in `HF_TO_OLMO_CORE_MAPPINGS`, in case a given HF key can refer to
-# different OLMo Core states depending on the HF model.
+#: Map of Hugging Face keys to OLMo Core keys. This map captures overrides of the standard
+#: one-to-one mappings in :data:`HF_TO_OLMO_CORE_MAPPINGS`, in case a given HF key can refer to
+#: different OLMo Core states depending on the HF model. You may configure this to change
+#: how HF state maps to OLMo Core state.
 MODEL_SPECIFIC_HF_TO_OLMO_CORE_MAPPINGS: Dict[str, Dict[str, str]] = {
     "meta-llama/Llama-3.2-1B": {
         f"model.layers.{LAYER}.post_attention_layernorm.weight": f"blocks.{LAYER}.feed_forward_norm.weight"
@@ -61,14 +62,14 @@ MODEL_SPECIFIC_HF_TO_OLMO_CORE_MAPPINGS: Dict[str, Dict[str, str]] = {
 }
 
 
-# Map of Hugging Face keys to OLMo Core keys, that is used to determine how HF state
-# maps to OLMo Core state. Different HF models may use different names for a given OLMo
-# Core state.
-#
-# This map captures many-to-many mappings from HF to OLMo Core and mappings that require
-# additional manipulation of state (e.g. merging dimensions).
-# For simple one-to-one mappings from HF to OLMo Core, see
-# `HF_TO_OLMO_CORE_MAPPINGS`.
+#: Map of Hugging Face keys to OLMo Core keys, that is used to determine how HF state
+#: maps to OLMo Core state. Different HF models may use different names for a given OLMo
+#: Core state. You may configure this to change how HF state maps to OLMo Core state.
+#:
+#: This map captures many-to-many mappings from HF to OLMo Core and mappings that require
+#: additional manipulation of state (e.g. merging dimensions).
+#: For simple one-to-one mappings from HF to OLMo Core, see
+#: :data:`HF_TO_OLMO_CORE_MAPPINGS`.
 HF_TO_OLMO_CORE_TEMPLATE_MAPPING: Dict[str, StateMappingTemplate] = {
     f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight": StateMappingTemplate(
         f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight",
@@ -102,11 +103,11 @@ HF_TO_OLMO_CORE_TEMPLATE_MAPPING: Dict[str, StateMappingTemplate] = {
 }
 
 
-# Map of OLMo Core keys to Hugging Face keys, that is used to determine how OLMo Core state
-# maps to HF state.
-#
-# This map only captures one-to-one mappings from OLMo Core to HF. For many-to-many mappings
-# or mappings that require additional manipulation of state, see `OLMO_CORE_TO_HF_TEMPLATE_MAPPING`.
+#: Map of OLMo Core keys to Hugging Face keys, that is used to determine how OLMo Core state
+#: maps to HF state. You may configure this to change how OLMo Core state maps to HF state.
+#:
+#: This map only captures one-to-one mappings from OLMo Core to HF. For many-to-many mappings
+#: or mappings that require additional manipulation of state, see :data:`OLMO_CORE_TO_HF_TEMPLATE_MAPPING`.
 OLMO_CORE_TO_HF_MAPPINGS: Dict[str, str] = {
     "embeddings.weight": "model.embed_tokens.weight",
     "lm_head.norm.weight": "model.norm.weight",
@@ -133,13 +134,13 @@ OLMO_CORE_TO_HF_MAPPINGS: Dict[str, str] = {
 }
 
 
-# Map of OLMo Core keys to Hugging Face keys, that is used to determine how OLMo Core state
-# maps to HF state.
-#
-# This map captures many-to-many mappings from OLMo Core to HF and mappings that require
-# additional manipulation of state (e.g. merging dimensions).
-# For simple one-to-one mappings from OLMo Core to HF, see
-# `OLMO_CORE_TO_HF_MAPPINGS`.
+#: Map of OLMo Core keys to Hugging Face keys, that is used to determine how OLMo Core state
+#: maps to HF state. You may configure this to change how OLMo Core state maps to HF state.
+#:
+#: This map captures many-to-many mappings from OLMo Core to HF and mappings that require
+#: additional manipulation of state (e.g. merging dimensions).
+#: For simple one-to-one mappings from OLMo Core to HF, see
+#: :data:`OLMO_CORE_TO_HF_MAPPINGS`.
 OLMO_CORE_TO_HF_TEMPLATE_MAPPING: Dict[str, StateMappingTemplate] = {
     f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1": StateMappingTemplate(
         f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1",
