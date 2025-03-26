@@ -179,7 +179,7 @@ class LcContTrain(Config):
                 vocab_size=tokenizer_config.padded_vocab_size(),
                 use_flash=True,
                 rope_theta = 8 * 10 **6,
-
+            ),
             dataset=NumpyDatasetConfig.from_data_mix(
                 AnnealingDataMix.pl_exact_repro_mix,
                 tokenizer=tokenizer_config,
