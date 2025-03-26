@@ -80,6 +80,7 @@ def convert_checkpoint_from_hf(
     transformer_config_dict: Dict[str, Any],
     tokenizer_config_dict: Dict[str, Any],
     *,
+    model_id: str | None = None,
     max_sequence_length: int = -1,
     validate: bool = True,
     debug: bool = False,
@@ -123,6 +124,7 @@ def convert_checkpoint_from_hf(
         load_hf_model(
             hf_checkpoint_path,
             model_state_dict,
+            model_id=model_id,
             work_dir=work_dir,
             num_embeddings=model.vocab_size,
         )
@@ -302,6 +304,7 @@ def parse_args():
 
     parser.add_argument("-o", "--huggingface-output-dir", type=Path, required=True)
     parser.add_argument("-s", "--max-sequence-length", type=int, required=True)
+    parser.add_argument("--model-id")
     parser.add_argument("--skip-validation", dest="validate", action="store_false")
     parser.add_argument("--debug", dest="debug", action="store_true")
     parser.add_argument("--device", type=torch.device)
@@ -333,6 +336,7 @@ def main():
         output_path=args.huggingface_output_dir,
         transformer_config_dict=transformer_config_dict,
         tokenizer_config_dict=tokenizer_config_dict,
+        model_id=args.model_id,
         max_sequence_length=args.max_sequence_length,
         validate=args.validate,
         debug=args.debug,
