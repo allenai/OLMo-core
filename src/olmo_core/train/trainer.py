@@ -442,8 +442,12 @@ class Trainer:
                 )
             max_epochs = duration.value
             complete_epochs_remaining = max(max_epochs - self.epoch, 0)
-            steps_remaining_this_epoch = max(
-                self.data_loader.total_batches - self.data_loader.batches_processed, 0
+            # NOTE: need to cover the case where the last epoch has just ended and we've incremented
+            # self.epoch.
+            steps_remaining_this_epoch = (
+                0
+                if self.epoch > max_epochs
+                else max(self.data_loader.total_batches - self.data_loader.batches_processed, 0)
             )
             steps_remaining = (
                 complete_epochs_remaining * self.data_loader.total_batches
