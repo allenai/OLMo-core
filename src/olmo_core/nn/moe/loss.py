@@ -60,7 +60,8 @@ class MoELoadBalancingLoss(MoELoss):
         super().__init__()
 
         if target_load_imbalance is not None:
-            assert min_loss_weight is not None
+            if min_loss_weight is None:
+                min_loss_weight = loss_weight
             assert max_loss_weight is not None
             assert min_loss_weight <= loss_weight <= max_loss_weight
             if loss_weight_delta is None:
