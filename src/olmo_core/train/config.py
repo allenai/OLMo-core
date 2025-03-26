@@ -66,7 +66,9 @@ class TrainerConfig(Config):
         out.add_callback(name, callback)
         return out
 
-    def with_recommended_evals(self, tokenizer: TokenizerConfig, sequence_length: int, cluster: str) -> "TrainerConfig":
+    def with_recommended_evals(
+        self, tokenizer: TokenizerConfig, sequence_length: int, cluster: str
+    ) -> "TrainerConfig":
         """
         Return a new trainer config with added callbacks for downstream evaluation and validation sets.
         """
@@ -82,16 +84,14 @@ class TrainerConfig(Config):
             # OLMES Core 9(-ish) RC
             "arc_challenge_test_rc_5shot",
             "arc_easy_test_rc_5shot",
-            "hellaswag_rc_5shot", # 1K subset of HellaSwag
-            "winogrande_val_rc_5shot", # Helpful after 750M-5xC scale
+            "hellaswag_rc_5shot",  # 1K subset of HellaSwag
+            "winogrande_val_rc_5shot",  # Helpful after 750M-5xC scale
             "csqa_val_rc_5shot",
             "piqa_val_rc_5shot",
             "socialiqa_val_rc_5shot",
-
             # Too noisy to be worth tracking
             # "boolq_val_rc_5shot",
             # "openbookqa_test_rc_5shot",
-
             # MMLU RC
             "mmlu_stem_val_rc_5shot",
             "mmlu_humanities_val_rc_5shot",
@@ -101,7 +101,6 @@ class TrainerConfig(Config):
             "mmlu_humanities_test_rc_5shot",
             "mmlu_social_sciences_test_rc_5shot",
             "mmlu_other_test_rc_5shot",
-
             # Gen tasks BPB
             "gsm8k_gold_bpb_5shot",
             "minerva_math_algebra_gold_bpb_0shot",
@@ -113,7 +112,6 @@ class TrainerConfig(Config):
             "minerva_math_precalculus_gold_bpb_0shot",
             "codex_humaneval_gold_bpb_0shot",
             "codex_mbpp_gold_bpb_0shot",
-
             # Sanity check for MCQA ability
             "copycolors_10way",
         ]
@@ -123,16 +121,14 @@ class TrainerConfig(Config):
             # OLMES Core 9(-ish) MC
             "arc_challenge_test_mc_5shot",
             "arc_easy_test_mc_5shot",
-            "hellaswag_rc_5shot", # 1K subset of HellaSwag
+            "hellaswag_rc_5shot",  # 1K subset of HellaSwag
             "csqa_val_mc_5shot",
             "piqa_val_mc_5shot",
             "socialiqa_val_mc_5shot",
             "winogrande_val_rc_5shot",
-
             # Too noisy to be worth tracking
             # "boolq_val_mc_5shot",
             # "openbookqa_test_mc_5shot",
-
             # MMLU MC BPB
             "mmlu_stem_val_mc_5shot",
             "mmlu_humanities_val_mc_5shot",
@@ -142,7 +138,6 @@ class TrainerConfig(Config):
             "mmlu_humanities_test_mc_5shot",
             "mmlu_social_sciences_test_mc_5shot",
             "mmlu_other_test_mc_5shot",
-
             # Gen tasks BPB
             "gsm8k_gold_bpb_5shot",
             "minerva_math_algebra_gold_bpb_0shot",
@@ -154,7 +149,6 @@ class TrainerConfig(Config):
             "minerva_math_precalculus_gold_bpb_0shot",
             "codex_humaneval_gold_bpb_0shot",
             "codex_mbpp_gold_bpb_0shot",
-
             # Sanity check for MCQA ability
             "copycolors_10way",
         ]
@@ -163,26 +157,26 @@ class TrainerConfig(Config):
         tasks.sort()
 
         return self.with_callback(
-                'downstream_evaluator',
-                DownstreamEvaluatorCallbackConfig(
-                    tasks=tasks,
+            "downstream_evaluator",
+            DownstreamEvaluatorCallbackConfig(
+                tasks=tasks,
+                tokenizer=tokenizer,
+                eval_interval=10000,
+            ),
+        ).with_callback(
+            "lm_evaluator",
+            LMEvaluatorCallbackConfig(
+                eval_dataset=NumpyDatasetConfig.from_data_mix(
+                    DataMix.v3_small_ppl_validation,
+                    name=NumpyDatasetType.padded_fsl,
+                    mix_base_dir=get_root_dir(cluster),
+                    sequence_length=sequence_length,
                     tokenizer=tokenizer,
-                    eval_interval=10000,
-                )
-            ).with_callback(
-                "lm_evaluator",
-                LMEvaluatorCallbackConfig(
-                    eval_dataset=NumpyDatasetConfig.from_data_mix(
-                        DataMix.v3_small_ppl_validation,
-                        name=NumpyDatasetType.padded_fsl,
-                        mix_base_dir=get_root_dir(cluster),
-                        sequence_length=sequence_length,
-                        tokenizer=tokenizer,
-                        work_dir=get_work_dir(get_root_dir(cluster)),
-                    ),
-                    eval_interval=10000,
+                    work_dir=get_work_dir(get_root_dir(cluster)),
                 ),
-            )
+                eval_interval=10000,
+            ),
+        )
 
     def build(
         self,
