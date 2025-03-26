@@ -126,7 +126,6 @@ preprocessed/prolong_64K_llama_tokenizer/book-65536_npy/proc60-64.npy
 preprocessed/prolong_64K_llama_tokenizer/book-65536_npy/proc61-64.npy
 preprocessed/prolong_64K_llama_tokenizer/book-65536_npy/proc62-64.npy
 preprocessed/prolong_64K_llama_tokenizer/book-65536_npy/proc63-64.npy
-preprocessed/prolong_64K_llama_tokenizer/dclm-baseline_npy/:
 preprocessed/prolong_64K_llama_tokenizer/dclm-baseline_npy/proc00-64.npy
 preprocessed/prolong_64K_llama_tokenizer/dclm-baseline_npy/proc01-64.npy
 preprocessed/prolong_64K_llama_tokenizer/dclm-baseline_npy/proc02-64.npy
