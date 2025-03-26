@@ -31,9 +31,10 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     rank_microbatch_size = 8 * SEQUENCE_LENGTH
-    gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
-    if all("B200" in g for g in gpus):
-        rank_microbatch_size *= 2
+    if common.launch is not None:
+        gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
+        if all("B200" in g for g in gpus):
+            rank_microbatch_size *= 2
 
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
@@ -61,6 +62,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 50
 
+    assert common.launch is not None
     assert len(common.launch.clusters) == 1
     cluster = common.launch.clusters[0]
 
