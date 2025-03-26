@@ -61,6 +61,9 @@ class MoEConfig(Config):
     router: MoERouterConfig = field(default_factory=MoERouterConfig)
     shared_mlp: Optional[FeedForwardConfig] = None
     lb_loss_weight: Optional[float] = 1.0
+    min_lb_loss_weight: Optional[float] = None
+    max_lb_loss_weight: Optional[float] = None
+    target_load_imbalance: Optional[float] = None
     z_loss_weight: Optional[float] = None
     dtype: DType = DType.float32
 
@@ -123,6 +126,9 @@ class MoEBase(nn.Module):
         shared_mlp: Optional[FeedForwardConfig] = None,
         init_device: str = "cpu",
         lb_loss_weight: Optional[float] = None,
+        min_lb_loss_weight: Optional[float] = None,
+        max_lb_loss_weight: Optional[float] = None,
+        target_load_imbalance: Optional[float] = None,
         z_loss_weight: Optional[float] = None,
         dtype: torch.dtype = torch.float32,
         cache: Optional[BufferCache] = None,
@@ -154,6 +160,9 @@ class MoEBase(nn.Module):
                     loss_weight=lb_loss_weight,
                     num_experts=num_experts,
                     top_k=self.router.top_k,
+                    min_loss_weight=min_lb_loss_weight,
+                    max_loss_weight=max_lb_loss_weight,
+                    target_load_imbalance=target_load_imbalance,
                 )
             )
         if z_loss_weight is not None:
@@ -291,6 +300,8 @@ class MoEBase(nn.Module):
 
     def apply_pp(self, pp_mesh: DeviceMesh):
         self.router.pp_group = pp_mesh.get_group()
+        for loss in self.losses:
+            loss.pp_group = pp_mesh.get_group()
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         """
