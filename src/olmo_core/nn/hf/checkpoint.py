@@ -35,6 +35,7 @@ def load_hf_model(
     model_name_or_path: PathOrStr,
     model_state_dict: Dict[str, Any],
     *,
+    model_id: Optional[str] = None,
     num_embeddings: Optional[int] = None,
     process_group: Optional[dist.ProcessGroup] = None,
     work_dir: Optional[PathOrStr] = None,
@@ -44,6 +45,8 @@ def load_hf_model(
 
     :param model_name_or_path: The name of a model in HF Hub or the path to a model saved in HF format.
     :param model_state_dict: The OLMo Core model state dict in which to load HF state.
+    :param model_id: If ``model_name_or_path`` is a local or remote path, this is the id of the model
+        in HF Hub that the model corresponds to.
     :param num_embeddings: The number of embeddings in the OLMo Core model being loaded into,
         defaults to the number of embeddings in the HF model.
     :param process_group: The process group to use for distributed communication.
@@ -63,7 +66,6 @@ def load_hf_model(
             or file_exists(f"{model_name_or_path}/model.safetensors.index.json")
             or file_exists(f"{model_name_or_path}/pytorch_model.bin")
         )
-        model_id = None
 
         # Download model to local FS
         if get_fs_local_rank() == 0:
@@ -75,7 +77,6 @@ def load_hf_model(
             or file_exists(f"{model_name_or_path}/model.safetensors.index.json")
             or file_exists(f"{model_name_or_path}/pytorch_model.bin")
         )
-        model_id = None
     elif repo_exists(str(model_name_or_path)):
         log.warning(
             "Model id or path provided is a Hugging Face model id. This may not be suitable for unshared file systems."
