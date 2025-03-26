@@ -19,7 +19,7 @@ EXPERT = TemplatePlaceholder.EXPERT
 #:
 #: This map only captures one-to-one mappings from HF to OLMo Core. For many-to-many mappings
 #: or mappings that require additional manipulation of state, see
-#: :data:`HF_TO_OLMO_CORE_TEMPLATE_MAPPING`. If a given HF key can refer to different OLMo Core
+#: :data:`HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS`. If a given HF key can refer to different OLMo Core
 #: states depending on the HF model, see :data:`MODEL_SPECIFIC_HF_TO_OLMO_CORE_MAPPINGS`.
 HF_TO_OLMO_CORE_MAPPINGS: Dict[str, str] = {
     "model.embed_tokens.weight": "embeddings.weight",
@@ -70,7 +70,7 @@ MODEL_SPECIFIC_HF_TO_OLMO_CORE_MAPPINGS: Dict[str, Dict[str, str]] = {
 #: additional manipulation of state (e.g. merging dimensions).
 #: For simple one-to-one mappings from HF to OLMo Core, see
 #: :data:`HF_TO_OLMO_CORE_MAPPINGS`.
-HF_TO_OLMO_CORE_TEMPLATE_MAPPING: Dict[str, StateMappingTemplate] = {
+HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
     f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight": StateMappingTemplate(
         f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight",
         f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1",
@@ -107,7 +107,7 @@ HF_TO_OLMO_CORE_TEMPLATE_MAPPING: Dict[str, StateMappingTemplate] = {
 #: maps to HF state. You may configure this to change how OLMo Core state maps to HF state.
 #:
 #: This map only captures one-to-one mappings from OLMo Core to HF. For many-to-many mappings
-#: or mappings that require additional manipulation of state, see :data:`OLMO_CORE_TO_HF_TEMPLATE_MAPPING`.
+#: or mappings that require additional manipulation of state, see :data:`OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS`.
 OLMO_CORE_TO_HF_MAPPINGS: Dict[str, str] = {
     "embeddings.weight": "model.embed_tokens.weight",
     "lm_head.norm.weight": "model.norm.weight",
@@ -141,7 +141,7 @@ OLMO_CORE_TO_HF_MAPPINGS: Dict[str, str] = {
 #: additional manipulation of state (e.g. merging dimensions).
 #: For simple one-to-one mappings from OLMo Core to HF, see
 #: :data:`OLMO_CORE_TO_HF_MAPPINGS`.
-OLMO_CORE_TO_HF_TEMPLATE_MAPPING: Dict[str, StateMappingTemplate] = {
+OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
     f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1": StateMappingTemplate(
         f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1",
         f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight",
@@ -193,7 +193,7 @@ def _get_hf_model_to_olmo_core_one_to_one_templates(
 
 def _get_converter_from_hf(model_id: str | None = None) -> StateConverter:
     mapping_templates = _get_hf_model_to_olmo_core_one_to_one_templates(model_id)
-    mapping_templates += list(HF_TO_OLMO_CORE_TEMPLATE_MAPPING.values())
+    mapping_templates += list(HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS.values())
     return StateConverter(mapping_templates)
 
 
@@ -239,7 +239,7 @@ def _get_converter_to_hf() -> StateConverter:
         StateMappingTemplate(olmo_core_key, hf_key)
         for olmo_core_key, hf_key in OLMO_CORE_TO_HF_MAPPINGS.items()
     ]
-    mapping_templates += list(OLMO_CORE_TO_HF_TEMPLATE_MAPPING.values())
+    mapping_templates += list(OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS.values())
     return StateConverter(mapping_templates)
 
 
