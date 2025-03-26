@@ -13,6 +13,7 @@ from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_mo
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.utils import (
     distribute_like,
+    get_full_tensor,
     get_local_tensor,
     is_distributed,
 )
@@ -61,6 +62,9 @@ class MoERouterType(StrEnum):
 class MoERouterGatingFunction(StrEnum):
     softmax = "softmax"
     sigmoid = "sigmoid"
+
+
+LAYER = 0
 
 
 @dataclass
@@ -184,6 +188,10 @@ class MoERouter(nn.Module):
         else:
             self.register_buffer("score_bias", None)
 
+        global LAYER
+        self.layer = LAYER
+        LAYER += 1
+
     def reset_parameters(self):
         if self.bias_gamma is not None:
             assert self.score_bias is not None
@@ -229,10 +237,16 @@ class MoERouter(nn.Module):
         bias_delta = self.bias_gamma * (ideal_batch_size_per_expert - batch_size_per_expert).sign()
 
         # NOTE: have to be careful here to manage the case where `score_bias` is a DTensor.
-        bias_delta = get_local_tensor(distribute_like(score_bias, bias_delta))
+        bias_delta = distribute_like(score_bias, bias_delta)
         score_bias = get_local_tensor(score_bias)
         if not dry_run:
-            score_bias += bias_delta
+            get_local_tensor(score_bias).add_(get_local_tensor(bias_delta))
+            bias_delta = get_full_tensor(bias_delta)
+            score_bias = get_full_tensor(score_bias)
+            if dist.get_rank() == 0:
+                debug_score_bias(
+                    batch_size_per_expert.tolist(), bias_delta.tolist(), score_bias.tolist()
+                )
 
         # Reset the accumulator.
         batch_size_per_expert.zero_()
@@ -380,3 +394,16 @@ def histc(indices: torch.Tensor, *, num_experts: int) -> torch.Tensor:
         return torch.histc(indices.float(), bins=num_experts, min=0, max=num_experts - 1).int()
     else:
         return torch.histc(indices, bins=num_experts, min=0, max=num_experts - 1)
+
+
+def debug_score_bias(
+    batch_size_per_expert: list[int], bias_delta: list[float], score_bias: list[float]
+):
+    num_experts = len(batch_size_per_expert)
+    for i in range(num_experts):
+        bz = batch_size_per_expert[i]
+        bias = bias_delta[i]
+        sign = "⬆️" if bias > 0 else "⬇️"
+        score = score_bias[i]
+        print(f"{i}({bz}{sign}{score:.4f})", end=" ")
+    print("")
