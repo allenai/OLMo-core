@@ -403,7 +403,7 @@ def debug_score_bias(
     for i in range(num_experts):
         bz = batch_size_per_expert[i]
         bias = bias_delta[i]
-        sign = "⬆️" if bias > 0 else "⬇️"
+        sign = "+" if bias > 0 else "-"
         score = score_bias[i]
-        print(f"{i}({bz}{sign}{score:.4f})", end=" ")
+        print(f"{i}({sign}{score:.4f})", end=" ")
     print("")
