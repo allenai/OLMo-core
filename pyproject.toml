@@ -20,6 +20,7 @@ dependencies = [
     "packaging",
     "rich",
     "omegaconf",
+    "transformers",
     "safetensors",
     "importlib_resources",
     "ai2-olmo-eval==0.7.0",
