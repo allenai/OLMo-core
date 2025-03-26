@@ -1,16 +1,14 @@
 """
 Train a 7B OLMo model. Run this script without any arguments to see usage info.
 """
-
-import logging
-
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
+from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
-from olmo_core.train import TrainerConfig
+from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
@@ -18,7 +16,10 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
-log = logging.getLogger(__name__)
+
+SEQUENCE_LENGTH = 4096
+GLOBAL_BATCH_SIZE = 1024 * SEQUENCE_LENGTH
+MAX_DURATION = int(4e12)
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -26,10 +27,15 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
+    rank_microbatch_size = 2 * SEQUENCE_LENGTH
+    gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
+    if all("B200" in g for g in gpus):
+        rank_microbatch_size *= 2
+
     return TransformerTrainModuleConfig(
-        rank_microbatch_size=2 * 4096,
+        rank_microbatch_size=rank_microbatch_size,
         max_sequence_length=common.dataset.effective_sequence_length,
-        optim=AdamWConfig(
+        optim=SkipStepAdamWConfig(
             lr=3e-4,
             weight_decay=0.1,
             betas=(0.9, 0.95),
@@ -48,17 +54,23 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
-        scheduler=CosWithWarmup(warmup_steps=2000),
+        scheduler=CosWithWarmup(warmup_steps=2000, t_max=int(5e12 / GLOBAL_BATCH_SIZE)),
     )
 
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
+    cancel_check_interval = 10
+
+    assert len(common.launch.clusters) == 1
+    cluster = common.launch.clusters[0]
+
     return (
         TrainerConfig(
             save_folder=common.save_folder,
             save_overwrite=True,
             metrics_collect_interval=10,
-            cancel_check_interval=1,
+            cancel_check_interval=cancel_check_interval,
+            max_duration=Duration.tokens(MAX_DURATION)
         )
         .with_callback(
             "checkpointer",
@@ -75,7 +87,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 workspace="ai2",
                 project="OLMo-core-7B",
                 enabled=True,
-                cancel_check_interval=10,
+                cancel_check_interval=cancel_check_interval,
             ),
         )
         .with_callback(
@@ -85,16 +97,20 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 entity="ai2-llm",
                 project="OLMo-core-7B",
                 enabled=False,
-                cancel_check_interval=10,
+                cancel_check_interval=cancel_check_interval,
             ),
         )
+        .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster)
     )
 
 
 if __name__ == "__main__":
     main(
-        global_batch_size=1024 * 4096,
+        global_batch_size=GLOBAL_BATCH_SIZE,
+        sequence_length=SEQUENCE_LENGTH,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
+        include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
+        include_default_evals=False,
     )

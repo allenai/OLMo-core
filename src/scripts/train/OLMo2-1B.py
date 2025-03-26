@@ -19,6 +19,7 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
+
 SEQUENCE_LENGTH = 4096
 GLOBAL_BATCH_SIZE = 512 * SEQUENCE_LENGTH
 MAX_DURATION = int(4e12)
@@ -53,8 +54,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
-        scheduler=CosWithWarmup(warmup_steps=2000, t_max=int(4e12 / GLOBAL_BATCH_SIZE)),
+        scheduler=CosWithWarmup(warmup_steps=2000, t_max=int(5e12 / GLOBAL_BATCH_SIZE)),
     )
+
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 50
@@ -74,7 +76,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=100_000,
-                ephemeral_save_interval=10_000,
+                ephemeral_save_interval=5_000,
                 save_async=True,
             ),
         )
@@ -100,6 +102,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster)
     )
+
 
 if __name__ == "__main__":
     main(
