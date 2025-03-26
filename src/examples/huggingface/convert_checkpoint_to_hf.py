@@ -1,8 +1,8 @@
 """
 Example script to convert a OLMo Core model checkpoint to a HuggingFace model checkpoint.
 
-Note that this script is architecture-dependent, meaning it may only work for OLMo Core models that
-have support in the `transformers` library.
+Note that this script is architecture-dependent, meaning it may only work for OLMo Core model
+architectures that have support in the `transformers` library.
 """
 
 import json
@@ -252,13 +252,45 @@ def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
 
 def parse_args():
     parser = ArgumentParser(description=__doc__)
-    parser.add_argument("-i", "--checkpoint-input-path", type=str, required=True)
+    parser.add_argument(
+        "-i",
+        "--checkpoint-input-path",
+        type=str,
+        required=True,
+        help="Local or remote directory containing the OLMo Core checkpoint.",
+    )
 
-    parser.add_argument("-o", "--huggingface-output-dir", type=Path, required=True)
-    parser.add_argument("-s", "--max-sequence-length", type=int, required=True)
-    parser.add_argument("--skip-validation", dest="validate", action="store_false")
-    parser.add_argument("--debug", dest="debug", action="store_true")
-    parser.add_argument("--device", type=torch.device)
+    parser.add_argument(
+        "-o",
+        "--huggingface-output-dir",
+        type=Path,
+        required=True,
+        help="Local or remote directory where the converted checkpoint should be saved.",
+    )
+    parser.add_argument(
+        "-s",
+        "--max-sequence-length",
+        type=int,
+        required=True,
+        help="Max sequence length supported by the model.",
+    )
+    parser.add_argument(
+        "--skip-validation",
+        dest="validate",
+        action="store_false",
+        help="If set, validation to check that the converted model matches the original model is skipped.",
+    )
+    parser.add_argument(
+        "--debug",
+        dest="debug",
+        action="store_true",
+        help="If set, debug information of validation is output.",
+    )
+    parser.add_argument(
+        "--device",
+        type=torch.device,
+        help="The device on which conversion and validation occurs. Defaults to CUDA or MPS if available and initialized.",
+    )
     return parser.parse_args()
 
 

@@ -2,9 +2,8 @@
 Example script showing how you could convert model weights on HuggingFace for an OLMo2
 model into a format that can be loaded by OLMo-core for fine-tuning.
 
-Note that this script is architecture-dependent, meaning it may only work for OLMo2 models on
-HuggingFace. Support for other models can be added by updating the constants in
-:mod:`olmo_core.nn.hf.convert`.
+Note that this script is architecture-dependent. Some models may work out-of-the-box. Support for
+other models can be added by updating the constants in :mod:`olmo_core.nn.hf.convert`.
 """
 
 import json
@@ -303,18 +302,69 @@ def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
 
 def parse_args():
     parser = ArgumentParser(description=__doc__)
-    parser.add_argument("-i", "--checkpoint-input-path", type=str, required=True)
+    parser.add_argument(
+        "-i",
+        "--checkpoint-input-path",
+        type=str,
+        required=True,
+        help="Local or remote directory containing the HF checkpoint, or the model id of a HF Hub repo.",
+    )
 
-    parser.add_argument("-c", "--config-path", type=str, default=None)
-    parser.add_argument("-m", "--model-arch")
-    parser.add_argument("-t", "--tokenizer", type=str, default="dolma2")
+    parser.add_argument(
+        "-c",
+        "--config-path",
+        type=str,
+        default=None,
+        help="Path to an OLMo Core experiment config containing information about the model architecture and tokenizer.",
+    )
+    parser.add_argument(
+        "-m",
+        "--model-arch",
+        help="OLMo Core model architecture corresponding to the HF model. New architectures should be added to ``_get_transformer_config``. This is required when an OLMo Core experiment config is not provided.",
+    )
+    parser.add_argument(
+        "-t",
+        "--tokenizer",
+        type=str,
+        default="dolma2",
+        help="OLMo Core tokenizer corresponding to the HF model. New tokenizers should be added to ``_get_tokenizer_config``. This is required when an OLMo Core experiment config is not provided.",
+    )
 
-    parser.add_argument("-o", "--huggingface-output-dir", type=Path, required=True)
-    parser.add_argument("-s", "--max-sequence-length", type=int, required=True)
-    parser.add_argument("--model-id")
-    parser.add_argument("--skip-validation", dest="validate", action="store_false")
-    parser.add_argument("--debug", dest="debug", action="store_true")
-    parser.add_argument("--device", type=torch.device)
+    parser.add_argument(
+        "-o",
+        "--huggingface-output-dir",
+        type=Path,
+        required=True,
+        help="Local or remote directory where the converted checkpoint should be saved.",
+    )
+    parser.add_argument(
+        "-s",
+        "--max-sequence-length",
+        type=int,
+        required=True,
+        help="Max sequence length supported by the model.",
+    )
+    parser.add_argument(
+        "--model-id",
+        help="Model id of the HF Hub repo corresponding to the model. Use to get model specific mappings in :mod:`olmo_core.nn.hf.convert`",
+    )
+    parser.add_argument(
+        "--skip-validation",
+        dest="validate",
+        action="store_false",
+        help="If set, validation to check that the converted model matches the original model is skipped.",
+    )
+    parser.add_argument(
+        "--debug",
+        dest="debug",
+        action="store_true",
+        help="If set, debug information of validation is output.",
+    )
+    parser.add_argument(
+        "--device",
+        type=torch.device,
+        help="The device on which conversion and validation occurs. Defaults to CUDA or MPS if available and initialized.",
+    )
     return parser.parse_args()
 
 
