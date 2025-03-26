@@ -43,14 +43,7 @@ class DataMix(DataMixBase):
         if not base_dir.endswith("/"):
             base_dir = base_dir + "/"
 
-        tokenizer_id: str = tokenizer
-        if self == DataMix.v3_small_ppl_validation:
-            if tokenizer == TokenizerName.gpt_neox_olmo_dolma_v1_5:
-                tokenizer_id = "gptneox20b"
-            elif tokenizer == TokenizerName.dolma2:
-                tokenizer_id = "dolma2-tokenizer"
-        elif tokenizer == TokenizerName.gpt_neox_olmo_dolma_v1_5:
-            tokenizer_id = "gpt-neox-olmo-dolma-v1_5"
+        tokenizer_id = self.get_tokenizer_id(tokenizer)
 
         paths = []
         labels = []
@@ -64,6 +57,43 @@ class DataMix(DataMixBase):
                     if "{TOKENIZER}" not in path:
                         raise ValueError(f"line {line_num+1} in data mix '{self}' is invalid")
                     path = path.replace("{TOKENIZER}", tokenizer_id)
+                    paths.append(f"{base_dir}{path}")
+                    labels.append(label)
+        return paths, labels
+
+    def get_tokenizer_id(self, tokenizer: str) -> str:
+        tokenizer_id: str = tokenizer
+        if self == DataMix.v3_small_ppl_validation:
+            if tokenizer == TokenizerName.gpt_neox_olmo_dolma_v1_5:
+                tokenizer_id = "gptneox20b"
+            elif tokenizer == TokenizerName.dolma2:
+                tokenizer_id = "dolma2-tokenizer"
+        elif tokenizer == TokenizerName.gpt_neox_olmo_dolma_v1_5:
+            tokenizer_id = "gpt-neox-olmo-dolma-v1_5"
+        return tokenizer_id
+
+
+class DataMixUnsafe(DataMix):
+    """Unfortunate repetition of code that doesn't throw on data mix checks"""
+
+    def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
+        if not base_dir.endswith("/"):
+            base_dir = base_dir + "/"
+
+        tokenizer_id = self.get_tokenizer_id(tokenizer)
+
+        paths = []
+        labels = []
+        with _get_data_mix_path(self) as mix_path:
+            with mix_path.open() as f:
+                for line_num, line in enumerate(f):
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    label, path = line.split(",")
+                    if "{TOKENIZER}" not in path:
+                        # No throw here, just replace
+                        path = path.replace("{TOKENIZER}", tokenizer_id)
                     paths.append(f"{base_dir}{path}")
                     labels.append(label)
         return paths, labels
