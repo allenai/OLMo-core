@@ -400,10 +400,11 @@ def debug_score_bias(
     batch_size_per_expert: list[int], bias_delta: list[float], score_bias: list[float]
 ):
     num_experts = len(batch_size_per_expert)
+    total_bz = sum(batch_size_per_expert)
     for i in range(num_experts):
-        bz = batch_size_per_expert[i]
+        bz = 100 * batch_size_per_expert[i] / total_bz
         bias = bias_delta[i]
-        sign = "+" if bias > 0 else "-"
+        sign = "+" if bias > 0 else ""
         score = score_bias[i]
-        print(f"{i}({sign}{score:.4f})", end=" ")
+        print(f"{i}({bz:.1f}%,{sign}{score:.3f})", end=" ")
     print("")
