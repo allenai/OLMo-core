@@ -54,6 +54,8 @@ class MoELoadBalancingLoss(MoELoss):
         target_load_imbalance: Optional[float] = None,
         loss_weight_delta: Optional[float] = None,
     ):
+        super().__init__()
+
         if target_load_imbalance is not None:
             assert min_loss_weight is not None
             assert max_loss_weight is not None
@@ -141,6 +143,7 @@ class MoELoadBalancingLoss(MoELoss):
 
 class MoERouterZLoss(MoELoss):
     def __init__(self, *, loss_weight: float, num_experts: int):
+        super().__init__()
         self.loss_weight = loss_weight
         self.num_experts = num_experts
         self.loss: Optional[torch.Tensor] = None
