@@ -29,6 +29,7 @@ class TokenizerName(StrEnum):
     The base GPT2 tokenizer.
     """
 
+    llama3 = "llama3"
 
 @dataclass
 class TokenizerConfig(Config):
