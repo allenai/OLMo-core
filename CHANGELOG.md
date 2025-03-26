@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added support for auxiliary-loss-free MoE load-balancing, similar to DeepSeek-v3. You can activate this by setting `bias_gamma` to a non-zero float in your `MoERouter` config.
+- Compatibility with B200s.
+- Added support for `warmup_fraction` as an alternative to `warmup_steps` in all schedulers, allowing warmup to be specified as a fraction of total training steps.
 - (BETA) Added methods `load_hf_model` and `save_hf_model` for saving supported OLMo Core models to HF transformers format.
 Also added lower-level methods for converting state between the formats.
 
@@ -17,7 +19,16 @@ Also added lower-level methods for converting state between the formats.
 
 - `TransformerTrainModuleConfig` can now be used to build a `TransformerPipelineTrainModule` by adding a `pp_config` spec. This makes the `TransformerPipelineTrainModuleConfig` redundant, but it will be kept around for backwards compatibility until the next major release.
 - Several state dict methods in `TrainModule` now take an `optim` option, which can disable the use of optimizer state.
+- Updated `Float8Config` for latest version of `torchao`.
+- Undo a fix applied to `olmo_core.data.numpy_dataset.NumpyFSLDatasetMixture` that was generating a mismatch between the shape of instances in the dataset and the shape of instances in the data loader.
 - Changed underlying logic and top-level arguments of `convert_checkpoint_from_hf.py` and `convert_checkpoint_to_hf.py`.
+
+### Fixed
+
+- Fixed calculation of total steps based on epochs at the end of a training job.
+- Fixed a bug where the trainer might try to save a duplicate final checkpoint if the run that already completed was restarted.
+- When submitting a Beaker job from a branch that's tracking a GitHub fork, OLMo-core now instructs Beaker to pull from the fork instead of from the main repo.
+- Made Beaker image resolution more robust.
 
 ## [v2.0.1](https://github.com/allenai/OLMo-core/releases/tag/v2.0.1) - 2025-03-18
 

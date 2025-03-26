@@ -76,6 +76,8 @@ class SpeedMonitorCallback(Callback):
                         self.device_peak_flops = int(756e12)
                     else:  # for SXM and other variants
                         self.device_peak_flops = int(989e12)
+                elif "B200" in device_name:
+                    self.device_peak_flops = int(2200e12)
                 else:  # for other GPU types, assume A100
                     self.device_peak_flops = int(312e12)
 

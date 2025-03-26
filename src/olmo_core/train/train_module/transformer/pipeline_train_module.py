@@ -32,7 +32,7 @@ from olmo_core.distributed.utils import (
 )
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.float8 import Float8Config, Float8Handler
+from olmo_core.float8 import Float8Config
 from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.transformer import Transformer
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
@@ -134,11 +134,6 @@ class TransformerPipelineTrainModule(TrainModule):
         self.dp_world_size = get_world_size(self.dp_process_group)
         log.info(f"Data parallel world size = {self.dp_world_size:,d}")
 
-        self.float8_handler: Optional[Float8Handler] = None
-        if float8_config is not None:
-            float8_config.compile = compile_model
-            self.float8_handler = float8_config.build()
-
         self._pp_config = pp_config
         # We'll initialize this lazily when the trainer is attached, since we need to know
         # the global batch size in order to determine the number of pipeline micro-batches.
@@ -167,7 +162,7 @@ class TransformerPipelineTrainModule(TrainModule):
             max_sequence_length=max_sequence_length,
             rank_microbatch_size=rank_microbatch_size,
             compile_model=compile_model,
-            float8_handler=self.float8_handler,
+            float8_config=float8_config,
             dp_config=dp_config,
             tp_config=tp_config,
             cp_config=cp_config,
@@ -458,12 +453,6 @@ class TransformerPipelineTrainModule(TrainModule):
                 if isinstance(optim, SkipStepOptimizer):
                     optim.latest_grad_norm = grad_norm
 
-        # Sync Float8 AMAXs (argmax of abs(max)) and scales.
-        if self.float8_handler is not None:
-            self.float8_handler.sync_float8_amax_and_scale_history(
-                cast(List[nn.Module], self.model_parts)
-            )
-
         # Maybe adjust learning rate.
         if self.scheduler is not None:
             for optim in self.optimizers:
@@ -509,13 +498,6 @@ class TransformerPipelineTrainModule(TrainModule):
 
         for model in self.model_parts:
             model.post_optim_step()
-
-        # Calculate Float8 dynamic AMAX/scale for all parameters.
-        # For FSDP2 this issues a single all-reduce for all parameters at once.
-        if self.float8_handler is not None:
-            self.float8_handler.precompute_float8_dynamic_scale_for_fsdp(
-                cast(List[nn.Module], self.model_parts)
-            )
 
     def zero_grads(self):
         for optim in self.optimizers:

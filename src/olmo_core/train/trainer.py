@@ -442,8 +442,12 @@ class Trainer:
                 )
             max_epochs = duration.value
             complete_epochs_remaining = max(max_epochs - self.epoch, 0)
-            steps_remaining_this_epoch = max(
-                self.data_loader.total_batches - self.data_loader.batches_processed, 0
+            # NOTE: need to cover the case where the last epoch has just ended and we've incremented
+            # self.epoch.
+            steps_remaining_this_epoch = (
+                0
+                if self.epoch > max_epochs
+                else max(self.data_loader.total_batches - self.data_loader.batches_processed, 0)
             )
             steps_remaining = (
                 complete_epochs_remaining * self.data_loader.total_batches
@@ -583,6 +587,13 @@ class Trainer:
 
         barrier()
 
+        # It's possible that we tried restarting a run that had already finished.
+        if self.training_complete:
+            log.warning("Training already complete, ending run now")
+            self._shutdown_bookkeeping()
+            gc_cuda()
+            return
+
         log.info("Callback order:")
         for i, callback_name in enumerate(self.callbacks.keys()):
             log.info(f"  - Callback {i+1}: {callback_name}")
@@ -618,13 +629,14 @@ class Trainer:
             callback.post_train()
 
         # Wait for any bookkeeping tasks to finish.
+        self._shutdown_bookkeeping()
+        gc_cuda()
+        log.info("Training complete")
+
+    def _shutdown_bookkeeping(self):
         self.thread_pool.shutdown(wait=True, cancel_futures=False)
         self._thread_pool = None
-
         barrier()
-        gc_cuda()
-
-        log.info("Training complete")
 
     def state_dict(self) -> TrainerStateDict:
         """
