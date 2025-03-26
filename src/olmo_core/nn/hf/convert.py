@@ -54,7 +54,10 @@ HF_TO_OLMO_CORE_MAPPINGS: Dict[str, str] = {
 MODEL_SPECIFIC_HF_TO_OLMO_CORE_MAPPINGS: Dict[str, Dict[str, str]] = {
     "meta-llama/Llama-3.2-1B": {
         f"model.layers.{LAYER}.post_attention_layernorm.weight": f"blocks.{LAYER}.feed_forward_norm.weight"
-    }
+    },
+    "meta-llama/Meta-Llama-3-8B-Instruct": {
+        f"model.layers.{LAYER}.post_attention_layernorm.weight": f"blocks.{LAYER}.feed_forward_norm.weight"
+    },
 }
 
 
