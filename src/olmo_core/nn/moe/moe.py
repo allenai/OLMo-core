@@ -393,6 +393,13 @@ class MoE(MoEBase):
         dtype: torch.dtype = torch.float32,
         cache: Optional[BufferCache] = None,
     ):
+        if (
+            min_lb_loss_weight is not None
+            and max_lb_loss_weight is not None
+            and target_load_imbalance is None
+        ):
+            target_load_imbalance = capacity_factor
+
         super().__init__(
             d_model=d_model,
             num_experts=num_experts,
