@@ -23,6 +23,7 @@ class MoELoss(metaclass=ABCMeta):
         expert_weights: torch.Tensor,
         expert_indices: torch.Tensor,
         batch_size_per_expert: torch.Tensor,
+        batched_batch_size_per_expert: torch.Tensor,
         **kwargs,
     ):
         raise NotImplementedError
@@ -56,6 +57,7 @@ class MoELoadBalancingLoss(MoELoss):
         max_loss_weight: Optional[float] = None,
         target_load_imbalance: Optional[float] = None,
         loss_weight_delta: Optional[float] = None,
+        instance_level: bool = False,
     ):
         super().__init__()
 
@@ -74,6 +76,7 @@ class MoELoadBalancingLoss(MoELoss):
         self.loss_weight_delta = loss_weight_delta
         self.num_experts = num_experts
         self.top_k = top_k
+        self.instance_level = instance_level
         self.loss: Optional[torch.Tensor] = None
         self.batch_size_per_expert: Optional[torch.Tensor] = None
 
@@ -82,13 +85,25 @@ class MoELoadBalancingLoss(MoELoss):
         *,
         expert_scores: torch.Tensor,
         batch_size_per_expert: torch.Tensor,
+        batched_batch_size_per_expert: torch.Tensor,
         **kwargs,
     ):
         del kwargs
 
-        # shape: (batch_size, num_experts) -> (num_experts,)
-        expert_scores = expert_scores.mean(dim=0)
-        loss = torch.dot(batch_size_per_expert.type_as(expert_scores), expert_scores)
+        loss: torch.Tensor
+        if self.instance_level:
+            B = batched_batch_size_per_expert.shape[0]
+            # shape: (B * S, num_experts) -> (B, S, num_experts,) -> (B, num_experts)
+            expert_scores = expert_scores.view(B, -1, self.num_experts).mean(dim=1)
+            # shape: (B, num_experts)
+            batched_batch_size_per_expert = batched_batch_size_per_expert.type_as(expert_scores)
+            loss = (expert_scores * batched_batch_size_per_expert).sum()
+        else:
+            # shape: (B * S, num_experts) -> (num_experts,)
+            expert_scores = expert_scores.mean(dim=0)
+            batch_size_per_expert = batch_size_per_expert.type_as(expert_scores)
+            loss = torch.dot(batch_size_per_expert, expert_scores)
+
         if self.loss is None:
             self.loss = loss
         else:
@@ -125,6 +140,7 @@ class MoELoadBalancingLoss(MoELoss):
             return
 
         if self.target_load_imbalance is not None:
+            # TODO: 'self.loss_weight' needs to be stored in checkpoint
             assert self.batch_size_per_expert is not None
             assert self.min_loss_weight is not None
             assert self.max_loss_weight is not None

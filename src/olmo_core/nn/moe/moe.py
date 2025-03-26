@@ -61,6 +61,7 @@ class MoEConfig(Config):
     router: MoERouterConfig = field(default_factory=MoERouterConfig)
     shared_mlp: Optional[FeedForwardConfig] = None
     lb_loss_weight: Optional[float] = 1.0
+    instance_level_lb_loss: bool = False
     min_lb_loss_weight: Optional[float] = None
     max_lb_loss_weight: Optional[float] = None
     target_load_imbalance: Optional[float] = None
@@ -126,6 +127,7 @@ class MoEBase(nn.Module):
         shared_mlp: Optional[FeedForwardConfig] = None,
         init_device: str = "cpu",
         lb_loss_weight: Optional[float] = None,
+        instance_level_lb_loss: bool = False,
         min_lb_loss_weight: Optional[float] = None,
         max_lb_loss_weight: Optional[float] = None,
         target_load_imbalance: Optional[float] = None,
@@ -163,6 +165,7 @@ class MoEBase(nn.Module):
                     min_loss_weight=min_lb_loss_weight,
                     max_loss_weight=max_lb_loss_weight,
                     target_load_imbalance=target_load_imbalance,
+                    instance_level=instance_level_lb_loss,
                 )
             )
         if z_loss_weight is not None:
@@ -193,6 +196,7 @@ class MoEBase(nn.Module):
         expert_weights: torch.Tensor,
         expert_indices: torch.Tensor,
         batch_size_per_expert: torch.Tensor,
+        batched_batch_size_per_expert: torch.Tensor,
     ):
         if not self.losses and not self.metrics:
             return
@@ -206,6 +210,7 @@ class MoEBase(nn.Module):
                 expert_weights=expert_weights,
                 expert_indices=expert_indices,
                 batch_size_per_expert=batch_size_per_expert,
+                batched_batch_size_per_expert=batched_batch_size_per_expert,
             )
 
         for metric in self.metrics:
@@ -215,6 +220,7 @@ class MoEBase(nn.Module):
                 expert_weights=expert_weights,
                 expert_indices=expert_indices,
                 batch_size_per_expert=batch_size_per_expert,
+                batched_batch_size_per_expert=batched_batch_size_per_expert,
             )
 
     def compute_losses(
@@ -277,6 +283,7 @@ class MoEBase(nn.Module):
             expert_weights,
             expert_indices,
             batch_size_per_expert,
+            batched_batch_size_per_expert,
         ) = self.router(x)
 
         shared_out: Optional[torch.Tensor] = None
@@ -296,6 +303,7 @@ class MoEBase(nn.Module):
                 expert_weights=expert_weights,
                 expert_indices=expert_indices,
                 batch_size_per_expert=batch_size_per_expert,
+                batched_batch_size_per_expert=batched_batch_size_per_expert,
             )
 
         return out
@@ -386,6 +394,7 @@ class MoE(MoEBase):
         capacity_factor: float = 1.2,
         init_device: str = "cpu",
         lb_loss_weight: Optional[float] = None,
+        instance_level_lb_loss: bool = False,
         min_lb_loss_weight: Optional[float] = None,
         max_lb_loss_weight: Optional[float] = None,
         target_load_imbalance: Optional[float] = None,
@@ -408,6 +417,7 @@ class MoE(MoEBase):
             shared_mlp=shared_mlp,
             init_device=init_device,
             lb_loss_weight=lb_loss_weight,
+            instance_level_lb_loss=instance_level_lb_loss,
             min_lb_loss_weight=min_lb_loss_weight,
             max_lb_loss_weight=max_lb_loss_weight,
             target_load_imbalance=target_load_imbalance,

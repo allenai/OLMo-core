@@ -10,6 +10,7 @@ from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Replicate, Shard, distribute_tensor
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
+import olmo_core.ops.moe as ops
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.utils import (
     distribute_like,
@@ -270,15 +271,16 @@ class MoERouter(nn.Module):
 
     def forward(
         self, x: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Given the input ``x`` of shape ``(*, d_model)``, compute the experts assignment.
+        Given the input ``x`` of shape ``(B, S, d_model)``, compute the experts assignment.
 
-        :returns: The unnormalized scores (logits) of shape ``(N, num_experts)``,
-            the normalized scores of shape ``(N, num_experts)``,
-            the expert weights of shape ``(N, top_k)``,
-            the expert indices of shape ``(N, top_k)``,
-            and the number of items routed to each expert, with shape ``(num_experts,)``.
+        :returns: The unnormalized scores (logits) of shape ``(B * S, num_experts)``,
+            the normalized scores of shape ``(B * S, num_experts)``,
+            the expert weights of shape ``(B * S, top_k)``,
+            the expert indices of shape ``(B * S, top_k)``,
+            the total number of items routed to each expert, with shape ``(num_experts,)``,
+            and the total number of items within each instance routed to each expert, with shape ``(B, num_experts)``.
         """
         # shape: (batch_size, seq_len, d_model)
         x = self.jitter(x)
@@ -313,12 +315,18 @@ class MoERouter(nn.Module):
         with torch.no_grad():
             # Histogram the expert ids to identify the number of items/tokens routed to each expert.
             # shape: (num_experts,)
-            # NOTE: if we wanted to keep the batch dimension here like for sequence-level load balancing
-            # loss, we could use `opts.batched_histc`.
-            batch_size_per_expert = histc(expert_indices, num_experts=self.num_experts)
+            batched_batch_size_per_expert = ops.batched_histc(expert_indices, self.num_experts)
+            batch_size_per_expert = batched_batch_size_per_expert.sum(dim=0)
             self._accumulate_batch_size_per_expert(batch_size_per_expert)
 
-        return logits, scores, expert_weights, expert_indices, batch_size_per_expert
+        return (
+            logits,
+            scores,
+            expert_weights,
+            expert_indices,
+            batch_size_per_expert,
+            batched_batch_size_per_expert,
+        )
 
     @abstractmethod
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
@@ -371,11 +379,3 @@ class MoELinearRouter(MoERouter):
         self.register_parameter(
             "weight", nn.Parameter(distribute_tensor(self.weight, tp_mesh, [Replicate()]))
         )
-
-
-def histc(indices: torch.Tensor, *, num_experts: int) -> torch.Tensor:
-    # NOTE: 'torch.histc' not implemented for integers on CPU, so convert to float then back to ints on CPU.
-    if indices.device.type == "cpu":
-        return torch.histc(indices.float(), bins=num_experts, min=0, max=num_experts - 1).int()
-    else:
-        return torch.histc(indices, bins=num_experts, min=0, max=num_experts - 1)

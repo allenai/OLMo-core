@@ -607,6 +607,7 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
             expert_weights,
             expert_indices,
             batch_size_per_expert,
+            batched_batch_size_per_expert,
         ) = self.router(x_moe)
 
         # shape: (batch_size * seq_len, d_model)
@@ -686,6 +687,7 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
                 expert_weights=expert_weights,
                 expert_indices=expert_indices,
                 batch_size_per_expert=batch_size_per_expert,
+                batched_batch_size_per_expert=batched_batch_size_per_expert,
             )
 
         return h + self.dropout(x_moe)
@@ -713,6 +715,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
             expert_weights,
             expert_indices,
             batch_size_per_expert,
+            batched_batch_size_per_expert,
         ) = self.router(x_moe)
 
         # shape: (batch_size * seq_len, d_model)
@@ -792,6 +795,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
                 expert_weights=expert_weights,
                 expert_indices=expert_indices,
                 batch_size_per_expert=batch_size_per_expert,
+                batched_batch_size_per_expert=batched_batch_size_per_expert,
             )
 
         return h + self.dropout(self.feed_forward_moe_norm(x_moe))

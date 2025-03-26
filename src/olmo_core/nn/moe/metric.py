@@ -19,6 +19,7 @@ class MoEMetric(metaclass=ABCMeta):
         expert_weights: torch.Tensor,
         expert_indices: torch.Tensor,
         batch_size_per_expert: torch.Tensor,
+        batched_batch_size_per_expert: torch.Tensor,
         **kwargs,
     ):
         raise NotImplementedError
