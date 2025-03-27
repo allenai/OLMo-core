@@ -95,9 +95,6 @@ class MoELoadBalancingLoss(MoELoss):
                 expert_scores = DTensor.from_local(expert_scores, self.sp_mesh, (Shard(1),)).mean(
                     dim=1
                 )
-                #  expert_scores = get_local_tensor(
-                #      DTensor.from_local(expert_scores, self.sp_mesh, (Shard(1),)).mean(dim=1)
-                #  )
             else:
                 # shape: (B * S, num_experts) -> (B, S, num_experts,) -> (B, num_experts)
                 expert_scores = expert_scores.view(B, -1, self.num_experts).mean(dim=1)
@@ -107,6 +104,9 @@ class MoELoadBalancingLoss(MoELoss):
             batch_size_per_expert = batch_size_per_expert.type_as(expert_scores)
             if self.sp_mesh is not None:
                 dist.all_reduce(batch_size_per_expert, group=self.sp_mesh.get_group())
+                batch_size_per_expert = DTensor.from_local(
+                    batch_size_per_expert, self.sp_mesh, (Replicate(),)
+                )
                 # NOTE: assumes equal sequence splits across group
                 # shape: (B * S, num_experts) -> (1, num_experts)
                 expert_scores = expert_scores.mean(dim=0, keepdim=True)
