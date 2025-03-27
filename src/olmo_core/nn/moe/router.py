@@ -195,8 +195,8 @@ class MoERouter(nn.Module):
                 self.num_experts, device=score_bias.device
             )
 
-    def _accumulate_batch_size_per_expert(self, batch_size_per_expert: torch.Tensor):
-        if self.bias_gamma is None or not self.training:
+    def _maybe_accumulate_batch_size_per_expert(self, batch_size_per_expert: torch.Tensor):
+        if self.bias_gamma is None or not self.training or not torch.is_grad_enabled():
             return
 
         assert self._cache is not None
@@ -318,7 +318,8 @@ class MoERouter(nn.Module):
             batched_batch_size_per_expert = ops.batched_histc(expert_indices, self.num_experts)
             batched_batch_size_per_expert = batched_batch_size_per_expert.sum(dim=1)
             batch_size_per_expert = batched_batch_size_per_expert.sum(dim=0)
-            self._accumulate_batch_size_per_expert(batch_size_per_expert)
+
+        self._maybe_accumulate_batch_size_per_expert(batch_size_per_expert)
 
         return (
             logits,

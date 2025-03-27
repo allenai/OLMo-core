@@ -187,7 +187,7 @@ class MoEBase(nn.Module):
     def warmup_cache(self, max_local_microbatch_size: int):
         self.experts.warmup_cache(max_local_microbatch_size)
 
-    def update_losses_and_metrics(
+    def maybe_update_losses_and_metrics(
         self,
         *,
         expert_logits: torch.Tensor,
@@ -198,6 +198,9 @@ class MoEBase(nn.Module):
         batched_batch_size_per_expert: torch.Tensor,
     ):
         if not self.losses and not self.metrics:
+            return
+
+        if not self.training or not torch.is_grad_enabled():
             return
 
         expert_logits = expert_logits.float()
@@ -293,15 +296,14 @@ class MoEBase(nn.Module):
             shared_out = shared_out / (self.top_k + 1)
             out = shared_out.add(out, alpha=self.top_k / (self.top_k + 1))
 
-        if self.training:
-            self.update_losses_and_metrics(
-                expert_logits=expert_logits,
-                expert_scores=expert_scores,
-                expert_weights=expert_weights,
-                expert_indices=expert_indices,
-                batch_size_per_expert=batch_size_per_expert,
-                batched_batch_size_per_expert=batched_batch_size_per_expert,
-            )
+        self.maybe_update_losses_and_metrics(
+            expert_logits=expert_logits,
+            expert_scores=expert_scores,
+            expert_weights=expert_weights,
+            expert_indices=expert_indices,
+            batch_size_per_expert=batch_size_per_expert,
+            batched_batch_size_per_expert=batched_batch_size_per_expert,
+        )
 
         return out
 

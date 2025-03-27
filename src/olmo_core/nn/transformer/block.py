@@ -704,15 +704,14 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
             moe_shared_out = moe_shared_out / (self.top_k + 1)
             x_moe = moe_shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
 
-        if self.training:
-            self.feed_forward_moe.update_losses_and_metrics(
-                expert_logits=expert_logits,
-                expert_scores=expert_scores,
-                expert_weights=expert_weights,
-                expert_indices=expert_indices,
-                batch_size_per_expert=batch_size_per_expert,
-                batched_batch_size_per_expert=batched_batch_size_per_expert,
-            )
+        self.feed_forward_moe.maybe_update_losses_and_metrics(
+            expert_logits=expert_logits,
+            expert_scores=expert_scores,
+            expert_weights=expert_weights,
+            expert_indices=expert_indices,
+            batch_size_per_expert=batch_size_per_expert,
+            batched_batch_size_per_expert=batched_batch_size_per_expert,
+        )
 
         return h + self.dropout(x_moe)
 
@@ -812,14 +811,13 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
             moe_shared_out = moe_shared_out / (self.top_k + 1)
             x_moe = moe_shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
 
-        if self.training:
-            self.feed_forward_moe.update_losses_and_metrics(
-                expert_logits=expert_logits,
-                expert_scores=expert_scores,
-                expert_weights=expert_weights,
-                expert_indices=expert_indices,
-                batch_size_per_expert=batch_size_per_expert,
-                batched_batch_size_per_expert=batched_batch_size_per_expert,
-            )
+        self.feed_forward_moe.maybe_update_losses_and_metrics(
+            expert_logits=expert_logits,
+            expert_scores=expert_scores,
+            expert_weights=expert_weights,
+            expert_indices=expert_indices,
+            batch_size_per_expert=batch_size_per_expert,
+            batched_batch_size_per_expert=batched_batch_size_per_expert,
+        )
 
         return h + self.dropout(self.feed_forward_moe_norm(x_moe))
