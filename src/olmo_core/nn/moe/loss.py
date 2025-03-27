@@ -3,7 +3,7 @@ from typing import Dict, Optional, Union
 
 import torch
 import torch.distributed as dist
-from torch.distributed.tensor import DTensor, Shard
+from torch.distributed.tensor import DTensor, Replicate, Shard
 
 from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import get_local_tensor
@@ -83,15 +83,21 @@ class MoELoadBalancingLoss(MoELoss):
             batched_batch_size_per_expert = batched_batch_size_per_expert.type_as(expert_scores)
             if self.sp_mesh is not None:
                 dist.all_reduce(batched_batch_size_per_expert, group=self.sp_mesh.get_group())
+                batched_batch_size_per_expert = DTensor.from_local(
+                    batched_batch_size_per_expert, self.sp_mesh, (Replicate(),)
+                )
                 # NOTE: assumes equal sequence splits across group
                 # shape: (B * S, num_experts) -> (B, S, num_experts,) -> (B, 1, num_experts)
                 expert_scores = expert_scores.view(B, -1, self.num_experts).mean(
                     dim=1, keepdim=True
                 )
                 # shape: (B, 1, num_experts) -> (B, num_experts)
-                expert_scores = get_local_tensor(
-                    DTensor.from_local(expert_scores, self.sp_mesh, (Shard(1),)).mean(dim=1)
+                expert_scores = DTensor.from_local(expert_scores, self.sp_mesh, (Shard(1),)).mean(
+                    dim=1
                 )
+                #  expert_scores = get_local_tensor(
+                #      DTensor.from_local(expert_scores, self.sp_mesh, (Shard(1),)).mean(dim=1)
+                #  )
             else:
                 # shape: (B * S, num_experts) -> (B, S, num_experts,) -> (B, num_experts)
                 expert_scores = expert_scores.view(B, -1, self.num_experts).mean(dim=1)
