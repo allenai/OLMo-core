@@ -60,14 +60,14 @@ class MoELoadImbalanceMetric(MoEMetric):
     def compute(
         self, total_bz: Union[int, float, torch.Tensor], reset: bool = True, **kwargs
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
-        del kwargs
+        del total_bz, kwargs
+
         if self.batch_size_per_expert is None:
             raise RuntimeError(
                 f"'{self.__class__.__name__}.update()' needs to be called before '.compute()'"
             )
 
-        ideal_bz_per_expert = total_bz * (self.top_k / self.num_experts)
-        load_imbalance = self.batch_size_per_expert.max() / ideal_bz_per_expert
+        load_imbalance = self.batch_size_per_expert.max() / self.batch_size_per_expert.mean()
 
         if reset:
             self.reset()
