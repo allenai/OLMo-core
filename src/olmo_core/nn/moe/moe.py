@@ -66,7 +66,7 @@ class MoEConfig(Config):
     capacity_factor: Optional[float] = None
     router: MoERouterConfig = field(default_factory=MoERouterConfig)
     shared_mlp: Optional[FeedForwardConfig] = None
-    lb_loss_weight: Optional[float] = 1.0
+    lb_loss_weight: Optional[float] = 0.01
     lb_loss_granularity: MoELoadBalancingLossGranularity = (
         MoELoadBalancingLossGranularity.local_batch
     )

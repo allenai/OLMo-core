@@ -13,8 +13,8 @@ __all__ = ["MoELoss", "MoELoadBalancingLoss", "MoERouterZLoss", "MoELoadBalancin
 
 class MoELoss(metaclass=ABCMeta):
     def __init__(self):
-        self.group: Optional[dist.ProcessGroup] = None
-        self.sp_mesh: Optional[dist.DeviceMesh] = None
+        self.group: Optional[dist.ProcessGroup] = None  # usually the data parallel group
+        self.sp_mesh: Optional[dist.DeviceMesh] = None  # the sequence parallel mesh
 
     @abstractmethod
     def update(
@@ -99,8 +99,18 @@ class MoELoadBalancingLoss(MoELoss):
         elif self.granularity == MoELoadBalancingLossGranularity.local_batch:
             # shape: (num_experts,)
             batch_size_per_expert = batch_size_per_expert.type_as(expert_scores)
-            # shape: (B * S, num_experts) -> (num_experts,)
-            expert_scores = expert_scores.mean(dim=0)
+            if self.sp_mesh is not None:
+                dist.all_reduce(batch_size_per_expert, group=self.sp_mesh.get_group())
+                # NOTE: assumes equal sequence splits across group
+                # shape: (B * S, num_experts) -> (1, num_experts)
+                expert_scores = expert_scores.mean(dim=0, keepdim=True)
+                # shape: (B, 1, num_experts) -> (B, num_experts)
+                expert_scores = get_local_tensor(
+                    DTensor.from_local(expert_scores, self.sp_mesh, (Shard(0),)).mean(dim=0)
+                )
+            else:
+                # shape: (B * S, num_experts) -> (num_experts,)
+                expert_scores = expert_scores.mean(dim=0)
             loss = torch.dot(batch_size_per_expert, expert_scores)
         else:
             raise NotImplementedError(self.granularity)
