@@ -89,8 +89,8 @@ class MoELoadBalancingLoss(MoELoss):
                     dim=1, keepdim=True
                 )
                 # shape: (B, 1, num_experts) -> (B, num_experts)
-                expert_scores = DTensor.from_local(expert_scores, self.sp_mesh, (Shard(1),)).mean(
-                    dim=1
+                expert_scores = get_local_tensor(
+                    DTensor.from_local(expert_scores, self.sp_mesh, (Shard(1),)).mean(dim=1)
                 )
             else:
                 # shape: (B * S, num_experts) -> (B, S, num_experts,) -> (B, num_experts)
