@@ -7,13 +7,13 @@ __all__ = ["cross_entropy_loss", "fused_linear_cross_entropy_loss"]
 
 
 def cross_entropy_loss(
-        logits: torch.Tensor,
-        labels: torch.Tensor,
-        *,
-        ignore_index: int = -100,
-        reduction: Literal["mean", "sum", "none"] = "mean",
-        compute_z_loss: bool = False,
-        z_loss_multiplier: float = 1e-4,
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    *,
+    ignore_index: int = -100,
+    reduction: Literal["mean", "sum", "none"] = "mean",
+    compute_z_loss: bool = False,
+    z_loss_multiplier: float = 1e-4,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     """
     Cross entropy loss that optionally computes the softmax auxiliary loss (z-loss) as well.
@@ -61,18 +61,18 @@ except ImportError:
 
 @torch._dynamo.disable()
 def fused_linear_cross_entropy_loss(
-        _input: torch.Tensor,
-        weight: torch.Tensor,
-        labels: torch.Tensor,
-        *,
-        bias: Optional[torch.Tensor] = None,
-        ignore_index: int = -100,
-        reduction: Literal["mean", "sum", "none"] = "mean",
-        compute_z_loss: bool = False,
-        z_loss_multiplier: float = 1e-4,
-        ce_weight: Optional[torch.Tensor] = None,
-        label_smoothing: float = 0.0,
-        softcap: Optional[float] = None,
+    _input: torch.Tensor,
+    weight: torch.Tensor,
+    labels: torch.Tensor,
+    *,
+    bias: Optional[torch.Tensor] = None,
+    ignore_index: int = -100,
+    reduction: Literal["mean", "sum", "none"] = "mean",
+    compute_z_loss: bool = False,
+    z_loss_multiplier: float = 1e-4,
+    ce_weight: Optional[torch.Tensor] = None,
+    label_smoothing: float = 0.0,
+    softcap: Optional[float] = None,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     """
     Cross entropy loss fused with the linear layer that computes the logits.

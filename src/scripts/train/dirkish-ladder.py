@@ -61,7 +61,7 @@ class DirkishModelLadder(ModelLadder):
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
-            fused=True
+            fused=True,
         )
 
     def get_train_module_config(
@@ -74,7 +74,9 @@ class DirkishModelLadder(ModelLadder):
         config.dp_config = TransformerDataParallelConfig(
             name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         )
-        config.scheduler = CosWithWarmupAndLinearDecay(warmup_steps=round(self.model_size / self.get_global_batch_size()))
+        config.scheduler = CosWithWarmupAndLinearDecay(
+            warmup_steps=round(self.model_size / self.get_global_batch_size())
+        )
         config.z_loss_multiplier = 1e-05
 
         return config
@@ -96,26 +98,22 @@ class DirkishModelLadder(ModelLadder):
         dp_world_size: int,
     ) -> TrainerConfig:
         config = super().get_trainer_config(
-            size=size,
-            run_duration=run_duration,
-            gpu_type=gpu_type,
-            dp_world_size=dp_world_size)
+            size=size, run_duration=run_duration, gpu_type=gpu_type, dp_world_size=dp_world_size
+        )
 
         # For training runs where we don't expect the model to acquire MC (e.g., 1B-5xC, short 7B training runs)
         tasks_small_compute = [
             # OLMES Core 9(-ish) RC
             "arc_challenge_test_rc_5shot",
             "arc_easy_test_rc_5shot",
-            "hellaswag_rc_5shot", # 1K subset of HellaSwag
-            "winogrande_val_rc_5shot", # Helpful after 750M-5xC scale
+            "hellaswag_rc_5shot",  # 1K subset of HellaSwag
+            "winogrande_val_rc_5shot",  # Helpful after 750M-5xC scale
             "csqa_val_rc_5shot",
             "piqa_val_rc_5shot",
             "socialiqa_val_rc_5shot",
-
             # Too noisy to be worth tracking
             # "boolq_val_rc_5shot",
             # "openbookqa_test_rc_5shot",
-
             # MMLU RC
             "mmlu_stem_val_rc_5shot",
             "mmlu_humanities_val_rc_5shot",
@@ -125,7 +123,6 @@ class DirkishModelLadder(ModelLadder):
             "mmlu_humanities_test_rc_5shot",
             "mmlu_social_sciences_test_rc_5shot",
             "mmlu_other_test_rc_5shot",
-
             # Gen tasks BPB
             "gsm8k_gold_bpb_5shot",
             "minerva_math_algebra_gold_bpb_0shot",
@@ -137,7 +134,6 @@ class DirkishModelLadder(ModelLadder):
             "minerva_math_precalculus_gold_bpb_0shot",
             "codex_humaneval_gold_bpb_0shot",
             "codex_mbpp_gold_bpb_0shot",
-
             # Sanity check for MCQA ability
             "copycolors_10way",
         ]
@@ -147,16 +143,14 @@ class DirkishModelLadder(ModelLadder):
             # OLMES Core 9(-ish) MC
             "arc_challenge_test_mc_5shot",
             "arc_easy_test_mc_5shot",
-            "hellaswag_rc_5shot", # 1K subset of HellaSwag
+            "hellaswag_rc_5shot",  # 1K subset of HellaSwag
             "csqa_val_mc_5shot",
             "piqa_val_mc_5shot",
             "socialiqa_val_mc_5shot",
             "winogrande_val_rc_5shot",
-
             # Too noisy to be worth tracking
             # "boolq_val_mc_5shot",
             # "openbookqa_test_mc_5shot",
-
             # MMLU MC BPB
             "mmlu_stem_val_mc_5shot",
             "mmlu_humanities_val_mc_5shot",
@@ -166,7 +160,6 @@ class DirkishModelLadder(ModelLadder):
             "mmlu_humanities_test_mc_5shot",
             "mmlu_social_sciences_test_mc_5shot",
             "mmlu_other_test_mc_5shot",
-
             # Gen tasks BPB
             "gsm8k_gold_bpb_5shot",
             "minerva_math_algebra_gold_bpb_0shot",
@@ -178,7 +171,6 @@ class DirkishModelLadder(ModelLadder):
             "minerva_math_precalculus_gold_bpb_0shot",
             "codex_humaneval_gold_bpb_0shot",
             "codex_mbpp_gold_bpb_0shot",
-
             # Sanity check for MCQA ability
             "copycolors_10way",
         ]
@@ -187,15 +179,16 @@ class DirkishModelLadder(ModelLadder):
         tasks = list(set(tasks_small_compute + tasks_large_compute))
         tasks.sort()
 
-        config.callbacks['lm_evaluator'].enabled = False
-        config.callbacks['downstream_evaluator'] = DownstreamEvaluatorCallbackConfig(
+        config.callbacks["lm_evaluator"].enabled = False
+        config.callbacks["downstream_evaluator"] = DownstreamEvaluatorCallbackConfig(
             tasks=tasks,
             tokenizer=self.tokenizer,
             eval_interval=1000,
         )
-        config.callbacks['checkpointer'].ephemeral_save_interval = 1000
+        config.callbacks["checkpointer"].ephemeral_save_interval = 1000
 
         return config
+
 
 def build_ladder(name: str, root_dir: str) -> DirkishModelLadder:
     save_folder = str(join_path(root_dir, f"checkpoints/{get_beaker_username().lower()}/ladder"))
@@ -205,7 +198,7 @@ def build_ladder(name: str, root_dir: str) -> DirkishModelLadder:
         mix_base_dir=root_dir,
         work_dir=get_work_dir(root_dir),
         save_folder=save_folder,
-        sequence_length=4096
+        sequence_length=4096,
     )
     return r
 

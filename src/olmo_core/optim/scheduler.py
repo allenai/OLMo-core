@@ -264,6 +264,7 @@ class CosWithWarmupAndLinearDecay(CosWithWarmup):
     """
     Cosine learning rate schedule with a warmup, followed by a linear decay.
     """
+
     decay_steps: Optional[int] = None
     decay_fraction: Optional[float] = 0.1
     decay_min_lr: float = 0.0
