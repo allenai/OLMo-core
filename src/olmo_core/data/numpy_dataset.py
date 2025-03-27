@@ -664,14 +664,14 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                         f"{self.sequence_length} from '{path}'"
                     )
 
-    def _read_chunk_from_array(self, path: PathOrStr, index: int) -> torch.Tensor:
-        indices_path = self._get_indices_path(path)
-        indices = load_array_slice_into_tensor(
-            indices_path, index * 2, index * 2 + 2, self.indices_dtype
-        )
-        start_idx, end_idx = indices
-        data = load_array_slice_into_tensor(path, int(start_idx), int(end_idx), self.dtype)
-        return data
+    # def _read_chunk_from_array(self, path: PathOrStr, index: int) -> torch.Tensor:
+    #     indices_path = self._get_indices_path(path)
+    #     indices = load_array_slice_into_tensor(
+    #         indices_path, index * 2, index * 2 + 2, self.indices_dtype
+    #     )
+    #     start_idx, end_idx = indices
+    #     data = load_array_slice_into_tensor(path, int(start_idx), int(end_idx), self.dtype)
+    #     return data
 
     def _get_file_size_and_length(
         self, path: PathOrStr, idx: int, dtype: Optional[NumpyUIntTypes] = None

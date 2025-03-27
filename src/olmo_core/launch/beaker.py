@@ -17,6 +17,7 @@ from beaker import (
     DatasetNotFound,
     Experiment,
     ExperimentSpec,
+    ImageNotFound,
     Job,
     Priority,
     RetrySpec,
@@ -47,6 +48,9 @@ __all__ = [
 
 BeakerPriority = Priority
 
+_DEFAULT_TORCH = "2.6.0".replace(".", "")
+_DEFAULT_TORCH_NIGHTLY = "2.7.0.dev20250202".replace(".", "")
+
 
 class OLMoCoreBeakerImage(StrEnum):
     """
@@ -57,14 +61,66 @@ class OLMoCoreBeakerImage(StrEnum):
     includes *versioned* images that are published with each release of the OLMo-core package.
     """
 
-    stable = "olmo-core-tch260cu124"
+    stable = f"olmo-core-tch{_DEFAULT_TORCH}cu124"
     """
     Built with the latest compatible stable version of PyTorch.
     """
 
-    nightly = "olmo-core-tch270dev20250202cu124"
+    stable_cu124 = f"olmo-core-tch{_DEFAULT_TORCH}cu124"
     """
-    Built with the latest compatible nightly version of PyTorch.
+    The stable image with CUDA pinned to 12.4.
+    """
+
+    stable_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126"
+    """
+    The stable image with CUDA pinned to 12.6.
+    """
+
+    stable_dev = f"olmo-core-tch{_DEFAULT_TORCH}cu124-devel"
+    """
+    Built with the latest compatible stable version of PyTorch and includes all the usual CUDA development
+    dependencies for building CUDA extensions.
+    """
+
+    stable_dev_cu124 = f"olmo-core-tch{_DEFAULT_TORCH}cu124-devel"
+    """
+    The stable development image with CUDA pinned to 12.4.
+    """
+
+    stable_dev_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126-devel"
+    """
+    The stable development image with CUDA pinned to 12.6.
+    """
+
+    nightly = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124"
+    """
+    Built with a recent compatible nightly version of PyTorch.
+    """
+
+    nightly_cu124 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124"
+    """
+    The nighlty image with CUDA pinned to 12.4.
+    """
+
+    nightly_cu126 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu126"
+    """
+    The nighlty image with CUDA pinned to 12.6.
+    """
+
+    nightly_dev = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124-devel"
+    """
+    Built with a recent compatible nightly version of PyTorch and includes all the usual CUDA development
+    dependencies for building CUDA extensions.
+    """
+
+    nightly_dev_cu124 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124-devel"
+    """
+    The nightly development image with CUDA pinned to 12.4.
+    """
+
+    nightly_dev_cu126 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu126-devel"
+    """
+    The nightly development image with CUDA pinned to 12.6.
     """
 
 
@@ -307,6 +363,21 @@ class BeakerLaunchConfig(Config):
 
         return dataset
 
+    def _resolve_beaker_image(self) -> str:
+        image = self.beaker_image
+        try:
+            return self.beaker.image.get(image).id
+        except ImageNotFound as exc:
+            # Image name was already a full name, so it probably doesn't exist.
+            if "/" in image:
+                raise
+
+            # Try pre-pending 'petew', since that's the account that we usually build the images from.
+            try:
+                return self.beaker.image.get(f"petew/{image}").id
+            except ImageNotFound:
+                raise exc
+
     def build_experiment_spec(
         self, torchrun: bool = True, entrypoint: Optional[str] = None
     ) -> ExperimentSpec:
@@ -330,8 +401,13 @@ class BeakerLaunchConfig(Config):
             "mkdir -p /root/.cache/torch/kernels && export PYTORCH_KERNEL_CACHE_PATH=/root/.cache/torch/kernels",
             "mkdir -p /olmo-core-runtime",
             "cd /olmo-core-runtime",
-            *self.setup_steps,
         ]
+        # TODO: remove once we have a base image with CUDA 12.8
+        if any(["titan" in cluster for cluster in self.clusters]):
+            entrypoint_script.append(
+                "pip install torch==2.7.0 torchaudio torchvision --index-url https://download.pytorch.org/whl/test/cu128"
+            )
+        entrypoint_script.extend(self.setup_steps)
 
         if torchrun:
             if self.num_nodes > 1 and any(["augusta" in cluster for cluster in self.clusters]):
@@ -354,17 +430,20 @@ class BeakerLaunchConfig(Config):
         task_spec = (
             TaskSpec.new(
                 self.task_name,
-                beaker_image=self.beaker.image.get(self.beaker_image).id,
+                beaker_image=self._resolve_beaker_image(),
                 priority=self.priority,
                 preemptible=self.preemptible,
                 arguments=self.cmd,
                 command=["bash", "/olmo-core/entrypoint.sh"],
                 replicas=self.num_nodes if self.num_nodes > 1 else None,
                 leader_selection=self.num_nodes > 1,
-                host_networking=self.host_networking
-                if self.host_networking is not None
-                else (
-                    self.num_nodes > 1 or any(["augusta" in cluster for cluster in self.clusters])
+                host_networking=(
+                    self.host_networking
+                    if self.host_networking is not None
+                    else (
+                        self.num_nodes > 1
+                        or any(["augusta" in cluster for cluster in self.clusters])
+                    )
                 ),
                 propagate_failure=False if self.num_nodes > 1 else None,
                 propagate_preemption=True if self.num_nodes > 1 else None,

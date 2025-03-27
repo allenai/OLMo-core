@@ -81,8 +81,11 @@ class BaselineModelLadder(ModelLadder):
         return config
 
     def get_rank_microbatch_size(self, *, size: ModelSize, gpu_type: str) -> int:
-        assert "h100" in gpu_type.lower()
-        return self.MBZ_SIZES[size]
+        if gpu_type.lower() in ("mps", "cpu"):
+            return 4096
+        else:
+            assert "h100" in gpu_type.lower()
+            return self.MBZ_SIZES[size]
 
 
 def build_ladder(root_dir: str) -> BaselineModelLadder:

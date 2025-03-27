@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Added support for auxiliary-loss-free MoE load-balancing, similar to DeepSeek-v3. You can activate this by setting `bias_gamma` to a non-zero float in your `MoERouter` config.
+- Compatibility with B200s.
+- Added support for `warmup_fraction` as an alternative to `warmup_steps` in all schedulers, allowing warmup to be specified as a fraction of total training steps.
+
+### Changed
+
+- `TransformerTrainModuleConfig` can now be used to build a `TransformerPipelineTrainModule` by adding a `pp_config` spec. This makes the `TransformerPipelineTrainModuleConfig` redundant, but it will be kept around for backwards compatibility until the next major release.
+- Several state dict methods in `TrainModule` now take an `optim` option, which can disable the use of optimizer state.
+- Updated `Float8Config` for latest version of `torchao`.
+- Undo a fix applied to `olmo_core.data.numpy_dataset.NumpyFSLDatasetMixture` that was generating a mismatch between the shape of instances in the dataset and the shape of instances in the data loader.
+
+### Fixed
+
+- Fixed calculation of total steps based on epochs at the end of a training job.
+- Fixed a bug where the trainer might try to save a duplicate final checkpoint if the run that already completed was restarted.
+- When submitting a Beaker job from a branch that's tracking a GitHub fork, OLMo-core now instructs Beaker to pull from the fork instead of from the main repo.
+- Made Beaker image resolution more robust.
+
+## [v2.0.1](https://github.com/allenai/OLMo-core/releases/tag/v2.0.1) - 2025-03-18
+
+### Added
+
+- Added information about the official 32B training run.
+- Added information about the official 32B anneal training run.
+- Added automatic support for LL128 when running on Augusta.
+- Added information about 32B training logs.
+
+### Fixed
+
+- The official config for the 32B had unrealistic batch size settings.
+- Ignore `group_overrides` for frozen parameters instead of throwing an error.
+
+### Removed
+
+- Removed the "fused" cross-entropy loss variant. It had a bug and consistently under-performed the native PyTorch version when compiled. See [Post Incident Report: bug with fused CE loss](https://docs.google.com/document/d/1IK6q2gX6mH7eQO_IItCZAYYlm4g4htL4mNWbTQuPKf4/edit?usp=sharing) for more information.
+
+## [v2.0.0](https://github.com/allenai/OLMo-core/releases/tag/v2.0.0) - 2025-03-12
+
 This major release introduces a few breaking changes. We've provided more information here: [OLMo-core v2 design and upgrade guide](https://docs.google.com/document/d/1LvANhNzA-MdtiD2pLniLTqB9wxSSuqY435WuJIADeFM/edit?usp=sharing).
 
 ### Added
@@ -16,6 +56,8 @@ This major release introduces a few breaking changes. We've provided more inform
 - Added support for context parallelism.
 - Added support for expert parallelism with MoE models.
 - Added in-loop evals for Minerva, GSM, HumanEval, MBPP (`ai2-olmo-eval==0.7.0`)
+- Added `CosWithWarmupAndLinearDecay` learning rate scheduler
+- Added `WSD` learning rate scheduler
 - Added `RunDuration` in `model_ladder` to configure training durations in terms of Chinchilla multipliers.
 
 ### Changed
@@ -28,6 +70,10 @@ This major release introduces a few breaking changes. We've provided more inform
 - Removed the following callbacks: `MoEHandlerCallback`, `SchedulerCallback`, `MatrixNormalizerCallback`, `GradClipperCallback`, and `Float8HandlerCallback`.
   The functionality from all of those callbacks has been moved to the `TransformerTrainModule` class.
 - Removed the callback methods `.pre_eval_batch()` and `.post_eval_batch()`.
+
+### Fixed
+
+- Fixed the model ladder code when training on mps or cpu device
 
 ## [v1.9.0](https://github.com/allenai/OLMo-core/releases/tag/v1.9.0) - 2025-03-10
 

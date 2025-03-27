@@ -2,6 +2,7 @@
 ARG CUDA_VERSION="12.4"
 ARG TORCH_CUDA_VERSION="124"
 ARG TORCH_VERSION="2.6.0
+ARG BASE=runtime
 
 #########################################################################
 # Build image
@@ -46,7 +47,7 @@ RUN echo "Built wheels:" && ls -lh .
 # Stable image
 #########################################################################
 
-FROM pytorch/pytorch:${TORCH_VERSION}-cuda${CUDA_VERSION}-cudnn9-runtime as stable
+FROM pytorch/pytorch:${TORCH_VERSION}-cuda${CUDA_VERSION}-cudnn9-${BASE} as stable
 
 # Install system dependencies.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -74,7 +75,7 @@ RUN pip install --upgrade --no-cache-dir pip wheel packaging
 
 # Install torchao.
 ARG TORCH_CUDA_VERSION
-ARG TORCHAO_VERSION="0.8.0"
+ARG TORCHAO_VERSION="0.9.0"
 RUN pip install --no-cache-dir \
     --extra-index-url https://download.pytorch.org/whl/cu${TORCH_CUDA_VERSION} \
     torchao==${TORCHAO_VERSION}

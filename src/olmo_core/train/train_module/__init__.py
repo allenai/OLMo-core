@@ -11,14 +11,12 @@ from .transformer import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerExpertParallelConfig,
-    TransformerTensorParallelConfig,
-    TransformerTrainModule,
-    TransformerTrainModuleConfig,
-)
-from .transformer_pipeline import (
     TransformerPipelineParallelConfig,
     TransformerPipelineTrainModule,
     TransformerPipelineTrainModuleConfig,
+    TransformerTensorParallelConfig,
+    TransformerTrainModule,
+    TransformerTrainModuleConfig,
 )
 
 __all__ = [

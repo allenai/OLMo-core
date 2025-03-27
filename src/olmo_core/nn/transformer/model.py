@@ -24,6 +24,7 @@ from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.float8 import Float8Config
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 
 from ..attention import (
@@ -39,7 +40,6 @@ from ..moe import MoEBase
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
 from ..utils import selective_checkpointing_context_fn
 from .block import (
-    MoEParallelTransformerBlockBase,
     MoETransformerBlock,
     NormalizedTransformerBlock,
     TransformerBlock,
@@ -124,11 +124,14 @@ class Transformer(nn.Module):
         self.init_seed = init_seed
 
         self._cache = cache
+        self._fp8_enabled = False
+        self._precompute_float8_dynamic_scale_for_fsdp = False
         self._compile_enabled = False
         self._device: Optional[torch.device] = None
         self._cp_load_balancer: Optional[RingAttentionLoadBalancer] = None
         self._tp_enabled = False
         self._tp_mesh: Optional[DeviceMesh] = None
+        self._fsdp_enabled = False
 
         # Cache the value of these properties up-front in case the parameters are removed
         # later, like for pipeline parallelism.
@@ -159,8 +162,16 @@ class Transformer(nn.Module):
         pass
 
     @property
+    def fp8_enabled(self) -> bool:
+        return self._fp8_enabled
+
+    @property
     def tp_enabled(self) -> bool:
         return self._tp_enabled
+
+    @property
+    def fsdp_enabled(self) -> bool:
+        return self._fsdp_enabled
 
     @property
     def is_moe(self) -> bool:
@@ -253,7 +264,9 @@ class Transformer(nn.Module):
                     num_blocks=self.n_layers,
                     generator=generator,
                 )
-            else:
+
+            # MoE weights.
+            if hasattr(block, "feed_forward_moe"):
                 block = cast(MoETransformerBlock, block)
                 if max_local_microbatch_size is not None:
                     block.feed_forward_moe.warmup_cache(max_local_microbatch_size)
@@ -442,30 +455,61 @@ class Transformer(nn.Module):
         else:
             return h
 
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
+    def apply_fp8(self, float8_config: Float8Config):
+        """
+        Use an FP8 recipe on most linear layers.
+        """
+        if not float8_config.enabled:
+            return
+
+        modules_to_ignore = set()
+        if self.lm_head is not None:
+            modules_to_ignore.add("lm_head.w_out")
+
+        float8_config.apply_float8_linear(self, modules_to_ignore=modules_to_ignore)
+
+        self._fp8_enabled = True
+        self._precompute_float8_dynamic_scale_for_fsdp = (
+            float8_config.should_precompute_float8_dynamic_scale_for_fsdp
+        )
+
+    def apply_pp(self, pp_mesh: DeviceMesh):
+        """
+        Prepare the model for pipeline parallelism after it's been split into stages.
+        """
+        for block in self.blocks.values():
+            block = cast(TransformerBlockBase, block)
+            block.apply_pp(pp_mesh)
+
+    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: Optional[bool] = None):
         """
         Apply tensor parallelism to the model.
 
         :param loss_parallel: Set to ``True`` if parallelizing the loss function as well.
         :param float8_enabled: Set this to ``True`` if training with float8 linear layers.
         """
+        if float8_enabled is None:
+            float8_enabled = self.fp8_enabled
+        elif not float8_enabled and self.fp8_enabled:
+            raise OLMoConfigurationError(
+                "Got 'float8_enabled=False', but FP8 has already been enabled"
+            )
+
         if self.embeddings is not None:
             parallelize_module(
                 self.embeddings,
                 device_mesh=tp_mesh,
                 parallelize_plan=RowwiseParallel(
                     input_layouts=Replicate(),
+                    output_layouts=Shard(1),
                     use_local_output=False,
                 ),
             )
 
         # Apply tensor/sequence parallelism to every transformer block.
-        # NOTE: At the cost of model code change, we can accelerate Sequence Parallel
-        #       by folding (and unfolding) the batch dimension and the sequence dimension.
-        #       Examples can be found at https://github.com/pytorch/torchtitan/pull/437
         for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)
-            block.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+            block.apply_tp(tp_mesh, input_layout=Shard(1), float8_enabled=float8_enabled)
 
         if self.lm_head is not None:
             self.lm_head.apply_tp(tp_mesh, input_layouts=(Shard(1), Replicate()))
@@ -655,6 +699,8 @@ class Transformer(nn.Module):
                 elif isinstance(self.lm_head, FSDPModule):
                     block.set_modules_to_forward_prefetch([self.lm_head])
 
+        self._fsdp_enabled = True
+
     def apply_ddp(
         self,
         dp_mesh: Optional[DeviceMesh] = None,
@@ -714,6 +760,21 @@ class Transformer(nn.Module):
         flop_per_token = 6 * self.num_non_embedding_params + 12 * n * h * q * t
 
         return flop_per_token
+
+    def post_batch(self, dry_run: bool = False):
+        """
+        Should be called right after the final backward of a complete batch but before the optimizer step.
+        """
+        del dry_run
+
+    def post_optim_step(self):
+        """
+        Should be called right after an optimizer step.
+        """
+        if self.fp8_enabled and self._precompute_float8_dynamic_scale_for_fsdp:
+            from torchao.float8 import precompute_float8_dynamic_scale_for_fsdp
+
+            precompute_float8_dynamic_scale_for_fsdp(self)
 
 
 @beta_feature
@@ -787,7 +848,7 @@ class NormalizedTransformer(Transformer):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        float8_enabled: bool = False,
+        float8_enabled: Optional[bool] = None,
     ):
         del tp_mesh, float8_enabled
 
@@ -798,6 +859,10 @@ class NormalizedTransformer(Transformer):
     def apply_compile(self):
         super().apply_compile()
         self.normalize_matrices = torch.compile(self.normalize_matrices)
+
+    def post_optim_step(self):
+        super().post_optim_step()
+        self.normalize_matrices()
 
 
 @beta_feature
@@ -861,20 +926,6 @@ class MoETransformer(Transformer):
         for block in self.blocks.values():
             block = cast(MoETransformerBlock, block)
             block.apply_ep(ep_mesh, **kwargs)
-        #  self._add_secondary_stream_to_blocks()
-
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
-        super().apply_tp(tp_mesh, float8_enabled=float8_enabled)
-        #  self._add_secondary_stream_to_blocks()
-
-    def _add_secondary_stream_to_blocks(self):
-        secondary_cuda_stream: Optional[torch.cuda.Stream] = None
-        for block in self.blocks.values():
-            if isinstance(block, MoEParallelTransformerBlockBase):
-                if torch.cuda.is_available() and secondary_cuda_stream is None:
-                    log.info("Creating secondary CUDA stream for MoE parallel block")
-                    secondary_cuda_stream = torch.cuda.Stream()
-                block.secondary_stream = secondary_cuda_stream  # type: ignore
 
     def prepare_experts_for_fsdp(
         self,
@@ -897,6 +948,11 @@ class MoETransformer(Transformer):
             cast(MoETransformerBlock, block).feed_forward_moe.prepare_experts_for_ddp(
                 world_mesh=world_mesh,
             )
+
+    def post_batch(self, dry_run: bool = False):
+        for block in self.blocks.values():
+            block = cast(MoETransformerBlock, block)
+            block.feed_forward_moe.post_batch(dry_run=dry_run)
 
 
 def _hide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
