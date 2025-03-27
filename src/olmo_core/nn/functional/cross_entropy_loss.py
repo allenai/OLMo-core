@@ -6,7 +6,7 @@ import torch.nn.functional as F
 __all__ = ["cross_entropy_loss", "fused_linear_cross_entropy_loss"]
 
 
-def new_cross_entropy_loss(
+def cross_entropy_loss(
     logits: torch.Tensor,
     labels: torch.Tensor,
     *,
