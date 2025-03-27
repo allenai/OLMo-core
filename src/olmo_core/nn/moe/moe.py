@@ -14,11 +14,17 @@ from torch.distributed.tensor.parallel import (
 )
 
 from olmo_core.config import Config, DType, StrEnum
+from olmo_core.distributed.parallel import get_dp_process_group
 from olmo_core.exceptions import OLMoConfigurationError
 
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig
-from .loss import MoELoadBalancingLoss, MoELoss, MoERouterZLoss
+from .loss import (
+    MoELoadBalancingLoss,
+    MoELoadBalancingLossGranularity,
+    MoELoss,
+    MoERouterZLoss,
+)
 from .metric import MoELoadImbalanceMetric, MoEMetric
 from .mlp import DroplessMoEMLP, MoEMLP
 from .parallel_mlp import ParallelDroplessMLP, ParallelMLP, ParallelMLPBase
@@ -61,10 +67,9 @@ class MoEConfig(Config):
     router: MoERouterConfig = field(default_factory=MoERouterConfig)
     shared_mlp: Optional[FeedForwardConfig] = None
     lb_loss_weight: Optional[float] = 1.0
-    instance_level_lb_loss: bool = False
-    min_lb_loss_weight: Optional[float] = None
-    max_lb_loss_weight: Optional[float] = None
-    target_load_imbalance: Optional[float] = None
+    lb_loss_granularity: MoELoadBalancingLossGranularity = (
+        MoELoadBalancingLossGranularity.local_batch
+    )
     z_loss_weight: Optional[float] = None
     dtype: DType = DType.float32
 
@@ -127,10 +132,7 @@ class MoEBase(nn.Module):
         shared_mlp: Optional[FeedForwardConfig] = None,
         init_device: str = "cpu",
         lb_loss_weight: Optional[float] = None,
-        instance_level_lb_loss: bool = False,
-        min_lb_loss_weight: Optional[float] = None,
-        max_lb_loss_weight: Optional[float] = None,
-        target_load_imbalance: Optional[float] = None,
+        lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
         z_loss_weight: Optional[float] = None,
         dtype: torch.dtype = torch.float32,
         cache: Optional[BufferCache] = None,
@@ -162,10 +164,7 @@ class MoEBase(nn.Module):
                     loss_weight=lb_loss_weight,
                     num_experts=num_experts,
                     top_k=self.router.top_k,
-                    min_loss_weight=min_lb_loss_weight,
-                    max_loss_weight=max_lb_loss_weight,
-                    target_load_imbalance=target_load_imbalance,
-                    instance_level=instance_level_lb_loss,
+                    granularity=lb_loss_granularity,
                 )
             )
         if z_loss_weight is not None:
@@ -252,8 +251,8 @@ class MoEBase(nn.Module):
         Should be called right after the final backward of a complete batch but before the optimizer step.
         """
         self.router.post_batch(dry_run=dry_run)
-        for loss in self.losses:
-            loss.post_batch(dry_run=dry_run, training=self.training)
+        #  for loss in self.losses:
+        #      loss.post_batch(dry_run=dry_run, training=self.training)
 
     @abstractmethod
     def _init_parallel_mlp(
@@ -308,10 +307,11 @@ class MoEBase(nn.Module):
 
         return out
 
-    def apply_pp(self, pp_mesh: DeviceMesh):
-        self.router.pp_group = pp_mesh.get_group()
+    def apply_dp(self, dp_mesh: Optional[DeviceMesh] = None):
+        group = None if dp_mesh is None else get_dp_process_group(dp_mesh)
+        self.router.group = group
         for loss in self.losses:
-            loss.pp_group = pp_mesh.get_group()
+            loss.group = group
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         """
@@ -331,6 +331,10 @@ class MoEBase(nn.Module):
         Should be called before wrapping this module with DDP2.
         """
         self.experts.prepare_experts_for_ddp(**kwargs)
+
+    def apply_cp(self, cp_mesh: DeviceMesh):
+        for loss in self.losses:
+            loss.sp_mesh = cp_mesh
 
     def apply_tp(
         self,
@@ -377,6 +381,9 @@ class MoEBase(nn.Module):
             ),
         )
 
+        for loss in self.losses:
+            loss.sp_mesh = tp_mesh
+
 
 class MoE(MoEBase):
     """
@@ -394,21 +401,13 @@ class MoE(MoEBase):
         capacity_factor: float = 1.2,
         init_device: str = "cpu",
         lb_loss_weight: Optional[float] = None,
-        instance_level_lb_loss: bool = False,
+        lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
         min_lb_loss_weight: Optional[float] = None,
         max_lb_loss_weight: Optional[float] = None,
-        target_load_imbalance: Optional[float] = None,
         z_loss_weight: Optional[float] = None,
         dtype: torch.dtype = torch.float32,
         cache: Optional[BufferCache] = None,
     ):
-        if (
-            min_lb_loss_weight is not None
-            and max_lb_loss_weight is not None
-            and target_load_imbalance is None
-        ):
-            target_load_imbalance = capacity_factor
-
         super().__init__(
             d_model=d_model,
             num_experts=num_experts,
@@ -417,10 +416,9 @@ class MoE(MoEBase):
             shared_mlp=shared_mlp,
             init_device=init_device,
             lb_loss_weight=lb_loss_weight,
-            instance_level_lb_loss=instance_level_lb_loss,
+            lb_loss_granularity=lb_loss_granularity,
             min_lb_loss_weight=min_lb_loss_weight,
             max_lb_loss_weight=max_lb_loss_weight,
-            target_load_imbalance=target_load_imbalance,
             z_loss_weight=z_loss_weight,
             dtype=dtype,
             capacity_factor=capacity_factor,

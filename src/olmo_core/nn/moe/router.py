@@ -173,7 +173,7 @@ class MoERouter(nn.Module):
         self.bias_gamma = bias_gamma
         self.gating_function = gating_function
         self._cache: Optional[BufferCache] = None
-        self.pp_group: Optional[dist.ProcessGroup] = None
+        self.group: Optional[dist.ProcessGroup] = None
         if self.bias_gamma is not None:
             assert self.bias_gamma > 0
             self.register_buffer("score_bias", torch.zeros(self.num_experts, device=init_device))
@@ -222,7 +222,7 @@ class MoERouter(nn.Module):
 
         # Maybe reduce across the process group.
         if is_distributed():
-            dist.all_reduce(batch_size_per_expert, group=self.pp_group)
+            dist.all_reduce(batch_size_per_expert, group=self.group)
 
         ideal_batch_size_per_expert = batch_size_per_expert.mean(
             dim=0, keepdim=True, dtype=torch.float32

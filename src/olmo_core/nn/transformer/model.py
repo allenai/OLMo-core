@@ -665,10 +665,11 @@ class Transformer(nn.Module):
         for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)
             block.apply_fsdp(
+                dp_mesh=dp_mesh,
                 prefetch_factor=prefetch_factor,
                 wrapping_strategy=wrapping_strategy,
                 reshard_after_forward=reshard_after_forward,
-                **fsdp_config,
+                mp_policy=mp_policy,
             )
 
         if self.embeddings is not None:
