@@ -18,12 +18,12 @@ from olmo_core.train.train_module import (
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    return TransformerConfig.smallmoe(vocab_size=common.tokenizer.padded_vocab_size())
+    return TransformerConfig.small_hybrid_moe(vocab_size=common.tokenizer.padded_vocab_size())
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     return TransformerTrainModuleConfig(
-        rank_microbatch_size=2 * 4096,
+        rank_microbatch_size=8 * 4096,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=AdamWConfig(
             lr=4e-4,
@@ -92,4 +92,5 @@ if __name__ == "__main__":
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
+        include_default_evals=False,
     )

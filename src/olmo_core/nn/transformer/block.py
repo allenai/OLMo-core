@@ -6,10 +6,11 @@ import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, fully_shard
-from torch.distributed.tensor import Shard
+from torch.distributed.tensor import Placement, Shard
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
+from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
 
 from ..attention import AttentionConfig, RingAttentionLoadBalancerType
@@ -39,8 +40,13 @@ class TransformerBlockBase(nn.Module):
         """
         raise NotImplementedError
 
+    def apply_pp(self, pp_mesh: DeviceMesh):
+        del pp_mesh
+
     @abstractmethod
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
+    def apply_tp(
+        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+    ):
         raise NotImplementedError
 
     @abstractmethod
@@ -98,11 +104,14 @@ class TransformerBlock(TransformerBlockBase):
         h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
         return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
+    def apply_tp(
+        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+    ):
         parallelize_module(
             self,
             device_mesh=tp_mesh,
             parallelize_plan=PrepareModuleInput(
+                input_layouts=(input_layout,),
                 desired_input_layouts=(Shard(1),),
             ),
         )
@@ -238,8 +247,10 @@ class NormalizedTransformerBlock(TransformerBlockBase):
             )
         )
 
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
-        del tp_mesh, float8_enabled
+    def apply_tp(
+        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+    ):
+        del tp_mesh, input_layout, float8_enabled
 
         raise NotImplementedError(
             "TP is not implemented yet for the normalized transformer block variant"
@@ -364,15 +375,21 @@ class MoETransformerBlock(TransformerBlockBase):
         h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
         return h + self.dropout(self.feed_forward_moe(self.feed_forward_norm(h)))
 
+    def apply_pp(self, pp_mesh: DeviceMesh):
+        self.feed_forward_moe.apply_pp(pp_mesh)
+
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         self.feed_forward_moe.apply_ep(ep_mesh, **kwargs)
         self._ep_enabled = True
 
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
+    def apply_tp(
+        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+    ):
         parallelize_module(
             self,
             device_mesh=tp_mesh,
             parallelize_plan=PrepareModuleInput(
+                input_layouts=(input_layout,),
                 desired_input_layouts=(Shard(1),),
             ),
         )
@@ -453,9 +470,80 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
 
 
 @beta_feature
-class MoEParallelTransformerBlockBase(MoETransformerBlock):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+class MoEHybridTransformerBlockBase(MoETransformerBlock):
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        layer_norm: LayerNormConfig,
+        feed_forward: FeedForwardConfig,
+        init_device: str = "cpu",
+        **kwargs,
+    ):
+        super().__init__(d_model=d_model, layer_norm=layer_norm, init_device=init_device, **kwargs)
+        self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
+        self.feed_forward_moe_norm = layer_norm.build(d_model, init_device=init_device)
+        self._use_combined_forward: Optional[bool] = None
+
+    @property
+    def use_combined_forward(self) -> bool:
+        if self._use_combined_forward is not None:
+            return self._use_combined_forward
+        elif not self.ep_enabled and not self.tp_enabled:
+            return False
+        else:
+            return True
+
+    @use_combined_forward.setter
+    def use_combined_forward(self, should_use: bool):
+        if should_use and not (self.tp_enabled or self.ep_enabled):
+            raise RuntimeError(
+                "combined forward can only be used when expert parallelism is enabled"
+            )
+        self._use_combined_forward = should_use
+
+    @abstractmethod
+    def dense_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        raise NotImplementedError
+
+    @abstractmethod
+    def sparse_forward(self, x: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError
+
+    @abstractmethod
+    def combined_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        raise NotImplementedError
+
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        if not self.use_combined_forward:
+            return self.sparse_forward(x) + self.dense_forward(x, **kwargs)
+        else:
+            # NOTE: alternatively could do something like this, but even with an extra stream it's
+            # not as fast as the hand-crafted 'combined_forward()'.
+            # stream = get_or_init_stream()
+            # stream.wait_stream(torch.cuda.default_stream())
+            # h_sparse = self._fwd_sparse(x)
+            # with torch.cuda.stream(stream):
+            #     h_dense = self._fwd_dense(x, **kwargs)
+            # torch.cuda.default_stream().wait_stream(stream)
+            # return h_sparse + h_dense
+            return self.combined_forward(x, **kwargs)
+
+    def apply_tp(
+        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+    ):
+        super().apply_tp(tp_mesh, input_layout=input_layout, float8_enabled=float8_enabled)
+
+        self.feed_forward.apply_tp(
+            tp_mesh,
+            output_layout=Shard(1),
+            use_local_output=False,
+            float8_enabled=float8_enabled,
+        )
+
+        parallelize_module(
+            self.feed_forward_moe_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+        )
 
     def apply_fsdp(
         self,
@@ -464,38 +552,73 @@ class MoEParallelTransformerBlockBase(MoETransformerBlock):
         **fsdp_kwargs,
     ):
         if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
-            fsdp_att = cast(FSDPModule, fully_shard(self.attention, **fsdp_kwargs))
-            fsdp_shared_mlp = (
-                None
-                if self.feed_forward_moe.shared_mlp is None
-                else cast(FSDPModule, fully_shard(self.feed_forward_moe.shared_mlp, **fsdp_kwargs))
-            )
-            fsdp_root = cast(FSDPModule, fully_shard(self, **fsdp_kwargs))
-            if prefetch_factor > 0:
-                if fsdp_shared_mlp is not None:
-                    fsdp_root.set_modules_to_forward_prefetch([fsdp_shared_mlp])
-                    fsdp_shared_mlp.set_modules_to_forward_prefetch([fsdp_att])
-                else:
-                    fsdp_root.set_modules_to_forward_prefetch([fsdp_att])
+            if not self.use_combined_forward:
+                fsdp_att = cast(FSDPModule, fully_shard(self.attention, **fsdp_kwargs))
+                fsdp_mlp = cast(FSDPModule, fully_shard(self.feed_forward, **fsdp_kwargs))
+                fsdp_moe = cast(FSDPModule, fully_shard(self.feed_forward_moe, **fsdp_kwargs))
+                fsdp_root = cast(FSDPModule, fully_shard(self, **fsdp_kwargs))
+                if prefetch_factor > 0:
+                    fsdp_root.set_modules_to_forward_prefetch([fsdp_moe, fsdp_att])
+                    fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp])
+            else:
+                fsdp_att = cast(FSDPModule, fully_shard(self.attention, **fsdp_kwargs))
+                fsdp_mlp = cast(FSDPModule, fully_shard(self.feed_forward, **fsdp_kwargs))
+                fsdp_moe = cast(
+                    FSDPModule, fully_shard(self.feed_forward_moe.experts.mlp, **fsdp_kwargs)
+                )
+                fsdp_shared_mlp = (
+                    None
+                    if self.feed_forward_moe.shared_mlp is None
+                    else cast(
+                        FSDPModule, fully_shard(self.feed_forward_moe.shared_mlp, **fsdp_kwargs)
+                    )
+                )
+                fsdp_root = cast(FSDPModule, fully_shard(self, **fsdp_kwargs))
+
+                if prefetch_factor > 0:
+                    fsdp_root.set_modules_to_forward_prefetch([fsdp_att, fsdp_moe])
+                    if fsdp_shared_mlp is not None:
+                        fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp, fsdp_shared_mlp])
+                    else:
+                        fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp])
         else:
             fully_shard(self, **fsdp_kwargs)
 
-    def parallel_forward(
-        self, x_moe: torch.Tensor, x_att: torch.Tensor, **kwargs
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+
+@beta_feature
+class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
+    def dense_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
+        return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
+
+    def sparse_forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.dropout(self.feed_forward_moe(self.feed_forward_moe_norm(x)))
+
+    def combined_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         # NOTE: this follows the same code path as the MoE's forward pass, except that we run
-        # the shared MLP and attention while we wait on expert parallel all-to-all comms.
+        # dense operations while we wait on expert parallel all-to-all comms.
+        B, _, D = x.shape
 
-        expert_logits, expert_scores, expert_weights, expert_indices = self.router(x_moe)
+        x_moe = get_local_tensor(self.feed_forward_moe_norm(x))
 
+        (
+            expert_logits,
+            expert_scores,
+            expert_weights,
+            expert_indices,
+            batch_size_per_expert,
+        ) = self.router(x_moe)
+
+        # shape: (batch_size * seq_len, d_model)
+        x_moe = x_moe.view(-1, D)
         # shape: (batch_size * top_k,)
         expert_weights = expert_weights.flatten()
         # shape: (batch_size * top_k,)
         expert_indices = expert_indices.flatten()
 
         with torch.no_grad():
-            indices, bin_ids, bins, batch_size_per_expert = self.experts.indices_and_bins(
-                expert_indices
+            indices, bin_ids, bins = self.experts.indices_and_bins(
+                expert_indices, batch_size_per_expert
             )
 
         (
@@ -507,21 +630,25 @@ class MoEParallelTransformerBlockBase(MoETransformerBlock):
             recv_counts,
             send_counts,
             expert_capacity,
-            parallel_x_handle,
+            handle,
         ) = self.experts.permute_and_all_to_all(
-            x_moe.view(-1, x_moe.shape[-1]),
+            x_moe,
             indices=indices,
             bin_ids=bin_ids,
             bins=bins,
             batch_size_per_expert=batch_size_per_expert,
         )
 
-        # Compute shared out while first all-to-all is in progress.
-        shared_out: Optional[torch.Tensor] = None
-        if self.shared_mlp is not None:
-            shared_out = self.shared_mlp(x_moe)
+        # Compute attention while all-to-all is in progress.
+        h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
 
-        parallel_x_handle.wait()
+        # Maybe compute MoE shared out while all-to-all is in progress.
+        moe_shared_out: Optional[torch.Tensor] = None
+        if self.shared_mlp is not None:
+            # NOTE: -1 on seq dim in case of TP
+            moe_shared_out = self.shared_mlp(x_moe.view(B, -1, D))
+
+        handle.wait()
         parallel_x = self.experts.compute_local_experts(
             parallel_x,
             parallel_indices=parallel_indices,
@@ -531,14 +658,14 @@ class MoEParallelTransformerBlockBase(MoETransformerBlock):
             expert_capacity=expert_capacity,
         )
 
-        x_moe, x_handle = self.experts.reverse_all_to_all(
+        x_moe, handle = self.experts.reverse_all_to_all(
             parallel_x, send_counts=send_counts, recv_counts=recv_counts
         )
 
-        # Compute attention while second all-to-all is in progress.
-        x_att = self.attention(x_att, **kwargs)
+        # Compute feed-forward while all-to-all is in progress.
+        h = h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
-        x_handle.wait()
+        handle.wait()
         x_moe = self.experts.unpermute(
             x_moe,
             expert_weights=expert_weights,
@@ -546,11 +673,11 @@ class MoEParallelTransformerBlockBase(MoETransformerBlock):
             indices=indices,
             bin_ids=bin_ids,
             bins=bins,
-        )
+        ).view(B, -1, D)
 
-        if shared_out is not None:
-            shared_out = shared_out / (self.top_k + 1)
-            x_moe = shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
+        if moe_shared_out is not None:
+            moe_shared_out = moe_shared_out / (self.top_k + 1)
+            x_moe = moe_shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
 
         if self.training:
             self.feed_forward_moe.update_losses_and_metrics(
@@ -561,48 +688,110 @@ class MoEParallelTransformerBlockBase(MoETransformerBlock):
                 batch_size_per_expert=batch_size_per_expert,
             )
 
-        return x_moe.view(x_att.shape), x_att
+        return h + self.dropout(x_moe)
 
 
 @beta_feature
-class MoEParallelTransformerBlock(MoEParallelTransformerBlockBase):
-    """
-    Like :class:`MoETransformerBlock` except that the attention and MLP are done in parallel
-    like PaLM instead of in sequence.
-    """
+class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
+    def dense_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+        return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
-    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        if not self.ep_enabled and not self.tp_enabled:
-            return (
-                x
-                + self.dropout(self.feed_forward_moe(self.feed_forward_norm(x)))
-                + self.dropout(self.attention(self.attention_norm(x), **kwargs))
+    def sparse_forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.dropout(self.feed_forward_moe_norm(self.feed_forward_moe(x)))
+
+    def combined_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        # NOTE: this follows the same code path as the MoE's forward pass, except that we run
+        # dense operations while we wait on expert parallel all-to-all comms.
+        B, _, D = x.shape
+
+        x_moe = get_local_tensor(x)
+
+        (
+            expert_logits,
+            expert_scores,
+            expert_weights,
+            expert_indices,
+            batch_size_per_expert,
+        ) = self.router(x_moe)
+
+        # shape: (batch_size * seq_len, d_model)
+        x_moe = x_moe.view(-1, D)
+        # shape: (batch_size * seq_len * top_k,)
+        expert_weights = get_local_tensor(expert_weights).flatten()
+        # shape: (batch_size * seq_len * top_k,)
+        expert_indices = get_local_tensor(expert_indices).flatten()
+
+        with torch.no_grad():
+            indices, bin_ids, bins = self.experts.indices_and_bins(
+                expert_indices, batch_size_per_expert
             )
 
-        x_moe = self.feed_forward_norm(x)
-        x_att = self.attention_norm(x)
-        x_moe, x_att = self.parallel_forward(x_moe, x_att, **kwargs)
-        return x + self.dropout(x_moe) + self.dropout(x_att)
-
-
-@beta_feature
-class MoEParallelReorderedNormTransformerBlock(MoEParallelTransformerBlockBase):
-    """
-    Like :class:`MoEReorderedNormTransformerBlock` except that the attention and MLP are done in parallel
-    like PaLM instead of in sequence.
-    """
-
-    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        if not self.ep_enabled and not self.tp_enabled:
-            return (
-                x
-                + self.dropout(self.feed_forward_norm(self.feed_forward_moe(x)))
-                + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-            )
-
-        x_moe, x_att = self.parallel_forward(x, x, **kwargs)
-        return (
-            x
-            + self.dropout(self.feed_forward_norm(x_moe))
-            + self.dropout(self.attention_norm(x_att))
+        (
+            parallel_x,
+            parallel_indices,
+            parallel_bin_ids,
+            parallel_bins,
+            parallel_batch_size_per_expert,
+            recv_counts,
+            send_counts,
+            expert_capacity,
+            handle,
+        ) = self.experts.permute_and_all_to_all(
+            x_moe,
+            indices=indices,
+            bin_ids=bin_ids,
+            bins=bins,
+            batch_size_per_expert=batch_size_per_expert,
         )
+
+        # Compute attention while all-to-all is in progress.
+        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+
+        # Maybe compute MoE shared out while all-to-all is in progress.
+        moe_shared_out: Optional[torch.Tensor] = None
+        if self.shared_mlp is not None:
+            # NOTE: -1 on seq dim in case of TP
+            moe_shared_out = self.shared_mlp(x_moe.view(B, -1, D))
+
+        handle.wait()
+        parallel_x = self.experts.compute_local_experts(
+            parallel_x,
+            parallel_indices=parallel_indices,
+            parallel_bin_ids=parallel_bin_ids,
+            parallel_bins=parallel_bins,
+            parallel_batch_size_per_expert=parallel_batch_size_per_expert,
+            expert_capacity=expert_capacity,
+        )
+
+        x_moe, handle = self.experts.reverse_all_to_all(
+            parallel_x, send_counts=send_counts, recv_counts=recv_counts
+        )
+
+        # Compute feed-forward while all-to-all is in progress.
+        h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+
+        handle.wait()
+        x_moe = self.experts.unpermute(
+            x_moe,
+            expert_weights=expert_weights,
+            expert_indices=expert_indices,
+            indices=indices,
+            bin_ids=bin_ids,
+            bins=bins,
+        ).view(B, -1, D)
+
+        if moe_shared_out is not None:
+            moe_shared_out = moe_shared_out / (self.top_k + 1)
+            x_moe = moe_shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
+
+        if self.training:
+            self.feed_forward_moe.update_losses_and_metrics(
+                expert_logits=expert_logits,
+                expert_scores=expert_scores,
+                expert_weights=expert_weights,
+                expert_indices=expert_indices,
+                batch_size_per_expert=batch_size_per_expert,
+            )
+
+        return h + self.dropout(self.feed_forward_moe_norm(x_moe))

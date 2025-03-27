@@ -102,7 +102,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            num_replicas=128 // 32,  # NOTE: tune this
+            num_replicas=get_world_size() // 64,  # NOTE: tune this
         ),
         ac_config=TransformerActivationCheckpointingConfig(
             TransformerActivationCheckpointingMode.full
@@ -116,7 +116,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         train_module_config.rank_microbatch_size //= 2
         train_module_config.ac_config = TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=[f"blocks.{i}.feed_forward" for i in range(64)],
+            modules=["blocks.*.feed_forward"],
         )
 
     trainer_config = (

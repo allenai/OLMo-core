@@ -14,7 +14,7 @@
   </a>
   <a href="https://github.com/allenai/OLMo-core/releases/tag/v1.9.0">
     <img alt="Pypi" src="https://img.shields.io/pypi/v/ai2-olmo-core.svg">
-  </a>  
+  </a>
   <a href="https://github.com/allenai/OLMo-core/blob/main/LICENSE">
     <img alt="GitHub License" src="https://img.shields.io/github/license/allenai/OLMo">
   </a>
@@ -73,6 +73,11 @@ You can override most configuration options from the command-line. For example, 
 ```bash
 torchrun --nproc-per-node=8 ./src/scripts/train/OLMo-2-0325-32B-train.py run01 --train_module.optim.lr=6e-3
 ```
+To continue annealing from a checkpoint, we use a separate script which can be launched like this:
+
+```bash
+torchrun --nproc-per-node=8 ./src/scripts/train/OLMo-2-0325-32B-anneal.py anneal_run01 https://olmo-checkpoints.org/ai2-llm/peteish32/step721901/
+```
 
 ## OLMo-2 Model Training
 
@@ -82,17 +87,17 @@ In the second stage, we train on a smaller amount of high-quality, targeted data
 
 | Stage | Model Size | Training | Checkpoint | Monitoring |
 |------------|----------|------------|------------|------------|
-| stage 1 | **32B** | 6T tokens | [stage1-step721901-tokens6056B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage1-step721901-tokens6056B) | coming soon |
-| stage 2 | **32B** | random seed 1110, 100B tokens | upload in progress | coming soon |
-| |  | random seed 2662, 100B tokens | upload in progress | coming soon |
-|  |  | random seed 2662, 300B tokens | upload in progress | coming soon |
+| stage 1 | **32B** | 6T tokens | [stage1-step721901-tokens6056B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage1-step721901-tokens6056B) | [comet.ml/OLMo2-32B](https://www.comet.com/ai2/olmo-2-0325-32b/reports/olmo-2-0325-32b?shareable=WhT37Wy7jqttDoy6ysDBumQzf) |
+| stage 2 | **32B** | random seed 1110, 100B tokens | [stage2-ingredient1-step11921-tokens101B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage2-ingredient1-step11921-tokens101B) | [comet.ml/OLMo2-32B](https://www.comet.com/ai2/olmo-2-0325-32b/reports/olmo-2-0325-32b-anneal?shareable=WhT37Wy7jqttDoy6ysDBumQzf) |
+| |  | random seed 2662, 100B tokens | [stage2-ingredient2-step11921-tokens101B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage2-ingredient2-step11921-tokens101B) | [comet.ml/OLMo2-32B](https://www.comet.com/ai2/olmo-2-0325-32b/reports/olmo-2-0325-32b-anneal?shareable=WhT37Wy7jqttDoy6ysDBumQzf) |
+|  |  | random seed 2662, 300B tokens | [stage2-ingredient3-step35763-tokens301B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage2-ingredient3-step35763-tokens301B) | [comet.ml/OLMo2-32B](https://www.comet.com/ai2/olmo-2-0325-32b/reports/olmo-2-0325-32b-anneal?shareable=WhT37Wy7jqttDoy6ysDBumQzf) |
 |  |  | **Final Souped Model** | [main](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/main) | No config, weights averaged in Python | - |
 
 The table below lists the checkpoints for Stage 1 and Stage 2 of OLMo-2, along with their corresponding Hugging Face format.
 
 | Variant         | OLMo Format (Stage 1)                                                                                         | OLMo Format (Stage 2) | Hugging Face Format                                                               |
 |----------------|-----------------------------------------------------------------------------------------------------|--------|----------------------------------------------------------------------------------|
-| **OLMo-2 32B**  | [OLMo-2 32B](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo-2-0325-32B.csv)     | Upload in progress      | [Hugging Face for the 32B variant](https://huggingface.co/allenai/OLMo-2-0325-32B)  |
+| **OLMo-2 32B**  | [OLMo-2 32B](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo-2-0325-32B.csv)     | [OLMo-2 32B](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo-2-0325-32B-stage2.csv)      | [Hugging Face for the 32B variant](https://huggingface.co/allenai/OLMo-2-0325-32B)  |
 
 
 > Note: OLMo-2 7B and 13B models were trained using [the old OLMo trainer](https://github.com/allenai/OLMo). All related checkpoints, configs, and scripts for these models can be found there. While you can train 7B and 13B models with this trainer, please note that the configs and script in the old training codebase are not compatible with this repo.
@@ -144,12 +149,12 @@ Code checks:
 
 ```bibtex
 @misc{olmo20242olmo2furious,
-      title={2 OLMo 2 Furious}, 
-      author={Team OLMo and Pete Walsh and Luca Soldaini and Dirk Groeneveld and Kyle Lo and Shane Arora and Akshita Bhagia and Yuling Gu and Shengyi Huang and Matt Jordan and Nathan Lambert and Dustin Schwenk and Oyvind Tafjord and Taira Anderson and David Atkinson and Faeze Brahman and Christopher Clark and Pradeep Dasigi and Nouha Dziri and Michal Guerquin and Hamish Ivison and Pang Wei Koh and Jiacheng Liu and Saumya Malik and William Merrill and Lester James V. Miranda and Jacob Morrison and Tyler Murray and Crystal Nam and Valentina Pyatkin and Aman Rangapur and Michael Schmitz and Sam Skjonsberg and David Wadden and Christopher Wilhelm and Michael Wilson and Luke Zettlemoyer and Ali Farhadi and Noah A. Smith and Hannaneh Hajishirzi},
+      title={{2 OLMo 2 Furious}},
+      author={{Team OLMo} and Pete Walsh and Luca Soldaini and Dirk Groeneveld and Kyle Lo and Shane Arora and Akshita Bhagia and Yuling Gu and Shengyi Huang and Matt Jordan and Nathan Lambert and Dustin Schwenk and Oyvind Tafjord and Taira Anderson and David Atkinson and Faeze Brahman and Christopher Clark and Pradeep Dasigi and Nouha Dziri and Michal Guerquin and Hamish Ivison and Pang Wei Koh and Jiacheng Liu and Saumya Malik and William Merrill and Lester James V. Miranda and Jacob Morrison and Tyler Murray and Crystal Nam and Valentina Pyatkin and Aman Rangapur and Michael Schmitz and Sam Skjonsberg and David Wadden and Christopher Wilhelm and Michael Wilson and Luke Zettlemoyer and Ali Farhadi and Noah A. Smith and Hannaneh Hajishirzi},
       year={2024},
       eprint={2501.00656},
       archivePrefix={arXiv},
       primaryClass={cs.CL},
-      url={https://arxiv.org/abs/2501.00656}, 
+      url={https://arxiv.org/abs/2501.00656},
 }
 ```

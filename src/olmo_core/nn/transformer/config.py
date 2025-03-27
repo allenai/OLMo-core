@@ -112,14 +112,14 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`MoEReorderedNormTransformerBlock`
     """
 
-    moe_parallel = "moe_parallel"
+    moe_hybrid = "moe_hybrid"
     """
-    ➡️ :class:`MoEParallelTransformerBlock`
+    ➡️ :class:`MoEHybridTransformerBlock`
     """
 
-    moe_parallel_reordered_norm = "moe_parallel_reordered_norm"
+    moe_hybrid_reordered_norm = "moe_hybrid_reordered_norm"
     """
-    ➡️ :class:`MoEParallelReorderedNormTransformerBlock`
+    ➡️ :class:`MoEHybridReorderedNormTransformerBlock`
     """
 
 
@@ -163,8 +163,8 @@ class TransformerBlockConfig(Config):
         cache: Optional[BufferCache] = None,
     ) -> "TransformerBlockBase":
         from .block import (
-            MoEParallelReorderedNormTransformerBlock,
-            MoEParallelTransformerBlock,
+            MoEHybridReorderedNormTransformerBlock,
+            MoEHybridTransformerBlock,
             MoEReorderedNormTransformerBlock,
             MoETransformerBlock,
             NormalizedTransformerBlock,
@@ -192,10 +192,10 @@ class TransformerBlockConfig(Config):
                 return MoETransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe_reordered_norm:
                 return MoEReorderedNormTransformerBlock(**kwargs)
-            elif self.name == TransformerBlockType.moe_parallel:
-                return MoEParallelTransformerBlock(**kwargs)
-            elif self.name == TransformerBlockType.moe_parallel_reordered_norm:
-                return MoEParallelReorderedNormTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.moe_hybrid:
+                return MoEHybridTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.moe_hybrid_reordered_norm:
+                return MoEHybridReorderedNormTransformerBlock(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
@@ -321,20 +321,18 @@ class TransformerConfig(Config):
 
         # Block attention params.
         block_params += self.block.attention.num_params(self.d_model)
-
-        # Block attention norm.
         if self.block.layer_norm is not None:
             block_params += self.block.layer_norm.num_params(self.d_model)
 
-        # Block feed forward.
+        # Block feed forward (dense and/or sparse).
         if self.block.feed_forward is not None:
             block_params += self.block.feed_forward.num_params(self.d_model)
-        elif self.block.feed_forward_moe is not None:
+            if self.block.layer_norm is not None:
+                block_params += self.block.layer_norm.num_params(self.d_model)
+        if self.block.feed_forward_moe is not None:
             block_params += self.block.feed_forward_moe.num_params(self.d_model)
-
-        # Block feed forward norm.
-        if self.block.layer_norm is not None:
-            block_params += self.block.layer_norm.num_params(self.d_model)
+            if self.block.layer_norm is not None:
+                block_params += self.block.layer_norm.num_params(self.d_model)
 
         # All block params.
         num_params += self.n_layers * block_params
@@ -550,6 +548,30 @@ class TransformerConfig(Config):
                 hidden_size=int(0.5 * d_model),
                 router=MoERouterConfig(top_k=4),
                 shared_mlp=FeedForwardConfig(hidden_size=d_model * 2),
+                lb_loss_weight=0.01,
+                z_loss_weight=0.001,
+            ),
+        )
+
+    @classmethod
+    def small_hybrid_moe(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        d_model = kwargs.pop("d_model", 768)
+        return cls.llama_like(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 12),
+            n_heads=kwargs.pop("n_heads", 12),
+            name=kwargs.pop("name", TransformerType.moe),
+            block_name=kwargs.pop("block_name", TransformerBlockType.moe_hybrid_reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            feed_forward=FeedForwardConfig(hidden_size=d_model * 2, bias=False),
+            feed_forward_moe=MoEConfig(
+                name=MoEType.default,
+                num_experts=32,
+                hidden_size=int(0.5 * d_model),
+                router=MoERouterConfig(top_k=4),
                 lb_loss_weight=0.01,
                 z_loss_weight=0.001,
             ),

@@ -11,7 +11,7 @@ from typing import Callable, List, Optional, TypeVar, Union, cast
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import DTensor
+from torch.distributed.tensor import DTensor, distribute_tensor
 
 from ..exceptions import OLMoEnvironmentError
 from ..utils import logging_configured, move_to_device, set_env_var
@@ -56,7 +56,7 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             # need host networking enabled so that the ethernet interface names don't change.
             set_env_var("NCCL_CROSS_NIC", "0")
             set_env_var("NCCL_ALGO", "Ring,Tree")
-            set_env_var("NCCL_PROTO", "Simple")
+            set_env_var("NCCL_PROTO", "Simple,LL128")
             set_env_var("NCCL_MIN_NCHANNELS", "4")
             set_env_var("NCCL_P2P_NET_CHUNKSIZE", "524288")
             set_env_var("NCCL_P2P_PCI_CHUNKSIZE", "524288")
@@ -81,11 +81,11 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             #  )
             set_env_var("NCCL_TUNER_PLUGIN", "libnccl-tuner.so")
             set_env_var(
-                "NCCL_TUNER_CONFIG_PATH", "/var/lib/tcpxo/lib64/a3plus_tuner_config.textproto"
+                "NCCL_TUNER_CONFIG_PATH", "/var/lib/tcpxo/lib64/a3plus_tuner_config_ll128.textproto"
             )
             set_env_var(
                 "NCCL_SHIMNET_GUEST_CONFIG_CHECKER_CONFIG_FILE",
-                "/var/lib/tcpxo/lib64/a3plus_guest_config.textproto",
+                "/var/lib/tcpxo/lib64/a3plus_guest_config_ll128.textproto",
             )
             set_env_var("NCCL_FASTRAK_CTRL_DEV", "enp0s12")
             set_env_var(
@@ -419,7 +419,14 @@ def get_reduce_divide_factor(world_size: int) -> float:
 
 def get_local_tensor(x: torch.Tensor) -> torch.Tensor:
     if isinstance(x, DTensor):
-        return x.to_local()
+        x = x.to_local()
+        # An `AsyncCollectiveTensor` might be returned, which means the local tensor is not ready
+        # yet (i.e. communication is not finished). In this case we need to call `.wait()`
+        # to wait the local tensor to be ready.
+        if hasattr(x, "wait"):
+            return x.wait()  # type: ignore
+        else:
+            return x
     else:
         return x
 
@@ -429,6 +436,19 @@ def get_full_tensor(x: torch.Tensor) -> torch.Tensor:
         return x.full_tensor()
     else:
         return x
+
+
+def distribute_like(source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    if not isinstance(source, DTensor):
+        return get_full_tensor(target)
+
+    if isinstance(target, DTensor):
+        if target.device_mesh == source.device_mesh and target.placements == source.placements:
+            return target
+        else:
+            return target.redistribute(device_mesh=source.device_mesh, placements=source.placements)
+
+    return distribute_tensor(target, device_mesh=source.device_mesh, placements=source.placements)
 
 
 def do_n_at_a_time(
