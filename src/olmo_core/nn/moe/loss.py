@@ -104,7 +104,7 @@ class MoELoadBalancingLoss(MoELoss):
                 # NOTE: assumes equal sequence splits across group
                 # shape: (B * S, num_experts) -> (1, num_experts)
                 expert_scores = expert_scores.mean(dim=0, keepdim=True)
-                # shape: (B, 1, num_experts) -> (B, num_experts)
+                # shape: (1, num_experts) -> (num_experts,)
                 expert_scores = get_local_tensor(
                     DTensor.from_local(expert_scores, self.sp_mesh, (Shard(0),)).mean(dim=0)
                 )
