@@ -251,8 +251,6 @@ class MoEBase(nn.Module):
         Should be called right after the final backward of a complete batch but before the optimizer step.
         """
         self.router.post_batch(dry_run=dry_run)
-        #  for loss in self.losses:
-        #      loss.post_batch(dry_run=dry_run, training=self.training)
 
     @abstractmethod
     def _init_parallel_mlp(
