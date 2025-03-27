@@ -275,20 +275,20 @@ class MoERouter(nn.Module):
         """
         Given the input ``x`` of shape ``(B, S, d_model)``, compute the experts assignment.
 
-        :returns: The unnormalized scores (logits) of shape ``(B * S, num_experts)``,
-            the normalized scores of shape ``(B * S, num_experts)``,
-            the expert weights of shape ``(B * S, top_k)``,
-            the expert indices of shape ``(B * S, top_k)``,
+        :returns: The unnormalized scores (logits) of shape ``(B, S, num_experts)``,
+            the normalized scores of shape ``(B, S, num_experts)``,
+            the expert weights of shape ``(B, S, top_k)``,
+            the expert indices of shape ``(B, S, top_k)``,
             the total number of items routed to each expert, with shape ``(num_experts,)``,
             and the total number of items within each instance routed to each expert, with shape ``(B, num_experts)``.
         """
         # shape: (batch_size, seq_len, d_model)
         x = self.jitter(x)
 
-        # shape: (batch_size * seq_len, num_experts)
-        logits = self.get_expert_logits(x).view(-1, self.num_experts)
+        # shape: (batch_size, seq_len, num_experts)
+        logits = self.get_expert_logits(x)
 
-        # shape: (batch_size * seq_len, num_experts)
+        # shape: (batch_size, seq_len, num_experts)
         if self.gating_function == MoERouterGatingFunction.softmax:
             scores = logits.softmax(dim=-1)
         elif self.gating_function == MoERouterGatingFunction.sigmoid:
@@ -296,7 +296,7 @@ class MoERouter(nn.Module):
         else:
             raise NotImplementedError(self.gating_function)
 
-        # shape: (batch_size * seq_len, top_k)
+        # shape: (batch_size, seq_len, top_k)
         expert_weights, expert_indices = self.get_top_k(scores)
 
         if self.normalize_expert_weights is not None:
@@ -314,8 +314,9 @@ class MoERouter(nn.Module):
 
         with torch.no_grad():
             # Histogram the expert ids to identify the number of items/tokens routed to each expert.
-            # shape: (num_experts,)
+            # shape: (batch_size, seq_len, num_experts,)
             batched_batch_size_per_expert = ops.batched_histc(expert_indices, self.num_experts)
+            batched_batch_size_per_expert = batched_batch_size_per_expert.sum(dim=1)
             batch_size_per_expert = batched_batch_size_per_expert.sum(dim=0)
             self._accumulate_batch_size_per_expert(batch_size_per_expert)
 
