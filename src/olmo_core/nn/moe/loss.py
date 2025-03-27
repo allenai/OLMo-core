@@ -6,7 +6,6 @@ import torch.distributed as dist
 from torch.distributed.tensor import DTensor, Replicate, Shard
 
 from olmo_core.config import StrEnum
-from olmo_core.distributed.utils import get_local_tensor
 
 __all__ = ["MoELoss", "MoELoadBalancingLoss", "MoERouterZLoss", "MoELoadBalancingLossGranularity"]
 
@@ -102,6 +101,8 @@ class MoELoadBalancingLoss(MoELoss):
         elif self.granularity == MoELoadBalancingLossGranularity.local_batch:
             # shape: (num_experts,)
             batch_size_per_expert = batch_size_per_expert.type_as(expert_scores)
+            # shape: (B, S, num_experts) -> (B * S, num_experts)
+            expert_scores = expert_scores.view(-1, self.num_experts)
             if self.sp_mesh is not None:
                 dist.all_reduce(batch_size_per_expert, group=self.sp_mesh.get_group())
                 batch_size_per_expert = DTensor.from_local(
@@ -111,8 +112,8 @@ class MoELoadBalancingLoss(MoELoss):
                 # shape: (B * S, num_experts) -> (1, num_experts)
                 expert_scores = expert_scores.mean(dim=0, keepdim=True)
                 # shape: (1, num_experts) -> (num_experts,)
-                expert_scores = get_local_tensor(
-                    DTensor.from_local(expert_scores, self.sp_mesh, (Shard(0),)).mean(dim=0)
+                expert_scores = DTensor.from_local(expert_scores, self.sp_mesh, (Shard(0),)).mean(
+                    dim=0
                 )
             else:
                 # shape: (B * S, num_experts) -> (num_experts,)
