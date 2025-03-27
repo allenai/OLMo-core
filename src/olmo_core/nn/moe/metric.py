@@ -67,7 +67,9 @@ class MoELoadImbalanceMetric(MoEMetric):
                 f"'{self.__class__.__name__}.update()' needs to be called before '.compute()'"
             )
 
-        load_imbalance = self.batch_size_per_expert.max() / self.batch_size_per_expert.mean()
+        load_imbalance = self.batch_size_per_expert.max() / self.batch_size_per_expert.mean(
+            dtype=torch.float
+        )
 
         if reset:
             self.reset()
