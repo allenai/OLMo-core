@@ -893,7 +893,7 @@ class MoETransformer(Transformer):
             ):
                 loss_val = loss_val.div(self.n_layers)
 
-                if self.tp_enabled:
+                if self.tp_enabled and not isinstance(loss_val, DTensor):
                     assert self._tp_mesh is not None
                     loss_val = DTensor.from_local(loss_val.unsqueeze(0), self._tp_mesh, (Shard(0),))
                     loss_val = loss_val.redistribute(placements=(Replicate(),)).mean()
