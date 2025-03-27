@@ -3,7 +3,7 @@ from typing import Dict, Optional, Union
 
 import torch
 import torch.distributed as dist
-from torch.distributed.tensor import DTensor, Shard
+from torch.distributed.tensor import DTensor, Replicate, Shard
 
 from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import get_local_tensor
@@ -88,10 +88,11 @@ class MoELoadBalancingLoss(MoELoss):
                 expert_scores = expert_scores.view(B, -1, self.num_experts).mean(
                     dim=1, keepdim=True
                 )
+                expert_scores = DTensor.from_local(expert_scores, self.sp_mesh, (Shard(1),))
+                # shape: (B, 1, num_experts) -> (B, SP_size, num_experts) -> (B, num_experts)
+                expert_scores = expert_scores.redistribute(placements=(Replicate(),)).mean(dim=1)
                 # shape: (B, 1, num_experts) -> (B, num_experts)
-                expert_scores = get_local_tensor(
-                    DTensor.from_local(expert_scores, self.sp_mesh, (Shard(1),)).mean(dim=1)
-                )
+                expert_scores = get_local_tensor(expert_scores)
             else:
                 # shape: (B * S, num_experts) -> (B, S, num_experts,) -> (B, num_experts)
                 expert_scores = expert_scores.view(B, -1, self.num_experts).mean(dim=1)
