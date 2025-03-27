@@ -93,6 +93,7 @@ class Transformer(nn.Module):
         init_method: InitMethod = InitMethod.normal,
         init_device: str = "cpu",
         init_seed: int = 0,
+        init_std: float = 0.02,
     ):
         super().__init__()
 
@@ -122,6 +123,7 @@ class Transformer(nn.Module):
         self.init_device = init_device
         self.init_method = InitMethod(init_method)
         self.init_seed = init_seed
+        self.init_std = init_std
 
         self._cache = cache
         self._fp8_enabled = False
@@ -237,7 +239,7 @@ class Transformer(nn.Module):
 
         if self.embeddings is not None:
             self.init_method.init_embeddings(
-                self.embeddings, d_model=self.d_model, generator=generator
+                self.embeddings, d_model=self.d_model, std=self.init_std, generator=generator
             )
 
         for block in self.blocks.values():
@@ -252,6 +254,7 @@ class Transformer(nn.Module):
                 d_model=self.d_model,
                 block_idx=block.block_idx,
                 num_blocks=self.n_layers,
+                std=self.init_std,
                 generator=generator,
             )
 
@@ -262,6 +265,7 @@ class Transformer(nn.Module):
                     d_model=self.d_model,
                     block_idx=block.block_idx,
                     num_blocks=self.n_layers,
+                    std=self.init_std,
                     generator=generator,
                 )
 
@@ -275,6 +279,7 @@ class Transformer(nn.Module):
                     d_model=self.d_model,
                     block_idx=block.block_idx,
                     num_blocks=self.n_layers,
+                    std=self.init_std,
                     generator=generator,
                 )
 
@@ -284,7 +289,7 @@ class Transformer(nn.Module):
 
         if self.lm_head is not None:
             self.init_method.init_final_w_out(
-                self.lm_head.w_out, d_model=self.d_model, generator=generator
+                self.lm_head.w_out, d_model=self.d_model, std=self.init_std, generator=generator
             )
 
         return generator
@@ -797,6 +802,7 @@ class NormalizedTransformer(Transformer):
         init_method: InitMethod = InitMethod.normalized,
         init_device: str = "cpu",
         init_seed: int = 0,
+        init_std: float = 0.02,
     ):
         super().__init__(
             d_model=d_model,
@@ -808,6 +814,7 @@ class NormalizedTransformer(Transformer):
             init_method=init_method,
             init_device=init_device,
             init_seed=init_seed,
+            init_std=init_std,
         )
 
     def _validate_block(self, block: TransformerBlockBase):

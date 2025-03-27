@@ -223,6 +223,7 @@ class TransformerConfig(Config):
     dtype: DType = DType.float32
     init_method: InitMethod = InitMethod.normal
     init_seed: int = 0
+    init_std: float = 0.02
     freeze_params: Optional[List[str]] = None
 
     def build(
@@ -254,6 +255,7 @@ class TransformerConfig(Config):
                 init_method=self.init_method,
                 init_device=init_device,
                 init_seed=self.init_seed,
+                init_std=self.init_std,
             )
         elif self.name == TransformerType.normalized:
             model = NormalizedTransformer(
@@ -266,6 +268,7 @@ class TransformerConfig(Config):
                 init_method=self.init_method,
                 init_device=init_device,
                 init_seed=self.init_seed,
+                init_std=self.init_std,
             )
         elif self.name == TransformerType.moe:
             model = MoETransformer(
@@ -278,6 +281,7 @@ class TransformerConfig(Config):
                 init_method=self.init_method,
                 init_device=init_device,
                 init_seed=self.init_seed,
+                init_std=self.init_std,
             )
         else:
             raise NotImplementedError(self.name)
