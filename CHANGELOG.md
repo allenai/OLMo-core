@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added support for auxiliary-loss-free MoE load-balancing, similar to DeepSeek-v3. You can activate this by setting `bias_gamma` to a non-zero float in your `MoERouter` config.
+- Compatibility with B200s.
+- Added support for `warmup_fraction` as an alternative to `warmup_steps` in all schedulers, allowing warmup to be specified as a fraction of total training steps.
 
 ### Changed
 
@@ -20,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed calculation of total steps based on epochs at the end of a training job.
 - Fixed a bug where the trainer might try to save a duplicate final checkpoint if the run that already completed was restarted.
 - When submitting a Beaker job from a branch that's tracking a GitHub fork, OLMo-core now instructs Beaker to pull from the fork instead of from the main repo.
 - Made Beaker image resolution more robust.
@@ -55,6 +58,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Added in-loop evals for Minerva, GSM, HumanEval, MBPP (`ai2-olmo-eval==0.7.0`)
 - Added `CosWithWarmupAndLinearDecay` learning rate scheduler
 - Added `WSD` learning rate scheduler
+- Added `RunDuration` in `model_ladder` to configure training durations in terms of Chinchilla multipliers.
 
 ### Changed
 

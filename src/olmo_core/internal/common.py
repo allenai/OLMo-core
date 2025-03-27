@@ -37,9 +37,9 @@ def get_beaker_username() -> Optional[str]:
 
 def get_root_dir(cluster: str) -> str:
     root_dir: str = "weka://oe-training-default/ai2-llm"
-    if "jupiter" in cluster or "test-h100" in cluster:
+    if "cirrascale" in cluster or "test-h100" in cluster:
         root_dir = "/weka/oe-training-default/ai2-llm"
-    elif "augusta" in cluster:
+    elif "google" in cluster:
         root_dir = "gs://ai2-llm"
     elif "local" in cluster:
         root_dir = "gs://ai2-llm"
@@ -127,6 +127,7 @@ CLUSTER_TO_GPU_TYPE = {
     "ai2/jupiter-cirrascale-2": "NVIDIA H100 80GB HBM3",
     "ai2/pluto-cirrascale": "NVIDIA H100",
     "ai2/augusta-google-1": "NVIDIA H100",
+    "ai2/titan-cirrascale": "NVIDIA B200",
 }
 
 
