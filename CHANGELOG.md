@@ -61,6 +61,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Added in-loop evals for Minerva, GSM, HumanEval, MBPP (`ai2-olmo-eval==0.7.0`)
 - Added `CosWithWarmupAndLinearDecay` learning rate scheduler
 - Added `WSD` learning rate scheduler
+- Added `RunDuration` in `model_ladder` to configure training durations in terms of Chinchilla multipliers.
 
 ### Changed
 

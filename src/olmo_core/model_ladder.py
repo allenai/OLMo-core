@@ -6,6 +6,8 @@ import logging
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, field
 
+from olmo_core.data.numpy_dataset import InstanceFilterConfig
+
 from .config import Config, StrEnum
 from .data import (
     DataMix,
@@ -32,7 +34,7 @@ from .train.callbacks import (
 )
 from .train.train_module import TransformerTrainModuleConfig
 
-__all__ = ["ModelSize", "ModelLadder"]
+__all__ = ["ModelSize", "ModelLadder", "RunDuration"]
 
 log = logging.getLogger(__name__)
 
@@ -86,6 +88,39 @@ class ModelSize(StrEnum):
             return value * int(1e9)
         else:
             raise NotImplementedError(self)
+
+
+class RunDuration(StrEnum):
+    """
+    An enumeration of the standard training durations for the ladder, in terms of Chinchilla multipliers.
+    """
+
+    Cx0_5 = "0.5xC"
+    """
+    Multiplier of 0.5.
+    """
+
+    Cx1 = "1xC"
+    """
+    Multiplier of 1.
+    """
+    Cx2 = "2xC"
+    """
+    Multiplier of 2.
+    """
+    Cx5 = "5xC"
+    """
+    Multiplier of 5.
+    """
+
+    Cx10 = "10xC"
+    """
+    Multiplier of 10.
+    """
+
+    @property
+    def multiplier(self) -> float:
+        return float(self.split("xC")[0])
 
 
 @beta_feature
@@ -158,11 +193,18 @@ class ModelLadder(Config, metaclass=ABCMeta):
     The maximum data parallel world size that you intent to run with. This is used to set the batch size.
     """
 
-    def get_save_folder(self, size: ModelSize) -> str:
-        return str(join_path(self.save_folder, f"checkpoints/{self.name}-{size}"))
+    @property
+    def model_size(self) -> int:
+        """
+        The size of the model in terms of non-embedding parameters.
+        """
+        return self._model_size
+
+    def get_save_folder(self, size: ModelSize, run_duration: RunDuration) -> str:
+        return str(join_path(self.save_folder, f"checkpoints/{self.name}-{size}-{run_duration}"))
 
     @abstractmethod
-    def get_model_config(self, *, size: ModelSize) -> TransformerConfig:
+    def _get_model_config(self, *, size: ModelSize) -> TransformerConfig:
         """
         Get the model config for a given model size.
 
@@ -170,8 +212,18 @@ class ModelLadder(Config, metaclass=ABCMeta):
         """
         raise NotImplementedError
 
+    def get_model_config(self, *, size: ModelSize) -> TransformerConfig:
+        """
+        Get the model config for a given model size.
+
+        :param size: The target model size.
+        """
+        model_config = self._get_model_config(size=size)
+        self._model_size = model_config.num_non_embedding_params
+        return model_config
+
     @abstractmethod
-    def get_optim_config(self, *, size: ModelSize) -> OptimConfig:
+    def get_optim_config(self) -> OptimConfig:
         """
         Get the optimizer config for a given model size.
 
@@ -191,16 +243,21 @@ class ModelLadder(Config, metaclass=ABCMeta):
             mix_base_dir=self.mix_base_dir,
             sequence_length=self.sequence_length,
             work_dir=self.work_dir,
+            instance_filter_config=InstanceFilterConfig(
+                repetition_max_period=13,
+                repetition_min_period=1,
+                repetition_max_count=32,
+            ),
         )
 
-    def get_data_loader_config(self, *, size: ModelSize) -> NumpyDataLoaderConfig:
+    def get_data_loader_config(self) -> NumpyDataLoaderConfig:
         """
         Get the data loader config.
 
         :param size: The target model size.
         """
         return NumpyDataLoaderConfig(
-            global_batch_size=self.get_global_batch_size(size=size),
+            global_batch_size=self.get_global_batch_size(),
             seed=self.data_seed,
             num_workers=4,
         )
@@ -216,7 +273,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
         """
         raise NotImplementedError
 
-    def get_global_batch_size(self, *, size: ModelSize) -> int:
+    def get_global_batch_size(self) -> int:
         """
         Get the global batch size in tokens for a given model size.
 
@@ -227,7 +284,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
         assert self.sequence_length in {2048, 4096, 8192}
         seq_len_divisor = self.sequence_length // 2048
 
-        global_batch_size = 160 * (size.num_params / 108000000) ** (2 / 3)
+        global_batch_size = 160 * (self.model_size / 108000000) ** (2 / 3)
         global_batch_size /= seq_len_divisor
         global_batch_size /= self.max_dp_world_size
         global_batch_size = round(global_batch_size)
@@ -235,16 +292,21 @@ class ModelLadder(Config, metaclass=ABCMeta):
 
         return self.sequence_length * global_batch_size
 
-    def get_duration(self, size: ModelSize) -> Duration:
+    def get_duration(self, run_duration: RunDuration = RunDuration.Cx2) -> Duration:
         """
         Get the duration to train for given the model size. Defaults to 2 x Chinchilla optimal.
 
         :param size: The target model size.
         """
-        return Duration.tokens(2 * 20 * size.num_params)
+        return Duration.tokens(int(run_duration.multiplier * 20) * self.model_size)
 
     def get_train_module_config(
-        self, *, size: ModelSize, gpu_type: str, dp_world_size: int
+        self,
+        *,
+        size: ModelSize,
+        run_duration: RunDuration,
+        gpu_type: str,
+        dp_world_size: int,
     ) -> TransformerTrainModuleConfig:
         """
         Build the train module config.
@@ -268,14 +330,14 @@ class ModelLadder(Config, metaclass=ABCMeta):
 
         rank_mbz_instances = rank_mbz // self.sequence_length
 
-        global_bz = self.get_global_batch_size(size=size)
+        global_bz = self.get_global_batch_size()
         if global_bz % self.sequence_length != 0:
             raise OLMoConfigurationError(
                 f"global batch size ({rank_mbz:,d} tokens) must be divisible "
                 f"by the sequence length ({self.sequence_length:,d})"
             )
 
-        global_bz_instances = self.get_global_batch_size(size=size) // self.sequence_length
+        global_bz_instances = self.get_global_batch_size() // self.sequence_length
 
         if global_bz_instances % (rank_mbz_instances * dp_world_size) != 0:
             new_rank_mbz_instances = global_bz_instances // dp_world_size
@@ -303,15 +365,16 @@ class ModelLadder(Config, metaclass=ABCMeta):
         return TransformerTrainModuleConfig(
             rank_microbatch_size=rank_mbz,
             max_sequence_length=self.sequence_length,
-            optim=self.get_optim_config(size=size),
+            optim=self.get_optim_config(),
             max_grad_norm=1.0,
-            scheduler=CosWithWarmup(warmup_steps=2000),
+            scheduler=CosWithWarmup(warmup_steps=round(self.model_size / global_bz)),
         )
 
     def get_trainer_config(
         self,
         *,
         size: ModelSize,
+        run_duration: RunDuration,
         gpu_type: str,
         dp_world_size: int,
     ) -> TrainerConfig:
@@ -327,10 +390,10 @@ class ModelLadder(Config, metaclass=ABCMeta):
         from olmo_eval import list_tasks
 
         config = TrainerConfig(
-            save_folder=self.get_save_folder(size),
+            save_folder=self.get_save_folder(size, run_duration),
             metrics_collect_interval=10,
             cancel_check_interval=10,
-            max_duration=self.get_duration(size),
+            max_duration=self.get_duration(run_duration),
         )
         if gpu_type not in ("cpu", "mps"):
             config = config.with_callback("gpu_monitor", GPUMemoryMonitorCallback())
@@ -369,7 +432,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
         config = config.with_callback(
             "comet",
             CometCallback(
-                name=f"{self.name}-{size}",
+                name=f"{self.name}-{size}-{run_duration}",
                 workspace="ai2",
                 project=self.project,
                 enabled=True,
@@ -379,7 +442,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
         config = config.with_callback(
             "wandb",
             WandBCallback(
-                name=f"{self.name}-{size}",
+                name=f"{self.name}-{size}-{run_duration}",
                 entity="ai2",
                 project=self.project,
                 enabled=False,
@@ -395,7 +458,13 @@ class ModelLadder(Config, metaclass=ABCMeta):
         :raises OLMoConfigurationError: If the ladder has any issues.
         """
         for size in ModelSize:
-            target_size = int(size[:-1])
+            # validating to match old ladder sizes.
+            if size == ModelSize.size_1B:
+                target_size = 1.3
+            elif size == ModelSize.size_3B:
+                target_size = 3.2
+            else:
+                target_size = int(size[:-1])
             if size.endswith("M"):
                 target_size = target_size * 10**6
             elif size.endswith("B"):
@@ -413,9 +482,9 @@ class ModelLadder(Config, metaclass=ABCMeta):
                     f"too far from target size of {size}: {model_config}"
                 )
 
-            self.get_optim_config(size=size)
+            self.get_optim_config()
             self.get_rank_microbatch_size(size=size, gpu_type="H100")
-            bz_tokens = self.get_global_batch_size(size=size)
+            bz_tokens = self.get_global_batch_size()
             if bz_tokens % self.sequence_length != 0:
                 raise OLMoConfigurationError(
                     f"Batch size of {bz_tokens:,d} tokens for model size {size} "
