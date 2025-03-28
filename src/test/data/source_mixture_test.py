@@ -45,6 +45,8 @@ def test_source_mixture_config(tmp_path: Path, caplog, capsys):
         source_configs=source_configs,
         dtype=NumpyDatasetDType.uint32,
         sequence_length=1024,
+        quiet=True,
+        render_tables=True,
     )
 
     # NOTE: We need to disable capsys so we can override log capture as
@@ -52,8 +54,8 @@ def test_source_mixture_config(tmp_path: Path, caplog, capsys):
     with capsys.disabled(), caplog.at_level(logging.DEBUG):
         config.validate()
         mixture = config.build()
-        print(caplog.text)
         assert isinstance(mixture, SourceMixtureDataset)
+        #  print(caplog.text)  # uncomment if you want to see the table
 
 
 def test_source_mixture_config_validation():
@@ -82,6 +84,8 @@ def test_dataset_mixture_config_validation():
         source_configs=source_configs,
         dtype=NumpyDatasetDType.uint32,
         sequence_length=1024,
+        quiet=True,
+        render_tables=False,
     )
     config.validate()
 
@@ -95,6 +99,8 @@ def test_dataset_mixture_config_validation():
         source_configs=source_configs_invalid,
         dtype=NumpyDatasetDType.uint32,
         sequence_length=1024,
+        quiet=True,
+        render_tables=False,
     )
 
     with pytest.raises(OLMoConfigurationError):
@@ -131,6 +137,8 @@ def test_dataset_mixture_build(tmp_path: Path):
         source_configs=source_configs,
         dtype=NumpyDatasetDType.uint32,
         sequence_length=1024,
+        quiet=True,
+        render_tables=False,
     )
 
     mixture = config.build()
@@ -166,6 +174,8 @@ def test_dataset_mixture_build_insufficient_source_data(tmp_path: Path):
         source_configs=source_configs,
         dtype=NumpyDatasetDType.uint32,
         sequence_length=1024,
+        quiet=True,
+        render_tables=False,
     )
 
     # Should raise exception because the target ratio for source 1 @50% (2.5M) is infeasible without repetition (default max_repetition_ratio=1)
@@ -209,6 +219,8 @@ def test_dataset_mixture_build_with_repetition(tmp_path: Path):
         source_configs=source_configs,
         dtype=NumpyDatasetDType.uint32,
         sequence_length=1024,
+        quiet=True,
+        render_tables=False,
     )
 
     mixture = config.build()
@@ -255,6 +267,8 @@ def test_dataset_mixture_build_insufficient_source_max_fraction(tmp_path: Path):
         source_configs=source_configs,
         dtype=NumpyDatasetDType.uint32,
         sequence_length=1024,
+        quiet=True,
+        render_tables=False,
     )
 
     # Should raise exception because the target ratio for source 1 is infeasible because
@@ -297,6 +311,8 @@ def test_dataset_mixture_build_duplicate_paths(tmp_path: Path):
         source_configs=source_configs,
         dtype=NumpyDatasetDType.uint32,
         sequence_length=1024,
+        quiet=True,
+        render_tables=False,
     )
 
     expected = [str(sources["1"][0][0])] + [str(item[0]) for item in list(chain(*sources.values()))]
