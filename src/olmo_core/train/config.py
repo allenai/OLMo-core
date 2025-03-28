@@ -9,7 +9,7 @@ import torch
 import torch.distributed as dist
 
 from ..config import Config
-from ..data import DataLoaderBase
+from ..data import DataLoaderBase, TokenizerConfig
 from ..exceptions import OLMoConfigurationError
 from ..io import is_url
 from ..utils import get_default_device
@@ -65,6 +65,118 @@ class TrainerConfig(Config):
         out = replace(self, callbacks=deepcopy(self.callbacks))
         out.add_callback(name, callback)
         return out
+
+    def with_recommended_evals(
+        self, tokenizer: TokenizerConfig, sequence_length: int, cluster: str
+    ) -> "TrainerConfig":
+        """
+        Return a new trainer config with added callbacks for downstream evaluation and validation sets.
+        """
+        from olmo_core.data import DataMix, NumpyDatasetConfig, NumpyDatasetType
+        from olmo_core.internal.common import get_root_dir, get_work_dir
+        from olmo_core.train.callbacks import (
+            DownstreamEvaluatorCallbackConfig,
+            LMEvaluatorCallbackConfig,
+        )
+
+        # For training runs where we don't expect the model to acquire MC (e.g., 1B-5xC, short 7B training runs)
+        tasks_small_compute = [
+            # OLMES Core 9(-ish) RC
+            "arc_challenge_test_rc_5shot",
+            "arc_easy_test_rc_5shot",
+            "hellaswag_rc_5shot",  # 1K subset of HellaSwag
+            "winogrande_val_rc_5shot",  # Helpful after 750M-5xC scale
+            "csqa_val_rc_5shot",
+            "piqa_val_rc_5shot",
+            "socialiqa_val_rc_5shot",
+            # Too noisy to be worth tracking
+            # "boolq_val_rc_5shot",
+            # "openbookqa_test_rc_5shot",
+            # MMLU RC
+            "mmlu_stem_val_rc_5shot",
+            "mmlu_humanities_val_rc_5shot",
+            "mmlu_social_sciences_val_rc_5shot",
+            "mmlu_other_val_rc_5shot",
+            "mmlu_stem_test_rc_5shot",
+            "mmlu_humanities_test_rc_5shot",
+            "mmlu_social_sciences_test_rc_5shot",
+            "mmlu_other_test_rc_5shot",
+            # Gen tasks BPB
+            "gsm8k_gold_bpb_5shot",
+            "minerva_math_algebra_gold_bpb_0shot",
+            "minerva_math_counting_and_probability_gold_bpb_0shot",
+            "minerva_math_geometry_gold_bpb_0shot",
+            "minerva_math_intermediate_algebra_gold_bpb_0shot",
+            "minerva_math_number_theory_gold_bpb_0shot",
+            "minerva_math_prealgebra_gold_bpb_0shot",
+            "minerva_math_precalculus_gold_bpb_0shot",
+            "codex_humaneval_gold_bpb_0shot",
+            "codex_mbpp_gold_bpb_0shot",
+            # Sanity check for MCQA ability
+            "copycolors_10way",
+        ]
+
+        # For training runs where we expect the model to acquire MC
+        tasks_large_compute = [
+            # OLMES Core 9(-ish) MC
+            "arc_challenge_test_mc_5shot",
+            "arc_easy_test_mc_5shot",
+            "hellaswag_rc_5shot",  # 1K subset of HellaSwag
+            "csqa_val_mc_5shot",
+            "piqa_val_mc_5shot",
+            "socialiqa_val_mc_5shot",
+            "winogrande_val_rc_5shot",
+            # Too noisy to be worth tracking
+            # "boolq_val_mc_5shot",
+            # "openbookqa_test_mc_5shot",
+            # MMLU MC BPB
+            "mmlu_stem_val_mc_5shot",
+            "mmlu_humanities_val_mc_5shot",
+            "mmlu_social_sciences_val_mc_5shot",
+            "mmlu_other_val_mc_5shot",
+            "mmlu_stem_test_mc_5shot",
+            "mmlu_humanities_test_mc_5shot",
+            "mmlu_social_sciences_test_mc_5shot",
+            "mmlu_other_test_mc_5shot",
+            # Gen tasks BPB
+            "gsm8k_gold_bpb_5shot",
+            "minerva_math_algebra_gold_bpb_0shot",
+            "minerva_math_counting_and_probability_gold_bpb_0shot",
+            "minerva_math_geometry_gold_bpb_0shot",
+            "minerva_math_intermediate_algebra_gold_bpb_0shot",
+            "minerva_math_number_theory_gold_bpb_0shot",
+            "minerva_math_prealgebra_gold_bpb_0shot",
+            "minerva_math_precalculus_gold_bpb_0shot",
+            "codex_humaneval_gold_bpb_0shot",
+            "codex_mbpp_gold_bpb_0shot",
+            # Sanity check for MCQA ability
+            "copycolors_10way",
+        ]
+        # Unfortunately we need the same metrics for everything, so we run them all.
+        tasks = list(set(tasks_small_compute + tasks_large_compute))
+        tasks.sort()
+
+        return self.with_callback(
+            "downstream_evaluator",
+            DownstreamEvaluatorCallbackConfig(
+                tasks=tasks,
+                tokenizer=tokenizer,
+                eval_interval=10000,
+            ),
+        ).with_callback(
+            "lm_evaluator",
+            LMEvaluatorCallbackConfig(
+                eval_dataset=NumpyDatasetConfig.from_data_mix(
+                    DataMix.v3_small_ppl_validation,
+                    name=NumpyDatasetType.padded_fsl,
+                    mix_base_dir=get_root_dir(cluster),
+                    sequence_length=sequence_length,
+                    tokenizer=tokenizer,
+                    work_dir=get_work_dir(get_root_dir(cluster)),
+                ),
+                eval_interval=10000,
+            ),
+        )
 
     def build(
         self,
