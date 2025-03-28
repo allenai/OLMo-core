@@ -482,7 +482,7 @@ class muPAttention(Attention):
         att = att.view(B, T, -1)
 
         # shape: (batch_size, seq_len, d_model)
-        return self.w_out(att) / math.sqrt(self.d_model)
+        return self.w_out(att) / self.d_model
 
 @beta_feature
 class NormalizedAttention(Attention):
