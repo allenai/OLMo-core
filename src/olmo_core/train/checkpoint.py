@@ -41,7 +41,7 @@ from ..io import (
 )
 from ..utils import wait_for
 from ..version import VERSION
-from .train_module import TrainModule
+from .train_module.train_module import TrainModule
 
 log = logging.getLogger(__name__)
 
