@@ -200,7 +200,7 @@ class muPFeedForward(FeedForward):
         :param x: The input of shape ``(*, d_model)``.
         """
         scaled_w1 = self.w1(x)/math.sqrt(self.d_model)
-        scaled_w3 = self.w1(x)/math.sqrt(self.d_model)
+        scaled_w3 = self.w3(x)/math.sqrt(self.d_model) 
         intermediate = F.silu(scaled_w1) * scaled_w3
         return self.w2(intermediate)#/math.sqrt(self.d_model)
 

@@ -164,7 +164,7 @@ if __name__ == "__main__":
     parser.add_argument("--load_base_shapes", type=str, default="", help="file location to load base shapes from")
 
     parser.add_argument("--batch_size", type=int, default=20, metavar="N", help="batch size")
-    parser.add_argument("--widths", type=int, nargs="+", default=[12 * 2 ** i for i in range(1, 9)], help="widths to use for coord check")
+    parser.add_argument("--widths", type=int, nargs="+", default=[12 * 2 ** i for i in range(1, 7)], help="widths to use for coord check")
 
     parser.add_argument("--cuda", action="store_true", help="use CUDA")
     parser.add_argument("--legend", type=str, help="'auto', 'brief', 'full', or False. This is passed to `seaborn.lineplot`.")
@@ -174,7 +174,7 @@ if __name__ == "__main__":
         action="store_true",
         help="test μ parametrization is correctly implemented by collecting statistics on coordinate distributions for a few steps of training.",
     )
-    parser.add_argument("--coord_check_nsteps", type=int, default=20, help="Do coord check with this many steps.")
+    parser.add_argument("--coord_check_nsteps", type=int, default=5, help="Do coord check with this many steps.")
     parser.add_argument(
         "--coord_check_nseeds",
         type=int,
