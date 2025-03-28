@@ -1,7 +1,7 @@
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import get_rank
@@ -111,7 +111,13 @@ class CometCallback(Callback):
     The tag to assign to failed experiments.
     """
 
+    auto_resume: bool = False
+    """
+    If ``True``, an existing experiment will be resumed from a checkpoint.
+    """
+
     _exp = None
+    _exp_key: Optional[str] = None
     _finalized: bool = False
 
     @property
@@ -125,6 +131,13 @@ class CometCallback(Callback):
     @property
     def finalized(self) -> bool:
         return self._finalized
+
+    def state_dict(self) -> Dict[str, Any]:
+        return {"experiment_key": self._exp_key}
+
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        if self.auto_resume:
+            self._exp_key = state_dict.get("experiment_key")
 
     def finalize(self):
         if not self.finalized:
@@ -140,22 +153,33 @@ class CometCallback(Callback):
             if COMET_API_KEY_ENV_VAR not in os.environ:
                 raise OLMoEnvironmentError(f"missing env var '{COMET_API_KEY_ENV_VAR}'")
 
-            self.exp = comet.Experiment(
-                api_key=os.environ[COMET_API_KEY_ENV_VAR],
-                project_name=self.project,
-                workspace=self.workspace,
-                auto_output_logging="simple",
-                display_summary_level=0,
-            )
+            if self.auto_resume and self._exp_key is not None:
+                self.exp = cast(
+                    "Experiment",
+                    comet.start(
+                        api_key=os.environ[COMET_API_KEY_ENV_VAR],
+                        mode="get",
+                        experiment_key=self._exp_key,
+                    ),
+                )
+            else:
+                self.exp = comet.Experiment(
+                    api_key=os.environ[COMET_API_KEY_ENV_VAR],
+                    project_name=self.project,
+                    workspace=self.workspace,
+                    auto_output_logging="simple",
+                    display_summary_level=0,
+                )
+                self._exp_key = self.exp.get_key()
 
-            if self.name is not None:
-                self.exp.set_name(self.name)
+                if self.name is not None:
+                    self.exp.set_name(self.name)
 
-            if self.tags:
-                self.exp.add_tags(self.tags)
+                if self.tags:
+                    self.exp.add_tags(self.tags)
 
-            if self.config is not None:
-                self.exp.log_parameters(self.config)
+                if self.config is not None:
+                    self.exp.log_parameters(self.config)
 
             if self.notifications == CometNotificationSetting.all:
                 self.exp.send_notification(
