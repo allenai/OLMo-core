@@ -14,11 +14,17 @@ from torch.distributed.tensor.parallel import (
 )
 
 from olmo_core.config import Config, DType, StrEnum
+from olmo_core.distributed.parallel import get_dp_process_group
 from olmo_core.exceptions import OLMoConfigurationError
 
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig
-from .loss import MoELoadBalancingLoss, MoELoss, MoERouterZLoss
+from .loss import (
+    MoELoadBalancingLoss,
+    MoELoadBalancingLossGranularity,
+    MoELoss,
+    MoERouterZLoss,
+)
 from .metric import MoELoadImbalanceMetric, MoEMetric
 from .mlp import DroplessMoEMLP, MoEMLP
 from .parallel_mlp import ParallelDroplessMLP, ParallelMLP, ParallelMLPBase
@@ -60,7 +66,10 @@ class MoEConfig(Config):
     capacity_factor: Optional[float] = None
     router: MoERouterConfig = field(default_factory=MoERouterConfig)
     shared_mlp: Optional[FeedForwardConfig] = None
-    lb_loss_weight: Optional[float] = 1.0
+    lb_loss_weight: Optional[float] = 0.01
+    lb_loss_granularity: MoELoadBalancingLossGranularity = (
+        MoELoadBalancingLossGranularity.local_batch
+    )
     z_loss_weight: Optional[float] = None
     dtype: DType = DType.float32
 
@@ -123,6 +132,7 @@ class MoEBase(nn.Module):
         shared_mlp: Optional[FeedForwardConfig] = None,
         init_device: str = "cpu",
         lb_loss_weight: Optional[float] = None,
+        lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
         z_loss_weight: Optional[float] = None,
         dtype: torch.dtype = torch.float32,
         cache: Optional[BufferCache] = None,
@@ -154,6 +164,7 @@ class MoEBase(nn.Module):
                     loss_weight=lb_loss_weight,
                     num_experts=num_experts,
                     top_k=self.router.top_k,
+                    granularity=lb_loss_granularity,
                 )
             )
         if z_loss_weight is not None:
@@ -176,7 +187,7 @@ class MoEBase(nn.Module):
     def warmup_cache(self, max_local_microbatch_size: int):
         self.experts.warmup_cache(max_local_microbatch_size)
 
-    def update_losses_and_metrics(
+    def maybe_update_losses_and_metrics(
         self,
         *,
         expert_logits: torch.Tensor,
@@ -184,8 +195,12 @@ class MoEBase(nn.Module):
         expert_weights: torch.Tensor,
         expert_indices: torch.Tensor,
         batch_size_per_expert: torch.Tensor,
+        batched_batch_size_per_expert: torch.Tensor,
     ):
         if not self.losses and not self.metrics:
+            return
+
+        if not self.training or not torch.is_grad_enabled():
             return
 
         expert_logits = expert_logits.float()
@@ -197,6 +212,7 @@ class MoEBase(nn.Module):
                 expert_weights=expert_weights,
                 expert_indices=expert_indices,
                 batch_size_per_expert=batch_size_per_expert,
+                batched_batch_size_per_expert=batched_batch_size_per_expert,
             )
 
         for metric in self.metrics:
@@ -206,6 +222,7 @@ class MoEBase(nn.Module):
                 expert_weights=expert_weights,
                 expert_indices=expert_indices,
                 batch_size_per_expert=batch_size_per_expert,
+                batched_batch_size_per_expert=batched_batch_size_per_expert,
             )
 
     def compute_losses(
@@ -266,6 +283,7 @@ class MoEBase(nn.Module):
             expert_weights,
             expert_indices,
             batch_size_per_expert,
+            batched_batch_size_per_expert,
         ) = self.router(x)
 
         shared_out: Optional[torch.Tensor] = None
@@ -278,19 +296,22 @@ class MoEBase(nn.Module):
             shared_out = shared_out / (self.top_k + 1)
             out = shared_out.add(out, alpha=self.top_k / (self.top_k + 1))
 
-        if self.training:
-            self.update_losses_and_metrics(
-                expert_logits=expert_logits,
-                expert_scores=expert_scores,
-                expert_weights=expert_weights,
-                expert_indices=expert_indices,
-                batch_size_per_expert=batch_size_per_expert,
-            )
+        self.maybe_update_losses_and_metrics(
+            expert_logits=expert_logits,
+            expert_scores=expert_scores,
+            expert_weights=expert_weights,
+            expert_indices=expert_indices,
+            batch_size_per_expert=batch_size_per_expert,
+            batched_batch_size_per_expert=batched_batch_size_per_expert,
+        )
 
         return out
 
-    def apply_pp(self, pp_mesh: DeviceMesh):
-        self.router.pp_group = pp_mesh.get_group()
+    def apply_dp(self, dp_mesh: Optional[DeviceMesh] = None):
+        group = None if dp_mesh is None else get_dp_process_group(dp_mesh)
+        self.router.group = group
+        for loss in self.losses:
+            loss.group = group
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         """
@@ -310,6 +331,10 @@ class MoEBase(nn.Module):
         Should be called before wrapping this module with DDP2.
         """
         self.experts.prepare_experts_for_ddp(**kwargs)
+
+    def apply_cp(self, cp_mesh: DeviceMesh):
+        for loss in self.losses:
+            loss.sp_mesh = cp_mesh
 
     def apply_tp(
         self,
@@ -356,6 +381,9 @@ class MoEBase(nn.Module):
             ),
         )
 
+        for loss in self.losses:
+            loss.sp_mesh = tp_mesh
+
 
 class MoE(MoEBase):
     """
@@ -373,6 +401,7 @@ class MoE(MoEBase):
         capacity_factor: float = 1.2,
         init_device: str = "cpu",
         lb_loss_weight: Optional[float] = None,
+        lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
         z_loss_weight: Optional[float] = None,
         dtype: torch.dtype = torch.float32,
         cache: Optional[BufferCache] = None,
@@ -385,6 +414,7 @@ class MoE(MoEBase):
             shared_mlp=shared_mlp,
             init_device=init_device,
             lb_loss_weight=lb_loss_weight,
+            lb_loss_granularity=lb_loss_granularity,
             z_loss_weight=z_loss_weight,
             dtype=dtype,
             capacity_factor=capacity_factor,
