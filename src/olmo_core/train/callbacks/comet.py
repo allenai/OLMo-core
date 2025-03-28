@@ -161,10 +161,12 @@ class CometCallback(Callback):
                         api_key=os.environ[COMET_API_KEY_ENV_VAR],
                         mode="get",
                         experiment_key=self._exp_key,
+                        experiment_config=comet.ExperimentConfig(
+                            auto_output_logging="simple",
+                            display_summary_level=0,
+                        ),
                     ),
                 )
-                self.exp.auto_output_logging = "simple"
-                self.exp.display_summary_level = 0
             else:
                 self.exp = comet.Experiment(
                     api_key=os.environ[COMET_API_KEY_ENV_VAR],
