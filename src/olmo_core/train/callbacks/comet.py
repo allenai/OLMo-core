@@ -154,6 +154,7 @@ class CometCallback(Callback):
                 raise OLMoEnvironmentError(f"missing env var '{COMET_API_KEY_ENV_VAR}'")
 
             if self.auto_resume and self._exp_key is not None:
+                log.info(f"Resuming Comet logging from existing experiment '{self._exp_key}'")
                 self.exp = cast(
                     "Experiment",
                     comet.start(
