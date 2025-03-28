@@ -292,7 +292,7 @@ class MoERouter(nn.Module):
         if self.gating_function == MoERouterGatingFunction.softmax:
             scores = logits.softmax(dim=-1)
         elif self.gating_function == MoERouterGatingFunction.sigmoid:
-            scores = F.sigmoid(logits)
+            scores = F.sigmoid(logits)  # NOTE: we normalize these *after* top-k, see below
         else:
             raise NotImplementedError(self.gating_function)
 
@@ -308,6 +308,10 @@ class MoERouter(nn.Module):
                     keepdim=True,
                 )
             )
+
+        # Make sure scores are normalized, otherwise load balancing loss doesn't work.
+        if self.gating_function == MoERouterGatingFunction.sigmoid:
+            scores = scores / (scores.sum(dim=-1, keepdim=True) + 1e-20)
 
         if self.uniform_expert_assignment:
             expert_indices = _uniform_expert_assignment(expert_indices, self.num_experts)
