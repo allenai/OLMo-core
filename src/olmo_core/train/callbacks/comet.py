@@ -113,7 +113,8 @@ class CometCallback(Callback):
 
     auto_resume: bool = False
     """
-    If ``True``, an existing experiment will be resumed from a checkpoint.
+    If ``True``, an existing experiment will be resumed from a checkpoint if the experiment name
+    matches.
     """
 
     _exp = None
@@ -133,10 +134,10 @@ class CometCallback(Callback):
         return self._finalized
 
     def state_dict(self) -> Dict[str, Any]:
-        return {"experiment_key": self._exp_key}
+        return {"experiment_key": self._exp_key, "name": self.name}
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
-        if self.auto_resume:
+        if self.auto_resume and self.name == state_dict.get("name"):
             self._exp_key = state_dict.get("experiment_key")
 
     def finalize(self):
