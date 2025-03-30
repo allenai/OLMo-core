@@ -403,7 +403,7 @@ class BeakerLaunchConfig(Config):
             "cd /olmo-core-runtime",
         ]
         # TODO: remove once we have a base image with CUDA 12.8
-        if any(["titan" in cluster for cluster in self.clusters]):
+        if any(["titan" in cluster for cluster in self.clusters]) or True:  # force this version of torch
             entrypoint_script.append(
                 "pip install torch==2.7.0 torchaudio torchvision --index-url https://download.pytorch.org/whl/test/cu128"
             )
