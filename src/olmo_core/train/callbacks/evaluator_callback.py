@@ -55,6 +55,11 @@ class EvaluatorCallback(Callback):
     The interval (in steps) with which to run the evaluators.
     """
 
+    eval_on_startup: bool = False
+    """
+    Whether to run an evaluation when the trainer starts up.
+    """
+
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     """
     The duration to run each evaluator for.
@@ -71,10 +76,17 @@ class EvaluatorCallback(Callback):
                 f"'{self.__class__.__name__}' only suports the '{TransformerTrainModule.__name__}' train module"
             )
 
+    def pre_train(self):
+        if self.eval_on_startup:
+            self._perform_eval()
+
     def post_step(self):
         if self.step <= 1 or self.step % self.eval_interval != 0:
             return
 
+        self._perform_eval()
+
+    def _perform_eval(self):
         # Put model in eval train mode.
         # TODO: make sure grads will be zeroed at this point
         #  self.trainer.optim.zero_grad(set_to_none=True)
@@ -171,6 +183,7 @@ class EvaluatorCallback(Callback):
 class LMEvaluatorCallbackConfig(CallbackConfig):
     eval_dataset: NumpyDatasetConfig
     eval_interval: int = 1000
+    eval_on_startup: bool = False
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     log_interval: int = 5
     enabled: bool = True
@@ -226,6 +239,7 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
             evaluators=[evaluator],
             eval_interval=self.eval_interval,
             log_interval=self.log_interval,
+            eval_on_startup=self.eval_on_startup,
             eval_duration=self.eval_duration,
         )
 
@@ -351,6 +365,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     tokenizer: TokenizerConfig
     eval_interval: int = 1000
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
+    eval_on_startup: bool = False
     log_interval: int = 5
     enabled: bool = True
 
@@ -388,6 +403,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
         return EvaluatorCallback(
             evaluators=evaluators,
             eval_interval=self.eval_interval,
+            eval_on_startup=self.eval_on_startup,
             log_interval=self.log_interval,
             eval_duration=self.eval_duration,
         )
