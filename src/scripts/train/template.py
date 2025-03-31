@@ -22,6 +22,7 @@ from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
     TrainerConfig,
+    prepare_cli_environment,
     prepare_training_environment,
     teardown_training_environment,
 )
@@ -156,7 +157,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("garbage_collector", GarbageCollectorCallback())
         .with_callback("beaker", BeakerCallback())
-        .with_recommended_evals(TOKENIZER_CONFIG, SEQUENCE_LENGTH, BEAKER_CLUSTER)
+        #  .with_recommended_evals(TOKENIZER_CONFIG, SEQUENCE_LENGTH, BEAKER_CLUSTER)
     )
 
     return ExperimentConfig(
@@ -213,6 +214,8 @@ if __name__ == "__main__":
         sys.exit(1)
 
     script, cmd, run_name, *overrides = sys.argv
+    if cmd != "train":
+        prepare_cli_environment()
 
     config = build_config(script, run_name, overrides)
     log.info(config)
