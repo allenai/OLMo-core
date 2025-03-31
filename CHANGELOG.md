@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Compatibility with B200s.
 - Added support for `warmup_fraction` as an alternative to `warmup_steps` in all schedulers, allowing warmup to be specified as a fraction of total training steps.
 - A better config for the 1B model, ported from the old OLMo trainer.
+- Added `auto_resume` option to `CometCallback` for resume an existing run.
+- (BETA) Added methods `load_hf_model` and `save_hf_model` for saving supported OLMo Core models to HF transformers format.
+Also added lower-level methods for converting state between the formats.
+- Added the ability to run an eval at startup
 
 ### Changed
 
@@ -21,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated `Float8Config` for latest version of `torchao`.
 - Undo a fix applied to `olmo_core.data.numpy_dataset.NumpyFSLDatasetMixture` that was generating a mismatch between the shape of instances in the dataset and the shape of instances in the data loader.
 - Made the 1B and 7B scripts more similar to each other.
+- Changed underlying logic and top-level arguments of `convert_checkpoint_from_hf.py` and `convert_checkpoint_to_hf.py`.
 
 ### Fixed
 
@@ -60,6 +65,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Added in-loop evals for Minerva, GSM, HumanEval, MBPP (`ai2-olmo-eval==0.7.0`)
 - Added `CosWithWarmupAndLinearDecay` learning rate scheduler
 - Added `WSD` learning rate scheduler
+- Added `RunDuration` in `model_ladder` to configure training durations in terms of Chinchilla multipliers.
 
 ### Changed
 

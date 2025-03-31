@@ -64,8 +64,11 @@ wandb = [
 comet = [
     "comet_ml",
 ]
+transformers = [
+    "transformers",
+]
 all = [
-    "ai2-olmo-core[dev,beaker,wandb,comet]",
+    "ai2-olmo-core[dev,beaker,wandb,comet,transformers]",
 ]
 
 [tool.setuptools]
