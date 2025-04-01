@@ -928,17 +928,25 @@ class TransformerConfig(Config):
         lb_loss_weight: float = 0.01,
         z_loss_weight: Optional[float] = 0.001,
         reordered_norm: bool = False,
+        hybrid: bool = False,
         **kwargs,
     ) -> "TransformerConfig":
+        block_name: TransformerBlockType
+        if reordered_norm:
+            block_name = (
+                TransformerBlockType.moe_hybrid_reordered_norm
+                if hybrid
+                else TransformerBlockType.moe_hybrid
+            )
+        else:
+            block_name = TransformerBlockType.moe_hybrid if hybrid else TransformerBlockType.moe
         return cls.llama_like(
             d_model=d_model,
             vocab_size=vocab_size,
             n_layers=n_layers,
             n_heads=n_heads,
             name=TransformerType.moe,
-            block_name=TransformerBlockType.moe
-            if not reordered_norm
-            else TransformerBlockType.moe_reordered_norm,
+            block_name=block_name,
             qk_norm=kwargs.pop("qk_norm", reordered_norm),
             feed_forward_moe=MoEConfig(
                 name=MoEType.default if not dropless else MoEType.dropless,
