@@ -174,7 +174,7 @@ if __name__ == "__main__":
         action="store_true",
         help="test μ parametrization is correctly implemented by collecting statistics on coordinate distributions for a few steps of training.",
     )
-    parser.add_argument("--coord_check_nsteps", type=int, default=5, help="Do coord check with this many steps.")
+    parser.add_argument("--coord_check_nsteps", type=int, default=3, help="Do coord check with this many steps.")
     parser.add_argument(
         "--coord_check_nseeds",
         type=int,

@@ -69,7 +69,7 @@ def _get_coord_data(
                 model = model.cuda()
             if mup:
                 base_shapes = mup_load(load_base_shapes)
-                set_base_shapes(model, base_shapes, rescale_params=False)
+                set_base_shapes(model, base_shapes, rescale_params=True)
 
             optimizer = optcls(model)
             for batch_idx, batch in enumerate(dataloader, 1):
