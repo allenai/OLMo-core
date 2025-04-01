@@ -3,13 +3,14 @@ Train a medium OLMoE model. Run this script without any arguments to see usage i
 """
 
 import logging
+from dataclasses import replace
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
-from olmo_core.internal.experiment import CommonComponents, main
+from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, main
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
-from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.transformer import TransformerBlockType, TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
@@ -41,6 +42,25 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         rope_theta=500_000,
         layer_norm_eps=1e-6,
     )
+
+
+def finalize_config(config: ExperimentConfig):
+    if config.model.block.name in (
+        TransformerBlockType.moe_hybrid,
+        TransformerBlockType.moe_hybrid_reordered_norm,
+    ):
+        assert config.model.block.feed_forward_moe is not None
+        moe_config = replace(
+            config.model.block.feed_forward_moe, shared_mlp=config.model.block.feed_forward
+        )
+        config.model.block_overrides = {
+            0: replace(
+                config.model.block,
+                name=TransformerBlockType(str(config.model.block.name).replace("_hybrid_", "_")),
+                feed_forward=None,
+                feed_forward_moe=moe_config,
+            )
+        }
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
@@ -130,4 +150,5 @@ if __name__ == "__main__":
         # https://github.com/pytorch/pytorch/issues/143194
         beaker_image=OLMoCoreBeakerImage.nightly_cu126,
         num_nodes=4,
+        finalize_config=finalize_config,
     )

@@ -94,6 +94,7 @@ class Transformer(nn.Module):
         init_device: str = "cpu",
         init_seed: int = 0,
         init_std: float = 0.02,
+        block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
     ):
         super().__init__()
 
@@ -108,14 +109,17 @@ class Transformer(nn.Module):
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.blocks = nn.ModuleDict()
         for block_idx in range(n_layers):
-            block_ = block.build(
-                d_model=d_model,
-                block_idx=block_idx,
-                init_device=init_device,
-                cache=cache,
+            block_config = block
+            if block_overrides is not None and block_idx in block_overrides:
+                block_config = block_overrides[block_idx]
+            self.blocks[str(block_idx)] = self._validate_block(
+                block_config.build(
+                    d_model=d_model,
+                    block_idx=block_idx,
+                    init_device=init_device,
+                    cache=cache,
+                )
             )
-            self._validate_block(block_)
-            self.blocks[str(block_idx)] = block_
         self.lm_head = lm_head.build(
             d_model=d_model, vocab_size=vocab_size, init_device=init_device
         )
@@ -140,8 +144,8 @@ class Transformer(nn.Module):
         self.num_params
         self.num_non_embedding_params
 
-    def _validate_block(self, block: TransformerBlockBase):
-        del block
+    def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
+        return block
 
     def compute_auxiliary_losses(
         self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
@@ -803,6 +807,7 @@ class NormalizedTransformer(Transformer):
         init_device: str = "cpu",
         init_seed: int = 0,
         init_std: float = 0.02,
+        block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
     ):
         super().__init__(
             d_model=d_model,
@@ -815,13 +820,15 @@ class NormalizedTransformer(Transformer):
             init_device=init_device,
             init_seed=init_seed,
             init_std=init_std,
+            block_overrides=block_overrides,
         )
 
-    def _validate_block(self, block: TransformerBlockBase):
+    def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
         if not isinstance(block, NormalizedTransformerBlock):
             raise OLMoConfigurationError(
                 f"'{self.__class__.__name__}' requires a '{NormalizedTransformerBlock.__name__}' block"
             )
+        return block
 
     @torch.no_grad()
     def init_weights(
@@ -884,11 +891,12 @@ class MoETransformer(Transformer):
     def is_moe(self) -> bool:
         return True
 
-    def _validate_block(self, block: TransformerBlockBase):
+    def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
         if not isinstance(block, MoETransformerBlock):
             raise OLMoConfigurationError(
                 f"'{self.__class__.__name__}' requires a '{MoETransformerBlock.__name__}' block"
             )
+        return block
 
     def compute_auxiliary_losses(
         self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
