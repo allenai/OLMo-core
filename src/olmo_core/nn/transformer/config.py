@@ -936,7 +936,7 @@ class TransformerConfig(Config):
             block_name = (
                 TransformerBlockType.moe_hybrid_reordered_norm
                 if hybrid
-                else TransformerBlockType.moe_hybrid
+                else TransformerBlockType.moe_reordered_norm
             )
         else:
             block_name = TransformerBlockType.moe_hybrid if hybrid else TransformerBlockType.moe
