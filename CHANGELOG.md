@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `auto_resume` option to `CometCallback` for resume an existing run.
 - (BETA) Added methods `load_hf_model` and `save_hf_model` for saving supported OLMo Core models to HF transformers format.
 Also added lower-level methods for converting state between the formats.
+- Added support for label mask files with numpy FSL datasets.
 
 ### Changed
 
