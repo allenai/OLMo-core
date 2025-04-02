@@ -29,7 +29,7 @@ class BaselineModelLadder(ModelLadder):
         ModelSize.size_600M: 16 * 4096,
         ModelSize.size_760M: 16 * 4096,
         # ===============================
-        ModelSize.size_1B: 2 * 8 * 4096,
+        ModelSize.size_1B: 3 * 8 * 4096,
         ModelSize.size_3B: 4 * 4096,
         ModelSize.size_7B: 2 * 4096,
         ModelSize.size_13B: 1 * 4096,
@@ -96,7 +96,7 @@ def build_ladder(root_dir: str) -> BaselineModelLadder:
         save_folder = str(join_path(root_dir, "checkpoints/ladder"))
     return BaselineModelLadder(
         name="OLMo2",
-        project="OLMo2-model-ladder",
+        project="OLMo2-model-ladder-davidh",
         mix_base_dir=root_dir,
         work_dir=get_work_dir(root_dir),
         save_folder=save_folder,
