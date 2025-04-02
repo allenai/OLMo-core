@@ -721,13 +721,24 @@ def _gcs_list_directory(
 def _get_s3_client(scheme: str):
     import boto3
     from botocore.config import Config
+    from botocore import UNSIGNED
 
     session = boto3.Session(profile_name=_get_s3_profile_name(scheme))
+
+    credentials = session.get_credentials()
+    if credentials is None:
+        kwargs = {
+            "config": Config(signature_version=UNSIGNED)
+        }
+    else:
+        kwargs = {}
+
     return session.client(
         "s3",
         endpoint_url=_get_s3_endpoint_url(scheme),
         config=Config(retries={"max_attempts": 10, "mode": "standard"}),
         use_ssl=not int(os.environ.get("OLMO_NO_SSL", "0")),
+        **kwargs,
     )
 
 
