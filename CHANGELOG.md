@@ -12,9 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for auxiliary-loss-free MoE load-balancing, similar to DeepSeek-v3. You can activate this by setting `bias_gamma` to a non-zero float in your `MoERouter` config.
 - Compatibility with B200s.
 - Added support for `warmup_fraction` as an alternative to `warmup_steps` in all schedulers, allowing warmup to be specified as a fraction of total training steps.
+- A better config for the 1B model, ported from the old OLMo trainer.
 - Added `auto_resume` option to `CometCallback` for resume an existing run.
 - (BETA) Added methods `load_hf_model` and `save_hf_model` for saving supported OLMo Core models to HF transformers format.
 Also added lower-level methods for converting state between the formats.
+- Added the ability to run an eval at startup
 - Added support for label mask files with numpy FSL datasets.
 
 ### Changed
@@ -23,6 +25,7 @@ Also added lower-level methods for converting state between the formats.
 - Several state dict methods in `TrainModule` now take an `optim` option, which can disable the use of optimizer state.
 - Updated `Float8Config` for latest version of `torchao`.
 - Undo a fix applied to `olmo_core.data.numpy_dataset.NumpyFSLDatasetMixture` that was generating a mismatch between the shape of instances in the dataset and the shape of instances in the data loader.
+- Made the 1B and 7B scripts more similar to each other.
 - Changed underlying logic and top-level arguments of `convert_checkpoint_from_hf.py` and `convert_checkpoint_to_hf.py`.
 
 ### Fixed
