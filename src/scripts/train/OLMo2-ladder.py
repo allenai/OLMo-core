@@ -96,7 +96,7 @@ def build_ladder(root_dir: str) -> BaselineModelLadder:
         save_folder = str(join_path(root_dir, "checkpoints/ladder"))
     return BaselineModelLadder(
         name="OLMo2",
-        project="OLMo2-model-ladder-davidh",
+        project="OLMo2-model-ladder-davidh-1",
         mix_base_dir=root_dir,
         work_dir=get_work_dir(root_dir),
         save_folder=save_folder,
