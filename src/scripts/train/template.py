@@ -51,7 +51,7 @@ log = logging.getLogger(__name__)
 # Data configuration.
 SEQUENCE_LENGTH = 4096
 TOKENIZER_CONFIG = TokenizerConfig.dolma2()
-DATA_PATHS = []
+DATA_PATHS: List[str] = []
 GLOBAL_BATCH_SIZE = 1024 * SEQUENCE_LENGTH
 RANK_MICROBATCH_SIZE = 8 * SEQUENCE_LENGTH
 INTRA_DOCUMENT_MASKING = False
