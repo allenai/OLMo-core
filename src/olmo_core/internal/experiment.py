@@ -300,6 +300,9 @@ def prep(config: ExperimentConfig):
 
 
 def train(config: ExperimentConfig):
+    if torch.cuda.is_available():
+        torch.cuda.init()   # unclear why this doesn't happen automatically all the time
+
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
