@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - (BETA) Added methods `load_hf_model` and `save_hf_model` for saving supported OLMo Core models to HF transformers format.
 Also added lower-level methods for converting state between the formats.
 - Added the ability to run an eval at startup
+- Added support for label mask files with numpy FSL datasets.
 
 ### Changed
 

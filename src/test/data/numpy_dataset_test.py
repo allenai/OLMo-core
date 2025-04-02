@@ -43,6 +43,49 @@ def test_numpy_fsl_dataset(tmp_path: Path):
     assert len(ds) == 8
 
 
+def test_numpy_fsl_dataset_with_label_mask(tmp_path: Path):
+    mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(16,))
+    mmap1[:] = list(range(16))
+    mmap1.flush()
+
+    mmap1_mask = np.memmap(tmp_path / "mmap1_mask.npy", mode="w+", dtype=np.bool_, shape=(16,))
+    mmap1_mask[:] = True
+    mmap1_mask[7] = False
+    mmap1_mask.flush()
+
+    mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(16,))
+    mmap2[:] = list(range(16, 32))
+    mmap2.flush()
+
+    mmap2_mask = np.memmap(tmp_path / "mmap2_mask.npy", mode="w+", dtype=np.bool_, shape=(16,))
+    mmap2_mask[:] = True
+    mmap2_mask[0:3] = False
+    mmap2_mask.flush()
+
+    ds = NumpyFSLDataset(
+        tmp_path / "mmap1.npy",
+        tmp_path / "mmap2.npy",
+        sequence_length=4,
+        pad_token_id=-1,
+        eos_token_id=-1,
+        vocab_size=32_000,
+        label_mask_paths=[tmp_path / "mmap1_mask.npy", tmp_path / "mmap2_mask.npy"],
+    )
+    assert len(ds) == 8
+
+    assert ds[0]["input_ids"].tolist() == [0, 1, 2, 3]
+    assert ds[0]["label_mask"].tolist() == [True, True, True, True]
+
+    assert ds[1]["input_ids"].tolist() == [4, 5, 6, 7]
+    assert ds[1]["label_mask"].tolist() == [True, True, True, False]
+
+    assert ds[4]["input_ids"].tolist() == [16, 17, 18, 19]
+    assert ds[4]["label_mask"].tolist() == [False, False, False, True]
+
+    assert ds[7]["input_ids"].tolist() == [28, 29, 30, 31]
+    assert ds[7]["label_mask"].tolist() == [True, True, True, True]
+
+
 def test_numpy_padded_fsl_dataset(tmp_path: Path):
     data1 = [1, 2, 3, 4, 5, 6, 7, 0, 8, 9, 10, 0]
     mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
@@ -70,6 +113,58 @@ def test_numpy_padded_fsl_dataset(tmp_path: Path):
     assert ds[2]["input_ids"].tolist() == [11, 12, 13, 14, 15, 16, 17, 18]
     assert ds[3]["input_ids"].tolist() == [21, 22, 0, 0, 0, 0, 0, 0]
     assert len(ds) == 4
+
+
+def test_numpy_padded_fsl_dataset_with_label_mask(tmp_path: Path):
+    data1 = [1, 2, 3, 4, 5, 6, 7, 0, 8, 9, 10, 0]
+    mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
+    mmap1[:] = data1
+    mmap1.flush()
+
+    data1_mask = [False, True, True, True, True, True, True, True] + [True, True, True, True]
+    mmap1_mask = np.memmap(
+        tmp_path / "mmap1_mask.npy", mode="w+", dtype=np.bool_, shape=(len(data1_mask),)
+    )
+    mmap1_mask[:] = data1_mask
+    mmap1_mask.flush()
+
+    data2 = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 21, 22, 0]
+    mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(len(data2),))
+    mmap2[:] = data2
+    mmap2.flush()
+
+    data2_mask = [True, True, True, True, True, True, True, True, True, True, True] + [
+        True,
+        True,
+        True,
+    ]
+    mmap2_mask = np.memmap(
+        tmp_path / "mmap2_mask.npy", mode="w+", dtype=np.bool_, shape=(len(data2_mask),)
+    )
+    mmap2_mask[:] = data2_mask
+    mmap2_mask.flush()
+
+    ds = NumpyPaddedFSLDataset(
+        tmp_path / "mmap1.npy",
+        tmp_path / "mmap2.npy",
+        sequence_length=8,
+        pad_token_id=0,
+        eos_token_id=0,
+        vocab_size=32_000,
+        label_mask_paths=[tmp_path / "mmap1_mask.npy", tmp_path / "mmap2_mask.npy"],
+    )
+
+    ds.prepare()
+    assert len(ds) == 4
+
+    assert ds[0]["input_ids"].tolist() == [1, 2, 3, 4, 5, 6, 7, 0]
+    assert ds[0]["label_mask"].tolist() == [False] + [True] * 7
+
+    assert ds[1]["input_ids"].tolist() == [8, 9, 10, 0, 0, 0, 0, 0]
+    assert ds[1]["label_mask"].tolist() == [True] * 4 + [False] * 4
+
+    assert ds[2]["input_ids"].tolist() == [11, 12, 13, 14, 15, 16, 17, 18]
+    assert ds[3]["input_ids"].tolist() == [21, 22, 0, 0, 0, 0, 0, 0]
 
 
 def test_numpy_fsl_mixture_dataset(tmp_path: Path):
