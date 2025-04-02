@@ -720,8 +720,8 @@ def _gcs_list_directory(
 @cache
 def _get_s3_client(scheme: str):
     import boto3
-    from botocore.config import Config
     from botocore import UNSIGNED
+    from botocore.config import Config
 
     session = boto3.Session(profile_name=_get_s3_profile_name(scheme))
 
