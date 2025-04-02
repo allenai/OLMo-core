@@ -526,8 +526,8 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                 ):
                     if array_lengths[i] != length:
                         raise RuntimeError(
-                            f"mismatch between length of source file '{self._array_paths[i]}' and "
-                            f"length of corresponding label mask file '{self._label_mask_paths[i]}'"
+                            f"mismatch between length of source file ('{self._array_paths[i]}', {array_lengths[i]:,d}) and "
+                            f"length of corresponding label mask file ('{self._label_mask_paths[i]}', {length:,d})"
                         )
 
         return self._array_file_sizes, self._array_offsets
@@ -764,6 +764,10 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
             label_mask_paths=label_mask_paths,
         )
         self._array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
+        self._label_mask_path_to_source_path: Dict[PathOrStr, PathOrStr] = {}
+        if self._label_mask_paths:
+            for label_mask_path, source_path in zip(self._label_mask_paths, self._array_paths):
+                self._label_mask_path_to_source_path[label_mask_path] = source_path
 
     @property
     def offsets(self) -> Tuple[Tuple[int, int], ...]:
@@ -816,6 +820,8 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         return data
 
     def _get_instance_indices_path(self, path: PathOrStr) -> Path:
+        if path in self._label_mask_path_to_source_path:
+            path = self._label_mask_path_to_source_path[path]
         sha256_hash = hashlib.sha256()
         sha256_hash.update(str(path).encode())
         sha256_hash.update(str(self._get_file_size(path)).encode())
