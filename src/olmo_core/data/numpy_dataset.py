@@ -502,13 +502,14 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     @property
     def _sizes_and_offsets(self) -> Tuple[Tuple[int, ...], Tuple[Tuple[int, int], ...]]:
         if self._array_offsets is None or self._array_file_sizes is None:
-            array_lengths: List[int] = []
+            array_sizes: List[int] = []
             array_offsets: List[Tuple[int, int]] = []
             array_file_sizes: List[int] = []
+            item_size = self.dtype(0).itemsize
 
             start_offset = 0
             for size, length in self.map(self._get_file_size_and_length):
-                array_lengths.append(length)
+                array_sizes.append(size // item_size)
                 end_offset = start_offset + length
                 array_offsets.append((start_offset, end_offset))
                 array_file_sizes.append(size)
@@ -517,17 +518,19 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
             self._array_offsets = tuple(array_offsets)
             self._array_file_sizes = tuple(array_file_sizes)
 
+            mask_item_size = np.bool_(True).itemsize
             if self._label_mask_paths is not None:
-                for i, (_, length) in enumerate(
+                for i, (size, _) in enumerate(
                     self.map(
                         partial(self._get_file_size_and_length, dtype=np.bool_),
                         _paths=self._label_mask_paths,
                     )
                 ):
-                    if array_lengths[i] != length:
+                    size = size // mask_item_size
+                    if array_sizes[i] != size:
                         raise RuntimeError(
-                            f"mismatch between length of source file ('{self._array_paths[i]}', {array_lengths[i]:,d}) and "
-                            f"length of corresponding label mask file ('{self._label_mask_paths[i]}', {length:,d})"
+                            f"mismatch between size of source file ('{self._array_paths[i]}', {array_sizes[i]:,d}) and "
+                            f"size of corresponding label mask file ('{self._label_mask_paths[i]}', {size:,d})"
                         )
 
         return self._array_file_sizes, self._array_offsets
@@ -1736,6 +1739,7 @@ class NumpyDatasetConfig(Config):
 
         paths: List[str] = []
         metadata = self.metadata
+        label_mask_paths: Optional[List[PathOrStr]] = None
         if self.paths and self.expand_glob:
             from glob import glob
 
@@ -1747,8 +1751,20 @@ class NumpyDatasetConfig(Config):
                 for path in matches:
                     log.info(f" - '{path}'")
                 paths.extend(matches)
+
+            if self.label_mask_paths:
+                label_mask_paths = []
+                for glob_path in self.label_mask_paths:
+                    log.info(f"Expanding '{glob_path}'...")
+                    matches = sorted(glob(glob_path))
+                    if not matches:
+                        raise FileNotFoundError(glob_path)
+                    for path in matches:
+                        log.info(f" - '{path}'")
+                    label_mask_paths.extend(matches)
         elif self.paths:
             paths = self.paths
+            label_mask_paths = cast(Optional[List[PathOrStr]], self.label_mask_paths)
         elif self.source_mixture_config and self.name == NumpyDatasetType.fsl:
             log.info("Building dataset from source mixture...")
         else:
@@ -1767,6 +1783,7 @@ class NumpyDatasetConfig(Config):
             paths, labels = mix.build(self.mix_base_dir, self.tokenizer.identifier)
             if metadata is None:
                 metadata = [{"label": label} for label in labels]
+            label_mask_paths = cast(Optional[List[PathOrStr]], self.label_mask_paths)
 
         dataset: NumpyDatasetBase
         if self.name == NumpyDatasetType.fsl:
@@ -1791,7 +1808,7 @@ class NumpyDatasetConfig(Config):
                     "'vsl_curriculum' is only a valid field for VSL datasets"
                 )
             if self.source_mixture_config:
-                if self.label_mask_paths is not None:
+                if label_mask_paths is not None:
                     raise OLMoConfigurationError(
                         "'label_mask_paths' is not supported for mixture datasets"
                     )
@@ -1824,7 +1841,7 @@ class NumpyDatasetConfig(Config):
                     include_instance_metadata=self.include_instance_metadata,
                     generate_doc_lengths=self.generate_doc_lengths,
                     instance_filter_config=self.instance_filter_config,
-                    label_mask_paths=cast(Optional[List[PathOrStr]], self.label_mask_paths),
+                    label_mask_paths=label_mask_paths,
                 )
         elif self.name == NumpyDatasetType.padded_fsl:
             if self.sequence_length is None:
@@ -1865,7 +1882,7 @@ class NumpyDatasetConfig(Config):
                 metadata=metadata,
                 include_instance_metadata=self.include_instance_metadata,
                 instance_filter_config=self.instance_filter_config,
-                label_mask_paths=cast(Optional[List[PathOrStr]], self.label_mask_paths),
+                label_mask_paths=label_mask_paths,
             )
         elif self.name == NumpyDatasetType.vsl:
             if self.max_sequence_length is None:
@@ -1880,7 +1897,7 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'generate_doc_lengths' is only valid for FSL datasets"
                 )
-            if self.label_mask_paths is not None:
+            if label_mask_paths is not None:
                 raise OLMoConfigurationError("'label_mask_paths' is not supported for VSL datasets")
             dataset = NumpyVSLDataset(
                 *paths,
