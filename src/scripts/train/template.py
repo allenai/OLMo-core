@@ -157,7 +157,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("garbage_collector", GarbageCollectorCallback())
         .with_callback("beaker", BeakerCallback())
-        #  .with_recommended_evals(TOKENIZER_CONFIG, SEQUENCE_LENGTH, BEAKER_CLUSTER)
+        .with_recommended_evals(TOKENIZER_CONFIG, SEQUENCE_LENGTH, BEAKER_CLUSTER)
     )
 
     return ExperimentConfig(
