@@ -58,17 +58,13 @@ class SkipStepAdamW(SkipStepOptimizer):
         betas: Tuple[float, float] = (0.9, 0.999),
         eps: float = 1e-8,
         weight_decay: float = 1e-2,
-        foreach: Optional[bool] = None,
-        fused: Optional[bool] = None,
         rolling_interval_length: int = 128,
         sigma_factor: int = 6,
         dtype: Optional[Union[torch.dtype, DType]] = None,
     ) -> None:
         assert lr > 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
-        defaults = dict(
-            lr=lr, betas=betas, eps=eps, weight_decay=weight_decay, foreach=foreach, fused=fused
-        )
+        defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
         super().__init__(
             params,
             defaults,
@@ -147,7 +143,6 @@ class SkipStepAdamWConfig(OptimConfig):
     betas: Tuple[float, float] = (0.9, 0.999)
     eps: float = 1e-8
     weight_decay: float = 1e-2
-    fused: Optional[bool] = None
     rolling_interval_length: int = 128
     sigma_factor: int = 6
     dtype: Optional[DType] = None
