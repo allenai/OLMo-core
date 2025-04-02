@@ -461,6 +461,7 @@ class TransformerConfig(Config):
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             layer_norm_eps=1e-6,
+            # hidden_size_multiplier=1,
             hidden_size_multiplier=1.5,
             **kwargs,
         )

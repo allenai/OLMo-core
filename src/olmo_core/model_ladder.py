@@ -163,7 +163,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
     The local or remote folder to save checkpoints to.
     """
 
-    sequence_length: int = 2048
+    sequence_length: int = 4096 # 2048
     """
     The target sequence length to train the ladder on.
     """
@@ -416,7 +416,75 @@ class ModelLadder(Config, metaclass=ABCMeta):
         config = config.with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
-                tasks=[task for task in list_tasks() if "_mc" not in task and "_var" not in task],
+                # tasks=[task for task in list_tasks() if "_mc" not in task and "_var" not in task],
+                tasks=[
+                    # OLMES Core 9 RC
+                    "arc_challenge_test_rc_5shot",
+                    "arc_easy_test_rc_5shot",
+                    "hellaswag_rc_5shot",  # 1K subset of HellaSwag
+                    "winogrande_val_rc_5shot",  # Helpful after 750M-5xC scale
+                    "csqa_val_rc_5shot",
+                    "piqa_val_rc_5shot",
+                    "socialiqa_val_rc_5shot",
+                    # Too noisy to be worth tracking
+                    # "boolq_val_rc_5shot",
+                    # "openbookqa_test_rc_5shot",
+                    # MMLU RC
+                    "mmlu_stem_val_rc_5shot",
+                    "mmlu_humanities_val_rc_5shot",
+                    "mmlu_social_sciences_val_rc_5shot",
+                    "mmlu_other_val_rc_5shot",
+                    "mmlu_stem_test_rc_5shot",
+                    "mmlu_humanities_test_rc_5shot",
+                    "mmlu_social_sciences_test_rc_5shot",
+                    "mmlu_other_test_rc_5shot",
+                    # Gen tasks BPB
+                    "gsm8k_gold_bpb_5shot",
+                    "minerva_math_algebra_gold_bpb_0shot",
+                    "minerva_math_counting_and_probability_gold_bpb_0shot",
+                    "minerva_math_geometry_gold_bpb_0shot",
+                    "minerva_math_intermediate_algebra_gold_bpb_0shot",
+                    "minerva_math_number_theory_gold_bpb_0shot",
+                    "minerva_math_prealgebra_gold_bpb_0shot",
+                    "minerva_math_precalculus_gold_bpb_0shot",
+                    "codex_humaneval_gold_bpb_0shot",
+                    "codex_mbpp_gold_bpb_0shot",
+                    # Sanity check for MCQA ability
+                    "copycolors_10way",
+                    # OLMES Core 9 MC
+                    "arc_challenge_test_mc_5shot",
+                    "arc_easy_test_mc_5shot",
+                    "hellaswag_rc_5shot",  # 1K subset of HellaSwag
+                    # "csqa_val_mc_5shot",
+                    "piqa_val_mc_5shot",
+                    "socialiqa_val_mc_5shot",
+                    "winogrande_val_rc_5shot",
+                    # Too noisy to be worth tracking
+                    # "boolq_val_mc_5shot",
+                    # "openbookqa_test_mc_5shot",
+                    # MMLU MC BPB
+                    "mmlu_stem_val_mc_5shot",
+                    "mmlu_humanities_val_mc_5shot",
+                    "mmlu_social_sciences_val_mc_5shot",
+                    "mmlu_other_val_mc_5shot",
+                    "mmlu_stem_test_mc_5shot",
+                    "mmlu_humanities_test_mc_5shot",
+                    "mmlu_social_sciences_test_mc_5shot",
+                    "mmlu_other_test_mc_5shot",
+                    # Gen tasks BPB
+                    "gsm8k_gold_bpb_5shot",
+                    "minerva_math_algebra_gold_bpb_0shot",
+                    "minerva_math_counting_and_probability_gold_bpb_0shot",
+                    "minerva_math_geometry_gold_bpb_0shot",
+                    "minerva_math_intermediate_algebra_gold_bpb_0shot",
+                    "minerva_math_number_theory_gold_bpb_0shot",
+                    "minerva_math_prealgebra_gold_bpb_0shot",
+                    "minerva_math_precalculus_gold_bpb_0shot",
+                    "codex_humaneval_gold_bpb_0shot",
+                    "codex_mbpp_gold_bpb_0shot",
+                    # Sanity check for MCQA ability
+                    "copycolors_10way",
+                ],
                 tokenizer=self.tokenizer,
                 eval_interval=500,
             ),

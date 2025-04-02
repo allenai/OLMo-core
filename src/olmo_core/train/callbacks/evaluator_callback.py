@@ -71,6 +71,10 @@ class EvaluatorCallback(Callback):
                 f"'{self.__class__.__name__}' only suports the '{TransformerTrainModule.__name__}' train module"
             )
 
+    # def pre_train(self):
+    #     self.post_step()
+    #     raise RuntimeError()
+
     def post_step(self):
         if self.step <= 1 or self.step % self.eval_interval != 0:
             return
@@ -99,9 +103,12 @@ class EvaluatorCallback(Callback):
                 with torch.no_grad():
                     # Run forward pass, get logits and un-reduced CE loss.
                     labels = get_labels(batch)
+                    log.info(f"Eval labels size: {labels.size()}")
                     output = self.trainer.train_module.eval_batch(batch, labels=labels)
                     assert isinstance(output, LMOutputWithLoss)
                     logits, ce_loss, _ = output
+
+                    log.info(f"Eval logits size: {logits.size()}")
 
                     # NOTE: might have host-device syncs here but that's okay.
                     with cuda_sync_debug_mode(0):

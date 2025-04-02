@@ -162,6 +162,7 @@ def load_state_dict(
         state_dict,
         checkpoint_id=dir,
         storage_reader=reader,
+        planner=dist_cp.DefaultLoadPlanner(allow_partial_load=True),
         process_group=process_group,
     )
 

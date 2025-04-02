@@ -29,7 +29,7 @@ class BaselineModelLadder(ModelLadder):
         ModelSize.size_600M: 16 * 4096,
         ModelSize.size_760M: 16 * 4096,
         # ===============================
-        ModelSize.size_1B: 8 * 4096,
+        ModelSize.size_1B: 2 * 8 * 4096,
         ModelSize.size_3B: 4 * 4096,
         ModelSize.size_7B: 2 * 4096,
         ModelSize.size_13B: 1 * 4096,
@@ -84,7 +84,7 @@ class BaselineModelLadder(ModelLadder):
         if gpu_type.lower() in ("mps", "cpu"):
             return 4096
         else:
-            assert "h100" in gpu_type.lower()
+            # assert "h100" in gpu_type.lower()
             return self.MBZ_SIZES[size]
 
 

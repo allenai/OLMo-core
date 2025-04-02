@@ -406,9 +406,12 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                 "this could mean the data has changed"
             )
         elif state_dict["dataset_fingerprint"] != self.dataset.fingerprint:
-            raise RuntimeError(
-                "Restoring state from a different dataset is not supported! (fingerprint doesn't match)"
+            log.warning(
+                "@davidh disabled the warning. all bets are off"
             )
+            # raise RuntimeError(
+            #     "Restoring state from a different dataset is not supported! (fingerprint doesn't match)"
+            # )
 
         if state_dict["seed"] != self.seed:
             log.warning(

@@ -227,7 +227,7 @@ class BeakerLaunchConfig(Config):
     shared filesystem (like weka or NFS).
     """
 
-    priority: Priority = Priority.normal
+    priority: Priority = Priority.low
     """
     The job priority.
     """
