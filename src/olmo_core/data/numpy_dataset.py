@@ -823,6 +823,9 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         return data
 
     def _get_instance_indices_path(self, path: PathOrStr) -> Path:
+        # NOTE: the instance indices file names are based on the corresponding source (token IDs) file name,
+        # so to get the right instance indices file name for a label mask file, we need to map
+        # the label mask file name to its corresponding source file name.
         if path in self._label_mask_path_to_source_path:
             path = self._label_mask_path_to_source_path[path]
         sha256_hash = hashlib.sha256()
