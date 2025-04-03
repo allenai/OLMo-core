@@ -936,7 +936,7 @@ class Trainer:
                 (k, cb)
                 for _, (k, cb) in sorted(
                     enumerate(self.callbacks.items()),
-                    key=lambda x: (x[1][1].priority, x[0]),
+                    key=lambda x: (x[1][1].priority, -1 * x[0]),
                     reverse=True,
                 )
             )
