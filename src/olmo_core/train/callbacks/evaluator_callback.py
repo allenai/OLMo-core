@@ -152,7 +152,7 @@ class EvaluatorCallback(Callback):
                     self.trainer.record_metric(f"eval/{evaluator.name}/{name}", value)
 
             evaluator_times.append(time.monotonic() - start_time)
-            evaluator_names.append(evaluation_names)
+            evaluator_names.append(evaluator.name)
             evaluator_bs.append(eval_step)
 
             log.info(
@@ -169,10 +169,9 @@ class EvaluatorCallback(Callback):
         eval_speeds = []
         max_time_width = max(len(f"{t:.1f}") for t in evaluator_times)
         max_batch_width = max(len(str(bs)) for bs in evaluator_bs)
-        for names, bs, t in sorted_evaluators:
-            name = names[0]  # only use the name of the first metric for each downstream task
+        for name, bs, t in sorted_evaluators:
             eval_speeds.append(
-                f"    {t:>{max_time_width}.1f} sec ({bs:>{max_batch_width}} batches): {name} (+ variants)"
+                f"    {name}: {t:>{max_time_width}.1f} sec ({bs:>{max_batch_width}} batches)"
             )
         total_time = sum(evaluator_times)
         total_bs = sum(int(bs) if bs is not None else 0 for bs in evaluator_bs)
