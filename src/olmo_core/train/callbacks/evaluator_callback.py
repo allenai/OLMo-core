@@ -63,7 +63,7 @@ class EvaluatorCallback(Callback):
     cancel_after_first_eval: bool = False
     """
     If ``True``, cancel the run after running evals for the first time. 
-    This combiend with ``eval_on_startup=True`` is useful if you just want to run in-loop evals
+    This combined with ``eval_on_startup=True`` is useful if you just want to run in-loop evals
     without training any longer.
     """
 
@@ -165,18 +165,21 @@ class EvaluatorCallback(Callback):
             zip(evaluator_names, evaluator_bs, evaluator_times), key=lambda x: x[2]
         )
 
-        # Record evaluation speed
-        log.info("Evaluation speed:")
+        # Record evaluation speed.
+        eval_speeds = []
         max_time_width = max(len(f"{t:.1f}") for t in evaluator_times)
         max_batch_width = max(len(str(bs)) for bs in evaluator_bs)
         for names, bs, t in sorted_evaluators:
             name = names[0]  # only use the name of the first metric for each downstream task
-            log.info(
+            eval_speeds.append(
                 f"    {t:>{max_time_width}.1f} sec ({bs:>{max_batch_width}} batches): {name} (+ variants)"
             )
         total_time = sum(evaluator_times)
         total_bs = sum(int(bs) if bs is not None else 0 for bs in evaluator_bs)
-        log.info(f"    Total evaluation time: {total_time:.1f} seconds ({total_bs} batches)")
+        eval_speeds.append(
+            f"    Total evaluation time: {total_time:.1f} seconds ({total_bs} batches)"
+        )
+        log.info("Evaluation speed:\n" + "\n".join(eval_speeds))
 
         self.trainer.record_metric("throughput/in-loop eval time (s)", total_time)
         self.trainer.record_metric("throughput/in-loop eval batches", total_bs)
