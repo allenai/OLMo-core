@@ -22,6 +22,7 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
+    Duration,
     TrainerConfig,
     prepare_training_environment,
     teardown_training_environment,
@@ -32,6 +33,7 @@ from olmo_core.train.callbacks import (
     ConfigSaverCallback,
     DownstreamEvaluatorCallbackConfig,
     GPUMemoryMonitorCallback,
+    LMEvaluatorCallbackConfig,
     ProfilerCallback,
     WandBCallback,
 )
@@ -59,6 +61,8 @@ DATA_PATHS = [
     f"{DATA_ROOT}/c4-train.00900-00999.npy",
     f"{DATA_ROOT}/c4-train.01000-01023.npy",
 ]
+EVAL_DATA_PATHS = [f"{DATA_ROOT}/c4-validation.00000-00008.npy"]
+DATA_WORK_DIR = "/tmp/dataset-cache"
 
 
 @dataclass
@@ -84,7 +88,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         sequence_length=SEQUENCE_LENGTH,
         max_target_sequence_length=8192,
         tokenizer=tokenizer_config,
-        work_dir="/tmp/dataset-cache",
+        work_dir=DATA_WORK_DIR,
     )
 
     data_loader_config = NumpyDataLoaderConfig(
@@ -144,6 +148,21 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         )
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("profiler", ProfilerCallback(enabled=False))
+        .with_callback(
+            "lm_evaluator",
+            LMEvaluatorCallbackConfig(
+                eval_dataset=NumpyDatasetConfig(
+                    paths=EVAL_DATA_PATHS,
+                    metadata=[{"label": "c4-validation"}],
+                    name=NumpyDatasetType.padded_fsl,
+                    sequence_length=SEQUENCE_LENGTH,
+                    tokenizer=tokenizer_config,
+                    work_dir=DATA_WORK_DIR,
+                ),
+                eval_interval=250,
+                eval_duration=Duration.steps(10),
+            ),
+        )
         .with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
