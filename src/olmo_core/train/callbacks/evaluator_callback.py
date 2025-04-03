@@ -194,6 +194,7 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
     eval_dataset: NumpyDatasetConfig
     eval_interval: int = 1000
     eval_on_startup: bool = False
+    cancel_after_first_eval: bool = False
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     log_interval: int = 5
     enabled: bool = True
@@ -250,6 +251,7 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
             eval_interval=self.eval_interval,
             log_interval=self.log_interval,
             eval_on_startup=self.eval_on_startup,
+            cancel_after_first_eval=self.cancel_after_first_eval,
             eval_duration=self.eval_duration,
         )
 
@@ -376,6 +378,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     eval_interval: int = 1000
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     eval_on_startup: bool = False
+    cancel_after_first_eval: bool = False
     log_interval: int = 5
     enabled: bool = True
 
@@ -414,6 +417,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
             evaluators=evaluators,
             eval_interval=self.eval_interval,
             eval_on_startup=self.eval_on_startup,
+            cancel_after_first_eval=self.cancel_after_first_eval,
             log_interval=self.log_interval,
             eval_duration=self.eval_duration,
         )
