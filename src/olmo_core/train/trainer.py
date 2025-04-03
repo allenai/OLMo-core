@@ -615,6 +615,8 @@ class Trainer:
 
         # Quick check if the run has already been canceled.
         if self.is_canceled:
+            self._shutdown_bookkeeping()
+            gc_cuda()
             return
 
         # Install SIGTERM + SIGINT handlers.
