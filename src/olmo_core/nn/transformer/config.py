@@ -494,6 +494,8 @@ class TransformerConfig(Config):
     def olmo2_1B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 1B OLMo model config.
+
+        This is different from the OLMo 1B from the old OLMo trainer.
         """
         return cls.llama2_1B(
             vocab_size,
@@ -502,6 +504,24 @@ class TransformerConfig(Config):
             rope_theta=kwargs.pop("rope_theta", 500_000),
             layer_norm_eps=1e-6,
             hidden_size_multiplier=1.5,
+            **kwargs,
+        )
+
+    @classmethod
+    def olmo2_1B_v2(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 1B OLMo model config.
+
+        This matches the OLMo 1B from the old OLMo trainer.
+        """
+        return cls.llama2_1B(
+            vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            n_layers=kwargs.pop("n_layers", 16),
+            hidden_size_multiplier=kwargs.pop("hidden_size_multiplier", 1.5),
             **kwargs,
         )
 
@@ -684,6 +704,8 @@ class TransformerConfig(Config):
     def llama2_1B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 1B Llama2-like model config.
+
+        Note: Llama2 doesn't have a 1B. We made this up.
         """
         return cls.llama_like(
             d_model=2048,
