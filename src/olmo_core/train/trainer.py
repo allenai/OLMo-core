@@ -598,8 +598,7 @@ class Trainer:
         # It's possible that we tried restarting a run that had already finished.
         if self.training_complete:
             log.warning("Training already complete, ending run now")
-            self._shutdown_bookkeeping()
-            gc_cuda()
+            self._shutdown()
             return
 
         log.info("Callback order:")
@@ -615,8 +614,7 @@ class Trainer:
 
         # Quick check if the run has already been canceled.
         if self.is_canceled:
-            self._shutdown_bookkeeping()
-            gc_cuda()
+            self._shutdown()
             return
 
         # Install SIGTERM + SIGINT handlers.
@@ -643,13 +641,14 @@ class Trainer:
             callback.post_train()
 
         # Wait for any bookkeeping tasks to finish.
-        self._shutdown_bookkeeping()
-        gc_cuda()
+        self._shutdown()
         log.info("Training complete")
 
-    def _shutdown_bookkeeping(self):
+    def _shutdown(self):
+        self._log_metrics()
         self.thread_pool.shutdown(wait=True, cancel_futures=False)
         self._thread_pool = None
+        gc_cuda()
         barrier()
 
     def state_dict(self) -> TrainerStateDict:
