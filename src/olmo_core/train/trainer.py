@@ -537,6 +537,9 @@ class Trainer:
         :param no_sync: Set this to ``True`` only if you're calling this from all ranks at the same
             time, otherwise you'll get a distributed deadlock.
         """
+        if self.is_canceled:
+            return
+
         self._canceling_rank = get_rank()
         self._cancel_reason = reason
         if no_sync:
