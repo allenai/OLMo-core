@@ -33,6 +33,7 @@ from olmo_core.train.callbacks import (
     ConfigSaverCallback,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
+    WandBCallback,
 )
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
@@ -68,6 +69,7 @@ BEAKER_BUDGET = "ai2/oe-training"
 
 # Logging.
 COMET_PROJECT = None
+WANDB_PROJECT = None
 
 ###########################
 #### END CONFIGURATION ####
@@ -154,6 +156,16 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
                 enabled=True,
             ),
         )
+        .with_callback(
+            "wandb",
+            WandBCallback(
+                name=run_name,
+                entity="ai2",
+                project=WANDB_PROJECT,
+                cancel_check_interval=10,
+                enabled=True,
+            ),
+        )
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("garbage_collector", GarbageCollectorCallback())
         .with_callback("beaker", BeakerCallback())
@@ -194,6 +206,7 @@ def train(config: ExperimentConfig):
     # Save config to W&B and each checkpoint dir.
     config_dict = config.as_config_dict()
     cast(CometCallback, trainer.callbacks["comet"]).config = config_dict
+    cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
     # Train.
