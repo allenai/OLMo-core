@@ -545,6 +545,7 @@ class Trainer:
         if no_sync:
             self._canceled = True
             log.warning(f"Run canceled from all ranks. Reason: {reason}")
+            barrier()
 
     def check_if_canceled(self):
         """
