@@ -126,16 +126,18 @@ class EvaluatorCallback(Callback):
                     with cuda_sync_debug_mode(0):
                         evaluator.update_metrics(batch, ce_loss, logits)
 
-                if eval_step % self.trainer.cancel_check_interval == 0:
-                    self.trainer.check_if_canceled()
+                if (
+                    not self.cancel_after_first_eval
+                ):  # guard here in case we have multiple evaluators doing this
+                    if self.trainer.is_canceled:
+                        self._log_progress(evaluator, eval_step)
+                        return
 
-                if self.trainer.is_canceled:
-                    self._log_progress(evaluator, eval_step)
-                    return
-                elif self.eval_duration.due(step=eval_step, tokens=eval_tokens, epoch=1):
+                if self.eval_duration.due(step=eval_step, tokens=eval_tokens, epoch=1):
                     self._log_progress(evaluator, eval_step)
                     break
-                elif eval_step % self.log_interval == 0 or eval_step == evaluator.total_batches:
+
+                if eval_step % self.log_interval == 0 or eval_step == evaluator.total_batches:
                     self._log_progress(evaluator, eval_step)
 
             # NOTE: going to have a host-device sync here but that's okay. It's only once
@@ -180,7 +182,10 @@ class EvaluatorCallback(Callback):
         self.trainer.record_metric("throughput/in-loop eval batches", total_bs)
 
         if self.cancel_after_first_eval:
-            self.trainer.cancel_run("canceled from evaluator callback", no_sync=True)
+            self.trainer.cancel_run(
+                "canceled from evaluator callback since 'cancel_after_first_eval' is set",
+                no_sync=True,  # 'no_sync' because we're calling this from all ranks at the same time.
+            )
 
     def _log_progress(self, evaluator: Evaluator, eval_step: int):
         if evaluator.total_batches is not None:

@@ -540,9 +540,7 @@ class Trainer:
         self._canceling_rank = get_rank()
         self._cancel_reason = reason
         if no_sync:
-            self._canceled = (
-                True  # NOTE: important not to set this otherwise!! Leads to distributed hang.
-            )
+            self._canceled = True
             log.warning(f"Run canceled from all ranks. Reason: {reason}")
 
     def check_if_canceled(self):
