@@ -254,7 +254,6 @@ class DownstreamEvaluator(Evaluator):
         "bpb_v1": "BPB v1",
         "soft_v1": "soft loss v1",
         "soft_log_v1": "log soft loss v1",
-
         "f1_v2": "F1 score v2",
         "acc_v2": "accuracy v2",
         "len_norm_v2": "length-normalized accuracy v2",
