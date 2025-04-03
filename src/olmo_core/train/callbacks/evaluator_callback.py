@@ -152,7 +152,7 @@ class EvaluatorCallback(Callback):
                     self.trainer.record_metric(f"eval/{evaluator.name}/{name}", value)
 
             evaluator_times.append(time.monotonic() - start_time)
-            evaluator_names.append(evaluator_names)
+            evaluator_names.append(evaluation_names)
             evaluator_bs.append(eval_step)
 
             log.info(
