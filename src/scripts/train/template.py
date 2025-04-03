@@ -1,7 +1,7 @@
 import logging
 import sys
 from dataclasses import dataclass
-from typing import List, cast
+from typing import List, Optional, cast
 
 from olmo_core.config import Config, DType
 from olmo_core.data import (
@@ -49,6 +49,10 @@ log = logging.getLogger(__name__)
 
 # TODO: update these settings for your use case
 
+# Set this if you want to start from an existing checkpoint (like for annealing).
+# NOTE: You do NOT need to set on a restart as long as the trainer's 'save_folder' is the same.
+CHECKPOINT: Optional[str] = None
+
 # Data configuration.
 SEQUENCE_LENGTH = 4096
 TOKENIZER_CONFIG = TokenizerConfig.dolma2()
@@ -68,14 +72,14 @@ BEAKER_WORKSPACE = "ai2/OLMo-core"
 BEAKER_BUDGET = "ai2/oe-training"
 
 # Logging.
-COMET_PROJECT = None
-WANDB_PROJECT = None
+COMET_PROJECT: Optional[str] = None  # set this to enable Comet logging
+WANDB_PROJECT: Optional[str] = None  # set this to enable W&B logging
 
 ###########################
 #### END CONFIGURATION ####
 ###########################
 
-# NOTE: in most cases you should need to edit below this line.
+# NOTE: in most cases you shouldn't need to edit below this line.
 
 
 @dataclass
@@ -153,7 +157,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
                 workspace="ai2",
                 project=COMET_PROJECT,
                 cancel_check_interval=10,
-                enabled=True,
+                enabled=COMET_PROJECT is not None,
             ),
         )
         .with_callback(
@@ -163,7 +167,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
                 entity="ai2",
                 project=WANDB_PROJECT,
                 cancel_check_interval=10,
-                enabled=True,
+                enabled=WANDB_PROJECT is not None,
             ),
         )
         .with_callback("config_saver", ConfigSaverCallback())
@@ -191,8 +195,6 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
 
 
 def train(config: ExperimentConfig):
-    prepare_training_environment()
-
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
@@ -209,11 +211,12 @@ def train(config: ExperimentConfig):
     cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
+    # Maybe load from existing checkpoint.
+    if CHECKPOINT is not None and not trainer.maybe_load_checkpoint(trainer.save_folder):
+        trainer.load_checkpoint(CHECKPOINT)
+
     # Train.
-    try:
-        trainer.fit()
-    finally:
-        teardown_training_environment()
+    trainer.fit()
 
 
 def launch(config: ExperimentConfig):
@@ -227,14 +230,20 @@ if __name__ == "__main__":
         sys.exit(1)
 
     script, cmd, run_name, *overrides = sys.argv
-    if cmd != "train":
+
+    if cmd == "train":
+        prepare_training_environment()
+    else:
         prepare_cli_environment()
 
     config = build_config(script, run_name, overrides)
     log.info(config)
 
     if cmd == "train":
-        train(config)
+        try:
+            train(config)
+        finally:
+            teardown_training_environment()
     elif cmd == "launch":
         launch(config)
     elif cmd == "dry_run":
