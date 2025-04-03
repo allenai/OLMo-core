@@ -56,6 +56,7 @@ from .common import (
     Duration,
     DurationUnit,
     LoadStrategy,
+    MetricMergeStrategy,
     ReduceType,
     TrainingProgress,
 )
@@ -818,6 +819,7 @@ class Trainer:
         value: Union[float, torch.Tensor],
         reduce_type: Optional[ReduceType] = None,
         namespace: Optional[str] = None,
+        merge_strategy: MetricMergeStrategy = MetricMergeStrategy.latest,
     ):
         """
         Record a new metric for the current step.
@@ -830,16 +832,32 @@ class Trainer:
         :param reduce_type: Specifies how to reduce the metric across the distributed process group.
             ``None`` means no reduction.
         :param namespace: A namespace to record the metric under, i.g. "train" or "optim".
+        :param merge_strategy: How to merge metrics when duplicates are logged.
         """
         if namespace is not None:
             name = f"{namespace.rstrip('/')}/{name.lstrip('/')}"
+
         if not isinstance(value, torch.Tensor):
             value = torch.tensor(value)
         else:
             value = get_local_tensor(value).float()
+
         if self.global_step not in self._metrics:
             self._metrics[self.global_step] = OrderedDict()
-        self._metrics[self.global_step][name] = value
+
+        step_metrics = self._metrics[self.global_step]
+
+        if name not in step_metrics or merge_strategy == MetricMergeStrategy.latest:
+            step_metrics[name] = value
+        elif merge_strategy == MetricMergeStrategy.sum:
+            step_metrics[name] = step_metrics[name] + value
+        elif merge_strategy == MetricMergeStrategy.mean:
+            step_metrics[name] = (step_metrics[name] + value) / 2
+        elif merge_strategy == MetricMergeStrategy.oldest:
+            pass
+        else:
+            raise NotImplementedError(merge_strategy)
+
         # reduce type must be consistent to avoid issues
         if name in self._metrics_reduce_type and self._metrics_reduce_type[name] != reduce_type:
             raise RuntimeError(

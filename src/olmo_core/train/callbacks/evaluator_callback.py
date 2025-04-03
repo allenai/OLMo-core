@@ -26,7 +26,7 @@ from olmo_core.utils import (
     move_to_device,
 )
 
-from ..common import Duration
+from ..common import Duration, MetricMergeStrategy
 from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TransformerTrainModule
 from .callback import Callback, CallbackConfig
 
@@ -177,8 +177,12 @@ class EvaluatorCallback(Callback):
         )
         log.info("Evaluation speed:\n" + "\n".join(eval_speeds))
 
-        self.trainer.record_metric("throughput/in-loop eval time (s)", total_time)
-        self.trainer.record_metric("throughput/in-loop eval batches", total_bs)
+        self.trainer.record_metric(
+            "throughput/in-loop eval time (s)", total_time, merge_strategy=MetricMergeStrategy.sum
+        )
+        self.trainer.record_metric(
+            "throughput/in-loop eval batches", total_bs, merge_strategy=MetricMergeStrategy.sum
+        )
 
         if self.cancel_after_first_eval:
             self.trainer.cancel_run(

@@ -128,6 +128,32 @@ class ReduceType(StrEnum):
     """
 
 
+class MetricMergeStrategy(StrEnum):
+    """
+    Determines how duplicate metrics are merged.
+    """
+
+    latest = "latest"
+    """
+    The latest is used.
+    """
+
+    oldest = "oldest"
+    """
+    The oldest (first logged) is used.
+    """
+
+    sum = "sum"
+    """
+    The sum of the duplicates is used.
+    """
+
+    mean = "mean"
+    """
+    When a duplicate is logged we take the average with the last value.
+    """
+
+
 def reshape_inputs_for_loss(
     logits: torch.Tensor, labels: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor]:
