@@ -153,6 +153,11 @@ class MetricMergeStrategy(StrEnum):
     When a duplicate is logged we take the average with the last value.
     """
 
+    warn = "warn"
+    """
+    Warn when a duplicate is logged, keeping the current value.
+    """
+
 
 def reshape_inputs_for_loss(
     logits: torch.Tensor, labels: torch.Tensor

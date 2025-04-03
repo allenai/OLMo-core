@@ -819,7 +819,7 @@ class Trainer:
         value: Union[float, torch.Tensor],
         reduce_type: Optional[ReduceType] = None,
         namespace: Optional[str] = None,
-        merge_strategy: MetricMergeStrategy = MetricMergeStrategy.latest,
+        merge_strategy: MetricMergeStrategy = MetricMergeStrategy.warn,
     ):
         """
         Record a new metric for the current step.
@@ -853,6 +853,11 @@ class Trainer:
             step_metrics[name] = step_metrics[name] + value
         elif merge_strategy == MetricMergeStrategy.mean:
             step_metrics[name] = (step_metrics[name] + value) / 2
+        elif merge_strategy == MetricMergeStrategy.warn:
+            log.warning(
+                f"Attempting to log duplicate metric '{name}' for step {(self.global_step)}. "
+                "The latest value will be ignored."
+            )
         elif merge_strategy == MetricMergeStrategy.oldest:
             pass
         else:
