@@ -167,13 +167,9 @@ class EvaluatorCallback(Callback):
 
         # Record evaluation speed.
         eval_speeds = []
-        max_time_width = max(len(f"{t:.1f}") for t in evaluator_times)
-        max_batch_width = max(len(str(bs)) for bs in evaluator_bs)
         for names, bs, t in sorted_evaluators:
             name = names[0]
-            eval_speeds.append(
-                f"    {name} (+variants): {t:>{max_time_width}.1f} sec ({bs:>{max_batch_width}} batches)"
-            )
+            eval_speeds.append(f"    {name} (+variants): {t:.1f} sec ({bs} batches)")
         total_time = sum(evaluator_times)
         total_bs = sum(int(bs) if bs is not None else 0 for bs in evaluator_bs)
         eval_speeds.append(
