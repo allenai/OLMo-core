@@ -60,6 +60,13 @@ class EvaluatorCallback(Callback):
     Whether to run an evaluation when the trainer starts up.
     """
 
+    cancel_after_first_eval: bool = False
+    """
+    If ``True``, cancel the run after running evals for the first time. 
+    This combiend with ``eval_on_startup=True`` is useful if you just want to run in-loop evals
+    without training any longer.
+    """
+
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     """
     The duration to run each evaluator for.
@@ -171,6 +178,9 @@ class EvaluatorCallback(Callback):
 
         self.trainer.record_metric("throughput/in-loop eval time (s)", total_time)
         self.trainer.record_metric("throughput/in-loop eval batches", total_bs)
+
+        if self.cancel_after_first_eval:
+            self.trainer.cancel_run("canceled from evaluator callback", no_sync=True)
 
     def _log_progress(self, evaluator: Evaluator, eval_step: int):
         if evaluator.total_batches is not None:

@@ -529,15 +529,21 @@ class Trainer:
             time_remaining=time_remaining,
         )
 
-    def cancel_run(self, reason: str):
+    def cancel_run(self, reason: str, no_sync: bool = False):
         """
         Mark the run canceled.
 
         :param reason: The reason for canceling.
+        :param no_sync: Set this to ``True`` only if you're calling this from all ranks at the same
+            time, otherwise you'll get a distributed deadlock.
         """
-        #  self._canceled = True  # NOTE: important not to set this!! Leads to distributed hang.
         self._canceling_rank = get_rank()
         self._cancel_reason = reason
+        if no_sync:
+            self._canceled = (
+                True  # NOTE: important not to set this otherwise!! Leads to distributed hang.
+            )
+            log.warning(f"Run canceled from all ranks. Reason: {reason}")
 
     def check_if_canceled(self):
         """
@@ -604,6 +610,10 @@ class Trainer:
             callback.pre_train()
 
         barrier()
+
+        # Quick check if the run has already been canceled.
+        if self.is_canceled:
+            return
 
         # Install SIGTERM + SIGINT handlers.
         og_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_os_signal)
