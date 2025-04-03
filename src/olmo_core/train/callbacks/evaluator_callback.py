@@ -153,7 +153,7 @@ class EvaluatorCallback(Callback):
 
             evaluator_times.append(time.monotonic() - start_time)
             evaluator_names.append(evaluation_names)
-            evaluator_bs.append(evaluator.total_batches)
+            evaluator_bs.append(eval_step)
 
             log.info(
                 f"Finished {evaluator.name} evals in {time.monotonic() - start_time:.1f} seconds. Metrics:\n"
