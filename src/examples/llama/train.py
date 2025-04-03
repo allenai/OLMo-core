@@ -160,7 +160,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
                     work_dir=DATA_WORK_DIR,
                 ),
                 eval_interval=250,
-                eval_duration=Duration.steps(10),
+                eval_duration=Duration.steps(50),
             ),
         )
         .with_callback(
