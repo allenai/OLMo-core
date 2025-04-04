@@ -93,6 +93,8 @@ class Transformer(nn.Module):
         init_method: InitMethod = InitMethod.normal,
         init_device: str = "cpu",
         init_seed: int = 0,
+        init_std: float = 0.02,
+        block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
     ):
         super().__init__()
 
@@ -107,14 +109,17 @@ class Transformer(nn.Module):
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.blocks = nn.ModuleDict()
         for block_idx in range(n_layers):
-            block_ = block.build(
-                d_model=d_model,
-                block_idx=block_idx,
-                init_device=init_device,
-                cache=cache,
+            block_config = block
+            if block_overrides is not None and block_idx in block_overrides:
+                block_config = block_overrides[block_idx]
+            self.blocks[str(block_idx)] = self._validate_block(
+                block_config.build(
+                    d_model=d_model,
+                    block_idx=block_idx,
+                    init_device=init_device,
+                    cache=cache,
+                )
             )
-            self._validate_block(block_)
-            self.blocks[str(block_idx)] = block_
         self.lm_head = lm_head.build(
             d_model=d_model, vocab_size=vocab_size, init_device=init_device
         )
@@ -122,6 +127,7 @@ class Transformer(nn.Module):
         self.init_device = init_device
         self.init_method = InitMethod(init_method)
         self.init_seed = init_seed
+        self.init_std = init_std
 
         self._cache = cache
         self._fp8_enabled = False
@@ -138,8 +144,8 @@ class Transformer(nn.Module):
         self.num_params
         self.num_non_embedding_params
 
-    def _validate_block(self, block: TransformerBlockBase):
-        del block
+    def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
+        return block
 
     def compute_auxiliary_losses(
         self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
@@ -237,7 +243,7 @@ class Transformer(nn.Module):
 
         if self.embeddings is not None:
             self.init_method.init_embeddings(
-                self.embeddings, d_model=self.d_model, generator=generator
+                self.embeddings, d_model=self.d_model, std=self.init_std, generator=generator
             )
 
         for block in self.blocks.values():
@@ -252,6 +258,7 @@ class Transformer(nn.Module):
                 d_model=self.d_model,
                 block_idx=block.block_idx,
                 num_blocks=self.n_layers,
+                std=self.init_std,
                 generator=generator,
             )
 
@@ -262,6 +269,7 @@ class Transformer(nn.Module):
                     d_model=self.d_model,
                     block_idx=block.block_idx,
                     num_blocks=self.n_layers,
+                    std=self.init_std,
                     generator=generator,
                 )
 
@@ -275,6 +283,7 @@ class Transformer(nn.Module):
                     d_model=self.d_model,
                     block_idx=block.block_idx,
                     num_blocks=self.n_layers,
+                    std=self.init_std,
                     generator=generator,
                 )
 
@@ -284,7 +293,7 @@ class Transformer(nn.Module):
 
         if self.lm_head is not None:
             self.init_method.init_final_w_out(
-                self.lm_head.w_out, d_model=self.d_model, generator=generator
+                self.lm_head.w_out, d_model=self.d_model, std=self.init_std, generator=generator
             )
 
         return generator
@@ -665,10 +674,11 @@ class Transformer(nn.Module):
         for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)
             block.apply_fsdp(
+                dp_mesh=dp_mesh,
                 prefetch_factor=prefetch_factor,
                 wrapping_strategy=wrapping_strategy,
                 reshard_after_forward=reshard_after_forward,
-                **fsdp_config,
+                mp_policy=mp_policy,
             )
 
         if self.embeddings is not None:
@@ -796,6 +806,8 @@ class NormalizedTransformer(Transformer):
         init_method: InitMethod = InitMethod.normalized,
         init_device: str = "cpu",
         init_seed: int = 0,
+        init_std: float = 0.02,
+        block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
     ):
         super().__init__(
             d_model=d_model,
@@ -807,13 +819,16 @@ class NormalizedTransformer(Transformer):
             init_method=init_method,
             init_device=init_device,
             init_seed=init_seed,
+            init_std=init_std,
+            block_overrides=block_overrides,
         )
 
-    def _validate_block(self, block: TransformerBlockBase):
+    def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
         if not isinstance(block, NormalizedTransformerBlock):
             raise OLMoConfigurationError(
                 f"'{self.__class__.__name__}' requires a '{NormalizedTransformerBlock.__name__}' block"
             )
+        return block
 
     @torch.no_grad()
     def init_weights(
@@ -876,11 +891,12 @@ class MoETransformer(Transformer):
     def is_moe(self) -> bool:
         return True
 
-    def _validate_block(self, block: TransformerBlockBase):
+    def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
         if not isinstance(block, MoETransformerBlock):
             raise OLMoConfigurationError(
                 f"'{self.__class__.__name__}' requires a '{MoETransformerBlock.__name__}' block"
             )
+        return block
 
     def compute_auxiliary_losses(
         self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
@@ -892,7 +908,7 @@ class MoETransformer(Transformer):
             ):
                 loss_val = loss_val.div(self.n_layers)
 
-                if self.tp_enabled:
+                if self.tp_enabled and not isinstance(loss_val, DTensor):
                     assert self._tp_mesh is not None
                     loss_val = DTensor.from_local(loss_val.unsqueeze(0), self._tp_mesh, (Shard(0),))
                     loss_val = loss_val.redistribute(placements=(Replicate(),)).mean()

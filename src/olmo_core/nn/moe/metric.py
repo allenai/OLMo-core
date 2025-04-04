@@ -19,6 +19,7 @@ class MoEMetric(metaclass=ABCMeta):
         expert_weights: torch.Tensor,
         expert_indices: torch.Tensor,
         batch_size_per_expert: torch.Tensor,
+        batched_batch_size_per_expert: torch.Tensor,
         **kwargs,
     ):
         raise NotImplementedError
@@ -59,14 +60,16 @@ class MoELoadImbalanceMetric(MoEMetric):
     def compute(
         self, total_bz: Union[int, float, torch.Tensor], reset: bool = True, **kwargs
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
-        del kwargs
+        del total_bz, kwargs
+
         if self.batch_size_per_expert is None:
             raise RuntimeError(
                 f"'{self.__class__.__name__}.update()' needs to be called before '.compute()'"
             )
 
-        ideal_bz_per_expert = total_bz * (self.top_k / self.num_experts)
-        load_imbalance = self.batch_size_per_expert.max() / ideal_bz_per_expert
+        load_imbalance = self.batch_size_per_expert.max() / self.batch_size_per_expert.mean(
+            dtype=torch.float
+        )
 
         if reset:
             self.reset()

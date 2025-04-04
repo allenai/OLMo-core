@@ -10,6 +10,7 @@ from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Replicate, Shard, distribute_tensor
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
+import olmo_core.ops.moe as ops
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.utils import (
     distribute_like,
@@ -20,7 +21,13 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from ..buffer_cache import BufferCache
 
-__all__ = ["MoERouter", "MoELinearRouter", "MoERouterConfig", "MoERouterType"]
+__all__ = [
+    "MoERouter",
+    "MoELinearRouter",
+    "MoERouterConfig",
+    "MoERouterType",
+    "MoERouterGatingFunction",
+]
 
 
 # NOTE: To enable end-to-end benchmarking without convergence we
@@ -52,6 +59,11 @@ class MoERouterType(StrEnum):
     """
 
 
+class MoERouterGatingFunction(StrEnum):
+    softmax = "softmax"
+    sigmoid = "sigmoid"
+
+
 @dataclass
 class MoERouterConfig(Config):
     """
@@ -67,6 +79,7 @@ class MoERouterConfig(Config):
     normalize_expert_weights: Optional[float] = None
     uniform_expert_assignment: bool = False
     bias_gamma: Optional[float] = None
+    gating_function: MoERouterGatingFunction = MoERouterGatingFunction.softmax
     dtype: Optional[DType] = None
 
     def num_params(self, d_model: int, num_experts: int) -> int:
@@ -147,6 +160,7 @@ class MoERouter(nn.Module):
         normalize_expert_weights: Optional[float] = None,
         uniform_expert_assignment: bool = False,
         bias_gamma: Optional[float] = None,
+        gating_function: MoERouterGatingFunction = MoERouterGatingFunction.softmax,
         init_device: str = "cpu",
     ):
         super().__init__()
@@ -157,8 +171,9 @@ class MoERouter(nn.Module):
         self.normalize_expert_weights = normalize_expert_weights
         self.uniform_expert_assignment = uniform_expert_assignment
         self.bias_gamma = bias_gamma
+        self.gating_function = gating_function
         self._cache: Optional[BufferCache] = None
-        self.pp_group: Optional[dist.ProcessGroup] = None
+        self.group: Optional[dist.ProcessGroup] = None
         if self.bias_gamma is not None:
             assert self.bias_gamma > 0
             self.register_buffer("score_bias", torch.zeros(self.num_experts, device=init_device))
@@ -180,8 +195,8 @@ class MoERouter(nn.Module):
                 self.num_experts, device=score_bias.device
             )
 
-    def _accumulate_batch_size_per_expert(self, batch_size_per_expert: torch.Tensor):
-        if self.bias_gamma is None or not self.training:
+    def _maybe_accumulate_batch_size_per_expert(self, batch_size_per_expert: torch.Tensor):
+        if self.bias_gamma is None or not self.training or not torch.is_grad_enabled():
             return
 
         assert self._cache is not None
@@ -207,16 +222,17 @@ class MoERouter(nn.Module):
 
         # Maybe reduce across the process group.
         if is_distributed():
-            dist.all_reduce(batch_size_per_expert, group=self.pp_group)
+            dist.all_reduce(batch_size_per_expert, group=self.group)
 
-        ideal_batch_size_per_expert = batch_size_per_expert.sum() / self.num_experts
+        ideal_batch_size_per_expert = batch_size_per_expert.mean(
+            dim=0, keepdim=True, dtype=torch.float32
+        )
         bias_delta = self.bias_gamma * (ideal_batch_size_per_expert - batch_size_per_expert).sign()
-
         # NOTE: have to be careful here to manage the case where `score_bias` is a DTensor.
-        bias_delta = get_local_tensor(distribute_like(score_bias, bias_delta))
-        score_bias = get_local_tensor(score_bias)
+        bias_delta = distribute_like(score_bias, bias_delta)
+
         if not dry_run:
-            score_bias += bias_delta
+            get_local_tensor(score_bias).add_(get_local_tensor(bias_delta))
 
         # Reset the accumulator.
         batch_size_per_expert.zero_()
@@ -255,26 +271,32 @@ class MoERouter(nn.Module):
 
     def forward(
         self, x: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Given the input ``x`` of shape ``(*, d_model)``, compute the experts assignment.
+        Given the input ``x`` of shape ``(B, S, d_model)``, compute the experts assignment.
 
-        :returns: The unnormalized scores (logits) of shape ``(N, num_experts)``,
-            the normalized scores of shape ``(N, num_experts)``,
-            the expert weights of shape ``(N, top_k)``,
-            the expert indices of shape ``(N, top_k)``,
-            and the number of items routed to each expert, with shape ``(num_experts,)``.
+        :returns: The unnormalized scores (logits) of shape ``(B, S, num_experts)``,
+            the normalized scores of shape ``(B, S, num_experts)``,
+            the expert weights of shape ``(B, S, top_k)``,
+            the expert indices of shape ``(B, S, top_k)``,
+            the total number of items routed to each expert, with shape ``(num_experts,)``,
+            and the total number of items within each instance routed to each expert, with shape ``(B, num_experts)``.
         """
         # shape: (batch_size, seq_len, d_model)
         x = self.jitter(x)
 
-        # shape: (batch_size * seq_len, num_experts)
-        logits = self.get_expert_logits(x).view(-1, self.num_experts)
+        # shape: (batch_size, seq_len, num_experts)
+        logits = self.get_expert_logits(x)
 
-        # shape: (batch_size * seq_len, num_experts)
-        scores = logits.softmax(dim=-1)
+        # shape: (batch_size, seq_len, num_experts)
+        if self.gating_function == MoERouterGatingFunction.softmax:
+            scores = logits.softmax(dim=-1)
+        elif self.gating_function == MoERouterGatingFunction.sigmoid:
+            scores = F.sigmoid(logits)  # NOTE: we normalize these *after* top-k, see below
+        else:
+            raise NotImplementedError(self.gating_function)
 
-        # shape: (batch_size * seq_len, top_k)
+        # shape: (batch_size, seq_len, top_k)
         expert_weights, expert_indices = self.get_top_k(scores)
 
         if self.normalize_expert_weights is not None:
@@ -287,18 +309,32 @@ class MoERouter(nn.Module):
                 )
             )
 
+        # Make sure scores are normalized, otherwise load balancing loss doesn't work.
+        if self.gating_function == MoERouterGatingFunction.sigmoid:
+            scores = scores / (scores.sum(dim=-1, keepdim=True) + 1e-20)
+
         if self.uniform_expert_assignment:
             expert_indices = _uniform_expert_assignment(expert_indices, self.num_experts)
 
         with torch.no_grad():
             # Histogram the expert ids to identify the number of items/tokens routed to each expert.
+            # shape: (batch_size, seq_len, num_experts)
+            batched_batch_size_per_expert = ops.batched_histc(expert_indices, self.num_experts)
+            # shape: (batch_size, num_experts)
+            batched_batch_size_per_expert = batched_batch_size_per_expert.sum(dim=1)
             # shape: (num_experts,)
-            # NOTE: if we wanted to keep the batch dimension here like for sequence-level load balancing
-            # loss, we could use `opts.batched_histc`.
-            batch_size_per_expert = histc(expert_indices, num_experts=self.num_experts)
-            self._accumulate_batch_size_per_expert(batch_size_per_expert)
+            batch_size_per_expert = batched_batch_size_per_expert.sum(dim=0)
 
-        return logits, scores, expert_weights, expert_indices, batch_size_per_expert
+        self._maybe_accumulate_batch_size_per_expert(batch_size_per_expert)
+
+        return (
+            logits,
+            scores,
+            expert_weights,
+            expert_indices,
+            batch_size_per_expert,
+            batched_batch_size_per_expert,
+        )
 
     @abstractmethod
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
@@ -351,11 +387,3 @@ class MoELinearRouter(MoERouter):
         self.register_parameter(
             "weight", nn.Parameter(distribute_tensor(self.weight, tp_mesh, [Replicate()]))
         )
-
-
-def histc(indices: torch.Tensor, *, num_experts: int) -> torch.Tensor:
-    # NOTE: 'torch.histc' not implemented for integers on CPU, so convert to float then back to ints on CPU.
-    if indices.device.type == "cpu":
-        return torch.histc(indices.float(), bins=num_experts, min=0, max=num_experts - 1).int()
-    else:
-        return torch.histc(indices, bins=num_experts, min=0, max=num_experts - 1)

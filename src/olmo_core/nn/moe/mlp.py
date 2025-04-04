@@ -1,7 +1,7 @@
 import logging
 import math
 import warnings
-from typing import Any, Callable, List, Optional
+from typing import List, Optional
 
 import torch
 import torch.distributed as dist
@@ -29,22 +29,6 @@ __all__ = ["MoEMLP", "DroplessMoEMLP"]
 log = logging.getLogger(__name__)
 
 
-class _ScaleGradient(torch.autograd.Function):
-    @staticmethod
-    @torch.amp.autocast_mode.custom_fwd(device_type="cuda")
-    def forward(ctx: Any, x: torch.Tensor, scale: float):
-        ctx.scale = scale
-        return x
-
-    @staticmethod
-    @torch.amp.autocast_mode.custom_bwd(device_type="cuda")
-    def backward(ctx: torch.Tensor, grad: torch.Tensor):
-        return grad * ctx.scale, None  # type: ignore
-
-
-_scale_gradient: Callable[[torch.Tensor, float], torch.Tensor] = _ScaleGradient.apply  # type: ignore
-
-
 class MoEMLPBase(nn.Module):
     def __init__(
         self,
@@ -58,16 +42,10 @@ class MoEMLPBase(nn.Module):
         self.hidden_size = hidden_size
         self.num_experts = num_experts
 
-        self.gradient_scale: Optional[float] = None
         self.num_local_experts = num_experts
         self.hidden_sharding_degree = 1
         self.ep_mesh: Optional[DeviceMesh] = None
         self.ep_pg: Optional[dist.ProcessGroup] = None
-
-    def scale_grad(self, w: torch.Tensor) -> torch.Tensor:
-        if self.gradient_scale is None:
-            return w
-        return _scale_gradient(w, self.gradient_scale)
 
     def apply_ep(self, ep_mesh: DeviceMesh):
         """
@@ -100,7 +78,6 @@ class MoEMLPBase(nn.Module):
         self.ep_mesh = mesh
         self.ep_pg = mesh.get_group()
         self.num_local_experts = self.num_experts // num_shards
-        self.gradient_scale = 1.0 / num_shards
 
         placements: List[Placement] = [Shard(0)]
         self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, mesh, placements)))  # type: ignore
@@ -207,15 +184,9 @@ class MoEMLP(MoEMLPBase):
         # Scale gradients and get local tensors (in case of expert parallelism).
         # shape (all): (num_local_experts, hidden_size, d_model)
         w1, w2, w3 = (
-            get_local_tensor(
-                self.scale_grad(self.w1).view(self.num_experts, self.d_model, self.hidden_size)
-            ),
-            get_local_tensor(
-                self.scale_grad(self.w2).view(self.num_experts, self.hidden_size, self.d_model)
-            ),
-            get_local_tensor(
-                self.scale_grad(self.w3).view(self.num_experts, self.d_model, self.hidden_size)
-            ),
+            get_local_tensor(self.w1.view(self.num_experts, self.d_model, self.hidden_size)),
+            get_local_tensor(self.w2.view(self.num_experts, self.hidden_size, self.d_model)),
+            get_local_tensor(self.w3.view(self.num_experts, self.d_model, self.hidden_size)),
         )
 
         x = x.type_as(w1)
@@ -309,15 +280,9 @@ class DroplessMoEMLP(MoEMLPBase):
         # Scale gradients and get local tensors (in case of expert parallelism).
         # shape (all): (num_local_experts, hidden_size, d_model)
         w1, w2, w3 = (
-            get_local_tensor(
-                self.scale_grad(self.w1).view(self.num_experts, self.hidden_size, self.d_model)
-            ),
-            get_local_tensor(
-                self.scale_grad(self.w2).view(self.num_experts, self.hidden_size, self.d_model)
-            ),
-            get_local_tensor(
-                self.scale_grad(self.w3).view(self.num_experts, self.hidden_size, self.d_model)
-            ),
+            get_local_tensor(self.w1.view(self.num_experts, self.hidden_size, self.d_model)),
+            get_local_tensor(self.w2.view(self.num_experts, self.hidden_size, self.d_model)),
+            get_local_tensor(self.w3.view(self.num_experts, self.hidden_size, self.d_model)),
         )
 
         # Compute the MLP.
