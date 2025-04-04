@@ -60,7 +60,7 @@ CHECKPOINT: Optional[str] = None
 SEQUENCE_LENGTH = 4096
 TOKENIZER_CONFIG = TokenizerConfig.dolma2()
 DATA_PATHS: List[str] = []
-DATA_PATHS_FILE = "/home/mayee/re/year6/ai2/olmo-cookbook/src/cookbook/data/mixes/datadelve_dclm_sample_expanded.txt"
+DATA_PATHS_FILE = "datadelve_dclm_sample_expanded.txt"
 GLOBAL_BATCH_SIZE = 512 * SEQUENCE_LENGTH
 INTRA_DOCUMENT_MASKING = False
 
