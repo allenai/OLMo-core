@@ -853,6 +853,10 @@ class Trainer:
             step_metrics[name] = step_metrics[name] + value
         elif merge_strategy == MetricMergeStrategy.mean:
             step_metrics[name] = (step_metrics[name] + value) / 2
+        elif merge_strategy == MetricMergeStrategy.max:
+            step_metrics[name] = torch.max(step_metrics[name], value.to(step_metrics[name].device))
+        elif merge_strategy == MetricMergeStrategy.min:
+            step_metrics[name] = torch.min(step_metrics[name], value.to(step_metrics[name].device))
         elif merge_strategy == MetricMergeStrategy.warn:
             log.warning(
                 f"Attempting to log duplicate metric '{name}' for step {(self.global_step)}. "

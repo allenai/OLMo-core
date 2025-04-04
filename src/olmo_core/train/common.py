@@ -133,6 +133,11 @@ class MetricMergeStrategy(StrEnum):
     Determines how duplicate metrics are merged.
     """
 
+    warn = "warn"
+    """
+    Warn when a duplicate is logged, keeping the current value.
+    """
+
     latest = "latest"
     """
     The latest is used.
@@ -143,19 +148,24 @@ class MetricMergeStrategy(StrEnum):
     The oldest (first logged) is used.
     """
 
-    sum = "sum"
-    """
-    The sum of the duplicates is used.
-    """
-
     mean = "mean"
     """
     When a duplicate is logged we take the average with the last value.
     """
 
-    warn = "warn"
+    sum = "sum"
     """
-    Warn when a duplicate is logged, keeping the current value.
+    The sum of the duplicates is used.
+    """
+
+    max = "max"
+    """
+    Take the maximum value of the duplicates.
+    """
+
+    min = "min"
+    """
+    Take the minimum value of the duplicates.
     """
 
 
