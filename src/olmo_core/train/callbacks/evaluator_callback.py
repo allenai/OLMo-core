@@ -246,14 +246,22 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
 
 class DownstreamEvaluator(Evaluator):
     metric_type_to_label = {
-        "f1": "F1 score",
-        "acc": "accuracy",
-        "len_norm": "length-normalized accuracy",
-        "pmi_dc": "PMI-DC accuracy",
-        "ce_loss": "CE loss",
-        "bpb": "BPB",
-        "soft": "soft loss",
-        "soft_log": "log soft loss",
+        "f1_v1": "F1 score",
+        "acc_v1": "accuracy",
+        "len_norm_v1": "length-normalized accuracy",
+        "pmi_dc_v1": "PMI-DC accuracy",
+        "ce_loss_v1": "CE loss",
+        "bpb_v1": "BPB",
+        "soft_v1": "soft loss",
+        "soft_log_v1": "log soft loss",
+        "f1_v2": "F1 score v2",
+        "acc_v2": "accuracy v2",
+        "len_norm_v2": "length-normalized accuracy v2",
+        "pmi_dc_v2": "PMI-DC accuracy v2",
+        "ce_loss_v2": "CE loss v2",
+        "bpb_v2": "BPB v2",
+        "soft_v2": "soft loss v2",
+        "soft_log_v2": "log soft loss v2",
     }
 
     def __init__(

@@ -48,6 +48,7 @@ Also added lower-level methods for converting state between the formats.
 
 - The official config for the 32B had unrealistic batch size settings.
 - Ignore `group_overrides` for frozen parameters instead of throwing an error.
+- Bump `ai2-olmo-eval==0.7.1`, which fixes makes the in-loop evaluation consistent with OLMES by removing [a bias](https://github.com/allenai/OLMo-in-loop-evals/pull/6)
 
 ### Removed
 
