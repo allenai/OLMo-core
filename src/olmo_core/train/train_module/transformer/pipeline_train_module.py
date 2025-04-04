@@ -535,9 +535,9 @@ class TransformerPipelineTrainModule(TrainModule):
         losses_to_record: Dict[str, torch.Tensor] = {}
         previous_stage_aux_loss: Optional[torch.Tensor] = None
 
-        def record_loss(name: str, value: torch.Tensor):
+        def record_loss(name: str, value: torch.Tensor, scale: float = 1.0):
             nonlocal losses_to_record
-            value = get_local_tensor(value.detach()).float()
+            value = get_local_tensor(value.detach()).float() * scale
             if name in losses_to_record:
                 losses_to_record[name] += value
             else:
@@ -558,7 +558,8 @@ class TransformerPipelineTrainModule(TrainModule):
             for name, value in model.compute_auxiliary_losses(
                 total_bz=batch_num_tokens_for_loss, reset=True
             ).items():
-                losses.append(value)
+                if value.requires_grad:
+                    losses.append(value)
                 record_loss(name, value)
 
             if model.lm_head is not None:
@@ -567,8 +568,12 @@ class TransformerPipelineTrainModule(TrainModule):
                 losses.append(ce_loss)
                 record_loss(TRAIN_CE_LOSS_METRIC, ce_loss)
                 if z_loss is not None:
+                    assert self.z_loss_multiplier is not None
                     losses.append(z_loss)
                     record_loss(TRAIN_Z_LOSS_METRIC, z_loss)
+                    record_loss(
+                        TRAIN_Z_LOSS_METRIC + " (unscaled)", z_loss, 1 / self.z_loss_multiplier
+                    )
                 return torch.stack(losses).sum(0, keepdim=True)
             else:
                 assert isinstance(output, torch.Tensor)

@@ -356,7 +356,8 @@ class TransformerTrainModule(TrainModule):
                     batch_num_tokens_for_loss, reset=True
                 )
                 for loss_name, loss_val in auxiliary_losses.items():
-                    loss += loss_val
+                    if loss_val.requires_grad:
+                        loss += loss_val
                     loss_val = get_local_tensor(loss_val.detach())
                     if loss_name in auxiliary_batch_losses:
                         auxiliary_batch_losses[loss_name] += loss_val
@@ -388,9 +389,16 @@ class TransformerTrainModule(TrainModule):
         else:
             self.record_ce_loss(ce_batch_loss, ReduceType.mean)
         if z_batch_loss is not None:
+            assert self.z_loss_multiplier is not None
             self.record_metric(
                 "Z loss",
                 z_batch_loss,
+                ReduceType.mean,
+                namespace="train",
+            )
+            self.record_metric(
+                "Z loss (unscaled)",
+                z_batch_loss / self.z_loss_multiplier,
                 ReduceType.mean,
                 namespace="train",
             )

@@ -145,7 +145,10 @@ class MoELoadBalancingLoss(MoELoss):
         if reset:
             self.reset()
 
-        return {"load balancing loss": lb_loss}
+        return {
+            "load balancing loss": lb_loss,
+            "load balancing loss (unscaled)": lb_loss.detach().float() / self.loss_weight,
+        }
 
     def reset(self):
         self.loss = None
@@ -174,11 +177,17 @@ class MoERouterZLoss(MoELoss):
             raise RuntimeError(
                 f"'{self.__class__.__name__}.update()' needs to be called before '.compute()'"
             )
+
         scale = self.loss_weight / total_bz
         lb_loss = scale * self.loss
+
         if reset:
             self.reset()
-        return {"router Z loss": lb_loss}
+
+        return {
+            "router Z loss": lb_loss,
+            "router Z loss (unscaled)": lb_loss.detach().float() / self.loss_weight,
+        }
 
     def reset(self):
         self.loss = None
