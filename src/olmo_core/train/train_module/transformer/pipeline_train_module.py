@@ -558,8 +558,7 @@ class TransformerPipelineTrainModule(TrainModule):
             for name, value in model.compute_auxiliary_losses(
                 total_bz=batch_num_tokens_for_loss, reset=True
             ).items():
-                if value.requires_grad:
-                    losses.append(value)
+                losses.append(value)
                 record_loss(name, value)
 
             if model.lm_head is not None:

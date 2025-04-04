@@ -201,6 +201,8 @@ class MoEBase(nn.Module):
             return
 
         # TODO: do we need to guard when recomputing during activation checkpointing?
+        # But pipeline parallelism does a dry-run to infer input/output sizes with grad disabled,
+        # and we still need to compute the losses in that case.
         #  if not self.training or not torch.is_grad_enabled():
         if not self.training:
             return
@@ -245,6 +247,8 @@ class MoEBase(nn.Module):
         out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
         for metric in self.metrics:
             out.update(metric.compute(total_bz, reset=reset))
+        for loss_fn in self.losses:
+            out.update(loss_fn.compute_metrics(total_bz, reset=reset))
         return out
 
     def reset_metrics(self):
