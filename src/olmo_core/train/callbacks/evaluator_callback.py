@@ -126,13 +126,6 @@ class EvaluatorCallback(Callback):
                     with cuda_sync_debug_mode(0):
                         evaluator.update_metrics(batch, ce_loss, logits)
 
-                if (
-                    not self.cancel_after_first_eval
-                ):  # guard here in case we have multiple evaluators doing this
-                    if self.trainer.is_canceled:
-                        self._log_progress(evaluator, eval_step)
-                        return
-
                 if self.eval_duration.due(step=eval_step, tokens=eval_tokens, epoch=1):
                     self._log_progress(evaluator, eval_step)
                     break
