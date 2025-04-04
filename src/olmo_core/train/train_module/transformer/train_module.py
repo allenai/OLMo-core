@@ -356,7 +356,8 @@ class TransformerTrainModule(TrainModule):
                     batch_num_tokens_for_loss, reset=True
                 )
                 for loss_name, loss_val in auxiliary_losses.items():
-                    loss += loss_val
+                    if loss_val.requires_grad:
+                        loss += loss_val
                     loss_val = get_local_tensor(loss_val.detach())
                     if loss_name in auxiliary_batch_losses:
                         auxiliary_batch_losses[loss_name] += loss_val

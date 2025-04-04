@@ -1,5 +1,5 @@
 from abc import ABCMeta, abstractmethod
-from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union
+from typing import Dict, Optional, Union
 
 import torch
 import torch.distributed as dist
@@ -7,9 +7,6 @@ from torch.distributed.tensor import DTensor, Replicate, Shard
 
 from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import get_local_tensor
-
-if TYPE_CHECKING:
-    from olmo_core.train.common import ReduceType
 
 __all__ = ["MoELoss", "MoELoadBalancingLoss", "MoERouterZLoss", "MoELoadBalancingLossGranularity"]
 
@@ -39,12 +36,6 @@ class MoELoss(metaclass=ABCMeta):
     ) -> Dict[str, torch.Tensor]:
         raise NotImplementedError
 
-    def compute_metrics(
-        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True, **kwargs
-    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
-        del total_bz, reset, kwargs
-        return {}
-
     @abstractmethod
     def reset(self):
         raise NotImplementedError
@@ -69,15 +60,11 @@ class MoELoadBalancingLoss(MoELoss):
         granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
     ):
         super().__init__()
-        from olmo_core.train.common import ReduceType
-
         self.loss_weight = loss_weight
         self.num_experts = num_experts
         self.top_k = top_k
         self.granularity = granularity
         self.loss: Optional[torch.Tensor] = None
-        self.detached_loss: Optional[torch.Tensor] = None
-        self.reduction = ReduceType.mean
 
     def update(
         self,
@@ -141,7 +128,6 @@ class MoELoadBalancingLoss(MoELoss):
             self.loss = loss
         else:
             self.loss += loss
-        self.detached_loss = self.loss.detach()
 
     def compute(
         self, total_bz: Union[int, float, torch.Tensor], reset: bool = True, **kwargs
@@ -157,43 +143,23 @@ class MoELoadBalancingLoss(MoELoss):
         lb_loss = scale * self.loss
 
         if reset:
-            self.loss = None
+            self.reset()
 
-        return {"load balancing loss": lb_loss}
-
-    def compute_metrics(
-        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True, **kwargs
-    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
-        del kwargs
-
-        if self.detached_loss is None:
-            raise RuntimeError(
-                f"'{self.__class__.__name__}.update()' needs to be called before '.compute_metrics()'"
-            )
-
-        scale = self.num_experts / (total_bz * self.top_k)
-        lb_loss = scale * self.detached_loss
-
-        if reset:
-            self.detached_loss = None
-
-        return {"load balancing loss (unscaled)": (lb_loss, self.reduction)}
+        return {
+            "load balancing loss": lb_loss,
+            "load balancing loss (unscaled)": lb_loss.detach().float() / self.loss_weight,
+        }
 
     def reset(self):
         self.loss = None
-        self.detached_loss = None
 
 
 class MoERouterZLoss(MoELoss):
     def __init__(self, *, loss_weight: float, num_experts: int):
-        from olmo_core.train.common import ReduceType
-
         super().__init__()
         self.loss_weight = loss_weight
         self.num_experts = num_experts
         self.loss: Optional[torch.Tensor] = None
-        self.detached_loss: Optional[torch.Tensor] = None
-        self.reduction = ReduceType.mean
 
     def update(self, *, expert_logits: torch.Tensor, **kwargs):
         del kwargs
@@ -202,7 +168,6 @@ class MoERouterZLoss(MoELoss):
             self.loss = loss
         else:
             self.loss += loss
-        self.detached_loss = self.loss.detach()
 
     def compute(
         self, total_bz: Union[int, float, torch.Tensor], reset: bool = True, **kwargs
@@ -217,27 +182,12 @@ class MoERouterZLoss(MoELoss):
         lb_z_loss = scale * self.loss
 
         if reset:
-            self.loss = None
+            self.reset()
 
-        return {"router Z loss": lb_z_loss}
-
-    def compute_metrics(
-        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True, **kwargs
-    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
-        del kwargs
-
-        if self.detached_loss is None:
-            raise RuntimeError(
-                f"'{self.__class__.__name__}.update()' needs to be called before '.compute_metrics()'"
-            )
-
-        lb_z_loss = self.detached_loss / total_bz
-
-        if reset:
-            self.detached_loss = None
-
-        return {"router Z loss (unscaled)": (lb_z_loss, self.reduction)}
+        return {
+            "router Z loss": lb_z_loss,
+            "router Z loss (unscaled)": lb_z_loss.detach().float() / self.loss_weight,
+        }
 
     def reset(self):
         self.loss = None
-        self.detached_loss = None

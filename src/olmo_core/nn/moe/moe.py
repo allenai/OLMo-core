@@ -247,8 +247,6 @@ class MoEBase(nn.Module):
         out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
         for metric in self.metrics:
             out.update(metric.compute(total_bz, reset=reset))
-        for loss_fn in self.losses:
-            out.update(loss_fn.compute_metrics(total_bz, reset=reset))
         return out
 
     def reset_metrics(self):
