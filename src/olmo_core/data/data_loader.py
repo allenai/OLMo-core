@@ -448,6 +448,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         if self._global_indices is not None:
             return self._global_indices
         if not self._global_indices_file.is_file():
+            log.info(f"Global indices file: {self._global_indices_file}")
             raise RuntimeError("Missing global indices file, did you forget to call 'reshuffle()'?")
         return np.memmap(self._global_indices_file, mode="r", dtype=np.uint32)  # type: ignore
 

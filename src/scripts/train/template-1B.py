@@ -71,7 +71,7 @@ MODEL_CONFIG = TransformerConfig.olmo2_1B_v2(vocab_size=TOKENIZER_CONFIG.padded_
 LEARNING_RATE = 4e-4
 
 # Beaker.
-BEAKER_CLUSTER = "ai2/jupiter-cirrascale-2"
+BEAKER_CLUSTER = "ai2/augusta-google-1" # "ai2/jupiter-cirrascale-2"
 NUM_NODES = 4
 BEAKER_WORKSPACE = "ai2/oe-data"
 BEAKER_BUDGET = "ai2/oe-data"
