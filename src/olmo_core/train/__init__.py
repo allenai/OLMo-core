@@ -51,7 +51,13 @@ from ..distributed.utils import init_distributed, is_distributed
 from ..io import add_cached_path_clients
 from ..utils import LogFilterType, get_default_device, prepare_cli_environment, seed_all
 from .checkpoint import Checkpointer, CheckpointerConfig
-from .common import Duration, DurationUnit, LoadStrategy, ReduceType
+from .common import (
+    Duration,
+    DurationUnit,
+    LoadStrategy,
+    MetricMergeStrategy,
+    ReduceType,
+)
 from .config import TrainerConfig
 from .trainer import Trainer
 
@@ -66,6 +72,7 @@ __all__ = [
     "Duration",
     "DurationUnit",
     "ReduceType",
+    "MetricMergeStrategy",
 ]
 
 
