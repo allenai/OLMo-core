@@ -200,7 +200,9 @@ class MoEBase(nn.Module):
         if not self.losses and not self.metrics:
             return
 
-        if not self.training or not torch.is_grad_enabled():
+        # TODO: do we need to guard when recomputing during activation checkpointing?
+        #  if not self.training or not torch.is_grad_enabled():
+        if not self.training:
             return
 
         expert_logits = expert_logits.float()
