@@ -561,7 +561,7 @@ class TransformerPipelineTrainModule(TrainModule):
                 # NOTE: when doing shape inference grad will be disabled.
                 if not torch.is_grad_enabled() or value.requires_grad:
                     losses.append(value)
-                record_loss(name, value)
+                record_loss(name, value, self.pp_group_size)
 
             if model.lm_head is not None:
                 assert isinstance(output, LMOutputWithLoss)
