@@ -55,7 +55,7 @@ def test_router_with_bias_gamma(device: torch.device):
     assert router1.score_bias is not None
     assert router1.score_bias.nonzero().sum().item() == 0  # type: ignore
     assert router1._cache is not None
-    assert router1._cache["batch_size_per_expert"].nonzero().sum().item() == 0
+    assert router1._cache["score_bias_batch_size_per_expert"].nonzero().sum().item() == 0
 
     router2 = MoELinearRouter(
         d_model=128,
@@ -81,4 +81,4 @@ def test_router_with_bias_gamma(device: torch.device):
     # Update the biases and check.
     router1.post_batch()
     assert router1.score_bias.nonzero().sum().item() > 0  # type: ignore
-    assert router1._cache["batch_size_per_expert"].nonzero().sum().item() == 0
+    assert router1._cache["score_bias_batch_size_per_expert"].nonzero().sum().item() == 0
