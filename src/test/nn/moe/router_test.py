@@ -35,7 +35,7 @@ def test_router(
     ).to(device)
 
     x = torch.randn((2, 4, 128), device=device)
-    x, weights, indices, bz_per_expert = router(x)
+    weights, indices, bz_per_expert = router(x)
 
     assert weights.shape == (2, 4, 2)
     assert indices.shape == (2, 4, 2)
@@ -70,8 +70,8 @@ def test_router_with_bias_gamma(device: torch.device):
     x = torch.randn((2, 4, 128), device=device)
 
     # At this point, the output should be exactly the same as it would be without a bias gamma.
-    _, weights1, indices1, bz_per_expert1 = router1(x)
-    _, weights2, indices2, bz_per_expert2 = router2(x)
+    weights1, indices1, bz_per_expert1 = router1(x)
+    weights2, indices2, bz_per_expert2 = router2(x)
     torch.testing.assert_close(weights1, weights2)
     torch.testing.assert_close(indices1, indices2)
     torch.testing.assert_close(bz_per_expert1, bz_per_expert2)
