@@ -352,6 +352,8 @@ class MoERouter(nn.Module):
             the expert indices of shape ``(B, S, top_k)``,
             the total number of items routed to each expert, with shape ``(num_experts,)``.
         """
+        B, S, _ = x.shape
+
         # shape: (batch_size, seq_len, d_model)
         x = self.jitter(x)
 
@@ -406,6 +408,8 @@ class MoERouter(nn.Module):
                 )
                 if loss_div_factor is not None:
                     lb_loss = lb_loss / loss_div_factor
+                else:
+                    lb_loss = lb_loss / (B * S)
                 scaled_lb_loss = self.lb_loss_weight * lb_loss
                 AutoAuxiliaryLoss.apply(x, scaled_lb_loss)
                 self._accumulate_metric("load balancing loss", scaled_lb_loss)
@@ -415,6 +419,8 @@ class MoERouter(nn.Module):
                 z_loss = router_z_loss(expert_logits=logits)
                 if loss_div_factor is not None:
                     z_loss = z_loss / loss_div_factor
+                else:
+                    z_loss = z_loss / (B * S)
                 scaled_z_loss = self.z_loss_weight * z_loss
                 AutoAuxiliaryLoss.apply(x, scaled_z_loss)
                 self._accumulate_metric("router Z loss", scaled_z_loss)
