@@ -192,6 +192,7 @@ class SourceMixtureDatasetConfig(Config):
     """
     Whether to render tables of the mixture outcome.
     """
+    quiet: bool = False
 
     def validate(self):
         if self.max_tokens <= 0:
@@ -314,7 +315,7 @@ class SourceMixtureDatasetConfig(Config):
             for path in paths:
                 futures.append(executor.submit(self._count_tokens_for_file, path))
 
-            with Progress() as progress:
+            with Progress(disable=self.quiet) as progress:
                 results = []
                 task = progress.add_task(
                     f"Counting available tokens for source: {source}", total=len(futures)

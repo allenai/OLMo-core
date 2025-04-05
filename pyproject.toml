@@ -22,7 +22,7 @@ dependencies = [
     "omegaconf",
     "safetensors",
     "importlib_resources",
-    "ai2-olmo-eval==0.7.0",
+    "ai2-olmo-eval==0.7.1",
 ]
 
 [project.urls]
@@ -64,8 +64,11 @@ wandb = [
 comet = [
     "comet_ml",
 ]
+transformers = [
+    "transformers",
+]
 all = [
-    "ai2-olmo-core[dev,beaker,wandb,comet]",
+    "ai2-olmo-core[dev,beaker,wandb,comet,transformers]",
 ]
 
 [tool.setuptools]

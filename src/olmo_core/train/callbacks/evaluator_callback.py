@@ -55,6 +55,11 @@ class EvaluatorCallback(Callback):
     The interval (in steps) with which to run the evaluators.
     """
 
+    eval_on_startup: bool = False
+    """
+    Whether to run an evaluation when the trainer starts up.
+    """
+
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     """
     The duration to run each evaluator for.
@@ -71,10 +76,17 @@ class EvaluatorCallback(Callback):
                 f"'{self.__class__.__name__}' only suports the '{TransformerTrainModule.__name__}' train module"
             )
 
+    def pre_train(self):
+        if self.eval_on_startup:
+            self._perform_eval()
+
     def post_step(self):
         if self.step <= 1 or self.step % self.eval_interval != 0:
             return
 
+        self._perform_eval()
+
+    def _perform_eval(self):
         # Put model in eval train mode.
         # TODO: make sure grads will be zeroed at this point
         #  self.trainer.optim.zero_grad(set_to_none=True)
@@ -171,6 +183,7 @@ class EvaluatorCallback(Callback):
 class LMEvaluatorCallbackConfig(CallbackConfig):
     eval_dataset: NumpyDatasetConfig
     eval_interval: int = 1000
+    eval_on_startup: bool = False
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     log_interval: int = 5
     enabled: bool = True
@@ -226,20 +239,29 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
             evaluators=[evaluator],
             eval_interval=self.eval_interval,
             log_interval=self.log_interval,
+            eval_on_startup=self.eval_on_startup,
             eval_duration=self.eval_duration,
         )
 
 
 class DownstreamEvaluator(Evaluator):
     metric_type_to_label = {
-        "f1": "F1 score",
-        "acc": "accuracy",
-        "len_norm": "length-normalized accuracy",
-        "pmi_dc": "PMI-DC accuracy",
-        "ce_loss": "CE loss",
-        "bpb": "BPB",
-        "soft": "soft loss",
-        "soft_log": "log soft loss",
+        "f1_v1": "F1 score",
+        "acc_v1": "accuracy",
+        "len_norm_v1": "length-normalized accuracy",
+        "pmi_dc_v1": "PMI-DC accuracy",
+        "ce_loss_v1": "CE loss",
+        "bpb_v1": "BPB",
+        "soft_v1": "soft loss",
+        "soft_log_v1": "log soft loss",
+        "f1_v2": "F1 score v2",
+        "acc_v2": "accuracy v2",
+        "len_norm_v2": "length-normalized accuracy v2",
+        "pmi_dc_v2": "PMI-DC accuracy v2",
+        "ce_loss_v2": "CE loss v2",
+        "bpb_v2": "BPB v2",
+        "soft_v2": "soft loss v2",
+        "soft_log_v2": "log soft loss v2",
     }
 
     def __init__(
@@ -351,6 +373,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     tokenizer: TokenizerConfig
     eval_interval: int = 1000
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
+    eval_on_startup: bool = False
     log_interval: int = 5
     enabled: bool = True
 
@@ -388,6 +411,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
         return EvaluatorCallback(
             evaluators=evaluators,
             eval_interval=self.eval_interval,
+            eval_on_startup=self.eval_on_startup,
             log_interval=self.log_interval,
             eval_duration=self.eval_duration,
         )
