@@ -351,20 +351,6 @@ class TransformerTrainModule(TrainModule):
                     z_batch_loss += get_local_tensor(z_loss.detach())
                     del z_loss
 
-                # Optionally get model auxiliary losses and update the total batch auxiliary losses.
-                auxiliary_losses = self.model.compute_auxiliary_losses(
-                    batch_num_tokens_for_loss, reset=True
-                )
-                for loss_name, loss_val in auxiliary_losses.items():
-                    if loss_val.requires_grad:
-                        loss += loss_val
-                    loss_val = get_local_tensor(loss_val.detach())
-                    if loss_name in auxiliary_batch_losses:
-                        auxiliary_batch_losses[loss_name] += loss_val
-                    else:
-                        auxiliary_batch_losses[loss_name] = loss_val
-                del auxiliary_losses
-
                 # Run backward pass.
                 loss.backward()
 
@@ -373,7 +359,6 @@ class TransformerTrainModule(TrainModule):
         self.model.post_batch(dry_run=dry_run)
 
         if dry_run:
-            self.model.reset_auxiliary_losses()
             self.model.reset_auxiliary_metrics()
             return
 

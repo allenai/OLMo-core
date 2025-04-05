@@ -367,7 +367,6 @@ class TransformerPipelineTrainModule(TrainModule):
 
         if dry_run:
             for model in self.model_parts:
-                model.reset_auxiliary_losses()
                 model.reset_auxiliary_metrics()
             return
 
@@ -514,26 +513,7 @@ class TransformerPipelineTrainModule(TrainModule):
         Run the pipeline, returning the losses captured.
         """
 
-        # NOTE: we to take extra care to handle auxiliary losses correctly which need to be propagated
-        # from stage to stage just like other activations. So each stage will return either a single
-        # tensor of activations (if there are no auxiliary losses) or a tuple of two tensors
-        # representing the activation and the combined_auxiliary losses, respectively, except for the
-        # final stage which always just returns the total combined loss.
-        # To accomplish this without complicated ad hoc model code changes, we register pre- and post-forward
-        # hooks to handle the logic.
-        #
-        # In particular, we have:
-        #  - A post-forward hook `capture_losses()`, which modifies a stage's output to include a
-        #    combined auxiliary loss when needed, in which the output becomes a `Tuple[Tensor, Tensor]`
-        #    instead of a `Tensor`. At the same time this callback will record/accumulate the individual
-        #    losses for logging later.
-        #  - A pre-forward hook `pass_losses_through()` which removes the added auxiliary loss
-        #    (from the previous stage) from the current stage's input so as to not require code
-        #    changes in the model. The remove loss will be added into the current stage's auxiliary
-        #    losses from the post-forward hook (`capture_losses`).
-
         losses_to_record: Dict[str, torch.Tensor] = {}
-        previous_stage_aux_loss: Optional[torch.Tensor] = None
 
         def record_loss(name: str, value: torch.Tensor, scale: float = 1.0):
             nonlocal losses_to_record
@@ -547,23 +527,9 @@ class TransformerPipelineTrainModule(TrainModule):
             model: Transformer, args: Tuple[torch.Tensor, ...], output: Any
         ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
             del args
-            losses: List[torch.Tensor] = []
-
-            nonlocal previous_stage_aux_loss
-            if previous_stage_aux_loss is not None:
-                losses.append(previous_stage_aux_loss.squeeze(0))
-                previous_stage_aux_loss = None
-
-            # Get auxiliary losses.
-            for name, value in model.compute_auxiliary_losses(
-                total_bz=batch_num_tokens_for_loss, reset=True
-            ).items():
-                # NOTE: when doing shape inference grad will be disabled.
-                if not torch.is_grad_enabled() or value.requires_grad:
-                    losses.append(value)
-                record_loss(name, value, self.pp_group_size)
 
             if model.lm_head is not None:
+                losses: List[torch.Tensor] = []
                 assert isinstance(output, LMOutputWithLoss)
                 _, ce_loss, z_loss = output
                 losses.append(ce_loss)
@@ -578,28 +544,10 @@ class TransformerPipelineTrainModule(TrainModule):
                 return torch.stack(losses).sum(0, keepdim=True)
             else:
                 assert isinstance(output, torch.Tensor)
-                if losses:
-                    return output, torch.stack(losses).sum(0, keepdim=True)
-                else:
-                    return output
-
-        def pass_losses_through(model: Transformer, args: Tuple[torch.Tensor, ...]) -> torch.Tensor:
-            del model
-            nonlocal previous_stage_aux_loss
-            assert previous_stage_aux_loss is None
-
-            if len(args) == 2:
-                previous_stage_aux_loss = args[1]
-            elif len(args) != 1:
-                raise RuntimeError(
-                    f"Expected 1 or 2 positional tensor inputs to model, got {len(args)}"
-                )
-
-            return args[0]
+                return output
 
         handles = []
         for model in self.model_parts:
-            handles.append(model.register_forward_pre_hook(pass_losses_through))
             handles.append(model.register_forward_hook(capture_losses))
 
         with self._model_forward_context():
