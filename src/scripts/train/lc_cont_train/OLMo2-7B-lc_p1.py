@@ -205,7 +205,7 @@ class LcContTrain(Config):
                 AnnealingDataMix.pl_repl_p1_contig,
                 tokenizer=tokenizer_config,
                 mix_base_dir=root_dir,
-                generate_doc_lengths=True,
+                # generate_doc_lengths=True,
                 sequence_length=CONTEXT_LENGTH,
                 work_dir=get_work_dir(root_dir),
             ),
