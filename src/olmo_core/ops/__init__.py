@@ -16,3 +16,13 @@ class AutoAuxiliaryLoss(torch.autograd.Function):
         (aux_loss,) = ctx.saved_tensors
         scaled_aux_loss_grad = torch.ones_like(aux_loss)
         return grad_output, scaled_aux_loss_grad
+
+
+def attach_auxiliary_loss(activation: torch.Tensor, aux_loss: torch.Tensor) -> torch.Tensor:
+    """
+    Attach an auxiliary loss to an activation with an autograd function in order to trigger
+    gradients for the aux loss in the backwards pass.
+
+    :returns: The input activation unchanged.
+    """
+    return AutoAuxiliaryLoss.apply(activation, aux_loss)  # type: ignore[return-value]
