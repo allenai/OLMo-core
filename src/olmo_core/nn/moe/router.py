@@ -194,6 +194,7 @@ class MoERouter(nn.Module):
         self.z_loss_weight = z_loss_weight
         self.group: Optional[dist.ProcessGroup] = None
         self.cp_mesh: Optional[dist.DeviceMesh] = None
+        self.tp_mesh: Optional[dist.DeviceMesh] = None
 
         if self.bias_gamma is not None:
             assert self.bias_gamma > 0
@@ -404,7 +405,7 @@ class MoERouter(nn.Module):
                     batch_size_per_expert=batch_size_per_expert,
                     batched_batch_size_per_expert=batched_batch_size_per_expert,
                     granularity=self.lb_loss_granularity,
-                    sp_mesh=self.cp_mesh,
+                    sp_mesh=self.cp_mesh or self.tp_mesh,  # TODO: what happens if both enabled?
                 )
                 if loss_div_factor is not None:
                     lb_loss = lb_loss / loss_div_factor
@@ -432,9 +433,18 @@ class MoERouter(nn.Module):
 
         return x, expert_weights, expert_indices, batch_size_per_expert
 
-    @abstractmethod
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
-        raise NotImplementedError
+        del float8_enabled
+        parallelize_module(
+            self,
+            device_mesh=tp_mesh,
+            parallelize_plan=PrepareModuleInput(
+                input_layouts=(Shard(1),),
+                desired_input_layouts=(Shard(1),),
+                use_local_output=True,
+            ),
+        )
+        self.tp_mesh = tp_mesh
 
     def apply_cp(self, cp_mesh: DeviceMesh):
         self.cp_mesh = cp_mesh
@@ -472,17 +482,7 @@ class MoELinearRouter(MoERouter):
         return F.linear(x, get_local_tensor(self.weight).view(self.num_experts, self.d_model))
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
-        del float8_enabled
-        parallelize_module(
-            self,
-            device_mesh=tp_mesh,
-            parallelize_plan=PrepareModuleInput(
-                input_layouts=(Shard(1),),
-                desired_input_layouts=(Shard(1),),
-                use_local_output=True,
-            ),
-        )
-
+        super().apply_tp(tp_mesh, float8_enabled=float8_enabled)
         self.register_parameter(
             "weight", nn.Parameter(distribute_tensor(self.weight, tp_mesh, [Replicate()]))
         )
