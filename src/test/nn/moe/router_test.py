@@ -35,18 +35,11 @@ def test_router(
     ).to(device)
 
     x = torch.randn((2, 4, 128), device=device)
-    logits, scores, weights, indices, bz_per_expert, batched_bz_per_expert = router(x)
+    x, weights, indices, bz_per_expert = router(x)
 
-    assert logits.shape == (2, 4, 4)
-    assert scores.shape == (2, 4, 4)
     assert weights.shape == (2, 4, 2)
     assert indices.shape == (2, 4, 2)
     assert bz_per_expert.shape == (4,)
-    assert batched_bz_per_expert.shape == (2, 4)
-
-    # Scores should be normalized, otherwise LB loss doesn't work.
-    scores_total = scores.sum(dim=-1)
-    torch.testing.assert_close(scores_total, torch.ones_like(scores_total))
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -77,10 +70,8 @@ def test_router_with_bias_gamma(device: torch.device):
     x = torch.randn((2, 4, 128), device=device)
 
     # At this point, the output should be exactly the same as it would be without a bias gamma.
-    logits1, scores1, weights1, indices1, bz_per_expert1, _ = router1(x)
-    logits2, scores2, weights2, indices2, bz_per_expert2, _ = router2(x)
-    torch.testing.assert_close(logits1, logits2)
-    torch.testing.assert_close(scores1, scores2)
+    _, weights1, indices1, bz_per_expert1 = router1(x)
+    _, weights2, indices2, bz_per_expert2 = router2(x)
     torch.testing.assert_close(weights1, weights2)
     torch.testing.assert_close(indices1, indices2)
     torch.testing.assert_close(bz_per_expert1, bz_per_expert2)

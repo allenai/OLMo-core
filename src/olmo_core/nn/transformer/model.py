@@ -17,7 +17,7 @@ import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
-from torch.distributed.tensor import DTensor, Replicate, Shard
+from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
 from olmo_core.data.utils import get_cumulative_document_lengths
@@ -116,6 +116,7 @@ class Transformer(nn.Module):
                 block_config.build(
                     d_model=d_model,
                     block_idx=block_idx,
+                    n_layers=n_layers,
                     init_device=init_device,
                     cache=cache,
                 )
@@ -146,17 +147,6 @@ class Transformer(nn.Module):
 
     def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
         return block
-
-    def compute_auxiliary_losses(
-        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
-    ) -> Dict[str, torch.Tensor]:
-        # NOTE: if tensor parallelism is enabled you'll need to distribute loss tensors as DTensors.
-        # See how the MoETransformer handles that for an example.
-        del total_bz, reset
-        return {}
-
-    def reset_auxiliary_losses(self):
-        pass
 
     def compute_auxiliary_metrics(
         self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
@@ -322,8 +312,12 @@ class Transformer(nn.Module):
             z_loss_multiplier=z_loss_multiplier,
             return_logits=return_logits,
         )
+
         if loss_div_factor is not None:
-            lm_head_kwargs["loss_div_factor"] = move_to_device(loss_div_factor, self.device)
+            loss_div_factor = move_to_device(loss_div_factor, self.device)
+            lm_head_kwargs["loss_div_factor"] = loss_div_factor
+            block_kwargs["loss_div_factor"] = loss_div_factor
+
         if labels is not None:
             lm_head_kwargs["labels"] = move_to_device(labels, self.device)
 
@@ -897,31 +891,6 @@ class MoETransformer(Transformer):
                 f"'{self.__class__.__name__}' requires a '{MoETransformerBlock.__name__}' block"
             )
         return block
-
-    def compute_auxiliary_losses(
-        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
-    ) -> Dict[str, torch.Tensor]:
-        out: Dict[str, torch.Tensor] = {}
-        for block in self.blocks.values():
-            for loss_name, loss_val in (
-                cast(MoETransformerBlock, block).compute_losses(total_bz, reset=reset).items()
-            ):
-                loss_val = loss_val.div(self.n_layers)
-
-                if self.tp_enabled and not isinstance(loss_val, DTensor):
-                    assert self._tp_mesh is not None
-                    loss_val = DTensor.from_local(loss_val.unsqueeze(0), self._tp_mesh, (Shard(0),))
-                    loss_val = loss_val.redistribute(placements=(Replicate(),)).mean()
-
-                if loss_name in out:
-                    out[loss_name] += loss_val
-                else:
-                    out[loss_name] = loss_val
-        return out
-
-    def reset_auxiliary_losses(self):
-        for block in self.blocks.values():
-            cast(MoETransformerBlock, block).reset_losses()
 
     def compute_auxiliary_metrics(
         self, total_bz: Union[int, float, torch.Tensor], reset: bool = True

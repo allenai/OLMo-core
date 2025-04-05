@@ -31,8 +31,18 @@ class TransformerBlockBase(nn.Module):
     Base class for transformer block implementations.
     """
 
+    def __init__(self, *, n_layers: int):
+        super().__init__()
+        self.n_layers = n_layers
+
     @abstractmethod
-    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
         """
         Run the block on the input ``x``.
 
@@ -85,6 +95,7 @@ class TransformerBlock(TransformerBlockBase):
         *,
         d_model: int,
         block_idx: int,
+        n_layers: int,
         attention: AttentionConfig,
         feed_forward: FeedForwardConfig,
         layer_norm: LayerNormConfig,
@@ -92,7 +103,7 @@ class TransformerBlock(TransformerBlockBase):
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
-        super().__init__()
+        super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
         self.attention = attention.build(d_model, init_device=init_device, cache=cache)
@@ -101,7 +112,14 @@ class TransformerBlock(TransformerBlockBase):
         self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
 
-    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        del loss_div_factor
         h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
         return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
@@ -170,7 +188,14 @@ class ReorderedNormTransformerBlock(TransformerBlock):
     of the feed-forward instead of the input.
     """
 
-    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        del loss_div_factor
         h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
@@ -202,12 +227,13 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         *,
         d_model: int,
         block_idx: int,
+        n_layers: int,
         attention: AttentionConfig,
         feed_forward: FeedForwardConfig,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
-        super().__init__()
+        super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
         self.attention = attention.build(d_model, init_device=init_device, cache=cache)
@@ -231,7 +257,14 @@ class NormalizedTransformerBlock(TransformerBlockBase):
             self.attn_alpha.mul_(self.attn_alpha_init_scaling)
             self.mlp_alpha.mul_(self.mlp_alpha_init_scaling)
 
-    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        del loss_div_factor
         h = l2_normalize(
             torch.lerp(
                 x,
@@ -310,6 +343,7 @@ class MoETransformerBlock(TransformerBlockBase):
         *,
         d_model: int,
         block_idx: int,
+        n_layers: int,
         attention: AttentionConfig,
         feed_forward_moe: MoEConfig,
         layer_norm: LayerNormConfig,
@@ -317,7 +351,7 @@ class MoETransformerBlock(TransformerBlockBase):
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
-        super().__init__()
+        super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
         self.attention = attention.build(d_model, init_device=init_device, cache=cache)
@@ -354,14 +388,6 @@ class MoETransformerBlock(TransformerBlockBase):
     def tp_enabled(self) -> bool:
         return self._tp_enabled
 
-    def compute_losses(
-        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
-    ) -> Dict[str, torch.Tensor]:
-        return self.feed_forward_moe.compute_losses(total_bz, reset=reset)
-
-    def reset_losses(self):
-        self.feed_forward_moe.reset_losses()
-
     def compute_metrics(
         self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
@@ -370,14 +396,17 @@ class MoETransformerBlock(TransformerBlockBase):
     def reset_metrics(self):
         self.feed_forward_moe.reset_metrics()
 
-    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        """
-        Run the block on the input ``x``.
-
-        Parameters are the same as :meth:`TransformerBlock.forward()`.
-        """
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
         h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
-        return h + self.dropout(self.feed_forward_moe(self.feed_forward_norm(h)))
+        return h + self.dropout(
+            self.feed_forward_moe(self.feed_forward_norm(h), loss_div_factor=loss_div_factor)
+        )
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         self.feed_forward_moe.apply_ep(ep_mesh, **kwargs)
@@ -456,9 +485,17 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
     output of the feed-forward MoE instead of the input.
     """
 
-    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
         h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-        return h + self.dropout(self.feed_forward_norm(self.feed_forward_moe(h)))
+        return h + self.dropout(
+            self.feed_forward_norm(self.feed_forward_moe(h, loss_div_factor=loss_div_factor))
+        )
 
     def apply_fsdp(
         self,
@@ -485,12 +522,19 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         self,
         *,
         d_model: int,
+        n_layers: int,
         layer_norm: LayerNormConfig,
         feed_forward: FeedForwardConfig,
         init_device: str = "cpu",
         **kwargs,
     ):
-        super().__init__(d_model=d_model, layer_norm=layer_norm, init_device=init_device, **kwargs)
+        super().__init__(
+            d_model=d_model,
+            n_layers=n_layers,
+            layer_norm=layer_norm,
+            init_device=init_device,
+            **kwargs,
+        )
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
         self.feed_forward_moe_norm = layer_norm.build(d_model, init_device=init_device)
         self._use_combined_forward: Optional[bool] = None
@@ -517,16 +561,32 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         raise NotImplementedError
 
     @abstractmethod
-    def sparse_forward(self, x: torch.Tensor) -> torch.Tensor:
+    def sparse_forward(
+        self, x: torch.Tensor, *, loss_div_factor: Optional[Union[torch.Tensor, float]] = None
+    ) -> torch.Tensor:
         raise NotImplementedError
 
     @abstractmethod
-    def combined_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    def combined_forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
         raise NotImplementedError
 
-    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
         if not self.use_combined_forward:
-            return self.sparse_forward(x) + self.dense_forward(x, **kwargs)
+            return self.sparse_forward(x, loss_div_factor=loss_div_factor) + self.dense_forward(
+                x, **kwargs
+            )
         else:
             # NOTE: alternatively could do something like this, but even with an extra stream it's
             # not as fast as the hand-crafted 'combined_forward()'.
@@ -537,7 +597,7 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
             #     h_dense = self._fwd_dense(x, **kwargs)
             # torch.cuda.default_stream().wait_stream(stream)
             # return h_sparse + h_dense
-            return self.combined_forward(x, **kwargs)
+            return self.combined_forward(x, loss_div_factor=loss_div_factor, **kwargs)
 
     def apply_tp(
         self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
@@ -615,24 +675,29 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
         h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
         return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
-    def sparse_forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.dropout(self.feed_forward_moe(self.feed_forward_moe_norm(x)))
+    def sparse_forward(
+        self, x: torch.Tensor, *, loss_div_factor: Optional[Union[torch.Tensor, float]] = None
+    ) -> torch.Tensor:
+        return self.dropout(
+            self.feed_forward_moe(self.feed_forward_moe_norm(x), loss_div_factor=loss_div_factor)
+        )
 
-    def combined_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    def combined_forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
         # NOTE: this follows the same code path as the MoE's forward pass, except that we run
         # dense operations while we wait on expert parallel all-to-all comms.
         B, _, D = x.shape
 
         x_moe = get_local_tensor(self.feed_forward_moe_norm(x))
 
-        (
-            expert_logits,
-            expert_scores,
-            expert_weights,
-            expert_indices,
-            batch_size_per_expert,
-            batched_batch_size_per_expert,
-        ) = self.router(x_moe)
+        x_moe, expert_weights, expert_indices, batch_size_per_expert = self.router(
+            x_moe, loss_div_factor=loss_div_factor
+        )
 
         # shape: (batch_size * seq_len, d_model)
         x_moe = x_moe.view(-1, D)
@@ -704,15 +769,6 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
             moe_shared_out = moe_shared_out / (self.top_k + 1)
             x_moe = moe_shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
 
-        self.feed_forward_moe.maybe_update_losses_and_metrics(
-            expert_logits=expert_logits,
-            expert_scores=expert_scores,
-            expert_weights=expert_weights,
-            expert_indices=expert_indices,
-            batch_size_per_expert=batch_size_per_expert,
-            batched_batch_size_per_expert=batched_batch_size_per_expert,
-        )
-
         return h + self.dropout(x_moe)
 
 
@@ -722,24 +778,29 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
-    def sparse_forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.dropout(self.feed_forward_moe_norm(self.feed_forward_moe(x)))
+    def sparse_forward(
+        self, x: torch.Tensor, *, loss_div_factor: Optional[Union[torch.Tensor, float]] = None
+    ) -> torch.Tensor:
+        return self.dropout(
+            self.feed_forward_moe_norm(self.feed_forward_moe(x, loss_div_factor=loss_div_factor))
+        )
 
-    def combined_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    def combined_forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
         # NOTE: this follows the same code path as the MoE's forward pass, except that we run
         # dense operations while we wait on expert parallel all-to-all comms.
         B, _, D = x.shape
 
         x_moe = get_local_tensor(x)
 
-        (
-            expert_logits,
-            expert_scores,
-            expert_weights,
-            expert_indices,
-            batch_size_per_expert,
-            batched_batch_size_per_expert,
-        ) = self.router(x_moe)
+        x_moe, expert_weights, expert_indices, batch_size_per_expert = self.router(
+            x_moe, loss_div_factor=loss_div_factor
+        )
 
         # shape: (batch_size * seq_len, d_model)
         x_moe = x_moe.view(-1, D)
@@ -810,14 +871,5 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         if moe_shared_out is not None:
             moe_shared_out = moe_shared_out / (self.top_k + 1)
             x_moe = moe_shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
-
-        self.feed_forward_moe.maybe_update_losses_and_metrics(
-            expert_logits=expert_logits,
-            expert_scores=expert_scores,
-            expert_weights=expert_weights,
-            expert_indices=expert_indices,
-            batch_size_per_expert=batch_size_per_expert,
-            batched_batch_size_per_expert=batched_batch_size_per_expert,
-        )
 
         return h + self.dropout(self.feed_forward_moe_norm(x_moe))

@@ -159,6 +159,7 @@ class TransformerBlockConfig(Config):
         *,
         d_model: int,
         block_idx: int,
+        n_layers: int,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ) -> "TransformerBlockBase":
@@ -177,6 +178,7 @@ class TransformerBlockConfig(Config):
         kwargs.update(
             d_model=d_model,
             block_idx=block_idx,
+            n_layers=n_layers,
             init_device=init_device,
             cache=cache,
         )
