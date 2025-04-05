@@ -344,12 +344,11 @@ class MoERouter(nn.Module):
         x: torch.Tensor,
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Given the input ``x`` of shape ``(B, S, d_model)``, compute the experts assignment.
 
-        :returns: The input, potentially with losses attached for autograd,
-            the expert weights of shape ``(B, S, top_k)``,
+        :returns: The expert weights of shape ``(B, S, top_k)``,
             the expert indices of shape ``(B, S, top_k)``,
             the total number of items routed to each expert, with shape ``(num_experts,)``.
         """
@@ -412,7 +411,7 @@ class MoERouter(nn.Module):
                 else:
                     lb_loss = lb_loss / (B * S)
                 scaled_lb_loss = self.lb_loss_weight * lb_loss
-                AutoAuxiliaryLoss.apply(x, scaled_lb_loss)
+                AutoAuxiliaryLoss.apply(expert_weights, scaled_lb_loss)
                 self._accumulate_metric("load balancing loss", scaled_lb_loss)
                 self._accumulate_metric("load balancing loss (unscaled)", lb_loss)
 
@@ -423,7 +422,7 @@ class MoERouter(nn.Module):
                 else:
                     z_loss = z_loss / (B * S)
                 scaled_z_loss = self.z_loss_weight * z_loss
-                AutoAuxiliaryLoss.apply(x, scaled_z_loss)
+                AutoAuxiliaryLoss.apply(expert_weights, scaled_z_loss)
                 self._accumulate_metric("router Z loss", scaled_z_loss)
                 self._accumulate_metric("router Z loss (unscaled)", z_loss)
 
@@ -431,7 +430,7 @@ class MoERouter(nn.Module):
             if self.bias_gamma is not None:
                 self._accumulate_metric("score_bias_batch_size_per_expert", batch_size_per_expert)
 
-        return x, expert_weights, expert_indices, batch_size_per_expert
+        return expert_weights, expert_indices, batch_size_per_expert
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         del float8_enabled

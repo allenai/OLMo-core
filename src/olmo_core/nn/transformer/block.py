@@ -695,7 +695,7 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
 
         x_moe = get_local_tensor(self.feed_forward_moe_norm(x))
 
-        x_moe, expert_weights, expert_indices, batch_size_per_expert = self.router(
+        expert_weights, expert_indices, batch_size_per_expert = self.router(
             x_moe, loss_div_factor=loss_div_factor
         )
 
@@ -798,7 +798,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
 
         x_moe = get_local_tensor(x)
 
-        x_moe, expert_weights, expert_indices, batch_size_per_expert = self.router(
+        expert_weights, expert_indices, batch_size_per_expert = self.router(
             x_moe, loss_div_factor=loss_div_factor
         )
 
