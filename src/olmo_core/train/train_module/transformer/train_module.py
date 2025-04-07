@@ -311,7 +311,6 @@ class TransformerTrainModule(TrainModule):
         z_batch_loss: Optional[torch.Tensor] = None
         if self.z_loss_multiplier is not None:
             z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
-        auxiliary_batch_losses: Dict[str, torch.Tensor] = {}
 
         # Split into micro-batches.
         if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
@@ -384,13 +383,6 @@ class TransformerTrainModule(TrainModule):
             self.record_metric(
                 "Z loss (unscaled)",
                 z_batch_loss / self.z_loss_multiplier,
-                ReduceType.mean,
-                namespace="train",
-            )
-        for loss_name, loss_val in auxiliary_batch_losses.items():
-            self.record_metric(
-                loss_name,
-                loss_val,
                 ReduceType.mean,
                 namespace="train",
             )
