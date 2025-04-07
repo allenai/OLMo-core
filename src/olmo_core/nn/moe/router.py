@@ -247,10 +247,13 @@ class MoERouter(nn.Module):
             return x * (low + noise * (high - low))
 
     def get_top_k(self, scores: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        expert_weights: torch.Tensor
+        expert_indices: torch.Tensor
         if self.bias_gamma is None:
             if self.top_k == 1:
-                return scores.max(dim=-1, keepdim=True)
-            return torch.topk(scores, self.top_k, dim=-1)
+                expert_weights, expert_indices = scores.max(dim=-1, keepdim=True)
+            else:
+                expert_weights, expert_indices = torch.topk(scores, self.top_k, dim=-1)
         else:
             assert self.score_bias is not None
             with torch.no_grad():
@@ -258,7 +261,12 @@ class MoERouter(nn.Module):
                     scores + self.score_bias.unsqueeze(0), self.top_k, dim=-1  # type: ignore
                 )
             expert_weights = scores.gather(-1, expert_indices)
-            return expert_weights, expert_indices
+
+        if self.uniform_expert_assignment:
+            expert_indices = _uniform_expert_assignment(expert_indices, self.num_experts)
+            expert_weights = scores.gather(-1, expert_indices)
+
+        return expert_weights, expert_indices
 
     @abstractmethod
     def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
@@ -312,9 +320,6 @@ class MoERouter(nn.Module):
         # Make sure scores are normalized, otherwise load balancing loss doesn't work.
         if self.gating_function == MoERouterGatingFunction.sigmoid:
             scores = scores / (scores.sum(dim=-1, keepdim=True) + 1e-20)
-
-        if self.uniform_expert_assignment:
-            expert_indices = _uniform_expert_assignment(expert_indices, self.num_experts)
 
         with torch.no_grad():
             # Histogram the expert ids to identify the number of items/tokens routed to each expert.
