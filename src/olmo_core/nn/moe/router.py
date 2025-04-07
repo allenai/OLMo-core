@@ -220,35 +220,51 @@ class MoERouter(nn.Module):
     def score_bias_batch_size_per_expert(self) -> Optional[torch.Tensor]:
         return self._cache[self._SCORE_BIAS_BZ_PER_EXPERT]
 
+    @score_bias_batch_size_per_expert.setter
+    def score_bias_batch_size_per_expert(self, value: torch.Tensor):
+        self._cache[self._SCORE_BIAS_BZ_PER_EXPERT] = value
+
     @property
     def batch_size_per_expert(self) -> torch.Tensor:
         return self._cache[self._BZ_PER_EXPERT]
+
+    @batch_size_per_expert.setter
+    def batch_size_per_expert(self, value: torch.Tensor):
+        self._cache[self._BZ_PER_EXPERT] = value
 
     @property
     def load_balancing_loss(self) -> Optional[torch.Tensor]:
         return self._cache[self._LB_LOSS]
 
+    @load_balancing_loss.setter
+    def load_balancing_loss(self, value: torch.Tensor):
+        self._cache[self._LB_LOSS] = value
+
     @property
     def z_loss(self) -> Optional[torch.Tensor]:
         return self._cache[self._Z_LOSS]
 
+    @z_loss.setter
+    def z_loss(self, value: torch.Tensor):
+        self._cache[self._Z_LOSS] = value
+
     def reset_parameters(self):
-        self._cache[self._BZ_PER_EXPERT] = torch.zeros(self.num_experts, device=self.device)
+        self.batch_size_per_expert = torch.zeros(self.num_experts, device=self.device)
 
         if self.bias_gamma is not None:
             assert self.score_bias is not None
             assert self._cache is not None
             score_bias = cast(torch.Tensor, self.score_bias)
             score_bias.zero_()
-            self._cache[self._SCORE_BIAS_BZ_PER_EXPERT] = torch.zeros(
+            self.score_bias_batch_size_per_expert = torch.zeros(
                 self.num_experts, device=self.device
             )
 
         if self.lb_loss_weight is not None:
-            self._cache[self._LB_LOSS] = torch.zeros([], device=self.device)
+            self.load_balancing_loss = torch.zeros([], device=self.device)
 
         if self.z_loss_weight is not None:
-            self._cache[self._Z_LOSS] = torch.zeros([], device=self.device)
+            self.z_loss = torch.zeros([], device=self.device)
 
     @torch.no_grad()
     def post_batch(self, dry_run: bool = False):
@@ -432,7 +448,7 @@ class MoERouter(nn.Module):
                 )
                 lb_loss = lb_loss / loss_div_factor
                 scaled_lb_loss = self.lb_loss_weight * lb_loss
-                self.load_balancing_loss.add_(lb_loss.detach())
+                self.load_balancing_loss += lb_loss.detach()
                 aux_loss = scaled_lb_loss
 
             if self.z_loss_weight is not None:
@@ -440,13 +456,13 @@ class MoERouter(nn.Module):
                 z_loss = router_z_loss(expert_logits=logits)
                 z_loss = z_loss / loss_div_factor
                 scaled_z_loss = self.z_loss_weight * z_loss
-                self.z_loss.add_(z_loss.detach())
+                self.z_loss += z_loss.detach()
                 aux_loss = scaled_z_loss if aux_loss is None else aux_loss + scaled_z_loss
 
-            self.batch_size_per_expert.add_(batch_size_per_expert)
+            self.batch_size_per_expert += batch_size_per_expert
             if self.bias_gamma is not None:
                 assert self.score_bias_batch_size_per_expert is not None
-                self.score_bias_batch_size_per_expert.add_(batch_size_per_expert)
+                self.score_bias_batch_size_per_expert += batch_size_per_expert
 
         return expert_weights, expert_indices, batch_size_per_expert, aux_loss
 
