@@ -244,6 +244,10 @@ class MoERouter(nn.Module):
 
     @property
     def score_bias_batch_size_per_expert(self) -> Optional[torch.Tensor]:
+        if self.bias_gamma is not None and self._score_bias_batch_size_per_expert is None:
+            self._score_bias_batch_size_per_expert = hide_from_torch(
+                torch.zeros(self.num_experts, device=self.device)
+            )
         return (
             None
             if self._score_bias_batch_size_per_expert is None
@@ -264,6 +268,8 @@ class MoERouter(nn.Module):
 
     @property
     def load_balancing_loss(self) -> Optional[torch.Tensor]:
+        if self.lb_loss_weight is not None and self._load_balancing_loss is None:
+            self._load_balancing_loss = hide_from_torch(torch.zeros([], device=self.device))
         return (
             None
             if self._load_balancing_loss is None
@@ -276,6 +282,8 @@ class MoERouter(nn.Module):
 
     @property
     def z_loss(self) -> Optional[torch.Tensor]:
+        if self.z_loss_weight is not None and self._z_loss is None:
+            self._z_loss = hide_from_torch(torch.zeros([], device=self.device))
         return None if self._z_loss is None else unhide_from_torch(self._z_loss)
 
     @z_loss.setter
