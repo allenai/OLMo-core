@@ -32,7 +32,8 @@ class ConsoleLoggerCallback(Callback):
 
     metrics: List[str] = field(
         default_factory=lambda: [
-            "train/*",
+            "train/*loss",
+            "train/*/load imbalance",
             "system/*",
             "optim/total grad norm",
             "optim/step skipped",

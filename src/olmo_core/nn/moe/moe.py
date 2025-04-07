@@ -66,6 +66,7 @@ class MoEConfig(Config):
         MoELoadBalancingLossGranularity.local_batch
     )
     z_loss_weight: Optional[float] = None
+    scale_loss_by_num_layers: bool = True
     dtype: DType = DType.float32
 
     def num_params(self, d_model: int) -> int:
@@ -132,17 +133,24 @@ class MoEBase(nn.Module):
         lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
         z_loss_weight: Optional[float] = None,
         n_layers: int = 1,
+        scale_loss_by_num_layers: bool = True,
         dtype: torch.dtype = torch.float32,
         cache: Optional[BufferCache] = None,
         **kwargs,
     ):
         super().__init__()
+        if scale_loss_by_num_layers:
+            if lb_loss_weight is not None:
+                lb_loss_weight = lb_loss_weight / n_layers
+            if z_loss_weight is not None:
+                z_loss_weight = z_loss_weight / n_layers
+
         self.router = router.build(
             d_model,
             num_experts,
-            lb_loss_weight=None if lb_loss_weight is None else lb_loss_weight / n_layers,
+            lb_loss_weight=lb_loss_weight,
             lb_loss_granularity=lb_loss_granularity,
-            z_loss_weight=None if z_loss_weight is None else z_loss_weight / n_layers,
+            z_loss_weight=z_loss_weight,
             dtype=dtype,
             init_device=init_device,
         )
