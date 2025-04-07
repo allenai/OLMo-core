@@ -15,7 +15,9 @@ from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.utils import (
     distribute_like,
     get_local_tensor,
+    hide_from_torch,
     is_distributed,
+    unhide_from_torch,
 )
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device
@@ -206,11 +208,35 @@ class MoERouter(nn.Module):
         if self.bias_gamma is not None:
             assert self.bias_gamma > 0
             self.register_buffer("score_bias", torch.zeros(self.num_experts, device=init_device))
-            # NOTE: use buffer cache to accumulate 'batch_size_per_expert' and "hide" it from FSDP
-            # so that FSDP doesn't try to distribute it.
-            self._cache["score_bias_batch_size_per_expert"] = torch.zeros(self.num_experts)
         else:
             self.register_buffer("score_bias", None)
+
+        self._batch_size_per_expert = hide_from_torch(
+            torch.zeros(self.num_experts, device=init_device)
+        )
+        self._score_bias_batch_size_per_expert = None
+        self._load_balancing_loss = None
+        self._z_loss = None
+
+    def reset_parameters(self):
+        self._batch_size_per_expert = hide_from_torch(
+            torch.zeros(self.num_experts, device=self.device)
+        )
+
+        if self.bias_gamma is not None:
+            assert self.score_bias is not None
+            assert self._cache is not None
+            score_bias = cast(torch.Tensor, self.score_bias)
+            score_bias.zero_()
+            self._score_bias_batch_size_per_expert = hide_from_torch(
+                torch.zeros(self.num_experts, device=self.device)
+            )
+
+        if self.lb_loss_weight is not None:
+            self._load_balancing_loss = hide_from_torch(torch.zeros([], device=self.device))
+
+        if self.z_loss_weight is not None:
+            self._z_loss = hide_from_torch(torch.zeros([], device=self.device))
 
     @property
     def device(self) -> torch.device:
@@ -218,53 +244,43 @@ class MoERouter(nn.Module):
 
     @property
     def score_bias_batch_size_per_expert(self) -> Optional[torch.Tensor]:
-        return self._cache[self._SCORE_BIAS_BZ_PER_EXPERT]
+        return (
+            None
+            if self._score_bias_batch_size_per_expert is None
+            else unhide_from_torch(self._score_bias_batch_size_per_expert)
+        )
 
     @score_bias_batch_size_per_expert.setter
     def score_bias_batch_size_per_expert(self, value: torch.Tensor):
-        self._cache[self._SCORE_BIAS_BZ_PER_EXPERT] = value
+        self._score_bias_batch_size_per_expert = hide_from_torch(value)
 
     @property
     def batch_size_per_expert(self) -> torch.Tensor:
-        return self._cache[self._BZ_PER_EXPERT]
+        return unhide_from_torch(self._batch_size_per_expert)
 
     @batch_size_per_expert.setter
     def batch_size_per_expert(self, value: torch.Tensor):
-        self._cache[self._BZ_PER_EXPERT] = value
+        self._batch_size_per_expert = hide_from_torch(value)
 
     @property
     def load_balancing_loss(self) -> Optional[torch.Tensor]:
-        return self._cache[self._LB_LOSS]
+        return (
+            None
+            if self._load_balancing_loss is None
+            else unhide_from_torch(self._load_balancing_loss)
+        )
 
     @load_balancing_loss.setter
     def load_balancing_loss(self, value: torch.Tensor):
-        self._cache[self._LB_LOSS] = value
+        self._load_balancing_loss = hide_from_torch(value)
 
     @property
     def z_loss(self) -> Optional[torch.Tensor]:
-        return self._cache[self._Z_LOSS]
+        return None if self._z_loss is None else unhide_from_torch(self._z_loss)
 
     @z_loss.setter
     def z_loss(self, value: torch.Tensor):
-        self._cache[self._Z_LOSS] = value
-
-    def reset_parameters(self):
-        self.batch_size_per_expert = torch.zeros(self.num_experts, device=self.device)
-
-        if self.bias_gamma is not None:
-            assert self.score_bias is not None
-            assert self._cache is not None
-            score_bias = cast(torch.Tensor, self.score_bias)
-            score_bias.zero_()
-            self.score_bias_batch_size_per_expert = torch.zeros(
-                self.num_experts, device=self.device
-            )
-
-        if self.lb_loss_weight is not None:
-            self.load_balancing_loss = torch.zeros([], device=self.device)
-
-        if self.z_loss_weight is not None:
-            self.z_loss = torch.zeros([], device=self.device)
+        self._z_loss = hide_from_torch(value)
 
     @torch.no_grad()
     def post_batch(self, dry_run: bool = False):
