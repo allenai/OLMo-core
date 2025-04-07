@@ -336,7 +336,7 @@ class MoERouter(nn.Module):
             if (
                 key != "score_bias_batch_size_per_expert"
             ):  # this one gets reset from '.post_batch()'
-                self._cache[key] = None
+                del self._cache[key]
 
     def forward(
         self,
