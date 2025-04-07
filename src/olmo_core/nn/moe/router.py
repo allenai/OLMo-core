@@ -13,6 +13,7 @@ from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_mo
 import olmo_core.ops.moe as ops
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.utils import (
+    _HiddenTensor,
     distribute_like,
     get_local_tensor,
     hide_from_torch,
@@ -22,7 +23,6 @@ from olmo_core.distributed.utils import (
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device
 
-from ..buffer_cache import BufferCache
 from .loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
 
 if TYPE_CHECKING:
@@ -187,9 +187,6 @@ class MoERouter(nn.Module):
         init_device: str = "cpu",
     ):
         super().__init__()
-        # We don't take the 'BufferCache' as an argument to ensure it's not a shared cache.
-        self._cache = BufferCache()
-
         self.d_model = d_model
         self.num_experts = num_experts
         self.top_k = top_k
@@ -211,12 +208,15 @@ class MoERouter(nn.Module):
         else:
             self.register_buffer("score_bias", None)
 
+        # NOTE: we don't use buffers for t hese because we don't want FSDP to manage them, and we
+        # don't use a BufferCache because `torch.compile()` doesn't handle that well when we're modifying
+        # values in the cache.
         self._batch_size_per_expert = hide_from_torch(
             torch.zeros(self.num_experts, device=init_device)
         )
-        self._score_bias_batch_size_per_expert = None
-        self._load_balancing_loss = None
-        self._z_loss = None
+        self._score_bias_batch_size_per_expert: Optional[_HiddenTensor] = None
+        self._load_balancing_loss: Optional[_HiddenTensor] = None
+        self._z_loss: Optional[_HiddenTensor] = None
 
     def reset_parameters(self):
         self._batch_size_per_expert = hide_from_torch(
