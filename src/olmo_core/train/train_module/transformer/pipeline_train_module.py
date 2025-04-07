@@ -39,7 +39,7 @@ from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
 
-from ...common import TRAIN_CE_LOSS_METRIC, TRAIN_Z_LOSS_METRIC, ReduceType
+from ...common import ReduceType
 from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TrainModule
 from .common import parallelize_model
 from .config import (
@@ -351,7 +351,7 @@ class TransformerPipelineTrainModule(TrainModule):
         # Run pipeline schedule.
         input_ids, labels, model_kwargs = self._prepare_batch(batch, labels)
         assert labels is not None
-        losses_to_record = self.run_pipeline(
+        ce_batch_loss, z_batch_loss = self.run_pipeline(
             input_ids,
             labels,
             batch_num_tokens_for_loss,
@@ -371,21 +371,30 @@ class TransformerPipelineTrainModule(TrainModule):
             return
 
         # Record all of the losses we captured.
-        # NOTE: main losses will be missing for non-final stages.
-        ce_loss = losses_to_record.pop(TRAIN_CE_LOSS_METRIC, None)
         # If we have a SkipStepOptimizer we'll reduce the loss (if we have the final stage) across
         # the DP process group and then asynchronously send to the ranks in the PP group.
+        # NOTE: main losses will be missing for non-final stages.
         if isinstance(self.optimizers[0], SkipStepOptimizer):
-            ce_loss = self.reduce_send_recv(ce_loss)
+            ce_batch_loss = self.reduce_send_recv(ce_batch_loss)
             for optim in self.optimizers:
-                cast(SkipStepOptimizer, optim).latest_loss = ce_loss
-            self.record_metric(TRAIN_CE_LOSS_METRIC, ce_loss)
-        elif ce_loss is not None:
-            self.record_metric(TRAIN_CE_LOSS_METRIC, ce_loss, ReduceType.mean)
-        if (z_loss := losses_to_record.pop(TRAIN_Z_LOSS_METRIC, None)) is not None:
-            self.record_metric(TRAIN_Z_LOSS_METRIC, z_loss, ReduceType.mean)
-        for loss_name, loss_value in losses_to_record.items():
-            self.record_metric(loss_name, loss_value, ReduceType.mean, namespace="train")
+                cast(SkipStepOptimizer, optim).latest_loss = ce_batch_loss
+            self.record_ce_loss(ce_batch_loss)
+        elif ce_batch_loss is not None:
+            self.record_ce_loss(ce_batch_loss, ReduceType.mean)
+        if z_batch_loss is not None:
+            assert self.z_loss_multiplier
+            self.record_metric(
+                "Z loss",
+                z_batch_loss,
+                ReduceType.mean,
+                namespace="train",
+            )
+            self.record_metric(
+                "Z loss (unscaled)",
+                z_batch_loss / self.z_loss_multiplier,
+                ReduceType.mean,
+                namespace="train",
+            )
 
         # And additional metrics.
         for model in self.model_parts:
@@ -508,39 +517,38 @@ class TransformerPipelineTrainModule(TrainModule):
         labels: torch.Tensor,
         batch_num_tokens_for_loss: Union[int, float],
         **kwargs,
-    ) -> Dict[str, torch.Tensor]:
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         Run the pipeline, returning the losses captured.
         """
 
-        losses_to_record: Dict[str, torch.Tensor] = {}
-
-        def record_loss(name: str, value: torch.Tensor, scale: float = 1.0):
-            nonlocal losses_to_record
-            value = get_local_tensor(value.detach()).float() * scale
-            if name in losses_to_record:
-                losses_to_record[name] += value
-            else:
-                losses_to_record[name] = value
+        ce_batch_loss: Optional[torch.Tensor] = None
+        z_batch_loss: Optional[torch.Tensor] = None
 
         def capture_losses(
             model: Transformer, args: Tuple[torch.Tensor, ...], output: Any
         ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
             del args
+            nonlocal ce_batch_loss
+            nonlocal z_batch_loss
 
             if model.lm_head is not None:
-                losses: List[torch.Tensor] = []
                 assert isinstance(output, LMOutputWithLoss)
                 _, ce_loss, z_loss = output
-                losses.append(ce_loss)
-                record_loss(TRAIN_CE_LOSS_METRIC, ce_loss)
-                if z_loss is not None:
-                    assert self.z_loss_multiplier is not None
+                losses: List[torch.Tensor] = [ce_loss]
+                if ce_batch_loss is None:
+                    ce_batch_loss = get_local_tensor(ce_loss.detach())
+                else:
+                    ce_batch_loss += get_local_tensor(ce_loss.detach())
+
+                if self.z_loss_multiplier is not None:
+                    assert z_loss is not None
                     losses.append(z_loss)
-                    record_loss(TRAIN_Z_LOSS_METRIC, z_loss)
-                    record_loss(
-                        TRAIN_Z_LOSS_METRIC + " (unscaled)", z_loss, 1 / self.z_loss_multiplier
-                    )
+                    if z_batch_loss is None:
+                        z_batch_loss = get_local_tensor(z_loss.detach())
+                    else:
+                        z_batch_loss += get_local_tensor(z_loss.detach())
+
                 return torch.stack(losses).sum(0, keepdim=True)
             else:
                 assert isinstance(output, torch.Tensor)
@@ -562,7 +570,7 @@ class TransformerPipelineTrainModule(TrainModule):
         for handle in handles:
             handle.remove()
 
-        return losses_to_record
+        return ce_batch_loss, z_batch_loss
 
     def num_flops_per_token(self, seq_len: int) -> int:
         return self.model_parts[0].num_flops_per_token(seq_len)
