@@ -73,4 +73,4 @@ def load_balancing_loss(
 
 
 def router_z_loss(*, expert_logits: torch.Tensor) -> torch.Tensor:
-    return torch.logsumexp(expert_logits, dim=-1).square().sum()
+    return torch.logsumexp(get_local_tensor(expert_logits), dim=-1).square().sum()
