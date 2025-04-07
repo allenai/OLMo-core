@@ -506,14 +506,22 @@ class TransformerPipelineTrainModule(TrainModule):
                         group[self.scheduler.lr_field] = new_lr
 
                     self.trainer.record_metric(
-                        f"LR (group {group_idx})", group[self.scheduler.lr_field], namespace="optim"
+                        f"LR (group {group_idx})",
+                        group[self.scheduler.lr_field],
+                        namespace="optim",
+                        merge_strategy=MetricMergeStrategy.latest,
                     )
 
         # Step optimizer.
         for optim in self.optimizers:
             optim.step()
             if isinstance(optim, SkipStepOptimizer):
-                self.record_metric("step skipped", optim.step_skipped, namespace="optim")
+                self.record_metric(
+                    "step skipped",
+                    optim.step_skipped,
+                    namespace="optim",
+                    merge_strategy=MetricMergeStrategy.latest,
+                )
 
         for model in self.model_parts:
             model.post_optim_step()
