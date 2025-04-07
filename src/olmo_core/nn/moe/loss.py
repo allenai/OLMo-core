@@ -68,12 +68,12 @@ def load_balancing_loss(
             )
             # NOTE: assumes equal sequence splits across group
             # shape: (B * S, num_experts) -> (B, S, num_experts,) -> (B, 1, num_experts)
-            expert_scores = expert_scores.view(B, -1, num_experts).mean(dim=1, keepdim=True)
+            expert_scores = expert_scores.view(B, -1, num_experts).sum(dim=1, keepdim=True)
             # shape: (B, 1, num_experts) -> (B, num_experts)
-            expert_scores = DTensor.from_local(expert_scores, sp_mesh, (Shard(1),)).mean(dim=1)
+            expert_scores = DTensor.from_local(expert_scores, sp_mesh, (Shard(1),)).sum(dim=1)
         else:
             # shape: (B * S, num_experts) -> (B, S, num_experts,) -> (B, num_experts)
-            expert_scores = expert_scores.view(B, -1, num_experts).mean(dim=1)
+            expert_scores = expert_scores.view(B, -1, num_experts).sum(dim=1)
         loss = (expert_scores * batched_batch_size_per_expert).sum()
     elif granularity == MoELoadBalancingLossGranularity.local_batch:
         # shape: (num_experts,)
@@ -85,17 +85,17 @@ def load_balancing_loss(
             dist.all_reduce(batch_size_per_expert, group=sp_mesh.get_group())
             # NOTE: assumes equal sequence splits across group
             # shape: (B * S, num_experts) -> (1, num_experts)
-            expert_scores = expert_scores.mean(dim=0, keepdim=True)
+            expert_scores = expert_scores.sum(dim=0, keepdim=True)
             # shape: (1, num_experts) -> (num_experts,)
             expert_scores = get_local_tensor(
-                DTensor.from_local(expert_scores, sp_mesh, (Shard(0),)).mean(dim=0)
+                DTensor.from_local(expert_scores, sp_mesh, (Shard(0),)).sum(dim=0)
             )
             loss = torch.dot(batch_size_per_expert, expert_scores)
             # Wrap back in DTensor.
             loss = DTensor.from_local(loss, sp_mesh, (Replicate(),))
         else:
             # shape: (B * S, num_experts) -> (num_experts,)
-            expert_scores = expert_scores.mean(dim=0)
+            expert_scores = expert_scores.sum(dim=0)
             loss = torch.dot(batch_size_per_expert, expert_scores)
     else:
         raise NotImplementedError(granularity)
