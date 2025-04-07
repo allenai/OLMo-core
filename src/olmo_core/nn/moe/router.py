@@ -428,7 +428,7 @@ class MoERouter(nn.Module):
         x = self.jitter(x)
 
         # shape: (batch_size, seq_len, num_experts)
-        logits = self.get_expert_logits(x)
+        logits = self.get_expert_logits(x).float()
 
         # shape: (batch_size, seq_len, num_experts)
         if self.gating_function == MoERouterGatingFunction.softmax:
@@ -451,6 +451,7 @@ class MoERouter(nn.Module):
                 )
             )
 
+        scores = scores.float()
         # Make sure scores are normalized, otherwise load balancing loss doesn't work.
         if self.gating_function == MoERouterGatingFunction.sigmoid:
             scores = scores / (scores.sum(dim=-1, keepdim=True) + 1e-20)
