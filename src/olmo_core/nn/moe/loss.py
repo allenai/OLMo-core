@@ -145,10 +145,7 @@ class MoELoadBalancingLoss(MoELoss):
         if reset:
             self.reset()
 
-        return {
-            "load balancing loss": lb_loss,
-            "load balancing loss (unscaled)": lb_loss.detach().float() / self.loss_weight,
-        }
+        return {"load balancing loss": lb_loss}
 
     def reset(self):
         self.loss = None
@@ -184,10 +181,7 @@ class MoERouterZLoss(MoELoss):
         if reset:
             self.reset()
 
-        return {
-            "router Z loss": lb_z_loss,
-            "router Z loss (unscaled)": lb_z_loss.detach().float() / self.loss_weight,
-        }
+        return {"router Z loss": lb_z_loss}
 
     def reset(self):
         self.loss = None

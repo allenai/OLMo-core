@@ -558,10 +558,9 @@ class TransformerPipelineTrainModule(TrainModule):
             for name, value in model.compute_auxiliary_losses(
                 total_bz=batch_num_tokens_for_loss, reset=True
             ).items():
-                # NOTE: when doing shape inference grad will be disabled.
-                if not torch.is_grad_enabled() or value.requires_grad:
-                    losses.append(value)
-                record_loss(name, value, self.pp_group_size)
+                losses.append(value)
+                if model.lm_head is not None:
+                    record_loss(name, value)
 
             if model.lm_head is not None:
                 assert isinstance(output, LMOutputWithLoss)
