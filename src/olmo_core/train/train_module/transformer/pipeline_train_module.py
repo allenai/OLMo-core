@@ -39,7 +39,7 @@ from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
 
-from ...common import ReduceType
+from ...common import MetricMergeStrategy, ReduceType
 from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TrainModule
 from .common import parallelize_model
 from .config import (
@@ -402,7 +402,18 @@ class TransformerPipelineTrainModule(TrainModule):
                 batch_num_tokens_for_loss,
                 reset=True,
             ).items():
-                self.record_metric(metric_name, metric_val, reduction, namespace="train")
+                merge_strategy = MetricMergeStrategy.warn
+                if reduction in (ReduceType.sum, ReduceType.mean):
+                    merge_strategy = MetricMergeStrategy.sum
+                elif reduction == ReduceType.max:
+                    merge_strategy = MetricMergeStrategy.max
+                self.record_metric(
+                    metric_name,
+                    metric_val,
+                    reduction,
+                    namespace="train",
+                    merge_strategy=merge_strategy,
+                )
 
     def reduce_send_recv(self, x: Optional[torch.Tensor] = None) -> torch.Tensor:
         if self.pp_group_rank == self.pp_final_stage_rank:
