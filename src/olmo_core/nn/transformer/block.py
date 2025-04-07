@@ -409,6 +409,9 @@ class MoETransformerBlock(TransformerBlockBase):
             self.feed_forward_moe(self.feed_forward_norm(h), loss_div_factor=loss_div_factor)
         )
 
+    def apply_pp(self, pp_mesh: DeviceMesh):
+        self.feed_forward_moe.apply_pp(pp_mesh)
+
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         self.feed_forward_moe.apply_ep(ep_mesh, **kwargs)
         self._ep_enabled = True
@@ -464,7 +467,6 @@ class MoETransformerBlock(TransformerBlockBase):
         wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
         **fsdp_kwargs,
     ):
-        self.feed_forward_moe.apply_dp(dp_mesh)
         if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
             fsdp_att = cast(FSDPModule, fully_shard(self.attention, mesh=dp_mesh, **fsdp_kwargs))
             fsdp_moe = cast(
@@ -505,7 +507,6 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
         wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
         **fsdp_kwargs,
     ):
-        self.feed_forward_moe.apply_dp(dp_mesh)
         if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
             fsdp_moe = cast(
                 FSDPModule, fully_shard(self.feed_forward_moe, mesh=dp_mesh, **fsdp_kwargs)
@@ -623,7 +624,6 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
         **fsdp_kwargs,
     ):
-        self.feed_forward_moe.apply_dp(dp_mesh)
         if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
             if not self.use_combined_forward:
                 fsdp_att = cast(

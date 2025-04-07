@@ -14,7 +14,11 @@ from torch.distributed.tensor.parallel import (
 )
 
 from olmo_core.config import Config, DType, StrEnum
-from olmo_core.distributed.parallel import get_dp_process_group
+from olmo_core.distributed.parallel import (
+    flatten_mesh,
+    get_pp_stage_mesh,
+    get_world_mesh,
+)
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.ops import attach_auxiliary_loss
 
@@ -246,8 +250,11 @@ class MoEBase(nn.Module):
 
         return out
 
-    def apply_dp(self, dp_mesh: Optional[DeviceMesh] = None):
-        group = None if dp_mesh is None else get_dp_process_group(dp_mesh)
+    def apply_pp(self, pp_mesh: DeviceMesh):
+        world_mesh = get_world_mesh()
+        assert world_mesh is not None
+        stage_mesh = get_pp_stage_mesh(world_mesh, pp_mesh)
+        group = flatten_mesh(stage_mesh).get_group()
         self.router.group = group
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):

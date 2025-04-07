@@ -21,6 +21,7 @@ from .tensor_parallel import TensorParallelConfig
 
 __all__ = [
     "build_world_mesh",
+    "get_world_mesh",
     "build_expert_parallel_mesh",
     "MeshDimName",
     "get_dp_model_mesh",
@@ -28,9 +29,11 @@ __all__ = [
     "get_tp_mesh",
     "get_cp_mesh",
     "get_pp_mesh",
+    "get_pp_stage_mesh",
     "get_ep_mesh",
     "get_dp_process_group",
     "get_device_mesh_info",
+    "flatten_mesh",
     "DataParallelType",
     "DataParallelConfig",
     "DPMeshDimName",
@@ -94,6 +97,17 @@ class MeshDimName(StrEnum):
     dp_cp = "dp_cp"
 
 
+_WORLD_MESH: Optional[DeviceMesh] = None
+
+
+def get_world_mesh() -> Optional[DeviceMesh]:
+    """
+    Get the global world mesh built with :meth:`build_world_mesh()`.
+    """
+    global _WORLD_MESH
+    return _WORLD_MESH
+
+
 def build_world_mesh(
     *,
     dp: Optional[DataParallelConfig] = None,
@@ -133,6 +147,11 @@ def build_world_mesh(
 
     :returns: The world mesh with a shape compatible with the given parallel configs.
     """
+    global _WORLD_MESH
+
+    if _WORLD_MESH is not None:
+        raise RuntimeError("world mesh already exists! You can only call 'build_world_mesh' once!")
+
     device_type = device_type or get_default_device().type
     dp_world_size = get_world_size()
 
@@ -229,6 +248,8 @@ def build_world_mesh(
 
     # Ensure data parallel process group is created here.
     get_dp_process_group(mesh)
+
+    _WORLD_MESH = mesh
 
     return mesh
 
@@ -437,7 +458,7 @@ def get_cp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
 
 def get_pp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     """
-    Get the tensor parallel sub-mesh associated with a ``DeviceMesh``
+    Get the pipeline parallel sub-mesh associated with a ``DeviceMesh``
     created from :func:`build_world_mesh()`.
 
     :param device_mesh: The world mesh created by :func:`build_world_mesh()`.
@@ -453,9 +474,27 @@ def get_pp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
         )
 
 
+def get_pp_stage_mesh(device_mesh: DeviceMesh, pp_mesh: Optional[DeviceMesh] = None) -> DeviceMesh:
+    """
+    Get the sub-mesh for a pipeline stage.
+    """
+    if pp_mesh is None:
+        pp_mesh = get_pp_mesh(device_mesh)
+
+    if device_mesh.mesh_dim_names is None or pp_mesh.mesh_dim_names is None:
+        raise RuntimeError(
+            "could not determine pipeline parallel stage sub-mesh without dimension names"
+        )
+
+    target_dims = tuple(n for n in device_mesh.mesh_dim_names if n not in pp_mesh.mesh_dim_names)
+    return device_mesh[target_dims]
+
+
 def _flatten_dims(
-    device_mesh: DeviceMesh, *dims: str, name: str
+    device_mesh: DeviceMesh, *dims: str, name: Optional[str] = None
 ) -> Tuple[DeviceMesh, Tuple[str, ...]]:
+    if name is None:
+        name = "_".join(dims)
     log.info(f"Flattening mesh dimensions {dims} into {name}")
     assert (names := device_mesh.mesh_dim_names) is not None
     out_names = []
@@ -468,3 +507,7 @@ def _flatten_dims(
     device_mesh[dims]._flatten(mesh_dim_name=name)
     new_names = tuple(out_names)
     return device_mesh[new_names], new_names
+
+
+def flatten_mesh(device_mesh: DeviceMesh, name: Optional[str] = None):
+    return device_mesh._flatten(mesh_dim_name=name)
