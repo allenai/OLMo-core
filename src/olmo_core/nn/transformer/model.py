@@ -21,7 +21,11 @@ from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
 from olmo_core.data.utils import get_cumulative_document_lengths
-from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
+from olmo_core.distributed.utils import (
+    get_world_size,
+    hide_from_torch,
+    unhide_from_torch,
+)
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
@@ -131,6 +135,8 @@ class Transformer(nn.Module):
         self.init_std = init_std
 
         self._cache = cache
+        self._pp_enabled = False
+        self._pp_group_size = 1
         self._fp8_enabled = False
         self._precompute_float8_dynamic_scale_for_fsdp = False
         self._compile_enabled = False
@@ -156,6 +162,10 @@ class Transformer(nn.Module):
 
     def reset_auxiliary_metrics(self):
         pass
+
+    @property
+    def pp_enabled(self) -> bool:
+        return self._pp_enabled
 
     @property
     def fp8_enabled(self) -> bool:
@@ -483,6 +493,8 @@ class Transformer(nn.Module):
         for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)
             block.apply_pp(pp_mesh)
+        self._pp_enabled = True
+        self._pp_group_size = pp_mesh.size()
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: Optional[bool] = None):
         """
@@ -897,12 +909,20 @@ class MoETransformer(Transformer):
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
         from olmo_core.train.common import ReduceType
 
+        mean_offset = 1.0
+        if self.pp_enabled:
+            # Change the divisor to 'world_size // pp_group_size'
+            mean_offset = self._pp_group_size
+
         out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
         for block_idx, block in self.blocks.items():
             block = cast(MoETransformerBlock, block)
             block_metrics = block.compute_metrics(total_bz, reset=reset)
             for metric_name, (metric_val, reduce_type) in block_metrics.items():
                 out[f"block {int(block_idx):02d}/{metric_name}"] = (metric_val, reduce_type)
+
+                if self.pp_enabled and reduce_type == ReduceType.mean:
+                    metric_val = metric_val.float() * mean_offset
 
                 if metric_name not in out:
                     out[metric_name] = (metric_val, reduce_type)
