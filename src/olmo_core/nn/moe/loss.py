@@ -1,5 +1,4 @@
-from abc import ABCMeta, abstractmethod
-from typing import Dict, Optional, Union
+from typing import Optional
 
 import torch
 import torch.distributed as dist
@@ -7,38 +6,6 @@ from torch.distributed.tensor import DTensor, Replicate, Shard
 
 from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import get_local_tensor
-
-__all__ = ["MoELoss", "MoELoadBalancingLoss", "MoERouterZLoss", "MoELoadBalancingLossGranularity"]
-
-
-class MoELoss(metaclass=ABCMeta):
-    def __init__(self):
-        self.group: Optional[dist.ProcessGroup] = None  # usually the data parallel group
-        self.sp_mesh: Optional[dist.DeviceMesh] = None  # the sequence parallel mesh
-
-    @abstractmethod
-    def update(
-        self,
-        *,
-        expert_logits: torch.Tensor,
-        expert_scores: torch.Tensor,
-        expert_weights: torch.Tensor,
-        expert_indices: torch.Tensor,
-        batch_size_per_expert: torch.Tensor,
-        batched_batch_size_per_expert: torch.Tensor,
-        **kwargs,
-    ):
-        raise NotImplementedError
-
-    @abstractmethod
-    def compute(
-        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True, **kwargs
-    ) -> Dict[str, torch.Tensor]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def reset(self):
-        raise NotImplementedError
 
 
 class MoELoadBalancingLossGranularity(StrEnum):
@@ -105,114 +72,5 @@ def load_balancing_loss(
     return scale * loss
 
 
-class MoELoadBalancingLoss(MoELoss):
-    """
-    Implements the load balancing loss from Switch Transformers.
-    """
-
-    def __init__(
-        self,
-        *,
-        loss_weight: float,
-        num_experts: int,
-        top_k: int,
-        granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
-    ):
-        super().__init__()
-        self.loss_weight = loss_weight
-        self.num_experts = num_experts
-        self.top_k = top_k
-        self.granularity = granularity
-        self.loss: Optional[torch.Tensor] = None
-
-    def update(
-        self,
-        *,
-        expert_scores: torch.Tensor,
-        batch_size_per_expert: torch.Tensor,
-        batched_batch_size_per_expert: torch.Tensor,
-        **kwargs,
-    ):
-        del kwargs
-
-        loss = load_balancing_loss(
-            num_experts=self.num_experts,
-            top_k=self.top_k,
-            expert_scores=expert_scores,
-            batch_size_per_expert=batch_size_per_expert,
-            batched_batch_size_per_expert=batched_batch_size_per_expert,
-            granularity=self.granularity,
-            sp_mesh=self.sp_mesh,
-        )
-
-        if self.loss is None:
-            self.loss = loss
-        else:
-            self.loss += loss
-
-    def compute(
-        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True, **kwargs
-    ) -> Dict[str, torch.Tensor]:
-        del kwargs
-
-        if self.loss is None:
-            raise RuntimeError(
-                f"'{self.__class__.__name__}.update()' needs to be called before '.compute()'"
-            )
-
-        scale = self.loss_weight / total_bz
-        lb_loss = scale * self.loss
-
-        if reset:
-            self.reset()
-
-        return {
-            "load balancing loss": lb_loss,
-            "load balancing loss (unscaled)": lb_loss.detach().float() / self.loss_weight,
-        }
-
-    def reset(self):
-        self.loss = None
-
-
 def router_z_loss(*, expert_logits: torch.Tensor) -> torch.Tensor:
     return torch.logsumexp(expert_logits, dim=-1).square().sum()
-
-
-class MoERouterZLoss(MoELoss):
-    def __init__(self, *, loss_weight: float, num_experts: int):
-        super().__init__()
-        self.loss_weight = loss_weight
-        self.num_experts = num_experts
-        self.loss: Optional[torch.Tensor] = None
-
-    def update(self, *, expert_logits: torch.Tensor, **kwargs):
-        del kwargs
-        loss = router_z_loss(expert_logits=expert_logits)
-        if self.loss is None:
-            self.loss = loss
-        else:
-            self.loss += loss
-
-    def compute(
-        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True, **kwargs
-    ) -> Dict[str, torch.Tensor]:
-        del kwargs
-        if self.loss is None:
-            raise RuntimeError(
-                f"'{self.__class__.__name__}.update()' needs to be called before '.compute()'"
-            )
-
-        scale = self.loss_weight / total_bz
-        lb_z_loss = scale * self.loss
-
-        if reset:
-            self.reset()
-
-        return {
-            "router Z loss": lb_z_loss,
-            "router Z loss (unscaled)": lb_z_loss.detach().float() / self.loss_weight,
-        }
-
-    def reset(self):
-        self.loss = None
