@@ -12,6 +12,7 @@ from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_mo
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
+from olmo_core.ops import attach_auxiliary_loss
 
 from ..attention import AttentionConfig, RingAttentionLoadBalancerType
 from ..buffer_cache import BufferCache
@@ -695,9 +696,12 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
 
         x_moe = get_local_tensor(self.feed_forward_moe_norm(x))
 
-        expert_weights, expert_indices, batch_size_per_expert = self.router(
+        expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = self.router(
             x_moe, loss_div_factor=loss_div_factor
         )
+
+        if router_aux_loss is not None:
+            x_moe = attach_auxiliary_loss(x_moe, router_aux_loss)
 
         # shape: (batch_size * seq_len, d_model)
         x_moe = x_moe.view(-1, D)
@@ -798,9 +802,12 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
 
         x_moe = get_local_tensor(x)
 
-        expert_weights, expert_indices, batch_size_per_expert = self.router(
+        expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = self.router(
             x_moe, loss_div_factor=loss_div_factor
         )
+
+        if router_aux_loss is not None:
+            x_moe = attach_auxiliary_loss(x_moe, router_aux_loss)
 
         # shape: (batch_size * seq_len, d_model)
         x_moe = x_moe.view(-1, D)

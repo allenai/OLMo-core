@@ -8,7 +8,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Replicate, Shard, distribute_tensor
-from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
+from torch.distributed.tensor.parallel import (
+    PrepareModuleInput,
+    PrepareModuleOutput,
+    parallelize_module,
+)
 
 import olmo_core.ops.moe as ops
 from olmo_core.config import Config, DType, StrEnum
@@ -344,13 +348,14 @@ class MoERouter(nn.Module):
         x: torch.Tensor,
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         """
         Given the input ``x`` of shape ``(B, S, d_model)``, compute the experts assignment.
 
         :returns: The expert weights of shape ``(B, S, top_k)``,
             the expert indices of shape ``(B, S, top_k)``,
-            the total number of items routed to each expert, with shape ``(num_experts,)``.
+            the total number of items routed to each expert, with shape ``(num_experts,)``,
+            and optionally the auxiliary losses.
         """
         B, S, _ = x.shape
 
@@ -394,7 +399,8 @@ class MoERouter(nn.Module):
             # shape: (num_experts,)
             batch_size_per_expert = batched_batch_size_per_expert.sum(dim=0)
 
-        # Maybe apply auxiliary losses and accumulate metrics.
+        # Maybe compute auxiliary losses and accumulate metrics.
+        aux_loss: Optional[torch.Tensor] = None
         if self.training and torch.is_grad_enabled():
             if self.lb_loss_weight is not None:
                 lb_loss = load_balancing_loss(
@@ -414,6 +420,7 @@ class MoERouter(nn.Module):
                 expert_weights = attach_auxiliary_loss(expert_weights, scaled_lb_loss)
                 self._accumulate_metric("load balancing loss", scaled_lb_loss)
                 self._accumulate_metric("load balancing loss (unscaled)", lb_loss)
+                aux_loss = scaled_lb_loss
 
             if self.z_loss_weight is not None:
                 z_loss = router_z_loss(expert_logits=logits)
@@ -425,12 +432,13 @@ class MoERouter(nn.Module):
                 expert_weights = attach_auxiliary_loss(expert_weights, scaled_z_loss)
                 self._accumulate_metric("router Z loss", scaled_z_loss)
                 self._accumulate_metric("router Z loss (unscaled)", z_loss)
+                aux_loss = scaled_z_loss if aux_loss is None else aux_loss + scaled_z_loss
 
             self._accumulate_metric("batch_size_per_expert", batch_size_per_expert)
             if self.bias_gamma is not None:
                 self._accumulate_metric("score_bias_batch_size_per_expert", batch_size_per_expert)
 
-        return expert_weights, expert_indices, batch_size_per_expert
+        return expert_weights, expert_indices, batch_size_per_expert, aux_loss
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         del float8_enabled
@@ -440,6 +448,15 @@ class MoERouter(nn.Module):
             parallelize_plan=PrepareModuleInput(
                 input_layouts=(Shard(1),),
                 desired_input_layouts=(Shard(1),),
+                use_local_output=True,
+            ),
+        )
+        parallelize_module(
+            self,
+            device_mesh=tp_mesh,
+            parallelize_plan=PrepareModuleOutput(
+                output_layouts=(Shard(1),),
+                desired_output_layouts=(Shard(1),),
                 use_local_output=True,
             ),
         )

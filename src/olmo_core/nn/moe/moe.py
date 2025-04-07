@@ -16,6 +16,7 @@ from torch.distributed.tensor.parallel import (
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel import get_dp_process_group
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.ops import attach_auxiliary_loss
 
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig
@@ -218,9 +219,12 @@ class MoEBase(nn.Module):
         :returns: The output of the MoE layer, the optional load-balancing loss, and the optional
             router Z-loss.
         """
-        expert_weights, expert_indices, batch_size_per_expert = self.router(
+        expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = self.router(
             x, loss_div_factor=loss_div_factor
         )
+
+        if router_aux_loss is not None:
+            x = attach_auxiliary_loss(x, router_aux_loss)
 
         shared_out: Optional[torch.Tensor] = None
         if self.shared_mlp is not None:
