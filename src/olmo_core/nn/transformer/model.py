@@ -905,7 +905,10 @@ class MoETransformer(Transformer):
                 out[f"block {int(block_idx):02d}/{metric_name}"] = (metric_val, reduce_type)
 
                 if metric_name not in out:
-                    out[metric_name] = (metric_val, reduce_type)
+                    if reduce_type == ReduceType.mean:
+                        out[metric_name] = (metric_val / self.n_layers, reduce_type)
+                    else:
+                        out[metric_name] = (metric_val, reduce_type)
                 elif reduce_type == ReduceType.mean:
                     out[metric_name] = (
                         out[metric_name][0] + metric_val / self.n_layers,
