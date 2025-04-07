@@ -541,7 +541,7 @@ class MoELinearRouter(MoERouter):
 
     @property
     def device(self) -> torch.device:
-        return self.weight.device
+        return self.weight.device if self.weight.device.type != "meta" else torch.device("cpu")
 
     def reset_parameters(self) -> None:
         super().reset_parameters()
