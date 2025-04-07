@@ -422,7 +422,7 @@ class MoERouter(nn.Module):
             the total number of items routed to each expert, with shape ``(num_experts,)``,
             and optionally the auxiliary losses.
         """
-        B, S, _ = x.shape
+        B, S, _ = get_local_tensor(x).shape
 
         # shape: (batch_size, seq_len, d_model)
         x = self.jitter(x)
@@ -488,7 +488,7 @@ class MoERouter(nn.Module):
 
             if self.z_loss_weight is not None:
                 assert self.z_loss is not None
-                z_loss = router_z_loss(expert_logits=logits)
+                z_loss = router_z_loss(expert_logits=logits.float())
                 z_loss = z_loss / loss_div_factor
                 scaled_z_loss = self.z_loss_weight * z_loss
                 self.z_loss += z_loss.detach()
