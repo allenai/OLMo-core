@@ -163,13 +163,6 @@ class MoERouter(nn.Module):
         A reasonable value is on the order of 0.0001.
     """
 
-    _SCORE_BIAS_BZ_PER_EXPERT = "score_bias_batch_size_per_expert"
-    _BZ_PER_EXPERT = "batch_size_per_expert"
-    _LB_LOSS = "load balancing loss"
-    _LB_LOSS_UNSCALED = "load balancing loss (unscaled)"
-    _Z_LOSS = "router Z loss"
-    _Z_LOSS_UNSCALED = "router Z loss (unscaled)"
-
     def __init__(
         self,
         *,
@@ -225,7 +218,6 @@ class MoERouter(nn.Module):
 
         if self.bias_gamma is not None:
             assert self.score_bias is not None
-            assert self._cache is not None
             score_bias = cast(torch.Tensor, self.score_bias)
             score_bias.zero_()
             self._score_bias_batch_size_per_expert = hide_from_torch(
@@ -244,10 +236,15 @@ class MoERouter(nn.Module):
 
     @property
     def score_bias_batch_size_per_expert(self) -> Optional[torch.Tensor]:
-        if self.bias_gamma is not None and self._score_bias_batch_size_per_expert is None:
-            self._score_bias_batch_size_per_expert = hide_from_torch(
-                torch.zeros(self.num_experts, device=self.device)
-            )
+        if self.bias_gamma is not None:
+            if self._score_bias_batch_size_per_expert is None:
+                self._score_bias_batch_size_per_expert = hide_from_torch(
+                    torch.zeros(self.num_experts, device=self.device)
+                )
+            elif self._score_bias_batch_size_per_expert.device != self.device:
+                self._score_bias_batch_size_per_expert = self._score_bias_batch_size_per_expert.to(
+                    self.device
+                )
         return (
             None
             if self._score_bias_batch_size_per_expert is None
@@ -260,6 +257,8 @@ class MoERouter(nn.Module):
 
     @property
     def batch_size_per_expert(self) -> torch.Tensor:
+        if self._batch_size_per_expert.device != self.device:
+            self._batch_size_per_expert = self._batch_size_per_expert.to(self.device)
         return unhide_from_torch(self._batch_size_per_expert)
 
     @batch_size_per_expert.setter
@@ -268,8 +267,11 @@ class MoERouter(nn.Module):
 
     @property
     def load_balancing_loss(self) -> Optional[torch.Tensor]:
-        if self.lb_loss_weight is not None and self._load_balancing_loss is None:
-            self._load_balancing_loss = hide_from_torch(torch.zeros([], device=self.device))
+        if self.lb_loss_weight is not None:
+            if self._load_balancing_loss is None:
+                self._load_balancing_loss = hide_from_torch(torch.zeros([], device=self.device))
+            elif self._load_balancing_loss.device != self.device:
+                self._load_balancing_loss = self._load_balancing_loss.to(self.device)
         return (
             None
             if self._load_balancing_loss is None
@@ -282,8 +284,11 @@ class MoERouter(nn.Module):
 
     @property
     def z_loss(self) -> Optional[torch.Tensor]:
-        if self.z_loss_weight is not None and self._z_loss is None:
-            self._z_loss = hide_from_torch(torch.zeros([], device=self.device))
+        if self.z_loss_weight is not None:
+            if self._z_loss is None:
+                self._z_loss = hide_from_torch(torch.zeros([], device=self.device))
+            elif self._z_loss.device != self.device:
+                self._z_loss = self._z_loss.to(self.device)
         return None if self._z_loss is None else unhide_from_torch(self._z_loss)
 
     @z_loss.setter
@@ -375,14 +380,20 @@ class MoERouter(nn.Module):
         # Load balancing loss.
         if self.lb_loss_weight is not None:
             assert self.load_balancing_loss is not None
-            out[self._LB_LOSS] = (self.lb_loss_weight * self.load_balancing_loss, ReduceType.mean)
-            out[self._LB_LOSS_UNSCALED] = (self.load_balancing_loss.clone(), ReduceType.mean)
+            out["load balancing loss"] = (
+                self.lb_loss_weight * self.load_balancing_loss,
+                ReduceType.mean,
+            )
+            out["load balancing loss (unscaled)"] = (
+                self.load_balancing_loss.clone(),
+                ReduceType.mean,
+            )
 
         # Router Z loss.
         if self.z_loss_weight is not None:
             assert self.z_loss is not None
-            out[self._Z_LOSS] = (self.z_loss_weight * self.z_loss, ReduceType.mean)
-            out[self._Z_LOSS_UNSCALED] = (self.z_loss.clone(), ReduceType.mean)
+            out["router Z loss"] = (self.z_loss_weight * self.z_loss, ReduceType.mean)
+            out["router Z loss (unscaled)"] = (self.z_loss.clone(), ReduceType.mean)
 
         if reset:
             self.reset_metrics()
