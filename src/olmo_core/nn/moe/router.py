@@ -22,7 +22,6 @@ from olmo_core.distributed.utils import (
     is_distributed,
 )
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.ops import attach_auxiliary_loss
 
 from ..buffer_cache import BufferCache
 from .loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
@@ -417,7 +416,6 @@ class MoERouter(nn.Module):
                 else:
                     lb_loss = lb_loss / (B * S)
                 scaled_lb_loss = self.lb_loss_weight * lb_loss
-                expert_weights = attach_auxiliary_loss(expert_weights, scaled_lb_loss)
                 self._accumulate_metric("load balancing loss", scaled_lb_loss)
                 self._accumulate_metric("load balancing loss (unscaled)", lb_loss)
                 aux_loss = scaled_lb_loss
@@ -429,7 +427,6 @@ class MoERouter(nn.Module):
                 else:
                     z_loss = z_loss / (B * S)
                 scaled_z_loss = self.z_loss_weight * z_loss
-                expert_weights = attach_auxiliary_loss(expert_weights, scaled_z_loss)
                 self._accumulate_metric("router Z loss", scaled_z_loss)
                 self._accumulate_metric("router Z loss (unscaled)", z_loss)
                 aux_loss = scaled_z_loss if aux_loss is None else aux_loss + scaled_z_loss
