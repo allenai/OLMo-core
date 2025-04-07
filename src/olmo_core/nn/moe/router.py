@@ -18,6 +18,7 @@ from olmo_core.distributed.utils import (
     is_distributed,
 )
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.utils import get_default_device
 
 from ..buffer_cache import BufferCache
 from .loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
@@ -160,6 +161,13 @@ class MoERouter(nn.Module):
         A reasonable value is on the order of 0.0001.
     """
 
+    _SCORE_BIAS_BZ_PER_EXPERT = "score_bias_batch_size_per_expert"
+    _BZ_PER_EXPERT = "batch_size_per_expert"
+    _LB_LOSS = "load balancing loss"
+    _LB_LOSS_UNSCALED = "load balancing loss (unscaled)"
+    _Z_LOSS = "router Z loss"
+    _Z_LOSS_UNSCALED = "router Z loss (unscaled)"
+
     def __init__(
         self,
         *,
@@ -204,20 +212,34 @@ class MoERouter(nn.Module):
         else:
             self.register_buffer("score_bias", None)
 
+    @property
+    def device(self) -> torch.device:
+        return get_default_device()
+
     def reset_parameters(self):
+        self._cache[self._BZ_PER_EXPERT] = torch.zeros(self.num_experts, device=self.device)
+
         if self.bias_gamma is not None:
             assert self.score_bias is not None
             assert self._cache is not None
             score_bias = cast(torch.Tensor, self.score_bias)
             score_bias.zero_()
-            self._cache["batch_size_per_expert"] = torch.zeros(
-                self.num_experts, device=score_bias.device
+            self._cache[self._SCORE_BIAS_BZ_PER_EXPERT] = torch.zeros(
+                self.num_experts, device=self.device
             )
+
+        if self.lb_loss_weight is not None:
+            self._cache[self._LB_LOSS] = torch.zeros([], device=self.device)
+            self._cache[self._LB_LOSS_UNSCALED] = torch.zeros([], device=self.device)
+
+        if self.z_loss_weight is not None:
+            self._cache[self._Z_LOSS] = torch.zeros([], device=self.device)
+            self._cache[self._Z_LOSS_UNSCALED] = torch.zeros([], device=self.device)
 
     def _maybe_accumulate_batch_size_per_expert(self, batch_size_per_expert: torch.Tensor):
         if self.bias_gamma is None or not self.training or not torch.is_grad_enabled():
             return
-        self._accumulate_metric("score_bias_batch_size_per_expert", batch_size_per_expert)
+        self._accumulate_metric(self._SCORE_BIAS_BZ_PER_EXPERT, batch_size_per_expert)
 
     @torch.no_grad()
     def _accumulate_metric(self, name: str, value: torch.Tensor):
@@ -236,7 +258,7 @@ class MoERouter(nn.Module):
         assert self.score_bias is not None
         assert self._cache is not None
         score_bias = cast(torch.Tensor, self.score_bias)
-        batch_size_per_expert = self._cache["score_bias_batch_size_per_expert"]
+        batch_size_per_expert = self._cache[self._SCORE_BIAS_BZ_PER_EXPERT]
 
         # Maybe reduce across the process group.
         if is_distributed():
@@ -304,7 +326,7 @@ class MoERouter(nn.Module):
         out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
 
         # Load imbalance.
-        batch_size_per_expert = self._cache["batch_size_per_expert"]
+        batch_size_per_expert = self._cache[self._BZ_PER_EXPERT]
         out["load imbalance"] = (
             batch_size_per_expert.max() / batch_size_per_expert.mean(dtype=torch.float),
             ReduceType.max,
@@ -312,19 +334,13 @@ class MoERouter(nn.Module):
 
         # Load balancing loss.
         if self.lb_loss_weight is not None:
-            out["load balancing loss"] = (self._cache["load balancing loss"], ReduceType.mean)
-            out["load balancing loss (unscaled)"] = (
-                self._cache["load balancing loss (unscaled)"],
-                ReduceType.mean,
-            )
+            out[self._LB_LOSS] = (self._cache[self._LB_LOSS], ReduceType.mean)
+            out[self._LB_LOSS_UNSCALED] = (self._cache[self._LB_LOSS_UNSCALED], ReduceType.mean)
 
         # Router Z loss.
         if self.z_loss_weight is not None:
-            out["router Z loss"] = (self._cache["router Z loss"], ReduceType.mean)
-            out["router Z loss (unscaled)"] = (
-                self._cache["router Z loss (unscaled)"],
-                ReduceType.mean,
-            )
+            out[self._Z_LOSS] = (self._cache[self._Z_LOSS], ReduceType.mean)
+            out[self._Z_LOSS_UNSCALED] = (self._cache[self._Z_LOSS_UNSCALED], ReduceType.mean)
 
         if reset:
             self.reset_metrics()
@@ -333,10 +349,8 @@ class MoERouter(nn.Module):
 
     def reset_metrics(self):
         for key in list(self._cache.keys()):
-            if (
-                key != "score_bias_batch_size_per_expert"
-            ):  # this one gets reset from '.post_batch()'
-                del self._cache[key]
+            if key != self._SCORE_BIAS_BZ_PER_EXPERT:  # this one gets reset from '.post_batch()'
+                self._cache[key].zero_()
 
     def forward(
         self,
@@ -397,6 +411,9 @@ class MoERouter(nn.Module):
         # Maybe compute auxiliary losses and accumulate metrics.
         aux_loss: Optional[torch.Tensor] = None
         if self.training and torch.is_grad_enabled():
+            if loss_div_factor is None:
+                loss_div_factor = B * S
+
             if self.lb_loss_weight is not None:
                 lb_loss = load_balancing_loss(
                     num_experts=self.num_experts,
@@ -407,29 +424,23 @@ class MoERouter(nn.Module):
                     granularity=self.lb_loss_granularity,
                     sp_mesh=self.cp_mesh or self.tp_mesh,  # TODO: what happens if both enabled?
                 )
-                if loss_div_factor is not None:
-                    lb_loss = lb_loss / loss_div_factor
-                else:
-                    lb_loss = lb_loss / (B * S)
+                lb_loss = lb_loss / loss_div_factor
                 scaled_lb_loss = self.lb_loss_weight * lb_loss
-                self._accumulate_metric("load balancing loss", scaled_lb_loss)
-                self._accumulate_metric("load balancing loss (unscaled)", lb_loss)
+                self._accumulate_metric(self._LB_LOSS, scaled_lb_loss)
+                self._accumulate_metric(self._LB_LOSS_UNSCALED, lb_loss)
                 aux_loss = scaled_lb_loss
 
             if self.z_loss_weight is not None:
                 z_loss = router_z_loss(expert_logits=logits)
-                if loss_div_factor is not None:
-                    z_loss = z_loss / loss_div_factor
-                else:
-                    z_loss = z_loss / (B * S)
+                z_loss = z_loss / loss_div_factor
                 scaled_z_loss = self.z_loss_weight * z_loss
-                self._accumulate_metric("router Z loss", scaled_z_loss)
-                self._accumulate_metric("router Z loss (unscaled)", z_loss)
+                self._accumulate_metric(self._Z_LOSS, scaled_z_loss)
+                self._accumulate_metric(self._Z_LOSS_UNSCALED, z_loss)
                 aux_loss = scaled_z_loss if aux_loss is None else aux_loss + scaled_z_loss
 
-            self._accumulate_metric("batch_size_per_expert", batch_size_per_expert)
+            self._accumulate_metric(self._BZ_PER_EXPERT, batch_size_per_expert)
             if self.bias_gamma is not None:
-                self._accumulate_metric("score_bias_batch_size_per_expert", batch_size_per_expert)
+                self._accumulate_metric(self._SCORE_BIAS_BZ_PER_EXPERT, batch_size_per_expert)
 
         return expert_weights, expert_indices, batch_size_per_expert, aux_loss
 
@@ -470,6 +481,10 @@ class MoELinearRouter(MoERouter):
             torch.empty(self.num_experts * self.d_model, device=init_device, dtype=dtype)
         )
         self.reset_parameters()
+
+    @property
+    def device(self) -> torch.device:
+        return self.weight.device
 
     def reset_parameters(self) -> None:
         super().reset_parameters()
