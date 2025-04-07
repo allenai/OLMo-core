@@ -137,12 +137,15 @@ class MoEBase(nn.Module):
         **kwargs,
     ):
         super().__init__()
+        del n_layers
         self.router = router.build(
             d_model,
             num_experts,
-            lb_loss_weight=None if lb_loss_weight is None else lb_loss_weight / n_layers,
+            #  lb_loss_weight=None if lb_loss_weight is None else lb_loss_weight / n_layers,
+            lb_loss_weight=lb_loss_weight,
             lb_loss_granularity=lb_loss_granularity,
-            z_loss_weight=None if z_loss_weight is None else z_loss_weight / n_layers,
+            #  z_loss_weight=None if z_loss_weight is None else z_loss_weight / n_layers,
+            z_loss_weight=z_loss_weight,
             dtype=dtype,
             init_device=init_device,
         )

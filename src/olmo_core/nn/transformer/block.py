@@ -358,7 +358,7 @@ class MoETransformerBlock(TransformerBlockBase):
         self.attention = attention.build(d_model, init_device=init_device, cache=cache)
         self.attention_norm = layer_norm.build(d_model, init_device=init_device)
         self.feed_forward_moe = feed_forward_moe.build(
-            d_model=d_model, init_device=init_device, cache=cache
+            d_model=d_model, n_layers=n_layers, init_device=init_device, cache=cache
         )
         self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()

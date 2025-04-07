@@ -908,7 +908,11 @@ class MoETransformer(Transformer):
                     out[metric_name] = (metric_val, reduce_type)
                 elif reduce_type == ReduceType.mean:
                     out[metric_name] = (
-                        #  out[metric_name][0] + metric_val / self.n_layers,
+                        out[metric_name][0] + metric_val / self.n_layers,
+                        reduce_type,
+                    )
+                elif reduce_type == ReduceType.sum:
+                    out[metric_name] = (
                         out[metric_name][0] + metric_val,
                         reduce_type,
                     )
