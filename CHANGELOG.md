@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `auto_resume` option to `CometCallback` for resume an existing run.
 - (BETA) Added methods `load_hf_model` and `save_hf_model` for saving supported OLMo Core models to HF transformers format.
 Also added lower-level methods for converting state between the formats.
-- Added the ability to run an eval at startup
+- Added the ability to run the evaluator callback on `.pre_train()` by setting `eval_on_startup=True`, and to cancel the run after the first time evals run by setting `cancel_after_first_eval=True`.
 - Added support for label mask files with numpy FSL datasets.
 
 ### Changed
@@ -49,6 +49,7 @@ Also added lower-level methods for converting state between the formats.
 
 - The official config for the 32B had unrealistic batch size settings.
 - Ignore `group_overrides` for frozen parameters instead of throwing an error.
+- Bump `ai2-olmo-eval==0.7.1`, which fixes makes the in-loop evaluation consistent with OLMES by removing [a bias](https://github.com/allenai/OLMo-in-loop-evals/pull/6)
 
 ### Removed
 
