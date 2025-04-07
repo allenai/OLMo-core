@@ -8,11 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Replicate, Shard, distribute_tensor
-from torch.distributed.tensor.parallel import (
-    PrepareModuleInput,
-    PrepareModuleOutput,
-    parallelize_module,
-)
+from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
 import olmo_core.ops.moe as ops
 from olmo_core.config import Config, DType, StrEnum
@@ -445,15 +441,6 @@ class MoERouter(nn.Module):
             parallelize_plan=PrepareModuleInput(
                 input_layouts=(Shard(1),),
                 desired_input_layouts=(Shard(1),),
-                use_local_output=True,
-            ),
-        )
-        parallelize_module(
-            self,
-            device_mesh=tp_mesh,
-            parallelize_plan=PrepareModuleOutput(
-                output_layouts=(Shard(1),),
-                desired_output_layouts=(Shard(1),),
                 use_local_output=True,
             ),
         )
