@@ -14,8 +14,8 @@ class AutoAuxiliaryLoss(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):
         (aux_loss,) = ctx.saved_tensors
-        scaled_aux_loss_grad = torch.ones_like(aux_loss)
-        return grad_output, scaled_aux_loss_grad
+        aux_loss_grad = torch.ones_like(aux_loss)
+        return grad_output, aux_loss_grad
 
 
 def attach_auxiliary_loss(activation: torch.Tensor, aux_loss: torch.Tensor) -> torch.Tensor:

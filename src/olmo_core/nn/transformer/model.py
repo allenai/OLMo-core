@@ -895,12 +895,26 @@ class MoETransformer(Transformer):
     def compute_auxiliary_metrics(
         self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
+        from olmo_core.train.common import ReduceType
+
         out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
         for block_idx, block in self.blocks.items():
             block = cast(MoETransformerBlock, block)
             block_metrics = block.compute_metrics(total_bz, reset=reset)
-            for metric_name, metric_val in block_metrics.items():
-                out[f"block {int(block_idx):02d}/{metric_name}"] = metric_val
+            for metric_name, (metric_val, reduce_type) in block_metrics.items():
+                out[f"block {int(block_idx):02d}/{metric_name}"] = (metric_val, reduce_type)
+
+                if metric_name not in out:
+                    out[metric_name] = (metric_val, reduce_type)
+                elif reduce_type == ReduceType.mean:
+                    out[metric_name] = (
+                        out[metric_name][0] + metric_val / self.n_layers,
+                        reduce_type,
+                    )
+                elif reduce_type == ReduceType.max:
+                    out[metric_name] = (torch.max(out[metric_name][0], metric_val), reduce_type)
+                else:
+                    raise NotImplementedError(reduce_type)
         return out
 
     def reset_auxiliary_metrics(self):
