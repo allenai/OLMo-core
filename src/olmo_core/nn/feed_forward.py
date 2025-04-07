@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass
-from typing import Optional
+from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
@@ -8,6 +8,8 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor.parallel import parallelize_module
 from torch.distributed.tensor.placement_types import Placement, Replicate
+
+from olmo_core.nn.mup import MuP, MuPConfig, MuPHyperParam
 
 from ..config import Config, DType, StrEnum
 from ..doc_utils import beta_feature
@@ -47,6 +49,10 @@ class FeedForwardConfig(Config):
     """
     bias: Optional[bool] = None
     dtype: Optional[DType] = None
+    mup: Optional[MuPConfig] = None
+    """
+    The muP config.
+    """
 
     def num_params(self, d_model: int) -> int:
         """
@@ -77,7 +83,7 @@ class FeedForwardConfig(Config):
         :param d_model: The model dimensionality.
         :param init_device: The device initialize the parameters on, e.g. "cpu", "meta".
         """
-        kwargs = self.as_dict(exclude_none=True)
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
         kwargs.update(d_model=d_model, init_device=init_device)
         if self.dtype is not None:
@@ -111,6 +117,7 @@ class FeedForward(nn.Module):
         bias: bool = True,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
+        mup: Optional[MuPConfig] = None,
     ):
         super().__init__()
         self.d_model = d_model
@@ -118,6 +125,17 @@ class FeedForward(nn.Module):
         self.w1 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
         self.w2 = nn.Linear(hidden_size, d_model, bias=bias, dtype=dtype, device=init_device)
         self.w3 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
+        self.mups: Dict[str, MuP] = {}
+        if mup:
+            self.mups["w1.weight"] = mup.build(
+                {MuPHyperParam.d_model: 1}, {MuPHyperParam.hidden_size: 1}
+            )
+            self.mups["w2.weight"] = mup.build(
+                {MuPHyperParam.hidden_size: 1}, {MuPHyperParam.d_model: 1}
+            )
+            self.mups["w3.weight"] = mup.build(
+                {MuPHyperParam.d_model: 1}, {MuPHyperParam.hidden_size: 1}
+            )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -125,7 +143,9 @@ class FeedForward(nn.Module):
 
         :param x: The input of shape ``(*, d_model)``.
         """
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+        w1_output = self.w1(MuP.scale_input(self.mups.get("w1.weight"), x))
+        w3_output = self.w3(MuP.scale_input(self.mups.get("w3.weight"), x))
+        return self.w2(MuP.scale_input(self.mups.get("w2.weight"), F.silu(w1_output) * w3_output))
 
     def apply_tp(
         self,
@@ -152,11 +172,11 @@ class FeedForward(nn.Module):
             module=self,
             device_mesh=tp_mesh,
             parallelize_plan={
-                "w1": colwise_parallel(),
-                "w2": rowwise_parallel(
+                "w1.weight": colwise_parallel(),
+                "w2.weight": rowwise_parallel(
                     output_layouts=output_layout, use_local_output=use_local_output
                 ),
-                "w3": colwise_parallel(),
+                "w3.weight": colwise_parallel(),
             },
         )
 

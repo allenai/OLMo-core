@@ -284,7 +284,10 @@ class Transformer(nn.Module):
 
         if self.lm_head is not None:
             self.init_method.init_final_w_out(
-                self.lm_head.w_out, d_model=self.d_model, generator=generator
+                self.lm_head.w_out,
+                d_model=self.d_model,
+                generator=generator,
+                mup=self.lm_head.mups.get("w_out.weight"),
             )
 
         return generator

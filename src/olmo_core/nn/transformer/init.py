@@ -1,9 +1,10 @@
-from typing import Optional, Union, cast
+from typing import Dict, Optional, Union, cast
 
 import torch
 import torch.nn as nn
 
 from olmo_core.config import StrEnum
+from olmo_core.nn.mup import MuP
 
 from ..attention import Attention, AttentionBase, FusedAttention
 from ..feed_forward import FeedForward
@@ -35,10 +36,21 @@ class InitMethod(StrEnum):
     """
 
     def _init_linear(
-        self, m: nn.Linear, *, std: float = 0.02, generator: Optional[torch.Generator] = None
+        self,
+        m: nn.Linear,
+        *,
+        std: float = 0.02,
+        generator: Optional[torch.Generator] = None,
+        mup: Optional[MuP] = None,
     ):
+        std = MuP.scale_init_std(mup, std)
         nn.init.trunc_normal_(
-            m.weight, mean=0.0, std=std, a=-3 * std, b=3 * std, generator=generator
+            m.weight,
+            mean=0.0,
+            std=std,
+            a=-3 * std,
+            b=3 * std,
+            generator=generator,
         )
         if m.bias is not None:
             nn.init.zeros_(m.bias)
@@ -56,12 +68,17 @@ class InitMethod(StrEnum):
             )
 
     def init_final_w_out(
-        self, m: nn.Linear, *, d_model: int, generator: Optional[torch.Generator] = None
+        self,
+        m: nn.Linear,
+        *,
+        d_model: int,
+        generator: Optional[torch.Generator] = None,
+        mup: Optional[MuP] = None,
     ):
         std = 0.02
         if self in (InitMethod.llama, InitMethod.llama_depth, InitMethod.normalized):
             std = d_model**-0.5
-        self._init_linear(m, std=std, generator=generator)
+        self._init_linear(m, std=std, generator=generator, mup=mup)
 
     def init_attention(
         self,
@@ -79,10 +96,11 @@ class InitMethod(StrEnum):
         # NOTE: isinstance checks could fail with AC wrappers
         if isinstance(m, Attention) or hasattr(m, "w_q"):
             m = cast(Attention, m)
-            for w in (m.w_q, m.w_k, m.w_v):
-                self._init_linear(w, std=std, generator=generator)
+            for name, w in zip(("w_q.weight", "w_k.weight", "w_v.weight"), (m.w_q, m.w_k, m.w_v)):
+                self._init_linear(w, std=std, generator=generator, mup=m.mups.get(name))
         elif isinstance(m, FusedAttention) or hasattr(m, "w_qkv"):
             m = cast(FusedAttention, m)
+            # FusedAttention does not support muP, so no mup scaling
             self._init_linear(m.w_qkv, std=std, generator=generator)
         else:
             raise NotImplementedError(m)
@@ -94,7 +112,10 @@ class InitMethod(StrEnum):
         elif self == InitMethod.normalized:
             std = std / (2 * num_blocks) ** 0.5
 
-        self._init_linear(m.w_out, std=std, generator=generator)
+        mups: Optional[Dict[str, MuP]] = getattr(m, "mups", None)
+        self._init_linear(
+            m.w_out, std=std, generator=generator, mup=mups.get("w_out.weight") if mups else None
+        )
 
     def init_feed_forward(
         self,
@@ -109,7 +130,7 @@ class InitMethod(StrEnum):
         if self == InitMethod.normalized:
             std = d_model**-0.5
 
-        self._init_linear(m.w1, std=std, generator=generator)
+        self._init_linear(m.w1, std=std, generator=generator, mup=m.mups.get("w1.weight"))
 
         std = 0.02
         if self == InitMethod.llama:
@@ -119,12 +140,12 @@ class InitMethod(StrEnum):
         elif self == InitMethod.normalized:
             std = d_model**-0.5
 
-        self._init_linear(m.w3, std=std, generator=generator)
+        self._init_linear(m.w3, std=std, generator=generator, mup=m.mups.get("w3.weight"))
 
         if self == InitMethod.normalized:
             std = std / (2 * num_blocks) ** 0.5
 
-        self._init_linear(m.w2, std=std, generator=generator)
+        self._init_linear(m.w2, std=std, generator=generator, mup=m.mups.get("w2.weight"))
 
     def init_feed_forward_moe(
         self,

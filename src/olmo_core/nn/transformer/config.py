@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, List, Optional
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.mup import MuPConfig
 from olmo_core.utils import ensure_multiple_of
 
 from ..attention import AttentionConfig, AttentionType
@@ -828,6 +829,7 @@ class TransformerConfig(Config):
         rope_scaling: Optional[RoPEScalingConfig] = None,
         feed_forward: Optional[FeedForwardConfig] = None,
         feed_forward_moe: Optional[MoEConfig] = None,
+        mup: Optional[MuPConfig] = None,
         **kwargs,
     ) -> "TransformerConfig":
         """
@@ -863,7 +865,9 @@ class TransformerConfig(Config):
 
         # Feed-forward.
         if feed_forward is None and feed_forward_moe is None:
-            feed_forward = FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype)
+            feed_forward = FeedForwardConfig(
+                hidden_size=hidden_size, bias=False, dtype=dtype, mup=mup
+            )
 
         # Configure blocks.
         block = TransformerBlockConfig(
@@ -877,6 +881,7 @@ class TransformerConfig(Config):
                 qk_norm=layer_norm if qk_norm else None,
                 use_flash=use_flash,
                 dtype=dtype,
+                mup=mup,
             ),
             feed_forward=feed_forward,
             feed_forward_moe=feed_forward_moe,
@@ -888,7 +893,7 @@ class TransformerConfig(Config):
             vocab_size=vocab_size,
             n_layers=n_layers,
             block=block,
-            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype, mup=mup),
             dtype=dtype,
             **kwargs,
         )

@@ -1,6 +1,6 @@
 import logging
 from abc import ABCMeta, abstractmethod
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from typing import (
@@ -23,6 +23,7 @@ import torch.nn as nn
 
 from ..config import Config
 from ..exceptions import OLMoConfigurationError
+from ..nn.mup import MuP
 from ..utils import get_default_device, move_to_device
 
 __all__ = [
@@ -113,7 +114,7 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         return OptimGroupOverride(param_names, go.opts.copy())
 
     def build_groups(
-        self, model: nn.Module, strict: bool = True
+        self, model: nn.Module, strict: bool = True, initial_lr: Optional[float] = None
     ) -> Union[Iterable[torch.Tensor], List[Dict[str, Any]]]:
         """
         Build parameters groups.
@@ -139,6 +140,26 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         overriden_param_names = {name for go in group_overrides for name in go.params}
         default_override = OptimGroupOverride(list(all_params.keys() - overriden_param_names), {})
         group_overrides.append(default_override)
+
+        named_mups = MuP.named_mups(model)
+        # If muP is scaling LR up/down, create separate parameter groups based on the new LRs.
+        if any(mup.lr_multiplier for _, mup in named_mups.items()):
+            if initial_lr is None:
+                raise OLMoConfigurationError("Initial LR must be provided for muP")
+
+            new_group_overrides = []
+            for go in group_overrides:
+                params_name_by_mup_lr = defaultdict(list)
+                for name in go.params:
+                    lr = MuP.scale_lr(named_mups.get(name), go.opts.get("lr", initial_lr))
+                    params_name_by_mup_lr[lr].append(name)
+
+                new_group_overrides += [
+                    OptimGroupOverride(param_names, {**go.opts, "lr": lr})
+                    for lr, param_names in params_name_by_mup_lr.items()
+                ]
+
+            group_overrides = new_group_overrides
 
         return [
             {"params": [all_params[param_name] for param_name in go.params], **go.opts}
@@ -167,7 +188,7 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         kwargs.pop("fixed_fields")
 
         optim: torch.optim.Optimizer = self.optimizer()(
-            self.build_groups(model, strict=strict), **kwargs
+            self.build_groups(model, strict=strict, initial_lr=kwargs.get("lr")), **kwargs
         )
 
         # Set 'lr' and 'initial_lr' in each group if needed.
