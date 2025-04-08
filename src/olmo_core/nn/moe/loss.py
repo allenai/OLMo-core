@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union
 
 import torch
 import torch.distributed as dist
@@ -34,6 +34,7 @@ def load_balancing_loss(
     batch_size_per_expert: torch.Tensor,
     batched_batch_size_per_expert: torch.Tensor,
     granularity: MoELoadBalancingLossGranularity,
+    loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     tp_mesh: Optional[dist.DeviceMesh] = None,
     cp_mesh: Optional[dist.DeviceMesh] = None,
 ) -> torch.Tensor:
@@ -43,9 +44,16 @@ def load_balancing_loss(
         get_local_tensor(batched_batch_size_per_expert),
     )
 
+    B, S, _ = expert_scores.shape
+
     loss: torch.Tensor
     if granularity == MoELoadBalancingLossGranularity.instance:
-        B = batched_batch_size_per_expert.shape[0]
+        if loss_div_factor is None:
+            loss_div_factor = B * S
+        # NOTE: don't scale 'loss_div_factor' for CP since we compute this loss in a CP-aware way.
+        #  elif cp_mesh is not None:
+        #      loss_div_factor = loss_div_factor / cp_mesh.size()
+
         # shape: (B, num_experts)
         batched_batch_size_per_expert = batched_batch_size_per_expert.type_as(expert_scores)
 
@@ -71,8 +79,13 @@ def load_balancing_loss(
             expert_scores = expert_scores.view(B, -1, num_experts).mean(dim=1)
 
         # shape: scalar
-        loss = (expert_scores * batched_batch_size_per_expert).sum()
+        loss = (expert_scores * batched_batch_size_per_expert).sum() / loss_div_factor
     elif granularity == MoELoadBalancingLossGranularity.local_batch:
+        if loss_div_factor is None:
+            loss_div_factor = B * S
+        elif cp_mesh is not None:
+            loss_div_factor = loss_div_factor / cp_mesh.size()
+
         # NOTE: We essentially ignore TP and CP for this granularity.
         # shape: (num_experts,)
         batch_size_per_expert = batch_size_per_expert.type_as(expert_scores)
@@ -94,11 +107,21 @@ def load_balancing_loss(
 
 
 def router_z_loss(
-    *, expert_logits: torch.Tensor, tp_mesh: Optional[dist.DeviceMesh] = None
+    *,
+    expert_logits: torch.Tensor,
+    loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+    tp_mesh: Optional[dist.DeviceMesh] = None,
+    cp_mesh: Optional[dist.DeviceMesh] = None,
 ) -> torch.Tensor:
     expert_logits = get_local_tensor(expert_logits)
 
-    loss = torch.logsumexp(expert_logits, dim=-1).square().sum()
+    B, S, _ = expert_logits.shape
+    if loss_div_factor is None:
+        loss_div_factor = B * S
+    elif cp_mesh is not None:
+        loss_div_factor = loss_div_factor / cp_mesh.size()
+
+    loss = torch.logsumexp(expert_logits, dim=-1).square().sum() / loss_div_factor
 
     # NOTE: with TP, end result has to be a DTensor over the TP mesh.
     if tp_mesh is not None:
