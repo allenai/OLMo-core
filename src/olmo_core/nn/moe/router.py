@@ -486,7 +486,8 @@ class MoERouter(nn.Module):
                     batch_size_per_expert=batch_size_per_expert,
                     batched_batch_size_per_expert=batched_batch_size_per_expert,
                     granularity=self.lb_loss_granularity,
-                    tp_mesh=self.tp_mesh,  # TODO: what about with CP, or both?
+                    tp_mesh=self.tp_mesh,
+                    cp_mesh=self.cp_mesh,
                 )
                 lb_loss = lb_loss / loss_div_factor
                 scaled_lb_loss = self.lb_loss_weight * lb_loss
@@ -497,7 +498,7 @@ class MoERouter(nn.Module):
                 assert self.z_loss is not None
                 z_loss = router_z_loss(
                     expert_logits=logits.float(),
-                    tp_mesh=self.tp_mesh,  # TODO: what about with CP, or both?
+                    tp_mesh=self.tp_mesh,
                 )
                 z_loss = z_loss / loss_div_factor
                 scaled_z_loss = self.z_loss_weight * z_loss
