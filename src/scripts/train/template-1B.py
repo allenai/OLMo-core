@@ -68,7 +68,7 @@ MAX_DURATION = 113184153600 #int(4e12)
 
 # Model and optim.
 MODEL_CONFIG = TransformerConfig.olmo2_1B_v2(vocab_size=TOKENIZER_CONFIG.padded_vocab_size())
-LEARNING_RATE = 1.8e-3 # 4e-4
+LEARNING_RATE = 1.2e-3 # 4e-4
 
 # Beaker.
 BEAKER_CLUSTER = "ai2/augusta-google-1" # "ai2/jupiter-cirrascale-2"
