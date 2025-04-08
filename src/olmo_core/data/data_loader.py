@@ -352,6 +352,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         num_workers: int = 0,
         prefetch_factor: Optional[int] = None,
         target_device_type: str = "cpu",
+        check_fingerprint: bool = False,
     ) -> "NumpyDataLoaderBase":
         """
         Construct the corresponding :class:`NumpyDataLoaderBase` instance for the given :class:`NumpyDatasetBase`.
@@ -370,6 +371,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             num_workers=num_workers,
             prefetch_factor=prefetch_factor,
             target_device_type=target_device_type,
+            check_fingerprint=check_fingerprint
         )
         data_loader: DataLoaderBase
         if isinstance(dataset, NumpyFSLDataset):
