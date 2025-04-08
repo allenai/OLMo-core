@@ -399,26 +399,37 @@ class ModelLadder(Config, metaclass=ABCMeta):
             config = config.with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         config = config.with_callback("config_saver", ConfigSaverCallback())
         config = config.with_callback("garbage_collector", GarbageCollectorCallback())
-        config = config.with_callback(
-            "lm_evaluator",
-            LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyDatasetConfig.from_data_mix(
-                    DataMix.v3_small_ppl_validation,
-                    name=NumpyDatasetType.padded_fsl,
-                    mix_base_dir=self.mix_base_dir,
-                    sequence_length=self.sequence_length,
-                    tokenizer=self.tokenizer,
-                    work_dir=self.work_dir,
-                ),
-                eval_interval=500,
-            ),
-        )
+        # config = config.with_callback(
+        #     "lm_evaluator",
+        #     LMEvaluatorCallbackConfig(
+        #         eval_dataset=NumpyDatasetConfig.from_data_mix(
+        #             DataMix.v3_small_ppl_validation,
+        #             name=NumpyDatasetType.padded_fsl,
+        #             mix_base_dir=self.mix_base_dir,
+        #             sequence_length=self.sequence_length,
+        #             tokenizer=self.tokenizer,
+        #             work_dir=self.work_dir,
+        #         ),
+        #         eval_interval=500,
+        #     ),
+        # )
+        # config = config.with_callback(
+        #     "downstream_evaluator",
+        #     DownstreamEvaluatorCallbackConfig(
+        #         tasks=[task for task in list_tasks() if "_mc" not in task and "_var" not in task],
+        #         tokenizer=self.tokenizer,
+        #         eval_interval=500,
+        #     ),
+        # )
         config = config.with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
-                tasks=[task for task in list_tasks() if "_mc" not in task and "_var" not in task],
+                tasks=[
+                    "arc_challenge_test_rc_5shot",
+                    "hellaswag_rc_5shot",
+                ],
                 tokenizer=self.tokenizer,
-                eval_interval=500,
+                eval_interval=1,
             ),
         )
         config = config.with_callback(
