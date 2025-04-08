@@ -180,7 +180,7 @@ class LcContTrain(Config):
                 # compile=True,
             #     fused_ops=False,
                 use_flash=True,
-                rope_theta = 16 * 10 ** 6,
+                rope_theta = 12 * 10 ** 6,
             #     dp_config=TransformerDataParallelConfig(
             #         name=DataParallelType.fsdp,
             #         param_dtype=DType.bfloat16,
