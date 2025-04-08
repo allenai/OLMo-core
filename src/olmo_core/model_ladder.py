@@ -281,16 +281,17 @@ class ModelLadder(Config, metaclass=ABCMeta):
         """
         # Calculate batch size according to https://api.semanticscholar.org/CorpusID:270764838,
         # which assumes a sequence length of 2048. So adjust from there accordingly.
-        assert self.sequence_length in {2048, 4096, 8192}
-        seq_len_divisor = self.sequence_length // 2048
+        # assert self.sequence_length in {2048, 4096, 8192}
+        # seq_len_divisor = self.sequence_length // 2048
 
-        global_batch_size = 160 * (self.model_size / 108000000) ** (2 / 3)
-        global_batch_size /= seq_len_divisor
-        global_batch_size /= self.max_dp_world_size
-        global_batch_size = round(global_batch_size)
-        global_batch_size *= self.max_dp_world_size
+        # global_batch_size = 160 * (self.model_size / 108000000) ** (2 / 3)
+        # global_batch_size /= seq_len_divisor
+        # global_batch_size /= self.max_dp_world_size
+        # global_batch_size = round(global_batch_size)
+        # global_batch_size *= self.max_dp_world_size
 
-        return self.sequence_length * global_batch_size
+        # return self.sequence_length * global_batch_size
+        return 2097152
 
     def get_duration(self, run_duration: RunDuration = RunDuration.Cx2) -> Duration:
         """
