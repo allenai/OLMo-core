@@ -114,7 +114,6 @@ def router_z_loss(
     cp_mesh: Optional[dist.DeviceMesh] = None,
 ) -> torch.Tensor:
     expert_logits = get_local_tensor(expert_logits)
-
     B, S, _ = expert_logits.shape
     if loss_div_factor is None:
         loss_div_factor = B * S
