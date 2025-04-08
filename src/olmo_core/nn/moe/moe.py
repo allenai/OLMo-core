@@ -190,9 +190,8 @@ class MoEBase(nn.Module):
         self.experts.warmup_cache(max_local_microbatch_size)
 
     def compute_metrics(
-        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
+        self, reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
-        del total_bz
         return self.router.compute_metrics(reset=reset)
 
     def reset_metrics(self):

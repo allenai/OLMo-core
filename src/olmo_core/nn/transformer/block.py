@@ -390,9 +390,9 @@ class MoETransformerBlock(TransformerBlockBase):
         return self._tp_enabled
 
     def compute_metrics(
-        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
+        self, reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
-        return self.feed_forward_moe.compute_metrics(total_bz, reset=reset)
+        return self.feed_forward_moe.compute_metrics(reset=reset)
 
     def reset_metrics(self):
         self.feed_forward_moe.reset_metrics()

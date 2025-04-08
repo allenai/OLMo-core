@@ -302,9 +302,6 @@ class TransformerTrainModule(TrainModule):
         batch_num_tokens_for_loss = move_to_device(
             (batch["labels"] != self.label_ignore_index).sum(), self.device
         )
-        if self.cp_enabled:
-            assert self._cp_config is not None
-            batch_num_tokens_for_loss = batch_num_tokens_for_loss / self._cp_config.degree
 
         # Batch losses to record.
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
@@ -389,8 +386,7 @@ class TransformerTrainModule(TrainModule):
 
         # And additional metrics.
         for metric_name, (metric_val, reduction) in self.model.compute_auxiliary_metrics(
-            batch_num_tokens_for_loss,
-            reset=True,
+            reset=True
         ).items():
             self.record_metric(
                 metric_name,

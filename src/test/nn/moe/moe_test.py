@@ -69,7 +69,7 @@ def test_moe(moe_type: MoEType, shared: bool, dtype: torch.dtype):
     assert (output > 0).any()
 
     # Check auxiliary losses.
-    metrics = moe.compute_metrics(B * S)
+    metrics = moe.compute_metrics()
     lb_loss, _ = metrics["load balancing loss"]
     assert math.isfinite(lb_loss.item())
     z_loss, _ = metrics["router Z loss"]
@@ -129,7 +129,7 @@ def run_moe_with_expert_parallelism(
     assert output.shape == batch.shape
     torch.testing.assert_close(output, expected_output)
 
-    metrics = moe.compute_metrics(batch.shape[0] * batch.shape[1])
+    metrics = moe.compute_metrics()
 
     # Check load balancing loss.
     lb_loss, _ = metrics["load balancing loss"]
@@ -205,7 +205,7 @@ def test_moe_with_expert_parallelism(
     assert (output > 0).any()
 
     # Get losses.
-    metrics = moe.compute_metrics(B * S)
+    metrics = moe.compute_metrics()
     lb_loss, _ = metrics["load balancing loss"]
     assert math.isfinite(lb_loss.item())
 

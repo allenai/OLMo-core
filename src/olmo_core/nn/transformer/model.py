@@ -151,9 +151,9 @@ class Transformer(nn.Module):
         return block
 
     def compute_auxiliary_metrics(
-        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
+        self, reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
-        del total_bz, reset
+        del reset
         return {}
 
     def reset_auxiliary_metrics(self):
@@ -535,6 +535,8 @@ class Transformer(nn.Module):
         self._cp_load_balancer = load_balancer.build(cp_mesh)
         for block in self.blocks.values():
             cast(TransformerBlockBase, block).apply_cp(cp_mesh, load_balancer)
+        if self.lm_head is not None:
+            self.lm_head.apply_cp(cp_mesh, load_balancer)
 
     def apply_activation_checkpointing(
         self,
@@ -898,7 +900,7 @@ class MoETransformer(Transformer):
         return block
 
     def compute_auxiliary_metrics(
-        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
+        self, reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
         from olmo_core.train.common import ReduceType
 
@@ -910,7 +912,7 @@ class MoETransformer(Transformer):
         out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
         for block_idx, block in self.blocks.items():
             block = cast(MoETransformerBlock, block)
-            block_metrics = block.compute_metrics(total_bz, reset=reset)
+            block_metrics = block.compute_metrics(reset=reset)
             for metric_name, (metric_val, reduce_type) in block_metrics.items():
                 out[f"block {int(block_idx):02d}/{metric_name}"] = (metric_val, reduce_type)
 

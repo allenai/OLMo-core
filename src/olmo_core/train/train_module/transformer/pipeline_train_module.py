@@ -344,9 +344,6 @@ class TransformerPipelineTrainModule(TrainModule):
 
         # Calculate how many tokens are going to be used in the loss.
         batch_num_tokens_for_loss = (labels != self.label_ignore_index).sum().item()
-        if self.cp_enabled:
-            assert self._cp_config is not None
-            batch_num_tokens_for_loss /= self._cp_config.degree
 
         # Run pipeline schedule.
         input_ids, labels, model_kwargs = self._prepare_batch(batch, labels)
@@ -399,7 +396,6 @@ class TransformerPipelineTrainModule(TrainModule):
         # And additional metrics.
         for model in self.model_parts:
             for metric_name, (metric_val, reduction) in model.compute_auxiliary_metrics(
-                batch_num_tokens_for_loss,
                 reset=True,
             ).items():
                 merge_strategy = MetricMergeStrategy.warn
