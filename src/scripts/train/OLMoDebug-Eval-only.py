@@ -28,7 +28,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     return TransformerTrainModuleConfig(
-        rank_microbatch_size=2 * 8 * 4096, # doubled for titan!
+        # rank_microbatch_size=2 * 8 * 4096, # doubled for titan!
+        rank_microbatch_size=2*4096,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=AdamWConfig(
             # lr=4e-4,
@@ -40,10 +41,11 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             ],
             fused=True,
         ),
-        compile_model=False, # To fix errors on Titan
+        # compile_model=False, # To fix errors on Titan
+        compile_model=True, # To fix errors on Titan
         dp_config=TransformerDataParallelConfig(
-            # name=DataParallelType.hsdp, 
-            name=DataParallelType.fsdp, 
+            name=DataParallelType.hsdp, 
+            # name=DataParallelType.fsdp, 
             param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
         # float8_config=Float8Config(enabled=False),
@@ -61,7 +63,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             # save_folder=common.save_folder,
             # save_folder="/root/ai2/in_loop/workspace",
             # save_folder="/root/ai2/in_loop/workspace/olmo-cookbook-1b-5xC-dclm-baseline-natural-9a234fde/step53000",
-            save_folder="/oe-eval-default/davidh/in_loop/workspace/olmo-cookbook-1b-5xC-dclm-baseline-natural-9a234fde/step53971",
+            # save_folder="/oe-eval-default/davidh/in_loop/workspace/olmo-cookbook-1b-5xC-dclm-baseline-natural-9a234fde/step53971",
+            save_folder='/oe-eval-default/davidh/in_loop/workspace/olmo-cookbook-1b-5xC-dclm-baseline-natural-4096-1.8e-3-bsz-2097152-06b4d23c/step53971',
             # rank_microbatch_size=8 * 4096,
             save_overwrite=True,
             metrics_collect_interval=10,
@@ -99,75 +102,74 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
                 tasks=[
-                    # OLMES Core 9 RC
+                    # # OLMES Core 9 RC
                     "arc_challenge_test_rc_5shot",
-                    "arc_easy_test_rc_5shot",
+                    # "arc_easy_test_rc_5shot",
                     "hellaswag_rc_5shot",  # 1K subset of HellaSwag
-                    "winogrande_val_rc_5shot",  # Helpful after 750M-5xC scale
-                    "csqa_val_rc_5shot",
-                    "piqa_val_rc_5shot",
-                    "socialiqa_val_rc_5shot",
-                    # Too noisy to be worth tracking
-                    # "boolq_val_rc_5shot",
-                    # "openbookqa_test_rc_5shot",
-                    # MMLU RC
-                    "mmlu_stem_val_rc_5shot",
-                    "mmlu_humanities_val_rc_5shot",
-                    "mmlu_social_sciences_val_rc_5shot",
-                    "mmlu_other_val_rc_5shot",
-                    "mmlu_stem_test_rc_5shot",
-                    "mmlu_humanities_test_rc_5shot",
-                    "mmlu_social_sciences_test_rc_5shot",
-                    "mmlu_other_test_rc_5shot",
-                    # Gen tasks BPB
-                    "gsm8k_gold_bpb_5shot",
-                    "minerva_math_algebra_gold_bpb_0shot",
-                    "minerva_math_counting_and_probability_gold_bpb_0shot",
-                    "minerva_math_geometry_gold_bpb_0shot",
-                    "minerva_math_intermediate_algebra_gold_bpb_0shot",
-                    "minerva_math_number_theory_gold_bpb_0shot",
-                    "minerva_math_prealgebra_gold_bpb_0shot",
-                    "minerva_math_precalculus_gold_bpb_0shot",
-                    "codex_humaneval_gold_bpb_0shot",
-                    "codex_mbpp_gold_bpb_0shot",
-                    # Sanity check for MCQA ability
-                    "copycolors_10way",
-                    # OLMES Core 9 MC
-                    "arc_challenge_test_mc_5shot",
-                    "arc_easy_test_mc_5shot",
-                    "hellaswag_rc_5shot",  # 1K subset of HellaSwag
-                    # "csqa_val_mc_5shot",
-                    "piqa_val_mc_5shot",
-                    "socialiqa_val_mc_5shot",
-                    "winogrande_val_rc_5shot",
-                    # Too noisy to be worth tracking
-                    # "boolq_val_mc_5shot",
-                    # "openbookqa_test_mc_5shot",
-                    # MMLU MC BPB
-                    "mmlu_stem_val_mc_5shot",
-                    "mmlu_humanities_val_mc_5shot",
-                    "mmlu_social_sciences_val_mc_5shot",
-                    "mmlu_other_val_mc_5shot",
-                    "mmlu_stem_test_mc_5shot",
-                    "mmlu_humanities_test_mc_5shot",
-                    "mmlu_social_sciences_test_mc_5shot",
-                    "mmlu_other_test_mc_5shot",
-                    # Gen tasks BPB
-                    "gsm8k_gold_bpb_5shot",
-                    "minerva_math_algebra_gold_bpb_0shot",
-                    "minerva_math_counting_and_probability_gold_bpb_0shot",
-                    "minerva_math_geometry_gold_bpb_0shot",
-                    "minerva_math_intermediate_algebra_gold_bpb_0shot",
-                    "minerva_math_number_theory_gold_bpb_0shot",
-                    "minerva_math_prealgebra_gold_bpb_0shot",
-                    "minerva_math_precalculus_gold_bpb_0shot",
-                    "codex_humaneval_gold_bpb_0shot",
-                    "codex_mbpp_gold_bpb_0shot",
-                    # Sanity check for MCQA ability
-                    "copycolors_10way",
+                    # "winogrande_val_rc_5shot",  # Helpful after 750M-5xC scale
+                    # "csqa_val_rc_5shot",
+                    # "piqa_val_rc_5shot",
+                    # "socialiqa_val_rc_5shot",
+                    # # Too noisy to be worth tracking
+                    # # "boolq_val_rc_5shot",
+                    # # "openbookqa_test_rc_5shot",
+                    # # MMLU RC
+                    # "mmlu_stem_val_rc_5shot",
+                    # "mmlu_humanities_val_rc_5shot",
+                    # "mmlu_social_sciences_val_rc_5shot",
+                    # "mmlu_other_val_rc_5shot",
+                    # "mmlu_stem_test_rc_5shot",
+                    # "mmlu_humanities_test_rc_5shot",
+                    # "mmlu_social_sciences_test_rc_5shot",
+                    # "mmlu_other_test_rc_5shot",
+                    # # Gen tasks BPB
+                    # "gsm8k_gold_bpb_5shot",
+                    # "minerva_math_algebra_gold_bpb_0shot",
+                    # "minerva_math_counting_and_probability_gold_bpb_0shot",
+                    # "minerva_math_geometry_gold_bpb_0shot",
+                    # "minerva_math_intermediate_algebra_gold_bpb_0shot",
+                    # "minerva_math_number_theory_gold_bpb_0shot",
+                    # "minerva_math_prealgebra_gold_bpb_0shot",
+                    # "minerva_math_precalculus_gold_bpb_0shot",
+                    # "codex_humaneval_gold_bpb_0shot",
+                    # "codex_mbpp_gold_bpb_0shot",
+                    # # Sanity check for MCQA ability
+                    # "copycolors_10way",
+                    # # OLMES Core 9 MC
+                    # "arc_challenge_test_mc_5shot",
+                    # "arc_easy_test_mc_5shot",
+                    # "hellaswag_rc_5shot",  # 1K subset of HellaSwag
+                    # # "csqa_val_mc_5shot",
+                    # "piqa_val_mc_5shot",
+                    # "socialiqa_val_mc_5shot",
+                    # "winogrande_val_rc_5shot",
+                    # # Too noisy to be worth tracking
+                    # # "boolq_val_mc_5shot",
+                    # # "openbookqa_test_mc_5shot",
+                    # # MMLU MC BPB
+                    # "mmlu_stem_val_mc_5shot",
+                    # "mmlu_humanities_val_mc_5shot",
+                    # "mmlu_social_sciences_val_mc_5shot",
+                    # "mmlu_other_val_mc_5shot",
+                    # "mmlu_stem_test_mc_5shot",
+                    # "mmlu_humanities_test_mc_5shot",
+                    # "mmlu_social_sciences_test_mc_5shot",
+                    # "mmlu_other_test_mc_5shot",
+                    # # Gen tasks BPB
+                    # "gsm8k_gold_bpb_5shot",
+                    # "minerva_math_algebra_gold_bpb_0shot",
+                    # "minerva_math_counting_and_probability_gold_bpb_0shot",
+                    # "minerva_math_geometry_gold_bpb_0shot",
+                    # "minerva_math_intermediate_algebra_gold_bpb_0shot",
+                    # "minerva_math_number_theory_gold_bpb_0shot",
+                    # "minerva_math_prealgebra_gold_bpb_0shot",
+                    # "minerva_math_precalculus_gold_bpb_0shot",
+                    # "codex_humaneval_gold_bpb_0shot",
+                    # "codex_mbpp_gold_bpb_0shot",
+                    # # Sanity check for MCQA ability
+                    # "copycolors_10way",
                 ],
                 tokenizer=tokenizer_config,
-                # eval_interval=250,
                 eval_interval=1,
                 enabled=True,
             ),
