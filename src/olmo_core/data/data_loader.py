@@ -316,6 +316,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         dp_world_size: int = 1,
         dp_rank: int = 0,
         fs_local_rank: int = 0,
+        check_fingerprint: bool = True,
     ):
         super().__init__(
             collator=collator,
@@ -333,6 +334,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         self.prefetch_factor = prefetch_factor
         self.target_device_type = target_device_type
         self._global_indices: Optional[np.ndarray] = None
+        self.check_fingerprint = check_fingerprint
 
     @classmethod
     def wrap_numpy_dataset(
@@ -406,9 +408,12 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                 "this could mean the data has changed"
             )
         elif state_dict["dataset_fingerprint"] != self.dataset.fingerprint:
-            log.warning(
-                "Restoring state from a different dataset is not supported! (fingerprint doesn't match)"
-            )
+            if self.check_fingerprint:
+                log.warning("Fingerprint doeesn't match, but fingerprint check is overridden.")
+            else:
+                raise RuntimeError(
+                    "Restoring state from a different dataset is not supported! (fingerprint doesn't match)"
+                )
 
         if state_dict["seed"] != self.seed:
             log.warning(
@@ -1027,6 +1032,10 @@ class NumpyDataLoaderConfig(Config):
     num_workers: int = 0
     prefetch_factor: Optional[int] = None
     target_device_type: Optional[str] = None
+    check_fingerprint: bool = True
+    """
+    Verify that the dataset fingerprint matches. Disable with caution (e.g., when debugging in-loop evals)
+    """
 
     def build(
         self,
@@ -1066,5 +1075,6 @@ class NumpyDataLoaderConfig(Config):
             num_workers=self.num_workers,
             prefetch_factor=self.prefetch_factor,
             target_device_type=self.target_device_type or get_default_device().type,
+            check_fingerprint=self.check_fingerprint
         )
         return data_loader
