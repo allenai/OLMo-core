@@ -324,9 +324,6 @@ class Transformer(nn.Module):
             lm_head_kwargs["loss_div_factor"] = loss_div_factor
             block_kwargs["loss_div_factor"] = loss_div_factor
 
-        if labels is not None:
-            lm_head_kwargs["labels"] = move_to_device(labels, self.device)
-
         # Prepare document length inputs.
         max_doc_len: Optional[int] = None
         cu_doc_lens: Optional[torch.Tensor] = None
@@ -460,7 +457,7 @@ class Transformer(nn.Module):
                 mark_dynamic(h, (0, 1), strict=False)
                 if labels is not None:
                     mark_dynamic(labels, (0, 1), strict=False)
-            return self.lm_head(h, **lm_head_kwargs)
+            return self.lm_head(h, labels=labels, **lm_head_kwargs)
         else:
             return h
 
