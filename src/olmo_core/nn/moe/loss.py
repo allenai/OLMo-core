@@ -9,8 +9,21 @@ from olmo_core.distributed.utils import get_local_tensor
 
 
 class MoELoadBalancingLossGranularity(StrEnum):
+    """
+    Defines the granularity for the router's load balancing loss.
+    """
+
     local_batch = "local_batch"
+    """
+    The loss is always computed over the rank-local shard of the batch, regardless of the
+    parallelism strategies used. This is ideal for minimizing the number of dropped tokens for
+    any parallel strategy.
+    """
+
     instance = "instance"
+    """
+    The loss is computed over each instance, taking into account any parallelism strategies used.
+    """
 
 
 def load_balancing_loss(
@@ -47,23 +60,11 @@ def load_balancing_loss(
         batch_size_per_expert = batch_size_per_expert.type_as(expert_scores)
         # shape: (B, S, num_experts) -> (B * S, num_experts)
         expert_scores = expert_scores.view(-1, num_experts)
+        # shape: (B * S, num_experts) -> (num_experts,)
+        expert_scores = expert_scores.mean(dim=0)
+        loss = torch.dot(batch_size_per_expert, expert_scores)
         if tp_mesh is not None:
-            # NOTE: torch.dot doesn't work on DTensor
-            dist.all_reduce(batch_size_per_expert, group=tp_mesh.get_group())
-            # NOTE: assumes equal sequence splits across group
-            # shape: (B * S, num_experts) -> (1, num_experts)
-            expert_scores = expert_scores.mean(dim=0, keepdim=True)
-            # shape: (1, num_experts) -> (num_experts,)
-            expert_scores = get_local_tensor(
-                DTensor.from_local(expert_scores, tp_mesh, (Shard(0),)).mean(dim=0)
-            )
-            loss = torch.dot(batch_size_per_expert, expert_scores)
-            # Wrap back in DTensor.
-            loss = DTensor.from_local(loss, tp_mesh, (Replicate(),))
-        else:
-            # shape: (B * S, num_experts) -> (num_experts,)
-            expert_scores = expert_scores.mean(dim=0)
-            loss = torch.dot(batch_size_per_expert, expert_scores)
+            loss = DTensor.from_local(loss.unsqueeze(0), tp_mesh, (Shard(0),)).sum()
     else:
         raise NotImplementedError(granularity)
 
