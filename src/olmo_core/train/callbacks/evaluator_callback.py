@@ -84,12 +84,12 @@ class EvaluatorCallback(Callback):
             )
 
     def pre_train(self):
-        if self.eval_on_startup:
-            self._perform_eval()
+        # if self.eval_on_startup:
+        self._perform_eval()
 
     def post_step(self):
-        if self.step <= 1 or self.step % self.eval_interval != 0:
-            return
+        # if self.step <= 1 or self.step % self.eval_interval != 0:
+        #     return
 
         self._perform_eval()
 
