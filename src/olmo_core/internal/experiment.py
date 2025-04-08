@@ -204,23 +204,23 @@ def build_common_components(
     if torch.cuda.is_available():
         callbacks["gpu_monitor"] = GPUMemoryMonitorCallback()
 
-    if include_default_evals:
-        callbacks["lm_evaluator"] = LMEvaluatorCallbackConfig(
-            eval_dataset=NumpyDatasetConfig.from_data_mix(
-                DataMix.v3_small_ppl_validation,
-                name=NumpyDatasetType.padded_fsl,
-                mix_base_dir=root_dir,
-                sequence_length=dataset_config.effective_sequence_length,
-                tokenizer=tokenizer_config,
-                work_dir=get_work_dir(root_dir),
-            ),
-            eval_interval=1000,
-        )
-        callbacks["downstream_evaluator"] = DownstreamEvaluatorCallbackConfig(
-            tasks=["hellaswag"],
-            tokenizer=tokenizer_config,
-            eval_interval=1000,
-        )
+    # if include_default_evals:
+    #     callbacks["lm_evaluator"] = LMEvaluatorCallbackConfig(
+    #         eval_dataset=NumpyDatasetConfig.from_data_mix(
+    #             DataMix.v3_small_ppl_validation,
+    #             name=NumpyDatasetType.padded_fsl,
+    #             mix_base_dir=root_dir,
+    #             sequence_length=dataset_config.effective_sequence_length,
+    #             tokenizer=tokenizer_config,
+    #             work_dir=get_work_dir(root_dir),
+    #         ),
+    #         eval_interval=1000,
+    #     )
+    #     callbacks["downstream_evaluator"] = DownstreamEvaluatorCallbackConfig(
+    #         tasks=["hellaswag"],
+    #         tokenizer=tokenizer_config,
+    #         eval_interval=1000,
+    #     )
 
     save_folder: str
     if beaker_user is not None:
