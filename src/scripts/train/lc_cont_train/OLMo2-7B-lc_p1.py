@@ -180,7 +180,7 @@ class LcContTrain(Config):
                 # compile=True,
             #     fused_ops=False,
                 use_flash=True,
-                rope_theta = 8 * 10 ** 6,
+                rope_theta = 16 * 10 ** 6,
             #     dp_config=TransformerDataParallelConfig(
             #         name=DataParallelType.fsdp,
             #         param_dtype=DType.bfloat16,
@@ -205,7 +205,7 @@ class LcContTrain(Config):
                 AnnealingDataMix.pl_repl_p1_contig,
                 tokenizer=tokenizer_config,
                 mix_base_dir=root_dir,
-                # generate_doc_lengths=True,
+                generate_doc_lengths=True,
                 sequence_length=CONTEXT_LENGTH,
                 work_dir=get_work_dir(root_dir),
             ),
