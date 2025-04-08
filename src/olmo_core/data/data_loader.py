@@ -352,7 +352,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         num_workers: int = 0,
         prefetch_factor: Optional[int] = None,
         target_device_type: str = "cpu",
-        check_fingerprint: bool = False,
+        check_fingerprint: bool = True,
     ) -> "NumpyDataLoaderBase":
         """
         Construct the corresponding :class:`NumpyDataLoaderBase` instance for the given :class:`NumpyDatasetBase`.
@@ -411,11 +411,11 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             )
         elif state_dict["dataset_fingerprint"] != self.dataset.fingerprint:
             if self.check_fingerprint:
-                log.warning("Fingerprint doeesn't match, but fingerprint check is overridden.")
-            else:
                 raise RuntimeError(
                     "Restoring state from a different dataset is not supported! (fingerprint doesn't match)"
                 )
+            else:
+                log.warning("Fingerprint doeesn't match, but fingerprint check is overridden.")
 
         if state_dict["seed"] != self.seed:
             log.warning(
