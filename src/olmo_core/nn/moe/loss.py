@@ -48,12 +48,6 @@ def load_balancing_loss(
 
     loss: torch.Tensor
     if granularity == MoELoadBalancingLossGranularity.instance:
-        if loss_div_factor is None:
-            loss_div_factor = B * S
-        # NOTE: don't scale 'loss_div_factor' for CP since we compute this loss in a CP-aware way.
-        #  elif cp_mesh is not None:
-        #      loss_div_factor = loss_div_factor / cp_mesh.size()
-
         # shape: (B, num_experts)
         batched_batch_size_per_expert = batched_batch_size_per_expert.type_as(expert_scores)
 
@@ -62,7 +56,7 @@ def load_balancing_loss(
         if cp_mesh is not None:
             dist.all_reduce(batched_batch_size_per_expert, group=cp_mesh.get_group())
 
-        # NOTE: we TP, the end result needs to be a DTensor over the TP mesh, so we handle this case
+        # NOTE: for TP, the end result needs to be a DTensor over the TP mesh, so we handle this case
         # a little differently.
         if tp_mesh is not None:
             # NOTE: assumes sharded on sequence dimension and equal splits across TP group.
@@ -78,15 +72,27 @@ def load_balancing_loss(
             # shape: (B * S, num_experts) -> (B, S, num_experts,) -> (B, num_experts)
             expert_scores = expert_scores.view(B, -1, num_experts).mean(dim=1)
 
+        # We compute this across the TP and CP groups, so the 'loss_div_factor' should represent
+        # the total number of tokens across the TP and CP groups.
+        if loss_div_factor is None:
+            # this gives us total number of tokens across TP + CP groups.
+            loss_div_factor = batched_batch_size_per_expert.sum() / top_k
+
         # shape: scalar
         loss = (expert_scores * batched_batch_size_per_expert).sum() / loss_div_factor
     elif granularity == MoELoadBalancingLossGranularity.local_batch:
+        # NOTE: We essentially ignore CP for this granularity, and for TP we still compute the loss
+        # locally, but wrap as a DTensor and reduce it at the end because the end result has to be
+        # a DTensor over the TP mesh.
+        # Due to that DTensor reduction, with TP the 'loss_div_factor' should be the total number
+        # of tokens across the TP group, but not the CP group.
         if loss_div_factor is None:
             loss_div_factor = B * S
+            if tp_mesh is not None:
+                loss_div_factor = loss_div_factor * tp_mesh.size()
         elif cp_mesh is not None:
             loss_div_factor = loss_div_factor / cp_mesh.size()
 
-        # NOTE: We essentially ignore TP and CP for this granularity.
         # shape: (num_experts,)
         batch_size_per_expert = batch_size_per_expert.type_as(expert_scores)
         # shape: (B, S, num_experts) -> (B * S, num_experts)
@@ -94,8 +100,7 @@ def load_balancing_loss(
         # shape: (B * S, num_experts) -> (num_experts,)
         expert_scores = expert_scores.mean(dim=0)
         # shape: scalar
-        loss = torch.dot(batch_size_per_expert, expert_scores)
-        # NOTE: with TP, end result has to be a DTensor over the TP mesh.
+        loss = torch.dot(batch_size_per_expert, expert_scores) / loss_div_factor
         if tp_mesh is not None:
             loss = DTensor.from_local(loss.unsqueeze(0), tp_mesh, (Shard(0),)).sum()
     else:
@@ -115,14 +120,18 @@ def router_z_loss(
 ) -> torch.Tensor:
     expert_logits = get_local_tensor(expert_logits)
     B, S, _ = expert_logits.shape
+
+    # NOTE: with TP, end result has to be a DTensor over the TP mesh, so we wrap as a DTensor
+    # and reduce it. Due to this reduction, the 'loss_div_factor' should represent the total
+    # number of tokens across the TP group (but not the CP group).
     if loss_div_factor is None:
         loss_div_factor = B * S
+        if tp_mesh is not None:
+            loss_div_factor = loss_div_factor * tp_mesh.size()
     elif cp_mesh is not None:
         loss_div_factor = loss_div_factor / cp_mesh.size()
 
     loss = torch.logsumexp(expert_logits, dim=-1).square().sum() / loss_div_factor
-
-    # NOTE: with TP, end result has to be a DTensor over the TP mesh.
     if tp_mesh is not None:
         loss = DTensor.from_local(loss.unsqueeze(0), tp_mesh, (Shard(0),)).sum()
 
