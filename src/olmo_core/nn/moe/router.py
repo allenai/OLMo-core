@@ -474,6 +474,8 @@ class MoERouter(nn.Module):
         if self.training and torch.is_grad_enabled():
             if loss_div_factor is None:
                 loss_div_factor = B * S
+            elif self.cp_mesh is not None:
+                loss_div_factor = loss_div_factor / self.cp_mesh.size()
 
             if self.lb_loss_weight is not None:
                 assert self.load_balancing_loss is not None
