@@ -455,9 +455,12 @@ class Transformer(nn.Module):
         if self.lm_head is not None:
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
+                # NOTE: When TP is active we can't pass 'labels=None' or the hook from 'PrepareModuleInput'
+                # will throw an exception.
                 if labels is not None:
                     mark_dynamic(labels, (0, 1), strict=False)
-            return self.lm_head(h, labels=labels, **lm_head_kwargs)
+                    lm_head_kwargs["labels"] = labels
+            return self.lm_head(h, **lm_head_kwargs)
         else:
             return h
 
