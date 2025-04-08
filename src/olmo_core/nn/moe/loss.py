@@ -72,5 +72,10 @@ def load_balancing_loss(
     return scale * loss
 
 
-def router_z_loss(*, expert_logits: torch.Tensor) -> torch.Tensor:
-    return torch.logsumexp(get_local_tensor(expert_logits), dim=-1).square().sum()
+def router_z_loss(
+    *, expert_logits: torch.Tensor, sp_mesh: Optional[dist.DeviceMesh] = None
+) -> torch.Tensor:
+    loss = torch.logsumexp(get_local_tensor(expert_logits), dim=-1).square().sum()
+    if sp_mesh is not None:
+        loss = DTensor.from_local(loss.unsqueeze(0), sp_mesh, (Shard(0),)).sum()
+    return loss
