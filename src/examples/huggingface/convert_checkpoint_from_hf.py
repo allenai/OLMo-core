@@ -80,6 +80,7 @@ def convert_checkpoint_from_hf(
     transformer_config_dict: Dict[str, Any],
     tokenizer_config_dict: Dict[str, Any],
     *,
+    revision: Optional[str] = None,
     model_id: str | None = None,
     max_sequence_length: int = -1,
     validate: bool = True,
@@ -124,6 +125,7 @@ def convert_checkpoint_from_hf(
         load_hf_model(
             hf_checkpoint_path,
             model_state_dict,
+            revision=revision,
             model_id=model_id,
             work_dir=work_dir,
             num_embeddings=model.vocab_size,
@@ -345,6 +347,10 @@ def parse_args():
         help="Max sequence length supported by the model.",
     )
     parser.add_argument(
+        "--revision",
+        help="Revision of the model to load from HF Hub. If not provided, the latest revision is used.",
+    )
+    parser.add_argument(
         "--model-id",
         help="Model id of the HF Hub repo corresponding to the model. Use to get model specific mappings in :mod:`olmo_core.nn.hf.convert`",
     )
@@ -393,6 +399,7 @@ def main():
         output_path=args.huggingface_output_dir,
         transformer_config_dict=transformer_config_dict,
         tokenizer_config_dict=tokenizer_config_dict,
+        revision=args.revision,
         model_id=args.model_id,
         max_sequence_length=args.max_sequence_length,
         validate=args.validate,

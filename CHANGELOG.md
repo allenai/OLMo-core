@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Also added lower-level methods for converting state between the formats.
 - Added the ability to run the evaluator callback on `.pre_train()` by setting `eval_on_startup=True`, and to cancel the run after the first time evals run by setting `cancel_after_first_eval=True`.
 - Added support for label mask files with numpy FSL datasets.
+- Added ability to convert specific revisions of huggingface models.
 
 ### Changed
 
