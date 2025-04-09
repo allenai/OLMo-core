@@ -181,7 +181,7 @@ class LcContTrain(Config):
             #     fused_ops=False,
                 use_flash=True,
                 rope_theta = 8 * 10 ** 6,
-
+            ),
             dataset=NumpyDatasetConfig.from_data_mix(
                 AnnealingDataMix.dolmino_prolong_50p,
                 tokenizer=tokenizer_config,
