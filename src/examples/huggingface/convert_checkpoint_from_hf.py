@@ -155,6 +155,7 @@ def convert_checkpoint_from_hf(
             hf_checkpoint_path,
             model,
             tokenizer_config.vocab_size,
+            revision=revision,
             model_id=model_id,
             debug=debug,
             device=device,
@@ -200,6 +201,7 @@ def validate_conversion(
     hf_path: str | Path,
     model: Transformer,
     vocab_size: int,
+    revision: str | None = None,
     model_id: str | None = None,
     debug: bool = False,
     device: torch.device | None = None,
@@ -213,7 +215,7 @@ def validate_conversion(
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
 
     log.info("Loading converted checkpoint for validation...")
-    hf_model = AutoModelForCausalLM.from_pretrained(hf_path).to(device).eval()
+    hf_model = AutoModelForCausalLM.from_pretrained(hf_path, revision=revision).to(device).eval()
 
     olmo_core_state, hf_state = {}, {}
     state_mapping = None
