@@ -6,11 +6,8 @@ import numpy as np
 import pytest
 import torch
 
-from olmo_core.nn.attention import Attention, AttentionConfig
-from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.mup import MuPConfig, MuPHyperParam, MuPScalingStrategy
 from olmo_core.nn.transformer.config import TransformerBlockType, TransformerConfig
-from olmo_core.nn.transformer.init import InitMethod
 from olmo_core.optim.adamw import AdamWConfig
 from olmo_core.optim.config import OptimGroupOverride
 
@@ -44,35 +41,96 @@ def get_transformer_inputs(vocab_size: int = 100) -> torch.Tensor:
     return torch.arange(0, vocab_size).unsqueeze(0)
 
 
-def assert_distributions_close(
-    base_tensor: torch.Tensor,
-    actual_tensor: torch.Tensor,
-    scale_factor: float = 1.0,
-    name: Optional[str] = None,
-    atol: float = 1e-3,
-    rtol: float = 1e-3,
-):
-    expected_mean = base_tensor.mean()
-    actual_mean = actual_tensor.mean() * scale_factor
-
-    torch.testing.assert_close(
-        expected_mean,
-        actual_mean,
-        atol=atol,
-        rtol=rtol,
-        msg=f"Expected mean value for {name} = {expected_mean}, actual = {actual_mean}",
+@pytest.mark.parametrize(
+    "mup_scaling_strategy, expected_multiplier",
+    [
+        pytest.param(MuPScalingStrategy.constant_inputs, None),
+        pytest.param(MuPScalingStrategy.constant_lr, 1 / (2**3 * 5)),
+        pytest.param(MuPScalingStrategy.constant_init_std, 1 / (2**3 * 5)),
+        pytest.param(MuPScalingStrategy.table_8, 1 / (2**3 * 5)),
+    ],
+)
+def test_mup_input_multiplier_scaling_input(mup_scaling_strategy, expected_multiplier):
+    mup_config = MuPConfig(
+        scaling_strategy=mup_scaling_strategy,
+        width_scalings={
+            MuPHyperParam.d_model: 2,
+            MuPHyperParam.hidden_size: 5,
+            MuPHyperParam.head_dim: 2,
+        },
     )
+    mup = mup_config.build({MuPHyperParam.d_model: 3, MuPHyperParam.hidden_size: 1}, {})
 
-    expected_std = base_tensor.std()
-    actual_std = actual_tensor.std() * scale_factor
+    torch.testing.assert_close(mup.input_multiplier, expected_multiplier)
 
-    torch.testing.assert_close(
-        expected_std,
-        actual_std,
-        atol=atol,
-        rtol=rtol,
-        msg=f"Expected std value for {name} = {expected_std}, actual = {actual_std}",
+
+@pytest.mark.parametrize(
+    "mup_scaling_strategy, expected_multiplier",
+    [
+        pytest.param(MuPScalingStrategy.constant_inputs, None),
+        pytest.param(MuPScalingStrategy.constant_lr, 1 / (2**3)),
+        pytest.param(MuPScalingStrategy.constant_init_std, 1 / (2 ** (3 / 2))),
+        pytest.param(MuPScalingStrategy.table_8, None),
+    ],
+)
+def test_mup_input_multiplier_scaling_input_and_output(mup_scaling_strategy, expected_multiplier):
+    mup_config = MuPConfig(
+        scaling_strategy=mup_scaling_strategy,
+        width_scalings={
+            MuPHyperParam.d_model: 2,
+            MuPHyperParam.hidden_size: 5,
+            MuPHyperParam.head_dim: 2,
+        },
     )
+    mup = mup_config.build({MuPHyperParam.d_model: 3}, {MuPHyperParam.hidden_size: 1})
+
+    torch.testing.assert_close(mup.input_multiplier, expected_multiplier)
+
+
+@pytest.mark.parametrize(
+    "mup_scaling_strategy, expected_multiplier",
+    [
+        pytest.param(MuPScalingStrategy.constant_inputs, 1 / (2**3 * 5)),
+        pytest.param(MuPScalingStrategy.constant_lr, None),
+        pytest.param(MuPScalingStrategy.constant_init_std, None),
+        pytest.param(MuPScalingStrategy.table_8, None),
+    ],
+)
+def test_mup_init_std_multiplier_scaling_input(mup_scaling_strategy, expected_multiplier):
+    mup_config = MuPConfig(
+        scaling_strategy=mup_scaling_strategy,
+        width_scalings={
+            MuPHyperParam.d_model: 2,
+            MuPHyperParam.hidden_size: 5,
+            MuPHyperParam.head_dim: 2,
+        },
+    )
+    mup = mup_config.build({MuPHyperParam.d_model: 3, MuPHyperParam.hidden_size: 1}, {})
+
+    torch.testing.assert_close(mup.init_std_multiplier, expected_multiplier)
+
+
+@pytest.mark.parametrize(
+    "mup_scaling_strategy, expected_multiplier",
+    [
+        pytest.param(MuPScalingStrategy.constant_inputs, 1 / (2 ** (3 / 2))),
+        pytest.param(MuPScalingStrategy.constant_lr, 2 ** (3 / 2)),
+        pytest.param(MuPScalingStrategy.constant_init_std, None),
+        pytest.param(MuPScalingStrategy.table_8, 1 / (2 ** (3 / 2))),
+    ],
+)
+def test_mup_init_std_multiplier_scaling_input_and_output(mup_scaling_strategy, expected_multiplier):
+    mup_config = MuPConfig(
+        scaling_strategy=mup_scaling_strategy,
+        width_scalings={
+            MuPHyperParam.d_model: 2,
+            MuPHyperParam.hidden_size: 5,
+            MuPHyperParam.head_dim: 2,
+        },
+    )
+    mup = mup_config.build({MuPHyperParam.d_model: 3}, {MuPHyperParam.hidden_size: 1})
+
+    torch.testing.assert_close(mup.init_std_multiplier, expected_multiplier)
 
 
 @pytest.mark.parametrize(
@@ -132,35 +190,11 @@ def test_mup_no_width_scaling_same_optim_groups(mup_scaling_strategy):
     torch.testing.assert_close(optim.param_groups, mup_optim.param_groups)
 
 
-@pytest.mark.parametrize(
-    "mup_scaling_strategy",
-    [pytest.param(scaling_strategy) for scaling_strategy in MuPScalingStrategy],
-)
-def test_mup_no_width_scaling_same_init(mup_scaling_strategy):
-    d_model_multiplier = 16
-    model_config = get_transformer_config(d_model_multiplier=d_model_multiplier)
-
-    mup_config = MuPConfig(scaling_strategy=mup_scaling_strategy)
-    mup_model_config = get_transformer_config(mup_config, d_model_multiplier=d_model_multiplier)
-
-    model = model_config.build()
-    mup_model = mup_model_config.build()
-
-    model.init_weights()
-    mup_model.init_weights()
-
-    model_params = dict(model.named_parameters())
-    mup_model_params = dict(mup_model.named_parameters())
-
-    for name, param in model_params.items():
-        assert_distributions_close(param, mup_model_params[name], name=name)
-
-
-def test_mup_no_output_scaling_same_output():
+def test_mup_no_input_scaling_same_output():
     model_config = get_transformer_config()
 
     mup_config = MuPConfig(
-        scaling_strategy=MuPScalingStrategy.constant_outputs,
+        scaling_strategy=MuPScalingStrategy.constant_inputs,
         width_scalings={MuPHyperParam.hidden_size: 2.0},
     )
     mup_model_config = get_transformer_config(mup_config)
@@ -177,33 +211,6 @@ def test_mup_no_output_scaling_same_output():
     mup_logits = mup_model(input_ids=input_ids)
 
     torch.testing.assert_close(logits, mup_logits)
-
-
-def test_mup_no_init_scaling_same_init():
-    d_model_multiplier = 16
-    model_config = get_transformer_config(d_model_multiplier=d_model_multiplier)
-
-    mup_config = MuPConfig(
-        scaling_strategy=MuPScalingStrategy.constant_init_std,
-        width_scalings={
-            MuPHyperParam.d_model: d_model_multiplier,
-            MuPHyperParam.head_dim: d_model_multiplier,
-            MuPHyperParam.hidden_size: d_model_multiplier,
-        },
-    )
-    mup_model_config = get_transformer_config(mup_config, d_model_multiplier=d_model_multiplier)
-
-    model = model_config.build()
-    mup_model = mup_model_config.build()
-
-    model.init_weights()
-    mup_model.init_weights()
-
-    model_params = dict(model.named_parameters())
-    mup_model_params = dict(mup_model.named_parameters())
-
-    for name, param in model_params.items():
-        assert_distributions_close(param, mup_model_params[name], name=name)
 
 
 def test_mup_no_lr_scaling_same_optim_groups():
@@ -240,85 +247,6 @@ def test_mup_no_lr_scaling_same_optim_groups():
     mup_optim: torch.optim.Optimizer = optim_config.build(mup_model)
 
     torch.testing.assert_close(optim.param_groups, mup_optim.param_groups)
-
-
-@pytest.mark.parametrize(
-    "mup_scaling_strategy",
-    [pytest.param(scaling_strategy) for scaling_strategy in MuPScalingStrategy],
-)
-def test_feed_forward_mup_scaling_init_std(mup_scaling_strategy):
-    d_model_multiplier = 16
-    d_model = 128 * d_model_multiplier
-    hidden_size = 64
-
-    feed_forward = FeedForwardConfig(hidden_size, bias=False).build(d_model)
-
-    mup_config = MuPConfig(
-        scaling_strategy=mup_scaling_strategy,
-        width_scalings={
-            MuPHyperParam.d_model: d_model_multiplier,
-            MuPHyperParam.hidden_size: 1.0,
-            MuPHyperParam.head_dim: d_model_multiplier,
-        },
-    )
-    mup_feed_forward = FeedForwardConfig(hidden_size, bias=False, mup=mup_config).build(d_model)
-
-    init = InitMethod.normal
-    init.init_feed_forward(feed_forward, d_model=d_model, block_idx=2, num_blocks=8)
-    init.init_feed_forward(mup_feed_forward, d_model=d_model, block_idx=2, num_blocks=8)
-
-    params = dict(feed_forward.named_parameters())
-    mup_params = dict(mup_feed_forward.named_parameters())
-
-    for name in ["w1.weight", "w2.weight", "w3.weight"]:
-        mup_init_std_multiplier = mup_feed_forward.mups[name].init_std_multiplier or 1.0
-        assert_distributions_close(
-            params[name],
-            mup_params[name],
-            scale_factor=1 / mup_init_std_multiplier,
-            name=name,
-            atol=1e-3,
-        )
-
-
-@pytest.mark.parametrize(
-    "mup_scaling_strategy",
-    [pytest.param(scaling_strategy) for scaling_strategy in MuPScalingStrategy],
-)
-def test_attention_mup_scaling_init_std(mup_scaling_strategy):
-    d_model_multiplier = 16
-    d_model = 128 * d_model_multiplier
-    n_heads = 32
-
-    attention = AttentionConfig(n_heads=n_heads, bias=False).build(d_model)
-
-    mup_config = MuPConfig(
-        scaling_strategy=mup_scaling_strategy,
-        width_scalings={
-            MuPHyperParam.d_model: d_model_multiplier,
-            MuPHyperParam.hidden_size: 1.0,
-            MuPHyperParam.head_dim: d_model_multiplier,
-        },
-    )
-    mup_attention = AttentionConfig(n_heads=n_heads, bias=False, mup=mup_config).build(d_model)
-    assert isinstance(mup_attention, Attention)
-
-    init = InitMethod.normal
-    init.init_attention(attention, d_model=d_model, block_idx=2, num_blocks=8)
-    init.init_attention(mup_attention, d_model=d_model, block_idx=2, num_blocks=8)
-
-    params = dict(attention.named_parameters())
-    mup_params = dict(mup_attention.named_parameters())
-
-    for name in ["w_q.weight", "w_k.weight", "w_v.weight", "w_out.weight"]:
-        mup_init_std_multiplier = mup_attention.mups[name].init_std_multiplier or 1.0
-        assert_distributions_close(
-            params[name],
-            mup_params[name],
-            scale_factor=1 / mup_init_std_multiplier,
-            name=name,
-            atol=1e-3,
-        )
 
 
 @pytest.mark.parametrize(
@@ -375,8 +303,9 @@ def test_mup_non_growing_coordinates(mup_scaling_strategy):
         fused=True,
     )
 
-    # Dict[activation_name, [activation_norm_for_different_multiplers]]
-    activation_norms: defaultdict[str, List[float]] = defaultdict(list)
+    #
+    # Dict[activation_name, [field_for_different_multiplers_and_seeds]]
+    coord_magnitudes: defaultdict[str, List[float]] = defaultdict(list)
     activation_shapes: defaultdict[str, List[tuple]] = defaultdict(list)
     for d_model_multiplier in D_MODEL_MULTIPLIERS:
         mup_config = MuPConfig(
@@ -416,38 +345,41 @@ def test_mup_non_growing_coordinates(mup_scaling_strategy):
                 loss.backward()
                 optim.step()
 
-            model_activation_shapes_and_norms: List[Tuple[str, tuple, float]] = []
+            activation_shapes_and_coord_magnitudes: List[Tuple[str, tuple, float]] = []
             for name, module in model.named_modules():
                 module.register_forward_hook(
-                    partial(collect_mean_coord_magnitude, model_activation_shapes_and_norms, name)
+                    partial(
+                        collect_mean_coord_magnitude,
+                        activation_shapes_and_coord_magnitudes,
+                        name,
+                    )
                 )
 
             model(torch.arange(0, BATCH_SIZE * SEQ_LEN).reshape(BATCH_SIZE, SEQ_LEN))
 
-            for name, shape, norm in model_activation_shapes_and_norms:
-                activation_norms[name].append(norm)
+            for name, shape, magnitude in activation_shapes_and_coord_magnitudes:
+                coord_magnitudes[name].append(magnitude)
                 activation_shapes[name].append(shape)
 
-    for name, norms in activation_norms.items():
-        norms = [np.mean(norms[i : i + SEEDS]) for i in range(0, len(norms), SEEDS)]
-        shapes = [activation_shapes[name][SEEDS * i] for i in range(len(norms))]
+    for name, magnitudes in coord_magnitudes.items():
+        magnitudes = [np.mean(magnitudes[i : i + SEEDS]) for i in range(0, len(magnitudes), SEEDS)]
+        shapes = [activation_shapes[name][SEEDS * i] for i in range(len(magnitudes))]
 
-        for i, norm in enumerate(norms):
+        for i, magnitude in enumerate(magnitudes):
             if i < BASE_MULTIPLIER_IDX:
-                ratio = norms[BASE_MULTIPLIER_IDX] / norm
+                ratio = magnitudes[BASE_MULTIPLIER_IDX] / magnitude
             else:
-                ratio = norm / norms[BASE_MULTIPLIER_IDX]
+                ratio = magnitude / magnitudes[BASE_MULTIPLIER_IDX]
 
-            print(name, shapes, norms)
             assert ratio <= GROWTH_THRESHOLD, (
                 f"Coordinate magnitudes for {name} grow too much with width. "
                 f"d_model multiplier {D_MODEL_MULTIPLIERS[i]}, "
                 f"base d_model multiplier {D_MODEL_MULTIPLIERS[BASE_MULTIPLIER_IDX]}, "
-                f"ratio {ratio}, norms {norms}, shapes {shapes}"
+                f"ratio {ratio}, magnitudes {magnitudes}, shapes {shapes}"
             )
             assert ratio >= DECAY_THRESHOLD, (
                 f"Coordinate magnitudes for {name} decay too much with width. "
                 f"d_model multiplier {D_MODEL_MULTIPLIERS[i]}, "
                 f"base d_model multiplier {D_MODEL_MULTIPLIERS[BASE_MULTIPLIER_IDX]}, "
-                f"ratio {ratio}, norms {norms}, shapes {shapes}"
+                f"ratio {ratio}, magnitudes {magnitudes}, shapes {shapes}"
             )

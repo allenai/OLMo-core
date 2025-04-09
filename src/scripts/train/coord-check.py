@@ -47,7 +47,7 @@ def build_model_config(
         fused_ops=False,
         use_flash=False,
         mup=MuPConfig(
-            scaling_strategy=MuPScalingStrategy.constant_outputs,
+            scaling_strategy=MuPScalingStrategy.constant_inputs,
             width_scalings={
                 MuPHyperParam.d_model: D_MODEL_MULTIPLIER,
                 MuPHyperParam.hidden_size: D_MODEL_MULTIPLIER,

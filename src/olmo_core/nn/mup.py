@@ -71,11 +71,15 @@ class MuPScalingStrategy(StrEnum):
     direction an appropriate amount. This permits having different scalings.
     """
 
-    constant_outputs = "constant_outputs"
+    constant_inputs = "constant_inputs"
     """
-    muP chooses scaling constants such that outputs are not scaled. This strategy means that the model
+    muP chooses scaling constants such that inputs/outputs are not scaled. This strategy means that the model
     submodules produces the same overall outputs with and without muP, with the exception of attention
-    (which has its own scaling). 
+    (which has its own scaling).
+    
+    This strategy corresponds to Table 3 of the muP paper. This strategy is NOT compatible with weight-tying,
+    since parameters with scaling outputs have different initialization standard to those with scaling
+    inputs.
     """
 
     constant_lr = "constant_lr"
@@ -90,7 +94,7 @@ class MuPScalingStrategy(StrEnum):
 
     table_8 = "table_8"
     """
-    The muP settings from Table 8 of the muP paper
+    The muP settings from Table 8 of the muP paper.
     """
 
 
@@ -100,7 +104,7 @@ class MuPConfig(Config):
     Defines how to scale the initialization and outputs of bigger/smaller models using muP.
     """
 
-    scaling_strategy: MuPScalingStrategy = MuPScalingStrategy.constant_outputs
+    scaling_strategy: MuPScalingStrategy = MuPScalingStrategy.constant_inputs
     width_scalings: Dict[MuPHyperParam, float] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -169,7 +173,7 @@ class MuP:
 
     input_scaling: float
     output_scaling: float
-    scaling_strategy: MuPScalingStrategy = MuPScalingStrategy.constant_outputs
+    scaling_strategy: MuPScalingStrategy = MuPScalingStrategy.constant_inputs
 
     @cached_property
     def _scaling_type(self) -> MuPParamScalingType:
@@ -190,14 +194,14 @@ class MuP:
         scaling_type = self._scaling_type
 
         input_multiplier_map: Dict[MuPScalingStrategy, Dict[MuPParamScalingType, float]] = {
-            MuPScalingStrategy.constant_outputs: {},
-            MuPScalingStrategy.constant_init_std: {
-                MuPParamScalingType.scaling_input: 1 / self.input_scaling,
-                MuPParamScalingType.scaling_input_output: 1 / math.sqrt(self.input_scaling),
-            },
+            MuPScalingStrategy.constant_inputs: {},
             MuPScalingStrategy.constant_lr: {
                 MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
                 MuPParamScalingType.scaling_input_output: 1.0 / self.input_scaling,
+            },
+            MuPScalingStrategy.constant_init_std: {
+                MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
+                MuPParamScalingType.scaling_input_output: 1.0 / math.sqrt(self.input_scaling),
             },
             MuPScalingStrategy.table_8: {
                 MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
@@ -214,16 +218,16 @@ class MuP:
         scaling_type = self._scaling_type
 
         init_std_multiplier_map: Dict[MuPScalingStrategy, Dict[MuPParamScalingType, float]] = {
-            MuPScalingStrategy.constant_outputs: {
-                MuPParamScalingType.scaling_input: 1 / self.input_scaling,
-                MuPParamScalingType.scaling_input_output: 1 / math.sqrt(self.input_scaling),
+            MuPScalingStrategy.constant_inputs: {
+                MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
+                MuPParamScalingType.scaling_input_output: 1.0 / math.sqrt(self.input_scaling),
             },
-            MuPScalingStrategy.constant_init_std: {},
             MuPScalingStrategy.constant_lr: {
                 MuPParamScalingType.scaling_input_output: math.sqrt(self.input_scaling),
             },
+            MuPScalingStrategy.constant_init_std: {},
             MuPScalingStrategy.table_8: {
-                MuPParamScalingType.scaling_input_output: 1 / math.sqrt(self.input_scaling),
+                MuPParamScalingType.scaling_input_output: 1.0 / math.sqrt(self.input_scaling),
             },
         }
 
@@ -237,16 +241,16 @@ class MuP:
         scaling_type = self._scaling_type
 
         lr_multiplier_map: Dict[MuPScalingStrategy, Dict[MuPParamScalingType, float]] = {
-            MuPScalingStrategy.constant_outputs: {
+            MuPScalingStrategy.constant_inputs: {
                 MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
                 MuPParamScalingType.scaling_input_output: 1.0 / self.input_scaling,
             },
+            MuPScalingStrategy.constant_lr: {},
             MuPScalingStrategy.constant_init_std: {
                 MuPParamScalingType.scaling_input_output: 1.0 / math.sqrt(self.input_scaling),
             },
-            MuPScalingStrategy.constant_lr: {},
             MuPScalingStrategy.table_8: {
-                MuPParamScalingType.scaling_input_output: 1 / self.input_scaling,
+                MuPParamScalingType.scaling_input_output: 1.0 / self.input_scaling,
             },
         }
 
