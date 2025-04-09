@@ -31,7 +31,7 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
 )
 from olmo_core.optim import (
-    LinearWithWarmup
+    LinearWithWarmup,
     OptimConfig,
     OptimGroupOverride,
     AdamWConfig,
