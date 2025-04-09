@@ -3,14 +3,14 @@ from typing import Type, Union
 
 import numpy as np
 
-from olmo_core.data import NumpyDatasetBase, NumpyDatasetConfig, TokenizerConfig
+from olmo_core.data import NumpyFSLDatasetMixture, TokenizerConfig
 from olmo_core.data.source_mixture import (
     SourceMixtureConfig,
     SourceMixtureDatasetConfig,
 )
 from olmo_core.data.types import NumpyDatasetDType
 
-from ..utils import mk_mmaps
+from ..utils import mk_mmaps, Mmaps
 
 
 def get_fsl_mixture(
@@ -20,7 +20,9 @@ def get_fsl_mixture(
     sequence_length: int = 4,
     num_tokens: int = 20 * 1000,
     eos: int = 0,
-) -> NumpyDatasetBase:
+    vocab_size: int = 32_000,
+    pad_token_id: int = -1,
+) -> NumpyFSLDatasetMixture:
     seed = 42
     mmap1 = mk_mmaps(
         tmp_path, "mmap1", 1, num_tokens * 2, dtype, eos=eos, seed=seed, seq_length=sequence_length
@@ -30,12 +32,13 @@ def get_fsl_mixture(
     )
 
     tokenizer = TokenizerConfig(
-        vocab_size=32_000,
+        vocab_size=vocab_size,
         eos_token_id=eos,
-        pad_token_id=-1,
+        pad_token_id=pad_token_id,
     )
 
     mixture_config = SourceMixtureDatasetConfig(
+        render_tables=False,
         max_tokens=num_tokens,
         sequence_length=sequence_length,
         source_configs=[
@@ -55,12 +58,17 @@ def get_fsl_mixture(
         seed=seed,
     )
 
-    ds = NumpyDatasetConfig(
-        source_mixture_config=mixture_config,
+    mixture = mixture_config.build()
+    return NumpyFSLDatasetMixture(
+        *mixture.to_paths(),
+        seed=mixture.seed,
         sequence_length=sequence_length,
-        tokenizer=tokenizer,
-        include_instance_metadata=False,
-    ).build()
-    ds.prepare()
-
-    return ds
+        pad_token_id=tokenizer.pad_token_id,
+        eos_token_id=tokenizer.eos_token_id,
+        vocab_size=tokenizer.vocab_size,
+        dtype=dtype,
+        metadata=None,
+        include_instance_metadata=None,
+        generate_doc_lengths=False,
+        path_offset_index=mixture.to_index(),
+    )
