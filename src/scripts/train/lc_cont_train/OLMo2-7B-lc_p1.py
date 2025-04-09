@@ -68,7 +68,7 @@ from olmo_core.utils import get_default_device, prepare_cli_environment, seed_al
 # TODO: pull this from the checkpoint when https://github.com/allenai/OLMo-core/pull/143 merges.
 
 
-CONTEXT_LENGTH = 4 * 16384
+CONTEXT_LENGTH = 1 * 16384
 
 
 class AnnealingDataMix(DataMixBase):
@@ -173,14 +173,14 @@ class LcContTrain(Config):
                 ac_config=TransformerActivationCheckpointingConfig(),
                 float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
                 max_grad_norm=1.0,
-                scheduler=CosWithWarmup(warmup_steps=475, alpha_f=0.0),
+                scheduler=CosWithWarmup(warmup_steps=475, alpha_f=0.1),
             ),
             model=TransformerConfig.olmo2_7B(
                 vocab_size=tokenizer_config.padded_vocab_size(),
                 # compile=True,
             #     fused_ops=False,
                 use_flash=True,
-                rope_theta = 12 * 10 ** 6,
+                rope_theta = 2  * 10 ** 6,
             #     dp_config=TransformerDataParallelConfig(
             #         name=DataParallelType.fsdp,
             #         param_dtype=DType.bfloat16,
