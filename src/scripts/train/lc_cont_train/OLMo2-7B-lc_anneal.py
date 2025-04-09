@@ -148,7 +148,7 @@ class LcContTrain(Config):
             train_module = TransformerTrainModuleConfig(
                 rank_microbatch_size=1 * CONTEXT_LENGTH,
                  optim=AdamWConfig(
-                    lr= 0.00041414,
+                    lr= 0.000061499,
                     weight_decay=0.1,
                     betas=(0.9, 0.95),
                     group_overrides=[
