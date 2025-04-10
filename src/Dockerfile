@@ -45,7 +45,7 @@ RUN chmod +x ~/miniconda.sh && \
 ARG CUDA_PATH
 ARG TORCH_VERSION=2.6.0
 ARG INSTALL_CHANNEL=whl/test
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_PATH}/ torch=={TORCH_VERSION} torchao torchvision torchaudio
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_PATH}/ torch==${TORCH_VERSION} torchao torchvision torchaudio
 
 # Install grouped-gemm.
 # NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
