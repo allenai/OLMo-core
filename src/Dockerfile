@@ -43,7 +43,7 @@ RUN chmod +x ~/miniconda.sh && \
 
 # Install PyTorch core ecosystem.
 ARG CUDA_PATH
-ARG TORCH_VERSION=2.6.0
+ARG TORCH_VERSION=2.7.0
 ARG INSTALL_CHANNEL=whl/test
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_PATH}/ torch==${TORCH_VERSION} torchao torchvision torchaudio
 

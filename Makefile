@@ -42,7 +42,7 @@ build :
 CUDA_VERSION = 12.6.3
 CUDA_PATH=cu$(shell echo $(CUDA_VERSION) | cut -d"." -f1-2 | tr -d .)
 PYTHON_VERSION = 3.11
-TORCH_VERSION = 2.6.0
+TORCH_VERSION = 2.7.0
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
 INSTALL_CHANNEL = whl/test
 GROUPED_GEMM_VERSION = "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
