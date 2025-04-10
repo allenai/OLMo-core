@@ -49,7 +49,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
-        scheduler=CosWithWarmup(warmup_steps=2000, t_max=int(5e12 / GLOBAL_BATCH_SIZE)),
+        scheduler=CosWithWarmup(warmup_steps=2000),
     )
 
 
