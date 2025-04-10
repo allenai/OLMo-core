@@ -173,8 +173,6 @@ class ModelLadder(Config, metaclass=ABCMeta):
     Get the tokenizer config to use throughput the ladder.
     """
 
-    # init_seed: int = 2352
-    # init_seed: int = 4932
     init_seed: int = 9258
     """
     The seed to use when first initializing RNG states.
