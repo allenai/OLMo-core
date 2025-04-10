@@ -18,7 +18,12 @@ from olmo_core.distributed.parallel import (
 )
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.nn.feed_forward import FeedForwardConfig
-from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
+from olmo_core.nn.moe import (
+    MoEConfig,
+    MoELoadBalancingLossGranularity,
+    MoERouterConfig,
+    MoEType,
+)
 from olmo_core.utils import get_default_device, seed_all
 
 from ...distributed.utils import requires_multi_gpu, run_distributed_test
@@ -63,16 +68,15 @@ def test_moe(moe_type: MoEType, shared: bool, dtype: torch.dtype):
     assert torch.isfinite(output).all()
     assert (output > 0).any()
 
-    losses = moe.compute_losses(B * S)
-    lb_loss = losses["load balancing loss"]
+    # Check auxiliary losses.
+    metrics = moe.compute_metrics()
+    lb_loss, _ = metrics["load balancing loss"]
     assert math.isfinite(lb_loss.item())
-
-    z_loss = losses["router Z loss"]
+    z_loss, _ = metrics["router Z loss"]
     assert math.isfinite(z_loss.item())
-    loss = lb_loss + z_loss
 
-    # Run backward pass.
-    loss.backward()
+    # Trigger backwards pass.
+    output.sum().backward()
     assert x.grad is not None
 
 
@@ -125,36 +129,44 @@ def run_moe_with_expert_parallelism(
     assert output.shape == batch.shape
     torch.testing.assert_close(output, expected_output)
 
-    losses = moe.compute_losses(batch.shape[0] * batch.shape[1])
+    metrics = moe.compute_metrics()
 
     # Check load balancing loss.
-    lb_loss = losses["load balancing loss"]
+    lb_loss, _ = metrics["load balancing loss"]
     assert math.isfinite(lb_loss.item())
-
-    # NOTE: This particular load-balancing loss may differ in distributed case, or even with
-    # gradient accumulation due to ``batch_size_per_expert`` being the local.
-    #  total_lb_loss = lb_loss.detach() / dist.get_world_size()
-    #  dist.all_reduce(total_lb_loss)
-    #  torch.testing.assert_close(total_lb_loss, expected_lb_loss.to(total_lb_loss.device))
-    del expected_lb_loss
+    if config.lb_loss_granularity != MoELoadBalancingLossGranularity.local_batch:
+        total_lb_loss = lb_loss.detach() / dist.get_world_size()
+        dist.all_reduce(total_lb_loss)
+        torch.testing.assert_close(total_lb_loss, expected_lb_loss.to(total_lb_loss.device))
 
     # Check Z loss.
-    z_loss = losses["router Z loss"]
+    z_loss, _ = metrics["router Z loss"]
     assert math.isfinite(z_loss.item())
     total_z_loss = z_loss.detach() / dist.get_world_size()
     dist.all_reduce(total_z_loss)
     torch.testing.assert_close(total_z_loss, expected_z_loss.to(total_z_loss.device))
 
     # Run backward pass.
-    loss = lb_loss + z_loss
-    loss.backward()
+    output.sum().backward()
     assert batch.grad is not None
 
 
 @requires_multi_gpu
 @pytest.mark.parametrize("moe_type", [MoEType.dropless, MoEType.default])
 @pytest.mark.parametrize("dtype", [pytest.param(torch.bfloat16, id="BF16")])
-def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: torch.dtype):
+@pytest.mark.parametrize(
+    "lb_granularity",
+    [
+        pytest.param(MoELoadBalancingLossGranularity.local_batch, id="local-batch-LB"),
+        pytest.param(MoELoadBalancingLossGranularity.instance, id="instance-LB"),
+    ],
+)
+def test_moe_with_expert_parallelism(
+    tmp_path: Path,
+    moe_type: MoEType,
+    dtype: torch.dtype,
+    lb_granularity: MoELoadBalancingLossGranularity,
+):
     """
     Test that we get the same result when we run an MoE on a single device as we do when
     we run it across multiple devices with expert parallelism.
@@ -174,6 +186,7 @@ def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: t
             == MoEType.default,  # EP results may be different otherwise
             dtype=DType.from_pt(dtype),
         ),
+        lb_loss_granularity=lb_granularity,
         z_loss_weight=0.1,
         dtype=DType.from_pt(dtype),
     )
@@ -192,16 +205,15 @@ def test_moe_with_expert_parallelism(tmp_path: Path, moe_type: MoEType, dtype: t
     assert (output > 0).any()
 
     # Get losses.
-    losses = moe.compute_losses(B * S)
-    lb_loss = losses["load balancing loss"]
+    metrics = moe.compute_metrics()
+    lb_loss, _ = metrics["load balancing loss"]
     assert math.isfinite(lb_loss.item())
 
-    z_loss = losses["router Z loss"]
+    z_loss, _ = metrics["router Z loss"]
     assert math.isfinite(z_loss.item())
-    loss = lb_loss + z_loss
 
     # Run backward pass.
-    loss.backward()
+    output.sum().backward()
     assert batch.grad is not None
 
     run_distributed_test(

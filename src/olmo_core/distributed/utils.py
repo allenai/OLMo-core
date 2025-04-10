@@ -488,6 +488,13 @@ class _HiddenTensor:
     def __init__(self, x: torch.Tensor):
         self.x = x
 
+    @property
+    def device(self) -> torch.device:
+        return self.x.device
+
+    def to(self, *args, **kwargs) -> "_HiddenTensor":
+        return _HiddenTensor(self.x.to(*args, **kwargs))
+
 
 def hide_from_torch(x: torch.Tensor) -> _HiddenTensor:
     return _HiddenTensor(x)

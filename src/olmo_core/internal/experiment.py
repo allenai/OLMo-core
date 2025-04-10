@@ -271,10 +271,10 @@ def build_config(
         trainer=trainer,
     )
 
+    config = config.merge(overrides)
+
     if finalize_config is not None:
         finalize_config(config)
-
-    config = config.merge(overrides)
 
     return config
 

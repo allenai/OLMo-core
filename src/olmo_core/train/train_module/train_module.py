@@ -17,7 +17,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.functional.cross_entropy_loss import cross_entropy_loss
 from olmo_core.utils import move_to_device
 
-from ..common import ReduceType, get_inputs_for_loss
+from ..common import MetricMergeStrategy, ReduceType, get_inputs_for_loss
 
 if TYPE_CHECKING:
     from ..trainer import Trainer
@@ -190,6 +190,7 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         value: Union[float, torch.Tensor],
         reduce_type: Optional[ReduceType] = None,
         namespace: Optional[str] = None,
+        merge_strategy: MetricMergeStrategy = MetricMergeStrategy.warn,
     ):
         """
         Record a metric. This is simply a convenience method that calls out to
@@ -198,7 +199,9 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         .. seealso::
             Use :meth:`record_ce_loss()` to record the cross-entropy loss, specifically.
         """
-        return self.trainer.record_metric(name, value, reduce_type=reduce_type, namespace=namespace)
+        return self.trainer.record_metric(
+            name, value, reduce_type=reduce_type, namespace=namespace, merge_strategy=merge_strategy
+        )
 
     def record_ce_loss(
         self, value: Union[float, torch.Tensor], reduce_type: Optional[ReduceType] = None
