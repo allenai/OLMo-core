@@ -306,7 +306,9 @@ def convert_checkpoint_from_old_olmo(
     log.info(f"Loading OLMo optim state from '{old_olmo_checkpoint_path}'")
     optim_state_dict = torch.load(f"{old_olmo_checkpoint_path}/optim.pt")
     optim_state_dict = _convert_optim_state(optim_state_dict, converter, placeholder_bounds)
+    # We unset fixed fields because we don't have any field we want to fix!
     optim: torch.optim.Optimizer = AdamWConfig(
+        fixed_fields=tuple(),
         group_overrides=[
             OptimGroupOverride(params=param_group["param_names"], opts={
                 k: v
@@ -328,6 +330,7 @@ def convert_checkpoint_from_old_olmo(
             old_olmo_checkpoint_path,
             model,
             tokenizer_config.vocab_size,
+            optim=optim,
             model_id=model_id,
             debug=debug,
             device=device,
@@ -369,10 +372,51 @@ def _register_debug_hooks(old_olmo_model: torch.nn.Module, model: Transformer):
     return olmo_core_debug_state, old_olmo_debug_state
 
 
+def _compare_debug_state(expected_state: Dict[str, Tuple[int, torch.Tensor]], actual_state: Dict[str, Tuple[int, torch.Tensor]], state_mapping: List[StateMapping]):
+    assert state_mapping is not None
+
+    simple_key_mapping = {
+        mapping.source_keys[0]
+        .replace(".weight", ""): mapping.dest_keys[0]
+        .replace(".weight", "")
+        for mapping in state_mapping
+        if len(mapping.source_keys) == 1
+        and len(mapping.dest_keys) == 1
+        and mapping.source_keys[0].endswith(".weight")
+        and mapping.dest_keys[0].endswith(".weight")
+    }
+
+    log.info(f"mapping: {simple_key_mapping}")
+    log.info(f"expected_state keys: {expected_state.keys()}")
+    log.info(f"actual_state keys: {actual_state.keys()}")
+
+    for orig_name, (_, expected_tensor) in sorted(expected_state.items(), key=lambda item: item[1][0]):
+        orig_key, state_type = orig_name.split("|")
+        if orig_key not in simple_key_mapping:
+            continue
+
+        converted_name = f"{simple_key_mapping[orig_key]}|{state_type}"
+        if converted_name not in actual_state:
+            continue
+
+        _, actual_tensor = actual_state[converted_name]
+
+        if actual_tensor.shape != expected_tensor.shape:
+            log.info(
+                f"{orig_name}, {converted_name} shape mismatch: {expected_tensor.shape} {actual_tensor.shape}"
+            )
+        else:
+            log.info(
+                f"{orig_name}, {converted_name} norm diff: {torch.norm(actual_tensor - expected_tensor)}"
+            )
+
+
+
 def validate_conversion(
     old_olmo_path: str | Path,
     model: Transformer,
     vocab_size: int,
+    optim: torch.optim.Optimizer | None = None,
     model_id: str | None = None,
     debug: bool = False,
     device: torch.device | None = None,
@@ -408,51 +452,51 @@ def validate_conversion(
     with torch.no_grad():
         old_olmo_logits = old_olmo_model(input_ids=input_ids).logits
 
-    del old_olmo_model
-
     model = model.to(device).eval()
     with torch.no_grad():
         logits = model(input_ids=input_ids)
 
     if debug:
         assert state_mapping is not None
-
-        simple_key_mapping = {
-            mapping.source_keys[0]
-            .replace(".weight", ""): mapping.dest_keys[0]
-            .replace(".weight", "")
-            for mapping in state_mapping
-            if len(mapping.source_keys) == 1
-            and len(mapping.dest_keys) == 1
-            and mapping.source_keys[0].endswith(".weight")
-            and mapping.dest_keys[0].endswith(".weight")
-        }
-
-        log.info(f"mapping: {simple_key_mapping}")
-        log.info(f"old_olmo keys: {old_olmo_state.keys()}")
-        log.info(f"olmo_core_state keys: {olmo_core_state.keys()}")
-
-        for old_olmo_name, (_, old_olmo_tensor) in sorted(old_olmo_state.items(), key=lambda item: item[1][0]):
-            hf_key, state_type = old_olmo_name.split("|")
-            if hf_key not in simple_key_mapping:
-                continue
-
-            olmo_core_state_name = f"{simple_key_mapping[hf_key]}|{state_type}"
-            if olmo_core_state_name not in olmo_core_state:
-                continue
-
-            _, olmo_core_tensor = olmo_core_state[olmo_core_state_name]
-
-            if olmo_core_tensor.shape != old_olmo_tensor.shape:
-                log.info(
-                    f"{old_olmo_name}, {olmo_core_state_name} shape mismatch: {old_olmo_tensor.shape} {olmo_core_tensor.shape}"
-                )
-            else:
-                log.info(
-                    f"{old_olmo_name}, {olmo_core_state_name} norm diff: {torch.norm(olmo_core_tensor - old_olmo_tensor)}"
-                )
+        _compare_debug_state(old_olmo_state, olmo_core_state, state_mapping)
+        old_olmo_state.clear()
+        olmo_core_state.clear()
 
     torch.testing.assert_close(old_olmo_logits[..., :vocab_size], logits[..., :vocab_size])
+
+    if optim:
+        log.info("Loading OLMo optimizer for validation...")
+        optim_state_dict = torch.load(f"{old_olmo_path}/optim.pt")
+        old_olmo_optim = torch.optim.AdamW(old_olmo_model.parameters())
+        old_olmo_optim.load_state_dict(optim_state_dict)
+
+        labels = input_ids[...,:-1]
+
+        log.info("Running optimizer step of OLMo core and old OLMo models for validation...")
+        old_olmo_loss = torch.nn.functional.cross_entropy(old_olmo_logits, labels)
+        old_olmo_loss.backward()
+        old_olmo_optim.step()
+
+        loss = torch.nn.functional.cross_entropy(logits, labels)
+        loss.backward()
+        optim.step()
+
+        log.info("Running 2nd step of OLMo core and old OLMo models for validation...")
+
+        with torch.no_grad():
+            old_olmo_logits = old_olmo_model(input_ids=input_ids).logits
+
+        model = model.to(device).eval()
+        with torch.no_grad():
+            logits = model(input_ids=input_ids)
+
+        if debug:
+            assert state_mapping is not None
+            _compare_debug_state(old_olmo_state, olmo_core_state, state_mapping)
+            old_olmo_state.clear()
+            olmo_core_state.clear()
+
+            torch.testing.assert_close(old_olmo_logits[..., :vocab_size], logits[..., :vocab_size])
 
 
 def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
