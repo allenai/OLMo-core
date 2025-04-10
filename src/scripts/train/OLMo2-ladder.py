@@ -29,7 +29,7 @@ class BaselineModelLadder(ModelLadder):
         ModelSize.size_600M: 16 * 4096,
         ModelSize.size_760M: 16 * 4096,
         # ===============================
-        ModelSize.size_1B: 2 * 8 * 4096,
+        ModelSize.size_1B: 4 * 3 * 4096, # 2 * 8 # overrideen so BZ works with 16 GPU on GBZ 1572864
         ModelSize.size_3B: 4 * 4096,
         ModelSize.size_7B: 2 * 4096,
         ModelSize.size_13B: 1 * 4096,
