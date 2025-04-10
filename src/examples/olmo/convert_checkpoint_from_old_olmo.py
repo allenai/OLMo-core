@@ -163,6 +163,7 @@ def _build_converted_optim_state(
     converted_tensor_state_by_name: Dict[str, Dict[str, torch.Tensor]],
 ):
     converted_optim_state_dict: Dict[str, Any] = {
+        "param_groups": [],
         "state": [],
     }
     # {param_idx: {substate_name: substate}}
