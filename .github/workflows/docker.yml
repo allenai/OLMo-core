@@ -34,10 +34,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cuda: ["12.4", "12.6"]
-        target: ["stable", "nightly", "stable-dev", "nightly-dev"]
+        cuda: ["12.6.3", "12.8.1"]  # NOTE: check tags for options: https://hub.docker.com/r/nvidia/cuda/tags
+        torch:
+          version: 2.7.0
+          channel: whl/test
     steps:
       - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set env vars
+        run: |
+          echo "BEAKER_WORKSPACE=$(make get-beaker-workspace)" >> $GITHUB_ENV
 
       - name: Authenticate with Beaker
         uses: allenai/setup-beaker@v2
@@ -51,27 +62,27 @@ jobs:
         run: |
           echo ${{ env.DOCKER_HUB_TOKEN }} | docker login -u ${{ env.DOCKER_HUB_USER }} --password-stdin
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Set env vars
-        run: |
-          echo "BEAKER_WORKSPACE=$(make get-beaker-workspace)" >> $GITHUB_ENV
-          #rm -rf /opt/hostedtoolcache  # clear up some disk space
-
       - name: Build image
         run: |
-          make ${{ matrix.target }}-image CUDA_VERSION=${{ matrix.cuda }}
+          #rm -rf /opt/hostedtoolcache  # clear up some disk space
+          make docker-image \
+            CUDA_VERSION=${{ matrix.cuda }} \
+            TORCH_VERSION=${{ matrix.torch.version }} \
+            INSTALL_CHANNEL=${{ matrix.torch.channel }}
 
       - name: Push to GHCR
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          make ghcr-image-${{ matrix.target }} CUDA_VERSION=${{ matrix.cuda }}
+          make ghcr-image \
+            CUDA_VERSION=${{ matrix.cuda }} \
+            TORCH_VERSION=${{ matrix.torch.version }} \
+            INSTALL_CHANNEL=${{ matrix.torch.channel }}
 
       - name: Push to Beaker
         if: env.BEAKER_TOKEN != '' && startsWith(github.ref, 'refs/tags/')
         run: |
-          make beaker-image-${{ matrix.target }} CUDA_VERSION=${{ matrix.cuda }}
+          make beaker-image \
+            CUDA_VERSION=${{ matrix.cuda }} \
+            TORCH_VERSION=${{ matrix.torch.version }} \
+            INSTALL_CHANNEL=${{ matrix.torch.channel }}

@@ -45,7 +45,8 @@ RUN chmod +x ~/miniconda.sh && \
 ARG CUDA_VERSION_PATH
 ARG TORCH_VERSION=2.7.0
 ARG INSTALL_CHANNEL=whl/test
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ torch==${TORCH_VERSION} torchao torchvision torchaudio
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
+    torch==${TORCH_VERSION} torchao torchvision torchaudio
 
 ENV TORCH_CUDA_ARCH_LIST="8.0 9.0"
 
