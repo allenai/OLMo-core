@@ -147,6 +147,9 @@ def _convert_optim_tensor_state(
         )
 
         for name, converted_substate in converted_optim_substate_by_name.items():
+            if name not in converted_optim_state_by_name:
+                converted_optim_state_by_name[name] = {}
+
             converted_optim_state_by_name[name][substate_name] = converted_substate
 
     return converted_optim_state_by_name
