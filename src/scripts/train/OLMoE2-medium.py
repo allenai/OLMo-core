@@ -146,9 +146,7 @@ if __name__ == "__main__":
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         include_default_evals=False,
-        # nightly needed right now for FP8 to work with PP
-        # https://github.com/pytorch/pytorch/issues/143194
-        beaker_image=OLMoCoreBeakerImage.nightly_cu126,
+        beaker_image=OLMoCoreBeakerImage.stable_cu126,
         num_nodes=4,
         finalize_config=finalize_config,
     )
