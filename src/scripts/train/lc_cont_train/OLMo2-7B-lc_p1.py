@@ -68,7 +68,7 @@ from olmo_core.utils import get_default_device, prepare_cli_environment, seed_al
 # TODO: pull this from the checkpoint when https://github.com/allenai/OLMo-core/pull/143 merges.
 
 
-CONTEXT_LENGTH = 1 * 16384
+CONTEXT_LENGTH = 4 * 16384
 
 
 class AnnealingDataMix(DataMixBase):
@@ -173,7 +173,7 @@ class LcContTrain(Config):
                 ac_config=TransformerActivationCheckpointingConfig(),
                 float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
                 max_grad_norm=1.0,
-                scheduler=CosWithWarmup(warmup_steps=475, alpha_f=0.1),
+                scheduler=CosWithWarmup(warmup_steps=475, alpha_f=0.0),
             ),
             model=TransformerConfig.olmo2_7B(
                 vocab_size=tokenizer_config.padded_vocab_size(),
@@ -405,7 +405,8 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         run_name=run_name,
         # load_path="/weka/oe-training-default/ai2-llm/checkpoints/dustins/OLMo-2-1124-7B-SFT/",
         # load_path="gs://ai2-llm/checkpoints/dustins/OLMo-2-1124-7B-Instruct/model_and_optim/",
-        load_path="gs://ai2-llm/checkpoints/dustins/OLMo-2-1124-7B/",
+        # load_path="gs://ai2-llm/checkpoints/dustins/OLMo-2-1124-7B/",
+        load_path="gs://ai2-llm/checkpoints/dustins/lc_7b_pl_p0p5_repl_mix_contig_idm/step19074/",
         cluster=cluster,
         overrides=overrides,
     )
