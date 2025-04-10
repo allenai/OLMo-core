@@ -175,7 +175,7 @@ def _build_converted_optim_state(
 
     for idx in sorted(idx_to_clean_name.keys()):
         param_group_idx = idx_to_param_group_idx[idx]
-        old_param_group: Dict[str, Any] = optim_state_dict["param_groups"][idx]
+        old_param_group: Dict[str, Any] = optim_state_dict["param_groups"][param_group_idx]
 
         converted_param_groups: List[Dict[str, Any]] = converted_optim_state_dict["param_groups"]
         if param_group_idx < len(converted_param_groups):
