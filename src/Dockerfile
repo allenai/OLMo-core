@@ -25,7 +25,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         libjpeg-dev \
         libpng-dev \
         gcc \
-        git ** \
+        git && \
     rm -rf /var/lib/apt/lists/*
 
 # Install miniconda, Python, and Python build dependencies.
