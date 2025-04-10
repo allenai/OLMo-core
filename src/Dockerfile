@@ -55,17 +55,18 @@ ENV GROUPED_GEMM_CUTLASS="1"
 ARG GROUPED_GEMM_VERSION="grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
 RUN pip install --no-build-isolation --no-cache-dir "${GROUPED_GEMM_VERSION}"
 
-# Install flash-attn.
-ARG FLASH_ATTN_VERSION="v2.7.4.post1"
-RUN pip install --no-build-isolation --no-cache-dir "${FLASH_ATTN_VERSION}"
 # Install direct dependencies, but not source code.
+ARG FLASH_ATTN_VERSION=2.7.4.post1
 ARG RING_FLASH_ATTN_VERSION=0.1.4
 ARG LIGER_KERNEL_VERSION=0.5.4
+RUN pip install --no-build-isolation --no-cache-dir \
+    flash-attn==${FLASH_ATTN_VERSION} \
+    ring-flash-attn==${RING_FLASH_ATTN_VERSION} \
+    liger-kernel==${LIGER_KERNEL_VERSION}
 COPY pyproject.toml .
 COPY src/olmo_core/__init__.py src/olmo_core/__init__.py
 COPY src/olmo_core/version.py src/olmo_core/version.py
 RUN pip install --no-cache-dir '.[all]' && \
-    pip install --no-cache-dir ring-flash-attn==${RING_FLASH_ATTN_VERSION} liger-kernel==${LIGER_KERNEL_VERSION} transformers && \
     pip uninstall -y ai2-olmo-core && \
     rm -rf *
 
