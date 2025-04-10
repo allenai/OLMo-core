@@ -48,8 +48,8 @@ __all__ = [
 
 BeakerPriority = Priority
 
-_DEFAULT_TORCH = "2.6.0".replace(".", "")
-_DEFAULT_TORCH_NIGHTLY = "2.7.0.dev20250202".replace(".", "")
+_DEFAULT_TORCH = "2.7.0".replace(".", "")
+_DEFAULT_CUDA = "12.6".replace(".", "")
 
 
 class OLMoCoreBeakerImage(StrEnum):
@@ -61,14 +61,9 @@ class OLMoCoreBeakerImage(StrEnum):
     includes *versioned* images that are published with each release of the OLMo-core package.
     """
 
-    stable = f"olmo-core-tch{_DEFAULT_TORCH}cu124"
+    stable = f"olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}"
     """
     Built with the latest compatible stable version of PyTorch.
-    """
-
-    stable_cu124 = f"olmo-core-tch{_DEFAULT_TORCH}cu124"
-    """
-    The stable image with CUDA pinned to 12.4.
     """
 
     stable_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126"
@@ -76,51 +71,9 @@ class OLMoCoreBeakerImage(StrEnum):
     The stable image with CUDA pinned to 12.6.
     """
 
-    stable_dev = f"olmo-core-tch{_DEFAULT_TORCH}cu124-devel"
+    stable_cu128 = f"olmo-core-tch{_DEFAULT_TORCH}cu128"
     """
-    Built with the latest compatible stable version of PyTorch and includes all the usual CUDA development
-    dependencies for building CUDA extensions.
-    """
-
-    stable_dev_cu124 = f"olmo-core-tch{_DEFAULT_TORCH}cu124-devel"
-    """
-    The stable development image with CUDA pinned to 12.4.
-    """
-
-    stable_dev_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126-devel"
-    """
-    The stable development image with CUDA pinned to 12.6.
-    """
-
-    nightly = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124"
-    """
-    Built with a recent compatible nightly version of PyTorch.
-    """
-
-    nightly_cu124 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124"
-    """
-    The nighlty image with CUDA pinned to 12.4.
-    """
-
-    nightly_cu126 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu126"
-    """
-    The nighlty image with CUDA pinned to 12.6.
-    """
-
-    nightly_dev = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124-devel"
-    """
-    Built with a recent compatible nightly version of PyTorch and includes all the usual CUDA development
-    dependencies for building CUDA extensions.
-    """
-
-    nightly_dev_cu124 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124-devel"
-    """
-    The nightly development image with CUDA pinned to 12.4.
-    """
-
-    nightly_dev_cu126 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu126-devel"
-    """
-    The nightly development image with CUDA pinned to 12.6.
+    The stable image with CUDA pinned to 12.8.
     """
 
 
