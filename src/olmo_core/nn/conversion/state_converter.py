@@ -102,7 +102,7 @@ class StateConverter:
             converted_keys = mapping.dest_keys
             if isinstance(state_dict[original_keys[0]], torch.Tensor):
                 original_state = torch.cat(
-                    [state_dict[key] for key in original_keys],
+                    [torch.atleast_1d(state_dict[key]) for key in original_keys],
                     dim=mapping.source_concat_dim,
                 )
 
@@ -113,11 +113,17 @@ class StateConverter:
                 if mapping.flatten_dims is not None:
                     original_state = original_state.flatten(*mapping.flatten_dims)
 
-                state_chunks = torch.chunk(
-                    original_state, chunks=len(converted_keys), dim=mapping.dest_chunk_dim
-                )
-                for hf_key, state_chunk in zip(converted_keys, state_chunks):
-                    converted_state_dict[hf_key] = state_chunk.contiguous()
+                if original_state.numel() == 1:
+                    # We allow original state being a 1-element tensor. In this case,
+                    # we just copy it to all the destinations.
+                    for hf_key in converted_keys:
+                        converted_state_dict[hf_key] = original_state.detach().clone()
+                else:
+                    state_chunks = torch.chunk(
+                        original_state, chunks=len(converted_keys), dim=mapping.dest_chunk_dim
+                    )
+                    for hf_key, state_chunk in zip(converted_keys, state_chunks):
+                        converted_state_dict[hf_key] = state_chunk.contiguous()
             else:
                 raise RuntimeError(
                     f"Attempting to map {len(original_keys)} non-tensor states to {len(converted_keys)} keys"
