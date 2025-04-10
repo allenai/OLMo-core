@@ -42,6 +42,7 @@ from olmo_core.train import (
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
     ConfigSaverCallback,
+    WandBCallback,
     DownstreamEvaluatorCallbackConfig,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
@@ -194,6 +195,16 @@ class AnnealingConfig(Config):
                     save_interval=1000,
                     ephemeral_save_interval=500,
                     save_async=True,
+                ),
+            )
+            .with_callback(
+                "wandb",
+                WandBCallback(
+                    name=run_name,
+                    entity="ai2-llm",
+                    project="long-contexts",
+                    enabled=True,
+                    cancel_check_interval=10,
                 ),
             )
             .with_callback(
