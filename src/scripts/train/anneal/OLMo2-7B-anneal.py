@@ -114,7 +114,6 @@ class AnnealingConfig(Config):
         script: str,
         cmd: str,
         run_name: str,
-        checkpoint: str,
         cluster: str,
         overrides: List[str],
         load_path: str,
@@ -132,7 +131,7 @@ class AnnealingConfig(Config):
             launch=build_launch_config(
                 name=run_name,
                 root_dir=root_dir,
-                cmd=[script, cmd, run_name, checkpoint, cluster, *overrides],
+                cmd=[script, cmd, run_name, cluster, *overrides],
                 cluster=cluster,
                 nccl_debug=False,
             ),
@@ -289,7 +288,7 @@ class AnnealingConfig(Config):
         return config
 
 
-def train(checkpoint: str, config: AnnealingConfig):
+def train(config: AnnealingConfig):
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
@@ -303,10 +302,6 @@ def train(checkpoint: str, config: AnnealingConfig):
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
-
-    # Try loading a checkpoint from the save folder, otherwise start from the pretraining checkpoint.
-    if not trainer.maybe_load_checkpoint(trainer.save_folder):
-        trainer.load_checkpoint(checkpoint, load_trainer_state=False)
 
     # Train.
     trainer.fit()
@@ -332,7 +327,7 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/peteish32/step41
         rich.get_console().print(USAGE, highlight=False)
         sys.exit(1)
 
-    script, cmd, run_name, checkpoint, cluster, *overrides = sys.argv
+    script, cmd, run_name, cluster, *overrides = sys.argv
 
     # Prepare the environment for the given command.
     if cmd in ("launch", "dry_run"):
@@ -347,7 +342,6 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/peteish32/step41
         script=script,
         cmd="train",
         run_name=run_name,
-        checkpoint=checkpoint,
         cluster=cluster,
         overrides=overrides,
         load_path="gs://ai2-llm/checkpoints/dustins/OLMo-2-1124-7B_pre_anneal_oc/",
@@ -363,7 +357,7 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/peteish32/step41
         config.launch.launch(follow=True)
     elif cmd == "train":
         try:
-            train(checkpoint, config)
+            train(config)
         finally:
             teardown_training_environment()
     else:
