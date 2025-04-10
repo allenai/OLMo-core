@@ -406,7 +406,7 @@ def validate_conversion(
 
     log.info("Running OLMo core and old OLMo models for validation...")
     with torch.no_grad():
-        old_olmo_logits = old_olmo_model(input_ids=input_ids, return_dict=False).logits
+        old_olmo_logits = old_olmo_model(input_ids=input_ids).logits
 
     del old_olmo_model
 
