@@ -107,8 +107,8 @@ class AnnealingConfig(Config):
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
-    init_seed: int = 12536,
     load_path: str
+    init_seed: int = 12536
 
     @classmethod
     def build(
@@ -129,9 +129,6 @@ class AnnealingConfig(Config):
         tokenizer_config = TokenizerConfig.dolma2()
 
     
-        run_name = f"peteish7-from-{run_name}"
-    
-
         config = AnnealingConfig(
             run_name=run_name,
             load_path=load_path,
