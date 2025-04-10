@@ -215,17 +215,17 @@ def _convert_optim_state(
     # Collect some convenient mapping information.
     idx_to_clean_name: Dict[int, str] = {}
     idx_to_param_group_idx: Dict[int, int] = {}
-    name_to_idx: Dict[str, int] = {}
+    clean_name_to_idx: Dict[str, int] = {}
     for i_group, param_group in enumerate(optim_state_dict["param_groups"]):
         param_names = param_group["param_names"]
         for i, name in enumerate(param_names):
             assert isinstance(name, str), name
             idx = param_group["params"][i]
 
-            name_to_idx[name] = idx
             idx_to_param_group_idx[idx] = i_group
 
             clean_name = name.replace("_fsdp_wrapped_module.", "")
+            clean_name_to_idx[clean_name] = idx
             idx_to_clean_name[idx] = clean_name
 
     # {param_idx: {substate_name: substate}}
@@ -238,7 +238,7 @@ def _convert_optim_state(
         optim_tensor_state, idx_to_clean_name, converter, placeholder_bounds
     )
 
-    mappings = converter.get_mappings(name_to_idx, placeholder_bounds=placeholder_bounds)
+    mappings = converter.get_mappings(clean_name_to_idx, placeholder_bounds=placeholder_bounds)
     clean_name_to_converted_names = {
         source_key: mapping.dest_keys for mapping in mappings for source_key in mapping.source_keys
     }
