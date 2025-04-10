@@ -39,8 +39,8 @@ build :
 # NOTE: When upgrading dependency versions (like for torch) make sure:
 #  * The corresponding versions specified in 'pyproject.toml' include the new version.
 #  * The versions installed in '.github/actions/setup-venv/action.yml' match if necessary.
-CUDA_VERSION = 12.6
-CUDA_PATH=cu$(shell echo $(CUDA_VERSION) | tr -d .)
+CUDA_VERSION = 12.6.3
+CUDA_PATH=cu$(shell echo $(CUDA_VERSION) | cut -d"." -f1-2 | tr -d .)
 PYTHON_VERSION = 3.11
 TORCH_VERSION = 2.6.0
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
