@@ -47,22 +47,28 @@ ARG TORCH_VERSION=2.7.0
 ARG INSTALL_CHANNEL=whl/test
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ torch==${TORCH_VERSION} torchao torchvision torchaudio
 
+ENV TORCH_CUDA_ARCH_LIST="8.0 9.0"
+
 # Install grouped-gemm.
 # NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
 # See https://github.com/tgale96/grouped_gemm/pull/21
-ENV TORCH_CUDA_ARCH_LIST="8.0 9.0"
 ENV GROUPED_GEMM_CUTLASS="1"
 ARG GROUPED_GEMM_VERSION="grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
 RUN pip install --no-build-isolation --no-cache-dir "${GROUPED_GEMM_VERSION}"
 
-# Install direct dependencies, but not source code.
+# Install flash-attn.
 ARG FLASH_ATTN_VERSION=2.7.4.post1
+RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
+
+# Install ring-flash-attn.
 ARG RING_FLASH_ATTN_VERSION=0.1.4
+RUN pip install --no-build-isolation --no-cache-dir ring-flash-attn==${RING_FLASH_ATTN_VERSION}
+
+# Install liger-kernel.
 ARG LIGER_KERNEL_VERSION=0.5.4
-RUN pip install --no-build-isolation --no-cache-dir \
-    flash-attn==${FLASH_ATTN_VERSION} \
-    ring-flash-attn==${RING_FLASH_ATTN_VERSION} \
-    liger-kernel==${LIGER_KERNEL_VERSION}
+RUN pip install --no-build-isolation --no-cache-dir liger-kernel==${LIGER_KERNEL_VERSION}
+
+# Install direct dependencies, but not source code.
 COPY pyproject.toml .
 COPY src/olmo_core/__init__.py src/olmo_core/__init__.py
 COPY src/olmo_core/version.py src/olmo_core/version.py
