@@ -36,8 +36,8 @@ jobs:
       matrix:
         cuda: ["12.6.3", "12.8.1"]  # NOTE: check tags for options: https://hub.docker.com/r/nvidia/cuda/tags
         torch:
-          version: 2.7.0
-          channel: whl/test
+          - version: 2.7.0
+            channel: whl/test
     steps:
       - uses: actions/checkout@v4
 
