@@ -40,7 +40,7 @@ build :
 #  * The corresponding versions specified in 'pyproject.toml' include the new version.
 #  * The versions installed in '.github/actions/setup-venv/action.yml' match if necessary.
 CUDA_VERSION = 12.6.3
-CUDA_PATH=cu$(shell echo $(CUDA_VERSION) | cut -d"." -f1-2 | tr -d .)
+CUDA_VERSION_PATH=cu$(shell echo $(CUDA_VERSION) | cut -d"." -f1-2 | tr -d .)
 PYTHON_VERSION = 3.11
 TORCH_VERSION = 2.7.0
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
@@ -57,14 +57,14 @@ LIGER_KERNEL_VERSION = 0.5.4
 VERSION = $(shell python src/olmo_core/version.py)
 VERSION_SHORT = $(shell python src/olmo_core/version.py short)
 IMAGE_SUFFIX = ""
-IMAGE_TAG = tch$(TORCH_VERSION_SHORT)$(CUDA_PATH)$(IMAGE_SUFFIX)
+IMAGE_TAG = tch$(TORCH_VERSION_SHORT)$(CUDA_VERSION_PATH)$(IMAGE_SUFFIX)
 
 .PHONY : docker-image
 docker-image :
 	docker build -f src/Dockerfile \
 		--build-arg BUILDKIT_INLINE_CACHE=1 \
 		--build-arg CUDA_VERSION=$(CUDA_VERSION) \
-		--build-arg CUDA_PATH=$(CUDA_PATH) \
+		--build-arg CUDA_VERSION_PATH=$(CUDA_VERSION_PATH) \
 		--build-arg PYTHON_VERSION=$(PYTHON_VERSION) \
 		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
 		--build-arg INSTALL_CHANNEL=$(INSTALL_CHANNEL) \

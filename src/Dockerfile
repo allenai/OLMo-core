@@ -1,7 +1,7 @@
 ARG UBUNTU_VERSION=22.04
 ARG TARGET_PLATFORM=x86_64
 ARG CUDA_VERSION=12.6.3
-ARG CUDA_PATH=cu126
+ARG CUDA_VERSION_PATH=cu126
 ARG PYTHON_VERSION=3.11
 ARG BASE_IMAGE=ubuntu:${UBUNTU_VERSION}
 ARG DEVEL_BASE_IMAGE=nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
@@ -42,10 +42,10 @@ RUN chmod +x ~/miniconda.sh && \
     /opt/conda/bin/conda clean -ya
 
 # Install PyTorch core ecosystem.
-ARG CUDA_PATH
+ARG CUDA_VERSION_PATH
 ARG TORCH_VERSION=2.7.0
 ARG INSTALL_CHANNEL=whl/test
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_PATH}/ torch==${TORCH_VERSION} torchao torchvision torchaudio
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ torch==${TORCH_VERSION} torchao torchvision torchaudio
 
 # Install grouped-gemm.
 # NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
