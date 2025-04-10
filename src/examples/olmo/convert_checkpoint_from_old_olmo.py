@@ -182,8 +182,8 @@ def _build_converted_optim_state(
             converted_param_group = converted_param_groups[param_group_idx]
         elif param_group_idx == len(converted_param_groups):
             converted_param_group = old_param_group.copy()
-            del converted_param_group["param_names"]
-            del converted_param_group["params"]
+            converted_param_group["param_names"] = []
+            converted_param_group["params"] = []
             converted_param_groups.append(converted_param_group)
         else:
             raise RuntimeError(
