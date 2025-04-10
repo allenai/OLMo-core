@@ -173,7 +173,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
     Get the tokenizer config to use throughput the ladder.
     """
 
-    init_seed: int = 9258
+    init_seed: int = 2352
     """
     The seed to use when first initializing RNG states.
     """
@@ -427,8 +427,8 @@ class ModelLadder(Config, metaclass=ABCMeta):
                     "piqa_val_rc_5shot",
                     "socialiqa_val_rc_5shot",
                     # Too noisy to be worth tracking
-                    # "boolq_val_rc_5shot",
-                    # "openbookqa_test_rc_5shot",
+                    "boolq_val_rc_5shot",
+                    "openbookqa_test_rc_5shot",
                     # MMLU RC
                     "mmlu_stem_val_rc_5shot",
                     "mmlu_humanities_val_rc_5shot",
@@ -460,8 +460,8 @@ class ModelLadder(Config, metaclass=ABCMeta):
                     "socialiqa_val_mc_5shot",
                     "winogrande_val_rc_5shot",
                     # Too noisy to be worth tracking
-                    # "boolq_val_mc_5shot",
-                    # "openbookqa_test_mc_5shot",
+                    "boolq_val_mc_5shot",
+                    "openbookqa_test_mc_5shot",
                     # MMLU MC BPB
                     "mmlu_stem_val_mc_5shot",
                     "mmlu_humanities_val_mc_5shot",
