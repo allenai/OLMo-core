@@ -28,7 +28,6 @@ from olmo_core.io import resource_path
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import (
-    CosWithWarmup,
     LinearWithWarmup,
     OptimGroupOverride,
     SkipStepAdamWConfig,
@@ -42,7 +41,6 @@ from olmo_core.train import (
 )
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
-    CometCallback,
     ConfigSaverCallback,
     DownstreamEvaluatorCallbackConfig,
     GarbageCollectorCallback,
@@ -50,9 +48,8 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.train.checkpoint import CheckpointerConfig
 from olmo_core.train.train_module import (
-    TransformerActivationCheckpointingConfig,
-    TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
+    TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
 from olmo_core.utils import prepare_cli_environment, seed_all
