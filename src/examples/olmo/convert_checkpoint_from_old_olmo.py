@@ -12,7 +12,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from olmo import OLMo
+from olmo import OLMo, TrainConfig
 from olmo.optim import build_optimizer
 import torch
 from cached_path import cached_path
@@ -468,7 +468,7 @@ def validate_conversion(
     if optim:
         log.info("Loading OLMo optimizer for validation...")
         optim_state_dict = torch.load(f"{old_olmo_path}/optim.pt")
-        old_olmo_config = torch.load(f"{old_olmo_path}/config.yaml")
+        old_olmo_config = TrainConfig.load(f"{old_olmo_path}/config.yaml")
         old_olmo_optim = build_optimizer(old_olmo_config, old_olmo_model)
         old_olmo_optim.load_state_dict(optim_state_dict)
 
