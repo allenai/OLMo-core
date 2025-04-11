@@ -32,7 +32,7 @@ from olmo_core.nn.conversion.state_mapping import (
 )
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
-from olmo_core.optim.adamw import AdamWConfig
+from olmo_core.optim.adamw import SkipStepAdamWConfig
 from olmo_core.optim.config import OptimGroupOverride
 from olmo_core.utils import get_default_device, prepare_cli_environment
 
@@ -309,7 +309,7 @@ def convert_checkpoint_from_old_olmo(
     optim_state_dict = torch.load(f"{old_olmo_checkpoint_path}/optim.pt")
     optim_state_dict = _convert_optim_state(optim_state_dict, converter, placeholder_bounds)
     # We unset fixed fields because we don't have any field we want to fix!
-    optim: torch.optim.Optimizer = AdamWConfig(
+    optim: torch.optim.Optimizer = SkipStepAdamWConfig(
         fixed_fields=tuple(),
         group_overrides=[
             OptimGroupOverride(
