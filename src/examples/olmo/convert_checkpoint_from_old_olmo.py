@@ -318,7 +318,7 @@ def convert_checkpoint_from_old_olmo(
     optim.load_state_dict(optim_state_dict)
 
     log.info(f"Saving OLMo core checkpoint to '{output_path}'")
-    save_model_and_optim_state(output_path, model, optim=optim, save_overwrite=True)
+    save_model_and_optim_state(output_path, model, optim=optim, save_overwrite=True, flatten_optimizer_state=True)
     log.info(f"Successfully saved converted model to '{output_path}'")
 
     if validate:
