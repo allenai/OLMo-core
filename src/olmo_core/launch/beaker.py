@@ -31,7 +31,7 @@ from ..distributed.utils import OLMO_SHARED_FS_ENV_VAR
 from ..exceptions import BeakerExperimentFailedError, OLMoConfigurationError
 from ..utils import LOG_FILTER_TYPE_ENV_VAR, LogFilterType
 from ..version import VERSION
-from .utils import GitConfig
+from .utils import GIT_BRANCH_ENV_VAR, GIT_REF_ENV_VAR, GIT_REPO_URL_ENV_VAR, GitConfig
 
 log = logging.getLogger(__name__)
 
@@ -417,12 +417,12 @@ class BeakerLaunchConfig(Config):
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
             .with_constraint(cluster=self.clusters)
-            .with_env_var("REPO_URL", git.repo_url)
-            .with_env_var("GIT_REF", git.ref)
+            .with_env_var(GIT_REPO_URL_ENV_VAR, git.repo_url)
+            .with_env_var(GIT_REF_ENV_VAR, git.ref)
         )
 
         if git.branch is not None:
-            task_spec = task_spec.with_env_var("GIT_BRANCH", git.branch)
+            task_spec = task_spec.with_env_var(GIT_BRANCH_ENV_VAR, git.branch)
 
         for name, val in self._get_env_vars():
             task_spec = task_spec.with_env_var(name=name, value=val)
