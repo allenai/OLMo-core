@@ -57,7 +57,7 @@ log = logging.getLogger(__name__)
 CHECKPOINT: Optional[str] = None
 
 # Data configuration.
-SEQUENCE_LENGTH = 4096
+SEQUENCE_LENGTH = 2048
 TOKENIZER_CONFIG = TokenizerConfig.dolma2()
 DATA_PATHS: List[str] = []
 DATA_PATHS_FILE = "datadelve_dclm_sample_expanded.txt"
