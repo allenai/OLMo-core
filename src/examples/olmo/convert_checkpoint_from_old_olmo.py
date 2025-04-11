@@ -19,7 +19,7 @@ from cached_path import cached_path
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.data.tokenizer import TokenizerConfig
-from olmo_core.distributed.checkpoint import save_model_and_optim_state
+from olmo_core.distributed.checkpoint import load_model_and_optim_state, save_model_and_optim_state
 from olmo_core.io import file_exists
 from olmo_core.nn.conversion.state_converter import StateConverter
 from olmo_core.nn.conversion.state_mapping import (
@@ -324,6 +324,7 @@ def convert_checkpoint_from_old_olmo(
     if validate:
         log.info("Validating converted model")
         validate_conversion(
+            output_path,
             old_olmo_checkpoint_path,
             model,
             tokenizer_config.vocab_size,
@@ -410,6 +411,7 @@ def _compare_debug_state(expected_state: Dict[str, Tuple[int, torch.Tensor]], ac
 
 
 def validate_conversion(
+    olmo_core_path: str | Path,
     old_olmo_path: str | Path,
     model: Transformer,
     vocab_size: int,
@@ -427,7 +429,10 @@ def validate_conversion(
     B, T = 1, 120
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
 
-    log.info("Loading converted checkpoint for validation...")
+    log.info("(Re)loading converted checkpoint for validation...")
+    load_model_and_optim_state(olmo_core_path, model, optim, flatten_optimizer_state=True)
+
+    log.info("Loading original checkpoint for validation...")
     old_olmo_model = OLMo.from_checkpoint(old_olmo_path).to(device).eval()
 
     olmo_core_state, old_olmo_state = {}, {}
