@@ -1,22 +1,22 @@
 """
-Train a large OLMoE model. Run this script without any arguments to see usage info.
+Train a medium OLMoE model. Run this script without any arguments to see usage info.
 """
 
 import logging
+from dataclasses import replace
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
-from olmo_core.internal.experiment import CommonComponents, main
+from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, main
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
-from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.transformer import TransformerBlockType, TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
-    TransformerExpertParallelConfig,
     TransformerTrainModuleConfig,
 )
 
@@ -24,17 +24,17 @@ log = logging.getLogger(__name__)
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    d_model = 4096
+    d_model = 3328
     return TransformerConfig.llama_like_moe(
         vocab_size=common.tokenizer.padded_vocab_size(),
         d_model=d_model,
-        n_layers=32,
-        n_heads=32,
+        n_layers=16,
+        n_heads=16,
         num_experts=64,
-        top_k=2,
+        top_k=8,
         expert_hidden_size=int(0.5 * d_model),
         shared_expert_hidden_size=d_model * 2,
-        capacity_factor=1.05,
+        capacity_factor=1.2,
         lb_loss_weight=0.01,
         z_loss_weight=0.001,
         reordered_norm=True,
@@ -42,6 +42,25 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         rope_theta=500_000,
         layer_norm_eps=1e-6,
     )
+
+
+def finalize_config(config: ExperimentConfig):
+    if config.model.block.name in (
+        TransformerBlockType.moe_hybrid,
+        TransformerBlockType.moe_hybrid_reordered_norm,
+    ):
+        assert config.model.block.feed_forward_moe is not None
+        moe_config = replace(
+            config.model.block.feed_forward_moe, shared_mlp=config.model.block.feed_forward
+        )
+        config.model.block_overrides = {
+            0: replace(
+                config.model.block,
+                name=TransformerBlockType(str(config.model.block.name).replace("_hybrid_", "_")),
+                feed_forward=None,
+                feed_forward_moe=moe_config,
+            )
+        }
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
@@ -62,17 +81,18 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.bfloat16,
-            num_replicas=1,  # to enable full-way expert parallel
+            shard_degree=32,
             prefetch_factor=1,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
-        ep_config=TransformerExpertParallelConfig(degree=-1),
+        #  ep_config=TransformerExpertParallelConfig(degree=-1),
         float8_config=Float8Config(
             ao=AOFloat8LinearConfig(
                 enable_fsdp_float8_all_gather=True,
                 force_recompute_fp8_weight_in_bwd=True,
                 round_scales_to_power_of_2=True,
-            )
+            ),
+            enabled=False,
         ),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
@@ -121,11 +141,12 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 if __name__ == "__main__":
     main(
-        global_batch_size=2048 * 4096,
+        global_batch_size=1024 * 4096,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         include_default_evals=False,
         beaker_image=OLMoCoreBeakerImage.stable_cu126,
-        num_nodes=8,
+        num_nodes=4,
+        finalize_config=finalize_config,
     )

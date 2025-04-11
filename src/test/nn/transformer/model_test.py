@@ -1,4 +1,5 @@
 import logging
+from dataclasses import replace
 from typing import cast
 
 import pytest
@@ -19,6 +20,7 @@ from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
 from olmo_core.nn.rope import RoPEConfig
 from olmo_core.nn.transformer import (
     MoEHybridTransformerBlockBase,
+    MoEReorderedNormTransformerBlock,
     MoETransformer,
     TransformerBlockConfig,
     TransformerBlockType,
@@ -301,3 +303,41 @@ def test_moe_hybrid_combined_forward(
             tp,
         ),
     )
+
+
+def test_build_with_block_overrides():
+    d_model = 512
+    config = TransformerConfig.llama_like_moe(
+        vocab_size=16_000,
+        d_model=d_model,
+        n_layers=8,
+        n_heads=8,
+        num_experts=32,
+        top_k=4,
+        expert_hidden_size=int(0.5 * d_model),
+        capacity_factor=1.2,
+        lb_loss_weight=0.01,
+        z_loss_weight=0.001,
+        reordered_norm=True,
+        hybrid=True,
+        qk_norm=True,
+        rope_theta=10_000,
+        layer_norm_eps=1e-6,
+        feed_forward=FeedForwardConfig(hidden_size=d_model * 2, bias=False),
+    )
+    assert config.block.feed_forward_moe is not None
+    moe_config = replace(config.block.feed_forward_moe, shared_mlp=config.block.feed_forward)
+    config.block_overrides = {
+        0: replace(
+            config.block,
+            name=TransformerBlockType(str(config.block.name).replace("_hybrid_", "_")),
+            feed_forward=None,
+            feed_forward_moe=moe_config,
+        )
+    }
+
+    model = config.build(init_device="cpu")
+    assert isinstance(model.blocks["0"], MoEReorderedNormTransformerBlock)
+    assert isinstance(model.blocks["1"], MoEHybridTransformerBlockBase)
+
+    assert config.num_params == model.num_params

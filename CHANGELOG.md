@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added 50B Dolmino 11/24 mix.
 - Added support for auxiliary-loss-free MoE load-balancing, similar to DeepSeek-v3. You can activate this by setting `bias_gamma` to a non-zero float in your `MoERouter` config.
+- Added support for sequence-level MoE load balancing loss.
 - Compatibility with B200s.
 - Added support for `warmup_fraction` as an alternative to `warmup_steps` in all schedulers, allowing warmup to be specified as a fraction of total training steps.
 - A better config for the 1B model, ported from the old OLMo trainer.
@@ -34,6 +36,7 @@ Also added lower-level methods for converting state between the formats.
 - Fixed a bug where the trainer might try to save a duplicate final checkpoint if the run that already completed was restarted.
 - When submitting a Beaker job from a branch that's tracking a GitHub fork, OLMo-core now instructs Beaker to pull from the fork instead of from the main repo.
 - Made Beaker image resolution more robust.
+- Beaker launcher will only clone a single branch at runtime when possible, which can be much faster.
 
 ## [v2.0.1](https://github.com/allenai/OLMo-core/releases/tag/v2.0.1) - 2025-03-18
 
