@@ -387,7 +387,7 @@ class TransformerPipelineTrainModule(TrainModule):
                 namespace="train",
             )
             self.record_metric(
-                "Z loss (unscaled)",
+                "Z loss unscaled",
                 z_batch_loss / self.z_loss_multiplier,
                 ReduceType.mean,
                 namespace="train",
