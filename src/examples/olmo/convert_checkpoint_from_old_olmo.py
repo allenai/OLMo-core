@@ -12,14 +12,17 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from olmo import OLMo, TrainConfig
-from olmo.optim import build_optimizer
 import torch
 from cached_path import cached_path
+from olmo import OLMo, TrainConfig
+from olmo.optim import build_optimizer
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.data.tokenizer import TokenizerConfig
-from olmo_core.distributed.checkpoint import load_model_and_optim_state, save_model_and_optim_state
+from olmo_core.distributed.checkpoint import (
+    load_model_and_optim_state,
+    save_model_and_optim_state,
+)
 from olmo_core.io import file_exists
 from olmo_core.nn.conversion.state_converter import StateConverter
 from olmo_core.nn.conversion.state_mapping import (
@@ -207,7 +210,9 @@ def _build_converted_optim_state(
 
 
 def _convert_optim_state(
-    optim_state_dict: Dict[str, Any], converter: StateConverter, placeholder_bounds: Dict[TemplatePlaceholder, int],
+    optim_state_dict: Dict[str, Any],
+    converter: StateConverter,
+    placeholder_bounds: Dict[TemplatePlaceholder, int],
 ):
     # Collect some convenient mapping information.
     idx_to_clean_name: Dict[int, str] = {}
@@ -307,18 +312,19 @@ def convert_checkpoint_from_old_olmo(
     optim: torch.optim.Optimizer = AdamWConfig(
         fixed_fields=tuple(),
         group_overrides=[
-            OptimGroupOverride(params=param_group["param_names"], opts={
-                k: v
-                for k, v in param_group.items()
-                if k not in ("param_names", "params")
-            })
+            OptimGroupOverride(
+                params=param_group["param_names"],
+                opts={k: v for k, v in param_group.items() if k not in ("param_names", "params")},
+            )
             for param_group in optim_state_dict["param_groups"]
         ],
     ).build(model)
     optim.load_state_dict(optim_state_dict)
 
     log.info(f"Saving OLMo core checkpoint to '{output_path}'")
-    save_model_and_optim_state(output_path, model, optim=optim, save_overwrite=True, flatten_optimizer_state=True)
+    save_model_and_optim_state(
+        output_path, model, optim=optim, save_overwrite=True, flatten_optimizer_state=True
+    )
     log.info(f"Successfully saved converted model to '{output_path}'")
 
     if validate:
@@ -370,13 +376,15 @@ def _register_debug_hooks(old_olmo_model: torch.nn.Module, model: Transformer):
     return olmo_core_debug_state, old_olmo_debug_state
 
 
-def _compare_debug_state(expected_state: Dict[str, Tuple[int, torch.Tensor]], actual_state: Dict[str, Tuple[int, torch.Tensor]], state_mapping: List[StateMapping]):
+def _compare_debug_state(
+    expected_state: Dict[str, Tuple[int, torch.Tensor]],
+    actual_state: Dict[str, Tuple[int, torch.Tensor]],
+    state_mapping: List[StateMapping],
+):
     assert state_mapping is not None
 
     simple_key_mapping = {
-        mapping.source_keys[0]
-        .replace(".weight", ""): mapping.dest_keys[0]
-        .replace(".weight", "")
+        mapping.source_keys[0].replace(".weight", ""): mapping.dest_keys[0].replace(".weight", "")
         for mapping in state_mapping
         if len(mapping.source_keys) == 1
         and len(mapping.dest_keys) == 1
@@ -388,7 +396,9 @@ def _compare_debug_state(expected_state: Dict[str, Tuple[int, torch.Tensor]], ac
     log.info(f"expected_state keys: {expected_state.keys()}")
     log.info(f"actual_state keys: {actual_state.keys()}")
 
-    for orig_name, (_, expected_tensor) in sorted(expected_state.items(), key=lambda item: item[1][0]):
+    for orig_name, (_, expected_tensor) in sorted(
+        expected_state.items(), key=lambda item: item[1][0]
+    ):
         orig_key, state_type = orig_name.split("|")
         if orig_key not in simple_key_mapping:
             continue
@@ -407,7 +417,6 @@ def _compare_debug_state(expected_state: Dict[str, Tuple[int, torch.Tensor]], ac
             log.info(
                 f"{orig_name}, {converted_name} norm diff: {torch.norm(actual_tensor - expected_tensor)}"
             )
-
 
 
 def validate_conversion(
@@ -463,7 +472,9 @@ def validate_conversion(
         old_olmo_state.clear()
         olmo_core_state.clear()
 
-    torch.testing.assert_close(old_olmo_logits[..., :vocab_size], logits[..., :vocab_size], atol=1e-4, rtol=1e-4)
+    torch.testing.assert_close(
+        old_olmo_logits[..., :vocab_size], logits[..., :vocab_size], atol=1e-4, rtol=1e-4
+    )
 
     if optim:
         log.info("Loading OLMo optimizer for validation...")
@@ -472,12 +483,16 @@ def validate_conversion(
         old_olmo_optim = build_optimizer(old_olmo_config, old_olmo_model)
         old_olmo_optim.load_state_dict(optim_state_dict)
 
-        labels = input_ids[...,:-1].view(-1)
+        labels = input_ids[..., :-1].view(-1)
 
         log.info("Running optimizer step of OLMo core and old OLMo models for validation...")
         old_olmo_logits_for_loss = old_olmo_logits[..., :-1, :].contiguous()
-        old_olmo_logits_for_loss = old_olmo_logits_for_loss.view(-1, old_olmo_logits_for_loss.size(-1))
-        old_olmo_loss = LOSS_MULTIPLIER * torch.nn.functional.cross_entropy(old_olmo_logits_for_loss, labels)
+        old_olmo_logits_for_loss = old_olmo_logits_for_loss.view(
+            -1, old_olmo_logits_for_loss.size(-1)
+        )
+        old_olmo_loss = LOSS_MULTIPLIER * torch.nn.functional.cross_entropy(
+            old_olmo_logits_for_loss, labels
+        )
         old_olmo_loss.backward()
         old_olmo_optim.step()
 
@@ -502,7 +517,9 @@ def validate_conversion(
             old_olmo_state.clear()
             olmo_core_state.clear()
 
-            torch.testing.assert_close(old_olmo_logits[..., :vocab_size], logits[..., :vocab_size], atol=1e-4, rtol=1e-4)
+            torch.testing.assert_close(
+                old_olmo_logits[..., :vocab_size], logits[..., :vocab_size], atol=1e-4, rtol=1e-4
+            )
 
 
 def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
