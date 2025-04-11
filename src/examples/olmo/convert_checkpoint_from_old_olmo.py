@@ -472,14 +472,18 @@ def validate_conversion(
         old_olmo_optim = build_optimizer(old_olmo_config, old_olmo_model)
         old_olmo_optim.load_state_dict(optim_state_dict)
 
-        labels = input_ids[...,:-1]
+        labels = input_ids[...,:-1].view(-1)
 
         log.info("Running optimizer step of OLMo core and old OLMo models for validation...")
-        old_olmo_loss = torch.nn.functional.cross_entropy(old_olmo_logits, labels)
+        old_olmo_logits_for_loss = old_olmo_logits[..., :-1, :].contiguous()
+        old_olmo_logits_for_loss = old_olmo_logits_for_loss.view(-1, old_olmo_logits_for_loss.size(-1))
+        old_olmo_loss = torch.nn.functional.cross_entropy(old_olmo_logits_for_loss, labels)
         old_olmo_loss.backward()
         old_olmo_optim.step()
 
-        loss = torch.nn.functional.cross_entropy(logits, labels)
+        logits_for_loss = logits[..., :-1, :].contiguous()
+        logits_for_loss = logits_for_loss.view(-1, logits_for_loss.size(-1))
+        loss = torch.nn.functional.cross_entropy(logits_for_loss, labels)
         loss.backward()
         optim.step()
 
