@@ -427,6 +427,7 @@ def validate_conversion(
 
     device = device or get_default_device()
 
+    LOSS_MULTIPLIER = 1
     B, T = 1, 120
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
 
@@ -475,13 +476,13 @@ def validate_conversion(
         log.info("Running optimizer step of OLMo core and old OLMo models for validation...")
         old_olmo_logits_for_loss = old_olmo_logits[..., :-1, :].contiguous()
         old_olmo_logits_for_loss = old_olmo_logits_for_loss.view(-1, old_olmo_logits_for_loss.size(-1))
-        old_olmo_loss = torch.nn.functional.cross_entropy(old_olmo_logits_for_loss, labels)
+        old_olmo_loss = LOSS_MULTIPLIER * torch.nn.functional.cross_entropy(old_olmo_logits_for_loss, labels)
         old_olmo_loss.backward()
         old_olmo_optim.step()
 
         logits_for_loss = logits[..., :-1, :].contiguous()
         logits_for_loss = logits_for_loss.view(-1, logits_for_loss.size(-1))
-        loss = torch.nn.functional.cross_entropy(logits_for_loss, labels)
+        loss = LOSS_MULTIPLIER * torch.nn.functional.cross_entropy(logits_for_loss, labels)
         loss.backward()
         optim.step()
 
