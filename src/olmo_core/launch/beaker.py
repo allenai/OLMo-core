@@ -96,7 +96,11 @@ class BeakerWekaBucket(Config):
 
 
 DEFAULT_SETUP_STEPS = (
-    'git clone "$REPO_URL" .',
+    'if [[ -z "$GIT_BRANCH" ]]; then',
+    '  git clone "$REPO_URL" .',
+    "else",
+    '  git clone -b "$GIT_BRANCH" --single-branch "$REPO_URL" .',
+    "fi",
     'git checkout "$GIT_REF"',
     "git submodule update --init --recursive",
     "conda shell.bash activate base",
@@ -338,7 +342,7 @@ class BeakerLaunchConfig(Config):
         Get the Beaker experiment spec corresponding to this config instance.
         """
         # Get repository account, name, and current ref.
-        github_account, github_repo, git_ref, is_public = ensure_repo(self.allow_dirty)
+        github_account, github_repo, git_branch, git_ref, is_public = ensure_repo(self.allow_dirty)
 
         if not is_public and self.setup_steps == DEFAULT_SETUP_STEPS:
             raise OLMoConfigurationError(
@@ -354,13 +358,7 @@ class BeakerLaunchConfig(Config):
             "mkdir -p /root/.cache/torch/kernels && export PYTORCH_KERNEL_CACHE_PATH=/root/.cache/torch/kernels",
             "mkdir -p /olmo-core-runtime",
             "cd /olmo-core-runtime",
-        ]
-        # TODO: remove once we have a base image with CUDA 12.8
-        if any(["titan" in cluster for cluster in self.clusters]):
-            entrypoint_script.append(
-                "pip install torch==2.7.0 torchaudio torchvision --index-url https://download.pytorch.org/whl/test/cu128"
-            )
-        entrypoint_script.extend(self.setup_steps)
+        ] + self.setup_steps
 
         if torchrun:
             if self.num_nodes > 1 and any(["augusta" in cluster for cluster in self.clusters]):
@@ -408,6 +406,9 @@ class BeakerLaunchConfig(Config):
             .with_env_var("REPO_URL", f"https://github.com/{github_account}/{github_repo}")
             .with_env_var("GIT_REF", git_ref)
         )
+
+        if git_branch is not None:
+            task_spec = task_spec.with_env_var("GIT_BRANCH", git_branch)
 
         for name, val in self._get_env_vars():
             task_spec = task_spec.with_env_var(name=name, value=val)
