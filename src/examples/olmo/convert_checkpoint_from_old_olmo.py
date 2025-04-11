@@ -450,12 +450,10 @@ def validate_conversion(
         )
 
     log.info("Running OLMo core and old OLMo models for validation...")
-    with torch.no_grad():
-        old_olmo_logits = old_olmo_model(input_ids=input_ids).logits
+    old_olmo_logits = old_olmo_model(input_ids=input_ids).logits
 
     model = model.to(device).eval()
-    with torch.no_grad():
-        logits = model(input_ids=input_ids)
+    logits = model(input_ids=input_ids)
 
     if debug:
         assert state_mapping is not None
