@@ -302,16 +302,12 @@ class TransformerTrainModule(TrainModule):
         batch_num_tokens_for_loss = move_to_device(
             (batch["labels"] != self.label_ignore_index).sum(), self.device
         )
-        if self.cp_enabled:
-            assert self._cp_config is not None
-            batch_num_tokens_for_loss = batch_num_tokens_for_loss / self._cp_config.degree
 
         # Batch losses to record.
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
         z_batch_loss: Optional[torch.Tensor] = None
         if self.z_loss_multiplier is not None:
             z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
-        auxiliary_batch_losses: Dict[str, torch.Tensor] = {}
 
         # Split into micro-batches.
         if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
@@ -351,19 +347,6 @@ class TransformerTrainModule(TrainModule):
                     z_batch_loss += get_local_tensor(z_loss.detach())
                     del z_loss
 
-                # Optionally get model auxiliary losses and update the total batch auxiliary losses.
-                auxiliary_losses = self.model.compute_auxiliary_losses(
-                    batch_num_tokens_for_loss, reset=True
-                )
-                for loss_name, loss_val in auxiliary_losses.items():
-                    loss += loss_val
-                    loss_val = get_local_tensor(loss_val.detach())
-                    if loss_name in auxiliary_batch_losses:
-                        auxiliary_batch_losses[loss_name] += loss_val
-                    else:
-                        auxiliary_batch_losses[loss_name] = loss_val
-                del auxiliary_losses
-
                 # Run backward pass.
                 loss.backward()
 
@@ -372,7 +355,6 @@ class TransformerTrainModule(TrainModule):
         self.model.post_batch(dry_run=dry_run)
 
         if dry_run:
-            self.model.reset_auxiliary_losses()
             self.model.reset_auxiliary_metrics()
             return
 
@@ -388,24 +370,23 @@ class TransformerTrainModule(TrainModule):
         else:
             self.record_ce_loss(ce_batch_loss, ReduceType.mean)
         if z_batch_loss is not None:
+            assert self.z_loss_multiplier is not None
             self.record_metric(
                 "Z loss",
                 z_batch_loss,
                 ReduceType.mean,
                 namespace="train",
             )
-        for loss_name, loss_val in auxiliary_batch_losses.items():
             self.record_metric(
-                loss_name,
-                loss_val,
+                "Z loss (unscaled)",
+                z_batch_loss / self.z_loss_multiplier,
                 ReduceType.mean,
                 namespace="train",
             )
 
         # And additional metrics.
         for metric_name, (metric_val, reduction) in self.model.compute_auxiliary_metrics(
-            batch_num_tokens_for_loss,
-            reset=True,
+            reset=True
         ).items():
             self.record_metric(
                 metric_name,

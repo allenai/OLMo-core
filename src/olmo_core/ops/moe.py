@@ -296,3 +296,11 @@ def batched_histc(x: torch.Tensor, num_classes: int) -> torch.Tensor:
     ones = move_to_device(torch.tensor(1, dtype=x.dtype), x.device).expand_as(x)
     hist.scatter_add_(-1, ((x * num_classes) // (x.max() + 1)).long(), ones)
     return hist
+
+
+def histc(x: torch.Tensor, num_classes: int) -> torch.Tensor:
+    # NOTE: 'torch.histc' not implemented for integers on CPU, so convert to float then back to ints on CPU.
+    if x.device.type == "cpu":
+        return torch.histc(x.float(), bins=num_classes, min=0, max=num_classes - 1).int()
+    else:
+        return torch.histc(x, bins=num_classes, min=0, max=num_classes - 1)
