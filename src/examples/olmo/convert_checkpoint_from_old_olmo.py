@@ -163,10 +163,6 @@ def _build_converted_optim_state(
     clean_name_to_converted_names: Dict[str, Tuple[str, ...]],
     converted_tensor_state_by_name: Dict[str, Dict[str, torch.Tensor]],
 ):
-    log.info(f"idx_to_clean_name: {idx_to_clean_name}")
-    log.info(f"idx_to_param_group_idx: {idx_to_param_group_idx}")
-    log.info(f"clean_name_to_converted_names: {clean_name_to_converted_names}")
-
     converted_optim_state_dict: Dict[str, Any] = {
         "param_groups": [],
         "state": {},
