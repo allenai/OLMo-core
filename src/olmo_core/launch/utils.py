@@ -33,8 +33,18 @@ def parse_git_remote_url(url: str) -> Tuple[str, str]:
 class GitConfig(Config):
     repo_url: str
     ref: str
-    is_dirty: bool
     branch: Optional[str] = None
+
+    @property
+    def is_dirty(self) -> bool:
+        from git.exc import InvalidGitRepositoryError
+        from git.repo import Repo
+
+        try:
+            repo = Repo(".")
+            return repo.is_dirty()
+        except InvalidGitRepositoryError:
+            return False
 
     @property
     def is_public(self) -> bool:
@@ -75,6 +85,5 @@ class GitConfig(Config):
         return cls(
             repo_url=repo_url,
             ref=git_ref,
-            is_dirty=repo.is_dirty(),
             branch=branch_name,
         )
