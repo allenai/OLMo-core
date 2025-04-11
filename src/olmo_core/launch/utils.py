@@ -6,7 +6,7 @@ import requests
 
 from olmo_core.config import Config
 
-GIT_REPO_URL_ENV_VAR = "GIT_REPO"
+GIT_REPO_URL_ENV_VAR = "REPO_URL"
 GIT_REF_ENV_VAR = "GIT_REF"
 GIT_BRANCH_ENV_VAR = "GIT_BRANCH"
 

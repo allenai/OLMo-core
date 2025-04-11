@@ -96,12 +96,12 @@ class BeakerWekaBucket(Config):
 
 
 DEFAULT_SETUP_STEPS = (
-    'if [[ -z "$GIT_BRANCH" ]]; then',
-    '  git clone "$REPO_URL" .',
+    f'if [[ -z "${GIT_BRANCH_ENV_VAR}" ]]; then',
+    f'  git clone "${GIT_REPO_URL_ENV_VAR}" .',
     "else",
-    '  git clone -b "$GIT_BRANCH" --single-branch "$REPO_URL" .',
+    f'  git clone -b "${GIT_BRANCH_ENV_VAR}" --single-branch "${GIT_REPO_URL_ENV_VAR}" .',
     "fi",
-    'git checkout "$GIT_REF"',
+    f'git checkout "${GIT_REF_ENV_VAR}"',
     "git submodule update --init --recursive",
     "conda shell.bash activate base",
     "pip install -e '.[all]'",
