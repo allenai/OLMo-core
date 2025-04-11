@@ -484,7 +484,7 @@ def validate_conversion(
         logits_for_loss = logits_for_loss.view(-1, logits_for_loss.size(-1))
         loss = LOSS_MULTIPLIER * torch.nn.functional.cross_entropy(logits_for_loss, labels)
         loss.backward()
-        # optim.step()
+        optim.step()
 
         log.info("Running 2nd step of OLMo core and old OLMo models for validation...")
 
