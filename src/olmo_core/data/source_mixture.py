@@ -228,6 +228,7 @@ class SourceMixtureDatasetConfig(Config):
         # Calculate the number of tokens available and to include for each source
         for source_config in self.source_configs:
             num_for_source = available_tokens_by_source[source_config.source_name]
+            log.info(f"Available tokens for source: {source_config.source_name} = {num_for_source}")
             needed_for_source = int(self.max_tokens * source_config.target_ratio)
             max_for_source = int(
                 (num_for_source * source_config.max_source_fraction)
