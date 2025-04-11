@@ -78,6 +78,7 @@ class AnnealingDataMix(DataMixBase):
     """
 
     pl_repl_p1_contig = "prolong_phase1_npb_contig_pack"
+    pl_all_long = "prolong_all_long_npb_contig_pack.txt"
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
@@ -202,7 +203,7 @@ class LcContTrain(Config):
             #     fused=True,
             # ),
             dataset=NumpyDatasetConfig.from_data_mix(
-                AnnealingDataMix.pl_repl_p1_contig,
+                AnnealingDataMix.pl_all_long,
                 tokenizer=tokenizer_config,
                 mix_base_dir=root_dir,
                 generate_doc_lengths=True,
@@ -224,7 +225,7 @@ class LcContTrain(Config):
                 load_path=load_path,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
-                max_duration=Duration.tokens(int(40e9)),
+                max_duration=Duration.tokens(int(10e9)),
             )
             .with_callback(
                 "checkpointer",
@@ -405,8 +406,8 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         run_name=run_name,
         # load_path="/weka/oe-training-default/ai2-llm/checkpoints/dustins/OLMo-2-1124-7B-SFT/",
         # load_path="gs://ai2-llm/checkpoints/dustins/OLMo-2-1124-7B-Instruct/model_and_optim/",
-        # load_path="gs://ai2-llm/checkpoints/dustins/OLMo-2-1124-7B/",
-        load_path="gs://ai2-llm/checkpoints/dustins/lc_7b_pl_p0p5_repl_mix_contig_idm/step19074/",
+        load_path="gs://ai2-llm/checkpoints/dustins/OLMo-2-1124-7B/",
+        # load_path="gs://ai2-llm/checkpoints/dustins/lc_7b_pl_p0p5_repl_mix_contig_idm/step19074/",
         cluster=cluster,
         overrides=overrides,
     )
