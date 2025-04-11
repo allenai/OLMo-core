@@ -1,4 +1,7 @@
+from dataclasses import dataclass
 from typing import Optional, Tuple
+
+from olmo_core.config import Config
 
 
 def parse_git_remote_url(url: str) -> Tuple[str, str]:
@@ -19,35 +22,54 @@ def parse_git_remote_url(url: str) -> Tuple[str, str]:
     return account, repo
 
 
-def ensure_repo(allow_dirty: bool = False) -> Tuple[str, str, Optional[str], str, bool]:
-    import requests
-    from git.repo import Repo
+@dataclass
+class GitConfig(Config):
+    repo_url: str
+    ref: str
+    is_public: bool
+    is_dirty: bool
+    branch: Optional[str] = None
 
-    repo = Repo(".")
-    if repo.is_dirty() and not allow_dirty:
-        raise RuntimeError("You have uncommitted changes! Use --allow-dirty to force.")
-    git_ref = str(repo.commit())
+    @classmethod
+    def from_env(cls) -> "GitConfig":
+        import requests
+        from git.repo import Repo
 
-    remote = repo.remote()
+        repo = Repo(".")
+        #  if repo.is_dirty() and not allow_dirty:
+        #  raise RuntimeError("You have uncommitted changes! Use --allow-dirty to force.")
 
-    # Try to find a remote based on the current tracking branch.
-    try:
-        branch = repo.active_branch
-    except TypeError:
-        branch = None
+        git_ref = str(repo.commit())
+        remote = repo.remote()
 
-    if branch is not None:
-        branch = branch.tracking_branch()
+        # Try to find a remote based on the current tracking branch.
+        try:
+            branch = repo.active_branch
+        except TypeError:
+            branch = None
 
-    branch_name: Optional[str] = None
-    if branch is not None:
-        remote = repo.remote(branch.remote_name)
-        assert branch.name.startswith(branch.remote_name + "/")
-        branch_name = branch.name.replace(branch.remote_name + "/", "", 1)
+        if branch is not None:
+            branch = branch.tracking_branch()
 
-    account, repo = parse_git_remote_url(remote.url)
-    response = requests.get(f"https://github.com/{account}/{repo}")
-    if response.status_code not in {200, 404}:
-        response.raise_for_status()
-    is_public = response.status_code == 200
-    return account, repo, branch_name, git_ref, is_public
+        branch_name: Optional[str] = None
+        if branch is not None:
+            remote = repo.remote(branch.remote_name)
+            assert branch.name.startswith(branch.remote_name + "/")
+            branch_name = branch.name.replace(branch.remote_name + "/", "", 1)
+
+        account, repo_name = parse_git_remote_url(remote.url)
+        repo_url = f"https://github.com/{account}/{repo_name}"
+
+        # Check if repo is public.
+        response = requests.get(repo_url)
+        if response.status_code not in {200, 404}:
+            response.raise_for_status()
+        is_public = response.status_code == 200
+
+        return cls(
+            repo_url=repo_url,
+            ref=git_ref,
+            is_public=is_public,
+            is_dirty=repo.is_dirty(),
+            branch=branch_name,
+        )

@@ -31,7 +31,7 @@ from ..distributed.utils import OLMO_SHARED_FS_ENV_VAR
 from ..exceptions import BeakerExperimentFailedError, OLMoConfigurationError
 from ..utils import LOG_FILTER_TYPE_ENV_VAR, LogFilterType
 from ..version import VERSION
-from .utils import ensure_repo
+from .utils import GitConfig
 
 log = logging.getLogger(__name__)
 
@@ -226,9 +226,19 @@ class BeakerLaunchConfig(Config):
 
     host_networking: Optional[bool] = None
 
+    git: Optional[GitConfig] = None
+    """
+    Git configuration, specifies where to clone your source code from and which commit to check out.
+    If not set, this will be initialized automatically from your working directory.
+    """
+
     # NOTE: don't assign a type here because omegaconf can't validate arbitrary classes
     #  _beaker: Optional[Beaker] = None
     _beaker = None
+
+    def __post_init__(self):
+        if self.git is None:
+            self.git = GitConfig.from_env()
 
     @property
     def default_env_vars(self) -> List[Tuple[str, str]]:
@@ -341,10 +351,14 @@ class BeakerLaunchConfig(Config):
         """
         Get the Beaker experiment spec corresponding to this config instance.
         """
-        # Get repository account, name, and current ref.
-        github_account, github_repo, git_branch, git_ref, is_public = ensure_repo(self.allow_dirty)
+        git = self.git or GitConfig.from_env()
 
-        if not is_public and self.setup_steps == DEFAULT_SETUP_STEPS:
+        if git.is_dirty and not self.allow_dirty:
+            raise RuntimeError(
+                "You have uncommitted changes! Set 'allow_dirty=True' in your launch config to force."
+            )
+
+        if not git.is_public and self.setup_steps == DEFAULT_SETUP_STEPS:
             raise OLMoConfigurationError(
                 "It looks like your repository is private and private repositories will require "
                 "custom 'setup_steps' in order to clone the repo."
@@ -403,12 +417,12 @@ class BeakerLaunchConfig(Config):
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
             .with_constraint(cluster=self.clusters)
-            .with_env_var("REPO_URL", f"https://github.com/{github_account}/{github_repo}")
-            .with_env_var("GIT_REF", git_ref)
+            .with_env_var("REPO_URL", git.repo_url)
+            .with_env_var("GIT_REF", git.ref)
         )
 
-        if git_branch is not None:
-            task_spec = task_spec.with_env_var("GIT_BRANCH", git_branch)
+        if git.branch is not None:
+            task_spec = task_spec.with_env_var("GIT_BRANCH", git.branch)
 
         for name, val in self._get_env_vars():
             task_spec = task_spec.with_env_var(name=name, value=val)
