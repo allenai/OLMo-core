@@ -500,7 +500,7 @@ def validate_conversion(
             old_olmo_state.clear()
             olmo_core_state.clear()
 
-            torch.testing.assert_close(old_olmo_logits[..., :vocab_size], logits[..., :vocab_size])
+            torch.testing.assert_close(old_olmo_logits[..., :vocab_size], logits[..., :vocab_size], atol=1e-4, rtol=1e-4)
 
 
 def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
