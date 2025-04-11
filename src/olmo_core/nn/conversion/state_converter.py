@@ -117,7 +117,7 @@ class StateConverter:
                     # We allow original state being a 1-element tensor. In this case,
                     # we just copy it to all the destinations.
                     for hf_key in converted_keys:
-                        converted_state_dict[hf_key] = original_state.detach().clone()
+                        converted_state_dict[hf_key] = original_state.detach().clone().squeeze()
                 else:
                     state_chunks = torch.chunk(
                         original_state, chunks=len(converted_keys), dim=mapping.dest_chunk_dim
