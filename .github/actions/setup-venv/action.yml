@@ -11,11 +11,15 @@ inputs:
   torch-version:
     description: The PyTorch version to install
     required: false
-    default: '==2.6.0'
+    default: '2.7.0'
   torchao-version:
     description: The torchao version to install
     required: false
-    default: '==0.9.0'
+    default: '0.9.0'
+  channel:
+    description: The channel to install from
+    required: false
+    default: 'whl/test/cpu'
 runs:
   using: composite
   steps:
@@ -38,9 +42,9 @@ runs:
       id: virtualenv-cache
       with:
         path: .venv
-        key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ inputs.torch-version }}-${{ inputs.torchao-version }}-${{ hashFiles('*requirements.txt', '*pyproject.toml') }}
+        key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ inputs.torch-version }}-${{ inputs.torchao-version }}-${{ inputs.channel }}-${{ hashFiles('*requirements.txt', '*pyproject.toml') }}
         restore-keys: |
-          ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ inputs.torch-version }}-${{ inputs.torchao-version }}
+          ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ inputs.torch-version }}-${{ inputs.torchao-version }}-${{ inputs.channel }}
 
     - if: steps.virtualenv-cache.outputs.cache-hit != 'true'
       shell: bash
@@ -48,7 +52,7 @@ runs:
         # Set up virtual environment without cache hit.
         test -d .venv || virtualenv -p $(which python) --copies --reset-app-data .venv
         . .venv/bin/activate
-        pip install 'torch${{ inputs.torch-version }}' 'torchao${{ inputs.torchao-version}}' --index-url https://download.pytorch.org/whl/cpu
+        pip install torch==${{ inputs.torch-version }} torchao==${{ inputs.torchao-version}} --index-url https://download.pytorch.org/${{ inputs.channel }}
         pip install -e .[all]
 
     - if: steps.virtualenv-cache.outputs.cache-hit == 'true'

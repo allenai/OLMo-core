@@ -56,6 +56,7 @@ from .common import (
     Duration,
     DurationUnit,
     LoadStrategy,
+    MetricMergeStrategy,
     ReduceType,
     TrainingProgress,
 )
@@ -529,15 +530,23 @@ class Trainer:
             time_remaining=time_remaining,
         )
 
-    def cancel_run(self, reason: str):
+    def cancel_run(self, reason: str, no_sync: bool = False):
         """
         Mark the run canceled.
 
         :param reason: The reason for canceling.
+        :param no_sync: Set this to ``True`` only if you're calling this from all ranks at the same
+            time, otherwise you'll get a distributed deadlock.
         """
-        #  self._canceled = True  # NOTE: important not to set this!! Leads to distributed hang.
+        if self.is_canceled:
+            return
+
         self._canceling_rank = get_rank()
         self._cancel_reason = reason
+        if no_sync:
+            self._canceled = True
+            log.warning(f"Run canceled from all ranks. Reason: {reason}")
+            barrier()
 
     def check_if_canceled(self):
         """
@@ -590,8 +599,7 @@ class Trainer:
         # It's possible that we tried restarting a run that had already finished.
         if self.training_complete:
             log.warning("Training already complete, ending run now")
-            self._shutdown_bookkeeping()
-            gc_cuda()
+            self._shutdown()
             return
 
         log.info("Callback order:")
@@ -604,6 +612,11 @@ class Trainer:
             callback.pre_train()
 
         barrier()
+
+        # Quick check if the run has already been canceled.
+        if self.is_canceled:
+            self._shutdown()
+            return
 
         # Install SIGTERM + SIGINT handlers.
         og_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_os_signal)
@@ -629,13 +642,14 @@ class Trainer:
             callback.post_train()
 
         # Wait for any bookkeeping tasks to finish.
-        self._shutdown_bookkeeping()
-        gc_cuda()
+        self._shutdown()
         log.info("Training complete")
 
-    def _shutdown_bookkeeping(self):
+    def _shutdown(self):
+        self._log_metrics()
         self.thread_pool.shutdown(wait=True, cancel_futures=False)
         self._thread_pool = None
+        gc_cuda()
         barrier()
 
     def state_dict(self) -> TrainerStateDict:
@@ -805,6 +819,7 @@ class Trainer:
         value: Union[float, torch.Tensor],
         reduce_type: Optional[ReduceType] = None,
         namespace: Optional[str] = None,
+        merge_strategy: MetricMergeStrategy = MetricMergeStrategy.warn,
     ):
         """
         Record a new metric for the current step.
@@ -817,16 +832,41 @@ class Trainer:
         :param reduce_type: Specifies how to reduce the metric across the distributed process group.
             ``None`` means no reduction.
         :param namespace: A namespace to record the metric under, i.g. "train" or "optim".
+        :param merge_strategy: How to merge metrics when duplicates are logged.
         """
         if namespace is not None:
             name = f"{namespace.rstrip('/')}/{name.lstrip('/')}"
+
         if not isinstance(value, torch.Tensor):
             value = torch.tensor(value)
         else:
             value = get_local_tensor(value).float()
+
         if self.global_step not in self._metrics:
             self._metrics[self.global_step] = OrderedDict()
-        self._metrics[self.global_step][name] = value
+
+        step_metrics = self._metrics[self.global_step]
+
+        if name not in step_metrics or merge_strategy == MetricMergeStrategy.latest:
+            step_metrics[name] = value
+        elif merge_strategy == MetricMergeStrategy.sum:
+            step_metrics[name] = step_metrics[name] + value
+        elif merge_strategy == MetricMergeStrategy.mean:
+            step_metrics[name] = (step_metrics[name] + value) / 2
+        elif merge_strategy == MetricMergeStrategy.max:
+            step_metrics[name] = torch.max(step_metrics[name], value.to(step_metrics[name].device))
+        elif merge_strategy == MetricMergeStrategy.min:
+            step_metrics[name] = torch.min(step_metrics[name], value.to(step_metrics[name].device))
+        elif merge_strategy == MetricMergeStrategy.warn:
+            log.warning(
+                f"Attempting to log duplicate metric '{name}' for step {(self.global_step)}. "
+                "The latest value will be ignored."
+            )
+        elif merge_strategy == MetricMergeStrategy.oldest:
+            pass
+        else:
+            raise NotImplementedError(merge_strategy)
+
         # reduce type must be consistent to avoid issues
         if name in self._metrics_reduce_type and self._metrics_reduce_type[name] != reduce_type:
             raise RuntimeError(
@@ -922,7 +962,7 @@ class Trainer:
                 (k, cb)
                 for _, (k, cb) in sorted(
                     enumerate(self.callbacks.items()),
-                    key=lambda x: (x[1][1].priority, x[0]),
+                    key=lambda x: (x[1][1].priority, -1 * x[0]),
                     reverse=True,
                 )
             )
