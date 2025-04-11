@@ -244,6 +244,7 @@ class BeakerLaunchConfig(Config):
             ("WEKA_PROFILE", "WEKA"),
             ("NUM_NODES", str(self.num_nodes)),
             ("OLMO_CORE_VERSION", VERSION),
+            ("FORCE_COLOR", "1"),
         ]
         if self.shared_filesystem:
             env_vars.append((OLMO_SHARED_FS_ENV_VAR, "1"))
