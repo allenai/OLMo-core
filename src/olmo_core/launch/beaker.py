@@ -226,7 +226,7 @@ class BeakerLaunchConfig(Config):
 
     host_networking: Optional[bool] = None
 
-    git: Optional[GitConfig] = None
+    git: Optional[GitConfig] = field(default_factory=GitConfig.from_env)
     """
     Git configuration, specifies where to clone your source code from and which commit to check out.
     If not set, this will be initialized automatically from your working directory.
@@ -235,10 +235,6 @@ class BeakerLaunchConfig(Config):
     # NOTE: don't assign a type here because omegaconf can't validate arbitrary classes
     #  _beaker: Optional[Beaker] = None
     _beaker = None
-
-    def __post_init__(self):
-        if self.git is None:
-            self.git = GitConfig.from_env()
 
     @property
     def default_env_vars(self) -> List[Tuple[str, str]]:
@@ -351,14 +347,15 @@ class BeakerLaunchConfig(Config):
         """
         Get the Beaker experiment spec corresponding to this config instance.
         """
-        git = self.git or GitConfig.from_env()
+        if self.git is None:
+            raise OLMoConfigurationError(f"{self.__class__.__name__}.git field is required!")
 
-        if git.is_dirty and not self.allow_dirty:
+        if self.git.is_dirty and not self.allow_dirty:
             raise RuntimeError(
                 "You have uncommitted changes! Set 'allow_dirty=True' in your launch config to force."
             )
 
-        if not git.is_public and self.setup_steps == DEFAULT_SETUP_STEPS:
+        if not self.git.is_public and self.setup_steps == DEFAULT_SETUP_STEPS:
             raise OLMoConfigurationError(
                 "It looks like your repository is private and private repositories will require "
                 "custom 'setup_steps' in order to clone the repo."
@@ -417,12 +414,12 @@ class BeakerLaunchConfig(Config):
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
             .with_constraint(cluster=self.clusters)
-            .with_env_var(GIT_REPO_URL_ENV_VAR, git.repo_url)
-            .with_env_var(GIT_REF_ENV_VAR, git.ref)
+            .with_env_var(GIT_REPO_URL_ENV_VAR, self.git.repo_url)
+            .with_env_var(GIT_REF_ENV_VAR, self.git.ref)
         )
 
-        if git.branch is not None:
-            task_spec = task_spec.with_env_var(GIT_BRANCH_ENV_VAR, git.branch)
+        if self.git.branch is not None:
+            task_spec = task_spec.with_env_var(GIT_BRANCH_ENV_VAR, self.git.branch)
 
         for name, val in self._get_env_vars():
             task_spec = task_spec.with_env_var(name=name, value=val)

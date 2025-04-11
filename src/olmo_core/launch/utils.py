@@ -54,10 +54,14 @@ class GitConfig(Config):
         return response.status_code == 200
 
     @classmethod
-    def from_env(cls) -> "GitConfig":
+    def from_env(cls) -> Optional["GitConfig"]:
+        from git.exc import InvalidGitRepositoryError
         from git.repo import Repo
 
-        repo = Repo(".")
+        try:
+            repo = Repo(".")
+        except InvalidGitRepositoryError:
+            return None
 
         git_ref = os.environ.get(GIT_REF_ENV_VAR, str(repo.commit()))
         remote = repo.remote()
