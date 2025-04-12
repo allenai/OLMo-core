@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Optional, Tuple
 
 
 def parse_git_remote_url(url: str) -> Tuple[str, str]:
@@ -19,7 +19,7 @@ def parse_git_remote_url(url: str) -> Tuple[str, str]:
     return account, repo
 
 
-def ensure_repo(allow_dirty: bool = False) -> Tuple[str, str, str, bool]:
+def ensure_repo(allow_dirty: bool = False) -> Tuple[str, str, Optional[str], str, bool]:
     import requests
     from git.repo import Repo
 
@@ -29,19 +29,25 @@ def ensure_repo(allow_dirty: bool = False) -> Tuple[str, str, str, bool]:
     git_ref = str(repo.commit())
 
     remote = repo.remote()
+
     # Try to find a remote based on the current tracking branch.
     try:
         branch = repo.active_branch
     except TypeError:
         branch = None
+
     if branch is not None:
         branch = branch.tracking_branch()
+
+    branch_name: Optional[str] = None
     if branch is not None:
         remote = repo.remote(branch.remote_name)
+        assert branch.name.startswith(branch.remote_name + "/")
+        branch_name = branch.name.replace(branch.remote_name + "/", "", 1)
 
     account, repo = parse_git_remote_url(remote.url)
     response = requests.get(f"https://github.com/{account}/{repo}")
     if response.status_code not in {200, 404}:
         response.raise_for_status()
     is_public = response.status_code == 200
-    return account, repo, git_ref, is_public
+    return account, repo, branch_name, git_ref, is_public

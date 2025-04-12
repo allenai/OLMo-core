@@ -44,7 +44,12 @@ class InitMethod(StrEnum):
             nn.init.zeros_(m.bias)
 
     def init_embeddings(
-        self, m: nn.Embedding, *, d_model: int, generator: Optional[torch.Generator] = None
+        self,
+        m: nn.Embedding,
+        *,
+        d_model: int,
+        std: float = 0.02,
+        generator: Optional[torch.Generator] = None,
     ):
         if self in (InitMethod.llama, InitMethod.llama_depth):
             nn.init.normal_(m.weight, generator=generator)
@@ -52,13 +57,17 @@ class InitMethod(StrEnum):
             nn.init.normal_(m.weight, std=d_model**-0.5)
         else:
             nn.init.trunc_normal_(
-                m.weight, mean=0.0, std=0.02, a=-3 * 0.02, b=3 * 0.02, generator=generator
+                m.weight, mean=0.0, std=std, a=-3 * std, b=3 * std, generator=generator
             )
 
     def init_final_w_out(
-        self, m: nn.Linear, *, d_model: int, generator: Optional[torch.Generator] = None
+        self,
+        m: nn.Linear,
+        *,
+        d_model: int,
+        std: float = 0.02,
+        generator: Optional[torch.Generator] = None,
     ):
-        std = 0.02
         if self in (InitMethod.llama, InitMethod.llama_depth, InitMethod.normalized):
             std = d_model**-0.5
         self._init_linear(m, std=std, generator=generator)
@@ -70,9 +79,9 @@ class InitMethod(StrEnum):
         d_model: int,
         block_idx: int,
         num_blocks: int,
+        std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ):
-        std = 0.02
         if self == InitMethod.normalized:
             std = d_model**-0.5
 
@@ -103,21 +112,18 @@ class InitMethod(StrEnum):
         d_model: int,
         block_idx: int,
         num_blocks: int,
+        std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ):
-        std = 0.02
         if self == InitMethod.normalized:
             std = d_model**-0.5
 
         self._init_linear(m.w1, std=std, generator=generator)
 
-        std = 0.02
         if self == InitMethod.llama:
-            std = 0.02 / (2 * num_blocks) ** 0.5
+            std = std / (2 * num_blocks) ** 0.5
         elif self == InitMethod.llama_depth:
-            std = 0.02 / (2 * (block_idx + 1)) ** 0.5
-        elif self == InitMethod.normalized:
-            std = d_model**-0.5
+            std = std / (2 * (block_idx + 1)) ** 0.5
 
         self._init_linear(m.w3, std=std, generator=generator)
 
@@ -133,15 +139,15 @@ class InitMethod(StrEnum):
         d_model: int,
         block_idx: int,
         num_blocks: int,
+        std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ):
         del d_model
 
-        std = 0.02
         if self == InitMethod.llama:
-            std = 0.02 / (2 * num_blocks) ** 0.5
+            std = std / (2 * num_blocks) ** 0.5
         elif self == InitMethod.llama_depth:
-            std = 0.02 / (2 * (block_idx + 1)) ** 0.5
+            std = std / (2 * (block_idx + 1)) ** 0.5
 
         nn.init.trunc_normal_(
             cast(MoELinearRouter, m.router).weight,
@@ -154,7 +160,7 @@ class InitMethod(StrEnum):
         nn.init.trunc_normal_(
             cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w1,
             mean=0.0,
-            std=0.02,
+            std=std,
             a=-3 * std,
             b=3 * std,
             generator=generator,
