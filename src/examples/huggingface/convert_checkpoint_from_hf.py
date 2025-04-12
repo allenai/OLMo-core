@@ -23,7 +23,7 @@ from transformers import AutoModelForCausalLM
 from olmo_core.aliases import PathOrStr
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import save_model_and_optim_state
-from olmo_core.io import copy_file, file_exists
+from olmo_core.io import copy_file, file_exists, join_path
 from olmo_core.nn.conversion.state_mapping import TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import load_hf_model
 from olmo_core.nn.hf.convert import get_converter_from_hf
@@ -130,11 +130,13 @@ def convert_checkpoint_from_hf(
         )
         model.load_state_dict(model_state_dict)
 
-    log.info(f"Saving OLMo core checkpoint to '{output_path}'")
-    save_model_and_optim_state(output_path, model, save_overwrite=True)
+    model_and_optim_dir = join_path(output_path, "model_and_optim")
+    log.info(f"Saving OLMo core checkpoint to '{model_and_optim_dir}'")
+    save_model_and_optim_state(model_and_optim_dir, model, save_overwrite=True)
     log.info(f"Successfully saved converted model to '{output_path}'")
 
-    log.info(f"Writing partial experiment config to '{output_path}'")
+    config_path = join_path(output_path, "config.json")
+    log.info(f"Writing partial experiment config to '{config_path}'")
     experiment_config_dict = {
         "model": transformer_config_dict,
         "dataset": {
@@ -144,8 +146,8 @@ def convert_checkpoint_from_hf(
 
     with tempfile.NamedTemporaryFile(mode="w") as temp_file:
         json.dump(experiment_config_dict, temp_file)
-        copy_file(temp_file.name, f"{output_path}/config.json", save_overwrite=True)
-        log.info(f"Successfully wrote partial experiment config to '{output_path}'")
+        copy_file(temp_file.name, config_path, save_overwrite=True)
+        log.info(f"Successfully wrote partial experiment config to '{config_path}'")
 
     if validate:
         log.info("Validating converted model")
@@ -332,7 +334,7 @@ def parse_args():
 
     parser.add_argument(
         "-o",
-        "--huggingface-output-dir",
+        "--output-dir",
         type=Path,
         required=True,
         help="Local or remote directory where the converted checkpoint should be saved.",
@@ -390,7 +392,7 @@ def main():
 
     convert_checkpoint_from_hf(
         hf_checkpoint_path=args.checkpoint_input_path,
-        output_path=args.huggingface_output_dir,
+        output_path=args.output_dir,
         transformer_config_dict=transformer_config_dict,
         tokenizer_config_dict=tokenizer_config_dict,
         model_id=args.model_id,
