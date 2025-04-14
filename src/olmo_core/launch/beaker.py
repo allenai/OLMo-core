@@ -31,7 +31,7 @@ from ..distributed.utils import OLMO_SHARED_FS_ENV_VAR
 from ..exceptions import BeakerExperimentFailedError, OLMoConfigurationError
 from ..utils import LOG_FILTER_TYPE_ENV_VAR, LogFilterType
 from ..version import VERSION
-from .utils import ensure_repo
+from .utils import GIT_BRANCH_ENV_VAR, GIT_REF_ENV_VAR, GIT_REPO_URL_ENV_VAR, GitConfig
 
 log = logging.getLogger(__name__)
 
@@ -96,12 +96,12 @@ class BeakerWekaBucket(Config):
 
 
 DEFAULT_SETUP_STEPS = (
-    'if [[ -z "$GIT_BRANCH" ]]; then',
-    '  git clone "$REPO_URL" .',
+    f'if [[ -z "${GIT_BRANCH_ENV_VAR}" ]]; then',
+    f'  git clone "${GIT_REPO_URL_ENV_VAR}" .',
     "else",
-    '  git clone -b "$GIT_BRANCH" --single-branch "$REPO_URL" .',
+    f'  git clone -b "${GIT_BRANCH_ENV_VAR}" --single-branch "${GIT_REPO_URL_ENV_VAR}" .',
     "fi",
-    'git checkout "$GIT_REF"',
+    f'git checkout "${GIT_REF_ENV_VAR}"',
     "git submodule update --init --recursive",
     "conda shell.bash activate base",
     "pip install -e '.[all]'",
@@ -226,6 +226,12 @@ class BeakerLaunchConfig(Config):
 
     host_networking: Optional[bool] = None
 
+    git: Optional[GitConfig] = field(default_factory=GitConfig.from_env)
+    """
+    Git configuration, specifies where to clone your source code from and which commit to check out.
+    If not set, this will be initialized automatically from your working directory.
+    """
+
     # NOTE: don't assign a type here because omegaconf can't validate arbitrary classes
     #  _beaker: Optional[Beaker] = None
     _beaker = None
@@ -342,10 +348,18 @@ class BeakerLaunchConfig(Config):
         """
         Get the Beaker experiment spec corresponding to this config instance.
         """
-        # Get repository account, name, and current ref.
-        github_account, github_repo, git_branch, git_ref, is_public = ensure_repo(self.allow_dirty)
+        if self.git is None:
+            raise OLMoConfigurationError(
+                f"{self.__class__.__name__}.git field is required!\n"
+                "You either need to instantiate your launch config from a valid git repository folder or set the 'git' field manually."
+            )
 
-        if not is_public and self.setup_steps == DEFAULT_SETUP_STEPS:
+        if self.git.is_dirty and not self.allow_dirty:
+            raise RuntimeError(
+                "You have uncommitted changes! Set 'allow_dirty=True' in your launch config to force."
+            )
+
+        if not self.git.is_public and self.setup_steps == DEFAULT_SETUP_STEPS:
             raise OLMoConfigurationError(
                 "It looks like your repository is private and private repositories will require "
                 "custom 'setup_steps' in order to clone the repo."
@@ -404,12 +418,12 @@ class BeakerLaunchConfig(Config):
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
             .with_constraint(cluster=self.clusters)
-            .with_env_var("REPO_URL", f"https://github.com/{github_account}/{github_repo}")
-            .with_env_var("GIT_REF", git_ref)
+            .with_env_var(GIT_REPO_URL_ENV_VAR, self.git.repo_url)
+            .with_env_var(GIT_REF_ENV_VAR, self.git.ref)
         )
 
-        if git_branch is not None:
-            task_spec = task_spec.with_env_var("GIT_BRANCH", git_branch)
+        if self.git.branch is not None:
+            task_spec = task_spec.with_env_var(GIT_BRANCH_ENV_VAR, self.git.branch)
 
         for name, val in self._get_env_vars():
             task_spec = task_spec.with_env_var(name=name, value=val)
