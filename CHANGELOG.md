@@ -29,6 +29,7 @@ Also added lower-level methods for converting state between the formats.
 - Undo a fix applied to `olmo_core.data.numpy_dataset.NumpyFSLDatasetMixture` that was generating a mismatch between the shape of instances in the dataset and the shape of instances in the data loader.
 - Made the 1B and 7B scripts more similar to each other.
 - Changed underlying logic and top-level arguments of `convert_checkpoint_from_hf.py` and `convert_checkpoint_to_hf.py`.
+- Beaker experiments launched with the `BeakerLaunchConfig` will now log with ANSI colors enabled.
 
 ### Fixed
 
@@ -36,6 +37,9 @@ Also added lower-level methods for converting state between the formats.
 - Fixed a bug where the trainer might try to save a duplicate final checkpoint if the run that already completed was restarted.
 - When submitting a Beaker job from a branch that's tracking a GitHub fork, OLMo-core now instructs Beaker to pull from the fork instead of from the main repo.
 - Made Beaker image resolution more robust.
+- Having `t_max` overrides in the default model configs is confusing and error prone, so we removed them.
+- Beaker launcher will only clone a single branch at runtime when possible, which can be much faster.
+
 
 ## [v2.0.1](https://github.com/allenai/OLMo-core/releases/tag/v2.0.1) - 2025-03-18
 

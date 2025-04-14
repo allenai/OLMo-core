@@ -388,7 +388,7 @@ class MoERouter(nn.Module):
                 self.lb_loss_weight * self.load_balancing_loss,
                 ReduceType.mean,
             )
-            out["load balancing loss (unscaled)"] = (
+            out["load balancing loss unscaled"] = (
                 self.load_balancing_loss.clone(),
                 ReduceType.mean,
             )
@@ -397,7 +397,7 @@ class MoERouter(nn.Module):
         if self.z_loss_weight is not None:
             assert self.z_loss is not None
             out["router Z loss"] = (self.z_loss_weight * self.z_loss, ReduceType.mean)
-            out["router Z loss (unscaled)"] = (self.z_loss.clone(), ReduceType.mean)
+            out["router Z loss unscaled"] = (self.z_loss.clone(), ReduceType.mean)
 
         if reset:
             self.reset_metrics()
