@@ -29,6 +29,7 @@ Also added lower-level methods for converting state between the formats.
 - Undo a fix applied to `olmo_core.data.numpy_dataset.NumpyFSLDatasetMixture` that was generating a mismatch between the shape of instances in the dataset and the shape of instances in the data loader.
 - Made the 1B and 7B scripts more similar to each other.
 - Changed underlying logic and top-level arguments of `convert_checkpoint_from_hf.py` and `convert_checkpoint_to_hf.py`.
+- Beaker experiments launched with the `BeakerLaunchConfig` will now log with ANSI colors enabled.
 
 ### Fixed
 
