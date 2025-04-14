@@ -4,6 +4,7 @@ import os
 import random
 import socket
 import sys
+from collections import deque
 from typing import Any, Callable, Dict, Optional, Tuple
 
 import pytest
@@ -85,10 +86,35 @@ def get_default_device():
         return torch.device("cpu")
 
 
+_PORT_MIN = 29500
+_PORT_MAX = 30000
+_PORTS = list(range(_PORT_MIN, _PORT_MAX))
+random.Random().shuffle(_PORTS)
+_PORTS = deque(_PORTS)
+
+
 def port_in_use(host: str, port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(1)
         return s.connect_ex((host, port)) == 0
+
+
+def get_next_port() -> int:
+    global _PORTS
+    port = _PORTS[0]
+    _PORTS.rotate()
+    return port
+
+
+def find_open_port(host: str = "127.0.0.1") -> int:
+    port = get_next_port()
+    attempts = 0
+    while port_in_use(host, port):
+        port += get_next_port()
+        attempts += 1
+        if attempts >= 10:
+            raise RuntimeError("failed to find an open port")
+    return port
 
 
 def init_process(
@@ -134,7 +160,7 @@ def init_process(
     if log_from_all_ranks or process_rank == 0:
         logging.basicConfig(level=logging.DEBUG, handlers=[handler])
 
-    logging.getLogger().info("Starting test...")
+    log.info("Starting test...")
 
     try:
         func(*(func_args or []), **(func_kwargs or {}))
@@ -160,14 +186,7 @@ def run_distributed_test(
         start_method = "fork" if backend == "gloo" else "spawn"
 
     if primary_port is None:
-        primary_port = 29500 + random.Random().randint(0, 100)
-
-        attempts = 0
-        while port_in_use(primary_addr, primary_port):
-            primary_port += 1
-            attempts += 1
-            if attempts >= 10:
-                raise RuntimeError("failed to guess an open port")
+        primary_port = find_open_port(host=primary_addr)
 
     log.info(f"Running distributed test on port {primary_port}...")
 
