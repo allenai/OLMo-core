@@ -78,7 +78,7 @@ class AnnealingDataMix(DataMixBase):
     """
 
     pl_repl_p1_contig = "prolong_phase1_npb_contig_pack"
-    pl_all_long = "prolong_all_long_npb_contig_pack.txt"
+    pl_all_long = "prolong_all_long_npb_contig_pack"
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
