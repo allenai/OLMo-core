@@ -88,18 +88,24 @@ def get_default_device():
 
 _PORT_MIN = 29500
 _PORT_MAX = 30000
-_PORTS = list(range(_PORT_MIN, _PORT_MAX))
-random.Random().shuffle(_PORTS)
-_PORTS = deque(_PORTS)
 
 
-def port_in_use(host: str, port: int) -> bool:
+def _initialize_ports() -> deque[int]:
+    ports = list(range(_PORT_MIN, _PORT_MAX))
+    random.Random().shuffle(ports)
+    return deque(ports)
+
+
+_PORTS = _initialize_ports()
+
+
+def _port_in_use(host: str, port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(1)
         return s.connect_ex((host, port)) == 0
 
 
-def get_next_port() -> int:
+def _get_next_port() -> int:
     global _PORTS
     port = _PORTS[0]
     _PORTS.rotate()
@@ -107,10 +113,10 @@ def get_next_port() -> int:
 
 
 def find_open_port(host: str = "127.0.0.1") -> int:
-    port = get_next_port()
+    port = _get_next_port()
     attempts = 0
-    while port_in_use(host, port):
-        port += get_next_port()
+    while _port_in_use(host, port):
+        port += _get_next_port()
         attempts += 1
         if attempts >= 10:
             raise RuntimeError("failed to find an open port")
