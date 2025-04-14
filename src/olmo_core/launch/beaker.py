@@ -350,7 +350,7 @@ class BeakerLaunchConfig(Config):
         if self.git is None:
             raise OLMoConfigurationError(
                 f"{self.__class__.__name__}.git field is required!\n"
-                "You either need to instantiate your launch config from a valid git repository folder or set the '.git' field manually."
+                "You either need to instantiate your launch config from a valid git repository folder or set the 'git' field manually."
             )
 
         if self.git.is_dirty and not self.allow_dirty:
