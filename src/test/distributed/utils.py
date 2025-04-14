@@ -44,6 +44,8 @@ __all__ = [
     "MULTI_GPU_MARKS",
 ]
 
+log = logging.getLogger(__name__)
+
 has_multiple_gpus = has_cuda and torch.cuda.device_count() > 1
 
 MULTI_GPU_MARKS = (
@@ -106,15 +108,6 @@ def init_process(
     os.environ.setdefault(OLMO_LOCAL_WORLD_SIZE_ENV_VAR, str(world_size))
     os.environ.setdefault(OLMO_LOCAL_RANK_ENV_VAR, str(process_rank))
 
-    #  dist.init_process_group(
-    #      backend=backend,
-    #      init_method=f"tcp://{primary_addr}:{primary_port}",
-    #      world_size=world_size,
-    #      rank=process_rank,
-    #      timeout=datetime.timedelta(seconds=120),
-    #  )
-    #  if "nccl" in backend:
-    #      torch.cuda.set_device(int(process_rank))
     init_distributed(
         backend=backend,
         timeout=datetime.timedelta(seconds=120),
@@ -141,9 +134,7 @@ def init_process(
     if log_from_all_ranks or process_rank == 0:
         logging.basicConfig(level=logging.DEBUG, handlers=[handler])
 
-    log = logging.getLogger()
-
-    log.info("Starting test...")
+    logging.getLogger().info("Starting test...")
 
     try:
         func(*(func_args or []), **(func_kwargs or {}))
@@ -177,6 +168,8 @@ def run_distributed_test(
             attempts += 1
             if attempts >= 10:
                 raise RuntimeError("failed to guess an open port")
+
+    log.info(f"Running distributed test on port {primary_port}...")
 
     mp.start_processes(
         init_process,
