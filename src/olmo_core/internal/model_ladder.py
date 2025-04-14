@@ -55,9 +55,14 @@ class SubCmd(StrEnum):
     def run(self, config: LadderRunConfig):
         if get_local_rank() == 0:
             print(config)
+            print(
+                "\n"
+                f"[b blue]Total parameters:[/]         {config.model.num_params:,d} ({config.model.num_active_params:,d} active)\n"
+                f"[b blue]Non-embedding parameters:[/] {config.model.num_non_embedding_params:,d} ({config.model.num_active_non_embedding_params:,d} active)"
+            )
 
         if self == SubCmd.launch:
-            config.launch.launch(follow=True)
+            config.launch.launch(follow=False)
         elif self == SubCmd.dry_run:
             pass
         elif self in (SubCmd.train, SubCmd.train_single):
