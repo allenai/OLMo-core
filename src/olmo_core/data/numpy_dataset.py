@@ -841,6 +841,8 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
             instance_filter_config=instance_filter_config,
             label_mask_paths=label_mask_paths,
         )
+        # :class:`NumpyPaddedFSLDataset` only has 1 document per instance, but child classes may have more.
+        self._docs_per_instance = 1
         self._array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
 
     @property
@@ -916,7 +918,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                         segment_documents_into_instances,
                         path,
                         indices_path,
-                        max_sequence_length=self.sequence_length,
+                        max_sequence_length=self.sequence_length // self._docs_per_instance,
                         eos_token_id=self.eos_token_id,
                         dtype=self.dtype,
                         indices_dtype=self.indices_dtype,
@@ -1254,30 +1256,30 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
             instance_filter_config=instance_filter_config,
             label_mask_paths=label_mask_paths,
         )
-        self.docs_per_instance = docs_per_instance
+        self._docs_per_instance = docs_per_instance
         self.chunks_per_doc = chunks_per_doc
         self._seed = seed
         self._docs_indices: Optional[np.ndarray] = None
 
+    def __len__(self) -> int:
+        if self._num_instances is None:
+            self._num_instances = self.offsets[-1][1]
+        return self._num_instances // self._docs_per_instance
+
     def prepare(self):
         super().prepare()
-        self._docs_indices = np.stack(
-            [get_rng(self._seed + i).permutation(len(self)) for i in range(self.docs_per_instance)],
-            axis=1,
+        self._docs_indices = (
+            get_rng(self._seed)
+            .permutation(len(self) * self._docs_per_instance)
+            .reshape(-1, self._docs_per_instance)
         )
 
-    def _unpad_sample_and_interleave(
+    def _unpad_and_interleave(
         self, tensors: List[torch.Tensor], tensors_non_pad_indices: List[Tuple[torch.Tensor, ...]]
     ) -> torch.Tensor:
         unpadded_tensors: List[torch.Tensor] = [
             tensor[non_pad_indices]
             for tensor, non_pad_indices in zip(tensors, tensors_non_pad_indices)
-        ]
-
-        # Take a ``1 / docs_per_instance`` portion of the each tensor
-        unpadded_tensors: List[torch.Tensor] = [
-            unpadded_tensor.tensor_split(self.docs_per_instance)[i]
-            for i, unpadded_tensor in enumerate(unpadded_tensors)
         ]
 
         chunked_tensors = [
@@ -1293,9 +1295,12 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         )
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
+        index = int(index)  # in case this is a numpy int type.
+        pos_index = index if index >= 0 else len(self) + index
+
         if self._docs_indices is None:
             raise RuntimeError(f"{self.prepare.__name__} has not been called.")
-        docs_indices = self._docs_indices[index]
+        docs_indices = self._docs_indices[pos_index]
 
         docs = [super().__getitem__(doc_index) for doc_index in docs_indices]
 
@@ -1309,13 +1314,13 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
 
         non_pad_indices = [torch.nonzero(doc["input_ids"], as_tuple=True) for doc in docs]
 
-        item["input_ids"] = self._unpad_sample_and_interleave(
+        item["input_ids"] = self._unpad_and_interleave(
             [doc["input_ids"] for doc in docs], non_pad_indices
         )
         pad_shape = (0, self.sequence_length - len(item["input_ids"]))
         item["input_ids"] = F.pad(item["input_ids"], pad_shape, value=self.pad_token_id)
 
-        item["label_mask"] = self._unpad_sample_and_interleave(
+        item["label_mask"] = self._unpad_and_interleave(
             [doc["label_mask"] for doc in docs], non_pad_indices
         )
         item["label_mask"] = F.pad(item["label_mask"], pad_shape, value=False)
