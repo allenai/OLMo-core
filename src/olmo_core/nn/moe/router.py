@@ -59,6 +59,9 @@ _uniform_expert_assignment: Callable[
 ] = _UniformExpertAssignment.apply  # type: ignore
 
 
+_EPSILON = torch.finfo(torch.float32).tiny
+
+
 class MoERouterType(StrEnum):
     """
     An enumeration of the different MoE router implementations.
@@ -426,8 +429,6 @@ class MoERouter(nn.Module):
             the total number of items routed to each expert, with shape ``(num_experts,)``,
             and optionally the auxiliary losses.
         """
-        B, S, _ = get_local_tensor(x).shape
-
         # shape: (batch_size, seq_len, d_model)
         x = self.jitter(x)
 
@@ -458,7 +459,7 @@ class MoERouter(nn.Module):
         scores = scores.float()
         # Make sure scores are normalized, otherwise load balancing loss doesn't work.
         if self.gating_function == MoERouterGatingFunction.sigmoid:
-            scores = scores / (scores.sum(dim=-1, keepdim=True) + 1e-20)
+            scores = scores / (scores.sum(dim=-1, keepdim=True) + _EPSILON)
 
         with torch.no_grad():
             # Histogram the expert ids to identify the number of items/tokens routed to each expert.
@@ -492,7 +493,7 @@ class MoERouter(nn.Module):
             if self.z_loss_weight is not None:
                 assert self.z_loss is not None
                 z_loss = router_z_loss(
-                    expert_logits=logits.float(),
+                    expert_logits=logits,
                     loss_div_factor=loss_div_factor,
                     tp_mesh=self.tp_mesh,
                     cp_mesh=self.cp_mesh,
