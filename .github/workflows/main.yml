@@ -188,6 +188,7 @@ jobs:
                   preemptible: true
                 resources:
                   gpuCount: ${{ matrix.task.gpus }}
+                timeout: 8m
                 hostNetworking: true
                 constraints:
                   cluster:
