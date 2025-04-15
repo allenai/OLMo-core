@@ -205,7 +205,7 @@ class LcContTrain(Config):
                 load_path=load_path,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
-                max_duration=Duration.tokens(int(20e9)),
+                max_duration=Duration.tokens(int(50e9)),
             )
             .with_callback(
                 "checkpointer",
