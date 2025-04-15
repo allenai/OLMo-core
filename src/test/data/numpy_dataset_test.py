@@ -13,6 +13,7 @@ from olmo_core.data import (
     NumpyVSLDataset,
     TokenizerConfig,
 )
+from olmo_core.data.numpy_dataset import NumpyInterleavedFSLDataset
 from olmo_core.data.source_mixture import (
     SourceMixtureConfig,
     SourceMixtureDatasetConfig,
@@ -466,6 +467,103 @@ def test_numpy_vsl_dataset(tmp_path: Path):
     assert buckets[2][1].tolist() == [0, 3]  # instances of length 8
 
     assert ds.instances_per_bucket == ((2, 2), (4, 1), (8, 2))
+
+
+def test_numpy_interleaved_fsl_dataset(tmp_path: Path):
+    data1 = [1, 2, 3, 4, 5, 6, 7, 0, 8, 9, 10, 0]
+    mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
+    mmap1[:] = data1
+    mmap1.flush()
+
+    data2 = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 21, 22, 0]
+    mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(len(data2),))
+    mmap2[:] = data2
+    mmap2.flush()
+
+    ds = NumpyInterleavedFSLDataset(
+        tmp_path / "mmap1.npy",
+        tmp_path / "mmap2.npy",
+        sequence_length=8,
+        pad_token_id=0,
+        eos_token_id=0,
+        vocab_size=32_000,
+        seed=2,
+        docs_per_instance=2,
+        chunks_per_doc=4,
+    )
+
+    ds.prepare()
+    assert ds._docs_indices is not None
+    # If this assert fails, the rng state has changed and so the subsequent asserts will fail.
+    assert ds._docs_indices.tolist() == [[3, 3], [2, 2], [0, 1], [1, 0]]
+
+    assert ds[0]["input_ids"].tolist() == [21, 22, 0, 0, 0, 0, 0, 0]
+    assert ds[0]["label_mask"].tolist() == [True] * 2 + [False] * 6
+    assert ds[1]["input_ids"].tolist() == [11, 15, 12, 16, 13, 17, 14, 18]
+    assert ds[1]["label_mask"].tolist() == [True] * 8
+    assert ds[2]["input_ids"].tolist() == [1, 10, 2, 3, 4, 0, 0, 0]
+    assert ds[2]["label_mask"].tolist() == [True] * 5 + [False] * 3
+    assert ds[3]["input_ids"].tolist() == [8, 5, 9, 6, 7, 0, 0, 0]
+    assert ds[3]["label_mask"].tolist() == [True] * 5 + [False] * 3
+    assert len(ds) == 4
+
+
+def test_numpy_interleaved_fsl_dataset_with_label_mask(tmp_path: Path):
+    data1 = [1, 2, 3, 4, 5, 6, 7, 0, 8, 9, 10, 0]
+    mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
+    mmap1[:] = data1
+    mmap1.flush()
+
+    data1_mask = [False, True, True, True, True, True, True, True] + [True, True, True, True]
+    mmap1_mask = np.memmap(
+        tmp_path / "mmap1_mask.npy", mode="w+", dtype=np.bool_, shape=(len(data1_mask),)
+    )
+    mmap1_mask[:] = data1_mask
+    mmap1_mask.flush()
+
+    data2 = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 21, 22, 0]
+    mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(len(data2),))
+    mmap2[:] = data2
+    mmap2.flush()
+
+    data2_mask = [True, True, True, True, True, True, True, True, True, True, True] + [
+        True,
+        True,
+        True,
+    ]
+    mmap2_mask = np.memmap(
+        tmp_path / "mmap2_mask.npy", mode="w+", dtype=np.bool_, shape=(len(data2_mask),)
+    )
+    mmap2_mask[:] = data2_mask
+    mmap2_mask.flush()
+
+    ds = NumpyInterleavedFSLDataset(
+        tmp_path / "mmap1.npy",
+        tmp_path / "mmap2.npy",
+        sequence_length=8,
+        pad_token_id=0,
+        eos_token_id=0,
+        vocab_size=32_000,
+        seed=2,
+        docs_per_instance=2,
+        chunks_per_doc=4,
+        label_mask_paths=[tmp_path / "mmap1_mask.npy", tmp_path / "mmap2_mask.npy"],
+    )
+
+    ds.prepare()
+    assert ds._docs_indices is not None
+    # If this assert fails, the rng state has changed and so the subsequent asserts will fail.
+    assert ds._docs_indices.tolist() == [[3, 3], [2, 2], [0, 1], [1, 0]]
+
+    assert ds[0]["input_ids"].tolist() == [21, 22, 0, 0, 0, 0, 0, 0]
+    assert ds[0]["label_mask"].tolist() == [True] * 2 + [False] * 6
+    assert ds[1]["input_ids"].tolist() == [11, 15, 12, 16, 13, 17, 14, 18]
+    assert ds[1]["label_mask"].tolist() == [True] * 8
+    assert ds[2]["input_ids"].tolist() == [1, 10, 2, 3, 4, 0, 0, 0]
+    assert ds[2]["label_mask"].tolist() == [False] + [True] * 4 + [False] * 3
+    assert ds[3]["input_ids"].tolist() == [8, 5, 9, 6, 7, 0, 0, 0]
+    assert ds[3]["label_mask"].tolist() == [True] * 5 + [False] * 3
+    assert len(ds) == 4
 
 
 def test_guess_dtype():
