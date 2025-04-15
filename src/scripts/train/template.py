@@ -1,3 +1,8 @@
+"""
+Template training script. Please copy and modify and for your own needs.
+Run this script without any arguments to see its usage.
+"""
+
 import logging
 import sys
 from dataclasses import dataclass
@@ -49,14 +54,14 @@ log = logging.getLogger(__name__)
 
 # TODO: update these settings for your use case
 
-# Set this if you want to start from an existing checkpoint (like for annealing).
-# NOTE: You do NOT need to set on a restart as long as the trainer's 'save_folder' is the same.
+# Set this if you want to start training a new run from an existing checkpoint (like for annealing).
+# NOTE: You do NOT need to set this on a restart of the same run as long as the trainer's 'save_folder' hasn't changed.
 CHECKPOINT: Optional[str] = None
 
 # Data configuration.
 SEQUENCE_LENGTH = 4096
 TOKENIZER_CONFIG = TokenizerConfig.dolma2()
-DATA_PATHS: List[str] = []
+DATA_PATHS: List[str] = []  # paths or URLs to your '.npy' tokenized training data files.
 GLOBAL_BATCH_SIZE = 1024 * SEQUENCE_LENGTH
 RANK_MICROBATCH_SIZE = 8 * SEQUENCE_LENGTH
 INTRA_DOCUMENT_MASKING = False
@@ -67,7 +72,7 @@ LEARNING_RATE = 4e-4
 
 # Beaker.
 BEAKER_CLUSTER = "ai2/jupiter-cirrascale-2"
-NUM_NODES = 2
+NUM_NODES = 1
 BEAKER_WORKSPACE = "ai2/OLMo-core"
 BEAKER_BUDGET = "ai2/oe-training"
 
@@ -224,7 +229,29 @@ def launch(config: ExperimentConfig):
 
 
 if __name__ == "__main__":
-    usage = f"Usage: python {sys.argv[0]} train|launch|dry_run RUN_NAME [OVERRIDES...]"
+    usage = f"""
+Usage
+=====
+
+› python {sys.argv[0]} [dry_run|launch|train] RUN_NAME [OVERRIDES...]
+
+  * dry_run: Print out the final config after applying overrides and exit. Useful for debugging.
+  * launch:  Launch the script on Beaker as a batch job for training.
+  * train:   Run the script for training locally. This should usually not be called directly.
+
+Examples
+========
+
+Print the config:
+› python {sys.argv[0]} dry_run run01 --launch.num_nodes=2
+
+Launch the training run as a Beaker batch job:
+› python {sys.argv[0]} launch run01 --launch.num_nodes=2
+
+Launch the training run locally (e.g. in a Beaker interactive session):
+› torchrun --nproc-per-node=8 {sys.argv[0]} train run01 --launch.num_nodes=2
+    """.strip()
+
     if len(sys.argv) < 3:
         print(usage)
         sys.exit(1)
