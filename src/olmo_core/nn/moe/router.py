@@ -59,7 +59,7 @@ _uniform_expert_assignment: Callable[
 ] = _UniformExpertAssignment.apply  # type: ignore
 
 
-_EPSILON = torch.finfo(torch.float32).tiny
+_EPSILON = torch.finfo(torch.float32).tiny  # = smallest normal value ~= 1.175e-38
 
 
 class MoERouterType(StrEnum):
@@ -443,6 +443,8 @@ class MoERouter(nn.Module):
         else:
             raise NotImplementedError(self.gating_function)
 
+        scores = scores.float()  # NOTE: should be FP32 already, but just to be sure.
+
         # shape: (batch_size, seq_len, top_k)
         expert_weights, expert_indices = self.get_top_k(scores)
 
@@ -456,7 +458,6 @@ class MoERouter(nn.Module):
                 )
             )
 
-        scores = scores.float()
         # Make sure scores are normalized, otherwise load balancing loss doesn't work.
         if self.gating_function == MoERouterGatingFunction.sigmoid:
             scores = scores / (scores.sum(dim=-1, keepdim=True) + _EPSILON)
