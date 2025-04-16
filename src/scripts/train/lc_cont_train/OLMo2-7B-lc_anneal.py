@@ -78,7 +78,7 @@ class AnnealingDataMix(DataMixBase):
     """
 
     dolmino_prolong_50p = "dolmino_prolong_50p"
-    lc50_dolmino50_v1 = " lc50_dolmino50_v1"
+    lc50_dolmino50_v1 = "lc50_dolmino50_v1"
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
