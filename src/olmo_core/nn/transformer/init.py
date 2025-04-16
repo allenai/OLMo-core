@@ -4,11 +4,11 @@ import torch
 import torch.nn as nn
 
 from olmo_core.config import StrEnum
-from olmo_core.nn.mup import MuP
 
 from ..attention import Attention, AttentionBase, FusedAttention
 from ..feed_forward import FeedForward
 from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP
+from ..mup import MuP
 
 
 class InitMethod(StrEnum):

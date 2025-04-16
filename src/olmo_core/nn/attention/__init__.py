@@ -15,11 +15,11 @@ from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.nn.mup import MuP, MuPConfig, MuPHyperParam
 
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..layer_norm import LayerNorm, LayerNormConfig
+from ..mup import MuP, MuPConfig, MuPHyperParam
 from ..rope import (
     ComplexRotaryEmbedding,
     FusedRotaryEmbedding,

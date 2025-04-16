@@ -9,12 +9,11 @@ from torch.distributed import DeviceMesh
 from torch.distributed.tensor.parallel import parallelize_module
 from torch.distributed.tensor.placement_types import Placement, Replicate
 
-from olmo_core.nn.mup import MuP, MuPConfig, MuPHyperParam
-
 from ..config import Config, DType, StrEnum
 from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
 from .functional import l2_normalize
+from .mup import MuP, MuPConfig, MuPHyperParam
 from .utils import get_tp_wrappers
 
 __all__ = ["FeedForwardType", "FeedForwardConfig", "FeedForward", "NormalizedFeedForward"]

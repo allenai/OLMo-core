@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, List, Optional
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.nn.mup import MuPConfig
 from olmo_core.utils import ensure_multiple_of
 
 from ..attention import AttentionConfig, AttentionType
@@ -15,6 +14,7 @@ from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
+from ..mup import MuPConfig
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from .init import InitMethod
 

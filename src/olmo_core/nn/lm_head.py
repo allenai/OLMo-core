@@ -19,7 +19,6 @@ from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.nn.mup import MuP, MuPConfig, MuPHyperParam
 
 from .functional import (
     cross_entropy_loss,
@@ -27,6 +26,7 @@ from .functional import (
     l2_normalize,
 )
 from .layer_norm import LayerNormConfig
+from .mup import MuP, MuPConfig, MuPHyperParam
 
 __all__ = [
     "LMHeadType",
