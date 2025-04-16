@@ -17,7 +17,7 @@ import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
-from torch.distributed.tensor import DTensor, Replicate, Shard
+from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
 from olmo_core.data.utils import get_cumulative_document_lengths
@@ -93,6 +93,8 @@ class Transformer(nn.Module):
         init_method: InitMethod = InitMethod.normal,
         init_device: str = "cpu",
         init_seed: int = 0,
+        init_std: float = 0.02,
+        block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
     ):
         super().__init__()
 
@@ -107,14 +109,18 @@ class Transformer(nn.Module):
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.blocks = nn.ModuleDict()
         for block_idx in range(n_layers):
-            block_ = block.build(
-                d_model=d_model,
-                block_idx=block_idx,
-                init_device=init_device,
-                cache=cache,
+            block_config = block
+            if block_overrides is not None and block_idx in block_overrides:
+                block_config = block_overrides[block_idx]
+            self.blocks[str(block_idx)] = self._validate_block(
+                block_config.build(
+                    d_model=d_model,
+                    block_idx=block_idx,
+                    n_layers=n_layers,
+                    init_device=init_device,
+                    cache=cache,
+                )
             )
-            self._validate_block(block_)
-            self.blocks[str(block_idx)] = block_
         self.lm_head = lm_head.build(
             d_model=d_model, vocab_size=vocab_size, init_device=init_device
         )
@@ -122,8 +128,11 @@ class Transformer(nn.Module):
         self.init_device = init_device
         self.init_method = InitMethod(init_method)
         self.init_seed = init_seed
+        self.init_std = init_std
 
         self._cache = cache
+        self._pp_enabled = False
+        self._pp_group_size = 1
         self._fp8_enabled = False
         self._precompute_float8_dynamic_scale_for_fsdp = False
         self._compile_enabled = False
@@ -138,28 +147,21 @@ class Transformer(nn.Module):
         self.num_params
         self.num_non_embedding_params
 
-    def _validate_block(self, block: TransformerBlockBase):
-        del block
-
-    def compute_auxiliary_losses(
-        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
-    ) -> Dict[str, torch.Tensor]:
-        # NOTE: if tensor parallelism is enabled you'll need to distribute loss tensors as DTensors.
-        # See how the MoETransformer handles that for an example.
-        del total_bz, reset
-        return {}
-
-    def reset_auxiliary_losses(self):
-        pass
+    def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
+        return block
 
     def compute_auxiliary_metrics(
-        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
+        self, reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
-        del total_bz, reset
+        del reset
         return {}
 
     def reset_auxiliary_metrics(self):
         pass
+
+    @property
+    def pp_enabled(self) -> bool:
+        return self._pp_enabled
 
     @property
     def fp8_enabled(self) -> bool:
@@ -237,7 +239,7 @@ class Transformer(nn.Module):
 
         if self.embeddings is not None:
             self.init_method.init_embeddings(
-                self.embeddings, d_model=self.d_model, generator=generator
+                self.embeddings, d_model=self.d_model, std=self.init_std, generator=generator
             )
 
         for block in self.blocks.values():
@@ -252,6 +254,7 @@ class Transformer(nn.Module):
                 d_model=self.d_model,
                 block_idx=block.block_idx,
                 num_blocks=self.n_layers,
+                std=self.init_std,
                 generator=generator,
             )
 
@@ -262,6 +265,7 @@ class Transformer(nn.Module):
                     d_model=self.d_model,
                     block_idx=block.block_idx,
                     num_blocks=self.n_layers,
+                    std=self.init_std,
                     generator=generator,
                 )
 
@@ -275,6 +279,7 @@ class Transformer(nn.Module):
                     d_model=self.d_model,
                     block_idx=block.block_idx,
                     num_blocks=self.n_layers,
+                    std=self.init_std,
                     generator=generator,
                 )
 
@@ -286,6 +291,7 @@ class Transformer(nn.Module):
             self.init_method.init_final_w_out(
                 self.lm_head.w_out,
                 d_model=self.d_model,
+                std=self.init_std,
                 generator=generator,
                 mup=self.lm_head.mups.get("w_out.weight"),
             )
@@ -316,10 +322,11 @@ class Transformer(nn.Module):
             z_loss_multiplier=z_loss_multiplier,
             return_logits=return_logits,
         )
+
         if loss_div_factor is not None:
-            lm_head_kwargs["loss_div_factor"] = move_to_device(loss_div_factor, self.device)
-        if labels is not None:
-            lm_head_kwargs["labels"] = move_to_device(labels, self.device)
+            loss_div_factor = move_to_device(loss_div_factor, self.device)
+            lm_head_kwargs["loss_div_factor"] = loss_div_factor
+            block_kwargs["loss_div_factor"] = loss_div_factor
 
         # Prepare document length inputs.
         max_doc_len: Optional[int] = None
@@ -452,8 +459,11 @@ class Transformer(nn.Module):
         if self.lm_head is not None:
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
+                # NOTE: When TP is active we can't pass 'labels=None' or the hook from 'PrepareModuleInput'
+                # will throw an exception.
                 if labels is not None:
                     mark_dynamic(labels, (0, 1), strict=False)
+                    lm_head_kwargs["labels"] = labels
             return self.lm_head(h, **lm_head_kwargs)
         else:
             return h
@@ -483,6 +493,8 @@ class Transformer(nn.Module):
         for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)
             block.apply_pp(pp_mesh)
+        self._pp_enabled = True
+        self._pp_group_size = pp_mesh.size()
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: Optional[bool] = None):
         """
@@ -530,6 +542,8 @@ class Transformer(nn.Module):
         self._cp_load_balancer = load_balancer.build(cp_mesh)
         for block in self.blocks.values():
             cast(TransformerBlockBase, block).apply_cp(cp_mesh, load_balancer)
+        if self.lm_head is not None:
+            self.lm_head.apply_cp(cp_mesh, load_balancer)
 
     def apply_activation_checkpointing(
         self,
@@ -668,10 +682,11 @@ class Transformer(nn.Module):
         for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)
             block.apply_fsdp(
+                dp_mesh=dp_mesh,
                 prefetch_factor=prefetch_factor,
                 wrapping_strategy=wrapping_strategy,
                 reshard_after_forward=reshard_after_forward,
-                **fsdp_config,
+                mp_policy=mp_policy,
             )
 
         if self.embeddings is not None:
@@ -799,6 +814,8 @@ class NormalizedTransformer(Transformer):
         init_method: InitMethod = InitMethod.normalized,
         init_device: str = "cpu",
         init_seed: int = 0,
+        init_std: float = 0.02,
+        block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
     ):
         super().__init__(
             d_model=d_model,
@@ -810,13 +827,16 @@ class NormalizedTransformer(Transformer):
             init_method=init_method,
             init_device=init_device,
             init_seed=init_seed,
+            init_std=init_std,
+            block_overrides=block_overrides,
         )
 
-    def _validate_block(self, block: TransformerBlockBase):
+    def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
         if not isinstance(block, NormalizedTransformerBlock):
             raise OLMoConfigurationError(
                 f"'{self.__class__.__name__}' requires a '{NormalizedTransformerBlock.__name__}' block"
             )
+        return block
 
     @torch.no_grad()
     def init_weights(
@@ -879,46 +899,44 @@ class MoETransformer(Transformer):
     def is_moe(self) -> bool:
         return True
 
-    def _validate_block(self, block: TransformerBlockBase):
+    def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
         if not isinstance(block, MoETransformerBlock):
             raise OLMoConfigurationError(
                 f"'{self.__class__.__name__}' requires a '{MoETransformerBlock.__name__}' block"
             )
-
-    def compute_auxiliary_losses(
-        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
-    ) -> Dict[str, torch.Tensor]:
-        out: Dict[str, torch.Tensor] = {}
-        for block in self.blocks.values():
-            for loss_name, loss_val in (
-                cast(MoETransformerBlock, block).compute_losses(total_bz, reset=reset).items()
-            ):
-                loss_val = loss_val.div(self.n_layers)
-
-                if self.tp_enabled:
-                    assert self._tp_mesh is not None
-                    loss_val = DTensor.from_local(loss_val.unsqueeze(0), self._tp_mesh, (Shard(0),))
-                    loss_val = loss_val.redistribute(placements=(Replicate(),)).mean()
-
-                if loss_name in out:
-                    out[loss_name] += loss_val
-                else:
-                    out[loss_name] = loss_val
-        return out
-
-    def reset_auxiliary_losses(self):
-        for block in self.blocks.values():
-            cast(MoETransformerBlock, block).reset_losses()
+        return block
 
     def compute_auxiliary_metrics(
-        self, total_bz: Union[int, float, torch.Tensor], reset: bool = True
+        self, reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
+        from olmo_core.train.common import ReduceType
+
+        mean_offset = 1.0
+        if self.pp_enabled:
+            # Change the divisor to 'world_size // pp_group_size'
+            mean_offset = self._pp_group_size
+
         out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
         for block_idx, block in self.blocks.items():
             block = cast(MoETransformerBlock, block)
-            block_metrics = block.compute_metrics(total_bz, reset=reset)
-            for metric_name, metric_val in block_metrics.items():
-                out[f"block {int(block_idx):02d}/{metric_name}"] = metric_val
+            block_metrics = block.compute_metrics(reset=reset)
+            for metric_name, (metric_val, reduce_type) in block_metrics.items():
+                out[f"block {int(block_idx):02d}/{metric_name}"] = (metric_val, reduce_type)
+
+                if self.pp_enabled and reduce_type == ReduceType.mean:
+                    metric_val = metric_val.float() * mean_offset
+
+                if metric_name not in out:
+                    out[metric_name] = (metric_val, reduce_type)
+                elif reduce_type in (ReduceType.mean, ReduceType.sum):
+                    out[metric_name] = (
+                        out[metric_name][0] + metric_val,
+                        reduce_type,
+                    )
+                elif reduce_type == ReduceType.max:
+                    out[metric_name] = (torch.max(out[metric_name][0], metric_val), reduce_type)
+                else:
+                    raise NotImplementedError(reduce_type)
         return out
 
     def reset_auxiliary_metrics(self):

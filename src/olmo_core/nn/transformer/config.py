@@ -161,6 +161,7 @@ class TransformerBlockConfig(Config):
         *,
         d_model: int,
         block_idx: int,
+        n_layers: int,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ) -> "TransformerBlockBase":
@@ -179,6 +180,7 @@ class TransformerBlockConfig(Config):
         kwargs.update(
             d_model=d_model,
             block_idx=block_idx,
+            n_layers=n_layers,
             init_device=init_device,
             cache=cache,
         )
@@ -205,6 +207,40 @@ class TransformerBlockConfig(Config):
                 f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
             ) from e
 
+    def num_params(self, d_model: int) -> int:
+        block_params = 0
+
+        # Block attn and MLP scaling factors.
+        if self.name == TransformerBlockType.normalized:
+            block_params += 2 * d_model
+
+        # Block attention params.
+        block_params += self.attention.num_params(d_model)
+        if self.layer_norm is not None:
+            block_params += self.layer_norm.num_params(d_model)
+
+        # Block feed forward (dense and/or sparse).
+        if self.feed_forward is not None:
+            block_params += self.feed_forward.num_params(d_model)
+            if self.layer_norm is not None:
+                block_params += self.layer_norm.num_params(d_model)
+        if self.feed_forward_moe is not None:
+            block_params += self.feed_forward_moe.num_params(d_model)
+            if self.layer_norm is not None:
+                block_params += self.layer_norm.num_params(d_model)
+
+        return block_params
+
+    def num_active_params(self, d_model: int) -> int:
+        num_params = self.num_params(d_model)
+        if self.feed_forward_moe is None:
+            return num_params
+
+        num_inactive_params = self.feed_forward_moe.num_params(
+            d_model
+        ) - self.feed_forward_moe.num_active_params(d_model)
+        return num_params - num_inactive_params
+
 
 @dataclass
 class TransformerConfig(Config):
@@ -225,7 +261,9 @@ class TransformerConfig(Config):
     dtype: DType = DType.float32
     init_method: InitMethod = InitMethod.normal
     init_seed: int = 0
+    init_std: float = 0.02
     freeze_params: Optional[List[str]] = None
+    block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
 
     def build(
         self,
@@ -256,6 +294,8 @@ class TransformerConfig(Config):
                 init_method=self.init_method,
                 init_device=init_device,
                 init_seed=self.init_seed,
+                init_std=self.init_std,
+                block_overrides=self.block_overrides,
             )
         elif self.name == TransformerType.normalized:
             model = NormalizedTransformer(
@@ -268,6 +308,8 @@ class TransformerConfig(Config):
                 init_method=self.init_method,
                 init_device=init_device,
                 init_seed=self.init_seed,
+                init_std=self.init_std,
+                block_overrides=self.block_overrides,
             )
         elif self.name == TransformerType.moe:
             model = MoETransformer(
@@ -280,6 +322,8 @@ class TransformerConfig(Config):
                 init_method=self.init_method,
                 init_device=init_device,
                 init_seed=self.init_seed,
+                init_std=self.init_std,
+                block_overrides=self.block_overrides,
             )
         else:
             raise NotImplementedError(self.name)
@@ -309,35 +353,21 @@ class TransformerConfig(Config):
         """
         The total number of parameters that a model from this config would have.
         """
-
         num_params = 0
 
         # Embedding params.
         num_params += self.d_model * self.vocab_size
 
-        block_params = 0
-
-        # Block attn and MLP scaling factors.
-        if self.block.name == TransformerBlockType.normalized:
-            block_params += 2 * self.d_model
-
-        # Block attention params.
-        block_params += self.block.attention.num_params(self.d_model)
-        if self.block.layer_norm is not None:
-            block_params += self.block.layer_norm.num_params(self.d_model)
-
-        # Block feed forward (dense and/or sparse).
-        if self.block.feed_forward is not None:
-            block_params += self.block.feed_forward.num_params(self.d_model)
-            if self.block.layer_norm is not None:
-                block_params += self.block.layer_norm.num_params(self.d_model)
-        if self.block.feed_forward_moe is not None:
-            block_params += self.block.feed_forward_moe.num_params(self.d_model)
-            if self.block.layer_norm is not None:
-                block_params += self.block.layer_norm.num_params(self.d_model)
-
         # All block params.
-        num_params += self.n_layers * block_params
+        num_block_params = self.block.num_params(self.d_model)
+        if self.block_overrides is None:
+            num_params += self.n_layers * num_block_params
+        else:
+            for idx in range(self.n_layers):
+                if idx in self.block_overrides:
+                    num_params += self.block_overrides[idx].num_params(self.d_model)
+                else:
+                    num_params += num_block_params
 
         # LM head.
         num_params += self.lm_head.num_params(self.d_model, self.vocab_size)
@@ -349,14 +379,26 @@ class TransformerConfig(Config):
         """
         The total number of active parameters that a model from this config would have.
         """
-        num_params = self.num_params
-        if self.block.feed_forward_moe is None:
-            return num_params
-        diff_per_block = self.block.feed_forward_moe.num_params(
-            self.d_model
-        ) - self.block.feed_forward_moe.num_active_params(self.d_model)
-        total_diff = self.n_layers * diff_per_block
-        return num_params - total_diff
+        num_active_params = 0
+
+        # Embedding params.
+        num_active_params += self.d_model * self.vocab_size
+
+        # All block active params.
+        num_active_block_params = self.block.num_active_params(self.d_model)
+        if self.block_overrides is None:
+            num_active_params += self.n_layers * num_active_block_params
+        else:
+            for idx in range(self.n_layers):
+                if idx in self.block_overrides:
+                    num_active_params += self.block_overrides[idx].num_active_params(self.d_model)
+                else:
+                    num_active_params += num_active_block_params
+
+        # LM head.
+        num_active_params += self.lm_head.num_params(self.d_model, self.vocab_size)
+
+        return num_active_params
 
     @property
     def num_non_embedding_params(self) -> int:
@@ -951,17 +993,25 @@ class TransformerConfig(Config):
         lb_loss_weight: float = 0.01,
         z_loss_weight: Optional[float] = 0.001,
         reordered_norm: bool = False,
+        hybrid: bool = False,
         **kwargs,
     ) -> "TransformerConfig":
+        block_name: TransformerBlockType
+        if reordered_norm:
+            block_name = (
+                TransformerBlockType.moe_hybrid_reordered_norm
+                if hybrid
+                else TransformerBlockType.moe_reordered_norm
+            )
+        else:
+            block_name = TransformerBlockType.moe_hybrid if hybrid else TransformerBlockType.moe
         return cls.llama_like(
             d_model=d_model,
             vocab_size=vocab_size,
             n_layers=n_layers,
             n_heads=n_heads,
             name=TransformerType.moe,
-            block_name=TransformerBlockType.moe
-            if not reordered_norm
-            else TransformerBlockType.moe_reordered_norm,
+            block_name=block_name,
             qk_norm=kwargs.pop("qk_norm", reordered_norm),
             feed_forward_moe=MoEConfig(
                 name=MoEType.default if not dropless else MoEType.dropless,

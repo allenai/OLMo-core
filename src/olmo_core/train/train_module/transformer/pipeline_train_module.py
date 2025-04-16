@@ -39,7 +39,7 @@ from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
 
-from ...common import TRAIN_CE_LOSS_METRIC, TRAIN_Z_LOSS_METRIC, ReduceType
+from ...common import MetricMergeStrategy, ReduceType
 from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TrainModule
 from .common import parallelize_model
 from .config import (
@@ -344,14 +344,11 @@ class TransformerPipelineTrainModule(TrainModule):
 
         # Calculate how many tokens are going to be used in the loss.
         batch_num_tokens_for_loss = (labels != self.label_ignore_index).sum().item()
-        if self.cp_enabled:
-            assert self._cp_config is not None
-            batch_num_tokens_for_loss /= self._cp_config.degree
 
         # Run pipeline schedule.
         input_ids, labels, model_kwargs = self._prepare_batch(batch, labels)
         assert labels is not None
-        losses_to_record = self.run_pipeline(
+        ce_batch_loss, z_batch_loss = self.run_pipeline(
             input_ids,
             labels,
             batch_num_tokens_for_loss,
@@ -367,34 +364,52 @@ class TransformerPipelineTrainModule(TrainModule):
 
         if dry_run:
             for model in self.model_parts:
-                model.reset_auxiliary_losses()
                 model.reset_auxiliary_metrics()
             return
 
         # Record all of the losses we captured.
-        # NOTE: main losses will be missing for non-final stages.
-        ce_loss = losses_to_record.pop(TRAIN_CE_LOSS_METRIC, None)
         # If we have a SkipStepOptimizer we'll reduce the loss (if we have the final stage) across
         # the DP process group and then asynchronously send to the ranks in the PP group.
+        # NOTE: main losses will be missing for non-final stages.
         if isinstance(self.optimizers[0], SkipStepOptimizer):
-            ce_loss = self.reduce_send_recv(ce_loss)
+            ce_batch_loss = self.reduce_send_recv(ce_batch_loss)
             for optim in self.optimizers:
-                cast(SkipStepOptimizer, optim).latest_loss = ce_loss
-            self.record_metric(TRAIN_CE_LOSS_METRIC, ce_loss)
-        elif ce_loss is not None:
-            self.record_metric(TRAIN_CE_LOSS_METRIC, ce_loss, ReduceType.mean)
-        if (z_loss := losses_to_record.pop(TRAIN_Z_LOSS_METRIC, None)) is not None:
-            self.record_metric(TRAIN_Z_LOSS_METRIC, z_loss, ReduceType.mean)
-        for loss_name, loss_value in losses_to_record.items():
-            self.record_metric(loss_name, loss_value, ReduceType.mean, namespace="train")
+                cast(SkipStepOptimizer, optim).latest_loss = ce_batch_loss
+            self.record_ce_loss(ce_batch_loss)
+        elif ce_batch_loss is not None:
+            self.record_ce_loss(ce_batch_loss, ReduceType.mean)
+        if z_batch_loss is not None:
+            assert self.z_loss_multiplier
+            self.record_metric(
+                "Z loss",
+                z_batch_loss,
+                ReduceType.mean,
+                namespace="train",
+            )
+            self.record_metric(
+                "Z loss unscaled",
+                z_batch_loss / self.z_loss_multiplier,
+                ReduceType.mean,
+                namespace="train",
+            )
 
         # And additional metrics.
         for model in self.model_parts:
             for metric_name, (metric_val, reduction) in model.compute_auxiliary_metrics(
-                batch_num_tokens_for_loss,
                 reset=True,
             ).items():
-                self.record_metric(metric_name, metric_val, reduction, namespace="train")
+                merge_strategy = MetricMergeStrategy.warn
+                if reduction in (ReduceType.sum, ReduceType.mean):
+                    merge_strategy = MetricMergeStrategy.sum
+                elif reduction == ReduceType.max:
+                    merge_strategy = MetricMergeStrategy.max
+                self.record_metric(
+                    metric_name,
+                    metric_val,
+                    reduction,
+                    namespace="train",
+                    merge_strategy=merge_strategy,
+                )
 
     def reduce_send_recv(self, x: Optional[torch.Tensor] = None) -> torch.Tensor:
         if self.pp_group_rank == self.pp_final_stage_rank:
@@ -487,14 +502,22 @@ class TransformerPipelineTrainModule(TrainModule):
                         group[self.scheduler.lr_field] = new_lr
 
                     self.trainer.record_metric(
-                        f"LR (group {group_idx})", group[self.scheduler.lr_field], namespace="optim"
+                        f"LR (group {group_idx})",
+                        group[self.scheduler.lr_field],
+                        namespace="optim",
+                        merge_strategy=MetricMergeStrategy.latest,
                     )
 
         # Step optimizer.
         for optim in self.optimizers:
             optim.step()
             if isinstance(optim, SkipStepOptimizer):
-                self.record_metric("step skipped", optim.step_skipped, namespace="optim")
+                self.record_metric(
+                    "step skipped",
+                    optim.step_skipped,
+                    namespace="optim",
+                    merge_strategy=MetricMergeStrategy.latest,
+                )
 
         for model in self.model_parts:
             model.post_optim_step()
@@ -509,91 +532,45 @@ class TransformerPipelineTrainModule(TrainModule):
         labels: torch.Tensor,
         batch_num_tokens_for_loss: Union[int, float],
         **kwargs,
-    ) -> Dict[str, torch.Tensor]:
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         Run the pipeline, returning the losses captured.
         """
 
-        # NOTE: we to take extra care to handle auxiliary losses correctly which need to be propagated
-        # from stage to stage just like other activations. So each stage will return either a single
-        # tensor of activations (if there are no auxiliary losses) or a tuple of two tensors
-        # representing the activation and the combined_auxiliary losses, respectively, except for the
-        # final stage which always just returns the total combined loss.
-        # To accomplish this without complicated ad hoc model code changes, we register pre- and post-forward
-        # hooks to handle the logic.
-        #
-        # In particular, we have:
-        #  - A post-forward hook `capture_losses()`, which modifies a stage's output to include a
-        #    combined auxiliary loss when needed, in which the output becomes a `Tuple[Tensor, Tensor]`
-        #    instead of a `Tensor`. At the same time this callback will record/accumulate the individual
-        #    losses for logging later.
-        #  - A pre-forward hook `pass_losses_through()` which removes the added auxiliary loss
-        #    (from the previous stage) from the current stage's input so as to not require code
-        #    changes in the model. The remove loss will be added into the current stage's auxiliary
-        #    losses from the post-forward hook (`capture_losses`).
-
-        losses_to_record: Dict[str, torch.Tensor] = {}
-        previous_stage_aux_loss: Optional[torch.Tensor] = None
-
-        def record_loss(name: str, value: torch.Tensor):
-            nonlocal losses_to_record
-            value = get_local_tensor(value.detach()).float()
-            if name in losses_to_record:
-                losses_to_record[name] += value
-            else:
-                losses_to_record[name] = value
+        ce_batch_loss: Optional[torch.Tensor] = None
+        z_batch_loss: Optional[torch.Tensor] = None
 
         def capture_losses(
             model: Transformer, args: Tuple[torch.Tensor, ...], output: Any
         ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
             del args
-            losses: List[torch.Tensor] = []
-
-            nonlocal previous_stage_aux_loss
-            if previous_stage_aux_loss is not None:
-                losses.append(previous_stage_aux_loss.squeeze(0))
-                previous_stage_aux_loss = None
-
-            # Get auxiliary losses.
-            for name, value in model.compute_auxiliary_losses(
-                total_bz=batch_num_tokens_for_loss, reset=True
-            ).items():
-                losses.append(value)
-                record_loss(name, value)
+            nonlocal ce_batch_loss
+            nonlocal z_batch_loss
 
             if model.lm_head is not None:
                 assert isinstance(output, LMOutputWithLoss)
                 _, ce_loss, z_loss = output
-                losses.append(ce_loss)
-                record_loss(TRAIN_CE_LOSS_METRIC, ce_loss)
-                if z_loss is not None:
+                losses: List[torch.Tensor] = [ce_loss]
+                if ce_batch_loss is None:
+                    ce_batch_loss = get_local_tensor(ce_loss.detach())
+                else:
+                    ce_batch_loss += get_local_tensor(ce_loss.detach())
+
+                if self.z_loss_multiplier is not None:
+                    assert z_loss is not None
                     losses.append(z_loss)
-                    record_loss(TRAIN_Z_LOSS_METRIC, z_loss)
+                    if z_batch_loss is None:
+                        z_batch_loss = get_local_tensor(z_loss.detach())
+                    else:
+                        z_batch_loss += get_local_tensor(z_loss.detach())
+
                 return torch.stack(losses).sum(0, keepdim=True)
             else:
                 assert isinstance(output, torch.Tensor)
-                if losses:
-                    return output, torch.stack(losses).sum(0, keepdim=True)
-                else:
-                    return output
-
-        def pass_losses_through(model: Transformer, args: Tuple[torch.Tensor, ...]) -> torch.Tensor:
-            del model
-            nonlocal previous_stage_aux_loss
-            assert previous_stage_aux_loss is None
-
-            if len(args) == 2:
-                previous_stage_aux_loss = args[1]
-            elif len(args) != 1:
-                raise RuntimeError(
-                    f"Expected 1 or 2 positional tensor inputs to model, got {len(args)}"
-                )
-
-            return args[0]
+                return output
 
         handles = []
         for model in self.model_parts:
-            handles.append(model.register_forward_pre_hook(pass_losses_through))
             handles.append(model.register_forward_hook(capture_losses))
 
         with self._model_forward_context():
@@ -608,7 +585,7 @@ class TransformerPipelineTrainModule(TrainModule):
         for handle in handles:
             handle.remove()
 
-        return losses_to_record
+        return ce_batch_loss, z_batch_loss
 
     def num_flops_per_token(self, seq_len: int) -> int:
         return self.model_parts[0].num_flops_per_token(seq_len)
