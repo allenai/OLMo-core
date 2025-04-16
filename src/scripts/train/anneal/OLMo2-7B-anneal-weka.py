@@ -141,7 +141,7 @@ class AnnealingConfig(Config):
                 cluster=cluster,
                 nccl_debug=False,
             ),
-            model=TransformerConfig.olmo2_7B(vocab_size=tokenizer_config.padded_vocab_size()),
+            model=TransformerConfig.olmo2_7B(vocab_size=tokenizer_config.padded_vocab_size(), use_flash=True),
             dataset=NumpyDatasetConfig.from_data_mix(
                 AnnealingDataMix.dolmino50,
                 tokenizer=tokenizer_config,
@@ -178,9 +178,9 @@ class AnnealingConfig(Config):
                     name=DataParallelType.fsdp,
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
-                    wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+                    wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
                 ),
-                cp_config=TransformerContextParallelConfig(degree=DOCS_PER_INSTANCE),
+                cp_config=TransformerContextParallelConfig.zig_zag(degree=8),
                 scheduler=LinearWithWarmup(
                     warmup_steps=0,
                     alpha_f=0.0,
