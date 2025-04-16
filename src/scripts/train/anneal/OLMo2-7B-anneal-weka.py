@@ -180,7 +180,6 @@ class AnnealingConfig(Config):
                     reduce_dtype=DType.float32,
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
                 ),
-                tp_config=TransformerTensorParallelConfig(degree=DOCS_PER_INSTANCE),
                 cp_config=TransformerContextParallelConfig(degree=DOCS_PER_INSTANCE),
                 scheduler=LinearWithWarmup(
                     warmup_steps=0,
