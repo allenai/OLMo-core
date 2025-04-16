@@ -21,6 +21,7 @@ from olmo_core.data import (
     TokenizerConfig,
     TokenizerName,
 )
+from olmo_core.data.types import NumpyDatasetType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
@@ -125,7 +126,10 @@ class AnnealingConfig(Config):
 
         tokenizer_config = TokenizerConfig.dolma2()
 
-    
+        DOCS_PER_INSTANCE = 4
+        CHUNKS_PER_DOC = 4
+        SEQUENCE_LENGTH = 4096 * DOCS_PER_INSTANCE
+
         config = AnnealingConfig(
             run_name=run_name,
             load_path=load_path,
@@ -141,17 +145,21 @@ class AnnealingConfig(Config):
                 AnnealingDataMix.dolmino50,
                 tokenizer=tokenizer_config,
                 mix_base_dir=root_dir,
-                sequence_length=4096,
+                sequence_length=SEQUENCE_LENGTH,
                 work_dir=get_work_dir(root_dir),
+                name=NumpyDatasetType.interleaved_fsl,
+                docs_per_instance=DOCS_PER_INSTANCE,
+                chunks_per_doc=CHUNKS_PER_DOC,
+                seed=12567,  # NOTE: can update this to change which docs are interleaved together.
             ),
             data_loader=NumpyDataLoaderConfig(
-                global_batch_size=1024 * 4096,  # NOTE: this is specified in TOKENS, not instances.
+                global_batch_size=1024 * SEQUENCE_LENGTH,  # NOTE: this is specified in TOKENS, not instances.
                 seed=34521,  # NOTE: can update this to change data order.
                 num_workers=4,
             ),
             train_module=TransformerTrainModuleConfig(
-                rank_microbatch_size=2 * 4096,  # NOTE: again this is specified in tokens.
-                max_sequence_length=4096,
+                rank_microbatch_size=2 * SEQUENCE_LENGTH,  # NOTE: again this is specified in tokens.
+                max_sequence_length=SEQUENCE_LENGTH,
                 z_loss_multiplier=1e-5,
                 compile_model=True,
                 optim=SkipStepAdamWConfig(
