@@ -159,7 +159,7 @@ class AnnealingConfig(Config):
                 num_workers=4,
             ),
             train_module=TransformerTrainModuleConfig(
-                rank_microbatch_size=2 * SEQUENCE_LENGTH,  # NOTE: again this is specified in tokens.
+                rank_microbatch_size=1 * SEQUENCE_LENGTH,  # NOTE: again this is specified in tokens.
                 max_sequence_length=SEQUENCE_LENGTH,
                 z_loss_multiplier=1e-5,
                 compile_model=True,
