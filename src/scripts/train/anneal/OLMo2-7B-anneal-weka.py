@@ -54,6 +54,7 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
+from olmo_core.train.train_module.transformer.config import TransformerContextParallelConfig, TransformerTensorParallelConfig
 from olmo_core.utils import prepare_cli_environment, seed_all
 
 log = logging.getLogger(__name__)
@@ -179,6 +180,8 @@ class AnnealingConfig(Config):
                     reduce_dtype=DType.float32,
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
                 ),
+                tp_config=TransformerTensorParallelConfig(degree=DOCS_PER_INSTANCE),
+                cp_config=TransformerContextParallelConfig(degree=DOCS_PER_INSTANCE),
                 scheduler=LinearWithWarmup(
                     warmup_steps=0,
                     alpha_f=0.0,
