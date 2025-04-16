@@ -59,6 +59,7 @@ __all__ = [
     "NumpyDatasetBase",
     "NumpyFSLDataset",
     "NumpyPaddedFSLDataset",
+    "NumpyInterleavedFSLDataset",
     "VSLCurriculum",
     "VSLNaturalCurriculum",
     "VSLGrowthCurriculum",
@@ -766,6 +767,8 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
             instance_filter_config=instance_filter_config,
             label_mask_paths=label_mask_paths,
         )
+        # :class:`NumpyPaddedFSLDataset` only has 1 document per instance, but child classes may have more.
+        self._docs_per_instance = 1
         self._array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
         self._label_mask_path_to_source_path: Dict[PathOrStr, PathOrStr] = {}
         if self._label_mask_paths:
@@ -858,7 +861,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                         segment_documents_into_instances,
                         path,
                         indices_path,
-                        max_sequence_length=self.sequence_length,
+                        max_sequence_length=self.sequence_length // self._docs_per_instance,
                         eos_token_id=self.eos_token_id,
                         dtype=self.dtype,
                         indices_dtype=self.indices_dtype,
@@ -874,6 +877,138 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                         f"Created {total_instances:,d} instances of sequence length up to "
                         f"{self.sequence_length} from '{path}'"
                     )
+
+
+class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
+    """
+    A version of :class:`NumpyPaddedFSLDataset` that creates a single instance by chunking documents and
+    interleaving these chunks. The resulting instances may be padded out to ``sequence_length``.
+
+    Duplicate use of a document and exceeding ``sequence_length`` are avoided by breaking each document
+    down into ``docs_per_instance`` 'sub-documents' and interleaving sub-documents.
+    """
+
+    def __init__(
+        self,
+        *paths: PathOrStr,
+        sequence_length: int,
+        pad_token_id: int,
+        eos_token_id: int,
+        vocab_size: int,
+        seed: int,
+        docs_per_instance: int,
+        chunks_per_doc: int,
+        dtype: NumpyUIntTypes = np.uint16,
+        metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
+        include_instance_metadata: Optional[bool] = None,
+        instance_filter_config: Optional[InstanceFilterConfig] = None,
+        label_mask_paths: Optional[List[PathOrStr]] = None,
+    ):
+        if sequence_length % docs_per_instance != 0:
+            raise OLMoConfigurationError(
+                "'sequence_length' must be a multiple of 'docs_per_instance'"
+            )
+        if sequence_length % chunks_per_doc != 0:
+            raise OLMoConfigurationError("'sequence_length' must be a multiple of 'chunks_per_doc'")
+
+        super().__init__(
+            *paths,
+            sequence_length=sequence_length,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            vocab_size=vocab_size,
+            dtype=dtype,
+            metadata=metadata,
+            include_instance_metadata=include_instance_metadata,
+            instance_filter_config=instance_filter_config,
+            label_mask_paths=label_mask_paths,
+        )
+        self._docs_per_instance = docs_per_instance
+        self.chunks_per_doc = chunks_per_doc
+        self._seed = seed
+        self._docs_indices: Optional[np.ndarray] = None
+
+    def __len__(self) -> int:
+        if self._num_instances is None:
+            self._num_instances = self.offsets[-1][1]
+        return self._num_instances // self._docs_per_instance
+
+    def prepare(self):
+        super().prepare()
+        self._docs_indices = (
+            get_rng(self._seed)
+            .permutation(len(self) * self._docs_per_instance)
+            .reshape(-1, self._docs_per_instance)
+        )
+
+    def _unpad_and_interleave(
+        self, tensors: List[torch.Tensor], tensors_non_pad_indices: List[Tuple[torch.Tensor, ...]]
+    ) -> torch.Tensor:
+        unpadded_tensors: List[torch.Tensor] = [
+            tensor[non_pad_indices]
+            for tensor, non_pad_indices in zip(tensors, tensors_non_pad_indices)
+        ]
+
+        chunked_tensors = [
+            unpadded_tensor.tensor_split(self.chunks_per_doc)
+            for unpadded_tensor in unpadded_tensors
+        ]
+        return torch.cat(
+            [
+                chunked_tensor[i]
+                for i in range(self.chunks_per_doc)
+                for chunked_tensor in chunked_tensors
+            ]
+        )
+
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        index = int(index)  # in case this is a numpy int type.
+        pos_index = index if index >= 0 else len(self) + index
+
+        if self._docs_indices is None:
+            raise RuntimeError(f"{self.prepare.__name__} has not been called.")
+        docs_indices = self._docs_indices[pos_index]
+
+        docs = [super().__getitem__(doc_index) for doc_index in docs_indices]
+
+        for doc in docs:
+            if doc.keys() != docs[0].keys():
+                raise RuntimeError(
+                    f"Trying to interleave documents when dataset docs have different keys: {docs[0].keys()}, {doc.keys()}."
+                )
+
+        item: Dict[str, Any] = {}
+
+        non_pad_indices = [torch.nonzero(doc["input_ids"], as_tuple=True) for doc in docs]
+
+        item["input_ids"] = self._unpad_and_interleave(
+            [doc["input_ids"] for doc in docs], non_pad_indices
+        )
+        pad_shape = (0, self.sequence_length - len(item["input_ids"]))
+        item["input_ids"] = F.pad(item["input_ids"], pad_shape, value=self.pad_token_id)
+
+        item["label_mask"] = self._unpad_and_interleave(
+            [doc["label_mask"] for doc in docs], non_pad_indices
+        )
+        item["label_mask"] = F.pad(item["label_mask"], pad_shape, value=False)
+
+        if "instance_mask" in docs[0]:
+            item["instance_mask"] = all([doc["instance_mask"] for doc in docs])
+
+        if "metadata" in docs[0]:
+            metadata = docs[0]["metadata"]
+            for doc in docs:
+                doc_metadata = docs[0]["metadata"]
+                if metadata != doc_metadata:
+                    raise RuntimeError(
+                        f"Trying to interleave documents when dataset docs have different metadata: {metadata}, {doc_metadata}."
+                    )
+            item["metadata"] = metadata
+
+        if "doc_lens" in docs[0]:
+            raise RuntimeError("Document lengths unexpectedly found.")
+
+        return item
 
 
 @dataclass
@@ -1639,6 +1774,25 @@ class NumpyDatasetConfig(Config):
     Include individual document lengths in the instances returned from
     :meth:`NumpyDatasetBase.__getitem__()`.
     """
+    docs_per_instance: Optional[int] = None
+    """
+    The number of documents to interleave per instance in
+    :class:`NumpyInterleavedFSLDataset`.
+    
+    Also, each dataset document is split into ``docs_per_instance`` separate documents
+    of equal size, so that the overall sequence length after interleaving is roughly
+    the same as not interleaving.
+    """
+    chunks_per_doc: Optional[int] = None
+    """
+    The number of chunks to break a document down into when interleaving in
+    :class:`NumpyInterleavedFSLDataset`.
+    """
+    seed: Optional[int] = None
+    """
+    An rng seed. Used for determining which combination of documents are interleaved by
+    :class:`NumpyInterleavedFSLDataset`.
+    """
     expand_glob: bool = False
     """
     Treat the :data:`paths` as globs.
@@ -1810,6 +1964,8 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'vsl_curriculum' is only a valid field for VSL datasets"
                 )
+            if self.seed is not None:
+                raise OLMoConfigurationError("'seed' is only valid for the interleaved FSL dataset")
             if self.source_mixture_config:
                 if label_mask_paths is not None:
                     raise OLMoConfigurationError(
@@ -1875,12 +2031,70 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'vsl_curriculum' is only a valid field for VSL datasets"
                 )
+            if self.seed is not None:
+                raise OLMoConfigurationError("'seed' is only valid for the interleaved FSL dataset")
             dataset = NumpyPaddedFSLDataset(
                 *paths,
                 sequence_length=self.sequence_length,
                 pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=self.tokenizer.eos_token_id,
                 vocab_size=self.tokenizer.vocab_size,
+                dtype=self.get_dtype(),
+                metadata=metadata,
+                include_instance_metadata=self.include_instance_metadata,
+                instance_filter_config=self.instance_filter_config,
+                label_mask_paths=label_mask_paths,
+            )
+        elif self.name == NumpyDatasetType.interleaved_fsl:
+            if self.sequence_length is None:
+                raise OLMoConfigurationError(
+                    "'sequence_length' is required for interleaved FSL dataset"
+                )
+            if self.docs_per_instance is None:
+                raise OLMoConfigurationError(
+                    "'docs_per_instance' is required for interleaved FSL dataset"
+                )
+            if self.chunks_per_doc is None:
+                raise OLMoConfigurationError(
+                    "'chunks_per_doc' is required for interleaved FSL dataset"
+                )
+            if self.seed is None:
+                raise OLMoConfigurationError("'seed' is required for interleaved FSL dataset")
+            if self.max_target_sequence_length is not None:
+                raise OLMoConfigurationError(
+                    "'max_target_sequence_length' is only valid for the (non-padded) FSL dataset"
+                )
+            if self.generate_doc_lengths:
+                raise OLMoConfigurationError(
+                    "'generate_doc_lengths' is only valid for the (non-padded) FSL dataset"
+                )
+            if self.max_sequence_length is not None:
+                if self.max_target_sequence_length is None:
+                    raise OLMoConfigurationError(
+                        "'max_sequence_length' is only a valid field for VSL datasets, "
+                        "did you mean to set 'max_target_sequence_length' instead?"
+                    )
+                else:
+                    raise OLMoConfigurationError(
+                        "'max_sequence_length' is only a valid field for VSL datasets"
+                    )
+            if self.min_sequence_length is not None:
+                raise OLMoConfigurationError(
+                    "'min_sequence_length' is only a valid field for VSL datasets"
+                )
+            if self.vsl_curriculum is not None:
+                raise OLMoConfigurationError(
+                    "'vsl_curriculum' is only a valid field for VSL datasets"
+                )
+            dataset = NumpyInterleavedFSLDataset(
+                *paths,
+                sequence_length=self.sequence_length,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+                vocab_size=self.tokenizer.vocab_size,
+                seed=self.seed,
+                docs_per_instance=self.docs_per_instance,
+                chunks_per_doc=self.chunks_per_doc,
                 dtype=self.get_dtype(),
                 metadata=metadata,
                 include_instance_metadata=self.include_instance_metadata,
@@ -1902,6 +2116,8 @@ class NumpyDatasetConfig(Config):
                 )
             if label_mask_paths is not None:
                 raise OLMoConfigurationError("'label_mask_paths' is not supported for VSL datasets")
+            if self.seed is not None:
+                raise OLMoConfigurationError("'seed' is only valid for the interleaved FSL dataset")
             dataset = NumpyVSLDataset(
                 *paths,
                 max_sequence_length=self.max_sequence_length,
