@@ -838,7 +838,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         return (
             self.work_dir
             / "dataset-common"
-            / f"instance-indices-{self.sequence_length}-{path_hash}.npy"
+            / f"instance-indices-{self.sequence_length // self._docs_per_instance}-{path_hash}.npy"
         )
 
     def _write_instance_indices(self):
