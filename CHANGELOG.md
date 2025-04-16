@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Modify `TokenizerConfig.from_hf()` to fallback to tokenizer_config.json if config.json is not found.
+
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 
 ### Added
