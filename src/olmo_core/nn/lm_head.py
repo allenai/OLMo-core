@@ -20,6 +20,7 @@ from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 
+from .attention import RingAttentionLoadBalancerType
 from .functional import (
     cross_entropy_loss,
     fused_linear_cross_entropy_loss,
@@ -170,6 +171,7 @@ class LMHead(nn.Module):
         self._vocab_size = vocab_size
         self._loss_implementation = loss_implementation
         self._tp_mesh: Optional[DeviceMesh] = None
+        self._cp_mesh: Optional[DeviceMesh] = None
 
     @property
     def d_model(self) -> int:
@@ -186,6 +188,10 @@ class LMHead(nn.Module):
     @property
     def tp_enabled(self) -> bool:
         return self._tp_mesh is not None
+
+    @property
+    def cp_enabled(self) -> bool:
+        return self._cp_mesh is not None
 
     def forward(
         self,
@@ -329,6 +335,9 @@ class LMHead(nn.Module):
                 raise NotImplementedError(loss_reduction)
 
         if loss_div_factor is not None:
+            if self.cp_enabled:
+                assert self._cp_mesh is not None
+                loss_div_factor = loss_div_factor / self._cp_mesh.size()
             loss = loss / loss_div_factor
 
         return loss
@@ -363,6 +372,10 @@ class LMHead(nn.Module):
         )
 
         self._tp_mesh = tp_mesh
+
+    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+        del load_balancer
+        self._cp_mesh = cp_mesh
 
 
 @beta_feature
