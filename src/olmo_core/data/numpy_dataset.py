@@ -969,7 +969,9 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
             raise RuntimeError(f"{self.prepare.__name__} has not been called.")
         docs_indices = self._docs_indices[pos_index]
 
-        docs = [super().__getitem__(doc_index) for doc_index in docs_indices]
+        docs: List[Dict[str, Any]] = []
+        for doc_index in docs_indices:
+            docs.append(super().__getitem__(doc_index))
 
         for doc in docs:
             if doc.keys() != docs[0].keys():
