@@ -1,7 +1,8 @@
 import logging
+import math
 from dataclasses import dataclass
 from fnmatch import fnmatch
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.doc_utils import beta_feature
@@ -14,7 +15,7 @@ from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
-from ..mup import MuPConfig
+from ..mup import MuPConfig, MuPHyperParam
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from .init import InitMethod
 
@@ -390,6 +391,41 @@ class TransformerConfig(Config):
         flop_per_token = 6 * self.num_non_embedding_params + 12 * n * h * q * t
 
         return flop_per_token
+
+    def get_mup_width_scalings(self, base_model: "TransformerConfig") -> Dict[MuPHyperParam, float]:
+        if self.block.feed_forward:
+            if base_model.block.feed_forward is None:
+                raise ValueError("Cannot get mup width scalings between MoE and non-MoE models")
+
+            hidden_size = self.block.feed_forward.hidden_size
+            base_hidden_size = base_model.block.feed_forward.hidden_size
+        elif self.block.feed_forward_moe:
+            if base_model.block.feed_forward_moe is None:
+                raise ValueError("Cannot get mup width scalings between MoE and non-MoE models")
+
+            hidden_size = self.block.feed_forward_moe.hidden_size
+            base_hidden_size = base_model.block.feed_forward_moe.hidden_size
+        else:
+            raise ValueError("Model has no feed forward layer")
+
+        width_scalings = {
+            MuPHyperParam.d_model: self.d_model / base_model.d_model,
+            MuPHyperParam.hidden_size: hidden_size / base_hidden_size,
+            MuPHyperParam.n_heads: self.block.attention.n_heads
+            / base_model.block.attention.n_heads,
+            MuPHyperParam.n_kv_heads: (
+                self.block.attention.n_kv_heads or self.block.attention.n_heads
+            )
+            / (base_model.block.attention.n_kv_heads or base_model.block.attention.n_heads),
+            MuPHyperParam.head_dim: (self.d_model / self.block.attention.n_heads)
+            / (base_model.d_model / base_model.block.attention.n_heads),
+        }
+
+        return {
+            hyper_param: scaling
+            for hyper_param, scaling in width_scalings.items()
+            if not math.isclose(scaling, 1)
+        }
 
     @classmethod
     def olmo2_190M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
