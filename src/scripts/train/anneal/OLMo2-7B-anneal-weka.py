@@ -28,6 +28,7 @@ from olmo_core.internal.common import build_launch_config, get_root_dir, get_wor
 from olmo_core.io import resource_path
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.optim import (
     LinearWithWarmup,
     OptimGroupOverride,
@@ -54,7 +55,7 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-from olmo_core.train.train_module.transformer.config import TransformerContextParallelConfig, TransformerTensorParallelConfig
+from olmo_core.train.train_module.transformer.config import TransformerActivationCheckpointingConfig, TransformerContextParallelConfig, TransformerTensorParallelConfig
 from olmo_core.utils import prepare_cli_environment, seed_all
 
 log = logging.getLogger(__name__)
@@ -179,6 +180,9 @@ class AnnealingConfig(Config):
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
+                ),
+                ac_config=TransformerActivationCheckpointingConfig(
+                    TransformerActivationCheckpointingMode.full
                 ),
                 # tp_config=TransformerTensorParallelConfig(degree=8),
                 # cp_config=TransformerContextParallelConfig.zig_zag(degree=8),
