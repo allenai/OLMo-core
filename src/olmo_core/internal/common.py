@@ -110,6 +110,7 @@ def build_launch_config(
             # Setup python environment.
             "conda shell.bash activate base",
             #  "pip install 'ai2-olmo-eval @ git+https://git@github.com/allenai/OLMo-in-loop-evals.git@epwalsh/debug'",
+            "pip install torch==2.7.0 torchaudio torchvision --index-url https://download.pytorch.org/whl/test/cu128",
             "pip install -e '.[all]'",
             "pip install --upgrade beaker-py",
             # Quickly try a new version of PyTorch like this
