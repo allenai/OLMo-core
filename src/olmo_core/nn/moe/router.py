@@ -59,9 +59,6 @@ _uniform_expert_assignment: Callable[
 ] = _UniformExpertAssignment.apply  # type: ignore
 
 
-_EPSILON = torch.finfo(torch.float32).tiny  # = smallest normal value ~= 1.175e-38
-
-
 class MoERouterType(StrEnum):
     """
     An enumeration of the different MoE router implementations.
@@ -460,7 +457,7 @@ class MoERouter(nn.Module):
 
         # Make sure scores are normalized, otherwise load balancing loss doesn't work.
         if self.gating_function == MoERouterGatingFunction.sigmoid:
-            scores = scores / (scores.sum(dim=-1, keepdim=True) + _EPSILON)
+            scores = scores / scores.sum(dim=-1, keepdim=True)
 
         with torch.no_grad():
             # Histogram the expert ids to identify the number of items/tokens routed to each expert.
