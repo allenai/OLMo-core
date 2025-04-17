@@ -57,6 +57,7 @@ from .utils import (
 
 __all__ = [
     "NumpyDatasetBase",
+    "NumpyFSLDatasetBase",
     "NumpyFSLDataset",
     "NumpyPaddedFSLDataset",
     "VSLCurriculum",
@@ -328,7 +329,62 @@ class InstanceFilterConfig(Config):
     repetition_max_count: int = 32
 
 
-class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
+class NumpyFSLDatasetBase(NumpyDatasetBase, Dataset[Dict[str, Any]]):
+    """
+    A base class for fixed sequence length (FSL) numpy array-backed dataset.
+    """
+
+    def __init__(
+        self,
+        *paths: PathOrStr,
+        sequence_length: int,
+        pad_token_id: int,
+        eos_token_id: int,
+        vocab_size: int,
+        dtype: NumpyUIntTypes = np.uint16,
+        metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
+        include_instance_metadata: Optional[bool] = None,
+        generate_doc_lengths: bool = False,
+        instance_filter_config: Optional[InstanceFilterConfig] = None,
+    ):
+        if include_instance_metadata is None and metadata:
+            include_instance_metadata = True
+
+        if isinstance(metadata, list):
+            if len(metadata) != len(paths):
+                raise OLMoConfigurationError(
+                    "'metadata' should have the same length as the number of file paths"
+                )
+        else:
+            metadata = [metadata or {}] * len(paths)
+
+        super().__init__(
+            *paths,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            vocab_size=vocab_size,
+            dtype=dtype,
+        )
+        self._metadata = tuple(metadata)
+        self._sequence_length = sequence_length
+        self._include_instance_metadata = include_instance_metadata
+        self._generate_doc_lengths = generate_doc_lengths
+        self.instance_filter_config = instance_filter_config
+
+    @property
+    def sequence_length(self) -> int:
+        return self._sequence_length
+
+    @property
+    def max_sequence_length(self) -> int:
+        return self.sequence_length
+
+    @property
+    def max_target_sequence_length(self) -> Optional[int]:
+        return None
+
+
+class NumpyFSLDataset(NumpyFSLDatasetBase):
     """
     A fixed sequence length (FSL) numpy array-backed dataset.
 
@@ -377,6 +433,19 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         instance_filter_config: Optional[InstanceFilterConfig] = None,
         label_mask_paths: Optional[List[PathOrStr]] = None,
     ):
+        super().__init__(
+            *paths,
+            sequence_length=sequence_length,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            vocab_size=vocab_size,
+            dtype=dtype,
+            metadata=metadata,
+            include_instance_metadata=include_instance_metadata,
+            generate_doc_lengths=generate_doc_lengths,
+            instance_filter_config=instance_filter_config,
+        )
+
         if max_target_sequence_length is not None and (
             max_target_sequence_length < sequence_length
             or max_target_sequence_length % sequence_length != 0
@@ -385,38 +454,15 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                 "'max_target_sequence_length' should be a multiple of 'sequence_length'"
             )
 
-        if include_instance_metadata is None and metadata:
-            include_instance_metadata = True
-
-        if isinstance(metadata, list):
-            if len(metadata) != len(paths):
-                raise OLMoConfigurationError(
-                    "'metadata' should have the same length as the number of file paths"
-                )
-        else:
-            metadata = [metadata or {}] * len(paths)
-
         if label_mask_paths is not None and len(label_mask_paths) != len(paths):
             raise OLMoConfigurationError(
                 "There must be the same number of 'label_mask_paths' as there are 'paths'"
             )
 
-        super().__init__(
-            *paths,
-            pad_token_id=pad_token_id,
-            eos_token_id=eos_token_id,
-            vocab_size=vocab_size,
-            dtype=dtype,
-        )
-        self._metadata = tuple(metadata)
         self._label_mask_paths = label_mask_paths
-        self._sequence_length = sequence_length
         self._max_target_sequence_length = max_target_sequence_length
         self._array_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
         self._num_instances: Optional[int] = None
-        self._include_instance_metadata = include_instance_metadata
-        self._generate_doc_lengths = generate_doc_lengths
-        self.instance_filter_config = instance_filter_config
 
     @property
     def num_tokens(self) -> int:
@@ -874,6 +920,50 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                         f"Created {total_instances:,d} instances of sequence length up to "
                         f"{self.sequence_length} from '{path}'"
                     )
+
+
+class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
+    """
+    A version of :class:`NumpyFSLDataset` that packs documents into instances using the
+    first-fit-decreasing packing algorithm.
+    The resulting instances may be padded out to ``sequence_length``.
+    """
+
+    def __init__(
+        self,
+        *paths: PathOrStr,
+        sequence_length: int,
+        pad_token_id: int,
+        eos_token_id: int,
+        vocab_size: int,
+        dtype: NumpyUIntTypes = np.uint16,
+        metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
+        include_instance_metadata: Optional[bool] = None,
+        generate_doc_lengths: bool = False,
+        instance_filter_config: Optional[InstanceFilterConfig] = None,
+    ):
+        super().__init__(
+            *paths,
+            sequence_length=sequence_length,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            vocab_size=vocab_size,
+            dtype=dtype,
+            metadata=metadata,
+            include_instance_metadata=include_instance_metadata,
+            generate_doc_lengths=generate_doc_lengths,
+            instance_filter_config=instance_filter_config,
+        )
+
+    def prepare(self):
+        pass
+
+    def __len__(self) -> int:
+        pass
+
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        # Map instance index to document indices.
+        pass
 
 
 @dataclass

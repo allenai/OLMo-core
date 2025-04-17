@@ -27,7 +27,7 @@ from .collator import DataCollator
 from .numpy_dataset import (
     NumpyDatasetBase,
     NumpyDatasetType,
-    NumpyFSLDataset,
+    NumpyFSLDatasetBase,
     NumpyVSLDataset,
 )
 from .utils import get_rng, iter_batched, load_array_slice, memmap_to_write
@@ -370,7 +370,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             target_device_type=target_device_type,
         )
         data_loader: DataLoaderBase
-        if isinstance(dataset, NumpyFSLDataset):
+        if isinstance(dataset, NumpyFSLDatasetBase):
             data_loader = NumpyFSLDataLoader(
                 dataset,
                 **kwargs,  # type: ignore
@@ -498,7 +498,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             device=device,
         )
         out: Dict[str, Any] = {"input_ids": input_ids}
-        if isinstance(self.dataset, NumpyFSLDataset) and self.dataset._generate_doc_lengths:
+        if isinstance(self.dataset, NumpyFSLDatasetBase) and self.dataset._generate_doc_lengths:
             splits = torch.randint(
                 2,
                 self.dataset.max_sequence_length - 2,
@@ -560,7 +560,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
 
     def __init__(
         self,
-        dataset: NumpyFSLDataset,
+        dataset: NumpyFSLDatasetBase,
         *,
         chunk_size: int = 1,
         **kwargs,
@@ -568,7 +568,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
         assert chunk_size >= 1
         super().__init__(dataset, **kwargs)
         self.chunk_size = chunk_size
-        assert isinstance(self.dataset, NumpyFSLDataset)
+        assert isinstance(self.dataset, NumpyFSLDatasetBase)
         if self.rank_batch_size % self.dataset.sequence_length != 0:
             raise OLMoConfigurationError(
                 "rank batch size (in tokens) must be divisible by sequence length"
@@ -579,13 +579,13 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
         """
         The total number of instances that the dataset will produce over the course of an epoch.
         """
-        assert isinstance(self.dataset, NumpyFSLDataset)
+        assert isinstance(self.dataset, NumpyFSLDatasetBase)
         instances_per_batch = self.global_batch_size // self.dataset.sequence_length
         return instances_per_batch * (len(self.dataset) // instances_per_batch)
 
     @property
     def total_batches(self) -> int:
-        assert isinstance(self.dataset, NumpyFSLDataset)
+        assert isinstance(self.dataset, NumpyFSLDatasetBase)
         return self.total_size // (self.global_batch_size // self.dataset.sequence_length)
 
     @property
@@ -633,7 +633,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
         indices = self.get_global_indices()
 
         # Slice up by batch.
-        assert isinstance(self.dataset, NumpyFSLDataset)
+        assert isinstance(self.dataset, NumpyFSLDatasetBase)
         instances_per_batch = self.global_batch_size // self.dataset.sequence_length
         # shape: (global num batches, global num instances per batch)
         indices = indices.reshape(-1, instances_per_batch)
@@ -652,7 +652,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
         # Make sure the logic here matches that in '__getitem__()'
 
         # Slice up by batch.
-        assert isinstance(self.dataset, NumpyFSLDataset)
+        assert isinstance(self.dataset, NumpyFSLDatasetBase)
         instances_per_batch = self.global_batch_size // self.dataset.sequence_length
         # shape: (global num batches, global num instances per batch)
         indices = indices.reshape(-1, instances_per_batch)
@@ -675,7 +675,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
 
     def state_dict(self) -> Dict[str, Any]:
         state_dict = super().state_dict()
-        assert isinstance(self.dataset, NumpyFSLDataset)
+        assert isinstance(self.dataset, NumpyFSLDatasetBase)
         state_dict["dataset_type"] = str(NumpyDatasetType.fsl)
         state_dict["sequence_length"] = self.dataset.sequence_length
         state_dict["max_target_sequence_length"] = self.dataset.max_target_sequence_length
@@ -689,7 +689,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
             f"Data loader will resume from batch {self.batches_processed}/{self.total_batches}"
         )
 
-        assert isinstance(self.dataset, NumpyFSLDataset)
+        assert isinstance(self.dataset, NumpyFSLDatasetBase)
         if state_dict["dataset_type"] != NumpyDatasetType.fsl:
             raise RuntimeError(
                 "Dataset type mismatch: attempting to restore state from a variable sequence length dataset "
@@ -974,7 +974,7 @@ class _IterableDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
             # In order to stay ahead of training the total queue size (sum across all threads)
             # should be bigger than the maximum number of instances per batch locally.
             max_instances_per_rank: int
-            if isinstance(self.dataset, NumpyFSLDataset):
+            if isinstance(self.dataset, NumpyFSLDatasetBase):
                 max_instances_per_rank = (
                     self.data_loader.rank_batch_size // self.dataset.sequence_length
                 )
