@@ -127,7 +127,7 @@ class AnnealingConfig(Config):
 
         tokenizer_config = TokenizerConfig.dolma2()
 
-        DOCS_PER_INSTANCE = 4
+        DOCS_PER_INSTANCE = 16
         CHUNKS_PER_DOC = 4
         SEQUENCE_LENGTH = 4096 * DOCS_PER_INSTANCE
 
@@ -181,7 +181,7 @@ class AnnealingConfig(Config):
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
                 ),
                 # tp_config=TransformerTensorParallelConfig(degree=8),
-                cp_config=TransformerContextParallelConfig.zig_zag(degree=8),
+                # cp_config=TransformerContextParallelConfig.zig_zag(degree=8),
                 scheduler=LinearWithWarmup(
                     warmup_steps=0,
                     alpha_f=0.0,
