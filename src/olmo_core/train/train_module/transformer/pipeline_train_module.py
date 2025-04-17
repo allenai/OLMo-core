@@ -472,38 +472,10 @@ class TransformerPipelineTrainModule(TrainModule):
         if self.scheduler is not None:
             for optim in self.optimizers:
                 for group_idx, group in enumerate(optim.param_groups):
-                    if (lr_field := self.scheduler.lr_field) not in group and (
-                        initial_lr_field := self.scheduler.initial_lr_field
-                    ) not in group:
-                        group_fields_list = "\n - ".join(
-                            [f"{k}: {v}" for k, v in group.items() if k != "params"]
-                        )
-                        raise RuntimeError(
-                            f"learning rate field '{lr_field}' and initial learning rate field "
-                            f"'{initial_lr_field}' not found in optimizer param group {group_idx} "
-                            f"with {len(group['params'])} parameter(s):\n"
-                            f" - {group_fields_list}"
-                        )
-
-                    # Ensure 'initial_lr' is set.
-                    if group.get(self.scheduler.initial_lr_field) is None:
-                        group[self.scheduler.initial_lr_field] = group["lr"]
-
-                    # Set new LR.
-                    new_lr = self.scheduler.get_lr(
-                        group[self.scheduler.initial_lr_field],
-                        self.trainer.global_step,
-                        self.trainer.max_steps,
-                    )
-
-                    if isinstance(current_lr := group.get(self.scheduler.lr_field), torch.Tensor):
-                        current_lr.fill_(new_lr)
-                    else:
-                        group[self.scheduler.lr_field] = new_lr
-
+                    new_lr = self.scheduler.set_lr(group, self.trainer)
                     self.trainer.record_metric(
                         f"LR (group {group_idx})",
-                        group[self.scheduler.lr_field],
+                        new_lr,
                         namespace="optim",
                         merge_strategy=MetricMergeStrategy.latest,
                     )

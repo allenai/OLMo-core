@@ -2,13 +2,22 @@ import logging
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, field
 from math import cos, pi, sqrt
-from typing import List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import torch
 
+from ..config import StrEnum
 from ..exceptions import OLMoConfigurationError
 
+if TYPE_CHECKING:
+    from olmo_core.train import Trainer
+
 log = logging.getLogger(__name__)
+
+
+class SchedulerUnits(StrEnum):
+    steps = "steps"
+    tokens = "tokens"
 
 
 @dataclass
@@ -19,6 +28,7 @@ class Scheduler(metaclass=ABCMeta):
 
     lr_field: str = "lr"
     initial_lr_field: str = "initial_lr"
+    units: SchedulerUnits = SchedulerUnits.steps
 
     @abstractmethod
     def get_lr(
@@ -29,6 +39,50 @@ class Scheduler(metaclass=ABCMeta):
         number of steps.
         """
         raise NotImplementedError
+
+    def set_lr(self, group: Dict[str, Any], trainer: "Trainer") -> Union[float, torch.Tensor]:
+        """
+        Set the learning rate on an optimizer param group given a trainer's state.
+        """
+        if (lr_field := self.lr_field) not in group and (
+            initial_lr_field := self.initial_lr_field
+        ) not in group:
+            group_fields_list = "\n - ".join(
+                [f"{k}: {v}" for k, v in group.items() if k != "params"]
+            )
+            raise RuntimeError(
+                f"learning rate field '{lr_field}' and initial learning rate field "
+                f"'{initial_lr_field}' not found in optimizer param group "
+                f"with {len(group['params'])} parameter(s):\n"
+                f" - {group_fields_list}"
+            )
+
+        # Ensure 'initial_lr' is set.
+        if group.get(self.initial_lr_field) is None:
+            group[self.initial_lr_field] = group["lr"]
+
+        # Set new LR.
+        if self.units == SchedulerUnits.steps:
+            new_lr = self.get_lr(
+                group[self.initial_lr_field],
+                trainer.global_step,
+                trainer.max_steps,
+            )
+        elif self.units == SchedulerUnits.tokens:
+            new_lr = self.get_lr(
+                group[self.initial_lr_field],
+                trainer.global_train_tokens_seen,
+                trainer.max_tokens,
+            )
+        else:
+            raise NotImplementedError(self.units)
+
+        if isinstance(current_lr := group.get(self.lr_field), torch.Tensor):
+            current_lr.fill_(new_lr)
+        else:
+            group[self.lr_field] = new_lr
+
+        return new_lr
 
 
 @dataclass
