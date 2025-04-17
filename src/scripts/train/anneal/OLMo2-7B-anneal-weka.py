@@ -181,7 +181,7 @@ class AnnealingConfig(Config):
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
                 ),
                 # tp_config=TransformerTensorParallelConfig(degree=8),
-                cp_config=TransformerContextParallelConfig.zig_zag(degree=2),
+                # cp_config=TransformerContextParallelConfig.zig_zag(degree=8),
                 scheduler=LinearWithWarmup(
                     warmup_steps=0,
                     alpha_f=0.0,
