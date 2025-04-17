@@ -357,7 +357,7 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/peteish32/step41
     if cmd in ("launch", "dry_run"):
         prepare_cli_environment()
     elif cmd == "train":
-        prepare_training_environment(backend="nccl")
+        prepare_training_environment()
     else:
         raise NotImplementedError(cmd)
 
