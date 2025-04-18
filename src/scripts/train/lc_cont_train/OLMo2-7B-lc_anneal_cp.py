@@ -166,7 +166,7 @@ class LcContTrain(Config):
                 # ),
                 cp_config=TransformerContextParallelConfig.llama3(degree=4)
                 if INTRA_DOCUMENT_MASKING
-                else TransformerContextParallelConfig.zig_zag(degree=4),
+                else TransformerContextParallelConfig.zig_zag(degree=8),
                 # ac_config=TransformerActivationCheckpointingConfig(),
                 float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
                 max_grad_norm=1.0,
