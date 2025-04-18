@@ -160,7 +160,6 @@ class LcContTrain(Config):
                 ),
                 max_sequence_length=CONTEXT_LENGTH,
                 compile_model=True,
-                compile_loss=True,
                 z_loss_multiplier=1e-5,
                 dp_config=TransformerDataParallelConfig(
                     name=DataParallelType.fsdp,
