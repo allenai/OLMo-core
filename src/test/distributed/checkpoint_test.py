@@ -13,10 +13,10 @@ from torch.distributed.tensor.parallel import (
 
 from olmo_core.distributed.checkpoint import (
     UnshardStrategy,
-    _iter_flat_keys,
     async_save_model_and_optim_state,
     load_keys,
     load_model_and_optim_state,
+    merge_state_dicts,
     prune_state_dict,
     save_model_and_optim_state,
     save_state_dict,
@@ -483,3 +483,18 @@ def test_prune_state_dict():
             "c": 1,
         },
     }
+
+
+def test_merge_state_dicts():
+    state_dict = {
+        "model": {
+            "a": 1,
+            "b": 2,
+        },
+        "optim": {
+            "c": 1,
+            "d": 2,
+        },
+    }
+    merge_state_dicts(state_dict, {"model": {"e": 3}})
+    assert state_dict["model"]["e"] == 3

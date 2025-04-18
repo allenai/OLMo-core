@@ -60,7 +60,9 @@ __all__ = [
     "get_checkpoint_metadata",
     "UnshardStrategy",
     "UnshardStrategyType",
+    "swap_param_keys",
     "prune_state_dict",
+    "merge_state_dicts",
 ]
 
 log = logging.getLogger(__name__)
@@ -334,7 +336,7 @@ def load_model_and_optim_state(
     metadata = reader.read_metadata()
 
     if key_mapping is not None:
-        _swap_param_keys(state_dict, key_mapping, metadata=metadata)
+        swap_param_keys(state_dict, key_mapping, metadata=metadata)
 
     dist_cp.load(
         state_dict,
@@ -344,7 +346,7 @@ def load_model_and_optim_state(
     )
 
     if key_mapping is not None:
-        _swap_param_keys(state_dict, key_mapping, reverse=True, quiet=True)
+        swap_param_keys(state_dict, key_mapping, reverse=True, quiet=True)
 
     dist_cp_sd.set_model_state_dict(
         model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=strict)
@@ -684,7 +686,7 @@ def _prepare_state_dict(
     return state_dict
 
 
-def _swap_param_keys(
+def swap_param_keys(
     state_dict: Dict[str, Any],
     key_mapping: Dict[str, str],
     metadata: Optional[Metadata] = None,
@@ -800,3 +802,12 @@ def prune_state_dict(state_dict: Dict[str, Any], allowed_keys: Set[str]) -> Set[
             _get_key(state_dict, key, pop=True)
             pruned_keys.add(key)
     return pruned_keys
+
+
+def merge_state_dicts(lhs: Dict[str, Any], rhs: Dict[str, Any]):
+    """
+    Merge ``rhs`` state dict into ``lhs``.
+    """
+    keys_to_set = set(_iter_flat_keys(rhs)) - set(_iter_flat_keys(lhs))
+    for key in keys_to_set:
+        _set_key(lhs, key, _get_key(rhs, key))
