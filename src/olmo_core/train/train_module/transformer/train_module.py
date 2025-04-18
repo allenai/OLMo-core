@@ -283,7 +283,7 @@ class TransformerTrainModule(TrainModule):
             swap_param_keys(state_dict, self.load_key_mapping, reverse=True, quiet=True)
 
         # NOTE: `dist_cp_sd.set_(model|optimizer)_state_dict()` doesn't respect `strict=False`
-        # option, so we have to handle that on our own.
+        # option with missing keys, so we have to handle that on our own.
         if not self.state_dict_load_opts.strict:
             flatten_optimizer_state_dict = (
                 False if not load_optim else ("state" not in state_dict["optim"])
