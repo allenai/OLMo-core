@@ -128,7 +128,7 @@ class AnnealingConfig(Config):
 
         tokenizer_config = TokenizerConfig.dolma2()
 
-        DOCS_PER_INSTANCE = 16
+        DOCS_PER_INSTANCE = 1
         CHUNKS_PER_DOC = 4
         SEQUENCE_LENGTH = 4096 * DOCS_PER_INSTANCE
 
