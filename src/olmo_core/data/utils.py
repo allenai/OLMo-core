@@ -10,6 +10,7 @@ from typing import (
     Generator,
     Iterable,
     List,
+    Literal,
     NamedTuple,
     Optional,
     Sequence,
@@ -156,6 +157,7 @@ def write_document_indices(data_path: Path, *, dtype, eos_token_id: int) -> Path
 
 def iter_document_indices(
     data_path: PathOrStr,
+    *,
     local_cache: Optional[PathOrStr] = None,
     use_array_if_local: Optional[bool] = None,
     eos_token_id: Optional[int] = None,
@@ -202,6 +204,39 @@ def iter_document_indices(
             for line in f:
                 start_index, end_index, *_ = line.split(",")
                 yield int(start_index), int(end_index)
+
+
+def iter_document_indices_with_max_sequence_length(
+    data_path: PathOrStr,
+    max_sequence_length: int,
+    *,
+    local_cache: Optional[PathOrStr] = None,
+    use_array_if_local: Optional[bool] = None,
+    eos_token_id: Optional[int] = None,
+    dtype=None,
+    long_doc_strategy: Literal["truncate", "split"] = "truncate",
+) -> Generator[Tuple[int, int], None, None]:
+    """
+    Like :func:`iter_document_indices` but will either truncate or split documents that are
+    longer than ``max_sequence_length``.
+    """
+    for start_idx, end_idx in iter_document_indices(
+        data_path,
+        local_cache=local_cache,
+        use_array_if_local=use_array_if_local,
+        eos_token_id=eos_token_id,
+        dtype=dtype,
+    ):
+        if end_idx - start_idx > max_sequence_length:
+            if long_doc_strategy == "truncate":
+                yield start_idx, start_idx + max_sequence_length
+            elif long_doc_strategy == "split":
+                for new_start_idx in range(start_idx, end_idx, max_sequence_length):
+                    yield new_start_idx, min(end_idx, new_start_idx + max_sequence_length)
+            else:
+                raise ValueError(long_doc_strategy)
+        else:
+            yield start_idx, end_idx
 
 
 def get_document_indices(
@@ -450,6 +485,33 @@ def segment_documents_into_instances(
         indices_mmap[:] = indices
 
     return total_og_docs, len(indices) // 2
+
+
+def pack_documents_into_instances(
+    path: PathOrStr,
+    *,
+    max_sequence_length: int,
+    eos_token_id: int,
+    dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]],
+    indices_dtype: Union[
+        Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
+    ] = np.uint32,
+    long_doc_strategy: Literal["truncate", "split"] = "truncate",
+):
+    doc_idx_gen = iter_document_indices_with_max_sequence_length(
+        path,
+        max_sequence_length,
+        eos_token_id=eos_token_id,
+        dtype=dtype,
+        long_doc_strategy=long_doc_strategy,
+    )
+    # shape: (num_docs, 2)
+    document_indices = np.fromiter(doc_idx_gen, dtype=indices_dtype).reshape(-1, 2)
+
+    # Sort document indices by document length, decreasing.
+    document_lengths = document_indices[:, 1] - document_indices[:, 0]
+    sorted_index = np.argsort(-1 * document_lengths)
+    document_indices = np.take(document_indices, sorted_index, axis=0)
 
 
 def run_worker_func(func, *args, **kwargs):
