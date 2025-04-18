@@ -419,7 +419,7 @@ class Trainer:
     @property
     def max_tokens(self) -> int:
         """
-        The maximum number of steps to train for, as determined by :data:`max_duration`.
+        The maximum number of tokens to train for, as determined by :data:`max_duration`.
         """
         return self._get_max_tokens(self.max_duration)
 
