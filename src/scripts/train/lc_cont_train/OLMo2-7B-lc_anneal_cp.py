@@ -3,14 +3,11 @@ This script can be used to launch phase of continued long-context training on Be
 Run the script without any arguments to see usage info.
 """
 
-import json
-import os
 import sys
 from dataclasses import dataclass
 from typing import List, Tuple, cast
 
 import rich
-import torch
 from rich import print
 
 from olmo_core.config import Config, DType
@@ -32,7 +29,6 @@ from olmo_core.nn.transformer import (
 )
 from olmo_core.optim import (
     LinearWithWarmup,
-    OptimConfig,
     OptimGroupOverride,
     AdamWConfig,
 )
@@ -54,11 +50,8 @@ from olmo_core.train.callbacks import (
     CheckpointerCallback,
     WandBCallback, 
     ConfigSaverCallback,
-    DownstreamEvaluatorCallbackConfig,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
-    # GradClipperCallback,
-    # SchedulerCallback,
 )
 from olmo_core.train.checkpoint import CheckpointerConfig
 from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
@@ -379,7 +372,8 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         script=script,
         cmd="train",
         run_name=run_name,
-        load_path="gs://ai2-llm/checkpoints/dustins/OLMo-2-1124-7B_pre_anneal_oc/",
+        # load_path="gs://ai2-llm/checkpoints/dustins/OLMo-2-1124-7B_pre_anneal_oc/",
+        load_path="gs://ai2-llm/checkpoints/shanea/OLMo-medium/peteish7/step928646/model_and_optim/"
         cluster=cluster,
         overrides=overrides,
     )
