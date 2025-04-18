@@ -7,7 +7,7 @@ from olmo_core.utils import move_to_device
 
 try:
     from olmo_core.kernels import moe as kernels
-except ImportError:
+except (ImportError, RuntimeError):
     kernels = None  # type: ignore
 
 
