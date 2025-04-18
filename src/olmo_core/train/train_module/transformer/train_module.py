@@ -17,7 +17,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 
 from olmo_core.data.utils import get_labels, split_batch
-from olmo_core.distributed.checkpoint import _swap_param_keys
+from olmo_core.distributed.checkpoint import _swap_param_keys, prune_state_dict
 from olmo_core.distributed.parallel import (
     DataParallelType,
     build_world_mesh,
@@ -260,6 +260,12 @@ class TransformerTrainModule(TrainModule):
         state_dict = self._get_state_dict(load_opts, optim=optim)
         if self.load_key_mapping is not None:
             _swap_param_keys(state_dict, self.load_key_mapping, metadata=metadata)
+
+        if not load_opts.strict:
+            # Remove any keys in the 'state_dict' that are not present in the checkpoint.
+            pruned_keys = prune_state_dict(state_dict, set(metadata.state_dict_metadata.keys()))
+            if pruned_keys:
+                log.warning(f"Checkpoint is missing the following keys: {pruned_keys}")
 
         return state_dict
 

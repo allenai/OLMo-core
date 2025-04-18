@@ -29,7 +29,7 @@ import logging
 from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Generator, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Generator, Iterable, List, Optional, Set, Tuple
 
 import torch
 import torch.distributed as dist
@@ -60,6 +60,7 @@ __all__ = [
     "get_checkpoint_metadata",
     "UnshardStrategy",
     "UnshardStrategyType",
+    "prune_state_dict",
 ]
 
 log = logging.getLogger(__name__)
@@ -776,3 +777,26 @@ def _set_key(state_dict: Dict[str, Any], key: str, value: Any):
         raise KeyError(root)
 
     return _set_key(state_dict[root], key, value=value)
+
+
+def _iter_flat_keys(state_dict: Dict[str, Any], prefix: str = "") -> Generator[str, None, None]:
+    for key, item in state_dict.items():
+        if isinstance(item, dict):
+            yield from _iter_flat_keys(item, prefix=key + ".")
+        else:
+            yield prefix + key
+
+
+def prune_state_dict(state_dict: Dict[str, Any], allowed_keys: Set[str]) -> Set[str]:
+    """
+    Prune a state dict by removing all keys not in ``allowed_keys``.
+
+    :returns: The keys that were pruned.
+    """
+    pruned_keys = set()
+    flat_keys = list(_iter_flat_keys(state_dict))
+    for key in flat_keys:
+        if key not in allowed_keys:
+            _get_key(state_dict, key, pop=True)
+            pruned_keys.add(key)
+    return pruned_keys
