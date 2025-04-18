@@ -61,6 +61,7 @@ __all__ = [
     "UnshardStrategy",
     "UnshardStrategyType",
     "prune_state_dict",
+    "merge_state_dicts",
 ]
 
 log = logging.getLogger(__name__)
@@ -800,3 +801,12 @@ def prune_state_dict(state_dict: Dict[str, Any], allowed_keys: Set[str]) -> Set[
             _get_key(state_dict, key, pop=True)
             pruned_keys.add(key)
     return pruned_keys
+
+
+def merge_state_dicts(lhs: Dict[str, Any], rhs: Dict[str, Any]):
+    """
+    Merge ``rhs`` state dict into ``lhs``.
+    """
+    keys_to_set = set(_iter_flat_keys(rhs)) - set(_iter_flat_keys(lhs))
+    for key in keys_to_set:
+        _set_key(lhs, key, _get_key(rhs, key))

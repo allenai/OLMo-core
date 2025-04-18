@@ -15,7 +15,11 @@ from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
 from olmo_core.data.utils import get_labels
-from olmo_core.distributed.checkpoint import _swap_param_keys, prune_state_dict
+from olmo_core.distributed.checkpoint import (
+    _swap_param_keys,
+    merge_state_dicts,
+    prune_state_dict,
+)
 from olmo_core.distributed.parallel import (
     PipelineSchedule,
     build_world_mesh,
@@ -316,8 +320,23 @@ class TransformerPipelineTrainModule(TrainModule):
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        load_optim = "optim" in state_dict
+
         if self.load_key_mapping is not None:
             _swap_param_keys(state_dict, self.load_key_mapping, reverse=True, quiet=True)
+
+        # NOTE: `dist_cp_sd.set_(model|optimizer)_state_dict()` doesn't respect `strict=False`
+        # option, so we have to handle that on our own.
+        if not self.state_dict_load_opts.strict:
+            flatten_optimizer_state_dict = (
+                False if not load_optim else ("state" not in state_dict["optim"])
+            )
+            load_opts = replace(
+                self.state_dict_load_opts, flatten_optimizer_state_dict=flatten_optimizer_state_dict
+            )
+            full_state_dict = self._get_state_dict(load_opts, optim=load_optim)
+            merge_state_dicts(state_dict, full_state_dict)
+
         for model, optim in zip(self.model_parts, self.optimizers):
             dist_cp_sd.set_model_state_dict(
                 model,
@@ -325,7 +344,7 @@ class TransformerPipelineTrainModule(TrainModule):
                 options=self.state_dict_load_opts,
             )
             gc_cuda()
-            if "optim" in state_dict:
+            if load_optim:
                 dist_cp_sd.set_optimizer_state_dict(
                     model,
                     optim,
