@@ -13,7 +13,6 @@ from torch.distributed.tensor.parallel import (
 
 from olmo_core.distributed.checkpoint import (
     UnshardStrategy,
-    _iter_flat_keys,
     async_save_model_and_optim_state,
     load_keys,
     load_model_and_optim_state,
