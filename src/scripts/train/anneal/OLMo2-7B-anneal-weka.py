@@ -183,7 +183,7 @@ class AnnealingConfig(Config):
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
                 ),
                 ac_config=TransformerActivationCheckpointingConfig(
-                    TransformerActivationCheckpointingMode.full
+                    TransformerActivationCheckpointingMode.selected_ops
                 ),
                 # tp_config=TransformerTensorParallelConfig(degree=8),
                 # cp_config=TransformerContextParallelConfig.zig_zag(degree=8),
