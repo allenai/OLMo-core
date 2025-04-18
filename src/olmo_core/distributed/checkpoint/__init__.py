@@ -60,6 +60,7 @@ __all__ = [
     "get_checkpoint_metadata",
     "UnshardStrategy",
     "UnshardStrategyType",
+    "swap_param_keys",
     "prune_state_dict",
     "merge_state_dicts",
 ]
@@ -335,7 +336,7 @@ def load_model_and_optim_state(
     metadata = reader.read_metadata()
 
     if key_mapping is not None:
-        _swap_param_keys(state_dict, key_mapping, metadata=metadata)
+        swap_param_keys(state_dict, key_mapping, metadata=metadata)
 
     dist_cp.load(
         state_dict,
@@ -345,7 +346,7 @@ def load_model_and_optim_state(
     )
 
     if key_mapping is not None:
-        _swap_param_keys(state_dict, key_mapping, reverse=True, quiet=True)
+        swap_param_keys(state_dict, key_mapping, reverse=True, quiet=True)
 
     dist_cp_sd.set_model_state_dict(
         model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=strict)
@@ -685,7 +686,7 @@ def _prepare_state_dict(
     return state_dict
 
 
-def _swap_param_keys(
+def swap_param_keys(
     state_dict: Dict[str, Any],
     key_mapping: Dict[str, str],
     metadata: Optional[Metadata] = None,

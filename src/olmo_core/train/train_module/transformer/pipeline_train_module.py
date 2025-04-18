@@ -16,9 +16,9 @@ from torch.optim import Optimizer
 
 from olmo_core.data.utils import get_labels
 from olmo_core.distributed.checkpoint import (
-    _swap_param_keys,
     merge_state_dicts,
     prune_state_dict,
+    swap_param_keys,
 )
 from olmo_core.distributed.parallel import (
     PipelineSchedule,
@@ -306,7 +306,7 @@ class TransformerPipelineTrainModule(TrainModule):
 
         state_dict = self._get_state_dict(load_opts, optim=optim)
         if self.load_key_mapping is not None:
-            _swap_param_keys(state_dict, self.load_key_mapping, metadata=metadata)
+            swap_param_keys(state_dict, self.load_key_mapping, metadata=metadata)
 
         if not load_opts.strict:
             # Remove any keys in the 'state_dict' that are not present in the checkpoint.
@@ -323,7 +323,7 @@ class TransformerPipelineTrainModule(TrainModule):
         load_optim = "optim" in state_dict
 
         if self.load_key_mapping is not None:
-            _swap_param_keys(state_dict, self.load_key_mapping, reverse=True, quiet=True)
+            swap_param_keys(state_dict, self.load_key_mapping, reverse=True, quiet=True)
 
         # NOTE: `dist_cp_sd.set_(model|optimizer)_state_dict()` doesn't respect `strict=False`
         # option, so we have to handle that on our own.
