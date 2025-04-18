@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Modify `TokenizerConfig.from_hf()` to fallback to tokenizer_config.json if config.json is not found.
+- Fixed loading checkpoints with missing keys from transformer train modules using torch 2.7.
 - Made MoE load balancing loss more robust.
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
