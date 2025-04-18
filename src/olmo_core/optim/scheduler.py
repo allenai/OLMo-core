@@ -33,11 +33,11 @@ class Scheduler(metaclass=ABCMeta):
 
     @abstractmethod
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
         """
-        Get the learning rate for a step given the initial/max learning rate and the maximum
-        number of steps.
+        Get the learning rate given the initial/max learning rate, current step/token count, and the maximum
+        number of steps/tokens.
         """
         raise NotImplementedError
 
@@ -93,9 +93,9 @@ class ConstantScheduler(Scheduler):
     """
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
-        del step, max_steps
+        del current, t_max
         return initial_lr
 
 
@@ -128,18 +128,17 @@ class ConstantWithWarmup(Scheduler):
             raise OLMoConfigurationError("'warmup_fraction' must be between 0 and 1.")
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
         if self.warmup is None:
             assert self.warmup_fraction is not None
-            warmup = round(max_steps * self.warmup_fraction)
+            warmup = round(t_max * self.warmup_fraction)
         else:
             warmup = self.warmup
 
-        if step <= warmup:
-            return _linear_warmup(initial_lr, step, warmup, self.warmup_min_lr)
+        if current <= warmup:
+            return _linear_warmup(initial_lr, current, warmup, self.warmup_min_lr)
 
-        del step, max_steps
         return initial_lr
 
 
@@ -190,27 +189,26 @@ class WSD(Scheduler):
             raise OLMoConfigurationError("decay_fraction must be between 0 and 1.")
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
         if self.warmup is None:
             assert self.warmup_fraction is not None
-            warmup = round(max_steps * self.warmup_fraction)
+            warmup = round(t_max * self.warmup_fraction)
         else:
             warmup = self.warmup
 
-        if step <= warmup:
-            return _linear_warmup(initial_lr, step, warmup, self.warmup_min_lr)
+        if current <= warmup:
+            return _linear_warmup(initial_lr, current, warmup, self.warmup_min_lr)
 
         if self.decay is None:
             assert self.decay_fraction is not None
-            decay = round(max_steps * self.decay_fraction)
+            decay = round(t_max * self.decay_fraction)
         else:
             decay = self.decay
 
-        if step >= max_steps - decay:
-            return _linear_decay(initial_lr, max_steps - step, decay, self.decay_min_lr)
+        if current >= t_max - decay:
+            return _linear_decay(initial_lr, t_max - current, decay, self.decay_min_lr)
 
-        del step, max_steps
         return initial_lr
 
 
@@ -245,25 +243,25 @@ class LinearWithWarmup(Scheduler):
             raise OLMoConfigurationError("warmup_fraction must be between 0 and 1.")
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
-        max_steps = max_steps if self.t_max is None else self.t_max
+        t_max = t_max if self.t_max is None else self.t_max
         eta_min = initial_lr * self.alpha_f
 
         if self.warmup is None:
             assert self.warmup_fraction is not None
-            warmup = round(max_steps * self.warmup_fraction)
+            warmup = round(t_max * self.warmup_fraction)
         else:
             warmup = self.warmup
 
-        if step < warmup:
-            return _linear_warmup(initial_lr, step, warmup, self.warmup_min_lr)
-        elif step >= max_steps:
+        if current < warmup:
+            return _linear_warmup(initial_lr, current, warmup, self.warmup_min_lr)
+        elif current >= t_max:
             return eta_min
         else:
-            step = step - warmup
-            max_steps = max_steps - warmup
-            return initial_lr - (initial_lr - eta_min) * (step / max_steps)
+            current = current - warmup
+            t_max = t_max - warmup
+            return initial_lr - (initial_lr - eta_min) * (current / t_max)
 
 
 @dataclass
@@ -296,20 +294,19 @@ class InvSqrtWithWarmup(Scheduler):
             raise OLMoConfigurationError("warmup_fraction must be between 0 and 1.")
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
         if self.warmup is None:
             assert self.warmup_fraction is not None
-            warmup = round(max_steps * self.warmup_fraction)
+            warmup = round(t_max * self.warmup_fraction)
         else:
             warmup = self.warmup
 
-        if step < warmup:
-            return _linear_warmup(initial_lr, step, warmup, self.warmup_min_lr)
-        del max_steps
+        if current < warmup:
+            return _linear_warmup(initial_lr, current, warmup, self.warmup_min_lr)
 
         eta_min = initial_lr * self.alpha_f
-        return eta_min + (initial_lr - eta_min) * sqrt(warmup / step)
+        return eta_min + (initial_lr - eta_min) * sqrt(warmup / current)
 
 
 @dataclass
@@ -343,25 +340,25 @@ class CosWithWarmup(Scheduler):
             raise OLMoConfigurationError("warmup_fraction must be between 0 and 1.")
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
-        max_steps = max_steps if self.t_max is None else self.t_max
+        t_max = t_max if self.t_max is None else self.t_max
         eta_min = initial_lr * self.alpha_f
 
         if self.warmup is None:
             assert self.warmup_fraction is not None
-            warmup = round(max_steps * self.warmup_fraction)
+            warmup = round(t_max * self.warmup_fraction)
         else:
             warmup = self.warmup
 
-        if step < warmup:
-            return _linear_warmup(initial_lr, step, warmup, self.warmup_min_lr)
-        elif step >= max_steps:
+        if current < warmup:
+            return _linear_warmup(initial_lr, current, warmup, self.warmup_min_lr)
+        elif current >= t_max:
             return eta_min
         else:
-            step = step - warmup
-            max_steps = max_steps - warmup
-            return eta_min + (initial_lr - eta_min) * (1 + cos(pi * step / max_steps)) / 2
+            current = current - warmup
+            t_max = t_max - warmup
+            return eta_min + (initial_lr - eta_min) * (1 + cos(pi * current / t_max)) / 2
 
 
 @dataclass
@@ -391,41 +388,39 @@ class CosWithWarmupAndLinearDecay(CosWithWarmup):
             raise OLMoConfigurationError("'decay_fraction' must be between 0 and 1.")
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
         if self.decay is None:
             assert self.decay_fraction is not None
-            decay = round(max_steps * self.decay_fraction)
+            decay = round(t_max * self.decay_fraction)
         else:
             decay = self.decay
 
-        if step >= max_steps - decay:
-            final_cosine_lr = super().get_lr(initial_lr, max_steps - decay, max_steps)
-            return _linear_decay(final_cosine_lr, max_steps - step, decay, self.decay_min_lr)
+        if current >= t_max - decay:
+            final_cosine_lr = super().get_lr(initial_lr, t_max - decay, t_max)
+            return _linear_decay(final_cosine_lr, t_max - current, decay, self.decay_min_lr)
 
-        return super().get_lr(initial_lr, step, max_steps)
+        return super().get_lr(initial_lr, current, t_max)
 
 
 def _linear_warmup(
-    initial_lr: Union[float, torch.Tensor], step: int, warmup_steps: int, warmup_min_lr: float = 0.0
+    initial_lr: Union[float, torch.Tensor], current: int, warmup: int, warmup_min_lr: float = 0.0
 ) -> Union[float, torch.Tensor]:
     if isinstance(initial_lr, float):  # not worth the potential host-device sync if it's a tensor
         assert 0 <= warmup_min_lr < initial_lr
-    return warmup_min_lr + (initial_lr - warmup_min_lr) * min(step, warmup_steps) / warmup_steps
+    return warmup_min_lr + (initial_lr - warmup_min_lr) * min(current, warmup) / warmup
 
 
 def _linear_decay(
     initial_lr: Union[float, torch.Tensor],
     step_from_end: int,
-    decay_steps: int,
+    decay: int,
     decay_min_lr: float = 0.0,
 ) -> Union[float, torch.Tensor]:
     if isinstance(initial_lr, float):  # not worth the potential host-device sync if it's a tensor
         assert 0 <= decay_min_lr < initial_lr
 
-    return (
-        decay_min_lr + (initial_lr - decay_min_lr) * min(step_from_end, decay_steps) / decay_steps
-    )
+    return decay_min_lr + (initial_lr - decay_min_lr) * min(step_from_end, decay) / decay
 
 
 @dataclass
@@ -469,22 +464,22 @@ class SequentialScheduler(Scheduler):
             )
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], step: int, max_steps: int
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
-        assert 0 <= step <= max_steps
+        assert 0 <= current <= t_max
         assert self.schedulers_max is not None
 
-        # Call schedulers sequentially until the step is within the max steps
-        # of the scheduler or the last scheduler is reached
+        # Call schedulers sequentially until the current step/token count is within the max steps/token count
+        # of the scheduler or the last scheduler is reached.
         for scheduler, scheduler_max in zip(self.schedulers[:-1], self.schedulers_max, strict=True):
-            if step <= scheduler_max:
-                return scheduler.get_lr(initial_lr, step, min(max_steps, scheduler_max))
+            if current <= scheduler_max:
+                return scheduler.get_lr(initial_lr, current, min(t_max, scheduler_max))
 
             # The next scheduler's initial LR should be the final LR of the current schedule
             initial_lr = scheduler.get_lr(initial_lr, scheduler_max, scheduler_max)
 
-            step -= scheduler_max
-            max_steps -= scheduler_max
+            current -= scheduler_max
+            t_max -= scheduler_max
 
-        assert max_steps > 0
-        return self.schedulers[-1].get_lr(initial_lr, step, max_steps)
+        assert t_max > 0
+        return self.schedulers[-1].get_lr(initial_lr, current, t_max)
