@@ -158,6 +158,7 @@ class AnnealingConfig(Config):
                 global_batch_size=1024 * SEQUENCE_LENGTH // DOCS_PER_INSTANCE,  # NOTE: this is specified in TOKENS, not instances.
                 seed=34521,  # NOTE: can update this to change data order.
                 num_workers=4,
+                prefetch_factor=8,
             ),
             train_module=TransformerTrainModuleConfig(
                 rank_microbatch_size=1 * SEQUENCE_LENGTH,  # NOTE: again this is specified in tokens.
