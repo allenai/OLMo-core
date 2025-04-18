@@ -416,6 +416,13 @@ class Trainer:
         """
         return self._get_max_steps(self.max_duration)
 
+    @property
+    def max_tokens(self) -> int:
+        """
+        The maximum number of tokens to train for, as determined by :data:`max_duration`.
+        """
+        return self._get_max_tokens(self.max_duration)
+
     def convert_duration_to_steps(self, duration: Duration) -> int:
         """Convert a duration to steps."""
         if duration.unit == DurationUnit.epochs:
@@ -463,6 +470,15 @@ class Trainer:
             return self.global_step + steps_remaining
         else:
             raise NotImplementedError
+
+    def _get_max_tokens(self, duration: Duration) -> int:
+        if duration.unit == DurationUnit.tokens:
+            return duration.value
+        else:
+            max_steps = self._get_max_steps(duration)
+            steps_remaining = max(max_steps - self.global_step, 0)
+            tokens_remaining = steps_remaining * self.tokens_per_batch
+            return self.global_train_tokens_seen + tokens_remaining
 
     @property
     def bookkeeping_device(self) -> torch.device:
