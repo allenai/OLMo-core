@@ -155,7 +155,7 @@ class AnnealingConfig(Config):
                 seed=12567,  # NOTE: can update this to change which docs are interleaved together.
             ),
             data_loader=NumpyDataLoaderConfig(
-                global_batch_size=1024 * SEQUENCE_LENGTH,  # NOTE: this is specified in TOKENS, not instances.
+                global_batch_size=1024 * SEQUENCE_LENGTH // DOCS_PER_INSTANCE,  # NOTE: this is specified in TOKENS, not instances.
                 seed=34521,  # NOTE: can update this to change data order.
                 num_workers=4,
             ),
