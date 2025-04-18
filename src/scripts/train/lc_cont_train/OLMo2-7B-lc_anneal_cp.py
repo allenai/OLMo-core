@@ -164,7 +164,7 @@ class LcContTrain(Config):
                 #     degree=2,
                 #     loss_parallel=True,
                 # ),
-                cp_config=TransformerContextParallelConfig.llama3(degree=4)
+                cp_config=TransformerContextParallelConfig.llama3(degree=8)
                 if INTRA_DOCUMENT_MASKING
                 else TransformerContextParallelConfig.zig_zag(degree=8),
                 # ac_config=TransformerActivationCheckpointingConfig(),
