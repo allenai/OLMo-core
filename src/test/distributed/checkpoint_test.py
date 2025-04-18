@@ -13,9 +13,11 @@ from torch.distributed.tensor.parallel import (
 
 from olmo_core.distributed.checkpoint import (
     UnshardStrategy,
+    _iter_flat_keys,
     async_save_model_and_optim_state,
     load_keys,
     load_model_and_optim_state,
+    prune_state_dict,
     save_model_and_optim_state,
     save_state_dict,
     unshard_checkpoint,
@@ -458,3 +460,26 @@ def test_load_checkpoint_with_different_keys(tmp_path, flatten_optim_state):
         start_method="spawn",
         func_args=(tmp_path, flatten_optim_state),
     )
+
+
+def test_prune_state_dict():
+    state_dict = {
+        "model": {
+            "a": 1,
+            "b": 2,
+        },
+        "optim": {
+            "c": 1,
+            "d": 2,
+        },
+    }
+    pruned_keys = prune_state_dict(state_dict, {"model.a", "optim.c"})
+    assert pruned_keys == {"model.b", "optim.d"}
+    assert state_dict == {
+        "model": {
+            "a": 1,
+        },
+        "optim": {
+            "c": 1,
+        },
+    }
