@@ -708,7 +708,7 @@ class InstancePacker:
         self.instance_bins: List[List[int]] = []
         self.space_to_bins: Dict[int, deque[int]] = defaultdict(deque)
 
-    def pack_instance(self, document_id: int, document_length: int) -> int:
+    def pack_document(self, document_id: int, document_length: int) -> int:
         # Query for best-fit capacity.
         best_fit_leaf_id = self.seg_tree.query(document_length).leaf_id
         assert best_fit_leaf_id is not None
@@ -751,13 +751,35 @@ def pack_documents_into_instances(
         Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
     ] = np.uint32,
     long_doc_strategy: Literal["truncate", "split"] = "truncate",
-):
-    doc_idx_gen = iter_document_indices_with_max_sequence_length(
-        path,
-        max_sequence_length,
-        eos_token_id=eos_token_id,
-        dtype=dtype,
-        long_doc_strategy=long_doc_strategy,
+) -> Tuple[List[List[int]], np.ndarray]:
+    """
+    Pack document from a source file into instances of at most ``max_sequence_length`` using
+    a best-fit-decreasing algorithm described in https://arxiv.org/pdf/2404.10830.
+
+    :param path: Path/URL to the source file of token IDs.
+    :param max_sequence_length: The maximum sequence length of each *instance*.
+    :param eos_token_id: The EOS token ID, used to find document boundaries.
+    :param dtype: The numpy datatype of the source file.
+    :param indices_dtype: The numpy datatype to use for document indices.
+    :param long_doc_strategy: Specifies how to handle document that are longer than ``max_sequence_length``.
+        If set to "truncate" then those documents are just truncated to ``max_sequence_length`` and
+        the excess tokens are discarded.
+        If set to "split" then those documents are split into smaller documents so that no tokens
+        are discarded, but you end up with fragmented documents.
+
+    :returns: A list of instances, where each instance is a list of document IDs, and 2D array
+        of the corresponding document start and end indices, which shape ``(num_documents, 2)``.
+    """
+    doc_idx_gen = (
+        idx
+        for (start_idx, end_idx) in iter_document_indices_with_max_sequence_length(
+            path,
+            max_sequence_length,
+            eos_token_id=eos_token_id,
+            dtype=dtype,
+            long_doc_strategy=long_doc_strategy,
+        )
+        for idx in (start_idx, end_idx)
     )
     # shape: (num_docs, 2)
     document_indices = np.fromiter(doc_idx_gen, dtype=indices_dtype).reshape(-1, 2)
@@ -766,3 +788,13 @@ def pack_documents_into_instances(
     document_lengths = document_indices[:, 1] - document_indices[:, 0]
     sorted_index = np.argsort(-1 * document_lengths)
     document_indices = np.take(document_indices, sorted_index, axis=0)
+
+    # Pack documents into instances.
+    instance_packer = InstancePacker(max_sequence_length)
+    for document_id, (start_idx, end_idx) in enumerate(document_indices):
+        document_len = end_idx - start_idx
+        instance_packer.pack_document(document_id, document_len)
+    instances = instance_packer.instance_bins  # list[list[int]] of document IDs in each instance
+    del instance_packer
+
+    return instances, document_indices

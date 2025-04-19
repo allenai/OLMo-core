@@ -11,6 +11,7 @@ from olmo_core.data.utils import (
     iter_batched,
     iter_document_indices,
     melt_batch,
+    pack_documents_into_instances,
     segment_documents_into_instances,
     write_document_indices,
 )
@@ -160,11 +161,29 @@ def test_segment_tree():
 def test_instance_packer():
     # Follows the example from appendix (B) in https://arxiv.org/pdf/2404.10830
     packer = InstancePacker(8)
-    assert packer.pack_instance(0, 8) == 0
-    assert packer.pack_instance(1, 6) == 1
-    assert packer.pack_instance(2, 6) == 2
-    assert packer.pack_instance(3, 4) == 3
-    assert packer.pack_instance(4, 3) == 3
+    assert packer.pack_document(0, 8) == 0
+    assert packer.pack_document(1, 6) == 1
+    assert packer.pack_document(2, 6) == 2
+    assert packer.pack_document(3, 4) == 3
+    assert packer.pack_document(4, 3) == 3
 
     # And here we extend the example...
-    assert packer.pack_instance(5, 2) == 1
+    assert packer.pack_document(5, 2) == 1
+    assert packer.pack_document(6, 3) == 4
+
+
+def test_pack_documents_into_instances(tmp_path):
+    data = np.array(
+        [1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 0, 1, 2, 0]
+    )
+
+    data_path = tmp_path / "data.npy"
+    mmap = np.memmap(data_path, dtype=np.uint16, mode="w+", shape=data.shape)
+    mmap[:] = data
+    mmap.flush()
+
+    instances, document_indices = pack_documents_into_instances(
+        data_path, max_sequence_length=8, eos_token_id=0, dtype=np.uint16
+    )
+    assert instances == [[0], [1], [2], [3, 4]]
+    assert document_indices[0].tolist() == [0, 8]
