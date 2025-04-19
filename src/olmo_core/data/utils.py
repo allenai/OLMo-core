@@ -12,7 +12,6 @@ from typing import (
     Generator,
     Iterable,
     List,
-    Literal,
     NamedTuple,
     Optional,
     Sequence,
@@ -28,6 +27,8 @@ import torch.nn.functional as F
 from olmo_core.aliases import PathOrStr
 from olmo_core.io import add_cached_path_clients, get_bytes_range, is_url, resource_path
 from olmo_core.utils import capped_powers_of_2
+
+from .types import LongDocStrategy
 
 
 def split_batch(batch: Dict[str, Any], num_microbatch_instances: int) -> List[Dict[str, Any]]:
@@ -216,7 +217,7 @@ def iter_document_indices_with_max_sequence_length(
     use_array_if_local: Optional[bool] = None,
     eos_token_id: Optional[int] = None,
     dtype=None,
-    long_doc_strategy: Literal["truncate", "split"] = "truncate",
+    long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
 ) -> Generator[Tuple[int, int], None, None]:
     """
     Like :func:`iter_document_indices` but will either truncate or split documents that are
@@ -230,13 +231,13 @@ def iter_document_indices_with_max_sequence_length(
         dtype=dtype,
     ):
         if end_idx - start_idx > max_sequence_length:
-            if long_doc_strategy == "truncate":
+            if long_doc_strategy == LongDocStrategy.truncate:
                 yield start_idx, start_idx + max_sequence_length
-            elif long_doc_strategy == "split":
+            elif long_doc_strategy == LongDocStrategy.fragment:
                 for new_start_idx in range(start_idx, end_idx, max_sequence_length):
                     yield new_start_idx, min(end_idx, new_start_idx + max_sequence_length)
             else:
-                raise ValueError(long_doc_strategy)
+                raise NotImplementedError(long_doc_strategy)
         else:
             yield start_idx, end_idx
 
@@ -694,10 +695,11 @@ class SegmentTree:
         node = self.root_node
         while not node.is_leaf:
             assert node.children is not None
-            if weight <= node.children[0].weight:
-                node = node.children[0]
+            left_child, right_child = node.children
+            if weight <= left_child.weight:
+                node = left_child
             else:
-                node = node.children[1]
+                node = right_child
         return node
 
 
@@ -750,7 +752,7 @@ def pack_documents_into_instances(
     indices_dtype: Union[
         Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
     ] = np.uint32,
-    long_doc_strategy: Literal["truncate", "split"] = "truncate",
+    long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
 ) -> Tuple[List[List[int]], np.ndarray]:
     """
     Pack document from a source file into instances of at most ``max_sequence_length`` using

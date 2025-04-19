@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from olmo_core.data import (
+    LongDocStrategy,
     NumpyDatasetConfig,
     NumpyFSLDataset,
     NumpyPackedFSLDataset,
@@ -169,7 +170,7 @@ def test_numpy_padded_fsl_dataset_with_label_mask(tmp_path: Path):
     assert ds[3]["input_ids"].tolist() == [21, 22, 0, 0, 0, 0, 0, 0]
 
 
-@pytest.mark.parametrize("long_doc_strategy", ["truncate", "split"])
+@pytest.mark.parametrize("long_doc_strategy", [LongDocStrategy.truncate, LongDocStrategy.fragment])
 def test_numpy_packed_fsl_dataset(tmp_path: Path, long_doc_strategy):
     data1 = np.array(
         [1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 0, 1, 2, 0]
@@ -204,17 +205,17 @@ def test_numpy_packed_fsl_dataset(tmp_path: Path, long_doc_strategy):
     assert ds[3]["input_ids"].tolist() == [1, 2, 3, 0, 1, 2, 0, -1]
     assert ds[3]["label_mask"].tolist() == [True] * 7 + [False]
 
-    if long_doc_strategy == "truncate":
+    if long_doc_strategy == LongDocStrategy.truncate:
         assert ds[5]["input_ids"].tolist() == [1, 2, 0, -1, -1, -1, -1, -1]
         assert ds[5]["label_mask"].tolist() == [True] * 3 + [False] * 5
-    elif long_doc_strategy == "split":
+    elif long_doc_strategy == LongDocStrategy.fragment:
         assert ds[5]["input_ids"].tolist() == [9, 10, 0, 1, 2, 0, -1, -1]
         assert ds[5]["label_mask"].tolist() == [True] * 6 + [False] * 2
     else:
         raise ValueError(long_doc_strategy)
 
 
-@pytest.mark.parametrize("long_doc_strategy", ["truncate", "split"])
+@pytest.mark.parametrize("long_doc_strategy", [LongDocStrategy.truncate, LongDocStrategy.fragment])
 def test_numpy_packed_fsl_dataset_with_label_mask(tmp_path: Path, long_doc_strategy):
     data1 = [1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 0, 1, 2, 0]
     mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
@@ -264,10 +265,10 @@ def test_numpy_packed_fsl_dataset_with_label_mask(tmp_path: Path, long_doc_strat
     assert ds[3]["input_ids"].tolist() == [1, 2, 3, 0, 1, 2, 0, -1]
     assert ds[3]["label_mask"].tolist() == [True] * 7 + [False]
 
-    if long_doc_strategy == "truncate":
+    if long_doc_strategy == LongDocStrategy.truncate:
         assert ds[5]["input_ids"].tolist() == [1, 2, 0, -1, -1, -1, -1, -1]
         assert ds[5]["label_mask"].tolist() == [True] * 3 + [False] * 5
-    elif long_doc_strategy == "split":
+    elif long_doc_strategy == LongDocStrategy.fragment:
         assert ds[5]["input_ids"].tolist() == [9, 10, 0, 1, 2, 0, -1, -1]
         assert ds[5]["label_mask"].tolist() == [False, True] + [True] * 4 + [False] * 2
     else:

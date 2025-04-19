@@ -41,6 +41,7 @@ from ..distributed.utils import barrier, get_fs_local_rank
 from ..io import _get_s3_client, get_file_size
 from .mixes import DataMix, DataMixBase
 from .tokenizer import TokenizerConfig
+from .types import LongDocStrategy
 from .utils import (
     bucket_documents,
     chunk_array,
@@ -942,7 +943,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         generate_doc_lengths: bool = False,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
         label_mask_paths: Optional[List[PathOrStr]] = None,
-        long_doc_strategy: Literal["truncate", "split"] = "truncate",
+        long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
     ):
         super().__init__(
             *paths,
@@ -957,7 +958,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             instance_filter_config=instance_filter_config,
         )
 
-        self._long_doc_strategy: Literal["truncate", "split"] = long_doc_strategy
+        self._long_doc_strategy = long_doc_strategy
 
         if label_mask_paths is not None and len(label_mask_paths) != len(paths):
             raise OLMoConfigurationError(
@@ -1978,6 +1979,10 @@ class NumpyDatasetConfig(Config):
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
+    long_doc_strategy: Optional[LongDocStrategy] = None
+    """
+    Determines how long documents are handled with the packed FSL dataset.
+    """
 
     def validate(self):
         if self.name in (NumpyDatasetType.fsl, NumpyDatasetType.padded_fsl):
@@ -2131,6 +2136,10 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'vsl_curriculum' is only a valid field for VSL datasets"
                 )
+            if self.long_doc_strategy is not None:
+                raise OLMoConfigurationError(
+                    "'long_doc_strategy' is only a valid field for the packed FSL dataset"
+                )
             if self.source_mixture_config:
                 if label_mask_paths is not None:
                     raise OLMoConfigurationError(
@@ -2196,6 +2205,10 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'vsl_curriculum' is only a valid field for VSL datasets"
                 )
+            if self.long_doc_strategy is not None:
+                raise OLMoConfigurationError(
+                    "'long_doc_strategy' is only a valid field for the packed FSL dataset"
+                )
             dataset = NumpyPaddedFSLDataset(
                 *paths,
                 sequence_length=self.sequence_length,
@@ -2206,6 +2219,45 @@ class NumpyDatasetConfig(Config):
                 metadata=metadata,
                 include_instance_metadata=self.include_instance_metadata,
                 instance_filter_config=self.instance_filter_config,
+                label_mask_paths=label_mask_paths,
+            )
+        elif self.name == NumpyDatasetType.packed_fsl:
+            if self.sequence_length is None:
+                raise OLMoConfigurationError("'sequence_length' is required for packed FSL dataset")
+            if self.max_target_sequence_length is not None:
+                raise OLMoConfigurationError(
+                    "'max_target_sequence_length' is only valid for the (non-packed) FSL dataset"
+                )
+            if self.max_sequence_length is not None:
+                if self.max_target_sequence_length is None:
+                    raise OLMoConfigurationError(
+                        "'max_sequence_length' is only a valid field for VSL datasets, "
+                        "did you mean to set 'max_target_sequence_length' instead?"
+                    )
+                else:
+                    raise OLMoConfigurationError(
+                        "'max_sequence_length' is only a valid field for VSL datasets"
+                    )
+            if self.min_sequence_length is not None:
+                raise OLMoConfigurationError(
+                    "'min_sequence_length' is only a valid field for VSL datasets"
+                )
+            if self.vsl_curriculum is not None:
+                raise OLMoConfigurationError(
+                    "'vsl_curriculum' is only a valid field for VSL datasets"
+                )
+            dataset = NumpyPackedFSLDataset(
+                *paths,
+                sequence_length=self.sequence_length,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+                vocab_size=self.tokenizer.vocab_size,
+                dtype=self.get_dtype(),
+                metadata=metadata,
+                include_instance_metadata=self.include_instance_metadata,
+                generate_doc_lengths=self.generate_doc_lengths,
+                instance_filter_config=self.instance_filter_config,
+                long_doc_strategy=self.long_doc_strategy or LongDocStrategy.truncate,
                 label_mask_paths=label_mask_paths,
             )
         elif self.name == NumpyDatasetType.vsl:
@@ -2220,6 +2272,10 @@ class NumpyDatasetConfig(Config):
             if self.generate_doc_lengths:
                 raise OLMoConfigurationError(
                     "'generate_doc_lengths' is only valid for FSL datasets"
+                )
+            if self.long_doc_strategy is not None:
+                raise OLMoConfigurationError(
+                    "'long_doc_strategy' is only a valid field for the packed FSL dataset"
                 )
             if label_mask_paths is not None:
                 raise OLMoConfigurationError("'label_mask_paths' is not supported for VSL datasets")
