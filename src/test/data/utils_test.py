@@ -3,6 +3,8 @@ import pytest
 import torch
 
 from olmo_core.data.utils import (
+    InstancePacker,
+    SegmentTree,
     bucket_documents,
     get_cumulative_document_lengths,
     get_document_lengths,
@@ -137,3 +139,32 @@ def test_bucket_documents(tmp_path):
         np.memmap(tmp_path / "buckets.npy", mode="r", dtype=np.uint32).reshape((-1, 2)).tolist()
     )
     assert buckets == [[0, 4], [4, 8], [8, 12], [13, 17], [17, 19], [19, 21]]
+
+
+def test_segment_tree():
+    seg_tree = SegmentTree(8)
+    assert seg_tree.root_node.weight == 8
+
+    leaf = seg_tree.query(8)  # leaf_id=7, weight=8
+    assert leaf.leaf_id == 7
+    assert leaf.weight == 8
+
+    seg_tree.leaf_nodes[1].update(2)
+    seg_tree.leaf_nodes[3].update(4)
+
+    leaf = seg_tree.query(3)  # leaf_id=3, weight=4
+    assert leaf.leaf_id == 3
+    assert leaf.weight == 4
+
+
+def test_instance_packer():
+    # Follows the example from appendix (B) in https://arxiv.org/pdf/2404.10830
+    packer = InstancePacker(8)
+    assert packer.pack_instance(0, 8) == 0
+    assert packer.pack_instance(1, 6) == 1
+    assert packer.pack_instance(2, 6) == 2
+    assert packer.pack_instance(3, 4) == 3
+    assert packer.pack_instance(4, 3) == 3
+
+    # And here we extend the example...
+    assert packer.pack_instance(5, 2) == 1

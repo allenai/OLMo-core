@@ -2,7 +2,9 @@ import gzip
 import math
 import os
 import random
+from collections import defaultdict, deque
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     Any,
@@ -487,33 +489,6 @@ def segment_documents_into_instances(
     return total_og_docs, len(indices) // 2
 
 
-def pack_documents_into_instances(
-    path: PathOrStr,
-    *,
-    max_sequence_length: int,
-    eos_token_id: int,
-    dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]],
-    indices_dtype: Union[
-        Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
-    ] = np.uint32,
-    long_doc_strategy: Literal["truncate", "split"] = "truncate",
-):
-    doc_idx_gen = iter_document_indices_with_max_sequence_length(
-        path,
-        max_sequence_length,
-        eos_token_id=eos_token_id,
-        dtype=dtype,
-        long_doc_strategy=long_doc_strategy,
-    )
-    # shape: (num_docs, 2)
-    document_indices = np.fromiter(doc_idx_gen, dtype=indices_dtype).reshape(-1, 2)
-
-    # Sort document indices by document length, decreasing.
-    document_lengths = document_indices[:, 1] - document_indices[:, 0]
-    sorted_index = np.argsort(-1 * document_lengths)
-    document_indices = np.take(document_indices, sorted_index, axis=0)
-
-
 def run_worker_func(func, *args, **kwargs):
     add_cached_path_clients()
     return func(*args, **kwargs)
@@ -654,3 +629,140 @@ def find_periodic_sequences(
                 # cannot accurately determine the period of a sequence that repeats
                 # less than 3 times with this algorithm
                 yield out
+
+
+####################################################################################################
+# implementation of best-fit-decreasing bin packing algorithm from https://arxiv.org/pdf/2404.10830
+####################################################################################################
+
+
+@dataclass
+class SegmentTreeNode:
+    weight: int = 0
+    parent: Optional["SegmentTreeNode"] = None
+    children: Optional[Tuple["SegmentTreeNode", "SegmentTreeNode"]] = None
+    leaf_id: Optional[int] = None
+
+    @property
+    def is_root(self) -> bool:
+        return self.parent is None
+
+    @property
+    def is_leaf(self) -> bool:
+        return self.children is None
+
+    def update(self, weight: Optional[int] = None):
+        if weight is not None:
+            assert self.is_leaf
+            self.weight = weight
+        else:
+            assert self.children is not None
+            self.weight = max(self.children[0].weight, self.children[1].weight)
+        if self.parent is not None:
+            self.parent.update()
+
+
+class SegmentTree:
+    def __init__(self, N: int):
+        assert math.log2(N) % 1 == 0, "N should be a power of 2"
+        self.root_node = SegmentTreeNode(weight=N)
+        self.leaf_nodes: List[SegmentTreeNode] = []
+
+        max_depth = int(math.log2(N))
+        leaf_id = 0
+        queue: deque[Tuple[SegmentTreeNode, int]] = deque([(self.root_node, 0)])
+        while queue:
+            parent, depth = queue.popleft()
+            if depth < max_depth:
+                parent.children = (SegmentTreeNode(parent=parent), SegmentTreeNode(parent=parent))
+                queue.append((parent.children[0], depth + 1))
+                queue.append((parent.children[1], depth + 1))
+            else:
+                parent.leaf_id = leaf_id
+                self.leaf_nodes.append(parent)
+                leaf_id += 1
+
+        assert len(self.leaf_nodes) == N
+
+        node: Optional[SegmentTreeNode] = self.root_node
+        while node is not None:
+            node.weight = N
+            node = None if node.children is None else node.children[1]
+
+    def query(self, weight: int) -> SegmentTreeNode:
+        assert weight <= self.root_node.weight
+        node = self.root_node
+        while not node.is_leaf:
+            assert node.children is not None
+            if weight <= node.children[0].weight:
+                node = node.children[0]
+            else:
+                node = node.children[1]
+        return node
+
+
+class InstancePacker:
+    def __init__(self, max_sequence_length: int):
+        self.max_sequence_length = max_sequence_length
+        self.seg_tree = SegmentTree(max_sequence_length)
+        self.instance_bins: List[List[int]] = []
+        self.space_to_bins: Dict[int, deque[int]] = defaultdict(deque)
+
+    def pack_instance(self, document_id: int, document_length: int) -> int:
+        # Query for best-fit capacity.
+        best_fit_leaf_id = self.seg_tree.query(document_length).leaf_id
+        assert best_fit_leaf_id is not None
+        best_fit_capacity = best_fit_leaf_id + 1
+
+        if best_fit_capacity == self.max_sequence_length:
+            # Need a new bin.
+            self.instance_bins.append([])
+            bin_id = len(self.instance_bins) - 1
+        else:
+            # Get first bin with the best-fit capacity left.
+            bins = self.space_to_bins[best_fit_capacity]
+            bin_id = bins.popleft()
+
+            if len(bins) == 0:
+                self.seg_tree.leaf_nodes[best_fit_capacity - 1].update(weight=0)
+
+        # Add document to the target bin.
+        bin = self.instance_bins[bin_id]
+        bin.append(document_id)
+
+        # Maybe update space-to-bins table and segment tree for bin's new capacity.
+        bin_space = best_fit_capacity - document_length
+        if bin_space > 0:
+            bins = self.space_to_bins[bin_space]
+            if len(bins) == 0:
+                self.seg_tree.leaf_nodes[bin_space - 1].update(weight=bin_space)
+            self.space_to_bins[bin_space].append(bin_id)
+
+        return bin_id
+
+
+def pack_documents_into_instances(
+    path: PathOrStr,
+    *,
+    max_sequence_length: int,
+    eos_token_id: int,
+    dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]],
+    indices_dtype: Union[
+        Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
+    ] = np.uint32,
+    long_doc_strategy: Literal["truncate", "split"] = "truncate",
+):
+    doc_idx_gen = iter_document_indices_with_max_sequence_length(
+        path,
+        max_sequence_length,
+        eos_token_id=eos_token_id,
+        dtype=dtype,
+        long_doc_strategy=long_doc_strategy,
+    )
+    # shape: (num_docs, 2)
+    document_indices = np.fromiter(doc_idx_gen, dtype=indices_dtype).reshape(-1, 2)
+
+    # Sort document indices by document length, decreasing.
+    document_lengths = document_indices[:, 1] - document_indices[:, 0]
+    sorted_index = np.argsort(-1 * document_lengths)
+    document_indices = np.take(document_indices, sorted_index, axis=0)
