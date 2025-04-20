@@ -766,7 +766,7 @@ def pack_documents_into_instances(
     :param long_doc_strategy: Specifies how to handle document that are longer than ``max_sequence_length``.
         If set to "truncate" then those documents are just truncated to ``max_sequence_length`` and
         the excess tokens are discarded.
-        If set to "split" then those documents are split into smaller documents so that no tokens
+        If set to "fragment" then those documents are split into smaller documents so that no tokens
         are discarded, but you end up with fragmented documents.
 
     :returns: A list of instances, where each instance is a list of document IDs, and 2D array
@@ -794,7 +794,7 @@ def pack_documents_into_instances(
     # Pack documents into instances.
     instance_packer = InstancePacker(max_sequence_length)
     for document_id, (start_idx, end_idx) in enumerate(document_indices):
-        document_len = end_idx - start_idx
+        document_len = int(end_idx - start_idx)
         instance_packer.pack_document(document_id, document_len)
     instances = instance_packer.instance_bins  # list[list[int]] of document IDs in each instance
     del instance_packer
