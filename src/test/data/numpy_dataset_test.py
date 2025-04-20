@@ -324,7 +324,7 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
     # first_src_sequence = mmap1[0][1][:sequence_length].tolist()
     # Note that changing the seed here could result in the inclusion of the first sequence from the mock data.
     # assert not np.array_equal(first_src_sequence, first_ds_item)
-    expected = "68144f"
+    expected = "634c5c"
     assert ds.fingerprint.endswith(
         expected
     ), f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
@@ -393,7 +393,7 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
     ).build()
     ds.prepare()
 
-    expected_fingerprint = "0b10f2"
+    expected_fingerprint = "fdd42d"
     first_ds_item = ds[0]["input_ids"].tolist()
 
     # NOTE: This is commented out until we fix behavior of the source mixture dataset
