@@ -708,6 +708,10 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         self.instance_filter_config = instance_filter_config
 
     @property
+    def extra_data_hash_fields(self) -> Tuple[str, ...]:
+        return ("mixture",)
+
+    @property
     def indices_dtype(
         self,
     ) -> NumpyUIntTypes:
@@ -840,6 +844,10 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
             label_mask_paths=label_mask_paths,
         )
         self._array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
+
+    @property
+    def extra_data_hash_fields(self) -> Tuple[str, ...]:
+        return ("padded",)
 
     @property
     def offsets(self) -> Tuple[Tuple[int, int], ...]:
@@ -985,7 +993,10 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
 
     @property
     def extra_data_hash_fields(self) -> Tuple[str, ...]:
-        return (self._long_doc_strategy,)
+        return (
+            "packed",
+            self._long_doc_strategy,
+        )
 
     @property
     def indices_dtype(
