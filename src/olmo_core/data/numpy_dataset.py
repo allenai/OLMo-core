@@ -167,6 +167,13 @@ class NumpyDatasetBase(ABC):
         return self._dtype
 
     @property
+    def extra_data_hash_fields(self) -> Tuple[str, ...]:
+        """
+        Extra values to include when calculating the data contents :data:`fingerprint`.
+        """
+        return tuple()
+
+    @property
     def fingerprint_version(self) -> str:
         """
         The version of the :data:`fingerprint`.
@@ -186,6 +193,8 @@ class NumpyDatasetBase(ABC):
         )
         for path, size in zip(self.paths, self.file_sizes):
             sha256_hash.update(f"name={os.path.basename(path)},size={size}".encode())
+        for value in self.extra_data_hash_fields:
+            sha256_hash.update(value.encode())
         return sha256_hash.hexdigest()
 
     @property
@@ -973,6 +982,10 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
 
         self._array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
         self._num_instances: Optional[int] = None
+
+    @property
+    def extra_data_hash_fields(self) -> Tuple[str, ...]:
+        return (self._long_doc_strategy,)
 
     @property
     def indices_dtype(
