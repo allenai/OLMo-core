@@ -1002,7 +1002,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
     def indices_dtype(
         self,
     ) -> NumpyUIntTypes:
-        return np.uint32
+        return np.uint64
 
     @property
     def offsets(self) -> Tuple[Tuple[int, int], ...]:
