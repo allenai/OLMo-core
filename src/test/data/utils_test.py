@@ -173,17 +173,15 @@ def test_instance_packer():
 
 
 def test_pack_documents_into_instances(tmp_path):
-    data = np.array(
-        [1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 0, 1, 2, 0]
-    )
-
+    data = [1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 0, 1, 2, 0]
     data_path = tmp_path / "data.npy"
-    mmap = np.memmap(data_path, dtype=np.uint16, mode="w+", shape=data.shape)
+    mmap = np.memmap(data_path, dtype=np.uint16, mode="w+", shape=(len(data),))
     mmap[:] = data
     mmap.flush()
 
-    instances, document_indices = pack_documents_into_instances(
+    instances, document_indices, total_tokens = pack_documents_into_instances(
         data_path, max_sequence_length=8, eos_token_id=0, dtype=np.uint16
     )
     assert instances == [[0], [1], [2], [3, 4]]
     assert document_indices[0].tolist() == [0, 8]
+    assert total_tokens == len(data)

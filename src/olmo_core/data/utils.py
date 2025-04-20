@@ -710,6 +710,18 @@ class InstancePacker:
         self.instance_bins: List[List[int]] = []
         self.space_to_bins: Dict[int, deque[int]] = defaultdict(deque)
 
+    @property
+    def total_padding(self) -> int:
+        total_padding = 0
+        for i in range(1, self.max_sequence_length):
+            if i in self.space_to_bins:
+                total_padding += i * len(self.space_to_bins[i])
+        return total_padding
+
+    @property
+    def total_tokens(self) -> int:
+        return self.max_sequence_length * len(self.instance_bins) - self.total_padding
+
     def pack_document(self, document_id: int, document_length: int) -> int:
         # Query for best-fit capacity.
         best_fit_leaf_id = self.seg_tree.query(document_length).leaf_id
@@ -753,7 +765,7 @@ def pack_documents_into_instances(
         Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
     ] = np.uint32,
     long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
-) -> Tuple[List[List[int]], np.ndarray]:
+) -> Tuple[List[List[int]], np.ndarray, int]:
     """
     Pack document from a source file into instances of at most ``max_sequence_length`` using
     a best-fit-decreasing algorithm described in https://arxiv.org/pdf/2404.10830.
@@ -769,8 +781,9 @@ def pack_documents_into_instances(
         If set to "fragment" then those documents are split into smaller documents so that no tokens
         are discarded, but you end up with fragmented documents.
 
-    :returns: A list of instances, where each instance is a list of document IDs, and 2D array
-        of the corresponding document start and end indices, which shape ``(num_documents, 2)``.
+    :returns: A list of instances, where each instance is a list of document IDs, a 2D array
+        of the corresponding document start and end indices, with shape ``(num_documents, 2)``,
+        and the total number of tokens packed into instances.
     """
     doc_idx_gen = (
         idx
@@ -797,6 +810,5 @@ def pack_documents_into_instances(
         document_len = int(end_idx - start_idx)
         instance_packer.pack_document(document_id, document_len)
     instances = instance_packer.instance_bins  # list[list[int]] of document IDs in each instance
-    del instance_packer
 
-    return instances, document_indices
+    return instances, document_indices, instance_packer.total_tokens

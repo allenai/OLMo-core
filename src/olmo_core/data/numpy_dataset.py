@@ -1134,12 +1134,12 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             self.indices_dtype.__name__,
         )
 
-    def _pack_documents_from_source_into_instances(self, source_path: PathOrStr) -> int:
+    def _pack_documents_from_source_into_instances(self, source_path: PathOrStr) -> Tuple[int, int]:
         document_indices_path = self._get_document_indices_path(source_path)
         instance_offsets_path = self._get_instance_offsets_path(source_path)
         docs_by_instance_path = self._get_docs_by_instance_path(source_path)
 
-        instances, document_indices = pack_documents_into_instances(
+        instances, document_indices, total_tokens = pack_documents_into_instances(
             source_path,
             max_sequence_length=self.sequence_length,
             eos_token_id=self.eos_token_id,
@@ -1182,7 +1182,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         ) as mmap:
             mmap[:] = docs_by_instance
 
-        return len(instances)
+        return len(instances), total_tokens
 
     def _pack_all_documents_into_instances(self):
         paths_needed: List[PathOrStr] = []
@@ -1215,10 +1215,13 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
 
                 # Log results.
                 for source_path, future in zip(paths_needed, futures):
-                    total_instances = future.result()
+                    total_instances, total_tokens = future.result()
+                    total_padding = self.sequence_length * total_instances - total_tokens
+                    avg_padding = total_padding / total_instances
                     log.info(
-                        f"Created {total_instances:,d} instances of sequence length up to "
-                        f"{self.sequence_length} from '{source_path}'"
+                        f"Packed {total_tokens:,} tokens from '{source_path}' into {total_instances:,d} instances "
+                        f"of sequence length {self.sequence_length:,d} using an average of "
+                        f"{avg_padding:.1f} padding tokens per instance."
                     )
 
 
