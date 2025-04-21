@@ -632,9 +632,10 @@ def find_periodic_sequences(
                 yield out
 
 
-####################################################################################################
-# implementation of best-fit-decreasing bin packing algorithm from https://arxiv.org/pdf/2404.10830
-####################################################################################################
+#########################################################################################################################
+# Implementation of the Optimized Best-Fit Decreasing (OBFD) bin packing algorithm from https://arxiv.org/pdf/2404.10830.
+# See Appendix B for a detailed illustration of the algorithm.
+#########################################################################################################################
 
 
 @dataclass
