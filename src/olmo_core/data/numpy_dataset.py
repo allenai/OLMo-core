@@ -403,9 +403,7 @@ class NumpyFSLDatasetBase(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     def max_target_sequence_length(self) -> Optional[int]:
         return None
 
-    def _get_preprocessed_data_path(
-        self, source_path: PathOrStr, name: str, *extra_ids: str
-    ) -> Path:
+    def _get_indices_path(self, source_path: PathOrStr, name: str, *extra_ids: str) -> Path:
         # NOTE: the pre-processed data file names are based on the corresponding source (token IDs) file name,
         # so to get the right instance indices file name for a label mask file, we need to map
         # the label mask file name to its corresponding source file name.
@@ -722,15 +720,15 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         barrier()
         len(self)
 
-    def _get_indices_path(self, source_path: PathOrStr) -> Path:
-        return self._get_preprocessed_data_path(
+    def _get_instance_indices_path(self, source_path: PathOrStr) -> Path:
+        return self._get_indices_path(
             source_path, "mixture-instance-indices", self.indices_dtype.__name__
         )
 
     def _write_document_indices(self):
         paths_needed: List[Tuple[PathOrStr, int]] = []
         for idx, path in enumerate(self.paths):
-            indices_path = self._get_indices_path(path)
+            indices_path = self._get_instance_indices_path(path)
             if indices_path.is_file():
                 log.info(f"Reusing document indices for '{path}' at:\n'{indices_path}'")
             elif path not in paths_needed:
@@ -740,7 +738,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
             with concurrent.futures.ProcessPoolExecutor() as executor:
                 futures = []
                 for path, idx in paths_needed:
-                    indices_path = self._get_indices_path(path)
+                    indices_path = self._get_instance_indices_path(path)
                     log.info(f"Gathering instance indices for '{path}'...")
                     # NOTE: We limit the number of instances by total target token count // sequence length
                     max_instances = (
@@ -774,7 +772,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                     )
 
     # def _read_chunk_from_array(self, path: PathOrStr, index: int) -> torch.Tensor:
-    #     indices_path = self._get_indices_path(path)
+    #     indices_path = self._get_instance_indices_path(path)
     #     indices = load_array_slice_into_tensor(
     #         indices_path, index * 2, index * 2 + 2, self.indices_dtype
     #     )
@@ -894,7 +892,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         return data
 
     def _get_instance_indices_path(self, source_path: PathOrStr) -> Path:
-        return self._get_preprocessed_data_path(source_path, "instance-indices")
+        return self._get_indices_path(source_path, "instance-indices")
 
     def _write_instance_indices(self):
         paths_needed: List[PathOrStr] = []
@@ -1112,17 +1110,17 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         return out
 
     def _get_document_indices_path(self, source_path: PathOrStr) -> Path:
-        return self._get_preprocessed_data_path(
+        return self._get_indices_path(
             source_path, "document-indices", self._long_doc_strategy, self.indices_dtype.__name__
         )
 
     def _get_instance_offsets_path(self, source_path: PathOrStr) -> Path:
-        return self._get_preprocessed_data_path(
+        return self._get_indices_path(
             source_path, "instance-offsets", self._long_doc_strategy, self.indices_dtype.__name__
         )
 
     def _get_docs_by_instance_path(self, source_path: PathOrStr) -> Path:
-        return self._get_preprocessed_data_path(
+        return self._get_indices_path(
             source_path,
             "documents-by-instance",
             self._long_doc_strategy,
