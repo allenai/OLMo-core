@@ -196,7 +196,6 @@ jobs:
                     - ai2/jupiter-cirrascale-2
                     - ai2/augusta-google-1
                     - ai2/ceres-cirrascale
-                    - ai2/test-h100
                     # A100 clusters
                     - ai2/saturn-cirrascale
                     # - ai2/allennlp-elanding-a100-40g

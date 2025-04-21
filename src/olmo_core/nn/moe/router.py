@@ -426,8 +426,6 @@ class MoERouter(nn.Module):
             the total number of items routed to each expert, with shape ``(num_experts,)``,
             and optionally the auxiliary losses.
         """
-        B, S, _ = get_local_tensor(x).shape
-
         # shape: (batch_size, seq_len, d_model)
         x = self.jitter(x)
 
@@ -438,7 +436,7 @@ class MoERouter(nn.Module):
         if self.gating_function == MoERouterGatingFunction.softmax:
             scores = logits.softmax(dim=-1)
         elif self.gating_function == MoERouterGatingFunction.sigmoid:
-            scores = F.sigmoid(logits)  # NOTE: we normalize these *after* top-k, see below
+            scores = F.sigmoid(logits)
         else:
             raise NotImplementedError(self.gating_function)
 
@@ -455,11 +453,6 @@ class MoERouter(nn.Module):
                 )
             )
 
-        scores = scores.float()
-        # Make sure scores are normalized, otherwise load balancing loss doesn't work.
-        if self.gating_function == MoERouterGatingFunction.sigmoid:
-            scores = scores / (scores.sum(dim=-1, keepdim=True) + 1e-20)
-
         with torch.no_grad():
             # Histogram the expert ids to identify the number of items/tokens routed to each expert.
             # shape: (batch_size, seq_len, num_experts)
@@ -472,34 +465,43 @@ class MoERouter(nn.Module):
         # Maybe compute auxiliary losses and accumulate metrics.
         aux_loss: Optional[torch.Tensor] = None
         if self.training and torch.is_grad_enabled():
-            if self.lb_loss_weight is not None:
-                assert self.load_balancing_loss is not None
-                lb_loss = load_balancing_loss(
-                    num_experts=self.num_experts,
-                    top_k=self.top_k,
-                    expert_scores=scores,
-                    batch_size_per_expert=batch_size_per_expert,
-                    batched_batch_size_per_expert=batched_batch_size_per_expert,
-                    granularity=self.lb_loss_granularity,
-                    loss_div_factor=loss_div_factor,
-                    tp_mesh=self.tp_mesh,
-                    cp_mesh=self.cp_mesh,
-                )
-                scaled_lb_loss = self.lb_loss_weight * lb_loss
-                self.load_balancing_loss += lb_loss.detach()
-                aux_loss = scaled_lb_loss
+            with torch.autocast(enabled=False, device_type=x.device.type):
+                if self.lb_loss_weight is not None:
+                    assert self.load_balancing_loss is not None
 
-            if self.z_loss_weight is not None:
-                assert self.z_loss is not None
-                z_loss = router_z_loss(
-                    expert_logits=logits.float(),
-                    loss_div_factor=loss_div_factor,
-                    tp_mesh=self.tp_mesh,
-                    cp_mesh=self.cp_mesh,
-                )
-                scaled_z_loss = self.z_loss_weight * z_loss
-                self.z_loss += z_loss.detach()
-                aux_loss = scaled_z_loss if aux_loss is None else aux_loss + scaled_z_loss
+                    # Make sure scores are normalized, otherwise load balancing loss doesn't work well.
+                    if self.gating_function == MoERouterGatingFunction.sigmoid:
+                        scores = scores / scores.sum(dim=-1, keepdim=True)
+
+                    lb_loss = load_balancing_loss(
+                        num_experts=self.num_experts,
+                        top_k=self.top_k,
+                        expert_scores=scores,
+                        batch_size_per_expert=batch_size_per_expert,
+                        batched_batch_size_per_expert=batched_batch_size_per_expert,
+                        granularity=self.lb_loss_granularity,
+                        loss_div_factor=loss_div_factor,
+                        tp_mesh=self.tp_mesh,
+                        cp_mesh=self.cp_mesh,
+                    )
+                    self.load_balancing_loss += lb_loss.detach()
+
+                    scaled_lb_loss = self.lb_loss_weight * lb_loss
+                    aux_loss = scaled_lb_loss
+
+                if self.z_loss_weight is not None:
+                    assert self.z_loss is not None
+
+                    z_loss = router_z_loss(
+                        expert_logits=logits,
+                        loss_div_factor=loss_div_factor,
+                        tp_mesh=self.tp_mesh,
+                        cp_mesh=self.cp_mesh,
+                    )
+                    self.z_loss += z_loss.detach()
+
+                    scaled_z_loss = self.z_loss_weight * z_loss
+                    aux_loss = scaled_z_loss if aux_loss is None else aux_loss + scaled_z_loss
 
             self.batch_size_per_expert += batch_size_per_expert
             if self.bias_gamma is not None:
