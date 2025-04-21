@@ -5,7 +5,7 @@ import torch.nn as nn
 
 from olmo_core.config import StrEnum
 
-from ..attention import Attention, AttentionBase, FusedAttention
+from ..attention import Attention, AttentionBase, FusedAttention, MultiheadLatentAttention
 from ..feed_forward import FeedForward
 from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP
 
@@ -93,6 +93,16 @@ class InitMethod(StrEnum):
         elif isinstance(m, FusedAttention) or hasattr(m, "w_qkv"):
             m = cast(FusedAttention, m)
             self._init_linear(m.w_qkv, std=std, generator=generator)
+        elif isinstance(m, MultiheadLatentAttention):
+            m = cast(MultiheadLatentAttention, m)
+            if hasattr(m, "wq"):
+                self._init_linear(m.wq, std=std, generator=generator)
+            else:
+                self._init_linear(m.wq_a, std=std, generator=generator)
+                self._init_linear(m.wq_b, std=std, generator=generator)
+                
+            self._init_linear(m.wkv_a, std=std, generator=generator)
+            self._init_linear(m.wkv_b, std=std, generator=generator)
         else:
             raise NotImplementedError(m)
 
