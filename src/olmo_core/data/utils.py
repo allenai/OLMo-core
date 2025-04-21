@@ -706,11 +706,7 @@ class SegmentTree:
                 leaf_id += 1
 
         assert len(self.leaf_nodes) == N
-
-        node: Optional[SegmentTreeNode] = self.root_node
-        while node is not None:
-            node.weight = N
-            node = None if node.children is None else node.children[1]
+        self.leaf_nodes[-1].update(N)
 
     def query(self, weight: int) -> SegmentTreeNode:
         node = self.root_node
