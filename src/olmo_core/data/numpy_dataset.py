@@ -31,8 +31,6 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
-from olmo_core.data.source_mixture import SourceMixtureDatasetConfig
-from olmo_core.data.types import NumpyDatasetDType, NumpyDatasetType, NumpyUIntTypes
 from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
 
 from ..aliases import PathOrStr
@@ -40,8 +38,9 @@ from ..config import Config, StrEnum
 from ..distributed.utils import barrier, get_fs_local_rank
 from ..io import _get_s3_client, get_file_size
 from .mixes import DataMix, DataMixBase
+from .source_mixture import SourceMixtureDatasetConfig
 from .tokenizer import TokenizerConfig
-from .types import LongDocStrategy
+from .types import LongDocStrategy, NumpyDatasetDType, NumpyDatasetType, NumpyUIntTypes
 from .utils import (
     bucket_documents,
     chunk_array,
@@ -70,6 +69,7 @@ __all__ = [
     "VSLGrowLinearCurriculum",
     "NumpyVSLDataset",
     "NumpyDatasetConfig",
+    "NumpyDatasetType",
     "VSLCurriculumType",
     "VSLCurriculumConfig",
 ]
@@ -810,8 +810,8 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
 
 class NumpyPaddedFSLDataset(NumpyFSLDataset):
     """
-    A version of :class:`NumpyFSLDataset` that creates a single instance from each document.
-    The resulting instances may be padded out to ``sequence_length``.
+    An FSL dataset that creates a single instance from each document.
+    The resulting instances will all have exactly ``sequence_length`` tokens, using padding if needed.
     """
 
     def __init__(
@@ -934,9 +934,9 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
 
 class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
     """
-    A version of :class:`NumpyFSLDataset` that packs documents into instances using the
-    first-fit-decreasing packing algorithm.
-    The resulting instances may be padded out to ``sequence_length``.
+    An FSL dataset that packs documents into instances using the Optimized Best-Fit Decreasing (OBFD)
+    algorithm described in `Fewer Truncations Improve Language Modeling <https://arxiv.org/pdf/2404.10830>`_.
+    The resulting instances will all have exactly ``sequence_length`` tokens, using padding if needed.
     """
 
     def __init__(
