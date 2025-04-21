@@ -688,7 +688,7 @@ class SegmentTreeNode:
 class SegmentTree:
     def __init__(self, N: int):
         assert math.log2(N) % 1 == 0, "N should be a power of 2"
-        self.root_node = SegmentTreeNode(weight=N)
+        self.root_node = SegmentTreeNode()
         self.leaf_nodes: List[SegmentTreeNode] = []
 
         max_depth = int(math.log2(N))
@@ -713,9 +713,9 @@ class SegmentTree:
             node = None if node.children is None else node.children[1]
 
     def query(self, weight: int) -> SegmentTreeNode:
-        assert weight <= self.root_node.weight
         node = self.root_node
         while not node.is_leaf:
+            assert weight <= node.weight
             assert node.children is not None
             left_child, right_child = node.children
             if weight <= left_child.weight:
