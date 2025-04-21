@@ -380,6 +380,18 @@ def memmap_to_write(
     tmp_path.replace(path)
 
 
+def write_array_to_disk(arr: np.ndarray, path: Path):
+    """
+    Write a numpy array to disk in the same simple format that ``np.memmap`` uses.
+    """
+    with memmap_to_write(
+        path,
+        dtype=arr.dtype,
+        shape=arr.shape,
+    ) as mmap:
+        mmap[:] = arr
+
+
 def divide_into_buckets(n: int, b: int) -> List[int]:
     buckets: List[int] = []
     while (buckets_remaining := b - len(buckets)) > 0:

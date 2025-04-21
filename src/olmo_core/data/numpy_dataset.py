@@ -54,6 +54,7 @@ from .utils import (
     pack_documents_into_instances,
     run_worker_func,
     segment_documents_into_instances,
+    write_array_to_disk,
 )
 
 __all__ = [
@@ -1156,24 +1157,9 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         # shape: (num_documents,)
         docs_by_instance = np.array(documents_by_instance_list, dtype=self.indices_dtype)
 
-        with memmap_to_write(
-            document_indices_path,
-            dtype=self.indices_dtype,
-            shape=document_indices.shape,
-        ) as mmap:
-            mmap[:] = document_indices
-        with memmap_to_write(
-            instance_offsets_path,
-            dtype=self.indices_dtype,
-            shape=instance_offsets.shape,
-        ) as mmap:
-            mmap[:] = instance_offsets
-        with memmap_to_write(
-            docs_by_instance_path,
-            dtype=self.indices_dtype,
-            shape=docs_by_instance.shape,
-        ) as mmap:
-            mmap[:] = docs_by_instance
+        write_array_to_disk(document_indices, document_indices_path)
+        write_array_to_disk(instance_offsets, instance_offsets_path)
+        write_array_to_disk(docs_by_instance, docs_by_instance_path)
 
         return len(instances), total_tokens
 
