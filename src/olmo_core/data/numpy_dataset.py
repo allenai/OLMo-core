@@ -938,6 +938,11 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
     An FSL dataset that packs documents into instances using the Optimized Best-Fit Decreasing (OBFD)
     algorithm described in `Fewer Truncations Improve Language Modeling <https://arxiv.org/pdf/2404.10830>`_.
     The resulting instances will all have exactly ``sequence_length`` tokens, using padding if needed.
+
+    .. note::
+        OBFD is applied to each source file separately since source files from the Dolma toolkit
+        are usually large enough for OBFD to achieve very good compactness (minimal padding tokens)
+        and so that we can parallelize the packing.
     """
 
     def __init__(
