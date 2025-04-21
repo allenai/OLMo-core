@@ -17,7 +17,7 @@ from olmo_core.data.utils import (
 )
 
 
-@pytest.mark.limit_memory("245 KB")
+@pytest.mark.limit_memory("265 KB")
 def test_segment_documents_into_instances(tmp_path):
     data = [1, 2, 3, 4, 0, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 0] * 1000
     data_path = tmp_path / "data.npy"

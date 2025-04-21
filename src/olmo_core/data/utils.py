@@ -198,11 +198,20 @@ def iter_document_indices(
             yield start_idx, end_idx
             start_idx = end_idx
     else:
-        metadata_path = resource_path(
-            os.path.dirname(data_path),
-            os.path.basename(data_path).replace(".npy", ".csv.gz"),
-            local_cache=local_cache,
-        )
+        metadata_filename = os.path.basename(data_path).replace(".npy", ".csv.gz")
+        try:
+            metadata_path = resource_path(
+                os.path.dirname(data_path),
+                metadata_filename,
+                local_cache=local_cache,
+            )
+        except FileNotFoundError as e:
+            raise RuntimeError(
+                f"Source metadata file '{metadata_filename}' is required to calculate document indices for '{data_path}'. "
+                "If the source data file is local (on-disk) and 'eos_token_id' and 'dtype' are provided, then the document "
+                "indices can be inferred from the source file."
+            ) from e
+
         with gzip.open(metadata_path, "rt") as f:
             for line in f:
                 start_index, end_index, *_ = line.split(",")
