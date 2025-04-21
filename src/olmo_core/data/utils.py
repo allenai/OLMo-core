@@ -776,6 +776,33 @@ class InstancePacker:
 
         return bin_id
 
+    def pack_documents(
+        self, document_indices: np.ndarray
+    ) -> Tuple[List[List[int]], np.ndarray, int]:
+        if self.instance_bins or self.space_to_bins:
+            raise RuntimeError(
+                f"You must call '{self.__class__.__name__}.reset()' before "
+                f"calling '{self.__class__.__name__}.pack_documents()' again."
+            )
+
+        # Sort document indices by document length, decreasing.
+        document_lengths = document_indices[:, 1] - document_indices[:, 0]
+        sorted_index = np.argsort(-1 * document_lengths)
+        document_indices = np.take(document_indices, sorted_index, axis=0)
+
+        # Pack documents into instances.
+        for document_id, (start_idx, end_idx) in enumerate(document_indices):
+            document_len = int(end_idx - start_idx)
+            self.pack_document(document_id, document_len)
+        instances = self.instance_bins  # list[list[int]] of document IDs in each instance
+
+        return instances, document_indices, self.total_tokens
+
+    def reset(self):
+        self.seg_tree = SegmentTree(self.max_sequence_length)
+        self.instance_bins.clear()
+        self.space_to_bins.clear()
+
 
 def pack_documents_into_instances(
     path: PathOrStr,
@@ -821,16 +848,6 @@ def pack_documents_into_instances(
     # shape: (num_docs, 2)
     document_indices = np.fromiter(doc_idx_gen, dtype=indices_dtype).reshape(-1, 2)
 
-    # Sort document indices by document length, decreasing.
-    document_lengths = document_indices[:, 1] - document_indices[:, 0]
-    sorted_index = np.argsort(-1 * document_lengths)
-    document_indices = np.take(document_indices, sorted_index, axis=0)
-
     # Pack documents into instances.
     instance_packer = InstancePacker(max_sequence_length)
-    for document_id, (start_idx, end_idx) in enumerate(document_indices):
-        document_len = int(end_idx - start_idx)
-        instance_packer.pack_document(document_id, document_len)
-    instances = instance_packer.instance_bins  # list[list[int]] of document IDs in each instance
-
-    return instances, document_indices, instance_packer.total_tokens
+    return instance_packer.pack_documents(document_indices)
