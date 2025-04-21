@@ -161,15 +161,15 @@ def test_segment_tree():
 def test_instance_packer():
     # Follows the example from appendix (B) in https://arxiv.org/pdf/2404.10830
     packer = InstancePacker(8)
-    assert packer.pack_document(0, 8) == 0
-    assert packer.pack_document(1, 6) == 1
-    assert packer.pack_document(2, 6) == 2
-    assert packer.pack_document(3, 4) == 3
-    assert packer.pack_document(4, 3) == 3
+    assert packer._pack_document(0, 8) == 0
+    assert packer._pack_document(1, 6) == 1
+    assert packer._pack_document(2, 6) == 2
+    assert packer._pack_document(3, 4) == 3
+    assert packer._pack_document(4, 3) == 3
 
     # And here we extend the example...
-    assert packer.pack_document(5, 2) == 1
-    assert packer.pack_document(6, 3) == 4
+    assert packer._pack_document(5, 2) == 1
+    assert packer._pack_document(6, 3) == 4
 
 
 def test_pack_documents_into_instances(tmp_path):

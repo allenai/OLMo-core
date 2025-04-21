@@ -740,7 +740,7 @@ class InstancePacker:
     def total_tokens(self) -> int:
         return self.max_sequence_length * len(self.instance_bins) - self.total_padding
 
-    def pack_document(self, document_id: int, document_length: int) -> int:
+    def _pack_document(self, document_id: int, document_length: int) -> int:
         # Query for best-fit capacity.
         best_fit_leaf_id = self.seg_tree.query(document_length).leaf_id
         assert best_fit_leaf_id is not None
@@ -789,7 +789,7 @@ class InstancePacker:
         # Pack documents into instances.
         for document_id, (start_idx, end_idx) in enumerate(document_indices):
             document_len = int(end_idx - start_idx)
-            self.pack_document(document_id, document_len)
+            self._pack_document(document_id, document_len)
         instances = self.instance_bins  # list[list[int]] of document IDs in each instance
 
         return instances, document_indices, self.total_tokens
