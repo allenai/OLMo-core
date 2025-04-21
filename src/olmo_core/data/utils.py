@@ -763,7 +763,7 @@ def pack_documents_into_instances(
     dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]],
     indices_dtype: Union[
         Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
-    ] = np.uint32,
+    ] = np.uint64,
     long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
 ) -> Tuple[List[List[int]], np.ndarray, int]:
     """
