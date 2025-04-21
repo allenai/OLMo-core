@@ -167,34 +167,31 @@ class NumpyDatasetBase(ABC):
         return self._dtype
 
     @property
-    def extra_data_hash_fields(self) -> Tuple[str, ...]:
-        """
-        Extra values to include when calculating the data contents :data:`fingerprint`.
-        """
-        return tuple()
-
-    @property
     def fingerprint_version(self) -> str:
         """
         The version of the :data:`fingerprint`.
         """
-        return "v1.1"
+        return "v2.0"
+
+    @property
+    def fingerprint_fields(self) -> Tuple[str, ...]:
+        """
+        Extra values to include when calculating the data contents :data:`fingerprint`.
+        """
+        return ("vocab_size", "pad_token_id", "eos_token_id", "dtype")
 
     @property
     def fingerprint(self) -> str:
         """
-        Can be used to identify/compare the contents of a dataset.
+        Used to compare the contents of a dataset.
         """
         sha256_hash = hashlib.sha256()
-        sha256_hash.update(
-            f"pad_token_id={self.pad_token_id},"
-            f"eos_token_id={self.eos_token_id},"
-            f"dtype={self.dtype}".encode()
-        )
+        sha256_hash.update(f"class={self.__class__.__name__}".encode())
+        for field_name in self.fingerprint_fields:
+            field_value = getattr(self, field_name)
+            sha256_hash.update(f"{field_name}={field_value},".encode())
         for path, size in zip(self.paths, self.file_sizes):
-            sha256_hash.update(f"name={os.path.basename(path)},size={size}".encode())
-        for value in self.extra_data_hash_fields:
-            sha256_hash.update(value.encode())
+            sha256_hash.update(f"path={os.path.basename(path)},size={size},".encode())
         return sha256_hash.hexdigest()
 
     @property
@@ -499,6 +496,10 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
         self._num_instances: Optional[int] = None
 
     @property
+    def fingerprint_fields(self) -> Tuple[str, ...]:
+        return ("vocab_size", "pad_token_id", "eos_token_id", "dtype", "max_target_sequence_length")
+
+    @property
     def num_tokens(self) -> int:
         return len(self) * self.sequence_length
 
@@ -647,7 +648,8 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
 
 class NumpyFSLDatasetMixture(NumpyFSLDataset):
     """
-    A version of :class:`NumpyFSLDataset` built from a mixture of sources and their expected token ratios relative to each other. A ``path_offset_index`` is used to determine the number of instances to retain from a path when constructing the local indices.
+    A version of :class:`NumpyFSLDataset` built from a mixture of sources and their expected token ratios relative to each other.
+    A ``path_offset_index`` is used to determine the number of instances to retain from a path when constructing the local indices.
     """
 
     def __init__(
@@ -706,10 +708,6 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         self._path_offset_index = path_offset_index
         self._seed = seed
         self.instance_filter_config = instance_filter_config
-
-    @property
-    def extra_data_hash_fields(self) -> Tuple[str, ...]:
-        return ("mixture",)
 
     @property
     def indices_dtype(
@@ -844,10 +842,6 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
             label_mask_paths=label_mask_paths,
         )
         self._array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
-
-    @property
-    def extra_data_hash_fields(self) -> Tuple[str, ...]:
-        return ("padded",)
 
     @property
     def offsets(self) -> Tuple[Tuple[int, int], ...]:
@@ -992,11 +986,12 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         self._num_instances: Optional[int] = None
 
     @property
-    def extra_data_hash_fields(self) -> Tuple[str, ...]:
-        return (
-            "packed",
-            self._long_doc_strategy,
-        )
+    def fingerprint_fields(self) -> Tuple[str, ...]:
+        return ("vocab_size", "pad_token_id", "eos_token_id", "dtype", "long_doc_strategy")
+
+    @property
+    def long_doc_strategy(self) -> LongDocStrategy:
+        return self._long_doc_strategy
 
     @property
     def indices_dtype(
@@ -1591,22 +1586,19 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         self.instance_filter_config = instance_filter_config
 
     @property
-    def fingerprint_version(self) -> str:
-        return "v1.1"
-
-    @property
-    def fingerprint(self) -> str:
-        sha256_hash = hashlib.sha256()
-        sha256_hash.update(
-            f"min_sequence_length={self.min_sequence_length},"
-            f"max_sequence_length={self.max_sequence_length},"
-            f"pad_token_id={self.pad_token_id},"
-            f"eos_token_id={self.eos_token_id},"
-            f"dtype={self.dtype}".encode()
+    def fingerprint_fields(self) -> Tuple[str, ...]:
+        """
+        Extra values to include when calculating the data contents :data:`fingerprint`.
+        """
+        return (
+            "vocab_size",
+            "pad_token_id",
+            "eos_token_id",
+            "dtype",
+            "min_sequence_length",
+            "max_sequence_length",
+            "curriculum",
         )
-        for path, size in zip(self.paths, self.file_sizes):
-            sha256_hash.update(f"name={os.path.basename(path)},size={size}".encode())
-        return sha256_hash.hexdigest()
 
     @property
     def max_sequence_length(self) -> int:
