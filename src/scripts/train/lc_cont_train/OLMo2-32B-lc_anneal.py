@@ -51,6 +51,7 @@ from olmo_core.train.callbacks import (
     GPUMemoryMonitorCallback,
 )
 from olmo_core.train.checkpoint import CheckpointerConfig
+from olmo_core.train.train_module.transformer.config import TransformerTensorParallelConfig
 from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
 
 # The max number of pretraining steps configured for the purpose of setting the learning rate
@@ -166,7 +167,6 @@ class LcContTrain(Config):
                 ),
                 max_sequence_length=CONTEXT_LENGTH,
                 compile_model=True,
-                compile_loss=True,
                 z_loss_multiplier=1e-5,
                 dp_config=TransformerDataParallelConfig(
                     name=DataParallelType.fsdp,
@@ -174,11 +174,17 @@ class LcContTrain(Config):
                     reduce_dtype=DType.float32,
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
                 ),
-                tp_config=None,
-                ac_config=TransformerActivationCheckpointingConfig(
-                    mode=TransformerActivationCheckpointingMode.selected_modules,
-                    modules=[f"blocks.{i}.feed_forward" for i in range(model.n_layers)],
+                # tp_config=None,
+                # ac_config=TransformerActivationCheckpointingConfig(
+                #     mode=TransformerActivationCheckpointingMode.selected_modules,
+                #     modules=[f"blocks.{i}.feed_forward" for i in range(model.n_layers)],
+                # ),
+                tp_config=TransformerTensorParallelConfig(
+                    degree=4,
+                    enable_async=True,
+                    # loss_parallel=True,
                 ),
+                ac_config=TransformerActivationCheckpointingConfig(),
                 float8_config=Float8Config(enabled=False),
                 max_grad_norm=1.0,
                 scheduler=CosWithWarmup(warmup_steps=475, alpha_f=0.1),
