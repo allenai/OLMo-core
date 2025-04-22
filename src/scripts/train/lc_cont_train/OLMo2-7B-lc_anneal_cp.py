@@ -64,7 +64,7 @@ from olmo_core.utils import get_default_device, prepare_cli_environment, seed_al
 
 
 CONTEXT_LENGTH = 4 * 16384
-CP_DEGREE = 4
+CP_DEGREE = 2
 INTRA_DOCUMENT_MASKING = True
 
 
