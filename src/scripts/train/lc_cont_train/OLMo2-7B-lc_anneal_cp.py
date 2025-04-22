@@ -143,7 +143,7 @@ class LcContTrain(Config):
                 nccl_debug=False,
             ),
             train_module = TransformerTrainModuleConfig(
-                rank_microbatch_size=2 * CONTEXT_LENGTH,
+                rank_microbatch_size=1 * CONTEXT_LENGTH,
                  optim=AdamWConfig(
                     lr= 0.000061499,
                     weight_decay=0.1,
