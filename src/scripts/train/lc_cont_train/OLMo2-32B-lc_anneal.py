@@ -181,7 +181,7 @@ class LcContTrain(Config):
                 # ),
                 tp_config=TransformerTensorParallelConfig(
                     degree=2,
-                    enable_async=True,
+                    # enable_async=True,
                     # loss_parallel=True,
                 ),
                 ac_config=TransformerActivationCheckpointingConfig(),
