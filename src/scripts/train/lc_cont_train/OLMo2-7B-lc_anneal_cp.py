@@ -63,6 +63,7 @@ from olmo_core.utils import get_default_device, prepare_cli_environment, seed_al
 
 
 CONTEXT_LENGTH = 4 * 16384
+CP_DEGREE = 8
 INTRA_DOCUMENT_MASKING = True
 
 
@@ -164,9 +165,9 @@ class LcContTrain(Config):
                 #     degree=2,
                 #     loss_parallel=True,
                 # ),
-                cp_config=TransformerContextParallelConfig.llama3(degree=8)
+                cp_config=TransformerContextParallelConfig.llama3(degree=CP_DEGREE)
                 if INTRA_DOCUMENT_MASKING
-                else TransformerContextParallelConfig.zig_zag(degree=8),
+                else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE),
                 # ac_config=TransformerActivationCheckpointingConfig(),
                 float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
                 max_grad_norm=1.0,
