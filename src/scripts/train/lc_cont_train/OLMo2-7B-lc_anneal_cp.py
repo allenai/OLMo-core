@@ -152,7 +152,7 @@ class LcContTrain(Config):
                         OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
                     ],
                     compile=True,
-                    fused=True,
+                    fused=False,
                 ),
                 max_sequence_length=CONTEXT_LENGTH,
                 compile_model=True,
