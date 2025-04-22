@@ -10,7 +10,6 @@ import importlib
 import json
 import logging
 import sys
-from pathlib import Path
 
 import rich
 import torch
@@ -59,12 +58,11 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/dirkg/baseline27
     max_pretrain_steps: int = checkpoint_train_state["max_steps"]
     with resource_path(checkpoint, "config.json").open() as f:
         checkpoint_config = json.load(f)
-    run_name = f"{checkpoint_config['run_name']}-from{last_pretrain_step}--{run_name}"
 
     config = build_config(
         script,
         cmd,
-        run_name,
+        f"{checkpoint_config['run_name']}-from{last_pretrain_step}--{run_name}",
         cluster,
         overrides,
         global_batch_size=checkpoint_config["data_loader"]["global_batch_size"],
@@ -94,8 +92,7 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/dirkg/baseline27
     )
 
     # fix up the launch config
-    script_path = Path(config.launch.cmd[0])
-    olmo1_path = Path(olmo1b.__file__)
-    config.launch.cmd[0] = str(script_path.with_stem(olmo1_path.stem))
+    config.launch.cmd.insert(3, checkpoint)
+    config.launch.cmd[2] = run_name
 
     cmd.run(config)
