@@ -27,6 +27,7 @@ from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import (
     TransformerConfig,
 )
+from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.optim import (
     LinearWithWarmup,
     OptimGroupOverride,
@@ -54,7 +55,7 @@ from olmo_core.train.callbacks import (
     GPUMemoryMonitorCallback,
 )
 from olmo_core.train.checkpoint import CheckpointerConfig
-from olmo_core.train.train_module.transformer.config import TransformerActivationCheckpointingConfig
+from olmo_core.train.train_module.transformer.config import TransformerActivationCheckpointingConfig, TransformerTensorParallelConfig
 from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
 
 # The max number of pretraining steps configured for the purpose of setting the learning rate
@@ -64,6 +65,8 @@ from olmo_core.utils import get_default_device, prepare_cli_environment, seed_al
 
 
 CONTEXT_LENGTH = 4 * 16384
+CP_DEGREE = 4
+AC_ATTENTION_INTERVAL = 4
 INTRA_DOCUMENT_MASKING = True
 
 
@@ -161,14 +164,24 @@ class LcContTrain(Config):
                     reduce_dtype=DType.float32,
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
                 ),
-                # tp_config=TransformerTensorParallelConfig(
-                #     degree=2,
-                #     loss_parallel=True,
-                # ),
-                # cp_config=TransformerContextParallelConfig.llama3(degree=8)
+                tp_config=TransformerTensorParallelConfig(
+                    degree=4,
+                    enable_async=True,
+                    # loss_parallel=True,
+                ),
+                # cp_config=TransformerContextParallelConfig.llama3(degree=CP_DEGREE)
                 # if INTRA_DOCUMENT_MASKING
-                # else TransformerContextParallelConfig.zig_zag(degree=8),
-                ac_config=TransformerActivationCheckpointingConfig(),
+                # else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE),
+                # ac_config=TransformerActivationCheckpointingConfig(),
+                ac_config=TransformerActivationCheckpointingConfig(
+                    mode=TransformerActivationCheckpointingMode.selected_modules,
+                    modules=[f"blocks.{i}.feed_forward" for i in range(32)] + ["lm_head"] + [
+                        f"blocks.{i}.attention" for i in range(0, 32, AC_ATTENTION_INTERVAL)
+                    ]
+                ),
+                # ac_config=TransformerActivationCheckpointingConfig(
+                #     mode=TransformerActivationCheckpointingMode.selected_ops,
+                # ),
                 float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
                 max_grad_norm=1.0,
                 scheduler=LinearWithWarmup(warmup_steps=0, alpha_f=0.0),
