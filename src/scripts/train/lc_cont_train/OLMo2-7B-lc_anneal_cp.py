@@ -66,6 +66,7 @@ from olmo_core.utils import get_default_device, prepare_cli_environment, seed_al
 
 CONTEXT_LENGTH = 4 * 16384
 CP_DEGREE = 4
+AC_ATTENTION_INTERVAL = 4
 INTRA_DOCUMENT_MASKING = True
 
 
@@ -175,10 +176,8 @@ class LcContTrain(Config):
                 ac_config=TransformerActivationCheckpointingConfig(
                     mode=TransformerActivationCheckpointingMode.selected_modules,
                     modules=[f"blocks.{i}.feed_forward" for i in range(32)] + ["lm_head"] + [
-                        f"blocks.{i}.attention_norm" for i in range(32)
-                    ] + [
-                        f"blocks.{i}.feed_forward_norm" for i in range(32)
-                    ],
+                        f"blocks.{i}.attention" for i in range(0, 32, AC_ATTENTION_INTERVAL)
+                    ]
                 ),
                 # ac_config=TransformerActivationCheckpointingConfig(
                 #     mode=TransformerActivationCheckpointingMode.selected_ops,
