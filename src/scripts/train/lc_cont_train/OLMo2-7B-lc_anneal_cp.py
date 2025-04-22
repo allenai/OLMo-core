@@ -54,6 +54,7 @@ from olmo_core.train.callbacks import (
     GPUMemoryMonitorCallback,
 )
 from olmo_core.train.checkpoint import CheckpointerConfig
+from olmo_core.train.train_module.transformer.config import TransformerActivationCheckpointingConfig
 from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
 
 # The max number of pretraining steps configured for the purpose of setting the learning rate
@@ -168,7 +169,7 @@ class LcContTrain(Config):
                 cp_config=TransformerContextParallelConfig.llama3(degree=CP_DEGREE)
                 if INTRA_DOCUMENT_MASKING
                 else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE),
-                # ac_config=TransformerActivationCheckpointingConfig(),
+                ac_config=TransformerActivationCheckpointingConfig(),
                 float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
                 max_grad_norm=1.0,
                 scheduler=LinearWithWarmup(warmup_steps=0, alpha_f=0.0),
