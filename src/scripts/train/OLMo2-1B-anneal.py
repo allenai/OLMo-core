@@ -10,6 +10,7 @@ import importlib
 import json
 import logging
 import sys
+from pathlib import Path
 
 import rich
 import torch
@@ -91,5 +92,10 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/dirkg/baseline27
     log.info(
         f"Will anneal from checkpoint at step {last_pretrain_step:,d} with an lr of {starting_lr:.6f}"
     )
+
+    # fix up the launch config
+    script_path = Path(config.launch.cmd[0])
+    olmo1_path = Path(olmo1b.__file__)
+    config.launch.cmd[0] = str(script_path.with_stem(olmo1_path.stem))
 
     cmd.run(config)
