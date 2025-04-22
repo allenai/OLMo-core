@@ -180,7 +180,7 @@ class LcContTrain(Config):
                 #     modules=[f"blocks.{i}.feed_forward" for i in range(model.n_layers)],
                 # ),
                 tp_config=TransformerTensorParallelConfig(
-                    degree=4,
+                    degree=8,
                     enable_async=True,
                     # loss_parallel=True,
                 ),
