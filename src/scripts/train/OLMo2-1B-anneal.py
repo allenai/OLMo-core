@@ -16,7 +16,7 @@ import torch
 
 from olmo_core.internal.experiment import SubCmd, build_config
 from olmo_core.io import resource_path
-from olmo_core.optim import CosWithWarmup, LinearWithWarmup
+from olmo_core.optim import CosWithWarmup, LinearWithWarmup, SchedulerUnits
 from olmo_core.train import Duration, LoadStrategy
 
 olmo1b = importlib.import_module("OLMo2-1B")
@@ -58,6 +58,8 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/dirkg/baseline27
     max_pretrain_steps: int = checkpoint_train_state["max_steps"]
     with resource_path(checkpoint, "config.json").open() as f:
         checkpoint_config = json.load(f)
+    global_batch_size = checkpoint_config["data_loader"]["global_batch_size"]
+    sequence_length = checkpoint_config["train_module"]["max_sequence_length"]
 
     config = build_config(
         script,
@@ -65,11 +67,11 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/dirkg/baseline27
         f"{checkpoint_config['run_name']}-from{last_pretrain_step}--{run_name}",
         cluster,
         overrides,
-        global_batch_size=checkpoint_config["data_loader"]["global_batch_size"],
+        global_batch_size=global_batch_size,
         model_config_builder=olmo1b.build_model_config,
         train_module_config_builder=olmo1b.build_train_module_config,
         trainer_config_builder=olmo1b.build_trainer_config,
-        sequence_length=checkpoint_config["train_module"]["max_sequence_length"],
+        sequence_length=sequence_length,
         include_default_evals=False,
         intra_document_masking=False,
         include_instance_filter=False,
@@ -81,12 +83,20 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/dirkg/baseline27
     # Now infer the learning rate.
     base_lr = checkpoint_config["train_module"]["optim"]["lr"]
     scheduler_config = checkpoint_config["train_module"]["scheduler"]
+    global_tokens_seen = checkpoint_train_state['global_train_tokens_seen']
     assert scheduler_config.pop("_CLASS_") == f"{CosWithWarmup.__module__}.{CosWithWarmup.__name__}"
     scheduler = CosWithWarmup(**scheduler_config)
-    starting_lr = float(scheduler.get_lr(base_lr, last_pretrain_step, max_pretrain_steps))
+    if scheduler.units == SchedulerUnits.tokens:
+        max_steps = checkpoint_train_state['max_steps']
+        target_tokens = global_tokens_seen + (
+            (max_steps - last_pretrain_step) * global_batch_size
+        )
+        starting_lr = float(scheduler.get_lr(base_lr, global_tokens_seen, target_tokens))
+    else:
+        starting_lr = float(scheduler.get_lr(base_lr, last_pretrain_step, max_pretrain_steps))
     config.train_module.optim.lr = starting_lr
     config.train_module.scheduler = LinearWithWarmup(warmup_steps=last_pretrain_step, alpha_f=0.0)
-    config.trainer.max_duration = Duration.tokens(checkpoint_train_state['global_train_tokens_seen'] + int(50e9))
+    config.trainer.max_duration = Duration.tokens(global_tokens_seen + int(50e9))
     log.info(
         f"Will anneal from checkpoint at step {last_pretrain_step:,d} with an lr of {starting_lr:.6f}"
     )
