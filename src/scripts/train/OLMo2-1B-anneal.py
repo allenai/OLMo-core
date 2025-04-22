@@ -58,7 +58,7 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/dirkg/baseline27
     max_pretrain_steps: int = checkpoint_train_state["max_steps"]
     with resource_path(checkpoint, "config.json").open() as f:
         checkpoint_config = json.load(f)
-    run_name = f"{checkpoint_config['run_name']}_from{last_pretrain_step}_{run_name}"
+    run_name = f"{checkpoint_config['run_name']}-from{last_pretrain_step}--{run_name}"
 
     config = build_config(
         script,
