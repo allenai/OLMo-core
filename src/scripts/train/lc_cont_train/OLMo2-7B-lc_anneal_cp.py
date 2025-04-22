@@ -175,7 +175,7 @@ class LcContTrain(Config):
                 # ac_config=TransformerActivationCheckpointingConfig(),
                 ac_config=TransformerActivationCheckpointingConfig(
                     mode=TransformerActivationCheckpointingMode.selected_modules,
-                    modules=[f"blocks.{i}.feed_forward" for i in range(32)] + ["lm_head"] + [
+                    modules=[f"blocks.{i}.feed_forward" for i in range(32)] + [
                         f"blocks.{i}.attention" for i in range(0, 32, AC_ATTENTION_INTERVAL)
                     ]
                 ),
