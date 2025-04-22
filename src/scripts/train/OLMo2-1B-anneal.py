@@ -86,7 +86,7 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/dirkg/baseline27
     starting_lr = float(scheduler.get_lr(base_lr, last_pretrain_step, max_pretrain_steps))
     config.train_module.optim.lr = starting_lr
     config.train_module.scheduler = LinearWithWarmup(warmup_steps=0, alpha_f=0.0)
-    config.trainer.max_duration = Duration.tokens(int(50e9))
+    config.trainer.max_duration = Duration.tokens(checkpoint_train_state['global_train_tokens_seen'] + int(50e9))
     log.info(
         f"Will anneal from checkpoint at step {last_pretrain_step:,d} with an lr of {starting_lr:.6f}"
     )
