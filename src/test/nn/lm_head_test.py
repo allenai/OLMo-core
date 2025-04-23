@@ -78,7 +78,9 @@ def run_lm_head_tp(
 
 @requires_multi_gpu
 @pytest.mark.parametrize("head_type", [LMHeadType.default])
-@pytest.mark.parametrize("loss_implementation", [LMLossImplementation.default])
+@pytest.mark.parametrize(
+    "loss_implementation", [LMLossImplementation.default, LMLossImplementation.fused_linear]
+)
 @pytest.mark.parametrize("d_model", [64])
 @pytest.mark.parametrize("vocab_size", [128])
 @pytest.mark.parametrize("loss_reduction", ["sum"])
