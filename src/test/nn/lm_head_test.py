@@ -33,8 +33,8 @@ def test_lm_head_builder_config():
 
 @requires_gpu
 def test_lm_head_fused_linear_loss(
-    d_model: int = 64,
-    vocab_size: int = 128,
+    d_model: int = 256,
+    vocab_size: int = 1024,
     z_loss_multiplier: float = 1e-3,
     loss_reduction: str = "sum",
 ):
