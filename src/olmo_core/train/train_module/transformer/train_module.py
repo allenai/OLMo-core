@@ -348,7 +348,7 @@ class TransformerTrainModule(TrainModule):
                 input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
 
                 # Run forward pass, get losses.
-                _, ce_loss, z_loss = self.model_forward(
+                _, loss, ce_loss, z_loss = self.model_forward(
                     input_ids,
                     labels=labels,
                     ignore_index=self.label_ignore_index,
@@ -358,11 +358,6 @@ class TransformerTrainModule(TrainModule):
                     return_logits=False,
                     **model_kwargs,
                 )
-
-                # Get loss to optimize for.
-                loss = ce_loss
-                if z_loss is not None:
-                    loss += z_loss
 
                 # Update total batch CE and Z loss.
                 ce_batch_loss += get_local_tensor(ce_loss.detach())

@@ -61,8 +61,8 @@ def test_lm_head_fused_linear_loss(
         loss_reduction=loss_reduction,
         z_loss_multiplier=z_loss_multiplier,
     )
-    ce_loss1, z_loss1 = output1.ce_loss, output1.z_loss
-    (ce_loss1 + z_loss1).backward()
+    _, loss1, ce_loss1, z_loss1 = output1
+    loss1.backward()
     assert inputs1.grad is not None
 
     output2 = lm_head2(
@@ -72,10 +72,11 @@ def test_lm_head_fused_linear_loss(
         loss_reduction=loss_reduction,
         z_loss_multiplier=z_loss_multiplier,
     )
-    ce_loss2, z_loss2 = output2.ce_loss, output2.z_loss
-    (ce_loss2 + z_loss2).backward()
+    _, loss2, ce_loss2, z_loss2 = output2
+    loss2.backward()
     assert inputs2.grad is not None
 
+    torch.testing.assert_close(loss1, loss2)
     torch.testing.assert_close(ce_loss1, ce_loss2)
     torch.testing.assert_close(z_loss1, z_loss2)
     torch.testing.assert_close(inputs1.grad, inputs2.grad)
@@ -92,6 +93,7 @@ def run_lm_head_tp(
     z_loss_multiplier: float,
     inputs: torch.Tensor,
     labels: torch.Tensor,
+    loss: torch.Tensor,
     ce_loss: torch.Tensor,
     z_loss: torch.Tensor,
     grad: torch.Tensor,
@@ -115,10 +117,11 @@ def run_lm_head_tp(
         loss_reduction=loss_reduction,
         z_loss_multiplier=z_loss_multiplier,
     )
-    local_ce_loss, local_z_loss = local_output.ce_loss, local_output.z_loss
-    (local_ce_loss + local_z_loss).backward()
+    _, local_loss, local_ce_loss, local_z_loss = local_output
+    local_loss.backward()
     assert local_inputs.grad is not None
 
+    torch.testing.assert_close(get_local_tensor(local_loss), loss.to(device=device))
     torch.testing.assert_close(get_local_tensor(local_ce_loss), ce_loss.to(device=device))
     torch.testing.assert_close(get_local_tensor(local_z_loss), z_loss.to(device=device))
     torch.testing.assert_close(
@@ -171,8 +174,8 @@ def test_lm_head_tp(
         loss_reduction=loss_reduction,
         z_loss_multiplier=z_loss_multiplier,
     )
-    ce_loss, z_loss = output.ce_loss, output.z_loss
-    (ce_loss + z_loss).backward()
+    _, loss, ce_loss, z_loss = output
+    loss.backward()
     assert inputs.grad is not None
 
     run_distributed_test(
@@ -189,6 +192,7 @@ def test_lm_head_tp(
             z_loss_multiplier=z_loss_multiplier,
             inputs=inputs.detach().cpu(),
             labels=labels.detach().cpu(),
+            loss=loss.detach().cpu(),
             ce_loss=ce_loss.detach().cpu(),
             z_loss=z_loss.detach().cpu(),
             grad=inputs.grad.detach().cpu(),
