@@ -234,6 +234,9 @@ class LMHead(nn.Module):
             )
         elif self.loss_implementation == LMLossImplementation.fused_linear:
             logits = None
+            print("h", get_local_tensor(h).view(-1, self.d_model))
+            print("w_out", get_local_tensor(self.w_out.weight))
+            print("labels", get_local_tensor(labels).view(-1))
             ce_loss, z_loss = fused_linear_cross_entropy_loss(
                 get_local_tensor(h).view(-1, self.d_model),
                 get_local_tensor(self.w_out.weight),
@@ -347,12 +350,23 @@ class LMHead(nn.Module):
         tp_mesh: DeviceMesh,
         input_layouts: Optional[Tuple[Placement, Placement]] = None,
     ):
+        # NOTE: there's a few cases to consider...
+        # 1. If we're not using 'fused_linear' loss and we have a norm, then we do sequence-parallel through
+        #    the norm, colwise-parallel through 'w_out', then back to sequence-parallel for the loss.
+        # 2. If we're not using 'fused_linear' loss and we don't have a norm, then we start with
+        #    the input replicated and proceed the same way.
+        # 3. If we're using 'fused_linear' loss we do sequence-parallel all the way through.
         parallelize_module(
             module=self,
             device_mesh=tp_mesh,
             parallelize_plan=PrepareModuleInput(
                 input_layouts=None if input_layouts is None else input_layouts[0],
-                desired_input_layouts=Shard(1) if self.norm is not None else Replicate(),
+                desired_input_layouts=Shard(1)
+                if (
+                    self.loss_implementation == LMLossImplementation.fused_linear
+                    or self.norm is not None
+                )
+                else Replicate(),
                 input_kwarg_layouts=None if input_layouts is None else {"labels": input_layouts[1]},
                 desired_input_kwarg_layouts={"labels": Shard(1)},
             ),
