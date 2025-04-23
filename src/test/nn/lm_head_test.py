@@ -17,6 +17,7 @@ from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType, LMLossImplementation
 from olmo_core.utils import get_default_device, seed_all
 
 from ..distributed.utils import requires_multi_gpu, run_distributed_test
+from ..utils import requires_gpu
 
 
 def test_lm_head_builder_config():
@@ -28,6 +29,56 @@ def test_lm_head_builder_config():
 
     with pytest.raises(OLMoConfigurationError):
         LMHeadConfig(name=LMHeadType.normalized, bias=True).build(d_model=64, vocab_size=128)
+
+
+@requires_gpu
+def test_lm_head_fused_linear_loss(
+    d_model: int = 64,
+    vocab_size: int = 128,
+    z_loss_multiplier: float = 1e-3,
+    loss_reduction: str = "sum",
+):
+    seed_all(42)
+    device = torch.device("cuda")
+
+    config1 = LMHeadConfig(loss_implementation=LMLossImplementation.default, bias=False)
+    lm_head1 = config1.build(d_model=d_model, vocab_size=vocab_size, init_device="cuda")
+    config2 = LMHeadConfig(loss_implementation=LMLossImplementation.fused_linear, bias=False)
+    lm_head2 = config2.build(d_model=d_model, vocab_size=vocab_size, init_device="cuda")
+
+    lm_head2.load_state_dict(lm_head1.state_dict())
+
+    B, S = 2, 32
+    inputs1 = torch.randn(B, S, d_model, device=device, requires_grad=True)
+    inputs2 = inputs1.clone()
+    labels = torch.randint(0, vocab_size, (B, S), device=device)
+    loss_div_factor = B * S
+
+    output1 = lm_head1(
+        inputs1,
+        labels=labels,
+        loss_div_factor=loss_div_factor,
+        loss_reduction=loss_reduction,
+        z_loss_multiplier=z_loss_multiplier,
+    )
+    ce_loss1, z_loss1 = output1.ce_loss, output1.z_loss
+    (ce_loss1 + z_loss1).backward()
+    assert inputs1.grad is not None
+
+    output2 = lm_head1(
+        inputs2,
+        labels=labels,
+        loss_div_factor=loss_div_factor,
+        loss_reduction=loss_reduction,
+        z_loss_multiplier=z_loss_multiplier,
+    )
+    ce_loss2, z_loss2 = output2.ce_loss, output2.z_loss
+    (ce_loss2 + z_loss2).backward()
+    assert inputs2.grad is not None
+
+    torch.testing.assert_close(ce_loss1, ce_loss2)
+    torch.testing.assert_close(z_loss1, z_loss2)
+    torch.testing.assert_close(inputs1.grad, inputs2.grad)
 
 
 def run_lm_head_tp(
