@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added option to set LR scheduler based on tokens instead of steps (e.g. `--train_module.scheduler.units=tokens`).
 
+### Changed
+
+- Output of `LMHead` when `labels` is passed as input is now a 4-tuple instead of a 3-tuple, with `(logits, loss, ce_loss, z_loss)`, where `loss` is the combined loss (`ce_loss + z_loss`).
+
 ### Fixed
 
 - Modify `TokenizerConfig.from_hf()` to fallback to tokenizer_config.json if config.json is not found.
@@ -18,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made MoE load balancing loss more robust.
 - Fixed a bug with `ReorderedNormTransformerBlock` when using fine-grained FSDP wrapping and activation checkpointing together.
 - Fixed an issue preventing tensor parallelism from working with `LMHead` when using the "fused_linear" loss implementation.
+- Fixed a bug with `LMHead` when using "fused_linear" loss implementation where the `ce_loss` output included the `z_loss` added to it.
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 
