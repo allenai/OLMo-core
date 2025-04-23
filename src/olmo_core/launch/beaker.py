@@ -492,36 +492,40 @@ def follow_experiment(beaker: Beaker, experiment: Experiment, tail_lines: Option
     # Wait for job to start...
     job: Optional[Job] = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
     if job is None:
-        print("Waiting for job to be created..", end="")
+        log.info("Waiting for job to be created...")
         while job is None:
             time.sleep(1.0)
-            print(".", end="")
             job = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
 
     # Pull events until job is running (or fails)...
     events = set()
     while not (job.is_finalized or job.is_running):
-        time.sleep(2.0)
         job = beaker.job.get(job.id)
-        for event in beaker.job.summarized_events(job):
+        for event in sorted(
+            beaker.job.summarized_events(job), key=lambda event: event.latest_occurrence
+        ):
             if event not in events:
                 events.add(event)
-                log.info(f" ❯ {event.latest_message}")
+                log.info(f"❯ {event.latest_message}")
+                if event.status.lower() == "started":
+                    break
+        else:
+            time.sleep(1.0)
+            continue
+        break
 
     # Stream logs...
-    exit_code: Optional[int] = job.status.exit_code
-    stream_logs = exit_code is None and not job.is_finalized
-    if stream_logs:
-        log.info("Showing logs:")
-        print()
-        for job_log in beaker.job.follow_structured(job, tail_lines=tail_lines):
-            print(job_log.message)
-        print()
-        log.info("End logs")
+    log.info("Showing logs:")
+    print()
+    time.sleep(2.0)  # wait a moment to make sure logs are available before experiment finishes
+    for job_log in beaker.job.follow_structured(job, tail_lines=tail_lines):
+        print(job_log.message)
+    print()
+    log.info("End logs")
 
-        # Refresh the job.
-        job = beaker.job.get(job.id)
-        exit_code = job.status.exit_code
+    # Refresh the job.
+    job = beaker.job.get(job.id)
+    exit_code = job.status.exit_code
 
     if exit_code is None:
         raise BeakerExperimentFailedError(
