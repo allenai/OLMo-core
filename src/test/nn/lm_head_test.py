@@ -53,9 +53,8 @@ def run_lm_head_tp(
 
     load_model_and_optim_state(checkpoint_dir, lm_head)
 
-    local_inputs = distribute_tensor(
-        inputs.to(device=device), device_mesh=tp_mesh, placements=(Shard(1),)
-    )
+    inputs = inputs.to(device=device).requires_grad_(True)
+    local_inputs = distribute_tensor(inputs, device_mesh=tp_mesh, placements=(Shard(1),))
     local_output = lm_head(
         local_inputs,
         labels=labels,
