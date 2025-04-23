@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed loading checkpoints with missing keys from transformer train modules using torch 2.7.
 - Made MoE load balancing loss more robust.
 - Fixed a bug with `ReorderedNormTransformerBlock` when using fine-grained FSDP wrapping and activation checkpointing together.
+- Fixed an issue preventing tensor parallelism from working with `LMHead` when using the "fused_linear" loss implementation.
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 
