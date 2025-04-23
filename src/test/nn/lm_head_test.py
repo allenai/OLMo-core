@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional
 
 import pytest
 import torch
@@ -11,6 +12,7 @@ from olmo_core.distributed.checkpoint import (
 )
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType, LMLossImplementation
 from olmo_core.utils import get_default_device, seed_all
 
@@ -81,6 +83,7 @@ def run_lm_head_tp(
 @pytest.mark.parametrize(
     "loss_implementation", [LMLossImplementation.default, LMLossImplementation.fused_linear]
 )
+@pytest.mark.parametrize("layer_norm", [LayerNormConfig(bias=False), None])
 @pytest.mark.parametrize("d_model", [64])
 @pytest.mark.parametrize("vocab_size", [128])
 @pytest.mark.parametrize("loss_reduction", ["sum"])
@@ -88,6 +91,7 @@ def test_lm_head_tp(
     tmp_path: Path,
     head_type: LMHeadType,
     loss_implementation: LMLossImplementation,
+    layer_norm: Optional[LayerNormConfig],
     d_model: int,
     vocab_size: int,
     loss_reduction: str,
@@ -98,7 +102,9 @@ def test_lm_head_tp(
 
     checkpoint_dir = tmp_path / "checkpoint"
 
-    config = LMHeadConfig(name=head_type, loss_implementation=loss_implementation, bias=False)
+    config = LMHeadConfig(
+        name=head_type, loss_implementation=loss_implementation, bias=False, layer_norm=layer_norm
+    )
     lm_head = config.build(d_model=d_model, vocab_size=vocab_size, init_device="cuda")
     save_model_and_optim_state(checkpoint_dir, lm_head)
 

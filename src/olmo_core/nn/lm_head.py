@@ -234,9 +234,6 @@ class LMHead(nn.Module):
             )
         elif self.loss_implementation == LMLossImplementation.fused_linear:
             logits = None
-            print("h", get_local_tensor(h).view(-1, self.d_model))
-            print("w_out", get_local_tensor(self.w_out.weight))
-            print("labels", get_local_tensor(labels).view(-1))
             ce_loss, z_loss = fused_linear_cross_entropy_loss(
                 get_local_tensor(h).view(-1, self.d_model),
                 get_local_tensor(self.w_out.weight),
