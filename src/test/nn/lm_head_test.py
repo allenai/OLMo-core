@@ -98,7 +98,7 @@ def test_lm_head_tp(
     checkpoint_dir = tmp_path / "checkpoint"
 
     config = LMHeadConfig(name=head_type, loss_implementation=loss_implementation, bias=False)
-    lm_head = config.build(d_model=d_model, vocab_size=vocab_size)
+    lm_head = config.build(d_model=d_model, vocab_size=vocab_size, init_device="cuda")
     save_model_and_optim_state(checkpoint_dir, lm_head)
 
     B, S = 2, 32
