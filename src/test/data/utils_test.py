@@ -3,18 +3,21 @@ import pytest
 import torch
 
 from olmo_core.data.utils import (
+    InstancePacker,
+    SegmentTree,
     bucket_documents,
     get_cumulative_document_lengths,
     get_document_lengths,
     iter_batched,
     iter_document_indices,
     melt_batch,
+    pack_documents_into_instances,
     segment_documents_into_instances,
     write_document_indices,
 )
 
 
-@pytest.mark.limit_memory("245 KB")
+@pytest.mark.limit_memory("265 KB")
 def test_segment_documents_into_instances(tmp_path):
     data = [1, 2, 3, 4, 0, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 0] * 1000
     data_path = tmp_path / "data.npy"
@@ -137,3 +140,48 @@ def test_bucket_documents(tmp_path):
         np.memmap(tmp_path / "buckets.npy", mode="r", dtype=np.uint32).reshape((-1, 2)).tolist()
     )
     assert buckets == [[0, 4], [4, 8], [8, 12], [13, 17], [17, 19], [19, 21]]
+
+
+def test_segment_tree():
+    seg_tree = SegmentTree(8)
+    assert seg_tree.root_node.weight == 8
+
+    leaf = seg_tree.query(8)  # leaf_id=7, weight=8
+    assert leaf.leaf_id == 7
+    assert leaf.weight == 8
+
+    seg_tree.leaf_nodes[1].update(2)
+    seg_tree.leaf_nodes[3].update(4)
+
+    leaf = seg_tree.query(3)  # leaf_id=3, weight=4
+    assert leaf.leaf_id == 3
+    assert leaf.weight == 4
+
+
+def test_instance_packer():
+    # Follows the example from appendix (B) in https://arxiv.org/pdf/2404.10830
+    packer = InstancePacker(8)
+    assert packer._pack_document(0, 8) == 0
+    assert packer._pack_document(1, 6) == 1
+    assert packer._pack_document(2, 6) == 2
+    assert packer._pack_document(3, 4) == 3
+    assert packer._pack_document(4, 3) == 3
+
+    # And here we extend the example...
+    assert packer._pack_document(5, 2) == 1
+    assert packer._pack_document(6, 3) == 4
+
+
+def test_pack_documents_into_instances(tmp_path):
+    data = [1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 0, 1, 2, 0]
+    data_path = tmp_path / "data.npy"
+    mmap = np.memmap(data_path, dtype=np.uint16, mode="w+", shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+
+    instances, document_indices, total_tokens = pack_documents_into_instances(
+        data_path, max_sequence_length=8, eos_token_id=0, dtype=np.uint16
+    )
+    assert instances == [[0], [1], [2], [3, 4]]
+    assert document_indices[0].tolist() == [0, 8]
+    assert total_tokens == len(data)
