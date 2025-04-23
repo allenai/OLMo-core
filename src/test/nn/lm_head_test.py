@@ -50,7 +50,7 @@ def test_lm_head_fused_linear_loss(
 
     B, S = 2, 32
     inputs1 = torch.randn(B, S, d_model, device=device, requires_grad=True)
-    inputs2 = inputs1.clone()
+    inputs2 = inputs1.clone().requires_grad_(True)
     labels = torch.randint(0, vocab_size, (B, S), device=device)
     loss_div_factor = B * S
 
