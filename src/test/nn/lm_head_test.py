@@ -65,7 +65,7 @@ def test_lm_head_fused_linear_loss(
     (ce_loss1 + z_loss1).backward()
     assert inputs1.grad is not None
 
-    output2 = lm_head1(
+    output2 = lm_head2(
         inputs2,
         labels=labels,
         loss_div_factor=loss_div_factor,
