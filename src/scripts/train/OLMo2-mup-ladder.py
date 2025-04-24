@@ -105,7 +105,9 @@ class BaselineModelLadder(ModelLadder):
         config.dp_config = TransformerDataParallelConfig(
             name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         )
-        config.scheduler = WSD(warmup_steps=round(self.model_size / self.get_global_batch_size()))
+        config.scheduler = WSD(
+            warmup_steps=round(self.model_size / self.get_global_batch_size()), decay_fraction=0.25
+        )
         return config
 
     def get_trainer_config(
