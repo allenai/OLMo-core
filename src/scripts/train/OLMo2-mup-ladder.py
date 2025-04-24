@@ -132,6 +132,15 @@ class BaselineModelLadder(ModelLadder):
 
         return config
 
+    def get_global_batch_size(self) -> int:
+        """
+        Get the global batch size in tokens for a given model size.
+
+        :param size: The target model size.
+        """
+        # Let's avoid global batch size making results harder to interpret, for now.
+        return self.sequence_length * 512
+
     def get_rank_microbatch_size(self, *, size: ModelSize, gpu_type: str) -> int:
         if gpu_type.lower() in ("mps", "cpu"):
             return 4096
