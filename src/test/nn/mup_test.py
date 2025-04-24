@@ -119,7 +119,9 @@ def test_mup_init_std_multiplier_scaling_input(mup_scaling_strategy, expected_mu
         pytest.param(MuPScalingStrategy.table_8, 1 / (2 ** (3 / 2))),
     ],
 )
-def test_mup_init_std_multiplier_scaling_input_and_output(mup_scaling_strategy, expected_multiplier):
+def test_mup_init_std_multiplier_scaling_input_and_output(
+    mup_scaling_strategy, expected_multiplier
+):
     mup_config = MuPConfig(
         scaling_strategy=mup_scaling_strategy,
         width_scalings={
