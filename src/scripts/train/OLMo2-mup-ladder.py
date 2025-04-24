@@ -136,7 +136,7 @@ class BaselineModelLadder(ModelLadder):
         if gpu_type.lower() in ("mps", "cpu"):
             return 4096
         else:
-            assert "h100" in gpu_type.lower()
+            # assert "h100" in gpu_type.lower()
             return self.MBZ_SIZES[size]
 
 
