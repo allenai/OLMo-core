@@ -448,49 +448,6 @@ class BeakerLaunchConfig(Config):
             retry=None if not self.retries else RetrySpec(allowed_task_retries=self.retries),
         )
 
-    def _follow_experiment(self, experiment: Experiment):
-        # Wait for job to start...
-        job: Optional[Job] = self.beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
-        if job is None:
-            print("Waiting for job to launch..", end="")
-            while job is None:
-                time.sleep(1.0)
-                print(".", end="")
-                job = self.beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
-
-        log.info("Showing logs:")
-
-        exit_code: Optional[int] = job.status.exit_code
-        stream_logs = exit_code is None and not job.is_finalized
-        if stream_logs:
-            print()
-            for line_bytes in self.beaker.job.follow(
-                job,
-                include_timestamps=False,
-            ):
-                line = line_bytes.decode(errors="ignore")
-                if line.endswith("\n"):
-                    line = line[:-1]
-                print(line)
-            log.info("End logs")
-            print()
-
-            # Refresh the job.
-            job = self.beaker.job.get(job.id)
-            exit_code = job.status.exit_code
-
-        if exit_code is None:
-            raise BeakerExperimentFailedError(
-                f"Experiment failed, see {self.beaker.experiment.url(experiment)} for details"
-            )
-        elif exit_code > 0:
-            raise BeakerExperimentFailedError(
-                f"Experiment exited with non-zero code ({exit_code}), "
-                f"see {self.beaker.experiment.url(experiment)} for details"
-            )
-        else:
-            log.info(f"Experiment completed successfully: {self.beaker.experiment.url(experiment)}")
-
     def launch(
         self, follow: bool = False, torchrun: bool = True, entrypoint: Optional[str] = None
     ) -> Experiment:
@@ -516,7 +473,7 @@ class BeakerLaunchConfig(Config):
             return experiment
 
         try:
-            self._follow_experiment(experiment)
+            follow_experiment(self.beaker, experiment)
         except KeyboardInterrupt:
             log.warning("Caught keyboard interrupt...")
             if Confirm.ask("Would you like to cancel the experiment?"):
@@ -529,3 +486,55 @@ class BeakerLaunchConfig(Config):
                 )
 
         return experiment
+
+
+def follow_experiment(beaker: Beaker, experiment: Experiment, tail_lines: Optional[int] = None):
+    # Wait for job to start...
+    job: Optional[Job] = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
+    if job is None:
+        log.info("Waiting for job to be created...")
+        while job is None:
+            time.sleep(1.0)
+            job = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
+
+    # Pull events until job is running (or fails)...
+    events = set()
+    while not (job.is_finalized or job.is_running):
+        job = beaker.job.get(job.id)
+        for event in sorted(
+            beaker.job.summarized_events(job), key=lambda event: event.latest_occurrence
+        ):
+            if event not in events:
+                events.add(event)
+                log.info(f"❯ {event.latest_message}")
+                if event.status.lower() == "started":
+                    break
+        else:
+            time.sleep(1.0)
+            continue
+        break
+
+    # Stream logs...
+    log.info("Showing logs:")
+    print()
+    time.sleep(2.0)  # wait a moment to make sure logs are available before experiment finishes
+    for job_log in beaker.job.follow_structured(job, tail_lines=tail_lines):
+        print(job_log.message)
+    print()
+    log.info("End logs")
+
+    # Refresh the job.
+    job = beaker.job.get(job.id)
+    exit_code = job.status.exit_code
+
+    if exit_code is None:
+        raise BeakerExperimentFailedError(
+            f"Experiment failed, see {beaker.experiment.url(experiment)} for details"
+        )
+    elif exit_code > 0:
+        raise BeakerExperimentFailedError(
+            f"Experiment exited with non-zero code ({exit_code}), "
+            f"see {beaker.experiment.url(experiment)} for details"
+        )
+    else:
+        log.info(f"Experiment completed successfully: {beaker.experiment.url(experiment)}")
