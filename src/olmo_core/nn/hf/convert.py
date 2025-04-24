@@ -42,6 +42,7 @@ HF_TO_OLMO_CORE_MAPPINGS: Dict[str, str] = {
     f"model.layers.{LAYER}.self_attn.k_norm.weight": f"blocks.{LAYER}.attention.k_norm.weight",
     # MoEMLP.
     f"model.layers.{LAYER}.mlp.gate.weight": f"blocks.{LAYER}.feed_forward_moe.router.weight",
+    f"model.layers.{LAYER}.mlp.expert_bias": f"blocks.{LAYER}.feed_forward_moe.router.expert_bias",
     f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight": f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1",
     f"model.layers.{LAYER}.mlp.experts.{EXPERT}.down_proj.weight": f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w2",
     f"model.layers.{LAYER}.mlp.experts.{EXPERT}.up_proj.weight": f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w3",
@@ -96,6 +97,11 @@ HF_TO_OLMO_CORE_TEMPLATE_MAPPING: Dict[str, StateMappingTemplate] = {
         f"blocks.{LAYER}.feed_forward_moe.router.weight",
         flatten_dims=(0, 1),
     ),
+    f"model.layers.{LAYER}.mlp.expert_bias": StateMappingTemplate(
+        f"model.layers.{LAYER}.mlp.expert_bias",
+        f"blocks.{LAYER}.feed_forward_moe.router.expert_bias",
+        flatten_dims=(0, 1),
+    ),
 }
 
 
@@ -124,6 +130,7 @@ OLMO_CORE_TO_HF_MAPPINGS: Dict[str, str] = {
     f"blocks.{LAYER}.attention.k_norm.weight": f"model.layers.{LAYER}.self_attn.k_norm.weight",
     # MoEMLP.
     f"blocks.{LAYER}.feed_forward_moe.router.weight": f"model.layers.{LAYER}.mlp.gate.weight",
+    f"blocks.{LAYER}.feed_forward_moe.router.expert_bias": f"model.layers.{LAYER}.mlp.expert_bias",
     f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1": f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight",
     f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w2": f"model.layers.{LAYER}.mlp.experts.{EXPERT}.down_proj.weight",
     f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w3": f"model.layers.{LAYER}.mlp.experts.{EXPERT}.up_proj.weight",
@@ -161,11 +168,6 @@ OLMO_CORE_TO_HF_TEMPLATE_MAPPING: Dict[str, StateMappingTemplate] = {
         source_concat_dim=0,
         dims_permutation=(1, 0),
         dest_chunk_dim=1,
-    ),
-    f"blocks.{LAYER}.feed_forward_moe.router.weight": StateMappingTemplate(
-        f"blocks.{LAYER}.feed_forward_moe.router.weight",
-        f"model.layers.{LAYER}.mlp.gate.weight",
-        unflatten_dim=(0, (TemplatePlaceholder.EXPERT, -1)),
     ),
 }
 

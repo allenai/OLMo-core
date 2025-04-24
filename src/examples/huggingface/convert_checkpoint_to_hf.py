@@ -4,7 +4,6 @@ Example script to convert a OLMo Core model checkpoint to a HuggingFace model ch
 Note that this script is architecture-dependent, meaning it may only work for OLMo Core models that
 have support in the `transformers` library.
 """
-
 import json
 import logging
 import types
@@ -69,7 +68,9 @@ def convert_checkpoint_to_hf(
     if "float8_config" in transformer_config_dict:
         del transformer_config_dict["float8_config"]
 
+    log.info("Building model")
     model = TransformerConfig.from_dict(transformer_config_dict).build()
+    log.info("Model built")
 
     # Replace weight init with an efficient alternative that just allocates memory
     @torch.no_grad()
@@ -112,8 +113,10 @@ def convert_checkpoint_to_hf(
         max_sequence_length=max_sequence_length,
         optim=AdamWConfig(),
     ).build(model, device=device)
+    log.info("train_module built")
 
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
+    log.info("tokenizer built")
 
     with TemporaryDirectory() as work_dir:
         checkpointer_config = CheckpointerConfig(work_dir=work_dir, save_overwrite=True)

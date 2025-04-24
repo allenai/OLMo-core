@@ -239,7 +239,6 @@ class StateConverter:
                     original_state = original_state.permute(*mapping.dims_permutation)
                 if mapping.flatten_dims is not None:
                     original_state = original_state.flatten(*mapping.flatten_dims)
-
                 state_chunks = torch.chunk(
                     original_state, chunks=len(converted_keys), dim=mapping.dest_chunk_dim
                 )
