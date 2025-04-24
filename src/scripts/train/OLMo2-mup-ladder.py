@@ -3,12 +3,17 @@ from typing import Any, ClassVar, Dict, List
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.common import get_beaker_username, get_work_dir
 from olmo_core.internal.model_ladder import RunDuration, main
 from olmo_core.io import join_path
 from olmo_core.model_ladder import ModelLadder, ModelSize
+from olmo_core.nn.mup import MuPConfig, MuPScalingStrategy
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, OptimConfig, OptimGroupOverride
+from olmo_core.optim.scheduler import WSD
+from olmo_core.train.callbacks.mup_coord_data import MuPCoordDataCallback
+from olmo_core.train.config import TrainerConfig
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
@@ -22,43 +27,54 @@ class BaselineModelLadder(ModelLadder):
     """
 
     SUPPORTED_MODEL_SIZES: ClassVar[List[ModelSize]] = [
-        ModelSize.size_190M,
+        ModelSize.size_60M,
         ModelSize.size_370M,
-        ModelSize.size_600M,
-        ModelSize.size_760M,
-        ModelSize.size_1B,
-        ModelSize.size_3B,
+        ModelSize.size_970M,
         ModelSize.size_7B,
-        ModelSize.size_13B,
     ]
 
     MBZ_SIZES: ClassVar[Dict[ModelSize, int]] = {
         # TODO: may need to tune these
         # ===============================
-        ModelSize.size_190M: 16 * 4096,
+        ModelSize.size_60M: 16 * 4096,
         ModelSize.size_370M: 16 * 4096,
-        ModelSize.size_600M: 16 * 4096,
-        ModelSize.size_760M: 16 * 4096,
-        # ===============================
-        ModelSize.size_1B: 8 * 4096,
-        ModelSize.size_3B: 4 * 4096,
+        # ===============================,
+        ModelSize.size_970M: 8 * 4096,
         ModelSize.size_7B: 2 * 4096,
-        ModelSize.size_13B: 1 * 4096,
     }
 
     MODEL_OVERRIDES: ClassVar[Dict[ModelSize, Dict[str, Any]]] = {
-        ModelSize.size_1B: dict(n_layers=16),  # need to scale down our actual 1B model
+        # ModelSize.size_970M: dict(n_layers=16),  # need to scale down our actual 1B model
     }
 
     def _get_model_config(self, *, size: ModelSize) -> TransformerConfig:
-        # if size in [ModelSize.size_7B, ModelSize.size_13B]:
-        #     data_parallel_type = DataParallelType.fsdp
-        # else:
-        #     data_parallel_type = DataParallelType.ddp
-        # data_parallel_type = DataParallelType.hsdp
-        return getattr(TransformerConfig, f"olmo2_{size}")(
+        if size not in self.SUPPORTED_MODEL_SIZES:
+            raise OLMoConfigurationError(
+                f"Size {size} not supported by this muP ladder (supported sizes: {self.SUPPORTED_MODEL_SIZES})."
+            )
+
+        model_config: TransformerConfig = getattr(TransformerConfig, f"olmo2_mup_{size}")(
             vocab_size=self.tokenizer.padded_vocab_size(),
             init_seed=self.init_seed,
+            **self.MODEL_OVERRIDES.get(size, {}),
+        )
+
+        base_size = ModelSize.size_7B
+        base_model_config = getattr(TransformerConfig, f"olmo2_mup_{base_size}")(
+            vocab_size=self.tokenizer.padded_vocab_size(),
+            init_seed=self.init_seed,
+            **self.MODEL_OVERRIDES.get(base_size, {}),
+        )
+        mup_width_scalings = model_config.get_mup_width_scalings(base_model_config)
+        mup_config = MuPConfig(
+            scaling_strategy=MuPScalingStrategy.constant_inputs, width_scalings=mup_width_scalings
+        )
+
+        # Need to reconstruct config to pass in muP config
+        return getattr(TransformerConfig, f"olmo2_mup_{size}")(
+            vocab_size=self.tokenizer.padded_vocab_size(),
+            init_seed=self.init_seed,
+            mup=mup_config,
             **self.MODEL_OVERRIDES.get(size, {}),
         )
 
@@ -89,6 +105,29 @@ class BaselineModelLadder(ModelLadder):
         config.dp_config = TransformerDataParallelConfig(
             name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         )
+        config.scheduler = WSD(warmup_steps=round(self.model_size / self.get_global_batch_size()))
+        return config
+
+    def get_trainer_config(
+        self,
+        *,
+        size: ModelSize,
+        run_duration: RunDuration,
+        gpu_type: str,
+        dp_world_size: int,
+    ) -> TrainerConfig:
+        config = super().get_trainer_config(
+            size=size, run_duration=run_duration, gpu_type=gpu_type, dp_world_size=dp_world_size
+        )
+
+        config = config.with_callback(
+            "mup_coord_data",
+            MuPCoordDataCallback(
+                enabled=True,
+                collection_step=10,
+            ),
+        )
+
         return config
 
     def get_rank_microbatch_size(self, *, size: ModelSize, gpu_type: str) -> int:
