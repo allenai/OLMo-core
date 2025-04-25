@@ -12,7 +12,7 @@ from ..exceptions import OLMoConfigurationError
 
 __all__ = [
     "MuPHyperParam",
-    "MuPParamScalingType",
+    "MuPScalingStrategy",
     "MuPConfig",
     "MuP",
 ]
