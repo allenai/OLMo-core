@@ -2316,6 +2316,14 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'long_doc_strategy' is only a valid field for the packed FSL dataset"
                 )
+            if self.docs_per_instance is not None:
+                raise OLMoConfigurationError(
+                    "'docs_per_instance' is only valid for the interleaved FSL dataset"
+                )
+            if self.chunks_per_doc is not None:
+                raise OLMoConfigurationError(
+                    "'chunks_per_doc' is only valid for the interleaved FSL dataset"
+                )
             if self.seed is not None:
                 raise OLMoConfigurationError("'seed' is only valid for the interleaved FSL dataset")
             if self.source_mixture_config:
@@ -2387,6 +2395,14 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'long_doc_strategy' is only a valid field for the packed FSL dataset"
                 )
+            if self.docs_per_instance is not None:
+                raise OLMoConfigurationError(
+                    "'docs_per_instance' is only valid for the interleaved FSL dataset"
+                )
+            if self.chunks_per_doc is not None:
+                raise OLMoConfigurationError(
+                    "'chunks_per_doc' is only valid for the interleaved FSL dataset"
+                )
             if self.seed is not None:
                 raise OLMoConfigurationError("'seed' is only valid for the interleaved FSL dataset")
             dataset = NumpyPaddedFSLDataset(
@@ -2425,6 +2441,14 @@ class NumpyDatasetConfig(Config):
             if self.vsl_curriculum is not None:
                 raise OLMoConfigurationError(
                     "'vsl_curriculum' is only a valid field for VSL datasets"
+                )
+            if self.docs_per_instance is not None:
+                raise OLMoConfigurationError(
+                    "'docs_per_instance' is only valid for the interleaved FSL dataset"
+                )
+            if self.chunks_per_doc is not None:
+                raise OLMoConfigurationError(
+                    "'chunks_per_doc' is only valid for the interleaved FSL dataset"
                 )
             if self.seed is not None:
                 raise OLMoConfigurationError("'seed' is only valid for the interleaved FSL dataset")
@@ -2521,6 +2545,14 @@ class NumpyDatasetConfig(Config):
                 )
             if label_mask_paths is not None:
                 raise OLMoConfigurationError("'label_mask_paths' is not supported for VSL datasets")
+            if self.docs_per_instance is not None:
+                raise OLMoConfigurationError(
+                    "'docs_per_instance' is only valid for the interleaved FSL dataset"
+                )
+            if self.chunks_per_doc is not None:
+                raise OLMoConfigurationError(
+                    "'chunks_per_doc' is only valid for the interleaved FSL dataset"
+                )
             if self.seed is not None:
                 raise OLMoConfigurationError("'seed' is only valid for the interleaved FSL dataset")
             dataset = NumpyVSLDataset(
