@@ -7,6 +7,8 @@ import mplcursors
 import pandas as pd
 from cached_path import cached_path
 
+from olmo_core.io import add_cached_path_clients
+
 
 def run_coord_check(data_files: List[str], widths: List[str], x_axis_label: str, title: str):
     if len(data_files) != len(widths):
@@ -82,6 +84,8 @@ if __name__ == "__main__":
         default="muP coord check",
     )
     args = parser.parse_args()
+
+    add_cached_path_clients()
 
     run_coord_check(
         data_files=args.data_files,
