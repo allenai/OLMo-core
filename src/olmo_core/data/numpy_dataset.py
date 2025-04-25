@@ -2412,6 +2412,8 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'vsl_curriculum' is only a valid field for VSL datasets"
                 )
+            if self.seed is not None:
+                raise OLMoConfigurationError("'seed' is only valid for the interleaved FSL dataset")
             dataset = NumpyPackedFSLDataset(
                 *paths,
                 sequence_length=self.sequence_length,
@@ -2466,6 +2468,10 @@ class NumpyDatasetConfig(Config):
             if self.vsl_curriculum is not None:
                 raise OLMoConfigurationError(
                     "'vsl_curriculum' is only a valid field for VSL datasets"
+                )
+            if self.long_doc_strategy is not None:
+                raise OLMoConfigurationError(
+                    "'long_doc_strategy' is only a valid field for the packed FSL dataset"
                 )
             dataset = NumpyInterleavedFSLDataset(
                 *paths,
