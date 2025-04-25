@@ -31,8 +31,6 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
-from olmo_core.data.source_mixture import SourceMixtureDatasetConfig
-from olmo_core.data.types import NumpyDatasetDType, NumpyDatasetType, NumpyUIntTypes
 from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
 
 from ..aliases import PathOrStr
@@ -40,7 +38,9 @@ from ..config import Config, StrEnum
 from ..distributed.utils import barrier, get_fs_local_rank
 from ..io import _get_s3_client, get_file_size
 from .mixes import DataMix, DataMixBase
+from .source_mixture import SourceMixtureDatasetConfig
 from .tokenizer import TokenizerConfig
+from .types import LongDocStrategy, NumpyDatasetDType, NumpyDatasetType, NumpyUIntTypes
 from .utils import (
     bucket_documents,
     chunk_array,
@@ -51,14 +51,18 @@ from .utils import (
     get_rng,
     load_array_slice_into_tensor,
     memmap_to_write,
+    pack_documents_into_instances,
     run_worker_func,
     segment_documents_into_instances,
+    write_array_to_disk,
 )
 
 __all__ = [
     "NumpyDatasetBase",
+    "NumpyFSLDatasetBase",
     "NumpyFSLDataset",
     "NumpyPaddedFSLDataset",
+    "NumpyPackedFSLDataset",
     "VSLCurriculum",
     "VSLNaturalCurriculum",
     "VSLGrowthCurriculum",
@@ -66,6 +70,7 @@ __all__ = [
     "VSLGrowLinearCurriculum",
     "NumpyVSLDataset",
     "NumpyDatasetConfig",
+    "NumpyDatasetType",
     "VSLCurriculumType",
     "VSLCurriculumConfig",
 ]
@@ -167,21 +172,27 @@ class NumpyDatasetBase(ABC):
         """
         The version of the :data:`fingerprint`.
         """
-        return "v1.1"
+        return "v2.0"
+
+    @property
+    def fingerprint_fields(self) -> Tuple[str, ...]:
+        """
+        Extra values to include when calculating the data contents :data:`fingerprint`.
+        """
+        return ("vocab_size", "pad_token_id", "eos_token_id", "dtype")
 
     @property
     def fingerprint(self) -> str:
         """
-        Can be used to identify/compare the contents of a dataset.
+        Used to compare the contents of a dataset.
         """
         sha256_hash = hashlib.sha256()
-        sha256_hash.update(
-            f"pad_token_id={self.pad_token_id},"
-            f"eos_token_id={self.eos_token_id},"
-            f"dtype={self.dtype}".encode()
-        )
+        sha256_hash.update(f"class={self.__class__.__name__}".encode())
+        for field_name in self.fingerprint_fields:
+            field_value = getattr(self, field_name)
+            sha256_hash.update(f"{field_name}={field_value},".encode())
         for path, size in zip(self.paths, self.file_sizes):
-            sha256_hash.update(f"name={os.path.basename(path)},size={size}".encode())
+            sha256_hash.update(f"path={os.path.basename(path)},size={size},".encode())
         return sha256_hash.hexdigest()
 
     @property
@@ -328,7 +339,87 @@ class InstanceFilterConfig(Config):
     repetition_max_count: int = 32
 
 
-class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
+class NumpyFSLDatasetBase(NumpyDatasetBase, Dataset[Dict[str, Any]]):
+    """
+    A base class for fixed sequence length (FSL) numpy array-backed dataset.
+    """
+
+    def __init__(
+        self,
+        *paths: PathOrStr,
+        sequence_length: int,
+        pad_token_id: int,
+        eos_token_id: int,
+        vocab_size: int,
+        dtype: NumpyUIntTypes = np.uint16,
+        metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
+        include_instance_metadata: Optional[bool] = None,
+        generate_doc_lengths: bool = False,
+        instance_filter_config: Optional[InstanceFilterConfig] = None,
+        label_mask_paths: Optional[List[PathOrStr]] = None,
+    ):
+        if include_instance_metadata is None and metadata:
+            include_instance_metadata = True
+
+        if isinstance(metadata, list):
+            if len(metadata) != len(paths):
+                raise OLMoConfigurationError(
+                    "'metadata' should have the same length as the number of file paths"
+                )
+        else:
+            metadata = [metadata or {}] * len(paths)
+
+        if label_mask_paths is not None and len(label_mask_paths) != len(paths):
+            raise OLMoConfigurationError(
+                "There must be the same number of 'label_mask_paths' as there are 'paths'"
+            )
+
+        super().__init__(
+            *paths,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            vocab_size=vocab_size,
+            dtype=dtype,
+        )
+        self._metadata = tuple(metadata)
+        self._sequence_length = sequence_length
+        self._include_instance_metadata = include_instance_metadata
+        self._generate_doc_lengths = generate_doc_lengths
+        self.instance_filter_config = instance_filter_config
+        self._label_mask_paths = label_mask_paths
+        self._label_mask_path_to_source_path: Dict[PathOrStr, PathOrStr] = {}
+        if self._label_mask_paths:
+            for label_mask_path, source_path in zip(self._label_mask_paths, self._array_paths):
+                self._label_mask_path_to_source_path[label_mask_path] = source_path
+
+    @property
+    def sequence_length(self) -> int:
+        return self._sequence_length
+
+    @property
+    def max_sequence_length(self) -> int:
+        return self.sequence_length
+
+    @property
+    def max_target_sequence_length(self) -> Optional[int]:
+        return None
+
+    def _get_indices_path(self, source_path: PathOrStr, name: str, *extra_ids: str) -> Path:
+        # NOTE: the pre-processed data file names are based on the corresponding source (token IDs) file name,
+        # so to get the right instance indices file name for a label mask file, we need to map
+        # the label mask file name to its corresponding source file name.
+        if source_path in self._label_mask_path_to_source_path:
+            source_path = self._label_mask_path_to_source_path[source_path]
+        sha256_hash = hashlib.sha256()
+        sha256_hash.update(str(source_path).encode())
+        sha256_hash.update(str(self._get_file_size(source_path)).encode())
+        for extra_id in extra_ids:
+            sha256_hash.update(extra_id.encode())
+        path_hash = sha256_hash.hexdigest()
+        return self.work_dir / "dataset-common" / f"{name}-{self.sequence_length}-{path_hash}.npy"
+
+
+class NumpyFSLDataset(NumpyFSLDatasetBase):
     """
     A fixed sequence length (FSL) numpy array-backed dataset.
 
@@ -377,6 +468,20 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         instance_filter_config: Optional[InstanceFilterConfig] = None,
         label_mask_paths: Optional[List[PathOrStr]] = None,
     ):
+        super().__init__(
+            *paths,
+            sequence_length=sequence_length,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            vocab_size=vocab_size,
+            dtype=dtype,
+            metadata=metadata,
+            include_instance_metadata=include_instance_metadata,
+            generate_doc_lengths=generate_doc_lengths,
+            instance_filter_config=instance_filter_config,
+            label_mask_paths=label_mask_paths,
+        )
+
         if max_target_sequence_length is not None and (
             max_target_sequence_length < sequence_length
             or max_target_sequence_length % sequence_length != 0
@@ -385,38 +490,13 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                 "'max_target_sequence_length' should be a multiple of 'sequence_length'"
             )
 
-        if include_instance_metadata is None and metadata:
-            include_instance_metadata = True
-
-        if isinstance(metadata, list):
-            if len(metadata) != len(paths):
-                raise OLMoConfigurationError(
-                    "'metadata' should have the same length as the number of file paths"
-                )
-        else:
-            metadata = [metadata or {}] * len(paths)
-
-        if label_mask_paths is not None and len(label_mask_paths) != len(paths):
-            raise OLMoConfigurationError(
-                "There must be the same number of 'label_mask_paths' as there are 'paths'"
-            )
-
-        super().__init__(
-            *paths,
-            pad_token_id=pad_token_id,
-            eos_token_id=eos_token_id,
-            vocab_size=vocab_size,
-            dtype=dtype,
-        )
-        self._metadata = tuple(metadata)
-        self._label_mask_paths = label_mask_paths
-        self._sequence_length = sequence_length
         self._max_target_sequence_length = max_target_sequence_length
         self._array_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
         self._num_instances: Optional[int] = None
-        self._include_instance_metadata = include_instance_metadata
-        self._generate_doc_lengths = generate_doc_lengths
-        self.instance_filter_config = instance_filter_config
+
+    @property
+    def fingerprint_fields(self) -> Tuple[str, ...]:
+        return ("vocab_size", "pad_token_id", "eos_token_id", "dtype", "max_target_sequence_length")
 
     @property
     def num_tokens(self) -> int:
@@ -567,7 +647,8 @@ class NumpyFSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
 
 class NumpyFSLDatasetMixture(NumpyFSLDataset):
     """
-    A version of :class:`NumpyFSLDataset` built from a mixture of sources and their expected token ratios relative to each other. A ``path_offset_index`` is used to determine the number of instances to retain from a path when constructing the local indices.
+    A version of :class:`NumpyFSLDataset` built from a mixture of sources and their expected token ratios relative to each other.
+    A ``path_offset_index`` is used to determine the number of instances to retain from a path when constructing the local indices.
     """
 
     def __init__(
@@ -640,22 +721,15 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         barrier()
         len(self)
 
-    def _get_indices_path(self, path: PathOrStr) -> Path:
-        sha256_hash = hashlib.sha256()
-        sha256_hash.update(str(path).encode())
-        sha256_hash.update(str(self._get_file_size(path)).encode())
-        sha256_hash.update(self.indices_dtype.__name__.encode())
-        path_hash = sha256_hash.hexdigest()
-        return (
-            self.work_dir
-            / "dataset-common"
-            / f"mixture-instance-indices-{self.sequence_length}-{path_hash}.npy"
+    def _get_instance_indices_path(self, source_path: PathOrStr) -> Path:
+        return self._get_indices_path(
+            source_path, "mixture-instance-indices", self.indices_dtype.__name__
         )
 
     def _write_document_indices(self):
         paths_needed: List[Tuple[PathOrStr, int]] = []
         for idx, path in enumerate(self.paths):
-            indices_path = self._get_indices_path(path)
+            indices_path = self._get_instance_indices_path(path)
             if indices_path.is_file():
                 log.info(f"Reusing document indices for '{path}' at:\n'{indices_path}'")
             elif path not in paths_needed:
@@ -665,7 +739,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
             with concurrent.futures.ProcessPoolExecutor() as executor:
                 futures = []
                 for path, idx in paths_needed:
-                    indices_path = self._get_indices_path(path)
+                    indices_path = self._get_instance_indices_path(path)
                     log.info(f"Gathering instance indices for '{path}'...")
                     # NOTE: We limit the number of instances by total target token count // sequence length
                     max_instances = (
@@ -699,7 +773,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                     )
 
     # def _read_chunk_from_array(self, path: PathOrStr, index: int) -> torch.Tensor:
-    #     indices_path = self._get_indices_path(path)
+    #     indices_path = self._get_instance_indices_path(path)
     #     indices = load_array_slice_into_tensor(
     #         indices_path, index * 2, index * 2 + 2, self.indices_dtype
     #     )
@@ -737,8 +811,8 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
 
 class NumpyPaddedFSLDataset(NumpyFSLDataset):
     """
-    A version of :class:`NumpyFSLDataset` that creates a single instance from each document.
-    The resulting instances may be padded out to ``sequence_length``.
+    An FSL dataset that creates a single instance from each document.
+    The resulting instances will all have exactly ``sequence_length`` tokens, using padding if needed.
     """
 
     def __init__(
@@ -767,10 +841,6 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
             label_mask_paths=label_mask_paths,
         )
         self._array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
-        self._label_mask_path_to_source_path: Dict[PathOrStr, PathOrStr] = {}
-        if self._label_mask_paths:
-            for label_mask_path, source_path in zip(self._label_mask_paths, self._array_paths):
-                self._label_mask_path_to_source_path[label_mask_path] = source_path
 
     @property
     def offsets(self) -> Tuple[Tuple[int, int], ...]:
@@ -822,21 +892,8 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         data = load_array_slice_into_tensor(path, int(start_idx), int(end_idx), dtype or self.dtype)
         return data
 
-    def _get_instance_indices_path(self, path: PathOrStr) -> Path:
-        # NOTE: the instance indices file names are based on the corresponding source (token IDs) file name,
-        # so to get the right instance indices file name for a label mask file, we need to map
-        # the label mask file name to its corresponding source file name.
-        if path in self._label_mask_path_to_source_path:
-            path = self._label_mask_path_to_source_path[path]
-        sha256_hash = hashlib.sha256()
-        sha256_hash.update(str(path).encode())
-        sha256_hash.update(str(self._get_file_size(path)).encode())
-        path_hash = sha256_hash.hexdigest()
-        return (
-            self.work_dir
-            / "dataset-common"
-            / f"instance-indices-{self.sequence_length}-{path_hash}.npy"
-        )
+    def _get_instance_indices_path(self, source_path: PathOrStr) -> Path:
+        return self._get_indices_path(source_path, "instance-indices")
 
     def _write_instance_indices(self):
         paths_needed: List[PathOrStr] = []
@@ -873,6 +930,282 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                     log.info(
                         f"Created {total_instances:,d} instances of sequence length up to "
                         f"{self.sequence_length} from '{path}'"
+                    )
+
+
+class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
+    """
+    An FSL dataset that packs documents into instances using the Optimized Best-Fit Decreasing (OBFD)
+    algorithm described in `Fewer Truncations Improve Language Modeling <https://arxiv.org/pdf/2404.10830>`_.
+    The resulting instances will all have exactly ``sequence_length`` tokens, using padding if needed.
+
+    .. note::
+        OBFD is applied to each source file separately since source files from the Dolma toolkit
+        are usually large enough for OBFD to achieve very good compactness (minimal padding tokens)
+        and so that we can parallelize the packing.
+    """
+
+    def __init__(
+        self,
+        *paths: PathOrStr,
+        sequence_length: int,
+        pad_token_id: int,
+        eos_token_id: int,
+        vocab_size: int,
+        dtype: NumpyUIntTypes = np.uint16,
+        metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
+        include_instance_metadata: Optional[bool] = None,
+        generate_doc_lengths: bool = False,
+        instance_filter_config: Optional[InstanceFilterConfig] = None,
+        label_mask_paths: Optional[List[PathOrStr]] = None,
+        long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
+    ):
+        super().__init__(
+            *paths,
+            sequence_length=sequence_length,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            vocab_size=vocab_size,
+            dtype=dtype,
+            metadata=metadata,
+            include_instance_metadata=include_instance_metadata,
+            generate_doc_lengths=generate_doc_lengths,
+            instance_filter_config=instance_filter_config,
+        )
+
+        self._long_doc_strategy = long_doc_strategy
+
+        if label_mask_paths is not None and len(label_mask_paths) != len(paths):
+            raise OLMoConfigurationError(
+                "There must be the same number of 'label_mask_paths' as there are 'paths'"
+            )
+
+        self._label_mask_paths = label_mask_paths
+        self._label_mask_path_to_source_path: Dict[PathOrStr, PathOrStr] = {}
+        if self._label_mask_paths:
+            for label_mask_path, source_path in zip(self._label_mask_paths, self._array_paths):
+                self._label_mask_path_to_source_path[label_mask_path] = source_path
+
+        self._array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
+        self._num_instances: Optional[int] = None
+
+    @property
+    def fingerprint_fields(self) -> Tuple[str, ...]:
+        return ("vocab_size", "pad_token_id", "eos_token_id", "dtype", "long_doc_strategy")
+
+    @property
+    def long_doc_strategy(self) -> LongDocStrategy:
+        return self._long_doc_strategy
+
+    @property
+    def indices_dtype(
+        self,
+    ) -> NumpyUIntTypes:
+        return np.uint64
+
+    @property
+    def offsets(self) -> Tuple[Tuple[int, int], ...]:
+        if self._array_instance_offsets is None:
+            item_size = self.indices_dtype(0).itemsize
+            num_instances_per_path = self.map(
+                lambda path, _: get_file_size(self._get_instance_offsets_path(path))
+                // (item_size * 2)
+            )
+            array_instance_offsets = []
+            start_offset = 0
+            for num_instances in num_instances_per_path:
+                array_instance_offsets.append((start_offset, start_offset + num_instances))
+                start_offset += num_instances
+            self._array_instance_offsets = tuple(array_instance_offsets)
+        return self._array_instance_offsets
+
+    def prepare(self):
+        if self.fs_local_rank == 0:
+            log.info("Packing document into instances...")
+            self._pack_all_documents_into_instances()
+        barrier()
+        len(self)
+
+    def __len__(self) -> int:
+        if self._num_instances is None:
+            self._num_instances = self.offsets[-1][1]
+        return self._num_instances
+
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        index = int(index)  # in case this is a numpy int type.
+        pos_index = index if index >= 0 else len(self) + index
+
+        # The index of the array within 'self.paths'.
+        array_index: Optional[int] = None
+        # The instance index within the corresponding array.
+        array_local_index: Optional[int] = None
+        for i, (offset_start, offset_end) in enumerate(self.offsets):
+            if offset_start <= pos_index < offset_end:
+                array_index = i
+                array_local_index = pos_index - offset_start
+                break
+
+        if array_index is None or array_local_index is None:
+            raise IndexError(f"{index} is out of bounds for dataset of size {len(self)}")
+
+        source_path = self.paths[array_index]
+        label_mask_path = (
+            None if self._label_mask_paths is None else self._label_mask_paths[array_index]
+        )
+        document_indices_path = self._get_document_indices_path(source_path)
+        instance_offsets_path = self._get_instance_offsets_path(source_path)
+        docs_by_instance_path = self._get_docs_by_instance_path(source_path)
+
+        # Load start and end document indices corresponding to instance.
+        instance_indices = load_array_slice_into_tensor(
+            instance_offsets_path,
+            array_local_index * 2,
+            array_local_index * 2 + 2,
+            self.indices_dtype,
+        ).tolist()
+        instance_start, instance_end = instance_indices
+
+        # Load document IDs corresponding to instance.
+        document_ids = load_array_slice_into_tensor(
+            docs_by_instance_path,
+            instance_start,
+            instance_end,
+            self.indices_dtype,
+        ).tolist()
+
+        # Load token IDs and maybe label masks for each document.
+        document_token_ids: List[torch.Tensor] = []
+        document_label_masks: Optional[List[torch.Tensor]] = None if label_mask_path is None else []
+        for document_id in document_ids:
+            document_indices = load_array_slice_into_tensor(
+                document_indices_path, document_id * 2, document_id * 2 + 2, self.indices_dtype
+            ).tolist()
+            document_start, document_end = document_indices
+            document_token_ids.append(
+                load_array_slice_into_tensor(source_path, document_start, document_end, self.dtype)
+            )
+            if label_mask_path is not None:
+                assert document_label_masks is not None
+                document_label_masks.append(
+                    load_array_slice_into_tensor(
+                        label_mask_path, document_start, document_end, np.bool_
+                    )
+                )
+
+        # Combine token IDs and maybe label masks for each document.
+        input_ids = torch.cat(document_token_ids)
+        label_mask = None if document_label_masks is None else torch.cat(document_label_masks)
+
+        # Pad to target sequence length.
+        pad_shape = (0, self.sequence_length - input_ids.numel())
+        if label_mask is not None:
+            label_mask = F.pad(label_mask, pad_shape, value=False)
+        else:
+            label_mask = F.pad(torch.ones_like(input_ids, dtype=torch.bool), pad_shape, value=False)
+        input_ids = F.pad(input_ids, pad_shape, value=self.pad_token_id)
+
+        # Prepare final output.
+        out: Dict[str, Any] = {"input_ids": input_ids, "label_mask": label_mask}
+        if self.instance_filter_config is not None:
+            out["instance_mask"] = self._validate_instance(input_ids, self.instance_filter_config)
+        if self._include_instance_metadata:
+            metadata = self._metadata[array_index]
+            out["metadata"] = deepcopy(metadata)
+        if self._generate_doc_lengths:
+            out["doc_lens"] = get_document_lengths(input_ids, self.eos_token_id)
+        return out
+
+    def _get_document_indices_path(self, source_path: PathOrStr) -> Path:
+        return self._get_indices_path(
+            source_path, "document-indices", self._long_doc_strategy, self.indices_dtype.__name__
+        )
+
+    def _get_instance_offsets_path(self, source_path: PathOrStr) -> Path:
+        return self._get_indices_path(
+            source_path, "instance-offsets", self._long_doc_strategy, self.indices_dtype.__name__
+        )
+
+    def _get_docs_by_instance_path(self, source_path: PathOrStr) -> Path:
+        return self._get_indices_path(
+            source_path,
+            "documents-by-instance",
+            self._long_doc_strategy,
+            self.indices_dtype.__name__,
+        )
+
+    def _pack_documents_from_source_into_instances(self, source_path: PathOrStr) -> Tuple[int, int]:
+        document_indices_path = self._get_document_indices_path(source_path)
+        instance_offsets_path = self._get_instance_offsets_path(source_path)
+        docs_by_instance_path = self._get_docs_by_instance_path(source_path)
+
+        instances, document_indices, total_tokens = pack_documents_into_instances(
+            source_path,
+            max_sequence_length=self.sequence_length,
+            eos_token_id=self.eos_token_id,
+            dtype=self.dtype,
+            indices_dtype=self.indices_dtype,
+            long_doc_strategy=self._long_doc_strategy,
+        )
+        document_indices = document_indices.reshape(-1)
+
+        instance_start_offset = 0
+        instance_offsets_list: List[int] = []
+        documents_by_instance_list: List[int] = []
+        for instance in instances:
+            instance_offsets_list.append(instance_start_offset)
+            instance_offsets_list.append(instance_start_offset + len(instance))
+            instance_start_offset += len(instance)
+            documents_by_instance_list.extend(instance)
+
+        # shape: (num_instances * 2,)
+        instance_offsets = np.array(instance_offsets_list, dtype=self.indices_dtype)
+        # shape: (num_documents,)
+        docs_by_instance = np.array(documents_by_instance_list, dtype=self.indices_dtype)
+
+        write_array_to_disk(document_indices, document_indices_path)
+        write_array_to_disk(instance_offsets, instance_offsets_path)
+        write_array_to_disk(docs_by_instance, docs_by_instance_path)
+
+        return len(instances), total_tokens
+
+    def _pack_all_documents_into_instances(self):
+        paths_needed: List[PathOrStr] = []
+        for source_path in self.paths:
+            document_indices_path = self._get_document_indices_path(source_path)
+            instance_offsets_path = self._get_instance_offsets_path(source_path)
+            docs_by_instance_path = self._get_docs_by_instance_path(source_path)
+            if (
+                document_indices_path.is_file()
+                and instance_offsets_path.is_file()
+                and docs_by_instance_path.is_file()
+            ):
+                log.info(f"Reusing cached packing results for '{source_path}'")
+            elif source_path not in paths_needed:
+                paths_needed.append(source_path)
+
+        if paths_needed:
+            with concurrent.futures.ProcessPoolExecutor() as executor:
+                futures = []
+                for source_path in paths_needed:
+                    log.info(f"Packing documents from '{source_path}' into instances...")
+                    future = executor.submit(
+                        run_worker_func,
+                        self._pack_documents_from_source_into_instances,
+                        source_path,
+                    )
+                    futures.append(future)
+
+                concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
+
+                # Log results.
+                for source_path, future in zip(paths_needed, futures):
+                    total_instances, total_tokens = future.result()
+                    total_padding = self.sequence_length * total_instances - total_tokens
+                    avg_padding = total_padding / total_instances
+                    log.info(
+                        f"Packed {total_tokens:,} tokens from '{source_path}' into {total_instances:,d} instances "
+                        f"of sequence length {self.sequence_length:,d} using an average of "
+                        f"{avg_padding:.1f} padding tokens per instance."
                     )
 
 
@@ -1242,22 +1575,19 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         self.instance_filter_config = instance_filter_config
 
     @property
-    def fingerprint_version(self) -> str:
-        return "v1.1"
-
-    @property
-    def fingerprint(self) -> str:
-        sha256_hash = hashlib.sha256()
-        sha256_hash.update(
-            f"min_sequence_length={self.min_sequence_length},"
-            f"max_sequence_length={self.max_sequence_length},"
-            f"pad_token_id={self.pad_token_id},"
-            f"eos_token_id={self.eos_token_id},"
-            f"dtype={self.dtype}".encode()
+    def fingerprint_fields(self) -> Tuple[str, ...]:
+        """
+        Extra values to include when calculating the data contents :data:`fingerprint`.
+        """
+        return (
+            "vocab_size",
+            "pad_token_id",
+            "eos_token_id",
+            "dtype",
+            "min_sequence_length",
+            "max_sequence_length",
+            "curriculum",
         )
-        for path, size in zip(self.paths, self.file_sizes):
-            sha256_hash.update(f"name={os.path.basename(path)},size={size}".encode())
-        return sha256_hash.hexdigest()
 
     @property
     def max_sequence_length(self) -> int:
@@ -1657,6 +1987,10 @@ class NumpyDatasetConfig(Config):
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
+    long_doc_strategy: Optional[LongDocStrategy] = None
+    """
+    Determines how long documents are handled with the packed FSL dataset.
+    """
 
     def validate(self):
         if self.name in (NumpyDatasetType.fsl, NumpyDatasetType.padded_fsl):
@@ -1810,6 +2144,10 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'vsl_curriculum' is only a valid field for VSL datasets"
                 )
+            if self.long_doc_strategy is not None:
+                raise OLMoConfigurationError(
+                    "'long_doc_strategy' is only a valid field for the packed FSL dataset"
+                )
             if self.source_mixture_config:
                 if label_mask_paths is not None:
                     raise OLMoConfigurationError(
@@ -1875,6 +2213,10 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'vsl_curriculum' is only a valid field for VSL datasets"
                 )
+            if self.long_doc_strategy is not None:
+                raise OLMoConfigurationError(
+                    "'long_doc_strategy' is only a valid field for the packed FSL dataset"
+                )
             dataset = NumpyPaddedFSLDataset(
                 *paths,
                 sequence_length=self.sequence_length,
@@ -1885,6 +2227,45 @@ class NumpyDatasetConfig(Config):
                 metadata=metadata,
                 include_instance_metadata=self.include_instance_metadata,
                 instance_filter_config=self.instance_filter_config,
+                label_mask_paths=label_mask_paths,
+            )
+        elif self.name == NumpyDatasetType.packed_fsl:
+            if self.sequence_length is None:
+                raise OLMoConfigurationError("'sequence_length' is required for packed FSL dataset")
+            if self.max_target_sequence_length is not None:
+                raise OLMoConfigurationError(
+                    "'max_target_sequence_length' is only valid for the (non-packed) FSL dataset"
+                )
+            if self.max_sequence_length is not None:
+                if self.max_target_sequence_length is None:
+                    raise OLMoConfigurationError(
+                        "'max_sequence_length' is only a valid field for VSL datasets, "
+                        "did you mean to set 'max_target_sequence_length' instead?"
+                    )
+                else:
+                    raise OLMoConfigurationError(
+                        "'max_sequence_length' is only a valid field for VSL datasets"
+                    )
+            if self.min_sequence_length is not None:
+                raise OLMoConfigurationError(
+                    "'min_sequence_length' is only a valid field for VSL datasets"
+                )
+            if self.vsl_curriculum is not None:
+                raise OLMoConfigurationError(
+                    "'vsl_curriculum' is only a valid field for VSL datasets"
+                )
+            dataset = NumpyPackedFSLDataset(
+                *paths,
+                sequence_length=self.sequence_length,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+                vocab_size=self.tokenizer.vocab_size,
+                dtype=self.get_dtype(),
+                metadata=metadata,
+                include_instance_metadata=self.include_instance_metadata,
+                generate_doc_lengths=self.generate_doc_lengths,
+                instance_filter_config=self.instance_filter_config,
+                long_doc_strategy=self.long_doc_strategy or LongDocStrategy.truncate,
                 label_mask_paths=label_mask_paths,
             )
         elif self.name == NumpyDatasetType.vsl:
@@ -1899,6 +2280,10 @@ class NumpyDatasetConfig(Config):
             if self.generate_doc_lengths:
                 raise OLMoConfigurationError(
                     "'generate_doc_lengths' is only valid for FSL datasets"
+                )
+            if self.long_doc_strategy is not None:
+                raise OLMoConfigurationError(
+                    "'long_doc_strategy' is only a valid field for the packed FSL dataset"
                 )
             if label_mask_paths is not None:
                 raise OLMoConfigurationError("'label_mask_paths' is not supported for VSL datasets")
