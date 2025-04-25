@@ -932,7 +932,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                     _, total_instances = future.result()
                     log.info(
                         f"Created {total_instances:,d} instances of sequence length up to "
-                        f"{self.sequence_length} from '{path}'"
+                        f"{self.sequence_length // self._docs_per_instance} from '{path}'"
                     )
 
 
