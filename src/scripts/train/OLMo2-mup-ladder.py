@@ -139,7 +139,7 @@ class BaselineModelLadder(ModelLadder):
         :param size: The target model size.
         """
         # Let's avoid global batch size making results harder to interpret, for now.
-        return self.sequence_length * 512
+        return self.sequence_length * 128
 
     def get_rank_microbatch_size(self, *, size: ModelSize, gpu_type: str) -> int:
         if gpu_type.lower() in ("mps", "cpu"):
@@ -161,6 +161,7 @@ def build_ladder(root_dir: str) -> BaselineModelLadder:
         mix_base_dir=root_dir,
         work_dir=get_work_dir(root_dir),
         save_folder=save_folder,
+        sequence_length=4096,
     )
 
 
