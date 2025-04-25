@@ -1343,6 +1343,9 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
 
         return item
 
+    def _get_instance_indices_path(self, source_path: PathOrStr) -> Path:
+        return self._get_indices_path(source_path, "instance-indices", str(self._docs_per_instance))
+
 
 @dataclass
 class VSLCurriculum:
