@@ -484,7 +484,7 @@ def test_numpy_interleaved_fsl_dataset(tmp_path: Path):
         tmp_path / "mmap1.npy",
         tmp_path / "mmap2.npy",
         sequence_length=16,
-        pad_token_id=0,
+        pad_token_id=-1,
         eos_token_id=0,
         vocab_size=32_000,
         seed=2,
@@ -512,12 +512,12 @@ def test_numpy_interleaved_fsl_dataset(tmp_path: Path):
         17,
         18,
         0,
-        0,
-        0,
+        -1,
+        -1,
     ]
-    assert ds[0]["label_mask"].tolist() == [True] * 13 + [False] * 3
-    assert ds[1]["input_ids"].tolist() == [1, 2, 8, 3, 4, 9, 5, 6, 10, 7, 0, 0, 0, 0, 0, 0]
-    assert ds[1]["label_mask"].tolist() == [True] * 10 + [False] * 6
+    assert ds[0]["label_mask"].tolist() == [True] * 14 + [False] * 2
+    assert ds[1]["input_ids"].tolist() == [1, 2, 8, 3, 4, 9, 5, 6, 10, 7, 0, -1, -1, -1, -1, -1]
+    assert ds[1]["label_mask"].tolist() == [True] * 11 + [False] * 5
     assert len(ds) == 2
 
 
@@ -557,7 +557,7 @@ def test_numpy_interleaved_fsl_dataset_with_label_mask(tmp_path: Path):
         tmp_path / "mmap1.npy",
         tmp_path / "mmap2.npy",
         sequence_length=16,
-        pad_token_id=0,
+        pad_token_id=-1,
         eos_token_id=0,
         vocab_size=32_000,
         seed=2,
@@ -586,12 +586,12 @@ def test_numpy_interleaved_fsl_dataset_with_label_mask(tmp_path: Path):
         17,
         18,
         0,
-        0,
-        0,
+        -1,
+        -1,
     ]
-    assert ds[0]["label_mask"].tolist() == [True] * 13 + [False] * 3
-    assert ds[1]["input_ids"].tolist() == [1, 2, 8, 3, 4, 9, 5, 6, 10, 7, 0, 0, 0, 0, 0, 0]
-    assert ds[1]["label_mask"].tolist() == [False] + [True] * 9 + [False] * 6
+    assert ds[0]["label_mask"].tolist() == [True] * 14 + [False] * 2
+    assert ds[1]["input_ids"].tolist() == [1, 2, 8, 3, 4, 9, 5, 6, 10, 7, 0, -1, -1, -1, -1, -1]
+    assert ds[1]["label_mask"].tolist() == [False] + [True] * 10 + [False] * 5
     assert len(ds) == 2
 
 

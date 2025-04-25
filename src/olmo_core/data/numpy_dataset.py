@@ -1271,17 +1271,18 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
             .reshape(-1, self._docs_per_instance)
         )
 
-    def _unpad_and_interleave(
-        self, tensors: List[torch.Tensor], tensors_non_pad_indices: List[Tuple[torch.Tensor, ...]]
+    def _remove_special_tokens_and_interleave(
+        self,
+        tensors: List[torch.Tensor],
+        tensors_non_special_indices: List[Tuple[torch.Tensor, ...]],
     ) -> torch.Tensor:
-        unpadded_tensors: List[torch.Tensor] = [
-            tensor[non_pad_indices]
-            for tensor, non_pad_indices in zip(tensors, tensors_non_pad_indices)
+        cleaned_tensors: List[torch.Tensor] = [
+            tensor[non_special_indices]
+            for tensor, non_special_indices in zip(tensors, tensors_non_special_indices)
         ]
 
         chunked_tensors = [
-            unpadded_tensor.tensor_split(self.chunks_per_doc)
-            for unpadded_tensor in unpadded_tensors
+            cleaned_tensor.tensor_split(self.chunks_per_doc) for cleaned_tensor in cleaned_tensors
         ]
         return torch.cat(
             [
@@ -1309,17 +1310,31 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
 
         item: Dict[str, Any] = {}
 
-        non_pad_indices = [torch.nonzero(doc["input_ids"], as_tuple=True) for doc in docs]
+        non_special_token_indices = [
+            torch.nonzero(
+                torch.logical_and(
+                    doc["input_ids"] != self.pad_token_id,
+                    doc["input_ids"] != self.eos_token_id,
+                ),
+                as_tuple=True,
+            )
+            for doc in docs
+        ]
 
-        item["input_ids"] = self._unpad_and_interleave(
-            [doc["input_ids"] for doc in docs], non_pad_indices
+        item["input_ids"] = self._remove_special_tokens_and_interleave(
+            [doc["input_ids"] for doc in docs], non_special_token_indices
         )
+        item["label_mask"] = self._remove_special_tokens_and_interleave(
+            [doc["label_mask"] for doc in docs], non_special_token_indices
+        )
+
+        # Add an eos token if there is space after interleaving.
+        if len(item["input_ids"]) < self.sequence_length:
+            item["input_ids"] = F.pad(item["input_ids"], (0, 1), value=self.eos_token_id)
+            item["label_mask"] = F.pad(item["label_mask"], (0, 1), value=True)
+
         pad_shape = (0, self.sequence_length - len(item["input_ids"]))
         item["input_ids"] = F.pad(item["input_ids"], pad_shape, value=self.pad_token_id)
-
-        item["label_mask"] = self._unpad_and_interleave(
-            [doc["label_mask"] for doc in docs], non_pad_indices
-        )
         item["label_mask"] = F.pad(item["label_mask"], pad_shape, value=False)
 
         if "instance_mask" in docs[0]:
