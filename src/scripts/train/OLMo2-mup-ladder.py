@@ -37,7 +37,7 @@ class BaselineModelLadder(ModelLadder):
         # TODO: may need to tune these
         # ===============================
         ModelSize.size_60M: 16 * 4096,
-        ModelSize.size_370M: 16 * 4096,
+        ModelSize.size_370M: 4 * 4096,
         # ===============================,
         ModelSize.size_970M: 8 * 4096,
         ModelSize.size_7B: 2 * 4096,
