@@ -463,7 +463,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
                     tokenizer=self.tokenizer,
                     work_dir=self.work_dir,
                 ),
-                eval_interval=500,
+                eval_interval=1_000_000,
             ),
         )
         config = config.with_callback(
@@ -471,7 +471,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
             DownstreamEvaluatorCallbackConfig(
                 tasks=tasks,
                 tokenizer=self.tokenizer,
-                eval_interval=500,
+                eval_interval=1_000_000,
             ),
         )
         config = config.with_callback(
