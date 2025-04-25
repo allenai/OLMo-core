@@ -1216,9 +1216,6 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
     """
     A version of :class:`NumpyPaddedFSLDataset` that creates a single instance by chunking documents and
     interleaving these chunks. The resulting instances may be padded out to ``sequence_length``.
-
-    Duplicate use of a document and exceeding ``sequence_length`` are avoided by breaking each document
-    down into ``docs_per_instance`` 'sub-documents' and interleaving sub-documents.
     """
 
     def __init__(
@@ -2112,9 +2109,8 @@ class NumpyDatasetConfig(Config):
     The number of documents to interleave per instance in
     :class:`NumpyInterleavedFSLDataset`.
     
-    Also, each dataset document is split into ``docs_per_instance`` separate documents
-    of equal size, so that the overall sequence length after interleaving is roughly
-    the same as not interleaving.
+    Dataset document are truncated down to length ``sequence_length // docs_per_instance``, so
+    that the overall sequence length after interleaving is up to ``sequence_length``.
     """
     chunks_per_doc: Optional[int] = None
     """
