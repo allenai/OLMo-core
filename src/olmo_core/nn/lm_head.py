@@ -230,7 +230,8 @@ class LMHead(nn.Module):
         ce_loss: torch.Tensor
         z_loss: Optional[torch.Tensor]
         if self.loss_implementation == LMLossImplementation.default:
-            logits = self.w_out(MuP.scale_input(self.mups.get("w_out.weight"), h))
+            h = MuP.scale_input(self.mups.get("w_out.weight"), h)
+            logits = self.w_out(h)
             assert logits is not None
             ce_loss, z_loss = cross_entropy_loss(
                 get_local_tensor(logits).view(-1, self.vocab_size),
