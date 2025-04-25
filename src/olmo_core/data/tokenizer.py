@@ -116,7 +116,12 @@ class TokenizerConfig(Config):
 
         from cached_path import cached_path
 
-        with cached_path(f"hf://{identifier}/config.json").open() as f:
+        try:
+            config_path = cached_path(f"hf://{identifier}/config.json")
+        except FileNotFoundError:
+            config_path = cached_path(f"hf://{identifier}/tokenizer_config.json")
+
+        with config_path.open() as f:
             config = json.load(f)
 
         return cls(

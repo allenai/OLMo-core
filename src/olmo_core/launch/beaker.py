@@ -31,7 +31,7 @@ from ..distributed.utils import OLMO_SHARED_FS_ENV_VAR
 from ..exceptions import BeakerExperimentFailedError, OLMoConfigurationError
 from ..utils import LOG_FILTER_TYPE_ENV_VAR, LogFilterType
 from ..version import VERSION
-from .utils import ensure_repo
+from .utils import GIT_BRANCH_ENV_VAR, GIT_REF_ENV_VAR, GIT_REPO_URL_ENV_VAR, GitConfig
 
 log = logging.getLogger(__name__)
 
@@ -96,12 +96,12 @@ class BeakerWekaBucket(Config):
 
 
 DEFAULT_SETUP_STEPS = (
-    'if [[ -z "$GIT_BRANCH" ]]; then',
-    '  git clone "$REPO_URL" .',
+    f'if [[ -z "${GIT_BRANCH_ENV_VAR}" ]]; then',
+    f'  git clone "${GIT_REPO_URL_ENV_VAR}" .',
     "else",
-    '  git clone -b "$GIT_BRANCH" --single-branch "$REPO_URL" .',
+    f'  git clone -b "${GIT_BRANCH_ENV_VAR}" --single-branch "${GIT_REPO_URL_ENV_VAR}" .',
     "fi",
-    'git checkout "$GIT_REF"',
+    f'git checkout "${GIT_REF_ENV_VAR}"',
     "git submodule update --init --recursive",
     "conda shell.bash activate base",
     "pip install -e '.[all]'",
@@ -226,6 +226,12 @@ class BeakerLaunchConfig(Config):
 
     host_networking: Optional[bool] = None
 
+    git: Optional[GitConfig] = field(default_factory=GitConfig.from_env)
+    """
+    Git configuration, specifies where to clone your source code from and which commit to check out.
+    If not set, this will be initialized automatically from your working directory.
+    """
+
     # NOTE: don't assign a type here because omegaconf can't validate arbitrary classes
     #  _beaker: Optional[Beaker] = None
     _beaker = None
@@ -342,10 +348,18 @@ class BeakerLaunchConfig(Config):
         """
         Get the Beaker experiment spec corresponding to this config instance.
         """
-        # Get repository account, name, and current ref.
-        github_account, github_repo, git_branch, git_ref, is_public = ensure_repo(self.allow_dirty)
+        if self.git is None:
+            raise OLMoConfigurationError(
+                f"{self.__class__.__name__}.git field is required!\n"
+                "You either need to instantiate your launch config from a valid git repository folder or set the 'git' field manually."
+            )
 
-        if not is_public and self.setup_steps == DEFAULT_SETUP_STEPS:
+        if self.git.is_dirty and not self.allow_dirty:
+            raise RuntimeError(
+                "You have uncommitted changes! Set 'allow_dirty=True' in your launch config to force."
+            )
+
+        if not self.git.is_public and self.setup_steps == DEFAULT_SETUP_STEPS:
             raise OLMoConfigurationError(
                 "It looks like your repository is private and private repositories will require "
                 "custom 'setup_steps' in order to clone the repo."
@@ -404,12 +418,12 @@ class BeakerLaunchConfig(Config):
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
             .with_constraint(cluster=self.clusters)
-            .with_env_var("REPO_URL", f"https://github.com/{github_account}/{github_repo}")
-            .with_env_var("GIT_REF", git_ref)
+            .with_env_var(GIT_REPO_URL_ENV_VAR, self.git.repo_url)
+            .with_env_var(GIT_REF_ENV_VAR, self.git.ref)
         )
 
-        if git_branch is not None:
-            task_spec = task_spec.with_env_var("GIT_BRANCH", git_branch)
+        if self.git.branch is not None:
+            task_spec = task_spec.with_env_var(GIT_BRANCH_ENV_VAR, self.git.branch)
 
         for name, val in self._get_env_vars():
             task_spec = task_spec.with_env_var(name=name, value=val)
@@ -433,49 +447,6 @@ class BeakerLaunchConfig(Config):
             tasks=[task_spec],
             retry=None if not self.retries else RetrySpec(allowed_task_retries=self.retries),
         )
-
-    def _follow_experiment(self, experiment: Experiment):
-        # Wait for job to start...
-        job: Optional[Job] = self.beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
-        if job is None:
-            print("Waiting for job to launch..", end="")
-            while job is None:
-                time.sleep(1.0)
-                print(".", end="")
-                job = self.beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
-
-        log.info("Showing logs:")
-
-        exit_code: Optional[int] = job.status.exit_code
-        stream_logs = exit_code is None and not job.is_finalized
-        if stream_logs:
-            print()
-            for line_bytes in self.beaker.job.follow(
-                job,
-                include_timestamps=False,
-            ):
-                line = line_bytes.decode(errors="ignore")
-                if line.endswith("\n"):
-                    line = line[:-1]
-                print(line)
-            log.info("End logs")
-            print()
-
-            # Refresh the job.
-            job = self.beaker.job.get(job.id)
-            exit_code = job.status.exit_code
-
-        if exit_code is None:
-            raise BeakerExperimentFailedError(
-                f"Experiment failed, see {self.beaker.experiment.url(experiment)} for details"
-            )
-        elif exit_code > 0:
-            raise BeakerExperimentFailedError(
-                f"Experiment exited with non-zero code ({exit_code}), "
-                f"see {self.beaker.experiment.url(experiment)} for details"
-            )
-        else:
-            log.info(f"Experiment completed successfully: {self.beaker.experiment.url(experiment)}")
 
     def launch(
         self, follow: bool = False, torchrun: bool = True, entrypoint: Optional[str] = None
@@ -502,7 +473,7 @@ class BeakerLaunchConfig(Config):
             return experiment
 
         try:
-            self._follow_experiment(experiment)
+            follow_experiment(self.beaker, experiment)
         except KeyboardInterrupt:
             log.warning("Caught keyboard interrupt...")
             if Confirm.ask("Would you like to cancel the experiment?"):
@@ -515,3 +486,55 @@ class BeakerLaunchConfig(Config):
                 )
 
         return experiment
+
+
+def follow_experiment(beaker: Beaker, experiment: Experiment, tail_lines: Optional[int] = None):
+    # Wait for job to start...
+    job: Optional[Job] = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
+    if job is None:
+        log.info("Waiting for job to be created...")
+        while job is None:
+            time.sleep(1.0)
+            job = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
+
+    # Pull events until job is running (or fails)...
+    events = set()
+    while not (job.is_finalized or job.is_running):
+        job = beaker.job.get(job.id)
+        for event in sorted(
+            beaker.job.summarized_events(job), key=lambda event: event.latest_occurrence
+        ):
+            if event not in events:
+                events.add(event)
+                log.info(f"❯ {event.latest_message}")
+                if event.status.lower() == "started":
+                    break
+        else:
+            time.sleep(1.0)
+            continue
+        break
+
+    # Stream logs...
+    log.info("Showing logs:")
+    print()
+    time.sleep(2.0)  # wait a moment to make sure logs are available before experiment finishes
+    for job_log in beaker.job.follow_structured(job, tail_lines=tail_lines):
+        print(job_log.message)
+    print()
+    log.info("End logs")
+
+    # Refresh the job.
+    job = beaker.job.get(job.id)
+    exit_code = job.status.exit_code
+
+    if exit_code is None:
+        raise BeakerExperimentFailedError(
+            f"Experiment failed, see {beaker.experiment.url(experiment)} for details"
+        )
+    elif exit_code > 0:
+        raise BeakerExperimentFailedError(
+            f"Experiment exited with non-zero code ({exit_code}), "
+            f"see {beaker.experiment.url(experiment)} for details"
+        )
+    else:
+        log.info(f"Experiment completed successfully: {beaker.experiment.url(experiment)}")
