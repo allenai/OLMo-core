@@ -14,10 +14,8 @@ from olmo_core.distributed.utils import get_local_tensor, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType, LMLossImplementation
+from olmo_core.testing import requires_gpu, requires_multi_gpu, run_distributed_test
 from olmo_core.utils import get_default_device, seed_all
-
-from ..distributed.utils import requires_multi_gpu, run_distributed_test
-from ..utils import requires_gpu
 
 
 def test_lm_head_builder_config():

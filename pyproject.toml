@@ -155,7 +155,7 @@ module = "tests.*"
 strict_optional = false
 
 [tool.pytest.ini_options]
-testpaths = "tests/"
+testpaths = "src/test/"
 python_classes = [
   "Test*",
   "*Test",
