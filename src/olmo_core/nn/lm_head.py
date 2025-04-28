@@ -368,7 +368,13 @@ class LMHead(nn.Module):
                 parallelize_plan=SequenceParallel(),
             )
 
-        if self.loss_implementation != LMLossImplementation.fused_linear:
+        if self.loss_implementation == LMLossImplementation.fused_linear:
+            parallelize_module(
+                module=self.w_out,
+                device_mesh=tp_mesh,
+                parallelize_plan=SequenceParallel(),
+            )
+        else:
             parallelize_module(
                 module=self.w_out,
                 device_mesh=tp_mesh,
