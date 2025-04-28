@@ -856,7 +856,7 @@ class Trainer:
         if not isinstance(value, torch.Tensor):
             value = torch.tensor(value)
         else:
-            value = get_local_tensor(value).float()
+            value = get_local_tensor(value.detach()).float()
 
         if self.global_step not in self._metrics:
             self._metrics[self.global_step] = OrderedDict()
