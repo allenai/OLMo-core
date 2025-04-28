@@ -24,10 +24,8 @@ from olmo_core.nn.moe import (
     MoERouterConfig,
     MoEType,
 )
+from olmo_core.testing import requires_gpu, requires_multi_gpu, run_distributed_test
 from olmo_core.utils import get_default_device, seed_all
-
-from ...distributed.utils import requires_multi_gpu, run_distributed_test
-from ...utils import requires_gpu
 
 
 @requires_gpu
