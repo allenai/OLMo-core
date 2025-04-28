@@ -234,13 +234,18 @@ class LMHead(nn.Module):
                 compute_z_loss=z_loss_multiplier is not None,
                 z_loss_multiplier=z_loss_multiplier or 1e-4,
             )
-            ce_loss = self._finalize_loss(
-                ce_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
-            )
+            #  loss = ce_loss
             if z_loss is not None:
-                z_loss = self._finalize_loss(
-                    z_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
-                )
+                loss = ce_loss + z_loss
+            else:
+                loss = ce_loss
+            #  ce_loss = self._finalize_loss(
+            #      ce_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
+            #  )
+            #  if z_loss is not None:
+            #      z_loss = self._finalize_loss(
+            #          z_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
+            #      )
         elif self.loss_implementation == LMLossImplementation.fused_linear:
             logits = None
             loss, z_loss = fused_linear_cross_entropy_loss(
@@ -253,13 +258,13 @@ class LMHead(nn.Module):
                 compute_z_loss=z_loss_multiplier is not None,
                 z_loss_multiplier=z_loss_multiplier or 1e-4,
             )
-            loss = self._finalize_loss(
-                loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
-            )
+            #  loss = self._finalize_loss(
+            #      loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
+            #  )
             if z_loss is not None:
-                z_loss = self._finalize_loss(
-                    z_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
-                )
+                #  z_loss = self._finalize_loss(
+                #      z_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
+                #  )
                 ce_loss = loss - z_loss
             else:
                 ce_loss = loss
@@ -275,7 +280,28 @@ class LMHead(nn.Module):
                 f"'return_logits=True' is not compatible '{self.loss_implementation}' loss implementation"
             )
 
-        return LMOutputWithLoss(logits=logits, loss=None, ce_loss=ce_loss, z_loss=z_loss)
+        return LMOutputWithLoss(
+            logits=logits,
+            loss=self._finalize_loss(
+                loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
+            ),
+            ce_loss=self._finalize_loss(
+                ce_loss,
+                B,
+                loss_reduction=loss_reduction,
+                loss_div_factor=loss_div_factor,
+                redistribute=False,
+            ),
+            z_loss=None
+            if z_loss is None
+            else self._finalize_loss(
+                z_loss,
+                B,
+                loss_reduction=loss_reduction,
+                loss_div_factor=loss_div_factor,
+                redistribute=False,
+            ),
+        )
 
     def _finalize_loss(
         self,
@@ -284,16 +310,17 @@ class LMHead(nn.Module):
         *,
         loss_reduction: str,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        redistribute: bool = True,
     ) -> torch.Tensor:
         if loss_reduction == "none":
             # Reshape to `(B, S)`
             loss = loss.view(B, -1)
 
             # If TP, wrap with DTensor and mark as sharded on the sequence dimension.
-            if self.tp_enabled:
+            if redistribute and self.tp_enabled:
                 assert self._tp_mesh is not None
                 loss = DTensor.from_local(loss, self._tp_mesh, (Shard(1),))
-        elif self.tp_enabled:
+        elif redistribute and self.tp_enabled:
             # Wrap with DTensor and finish the reduction.
             assert self._tp_mesh is not None
             loss = DTensor.from_local(loss.unsqueeze(0), self._tp_mesh, (Shard(0),))
