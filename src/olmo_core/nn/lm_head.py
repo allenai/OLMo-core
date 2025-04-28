@@ -331,13 +331,12 @@ class LMHead(nn.Module):
             device_mesh=tp_mesh,
             parallelize_plan=PrepareModuleInput(
                 input_layouts=None if input_layouts is None else input_layouts[0],
-                desired_input_layouts=Shard(1) if self.norm is not None else Replicate(),
-                #  desired_input_layouts=Shard(1)
-                #  if (
-                #      self.loss_implementation == LMLossImplementation.fused_linear
-                #      or self.norm is not None
-                #  )
-                #  else Replicate(),
+                desired_input_layouts=Shard(1)
+                if (
+                    self.loss_implementation == LMLossImplementation.fused_linear
+                    or self.norm is not None
+                )
+                else Replicate(),
                 input_kwarg_layouts=None if input_layouts is None else {"labels": input_layouts[1]},
                 desired_input_kwarg_layouts={"labels": Shard(1)},
             ),
