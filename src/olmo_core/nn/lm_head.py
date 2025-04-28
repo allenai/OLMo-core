@@ -276,7 +276,7 @@ class LMHead(nn.Module):
                 loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
             ),
             ce_loss=self._finalize_loss(
-                ce_loss,
+                ce_loss.detach(),
                 B,
                 loss_reduction=loss_reduction,
                 loss_div_factor=loss_div_factor,
@@ -285,7 +285,7 @@ class LMHead(nn.Module):
             z_loss=None
             if z_loss is None
             else self._finalize_loss(
-                z_loss,
+                z_loss.detach(),
                 B,
                 loss_reduction=loss_reduction,
                 loss_div_factor=loss_div_factor,
@@ -327,9 +327,15 @@ class LMHead(nn.Module):
                 raise NotImplementedError(loss_reduction)
 
         if loss_div_factor is not None:
+            # Adjust divide factor to account for parallel strategy.
+            if self.tp_enabled and not reduce_across_tp_group:
+                assert self._tp_mesh is not None
+                loss_div_factor = loss_div_factor / self._tp_mesh.size()
             if self.cp_enabled:
                 assert self._cp_mesh is not None
                 loss_div_factor = loss_div_factor / self._cp_mesh.size()
+
+            # Apply divide factor.
             loss = loss / loss_div_factor
 
         return loss
@@ -479,7 +485,7 @@ class NormalizedLMHead(LMHead):
                 loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
             ),
             ce_loss=self._finalize_loss(
-                ce_loss,
+                ce_loss.detach(),
                 B,
                 loss_reduction=loss_reduction,
                 loss_div_factor=loss_div_factor,
@@ -488,7 +494,7 @@ class NormalizedLMHead(LMHead):
             z_loss=None
             if z_loss is None
             else self._finalize_loss(
-                z_loss,
+                z_loss.detach(),
                 B,
                 loss_reduction=loss_reduction,
                 loss_div_factor=loss_div_factor,

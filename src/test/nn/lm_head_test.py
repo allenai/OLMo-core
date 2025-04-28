@@ -118,6 +118,14 @@ def run_lm_head_tp(
         z_loss_multiplier=z_loss_multiplier,
     )
     _, local_loss, local_ce_loss, local_z_loss = local_output
+
+    # The loss for optimizing ('local_loss') will have been reduced across the TP group, but not losses
+    # logging ('local_ce_loss' and 'local_z_loss').
+    dist.all_reduce(local_ce_loss)
+    local_ce_loss.div_(get_world_size())
+    dist.all_reduce(local_z_loss)
+    local_z_loss.div_(get_world_size())
+
     local_loss.backward()
     assert local_inputs.grad is not None
 
