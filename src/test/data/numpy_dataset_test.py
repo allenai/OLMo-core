@@ -20,7 +20,7 @@ from olmo_core.data.source_mixture import (
 from olmo_core.data.types import NumpyDatasetDType
 from olmo_core.data.utils import get_document_indices, write_document_indices
 
-from ..utils import mk_mmaps
+from .utils import mk_mmaps
 
 
 def test_numpy_fsl_dataset(tmp_path: Path):
