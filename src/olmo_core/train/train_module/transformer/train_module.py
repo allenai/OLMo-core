@@ -381,10 +381,11 @@ class TransformerTrainModule(TrainModule):
         # Record loss metrics.
         if isinstance(self.optim, SkipStepOptimizer):
             # Need to reduce the loss right away for the SkipStepOptimizer.
-            ce_batch_loss.div_(self._reduce_divide_factor)
-            dist.all_reduce(ce_batch_loss)
-            ce_batch_loss.div_(self.world_size)
-            ce_batch_loss.mul_(self._reduce_divide_factor)
+            if is_distributed():
+                ce_batch_loss.div_(self._reduce_divide_factor)
+                dist.all_reduce(ce_batch_loss)
+                ce_batch_loss.div_(self.world_size)
+                ce_batch_loss.mul_(self._reduce_divide_factor)
             self.record_ce_loss(ce_batch_loss)
             self.optim.latest_loss = ce_batch_loss
         else:
