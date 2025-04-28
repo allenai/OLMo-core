@@ -374,7 +374,7 @@ class CosWithWarmupAndLinearDecay(CosWithWarmup):
 
     def __post_init__(self):
         super().__post_init__()
-        
+
         if self.decay is None and self.decay_steps is not None:
             self.decay = self.decay_steps
             self.decay_steps = None
