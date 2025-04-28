@@ -358,7 +358,9 @@ class TransformerTrainModule(TrainModule):
                     return_logits=False,
                     **model_kwargs,
                 )
-                log.info(f"{loss=}, {ce_loss=}, {z_loss=}")
+                loss = ce_loss
+                if z_loss is not None:
+                    loss += z_loss
 
                 # Update total batch CE and Z loss.
                 ce_batch_loss += get_local_tensor(ce_loss.detach())
