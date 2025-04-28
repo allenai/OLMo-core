@@ -242,14 +242,6 @@ class LMHead(nn.Module):
                 loss = ce_loss + z_loss
             else:
                 loss = ce_loss
-            #  loss = ce_loss
-            #  ce_loss = self._finalize_loss(
-            #      ce_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
-            #  )
-            #  if z_loss is not None:
-            #      z_loss = self._finalize_loss(
-            #          z_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
-            #      )
         elif self.loss_implementation == LMLossImplementation.fused_linear:
             logits = None
             loss, z_loss = fused_linear_cross_entropy_loss(
@@ -465,15 +457,10 @@ class NormalizedLMHead(LMHead):
                 compute_z_loss=z_loss_multiplier is not None,
                 z_loss_multiplier=z_loss_multiplier or 1e-4,
             )
-            ce_loss = self._finalize_loss(
-                ce_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
-            )
-            loss = ce_loss
             if z_loss is not None:
-                z_loss = self._finalize_loss(
-                    z_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
-                )
-                loss = loss + z_loss
+                loss = ce_loss + z_loss
+            else:
+                loss = ce_loss
         else:
             raise NotImplementedError(
                 f"'{self.loss_implementation}' loss implementation is not supported by '{self.__class__.__name__}'"
@@ -486,7 +473,28 @@ class NormalizedLMHead(LMHead):
                 f"'return_logits=True' is not compatible '{self.loss_implementation}' loss implementation"
             )
 
-        return LMOutputWithLoss(logits if return_logits else None, loss, ce_loss, z_loss)
+        return LMOutputWithLoss(
+            logits=logits,
+            loss=self._finalize_loss(
+                loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
+            ),
+            ce_loss=self._finalize_loss(
+                ce_loss,
+                B,
+                loss_reduction=loss_reduction,
+                loss_div_factor=loss_div_factor,
+                reduce_across_tp_group=False,
+            ),
+            z_loss=None
+            if z_loss is None
+            else self._finalize_loss(
+                z_loss,
+                B,
+                loss_reduction=loss_reduction,
+                loss_div_factor=loss_div_factor,
+                reduce_across_tp_group=False,
+            ),
+        )
 
     def apply_tp(
         self,
