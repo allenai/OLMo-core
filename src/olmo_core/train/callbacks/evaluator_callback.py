@@ -120,7 +120,7 @@ class EvaluatorCallback(Callback):
                     labels = get_labels(batch)
                     output = self.trainer.train_module.eval_batch(batch, labels=labels)
                     assert isinstance(output, LMOutputWithLoss)
-                    logits, _, ce_loss, _ = output
+                    logits, ce_loss, _ = output
 
                     # NOTE: might have host-device syncs here but that's okay.
                     with cuda_sync_debug_mode(0):

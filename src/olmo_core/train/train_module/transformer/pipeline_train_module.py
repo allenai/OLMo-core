@@ -546,7 +546,8 @@ class TransformerPipelineTrainModule(TrainModule):
 
             if model.lm_head is not None:
                 assert isinstance(output, LMOutputWithLoss)
-                _, loss, ce_loss, z_loss = output
+                _, ce_loss, z_loss = output
+                losses: List[torch.Tensor] = [ce_loss]
                 if ce_batch_loss is None:
                     ce_batch_loss = get_local_tensor(ce_loss.detach())
                 else:
@@ -554,12 +555,13 @@ class TransformerPipelineTrainModule(TrainModule):
 
                 if self.z_loss_multiplier is not None:
                     assert z_loss is not None
+                    losses.append(z_loss)
                     if z_batch_loss is None:
                         z_batch_loss = get_local_tensor(z_loss.detach())
                     else:
                         z_batch_loss += get_local_tensor(z_loss.detach())
 
-                return loss.unsqueeze(0)
+                return torch.stack(losses).sum(0, keepdim=True)
             else:
                 assert isinstance(output, torch.Tensor)
                 return output
