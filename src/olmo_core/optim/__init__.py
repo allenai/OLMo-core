@@ -9,6 +9,7 @@ from .scheduler import (
     InvSqrtWithWarmup,
     LinearWithWarmup,
     Scheduler,
+    SchedulerUnits,
     SequentialScheduler,
 )
 from .skip_step_optimizer import SkipStepOptimizer
@@ -26,6 +27,7 @@ __all__ = [
     "SkipStepLionConfig",
     "SkipStepLion",
     "Scheduler",
+    "SchedulerUnits",
     "ConstantScheduler",
     "ConstantWithWarmup",
     "CosWithWarmup",

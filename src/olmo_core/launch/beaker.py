@@ -31,7 +31,7 @@ from ..distributed.utils import OLMO_SHARED_FS_ENV_VAR
 from ..exceptions import BeakerExperimentFailedError, OLMoConfigurationError
 from ..utils import LOG_FILTER_TYPE_ENV_VAR, LogFilterType
 from ..version import VERSION
-from .utils import ensure_repo
+from .utils import GIT_BRANCH_ENV_VAR, GIT_REF_ENV_VAR, GIT_REPO_URL_ENV_VAR, GitConfig
 
 log = logging.getLogger(__name__)
 
@@ -48,8 +48,8 @@ __all__ = [
 
 BeakerPriority = Priority
 
-_DEFAULT_TORCH = "2.6.0".replace(".", "")
-_DEFAULT_TORCH_NIGHTLY = "2.7.0.dev20250202".replace(".", "")
+_DEFAULT_TORCH = "2.7.0".replace(".", "")
+_DEFAULT_CUDA = "12.6".replace(".", "")
 
 
 class OLMoCoreBeakerImage(StrEnum):
@@ -61,14 +61,9 @@ class OLMoCoreBeakerImage(StrEnum):
     includes *versioned* images that are published with each release of the OLMo-core package.
     """
 
-    stable = f"olmo-core-tch{_DEFAULT_TORCH}cu124"
+    stable = f"olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}"
     """
     Built with the latest compatible stable version of PyTorch.
-    """
-
-    stable_cu124 = f"olmo-core-tch{_DEFAULT_TORCH}cu124"
-    """
-    The stable image with CUDA pinned to 12.4.
     """
 
     stable_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126"
@@ -76,51 +71,9 @@ class OLMoCoreBeakerImage(StrEnum):
     The stable image with CUDA pinned to 12.6.
     """
 
-    stable_dev = f"olmo-core-tch{_DEFAULT_TORCH}cu124-devel"
+    stable_cu128 = f"olmo-core-tch{_DEFAULT_TORCH}cu128"
     """
-    Built with the latest compatible stable version of PyTorch and includes all the usual CUDA development
-    dependencies for building CUDA extensions.
-    """
-
-    stable_dev_cu124 = f"olmo-core-tch{_DEFAULT_TORCH}cu124-devel"
-    """
-    The stable development image with CUDA pinned to 12.4.
-    """
-
-    stable_dev_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126-devel"
-    """
-    The stable development image with CUDA pinned to 12.6.
-    """
-
-    nightly = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124"
-    """
-    Built with a recent compatible nightly version of PyTorch.
-    """
-
-    nightly_cu124 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124"
-    """
-    The nighlty image with CUDA pinned to 12.4.
-    """
-
-    nightly_cu126 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu126"
-    """
-    The nighlty image with CUDA pinned to 12.6.
-    """
-
-    nightly_dev = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124-devel"
-    """
-    Built with a recent compatible nightly version of PyTorch and includes all the usual CUDA development
-    dependencies for building CUDA extensions.
-    """
-
-    nightly_dev_cu124 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu124-devel"
-    """
-    The nightly development image with CUDA pinned to 12.4.
-    """
-
-    nightly_dev_cu126 = f"olmo-core-tch{_DEFAULT_TORCH_NIGHTLY}cu126-devel"
-    """
-    The nightly development image with CUDA pinned to 12.6.
+    The stable image with CUDA pinned to 12.8.
     """
 
 
@@ -143,8 +96,12 @@ class BeakerWekaBucket(Config):
 
 
 DEFAULT_SETUP_STEPS = (
-    'git clone "$REPO_URL" .',
-    'git checkout "$GIT_REF"',
+    f'if [[ -z "${GIT_BRANCH_ENV_VAR}" ]]; then',
+    f'  git clone "${GIT_REPO_URL_ENV_VAR}" .',
+    "else",
+    f'  git clone -b "${GIT_BRANCH_ENV_VAR}" --single-branch "${GIT_REPO_URL_ENV_VAR}" .',
+    "fi",
+    f'git checkout "${GIT_REF_ENV_VAR}"',
     "git submodule update --init --recursive",
     "conda shell.bash activate base",
     "pip install -e '.[all]'",
@@ -269,6 +226,12 @@ class BeakerLaunchConfig(Config):
 
     host_networking: Optional[bool] = None
 
+    git: Optional[GitConfig] = field(default_factory=GitConfig.from_env)
+    """
+    Git configuration, specifies where to clone your source code from and which commit to check out.
+    If not set, this will be initialized automatically from your working directory.
+    """
+
     # NOTE: don't assign a type here because omegaconf can't validate arbitrary classes
     #  _beaker: Optional[Beaker] = None
     _beaker = None
@@ -287,6 +250,7 @@ class BeakerLaunchConfig(Config):
             ("WEKA_PROFILE", "WEKA"),
             ("NUM_NODES", str(self.num_nodes)),
             ("OLMO_CORE_VERSION", VERSION),
+            ("FORCE_COLOR", "1"),  # for 'rich' because Beaker supports ANSI colors in logs
         ]
         if self.shared_filesystem:
             env_vars.append((OLMO_SHARED_FS_ENV_VAR, "1"))
@@ -384,10 +348,18 @@ class BeakerLaunchConfig(Config):
         """
         Get the Beaker experiment spec corresponding to this config instance.
         """
-        # Get repository account, name, and current ref.
-        github_account, github_repo, git_ref, is_public = ensure_repo(self.allow_dirty)
+        if self.git is None:
+            raise OLMoConfigurationError(
+                f"{self.__class__.__name__}.git field is required!\n"
+                "You either need to instantiate your launch config from a valid git repository folder or set the 'git' field manually."
+            )
 
-        if not is_public and self.setup_steps == DEFAULT_SETUP_STEPS:
+        if self.git.is_dirty and not self.allow_dirty:
+            raise RuntimeError(
+                "You have uncommitted changes! Set 'allow_dirty=True' in your launch config to force."
+            )
+
+        if not self.git.is_public and self.setup_steps == DEFAULT_SETUP_STEPS:
             raise OLMoConfigurationError(
                 "It looks like your repository is private and private repositories will require "
                 "custom 'setup_steps' in order to clone the repo."
@@ -401,13 +373,7 @@ class BeakerLaunchConfig(Config):
             "mkdir -p /root/.cache/torch/kernels && export PYTORCH_KERNEL_CACHE_PATH=/root/.cache/torch/kernels",
             "mkdir -p /olmo-core-runtime",
             "cd /olmo-core-runtime",
-        ]
-        # TODO: remove once we have a base image with CUDA 12.8
-        if any(["titan" in cluster for cluster in self.clusters]):
-            entrypoint_script.append(
-                "pip install torch==2.7.0 torchaudio torchvision --index-url https://download.pytorch.org/whl/test/cu128"
-            )
-        entrypoint_script.extend(self.setup_steps)
+        ] + self.setup_steps
 
         if torchrun:
             if self.num_nodes > 1 and any(["augusta" in cluster for cluster in self.clusters]):
@@ -452,9 +418,12 @@ class BeakerLaunchConfig(Config):
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
             .with_constraint(cluster=self.clusters)
-            .with_env_var("REPO_URL", f"https://github.com/{github_account}/{github_repo}")
-            .with_env_var("GIT_REF", git_ref)
+            .with_env_var(GIT_REPO_URL_ENV_VAR, self.git.repo_url)
+            .with_env_var(GIT_REF_ENV_VAR, self.git.ref)
         )
+
+        if self.git.branch is not None:
+            task_spec = task_spec.with_env_var(GIT_BRANCH_ENV_VAR, self.git.branch)
 
         for name, val in self._get_env_vars():
             task_spec = task_spec.with_env_var(name=name, value=val)
@@ -478,49 +447,6 @@ class BeakerLaunchConfig(Config):
             tasks=[task_spec],
             retry=None if not self.retries else RetrySpec(allowed_task_retries=self.retries),
         )
-
-    def _follow_experiment(self, experiment: Experiment):
-        # Wait for job to start...
-        job: Optional[Job] = self.beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
-        if job is None:
-            print("Waiting for job to launch..", end="")
-            while job is None:
-                time.sleep(1.0)
-                print(".", end="")
-                job = self.beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
-
-        log.info("Showing logs:")
-
-        exit_code: Optional[int] = job.status.exit_code
-        stream_logs = exit_code is None and not job.is_finalized
-        if stream_logs:
-            print()
-            for line_bytes in self.beaker.job.follow(
-                job,
-                include_timestamps=False,
-            ):
-                line = line_bytes.decode(errors="ignore")
-                if line.endswith("\n"):
-                    line = line[:-1]
-                print(line)
-            log.info("End logs")
-            print()
-
-            # Refresh the job.
-            job = self.beaker.job.get(job.id)
-            exit_code = job.status.exit_code
-
-        if exit_code is None:
-            raise BeakerExperimentFailedError(
-                f"Experiment failed, see {self.beaker.experiment.url(experiment)} for details"
-            )
-        elif exit_code > 0:
-            raise BeakerExperimentFailedError(
-                f"Experiment exited with non-zero code ({exit_code}), "
-                f"see {self.beaker.experiment.url(experiment)} for details"
-            )
-        else:
-            log.info(f"Experiment completed successfully: {self.beaker.experiment.url(experiment)}")
 
     def launch(
         self, follow: bool = False, torchrun: bool = True, entrypoint: Optional[str] = None
@@ -547,7 +473,7 @@ class BeakerLaunchConfig(Config):
             return experiment
 
         try:
-            self._follow_experiment(experiment)
+            follow_experiment(self.beaker, experiment)
         except KeyboardInterrupt:
             log.warning("Caught keyboard interrupt...")
             if Confirm.ask("Would you like to cancel the experiment?"):
@@ -560,3 +486,55 @@ class BeakerLaunchConfig(Config):
                 )
 
         return experiment
+
+
+def follow_experiment(beaker: Beaker, experiment: Experiment, tail_lines: Optional[int] = None):
+    # Wait for job to start...
+    job: Optional[Job] = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
+    if job is None:
+        log.info("Waiting for job to be created...")
+        while job is None:
+            time.sleep(1.0)
+            job = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
+
+    # Pull events until job is running (or fails)...
+    events = set()
+    while not (job.is_finalized or job.is_running):
+        job = beaker.job.get(job.id)
+        for event in sorted(
+            beaker.job.summarized_events(job), key=lambda event: event.latest_occurrence
+        ):
+            if event not in events:
+                events.add(event)
+                log.info(f"❯ {event.latest_message}")
+                if event.status.lower() == "started":
+                    break
+        else:
+            time.sleep(1.0)
+            continue
+        break
+
+    # Stream logs...
+    log.info("Showing logs:")
+    print()
+    time.sleep(2.0)  # wait a moment to make sure logs are available before experiment finishes
+    for job_log in beaker.job.follow_structured(job, tail_lines=tail_lines):
+        print(job_log.message)
+    print()
+    log.info("End logs")
+
+    # Refresh the job.
+    job = beaker.job.get(job.id)
+    exit_code = job.status.exit_code
+
+    if exit_code is None:
+        raise BeakerExperimentFailedError(
+            f"Experiment failed, see {beaker.experiment.url(experiment)} for details"
+        )
+    elif exit_code > 0:
+        raise BeakerExperimentFailedError(
+            f"Experiment exited with non-zero code ({exit_code}), "
+            f"see {beaker.experiment.url(experiment)} for details"
+        )
+    else:
+        log.info(f"Experiment completed successfully: {beaker.experiment.url(experiment)}")

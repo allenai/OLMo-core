@@ -41,23 +41,32 @@ Once you're data is pre-processed as above there are several different strategie
 Concat and chunk
 ^^^^^^^^^^^^^^^^
 
-The simplest strategy is the "concat and chunk" approach, which means all tokenized documents are concatenated together and then chunked into training instances of the desired sequence length.
-To use this method you just need to set a :class:`~olmo_core.data.data_loader.NumpyFSLDataLoader`
-data loader as your trainer's :data:`~olmo_core.train.Trainer.data_loader`.
+The simplest strategy is the "concatenate and chunk" approach, which means all tokenized documents are concatenated together and then chunked into training instances of the desired sequence length.
+To use this method you just need to pass a :class:`~olmo_core.data.data_loader.NumpyFSLDataLoader` with a :class:`~olmo_core.data.numpy_dataset.NumpyFSLDataset` to your trainer.
 
-While this strategy is simple and efficient, it does have several downsides.
-For one, documents may end up fragmented across multiple training instances.
-Second, since each training instance may be composed of multiple documents, the model will be attending to tokens across different documents, which could potentially have adverse affects on the model (see `Zhao et al. (2024) <Zhao et al 2024_>`_ for example).
+While this strategy is simple and efficient, it does have a couple downsides:
+
+1. Documents often end up fragmented across multiple training instances.
+2. Since each training instance may be composed of multiple documents, the model will be attending to tokens across different documents, which could potentially have adverse affects on the model (see `Zhao et al. (2024) <Zhao et al 2024_>`_ for example).
 
 Concat and chunk with intra-document masking
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The latter point downside, however, can be addressed by using `intra-document masking <intra-document masking_>`_. This requires you set ``generate_doc_lengths=True`` in your :class:`~olmo_core.data.numpy_dataset.NumpyFSLDataset` and use a model implementation that accepts the parameters ``doc_lens`` and ``max_doc_lens`` to its ``forward()`` method. See the :class:`~olmo_core.nn.transformer.Transformer` model implementation for example.
+The latter downside can be addressed by using `intra-document masking <intra-document masking_>`_, which you can enable
+by setting ``generate_doc_lengths=True`` in your :class:`~olmo_core.data.numpy_dataset.NumpyFSLDataset` and using a model implementation that accepts the parameters ``doc_lens`` and ``max_doc_lens`` to its ``forward()`` method.
+See the :class:`~olmo_core.nn.transformer.Transformer` model implementation for example.
+
+Document packing
+^^^^^^^^^^^^^^^^
+
+An alternative to the concatenate and chunk approach that also addresses the issue of document fragmentation is `document packing <https://arxiv.org/pdf/2404.10830>`_,
+which uses a bin-packing algorithm to pack documents into instances with minimal padding.
+You can enable this strategy by replacing your :class:`~olmo_core.data.numpy_dataset.NumpyFSLDataset` with a :class:`~olmo_core.data.numpy_dataset.NumpyPackedFSLDataset`.
 
 Variable sequence length training
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-A promising alternative to the simple fixed sequence length "concat and chunk" strategy is variable sequence length training through "dataset decomposition" (`Pouransari et al. (2024) <Pouransari et al 2024_>`_).
+Another alternative is variable sequence length (VSL) training through "dataset decomposition" (`Pouransari et al. (2024) <Pouransari et al 2024_>`_).
 With dataset decomposition, every training instance is a unique subset of tokens from a single document. Therefore there's no need for intra-document masking.
 You can use this approach by setting a :class:`~olmo_core.data.data_loader.NumpyVSLDataLoader` as your trainer's :data:`~olmo_core.train.Trainer.data_loader`.
 

@@ -26,7 +26,7 @@ from olmo_core.utils import (
     move_to_device,
 )
 
-from ..common import Duration
+from ..common import Duration, MetricMergeStrategy
 from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TransformerTrainModule
 from .callback import Callback, CallbackConfig
 
@@ -58,6 +58,13 @@ class EvaluatorCallback(Callback):
     eval_on_startup: bool = False
     """
     Whether to run an evaluation when the trainer starts up.
+    """
+
+    cancel_after_first_eval: bool = False
+    """
+    If ``True``, cancel the run after running evals for the first time. 
+    This combined with ``eval_on_startup=True`` is useful if you just want to run in-loop evals
+    without training any longer.
     """
 
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
@@ -113,22 +120,17 @@ class EvaluatorCallback(Callback):
                     labels = get_labels(batch)
                     output = self.trainer.train_module.eval_batch(batch, labels=labels)
                     assert isinstance(output, LMOutputWithLoss)
-                    logits, ce_loss, _ = output
+                    logits, _, ce_loss, _ = output
 
                     # NOTE: might have host-device syncs here but that's okay.
                     with cuda_sync_debug_mode(0):
                         evaluator.update_metrics(batch, ce_loss, logits)
 
-                if eval_step % self.trainer.cancel_check_interval == 0:
-                    self.trainer.check_if_canceled()
-
-                if self.trainer.is_canceled:
-                    self._log_progress(evaluator, eval_step)
-                    return
-                elif self.eval_duration.due(step=eval_step, tokens=eval_tokens, epoch=1):
+                if self.eval_duration.due(step=eval_step, tokens=eval_tokens, epoch=1):
                     self._log_progress(evaluator, eval_step)
                     break
-                elif eval_step % self.log_interval == 0 or eval_step == evaluator.total_batches:
+
+                if eval_step % self.log_interval == 0 or eval_step == evaluator.total_batches:
                     self._log_progress(evaluator, eval_step)
 
             # NOTE: going to have a host-device sync here but that's okay. It's only once
@@ -144,7 +146,7 @@ class EvaluatorCallback(Callback):
 
             evaluator_times.append(time.monotonic() - start_time)
             evaluator_names.append(evaluation_names)
-            evaluator_bs.append(evaluator.total_batches)
+            evaluator_bs.append(eval_step)
 
             log.info(
                 f"Finished {evaluator.name} evals in {time.monotonic() - start_time:.1f} seconds. Metrics:\n"
@@ -156,21 +158,30 @@ class EvaluatorCallback(Callback):
             zip(evaluator_names, evaluator_bs, evaluator_times), key=lambda x: x[2]
         )
 
-        # Record evaluation speed
-        log.info("Evaluation speed:")
-        max_time_width = max(len(f"{t:.1f}") for t in evaluator_times)
-        max_batch_width = max(len(str(bs)) for bs in evaluator_bs)
+        # Record evaluation speed.
+        eval_speeds = []
         for names, bs, t in sorted_evaluators:
-            name = names[0]  # only use the name of the first metric for each downstream task
-            log.info(
-                f"    {t:>{max_time_width}.1f} sec ({bs:>{max_batch_width}} batches): {name} (+ variants)"
-            )
+            name = names[0]
+            eval_speeds.append(f"    {name} (+variants): {t:.1f} sec ({bs} batches)")
         total_time = sum(evaluator_times)
         total_bs = sum(int(bs) if bs is not None else 0 for bs in evaluator_bs)
-        log.info(f"    Total evaluation time: {total_time:.1f} seconds ({total_bs} batches)")
+        eval_speeds.append(
+            f"    Total evaluation time: {total_time:.1f} seconds ({total_bs} batches)"
+        )
+        log.info("Evaluation speed:\n" + "\n".join(eval_speeds))
 
-        self.trainer.record_metric("throughput/in-loop eval time (s)", total_time)
-        self.trainer.record_metric("throughput/in-loop eval batches", total_bs)
+        self.trainer.record_metric(
+            "throughput/in-loop eval time (s)", total_time, merge_strategy=MetricMergeStrategy.sum
+        )
+        self.trainer.record_metric(
+            "throughput/in-loop eval batches", total_bs, merge_strategy=MetricMergeStrategy.sum
+        )
+
+        if self.cancel_after_first_eval:
+            self.trainer.cancel_run(
+                "canceled from evaluator callback since 'cancel_after_first_eval' is set",
+                no_sync=True,  # 'no_sync' because we're calling this from all ranks at the same time.
+            )
 
     def _log_progress(self, evaluator: Evaluator, eval_step: int):
         if evaluator.total_batches is not None:
@@ -184,6 +195,7 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
     eval_dataset: NumpyDatasetConfig
     eval_interval: int = 1000
     eval_on_startup: bool = False
+    cancel_after_first_eval: bool = False
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     log_interval: int = 5
     enabled: bool = True
@@ -240,6 +252,7 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
             eval_interval=self.eval_interval,
             log_interval=self.log_interval,
             eval_on_startup=self.eval_on_startup,
+            cancel_after_first_eval=self.cancel_after_first_eval,
             eval_duration=self.eval_duration,
         )
 
@@ -374,6 +387,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     eval_interval: int = 1000
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     eval_on_startup: bool = False
+    cancel_after_first_eval: bool = False
     log_interval: int = 5
     enabled: bool = True
 
@@ -412,6 +426,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
             evaluators=evaluators,
             eval_interval=self.eval_interval,
             eval_on_startup=self.eval_on_startup,
+            cancel_after_first_eval=self.cancel_after_first_eval,
             log_interval=self.log_interval,
             eval_duration=self.eval_duration,
         )

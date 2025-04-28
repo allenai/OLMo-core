@@ -117,7 +117,7 @@ def test_convert_checkpoint_from_hf_correct_model(
     )
 
     olmo_core_model = transformer_config.build()
-    load_model_and_optim_state(output_dir, olmo_core_model)
+    load_model_and_optim_state(output_dir / "model_and_optim", olmo_core_model)
 
     hf_model = AutoModelForCausalLM.from_pretrained(hf_model_path)
 

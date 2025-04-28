@@ -3,11 +3,9 @@ from typing import Any, List, Optional, Tuple, Union
 import torch
 import torch.distributed as dist
 
-from olmo_core.utils import move_to_device
-
 try:
     from olmo_core.kernels import moe as kernels
-except ImportError:
+except (ImportError, RuntimeError):
     kernels = None  # type: ignore
 
 
@@ -292,7 +290,15 @@ def batched_histc(x: torch.Tensor, num_classes: int) -> torch.Tensor:
     """
     A batched version of ``torch.histc``.
     """
-    hist = move_to_device(torch.zeros((*x.shape[:-1], num_classes), dtype=x.dtype), x.device)
-    ones = move_to_device(torch.tensor(1, dtype=x.dtype), x.device).expand_as(x)
-    hist.scatter_add_(-1, ((x * num_classes) // (x.max() + 1)).long(), ones)
+    hist = torch.zeros((*x.shape[:-1], num_classes), dtype=x.dtype, device=x.device)
+    ones = torch.ones_like(x)
+    hist.scatter_add_(-1, x, ones)
     return hist
+
+
+def histc(x: torch.Tensor, num_classes: int) -> torch.Tensor:
+    # NOTE: 'torch.histc' not implemented for integers on CPU, so convert to float then back to ints on CPU.
+    if x.device.type == "cpu":
+        return torch.histc(x.float(), bins=num_classes, min=0, max=num_classes - 1).int()
+    else:
+        return torch.histc(x, bins=num_classes, min=0, max=num_classes - 1)

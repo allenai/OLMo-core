@@ -21,7 +21,7 @@ from transformers import AutoConfig, AutoModelForCausalLM
 from olmo_core.aliases import PathOrStr
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
-from olmo_core.io import file_exists
+from olmo_core.io import file_exists, join_path
 from olmo_core.nn.conversion.state_mapping import TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import save_hf_model
 from olmo_core.nn.hf.convert import get_converter_to_hf
@@ -74,9 +74,10 @@ def convert_checkpoint_to_hf(
     vocab_size = tokenizer_config.vocab_size
 
     with TemporaryDirectory() as work_dir:
-        log.info(f"Loading checkpoint from '{original_checkpoint_path}'")
+        model_and_optim_dir = join_path(original_checkpoint_path, "model_and_optim")
+        log.info(f"Loading checkpoint from '{model_and_optim_dir}'")
         load_model_and_optim_state(
-            original_checkpoint_path,
+            model_and_optim_dir,
             model,
             work_dir=work_dir,
         )

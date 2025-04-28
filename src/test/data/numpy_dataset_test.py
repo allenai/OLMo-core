@@ -2,10 +2,13 @@ from pathlib import Path
 from typing import List
 
 import numpy as np
+import pytest
 
 from olmo_core.data import (
+    LongDocStrategy,
     NumpyDatasetConfig,
     NumpyFSLDataset,
+    NumpyPackedFSLDataset,
     NumpyPaddedFSLDataset,
     NumpyVSLDataset,
     TokenizerConfig,
@@ -167,6 +170,111 @@ def test_numpy_padded_fsl_dataset_with_label_mask(tmp_path: Path):
     assert ds[3]["input_ids"].tolist() == [21, 22, 0, 0, 0, 0, 0, 0]
 
 
+@pytest.mark.parametrize("long_doc_strategy", [LongDocStrategy.truncate, LongDocStrategy.fragment])
+def test_numpy_packed_fsl_dataset(tmp_path: Path, long_doc_strategy):
+    data1 = np.array(
+        [1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 0, 1, 2, 0]
+    )
+    mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
+    mmap1[:] = data1
+    mmap1.flush()
+
+    data2 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0, 1, 2, 0]
+    mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(len(data2),))
+    mmap2[:] = data2
+    mmap2.flush()
+
+    ds = NumpyPackedFSLDataset(
+        tmp_path / "mmap1.npy",
+        tmp_path / "mmap2.npy",
+        sequence_length=8,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=32_000,
+        long_doc_strategy=long_doc_strategy,
+    )
+    ds.prepare()
+    assert len(ds) == 6
+
+    assert ds[0]["input_ids"].tolist() == [1, 2, 3, 4, 5, 6, 7, 0]
+    assert ds[0]["label_mask"].tolist() == [True] * 8
+
+    assert ds[1]["input_ids"].tolist() == [1, 2, 3, 4, 5, 0, -1, -1]
+    assert ds[1]["label_mask"].tolist() == [True] * 6 + [False] * 2
+
+    assert ds[3]["input_ids"].tolist() == [1, 2, 3, 0, 1, 2, 0, -1]
+    assert ds[3]["label_mask"].tolist() == [True] * 7 + [False]
+
+    if long_doc_strategy == LongDocStrategy.truncate:
+        assert ds[5]["input_ids"].tolist() == [1, 2, 0, -1, -1, -1, -1, -1]
+        assert ds[5]["label_mask"].tolist() == [True] * 3 + [False] * 5
+    elif long_doc_strategy == LongDocStrategy.fragment:
+        assert ds[5]["input_ids"].tolist() == [9, 10, 0, 1, 2, 0, -1, -1]
+        assert ds[5]["label_mask"].tolist() == [True] * 6 + [False] * 2
+    else:
+        raise ValueError(long_doc_strategy)
+
+
+@pytest.mark.parametrize("long_doc_strategy", [LongDocStrategy.truncate, LongDocStrategy.fragment])
+def test_numpy_packed_fsl_dataset_with_label_mask(tmp_path: Path, long_doc_strategy):
+    data1 = [1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 0, 1, 2, 0]
+    mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
+    mmap1[:] = data1
+    mmap1.flush()
+
+    data1_mask = [True] * len(data1)
+    data1_mask[1] = False
+    mmap1_mask = np.memmap(
+        tmp_path / "mmap1_mask.npy", mode="w+", dtype=np.bool_, shape=(len(data1_mask),)
+    )
+    mmap1_mask[:] = data1_mask
+    mmap1_mask.flush()
+
+    data2 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0, 1, 2, 0]
+    mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(len(data2),))
+    mmap2[:] = data2
+    mmap2.flush()
+
+    data2_mask = [True] * len(data2)
+    data2_mask[8] = False
+    mmap2_mask = np.memmap(
+        tmp_path / "mmap2_mask.npy", mode="w+", dtype=np.bool_, shape=(len(data2_mask),)
+    )
+    mmap2_mask[:] = data2_mask
+    mmap2_mask.flush()
+
+    ds = NumpyPackedFSLDataset(
+        tmp_path / "mmap1.npy",
+        tmp_path / "mmap2.npy",
+        sequence_length=8,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=32_000,
+        label_mask_paths=[tmp_path / "mmap1_mask.npy", tmp_path / "mmap2_mask.npy"],
+        long_doc_strategy=long_doc_strategy,
+    )
+    ds.prepare()
+    assert len(ds) == 6
+
+    assert ds[0]["input_ids"].tolist() == [1, 2, 3, 4, 5, 6, 7, 0]
+    assert ds[0]["label_mask"].tolist() == [True, False] + [True] * 6
+
+    assert ds[1]["input_ids"].tolist() == [1, 2, 3, 4, 5, 0, -1, -1]
+    assert ds[1]["label_mask"].tolist() == [True] * 6 + [False] * 2
+
+    assert ds[3]["input_ids"].tolist() == [1, 2, 3, 0, 1, 2, 0, -1]
+    assert ds[3]["label_mask"].tolist() == [True] * 7 + [False]
+
+    if long_doc_strategy == LongDocStrategy.truncate:
+        assert ds[5]["input_ids"].tolist() == [1, 2, 0, -1, -1, -1, -1, -1]
+        assert ds[5]["label_mask"].tolist() == [True] * 3 + [False] * 5
+    elif long_doc_strategy == LongDocStrategy.fragment:
+        assert ds[5]["input_ids"].tolist() == [9, 10, 0, 1, 2, 0, -1, -1]
+        assert ds[5]["label_mask"].tolist() == [False, True] + [True] * 4 + [False] * 2
+    else:
+        raise ValueError(long_doc_strategy)
+
+
 def test_numpy_fsl_mixture_dataset(tmp_path: Path):
     # NOTE: At small token counts the take_ratio can be finicky so we test at small but real world-ish scale
     npdtype = np.uint16
@@ -216,7 +324,7 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
     # first_src_sequence = mmap1[0][1][:sequence_length].tolist()
     # Note that changing the seed here could result in the inclusion of the first sequence from the mock data.
     # assert not np.array_equal(first_src_sequence, first_ds_item)
-    expected = "68144f"
+    expected = "6c05bc"
     assert ds.fingerprint.endswith(
         expected
     ), f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
@@ -285,7 +393,7 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
     ).build()
     ds.prepare()
 
-    expected_fingerprint = "0b10f2"
+    expected_fingerprint = "7a2873"
     first_ds_item = ds[0]["input_ids"].tolist()
 
     # NOTE: This is commented out until we fix behavior of the source mixture dataset

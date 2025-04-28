@@ -1,4 +1,14 @@
-from typing import Tuple
+import os
+from dataclasses import dataclass
+from typing import Optional, Tuple
+
+import requests
+
+from olmo_core.config import Config
+
+GIT_REPO_URL_ENV_VAR = "REPO_URL"
+GIT_REF_ENV_VAR = "GIT_REF"
+GIT_BRANCH_ENV_VAR = "GIT_BRANCH"
 
 
 def parse_git_remote_url(url: str) -> Tuple[str, str]:
@@ -19,29 +29,65 @@ def parse_git_remote_url(url: str) -> Tuple[str, str]:
     return account, repo
 
 
-def ensure_repo(allow_dirty: bool = False) -> Tuple[str, str, str, bool]:
-    import requests
-    from git.repo import Repo
+@dataclass
+class GitConfig(Config):
+    repo_url: str
+    ref: str
+    branch: Optional[str] = None
 
-    repo = Repo(".")
-    if repo.is_dirty() and not allow_dirty:
-        raise RuntimeError("You have uncommitted changes! Use --allow-dirty to force.")
-    git_ref = str(repo.commit())
+    @property
+    def is_dirty(self) -> bool:
+        from git.exc import InvalidGitRepositoryError
+        from git.repo import Repo
 
-    remote = repo.remote()
-    # Try to find a remote based on the current tracking branch.
-    try:
-        branch = repo.active_branch
-    except TypeError:
-        branch = None
-    if branch is not None:
-        branch = branch.tracking_branch()
-    if branch is not None:
-        remote = repo.remote(branch.remote_name)
+        try:
+            repo = Repo(".")
+            return repo.is_dirty()
+        except InvalidGitRepositoryError:
+            return False
 
-    account, repo = parse_git_remote_url(remote.url)
-    response = requests.get(f"https://github.com/{account}/{repo}")
-    if response.status_code not in {200, 404}:
-        response.raise_for_status()
-    is_public = response.status_code == 200
-    return account, repo, git_ref, is_public
+    @property
+    def is_public(self) -> bool:
+        response = requests.get(self.repo_url)
+        if response.status_code not in {200, 404}:
+            response.raise_for_status()
+        return response.status_code == 200
+
+    @classmethod
+    def from_env(cls) -> Optional["GitConfig"]:
+        from git.exc import InvalidGitRepositoryError
+        from git.repo import Repo
+
+        try:
+            repo = Repo(".")
+        except InvalidGitRepositoryError:
+            return None
+
+        git_ref = os.environ.get(GIT_REF_ENV_VAR, str(repo.commit()))
+        remote = repo.remote()
+
+        # Try to find a remote based on the current tracking branch.
+        try:
+            branch = repo.active_branch
+        except TypeError:
+            branch = None
+
+        if branch is not None:
+            branch = branch.tracking_branch()
+
+        branch_name = os.environ.get(GIT_BRANCH_ENV_VAR)
+        if branch is not None:
+            remote = repo.remote(branch.remote_name)
+            if branch_name is None:
+                assert branch.name.startswith(branch.remote_name + "/")
+                branch_name = branch.name.replace(branch.remote_name + "/", "", 1)
+
+        if (repo_url := os.environ.get(GIT_REPO_URL_ENV_VAR)) is None:
+            account, repo_name = parse_git_remote_url(remote.url)
+            repo_url = f"https://github.com/{account}/{repo_name}"
+
+        return cls(
+            repo_url=repo_url,
+            ref=git_ref,
+            branch=branch_name,
+        )

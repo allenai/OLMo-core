@@ -109,7 +109,7 @@ jobs:
       matrix:
         task:
           - name: Test (GPU)
-            image: olmo-core-tch260cu124
+            image: olmo-core-tch270cu126
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
@@ -119,21 +119,21 @@ jobs:
                 src/test/
 
           - name: Test checkpoint (GPU)
-            image: olmo-core-tch260cu124
+            image: olmo-core-tch270cu126
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/distributed/checkpoint*
 
           - name: Test transformer (GPU)
-            image: olmo-core-tch260cu124
+            image: olmo-core-tch270cu126
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/transformer*
 
           - name: Test MoE (GPU)
-            image: olmo-core-tch260cu124
+            image: olmo-core-tch270cu126
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
@@ -188,6 +188,7 @@ jobs:
                   preemptible: true
                 resources:
                   gpuCount: ${{ matrix.task.gpus }}
+                timeout: 8m
                 hostNetworking: true
                 constraints:
                   cluster:

@@ -4,6 +4,7 @@ import os
 import random
 import socket
 import sys
+from collections import deque
 from typing import Any, Callable, Dict, Optional, Tuple
 
 import pytest
@@ -44,6 +45,8 @@ __all__ = [
     "MULTI_GPU_MARKS",
 ]
 
+log = logging.getLogger(__name__)
+
 has_multiple_gpus = has_cuda and torch.cuda.device_count() > 1
 
 MULTI_GPU_MARKS = (
@@ -83,10 +86,41 @@ def get_default_device():
         return torch.device("cpu")
 
 
-def port_in_use(host: str, port: int) -> bool:
+_PORT_MIN = 29500
+_PORT_MAX = 30000
+
+
+def _initialize_ports() -> deque[int]:
+    ports = list(range(_PORT_MIN, _PORT_MAX))
+    random.Random().shuffle(ports)
+    return deque(ports)
+
+
+_PORTS = _initialize_ports()
+
+
+def _port_in_use(host: str, port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(1)
         return s.connect_ex((host, port)) == 0
+
+
+def _get_next_port() -> int:
+    global _PORTS
+    port = _PORTS[0]
+    _PORTS.rotate()
+    return port
+
+
+def find_open_port(host: str = "127.0.0.1") -> int:
+    port = _get_next_port()
+    attempts = 0
+    while _port_in_use(host, port):
+        port += _get_next_port()
+        attempts += 1
+        if attempts >= 10:
+            raise RuntimeError("failed to find an open port")
+    return port
 
 
 def init_process(
@@ -106,15 +140,6 @@ def init_process(
     os.environ.setdefault(OLMO_LOCAL_WORLD_SIZE_ENV_VAR, str(world_size))
     os.environ.setdefault(OLMO_LOCAL_RANK_ENV_VAR, str(process_rank))
 
-    #  dist.init_process_group(
-    #      backend=backend,
-    #      init_method=f"tcp://{primary_addr}:{primary_port}",
-    #      world_size=world_size,
-    #      rank=process_rank,
-    #      timeout=datetime.timedelta(seconds=120),
-    #  )
-    #  if "nccl" in backend:
-    #      torch.cuda.set_device(int(process_rank))
     init_distributed(
         backend=backend,
         timeout=datetime.timedelta(seconds=120),
@@ -140,8 +165,6 @@ def init_process(
 
     if log_from_all_ranks or process_rank == 0:
         logging.basicConfig(level=logging.DEBUG, handlers=[handler])
-
-    log = logging.getLogger()
 
     log.info("Starting test...")
 
@@ -169,14 +192,9 @@ def run_distributed_test(
         start_method = "fork" if backend == "gloo" else "spawn"
 
     if primary_port is None:
-        primary_port = 29500 + random.Random().randint(0, 100)
+        primary_port = find_open_port(host=primary_addr)
 
-        attempts = 0
-        while port_in_use(primary_addr, primary_port):
-            primary_port += 1
-            attempts += 1
-            if attempts >= 10:
-                raise RuntimeError("failed to guess an open port")
+    log.info(f"Running distributed test on port {primary_port}...")
 
     mp.start_processes(
         init_process,
