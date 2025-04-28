@@ -234,15 +234,6 @@ class LMHead(nn.Module):
                 compute_z_loss=z_loss_multiplier is not None,
                 z_loss_multiplier=z_loss_multiplier or 1e-4,
             )
-            ce_loss = self._finalize_loss(
-                ce_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
-            )
-            loss = ce_loss
-            if z_loss is not None:
-                z_loss = self._finalize_loss(
-                    z_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
-                )
-                loss = loss + z_loss
         elif self.loss_implementation == LMLossImplementation.fused_linear:
             logits = None
             loss, z_loss = fused_linear_cross_entropy_loss(
@@ -277,7 +268,15 @@ class LMHead(nn.Module):
                 f"'return_logits=True' is not compatible '{self.loss_implementation}' loss implementation"
             )
 
-        return LMOutputWithLoss(logits=logits, loss=loss, ce_loss=ce_loss, z_loss=z_loss)
+        ce_loss = self._finalize_loss(
+            ce_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
+        )
+        if z_loss is not None:
+            z_loss = self._finalize_loss(
+                z_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
+            )
+
+        return LMOutputWithLoss(logits=logits, loss=None, ce_loss=ce_loss, z_loss=z_loss)
 
     def _finalize_loss(
         self,
@@ -332,12 +331,13 @@ class LMHead(nn.Module):
             device_mesh=tp_mesh,
             parallelize_plan=PrepareModuleInput(
                 input_layouts=None if input_layouts is None else input_layouts[0],
-                desired_input_layouts=Shard(1)
-                if (
-                    self.loss_implementation == LMLossImplementation.fused_linear
-                    or self.norm is not None
-                )
-                else Replicate(),
+                desired_input_layouts=Shard(1) if self.norm is not None else Replicate(),
+                #  desired_input_layouts=Shard(1)
+                #  if (
+                #      self.loss_implementation == LMLossImplementation.fused_linear
+                #      or self.norm is not None
+                #  )
+                #  else Replicate(),
                 input_kwarg_layouts=None if input_layouts is None else {"labels": input_layouts[1]},
                 desired_input_kwarg_layouts={"labels": Shard(1)},
             ),
@@ -350,12 +350,12 @@ class LMHead(nn.Module):
                 parallelize_plan=SequenceParallel(),
             )
 
-        if self.loss_implementation != LMLossImplementation.fused_linear:
-            parallelize_module(
-                module=self.w_out,
-                device_mesh=tp_mesh,
-                parallelize_plan=ColwiseParallel(output_layouts=Shard(1), use_local_output=False),
-            )
+        #  if self.loss_implementation != LMLossImplementation.fused_linear:
+        parallelize_module(
+            module=self.w_out,
+            device_mesh=tp_mesh,
+            parallelize_plan=ColwiseParallel(output_layouts=Shard(1), use_local_output=False),
+        )
 
         self._tp_mesh = tp_mesh
 
