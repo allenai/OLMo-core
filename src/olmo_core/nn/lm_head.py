@@ -254,13 +254,7 @@ class LMHead(nn.Module):
                 compute_z_loss=z_loss_multiplier is not None,
                 z_loss_multiplier=z_loss_multiplier or 1e-4,
             )
-            #  loss = self._finalize_loss(
-            #      loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
-            #  )
             if z_loss is not None:
-                #  z_loss = self._finalize_loss(
-                #      z_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
-                #  )
                 ce_loss = loss - z_loss
             else:
                 ce_loss = loss
