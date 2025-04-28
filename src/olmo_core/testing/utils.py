@@ -1,13 +1,17 @@
-from os import PathLike
-from pathlib import Path
-from typing import Any, List, Tuple, Type, Union
+import logging
 
-import numpy as np
 import pytest
 import torch
+import torch.distributed as dist
+
+from olmo_core.distributed.utils import is_distributed
+
+log = logging.getLogger(__name__)
 
 has_cuda = torch.cuda.is_available()
+has_multiple_gpus = has_cuda and torch.cuda.device_count() > 1
 has_flash_attn = False
+has_torchao = False
 has_grouped_gemm = False
 
 try:
@@ -15,6 +19,14 @@ try:
 
     has_flash_attn = True
     del flash_attn
+except ModuleNotFoundError:
+    pass
+
+try:
+    import torchao  # type: ignore
+
+    has_torchao = True
+    del torchao
 except ModuleNotFoundError:
     pass
 
@@ -32,6 +44,18 @@ GPU_MARKS = (pytest.mark.gpu, pytest.mark.skipif(not has_cuda, reason="Requires 
 
 def requires_gpu(func):
     for mark in GPU_MARKS:
+        func = mark(func)
+    return func
+
+
+MULTI_GPU_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_multiple_gpus, reason="Requires multiple GPUs"),
+)
+
+
+def requires_multi_gpu(func):
+    for mark in MULTI_GPU_MARKS:
         func = mark(func)
     return func
 
@@ -79,6 +103,16 @@ DEVICES = [
     ),
 ]
 
+
+BACKENDS = [
+    pytest.param("gloo", id="backend=GLOO"),
+    pytest.param(
+        "cuda:nccl,cpu:gloo",
+        id="backend=NCCL",
+        marks=MULTI_GPU_MARKS,
+    ),
+]
+
 LOW_PRECISION_DTYPES = [
     pytest.param(torch.float16, id="dtype=float16"),
     pytest.param(
@@ -90,36 +124,15 @@ LOW_PRECISION_DTYPES = [
 
 
 def get_default_device():
-    if torch.cuda.is_available():
+    if is_distributed():
+        backend = dist.get_backend()
+        if dist.Backend.NCCL in backend:
+            return torch.device("cuda")
+        elif backend == dist.Backend.GLOO:
+            return torch.device("cpu")
+        else:
+            raise NotImplementedError(backend)
+    elif torch.cuda.is_available():
         return torch.device("cuda")
     else:
         return torch.device("cpu")
-
-
-Mmaps = List[Tuple[Union[Path, PathLike[Any], str], Any]]
-
-
-def mk_mmaps(
-    tmp_path: Path,
-    prefix: str,
-    num_files: int,
-    size: int,
-    dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]] = np.uint32,
-    eos: int = 0,
-    seq_length: int = 4,
-    seed: int = 42,
-) -> Mmaps:
-    mmaps: Mmaps = []
-    for i in range(num_files):
-        filepath = f"{tmp_path}/{prefix}_{i}.npy"
-        np.random.seed(seed)
-        data = np.random.randint(1, np.iinfo(dtype).max, size=size, dtype=dtype)
-        data = np.append(
-            np.insert(data, np.arange(seq_length + 1, len(data), seq_length), eos), eos
-        )
-        mm = np.memmap(filepath, mode="w+", dtype=dtype, shape=(len(data),))
-        mm[:] = data
-        mm.flush()
-        mmaps.append((Path(filepath), data))
-
-    return mmaps

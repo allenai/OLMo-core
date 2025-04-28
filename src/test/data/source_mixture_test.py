@@ -12,7 +12,7 @@ from olmo_core.data.source_mixture import (
 )
 from olmo_core.exceptions import OLMoConfigurationError
 
-from ..utils import mk_mmaps
+from .utils import mk_mmaps
 
 
 def test_source_mixture_config(tmp_path: Path, caplog, capsys):

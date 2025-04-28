@@ -27,10 +27,13 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerType,
 )
+from olmo_core.testing import (
+    BACKENDS,
+    GPU_MARKS,
+    requires_multi_gpu,
+    run_distributed_test,
+)
 from olmo_core.utils import get_default_device
-
-from ...distributed.utils import BACKENDS, requires_multi_gpu, run_distributed_test
-from ...utils import GPU_MARKS
 
 log = logging.getLogger(__name__)
 

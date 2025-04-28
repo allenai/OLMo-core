@@ -3,8 +3,7 @@ import torch
 import torch.nn as nn
 
 from olmo_core.optim import LionConfig
-
-from ..utils import DEVICES
+from olmo_core.testing import DEVICES
 
 
 class Model(nn.Module):

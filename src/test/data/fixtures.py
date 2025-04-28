@@ -10,7 +10,7 @@ from olmo_core.data.source_mixture import (
 )
 from olmo_core.data.types import NumpyDatasetDType
 
-from ..utils import mk_mmaps
+from .utils import mk_mmaps
 
 
 def get_fsl_mixture(
