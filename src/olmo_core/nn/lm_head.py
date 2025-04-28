@@ -234,6 +234,13 @@ class LMHead(nn.Module):
                 compute_z_loss=z_loss_multiplier is not None,
                 z_loss_multiplier=z_loss_multiplier or 1e-4,
             )
+            ce_loss = self._finalize_loss(
+                ce_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
+            )
+            if z_loss is not None:
+                z_loss = self._finalize_loss(
+                    z_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
+                )
         elif self.loss_implementation == LMLossImplementation.fused_linear:
             logits = None
             loss, z_loss = fused_linear_cross_entropy_loss(
@@ -266,14 +273,6 @@ class LMHead(nn.Module):
         elif return_logits is True and logits is None:
             raise RuntimeError(
                 f"'return_logits=True' is not compatible '{self.loss_implementation}' loss implementation"
-            )
-
-        ce_loss = self._finalize_loss(
-            ce_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
-        )
-        if z_loss is not None:
-            z_loss = self._finalize_loss(
-                z_loss, B, loss_reduction=loss_reduction, loss_div_factor=loss_div_factor
             )
 
         return LMOutputWithLoss(logits=logits, loss=None, ce_loss=ce_loss, z_loss=z_loss)
