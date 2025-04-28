@@ -3,12 +3,12 @@ from typing import Any, ClassVar, Dict
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.internal.common import get_beaker_username, get_work_dir, get_root_dir
-from olmo_core.internal.model_ladder import RunDuration, main, SubCmd, build_config
+from olmo_core.internal.common import get_beaker_username, get_root_dir, get_work_dir
+from olmo_core.internal.model_ladder import RunDuration, SubCmd, build_config, main
 from olmo_core.io import join_path
 from olmo_core.model_ladder import ModelLadder, ModelSize
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import AdamWConfig, OptimConfig, OptimGroupOverride
+from olmo_core.optim import OptimConfig, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.optim.scheduler import CosWithWarmupAndLinearDecay
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import DownstreamEvaluatorCallbackConfig
@@ -54,14 +54,13 @@ class DirkishModelLadder(ModelLadder):
         lr = 0.0047 * (self.model_size / 108000000) ** (-1 / 3)
         lr /= 8
 
-        return AdamWConfig(
+        return SkipStepAdamWConfig(
             lr=lr,
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
-            fused=True,
         )
 
     def get_train_module_config(
