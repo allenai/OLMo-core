@@ -3,6 +3,7 @@ from typing import Optional, Tuple, Type
 
 import torch
 
+from ..nn.mup import MuPOptimizerType
 from .config import OptimConfig
 
 
@@ -17,6 +18,10 @@ class AdamConfig(OptimConfig):  # NOTE: omagaconf doesn't like "OptimConfig[torc
     eps: float = 1e-8
     foreach: Optional[bool] = None
     fused: Optional[bool] = None
+
+    @classmethod
+    def mup_optimizer_type(cls) -> Optional[MuPOptimizerType]:
+        return MuPOptimizerType.adam
 
     @classmethod
     def optimizer(cls) -> Type[torch.optim.Adam]:

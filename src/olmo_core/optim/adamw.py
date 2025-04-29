@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 
 from ..config import DType
+from ..nn.mup import MuPOptimizerType
 from .config import OptimConfig
 from .skip_step_optimizer import SkipStepOptimizer
 
@@ -129,6 +130,10 @@ class AdamWConfig(OptimConfig):  # NOTE: omagaconf doesn't like "OptimConfig[tor
     fused: Optional[bool] = None
 
     @classmethod
+    def mup_optimizer_type(cls) -> Optional[MuPOptimizerType]:
+        return MuPOptimizerType.adam_coupled_wd
+
+    @classmethod
     def optimizer(cls) -> Type[torch.optim.AdamW]:
         return torch.optim.AdamW
 
@@ -146,6 +151,10 @@ class SkipStepAdamWConfig(OptimConfig):
     rolling_interval_length: int = 128
     sigma_factor: int = 6
     dtype: Optional[DType] = None
+
+    @classmethod
+    def mup_optimizer_type(cls) -> Optional[MuPOptimizerType]:
+        return MuPOptimizerType.adam_coupled_wd
 
     @classmethod
     def optimizer(cls) -> Type[SkipStepAdamW]:

@@ -12,6 +12,7 @@ from ..exceptions import OLMoConfigurationError
 
 __all__ = [
     "MuPHyperParam",
+    "MuPOptimizerType",
     "MuPScalingStrategy",
     "MuPConfig",
     "MuP",
@@ -32,6 +33,23 @@ class MuPHyperParam(StrEnum):
     n_heads = "n_heads"
     n_kv_heads = "n_kv_heads"
     head_dim = "head_dim"
+
+
+class MuPOptimizerType(StrEnum):
+    """
+    An enumeration of the different types of optimizers. MuP scaling depends on the type of optimizer.
+    """
+
+    adam = "adam"
+    adam_coupled_wd = "adam_coupled_wd"
+    """
+    An AdamW optimizer where weight decay is coupled with the learning rate (i.e. the learning rate
+    affects the weight decay.)
+    """
+
+    @property
+    def coupled_weight_decay(self) -> bool:
+        return self in (MuPOptimizerType.adam_coupled_wd,)
 
 
 class MuPParamScalingType(StrEnum):
@@ -101,11 +119,25 @@ class MuPScalingStrategy(StrEnum):
 @dataclass
 class MuPConfig(Config):
     """
-    Defines how to scale the initialization and outputs of bigger/smaller models using muP.
+    Defines how to scale the initialization, outputs and learning rates of bigger/smaller models using muP.
+    """
+
+    optimizer: MuPOptimizerType
+    """
+    The type of optimizer being used for training.
     """
 
     scaling_strategy: MuPScalingStrategy = MuPScalingStrategy.constant_inputs
+    """
+    The strategy for how muP should scale the initialization, outputs and LR of bigger/smaller models.
+    """
+
     width_scalings: Dict[MuPHyperParam, float] = field(default_factory=dict)
+    """
+    A map that contains for each width-related hyperparameters the factor by which it has been increased/decreased
+    in this model relative to in the base model. For example, a mapping of ``MuPHyperParam.d_model`` to ``0.5``
+    means that the ``d_model`` of this model is half of the base model.
+    """
 
     def __post_init__(self):
         if (
@@ -114,7 +146,7 @@ class MuPConfig(Config):
         ):
             raise OLMoConfigurationError(
                 f"MuP scaling for {MuPHyperParam.d_model} is provided but scaling for {MuPHyperParam.hidden_size} is not. "
-                f"This implies that {MuPHyperParam.d_model} is being varied but {MuPHyperParam.hidden_size} is not ."
+                f"This implies that {MuPHyperParam.d_model} is being varied but {MuPHyperParam.hidden_size} is not. "
                 f"This is likely a mistake. If this is intentional, set scaling for {MuPHyperParam.hidden_size} to 1."
             )
 
@@ -122,10 +154,10 @@ class MuPConfig(Config):
             MuPHyperParam.n_heads in self.width_scalings
             and MuPHyperParam.n_kv_heads not in self.width_scalings
         ):
-            log.warning(
+            raise OLMoConfigurationError(
                 f"MuP scaling for {MuPHyperParam.n_heads} is provided but scaling for {MuPHyperParam.n_kv_heads} is not. "
                 f"This implies that {MuPHyperParam.n_heads} is being varied but {MuPHyperParam.n_kv_heads} is not. "
-                f"This is likely a mistake. If this is intentional, set scaling for {MuPHyperParam.n_kv_heads} to 1."
+                f"This may be a mistake. If this is intentional, set scaling for {MuPHyperParam.n_kv_heads} to 1."
             )
 
         head_dim_scaling = self.width_scalings.get(MuPHyperParam.head_dim, 1.0)
@@ -153,12 +185,13 @@ class MuPConfig(Config):
         kwargs = self.as_dict(exclude_none=True, recurse=False)
 
         kwargs.pop("width_scalings")
+        optimizer = kwargs.pop("optimizer")
 
         input_scaling = self._get_scaling(input_hyper_param_exponents)
         output_scaling = self._get_scaling(output_hyper_param_exponents)
 
         try:
-            return MuP(input_scaling, output_scaling, **kwargs)
+            return MuP(input_scaling, output_scaling, optimizer, **kwargs)
         except TypeError as e:
             raise OLMoConfigurationError(
                 f"invalid options for {self.__class__.__name__}, {e}"
@@ -173,6 +206,7 @@ class MuP:
 
     input_scaling: float
     output_scaling: float
+    optimizer: MuPOptimizerType
     scaling_strategy: MuPScalingStrategy = MuPScalingStrategy.constant_inputs
 
     @cached_property
@@ -193,71 +227,104 @@ class MuP:
     def input_multiplier(self) -> Optional[float]:
         scaling_type = self._scaling_type
 
-        input_multiplier_map: Dict[MuPScalingStrategy, Dict[MuPParamScalingType, float]] = {
-            MuPScalingStrategy.constant_inputs: {},
-            MuPScalingStrategy.constant_lr: {
-                MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
-                MuPParamScalingType.scaling_input_output: 1.0 / self.input_scaling,
-            },
-            MuPScalingStrategy.constant_init_std: {
-                MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
-                MuPParamScalingType.scaling_input_output: 1.0 / math.sqrt(self.input_scaling),
-            },
-            MuPScalingStrategy.table_8: {
-                MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
-            },
+        optimizer = self.optimizer
+        if optimizer == MuPOptimizerType.adam_coupled_wd:
+            optimizer = MuPOptimizerType.adam
+
+        input_multiplier_map: Dict[
+            MuPOptimizerType, Dict[MuPScalingStrategy, Dict[MuPParamScalingType, float]]
+        ] = {
+            MuPOptimizerType.adam: {
+                MuPScalingStrategy.constant_inputs: {},
+                MuPScalingStrategy.constant_lr: {
+                    MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
+                    MuPParamScalingType.scaling_input_output: 1.0 / self.input_scaling,
+                },
+                MuPScalingStrategy.constant_init_std: {
+                    MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
+                    MuPParamScalingType.scaling_input_output: 1.0 / math.sqrt(self.input_scaling),
+                },
+                MuPScalingStrategy.table_8: {
+                    MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
+                },
+            }
         }
 
-        if self.scaling_strategy not in input_multiplier_map:
+        if optimizer not in input_multiplier_map:
+            raise NotImplementedError(optimizer)
+
+        if self.scaling_strategy not in input_multiplier_map[optimizer]:
             raise NotImplementedError(self.scaling_strategy)
 
-        return input_multiplier_map[self.scaling_strategy].get(scaling_type)
+        return input_multiplier_map[optimizer][self.scaling_strategy].get(scaling_type)
 
     @cached_property
     def init_std_multiplier(self) -> Optional[float]:
         scaling_type = self._scaling_type
 
-        init_std_multiplier_map: Dict[MuPScalingStrategy, Dict[MuPParamScalingType, float]] = {
-            MuPScalingStrategy.constant_inputs: {
-                MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
-                MuPParamScalingType.scaling_input_output: 1.0 / math.sqrt(self.input_scaling),
-            },
-            MuPScalingStrategy.constant_lr: {
-                MuPParamScalingType.scaling_input_output: math.sqrt(self.input_scaling),
-            },
-            MuPScalingStrategy.constant_init_std: {},
-            MuPScalingStrategy.table_8: {
-                MuPParamScalingType.scaling_input_output: 1.0 / math.sqrt(self.input_scaling),
-            },
+        optimizer = self.optimizer
+        if optimizer == MuPOptimizerType.adam_coupled_wd:
+            optimizer = MuPOptimizerType.adam
+
+        init_std_multiplier_map: Dict[
+            MuPOptimizerType, Dict[MuPScalingStrategy, Dict[MuPParamScalingType, float]]
+        ] = {
+            MuPOptimizerType.adam: {
+                MuPScalingStrategy.constant_inputs: {
+                    MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
+                    MuPParamScalingType.scaling_input_output: 1.0 / math.sqrt(self.input_scaling),
+                },
+                MuPScalingStrategy.constant_lr: {
+                    MuPParamScalingType.scaling_input_output: math.sqrt(self.input_scaling),
+                },
+                MuPScalingStrategy.constant_init_std: {},
+                MuPScalingStrategy.table_8: {
+                    MuPParamScalingType.scaling_input_output: 1.0 / math.sqrt(self.input_scaling),
+                },
+            }
         }
 
-        if self.scaling_strategy not in init_std_multiplier_map:
+        if optimizer not in init_std_multiplier_map:
+            raise NotImplementedError(optimizer)
+
+        if self.scaling_strategy not in init_std_multiplier_map[optimizer]:
             raise NotImplementedError(self.scaling_strategy)
 
-        return init_std_multiplier_map[self.scaling_strategy].get(scaling_type)
+        return init_std_multiplier_map[optimizer][self.scaling_strategy].get(scaling_type)
 
     @cached_property
     def lr_multiplier(self) -> Optional[float]:
         scaling_type = self._scaling_type
 
-        lr_multiplier_map: Dict[MuPScalingStrategy, Dict[MuPParamScalingType, float]] = {
-            MuPScalingStrategy.constant_inputs: {
-                MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
-                MuPParamScalingType.scaling_input_output: 1.0 / self.input_scaling,
-            },
-            MuPScalingStrategy.constant_lr: {},
-            MuPScalingStrategy.constant_init_std: {
-                MuPParamScalingType.scaling_input_output: 1.0 / math.sqrt(self.input_scaling),
-            },
-            MuPScalingStrategy.table_8: {
-                MuPParamScalingType.scaling_input_output: 1.0 / self.input_scaling,
-            },
+        optimizer = self.optimizer
+        if optimizer == MuPOptimizerType.adam_coupled_wd:
+            optimizer = MuPOptimizerType.adam
+
+        lr_multiplier_map: Dict[
+            MuPOptimizerType, Dict[MuPScalingStrategy, Dict[MuPParamScalingType, float]]
+        ] = {
+            MuPOptimizerType.adam: {
+                MuPScalingStrategy.constant_inputs: {
+                    MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
+                    MuPParamScalingType.scaling_input_output: 1.0 / self.input_scaling,
+                },
+                MuPScalingStrategy.constant_lr: {},
+                MuPScalingStrategy.constant_init_std: {
+                    MuPParamScalingType.scaling_input_output: 1.0 / math.sqrt(self.input_scaling),
+                },
+                MuPScalingStrategy.table_8: {
+                    MuPParamScalingType.scaling_input_output: 1.0 / self.input_scaling,
+                },
+            }
         }
 
-        if self.scaling_strategy not in lr_multiplier_map:
+        if optimizer not in lr_multiplier_map:
+            raise NotImplementedError(optimizer)
+
+        if self.scaling_strategy not in lr_multiplier_map[optimizer]:
             raise NotImplementedError(self.scaling_strategy)
 
-        return lr_multiplier_map[self.scaling_strategy].get(scaling_type)
+        return lr_multiplier_map[optimizer][self.scaling_strategy].get(scaling_type)
 
     @cached_property
     def attention_multiplier(self) -> Optional[float]:
@@ -305,6 +372,17 @@ class MuP:
             return lr
 
         return lr * mup.lr_multiplier
+
+    @classmethod
+    def scale_coupled_wd(cls, mup: Optional["MuP"], weight_decay: float) -> float:
+        """
+        Convenient wrapper for un-applying muP LR multiplier to coupled weight decay to reduce lines of code.
+        This just performs ``weight_decay / mup_lr_multiplier``, if the multiplier exists.
+        """
+        if mup is None or mup.lr_multiplier is None:
+            return weight_decay
+
+        return weight_decay / mup.lr_multiplier
 
     @classmethod
     def named_mups(cls, model: nn.Module) -> Dict[str, "MuP"]:

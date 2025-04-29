@@ -8,7 +8,7 @@ from olmo_core.internal.common import get_beaker_username, get_work_dir
 from olmo_core.internal.model_ladder import RunDuration, main
 from olmo_core.io import join_path
 from olmo_core.model_ladder import ModelLadder, ModelSize
-from olmo_core.nn.mup import MuPConfig, MuPScalingStrategy
+from olmo_core.nn.mup import MuPConfig, MuPOptimizerType, MuPScalingStrategy
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, OptimConfig, OptimGroupOverride
 from olmo_core.optim.scheduler import WSD
@@ -67,7 +67,7 @@ class BaselineModelLadder(ModelLadder):
         )
         mup_width_scalings = model_config.get_mup_width_scalings(base_model_config)
         mup_config = MuPConfig(
-            scaling_strategy=MuPScalingStrategy.constant_inputs, width_scalings=mup_width_scalings
+            MuPOptimizerType.adam, scaling_strategy=MuPScalingStrategy.constant_inputs, width_scalings=mup_width_scalings
         )
 
         # Need to reconstruct config to pass in muP config
