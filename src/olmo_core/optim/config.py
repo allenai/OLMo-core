@@ -114,7 +114,11 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         return OptimGroupOverride(param_names, go.opts.copy())
 
     def build_groups(
-        self, model: nn.Module, strict: bool = True, initial_lr: Optional[float] = None, default_weight_decay: Optional[float] = None,
+        self,
+        model: nn.Module,
+        strict: bool = True,
+        initial_lr: Optional[float] = None,
+        default_weight_decay: Optional[float] = None,
     ) -> Union[Iterable[torch.Tensor], List[Dict[str, Any]]]:
         """
         Build parameters groups.
@@ -167,13 +171,17 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
 
             new_group_overrides = []
             for go in group_overrides:
-                params_name_by_mup_lr_and_wd: defaultdict[Tuple[float, Optional[float]], List[str]] = defaultdict(list)
+                params_name_by_mup_lr_and_wd: defaultdict[
+                    Tuple[float, Optional[float]], List[str]
+                ] = defaultdict(list)
                 for name in go.params:
                     lr = MuP.scale_lr(named_mups.get(name), go.opts.get("lr", initial_lr))
 
                     if mup_optimizer_type.coupled_weight_decay:
                         assert default_weight_decay is not None
-                        weight_decay = MuP.scale_coupled_wd(named_mups.get(name), go.opts.get("weight_decay", default_weight_decay))
+                        weight_decay = MuP.scale_coupled_wd(
+                            named_mups.get(name), go.opts.get("weight_decay", default_weight_decay)
+                        )
                     else:
                         weight_decay = default_weight_decay
 
@@ -181,7 +189,9 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
 
                 if mup_optimizer_type.coupled_weight_decay or default_weight_decay is not None:
                     new_group_overrides += [
-                        OptimGroupOverride(param_names, {**go.opts, "lr": lr, "weight_decay": weight_decay})
+                        OptimGroupOverride(
+                            param_names, {**go.opts, "lr": lr, "weight_decay": weight_decay}
+                        )
                         for (lr, weight_decay), param_names in params_name_by_mup_lr_and_wd.items()
                     ]
                 else:
@@ -228,7 +238,13 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         kwargs.pop("fixed_fields")
 
         optim: torch.optim.Optimizer = self.optimizer()(
-            self.build_groups(model, strict=strict, initial_lr=kwargs.get("lr"), default_weight_decay=kwargs.get("weight_decay")), **kwargs
+            self.build_groups(
+                model,
+                strict=strict,
+                initial_lr=kwargs.get("lr"),
+                default_weight_decay=kwargs.get("weight_decay"),
+            ),
+            **kwargs,
         )
 
         # Set 'lr' and 'initial_lr' in each group if needed.

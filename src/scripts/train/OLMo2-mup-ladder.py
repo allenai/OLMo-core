@@ -67,7 +67,9 @@ class BaselineModelLadder(ModelLadder):
         )
         mup_width_scalings = model_config.get_mup_width_scalings(base_model_config)
         mup_config = MuPConfig(
-            MuPOptimizerType.adam, scaling_strategy=MuPScalingStrategy.constant_inputs, width_scalings=mup_width_scalings
+            MuPOptimizerType.adam,
+            scaling_strategy=MuPScalingStrategy.constant_inputs,
+            width_scalings=mup_width_scalings,
         )
 
         # Need to reconstruct config to pass in muP config
