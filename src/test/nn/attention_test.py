@@ -13,8 +13,13 @@ from olmo_core.nn.attention import (
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.mup import MuPConfig, MuPScalingStrategy
 from olmo_core.nn.rope import RoPEConfig, RoPEType
-
-from ..utils import DEVICES, FLASH_MARKS, GPU_MARKS, requires_flash_attn, requires_gpu
+from olmo_core.testing import (
+    DEVICES,
+    FLASH_MARKS,
+    GPU_MARKS,
+    requires_flash_attn,
+    requires_gpu,
+)
 
 
 @pytest.mark.parametrize("device", DEVICES)

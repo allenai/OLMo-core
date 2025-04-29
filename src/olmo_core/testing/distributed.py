@@ -7,8 +7,6 @@ import sys
 from collections import deque
 from typing import Any, Callable, Dict, Optional, Tuple
 
-import pytest
-import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
@@ -17,73 +15,9 @@ from olmo_core.distributed.utils import (
     OLMO_LOCAL_WORLD_SIZE_ENV_VAR,
     OLMO_NUM_NODES_ENV_VAR,
     init_distributed,
-    is_distributed,
 )
-
-from ..utils import (
-    DEVICES,
-    GPU_MARKS,
-    INIT_DEVICES,
-    LOW_PRECISION_DTYPES,
-    has_cuda,
-    requires_gpu,
-)
-
-__all__ = [
-    "has_cuda",
-    "has_multiple_gpus",
-    "requires_gpu",
-    "requires_multi_gpu",
-    "get_default_device",
-    "init_process",
-    "run_distributed_test",
-    "DEVICES",
-    "INIT_DEVICES",
-    "BACKENDS",
-    "LOW_PRECISION_DTYPES",
-    "GPU_MARKS",
-    "MULTI_GPU_MARKS",
-]
 
 log = logging.getLogger(__name__)
-
-has_multiple_gpus = has_cuda and torch.cuda.device_count() > 1
-
-MULTI_GPU_MARKS = (
-    pytest.mark.gpu,
-    pytest.mark.skipif(not has_multiple_gpus, reason="Requires multiple GPUs"),
-)
-
-
-def requires_multi_gpu(func):
-    for mark in MULTI_GPU_MARKS:
-        func = mark(func)
-    return func
-
-
-BACKENDS = [
-    pytest.param("gloo", id="backend=GLOO"),
-    pytest.param(
-        "cuda:nccl,cpu:gloo",
-        id="backend=NCCL",
-        marks=MULTI_GPU_MARKS,
-    ),
-]
-
-
-def get_default_device():
-    if is_distributed():
-        backend = dist.get_backend()
-        if dist.Backend.NCCL in backend:
-            return torch.device("cuda")
-        elif backend == dist.Backend.GLOO:
-            return torch.device("cpu")
-        else:
-            raise NotImplementedError(backend)
-    elif torch.cuda.is_available():
-        return torch.device("cuda")
-    else:
-        return torch.device("cpu")
 
 
 _PORT_MIN = 29500
@@ -112,7 +46,7 @@ def _get_next_port() -> int:
     return port
 
 
-def find_open_port(host: str = "127.0.0.1") -> int:
+def _find_open_port(host: str = "127.0.0.1") -> int:
     port = _get_next_port()
     attempts = 0
     while _port_in_use(host, port):
@@ -123,7 +57,7 @@ def find_open_port(host: str = "127.0.0.1") -> int:
     return port
 
 
-def init_process(
+def _init_process(
     process_rank: int,
     world_size: int,
     backend: str,
@@ -192,12 +126,12 @@ def run_distributed_test(
         start_method = "fork" if backend == "gloo" else "spawn"
 
     if primary_port is None:
-        primary_port = find_open_port(host=primary_addr)
+        primary_port = _find_open_port(host=primary_addr)
 
     log.info(f"Running distributed test on port {primary_port}...")
 
     mp.start_processes(
-        init_process,
+        _init_process,
         args=(
             world_size,
             backend,
