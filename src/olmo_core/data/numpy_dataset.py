@@ -1254,9 +1254,19 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
             label_mask_paths=label_mask_paths,
         )
         self._docs_per_instance = docs_per_instance
-        self.chunks_per_doc = chunks_per_doc
+        self._chunks_per_doc = chunks_per_doc
         self._seed = seed
-        self._docs_indices: Optional[np.ndarray] = None
+
+    @property
+    def fingerprint_fields(self) -> Tuple[str, ...]:
+        return (
+            "vocab_size",
+            "pad_token_id",
+            "eos_token_id",
+            "dtype",
+            "_docs_per_instance",
+            "_seed",
+        )
 
     def __len__(self) -> int:
         if self._num_instances is None:
@@ -1264,12 +1274,31 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         return self._num_instances // self._docs_per_instance
 
     def prepare(self):
-        super().prepare()
-        self._docs_indices = (
-            get_rng(self._seed)
-            .permutation(len(self) * self._docs_per_instance)
-            .reshape(-1, self._docs_per_instance)
-        )
+        if self.fs_local_rank == 0:
+            log.info("Gathering dataset document and interleaving indices...")
+            self._write_instance_indices()
+            self._write_docs_interleaving_indices()
+        barrier()
+        len(self)
+
+    def _write_docs_interleaving_indices(self):
+        interleaving_indices_path = self._get_docs_interleaving_indices_path()
+        if interleaving_indices_path.is_file():
+            log.info(
+                f"Reusing all document interleaving indices at:\n'{interleaving_indices_path}'"
+            )
+        else:
+            log.info(
+                f"Generating all document interleaving indices to:\n'{interleaving_indices_path}..."
+            )
+            with memmap_to_write(
+                interleaving_indices_path,
+                dtype=self.indices_dtype,
+                shape=(len(self) * self._docs_per_instance,),
+            ) as docs_interleaving_indices:
+                docs_interleaving_indices[:] = get_rng(self._seed).permutation(
+                    len(self) * self._docs_per_instance
+                )
 
     def _remove_special_tokens_and_interleave(
         self,
@@ -1282,12 +1311,12 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         ]
 
         chunked_tensors = [
-            cleaned_tensor.tensor_split(self.chunks_per_doc) for cleaned_tensor in cleaned_tensors
+            cleaned_tensor.tensor_split(self._chunks_per_doc) for cleaned_tensor in cleaned_tensors
         ]
         return torch.cat(
             [
                 chunked_tensor[i]
-                for i in range(self.chunks_per_doc)
+                for i in range(self._chunks_per_doc)
                 for chunked_tensor in chunked_tensors
             ]
         )
@@ -1296,12 +1325,16 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         index = int(index)  # in case this is a numpy int type.
         pos_index = index if index >= 0 else len(self) + index
 
-        if self._docs_indices is None:
-            raise RuntimeError(f"{self.__class__.__name__}.prepare() has not been called.")
-        docs_indices = self._docs_indices[pos_index]
+        interleaving_indices_path = self._get_docs_interleaving_indices_path()
+        interleaving_indices = load_array_slice_into_tensor(
+            interleaving_indices_path,
+            pos_index * self._docs_per_instance,
+            pos_index * self._docs_per_instance + self._docs_per_instance,
+            self.indices_dtype,
+        ).tolist()
 
         docs: List[Dict[str, Any]] = []
-        for doc_index in docs_indices:
+        for doc_index in interleaving_indices:
             docs.append(super().__getitem__(doc_index))
 
         for doc in docs:
@@ -1359,6 +1392,9 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
 
     def _get_instance_indices_path(self, source_path: PathOrStr) -> Path:
         return self._get_indices_path(source_path, "instance-indices", str(self._docs_per_instance))
+
+    def _get_docs_interleaving_indices_path(self) -> Path:
+        return self.work_dir / f"dataset-{self.fingerprint}" / "interleaved-docs-indices.npy"
 
 
 @dataclass

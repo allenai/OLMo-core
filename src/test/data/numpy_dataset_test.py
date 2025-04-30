@@ -491,11 +491,8 @@ def test_numpy_interleaved_fsl_dataset(tmp_path: Path):
         docs_per_instance=2,
         chunks_per_doc=4,
     )
-
+    ds.work_dir = tmp_path
     ds.prepare()
-    assert ds._docs_indices is not None
-    # If this assert fails, the rng state has changed and so the subsequent asserts will fail.
-    assert ds._docs_indices.tolist() == [[3, 2], [0, 1]]
 
     assert ds[0]["input_ids"].tolist() == [
         21,
@@ -566,10 +563,8 @@ def test_numpy_interleaved_fsl_dataset_with_label_mask(tmp_path: Path):
         label_mask_paths=[tmp_path / "mmap1_mask.npy", tmp_path / "mmap2_mask.npy"],
     )
 
+    ds.work_dir = tmp_path
     ds.prepare()
-    assert ds._docs_indices is not None
-    # If this assert fails, the rng state has changed and so the subsequent asserts will fail.
-    assert ds._docs_indices.tolist() == [[3, 2], [0, 1]]
 
     assert ds[0]["input_ids"].tolist() == [
         21,
