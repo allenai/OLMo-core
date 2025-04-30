@@ -841,8 +841,6 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
             instance_filter_config=instance_filter_config,
             label_mask_paths=label_mask_paths,
         )
-        # :class:`NumpyPaddedFSLDataset` only has 1 document per instance, but child classes may have more.
-        self._docs_per_instance = 1
         self._array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
 
     @property
@@ -918,7 +916,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                         segment_documents_into_instances,
                         path,
                         indices_path,
-                        max_sequence_length=self.sequence_length // self._docs_per_instance,
+                        max_sequence_length=self.sequence_length,
                         eos_token_id=self.eos_token_id,
                         dtype=self.dtype,
                         indices_dtype=self.indices_dtype,
@@ -932,7 +930,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                     _, total_instances = future.result()
                     log.info(
                         f"Created {total_instances:,d} instances of sequence length up to "
-                        f"{self.sequence_length // self._docs_per_instance} from '{path}'"
+                        f"{self.sequence_length} from '{path}'"
                     )
 
 
@@ -1234,6 +1232,7 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         instance_filter_config: Optional[InstanceFilterConfig] = None,
         label_mask_paths: Optional[List[PathOrStr]] = None,
         bos_token_id: Optional[int] = None,
+        interleaving_exempt_paths: Optional[List[PathOrStr]] = None,
     ):
         if sequence_length % docs_per_instance != 0:
             raise OLMoConfigurationError(
@@ -1258,6 +1257,11 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         self._chunks_per_doc = chunks_per_doc
         self._seed = seed
         self._bos_token_id = bos_token_id
+        self._interleaving_exempt_paths = (
+            set(interleaving_exempt_paths) if interleaving_exempt_paths else None
+        )
+        self._num_interleaving_exempt_instances = None
+        self._num_interleavable_instances = None
 
     @property
     def fingerprint_fields(self) -> Tuple[str, ...]:
@@ -1273,8 +1277,23 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
 
     def __len__(self) -> int:
         if self._num_instances is None:
-            self._num_instances = self.offsets[-1][1]
-        return self._num_instances // self._docs_per_instance
+            item_size = self.indices_dtype(0).itemsize
+
+            interleavable_indices_path = self._get_interleaveable_indices_path()
+            self._num_interleavable_instances = (
+                get_file_size(interleavable_indices_path) // item_size
+            )
+
+            interleaving_exempt_indices_path = self._get_interleaving_exempt_indices_path()
+            self._num_interleaving_exempt_instances = (
+                get_file_size(interleaving_exempt_indices_path) // item_size
+            ) if interleaving_exempt_indices_path.is_file() else 0
+
+            self._num_instances = (
+                self._num_interleavable_instances // self._docs_per_instance
+                + self._num_interleaving_exempt_instances
+            )
+        return self._num_instances
 
     def prepare(self):
         if self.fs_local_rank == 0:
@@ -1285,22 +1304,47 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         len(self)
 
     def _write_docs_interleaving_indices(self):
-        interleaving_indices_path = self._get_docs_interleaving_indices_path()
-        if interleaving_indices_path.is_file():
+        interleavable_indices_path = self._get_interleaveable_indices_path()
+        interleaving_exempt_indices_path = self._get_interleaving_exempt_indices_path()
+        if interleavable_indices_path.is_file() and (
+            self._interleaving_exempt_paths is None or interleaving_exempt_indices_path.is_file()
+        ):
             log.info(
-                f"Reusing all document interleaving indices at:\n'{interleaving_indices_path}'"
+                f"Reusing all document interleaving indices at:\n'{interleavable_indices_path}'"
             )
         else:
             log.info(
-                f"Generating all document interleaving indices to:\n'{interleaving_indices_path}..."
+                f"Generating all document interleaving indices to:\n'{interleavable_indices_path}..."
             )
+
+            if self._interleaving_exempt_paths:
+                interleaving_exempt_doc_indices = [
+                    instance_num
+                    for i_offset, (start, end) in enumerate(self.offsets)
+                    for instance_num in range(start, end)
+                    if self.paths[i_offset] in self._interleaving_exempt_paths
+                ]
+
+                with memmap_to_write(
+                    interleaving_exempt_indices_path,
+                    dtype=self.indices_dtype,
+                    shape=(len(interleaving_exempt_doc_indices),),
+                ) as interleaving_exempt_indices:
+                    interleaving_exempt_indices[:] = interleaving_exempt_doc_indices
+
+                interleavable_doc_indices = sorted(
+                    set(range(self.offsets[-1][1])) - set(interleaving_exempt_doc_indices)
+                )
+            else:
+                interleavable_doc_indices = list(range(self.offsets[-1][1]))
+
             with memmap_to_write(
-                interleaving_indices_path,
+                interleavable_indices_path,
                 dtype=self.indices_dtype,
-                shape=(len(self) * self._docs_per_instance,),
-            ) as docs_interleaving_indices:
-                docs_interleaving_indices[:] = get_rng(self._seed).permutation(
-                    len(self) * self._docs_per_instance
+                shape=(len(interleavable_doc_indices),),
+            ) as interleavable_indices:
+                interleavable_indices[:] = get_rng(self._seed).permutation(
+                    interleavable_doc_indices
                 )
 
     def _remove_special_tokens_and_interleave(
@@ -1328,7 +1372,23 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         index = int(index)  # in case this is a numpy int type.
         pos_index = index if index >= 0 else len(self) + index
 
-        interleaving_indices_path = self._get_docs_interleaving_indices_path()
+        assert self._num_interleaving_exempt_instances is not None
+        if self._interleaving_exempt_paths and pos_index < self._num_interleaving_exempt_instances:
+            interleaving_exempt_indices_path = self._get_interleaving_exempt_indices_path()
+            doc_index = load_array_slice_into_tensor(
+                interleaving_exempt_indices_path,
+                pos_index,
+                pos_index + 1,
+                self.indices_dtype,
+            ).tolist()[0]
+
+            return super().__getitem__(doc_index)
+
+        pos_index -= self._num_interleaving_exempt_instances
+        assert self._num_interleavable_instances is not None
+        assert pos_index < self._num_interleavable_instances
+
+        interleaving_indices_path = self._get_interleaveable_indices_path()
         interleaving_indices = load_array_slice_into_tensor(
             interleaving_indices_path,
             pos_index * self._docs_per_instance,
@@ -1338,7 +1398,13 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
 
         docs: List[Dict[str, Any]] = []
         for doc_index in interleaving_indices:
-            docs.append(super().__getitem__(doc_index))
+            doc = super().__getitem__(doc_index)
+
+            # Shrink the documents down, so that interleaving them does not exceed the sequence length.
+            doc["input_ids"] = doc["input_ids"][:self.sequence_length // self._docs_per_instance]
+            doc["label_mask"] = doc["label_mask"][:self.sequence_length // self._docs_per_instance]
+
+            docs.append(doc)
 
         for doc in docs:
             if doc.keys() != docs[0].keys():
@@ -1406,8 +1472,13 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
     def _get_instance_indices_path(self, source_path: PathOrStr) -> Path:
         return self._get_indices_path(source_path, "instance-indices", str(self._docs_per_instance))
 
-    def _get_docs_interleaving_indices_path(self) -> Path:
-        return self.work_dir / f"dataset-{self.fingerprint}" / "interleaved-docs-indices.npy"
+    def _get_interleaveable_indices_path(self) -> Path:
+        return self.work_dir / f"dataset-{self.fingerprint}" / "interleavable-docs-indices.npy"
+
+    def _get_interleaving_exempt_indices_path(self) -> Path:
+        return (
+            self.work_dir / f"dataset-{self.fingerprint}" / "interleaving-exempt-docs-indices.npy"
+        )
 
 
 @dataclass
@@ -2188,6 +2259,10 @@ class NumpyDatasetConfig(Config):
     An rng seed. Used for determining which combination of documents are interleaved by
     :class:`NumpyInterleavedFSLDataset`.
     """
+    interleaving_exempt_paths: Optional[List[str]] = None
+    """
+    A list of paths that are exempt from interleaving in :class:`NumpyInterleavedFSLDataset`.
+    """
     expand_glob: bool = False
     """
     Treat the :data:`paths` as globs.
@@ -2377,6 +2452,10 @@ class NumpyDatasetConfig(Config):
                 )
             if self.seed is not None:
                 raise OLMoConfigurationError("'seed' is only valid for the interleaved FSL dataset")
+            if self.interleaving_exempt_paths is not None:
+                raise OLMoConfigurationError(
+                    "'interleaving_exempt_paths' is only valid for the interleaved FSL dataset"
+                )
             if self.source_mixture_config:
                 if label_mask_paths is not None:
                     raise OLMoConfigurationError(
@@ -2456,6 +2535,10 @@ class NumpyDatasetConfig(Config):
                 )
             if self.seed is not None:
                 raise OLMoConfigurationError("'seed' is only valid for the interleaved FSL dataset")
+            if self.interleaving_exempt_paths is not None:
+                raise OLMoConfigurationError(
+                    "'interleaving_exempt_paths' is only valid for the interleaved FSL dataset"
+                )
             dataset = NumpyPaddedFSLDataset(
                 *paths,
                 sequence_length=self.sequence_length,
@@ -2503,6 +2586,10 @@ class NumpyDatasetConfig(Config):
                 )
             if self.seed is not None:
                 raise OLMoConfigurationError("'seed' is only valid for the interleaved FSL dataset")
+            if self.interleaving_exempt_paths is not None:
+                raise OLMoConfigurationError(
+                    "'interleaving_exempt_paths' is only valid for the interleaved FSL dataset"
+                )
             dataset = NumpyPackedFSLDataset(
                 *paths,
                 sequence_length=self.sequence_length,
@@ -2562,6 +2649,9 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'long_doc_strategy' is only a valid field for the packed FSL dataset"
                 )
+
+            interleaving_exempt_paths = cast(Optional[List[PathOrStr]], self.interleaving_exempt_paths)
+
             dataset = NumpyInterleavedFSLDataset(
                 *paths,
                 sequence_length=self.sequence_length,
@@ -2577,6 +2667,7 @@ class NumpyDatasetConfig(Config):
                 instance_filter_config=self.instance_filter_config,
                 label_mask_paths=label_mask_paths,
                 bos_token_id=self.tokenizer.bos_token_id,
+                interleaving_exempt_paths=interleaving_exempt_paths,
             )
         elif self.name == NumpyDatasetType.vsl:
             if self.max_sequence_length is None:
@@ -2607,6 +2698,10 @@ class NumpyDatasetConfig(Config):
                 )
             if self.seed is not None:
                 raise OLMoConfigurationError("'seed' is only valid for the interleaved FSL dataset")
+            if self.interleaving_exempt_paths is not None:
+                raise OLMoConfigurationError(
+                    "'interleaving_exempt_paths' is only valid for the interleaved FSL dataset"
+                )
             dataset = NumpyVSLDataset(
                 *paths,
                 max_sequence_length=self.max_sequence_length,

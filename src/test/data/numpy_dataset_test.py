@@ -720,6 +720,57 @@ def test_numpy_interleaved_fsl_dataset_with_bos_token_and_label_mask(tmp_path: P
     assert len(ds) == 2
 
 
+def test_numpy_interleaved_fsl_dataset_with_interleaving_exempt_paths(tmp_path: Path):
+    data1 = [1, 2, 3, 4, 5, 6, 7, 0, 8, 9, 10, 0]
+    mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
+    mmap1[:] = data1
+    mmap1.flush()
+
+    data2 = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 21, 22, 23, 24, 25, 0]
+    mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(len(data2),))
+    mmap2[:] = data2
+    mmap2.flush()
+
+    ds = NumpyInterleavedFSLDataset(
+        tmp_path / "mmap1.npy",
+        tmp_path / "mmap2.npy",
+        sequence_length=16,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=32_000,
+        seed=3,
+        docs_per_instance=2,
+        chunks_per_doc=4,
+        interleaving_exempt_paths=[tmp_path / "mmap1.npy"],
+    )
+    ds.work_dir = tmp_path
+    ds.prepare()
+
+    assert ds[0]["input_ids"].tolist() == [1, 2, 3, 4, 5, 6, 7, 0] + [-1] * 8
+    assert ds[1]["input_ids"].tolist() == [8, 9, 10, 0] + [-1] * 12
+
+    assert ds[2]["input_ids"].tolist() == [
+        21,
+        22,
+        11,
+        12,
+        23,
+        13,
+        14,
+        24,
+        15,
+        16,
+        25,
+        17,
+        18,
+        0,
+        -1,
+        -1,
+    ]
+    assert ds[2]["label_mask"].tolist() == [True] * 14 + [False] * 2
+    assert len(ds) == 3
+
+
 def test_guess_dtype():
     config = NumpyDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.gpt2())
     assert config.get_dtype() == np.uint16
