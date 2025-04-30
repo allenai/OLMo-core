@@ -1273,6 +1273,7 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
             "_bos_token_id",
             "_docs_per_instance",
             "_seed",
+            "_interleaving_exempt_paths",
         )
 
     def __len__(self) -> int:
