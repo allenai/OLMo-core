@@ -1286,8 +1286,10 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
 
             interleaving_exempt_indices_path = self._get_interleaving_exempt_indices_path()
             self._num_interleaving_exempt_instances = (
-                get_file_size(interleaving_exempt_indices_path) // item_size
-            ) if interleaving_exempt_indices_path.is_file() else 0
+                (get_file_size(interleaving_exempt_indices_path) // item_size)
+                if interleaving_exempt_indices_path.is_file()
+                else 0
+            )
 
             self._num_instances = (
                 self._num_interleavable_instances // self._docs_per_instance
@@ -1401,8 +1403,8 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
             doc = super().__getitem__(doc_index)
 
             # Shrink the documents down, so that interleaving them does not exceed the sequence length.
-            doc["input_ids"] = doc["input_ids"][:self.sequence_length // self._docs_per_instance]
-            doc["label_mask"] = doc["label_mask"][:self.sequence_length // self._docs_per_instance]
+            doc["input_ids"] = doc["input_ids"][: self.sequence_length // self._docs_per_instance]
+            doc["label_mask"] = doc["label_mask"][: self.sequence_length // self._docs_per_instance]
 
             docs.append(doc)
 
@@ -2650,7 +2652,9 @@ class NumpyDatasetConfig(Config):
                     "'long_doc_strategy' is only a valid field for the packed FSL dataset"
                 )
 
-            interleaving_exempt_paths = cast(Optional[List[PathOrStr]], self.interleaving_exempt_paths)
+            interleaving_exempt_paths = cast(
+                Optional[List[PathOrStr]], self.interleaving_exempt_paths
+            )
 
             dataset = NumpyInterleavedFSLDataset(
                 *paths,
