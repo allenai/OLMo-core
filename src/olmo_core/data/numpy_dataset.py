@@ -1297,7 +1297,7 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         pos_index = index if index >= 0 else len(self) + index
 
         if self._docs_indices is None:
-            raise RuntimeError(f"{self.prepare.__name__} has not been called.")
+            raise RuntimeError(f"{self.__class__.__name__}.prepare() has not been called.")
         docs_indices = self._docs_indices[pos_index]
 
         docs: List[Dict[str, Any]] = []
