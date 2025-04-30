@@ -11,7 +11,6 @@ import rich
 from rich import print
 
 from olmo_core.config import Config, DType
-from olmo_core.float8 import Float8Config
 from olmo_core.data import (
     DataMixBase,
     NumpyDataLoaderConfig,
@@ -19,43 +18,40 @@ from olmo_core.data import (
     TokenizerConfig,
     TokenizerName,
 )
+from olmo_core.data.types import NumpyDatasetType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank
+from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.io import resource_path
 from olmo_core.launch.beaker import BeakerLaunchConfig
-from olmo_core.nn.transformer import (
-    TransformerConfig,
-)
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
-from olmo_core.optim import (
-    LinearWithWarmup,
-    OptimGroupOverride,
-    AdamWConfig,
-)
+from olmo_core.optim import AdamWConfig, LinearWithWarmup, OptimGroupOverride
 from olmo_core.train import (
     Duration,
     TrainerConfig,
     prepare_training_environment,
     teardown_training_environment,
 )
-from olmo_core.train.train_module import (
-    # TransformerActivationCheckpointingConfig,
-    TransformerDataParallelConfig,
-    TransformerDataParallelWrappingStrategy,
-    # TransformerTensorParallelConfig,
-    TransformerContextParallelConfig,
-    TransformerTrainModuleConfig,
-)
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
-    WandBCallback, 
     ConfigSaverCallback,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
+    WandBCallback,
 )
 from olmo_core.train.checkpoint import CheckpointerConfig
-from olmo_core.train.train_module.transformer.config import TransformerActivationCheckpointingConfig, TransformerTensorParallelConfig
+from olmo_core.train.train_module import (  # TransformerActivationCheckpointingConfig,; TransformerTensorParallelConfig,
+    TransformerContextParallelConfig,
+    TransformerDataParallelConfig,
+    TransformerDataParallelWrappingStrategy,
+    TransformerTrainModuleConfig,
+)
+from olmo_core.train.train_module.transformer.config import (
+    TransformerActivationCheckpointingConfig,
+    TransformerTensorParallelConfig,
+)
 from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
 
 # The max number of pretraining steps configured for the purpose of setting the learning rate
@@ -133,6 +129,22 @@ class LcContTrain(Config):
 
         tokenizer_config = TokenizerConfig.dolma2()
 
+        interleaving_exempt_paths = []
+        with open("src/scripts/train/lc_cont_train/lc_v1.txt") as f:
+            base_dir = root_dir.rstrip("/") + "/"
+
+            assert tokenizer_config.identifier is not None
+            data_paths, _ = AnnealingDataMix.data_mix.build(base_dir, tokenizer_config.identifier)
+
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+
+                lc_path = f"{base_dir}{line}"
+
+                if lc_path in data_paths:
+                    interleaving_exempt_paths.append(lc_path)
 
         return LcContTrain(
             run_name=run_name,
@@ -144,14 +156,16 @@ class LcContTrain(Config):
                 cluster=cluster,
                 nccl_debug=False,
             ),
-            train_module = TransformerTrainModuleConfig(
+            train_module=TransformerTrainModuleConfig(
                 rank_microbatch_size=1 * CONTEXT_LENGTH,
-                 optim=AdamWConfig(
-                    lr= 0.000061499,
+                optim=AdamWConfig(
+                    lr=0.000061499,
                     weight_decay=0.1,
                     betas=(0.9, 0.95),
                     group_overrides=[
-                        OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                        OptimGroupOverride(
+                            params=["embeddings.weight"], opts=dict(weight_decay=0.0)
+                        )
                     ],
                     fused=True,
                 ),
@@ -175,9 +189,8 @@ class LcContTrain(Config):
                 # ac_config=TransformerActivationCheckpointingConfig(),
                 ac_config=TransformerActivationCheckpointingConfig(
                     mode=TransformerActivationCheckpointingMode.selected_modules,
-                    modules=[f"blocks.{i}.feed_forward" for i in range(32)] + [
-                        f"blocks.{i}.attention" for i in range(0, 32, AC_ATTENTION_INTERVAL)
-                    ]
+                    modules=[f"blocks.{i}.feed_forward" for i in range(32)]
+                    + [f"blocks.{i}.attention" for i in range(0, 32, AC_ATTENTION_INTERVAL)],
                 ),
                 # ac_config=TransformerActivationCheckpointingConfig(
                 #     mode=TransformerActivationCheckpointingMode.selected_ops,
@@ -189,20 +202,26 @@ class LcContTrain(Config):
             model=TransformerConfig.olmo2_7B(
                 vocab_size=tokenizer_config.padded_vocab_size(),
                 # compile=True,
-            #     fused_ops=False,
+                #     fused_ops=False,
                 use_flash=True,
-                rope_theta = 8 * 10 ** 6,
+                rope_theta=8 * 10**6,
             ),
             dataset=NumpyDatasetConfig.from_data_mix(
                 AnnealingDataMix.data_mix,
+                name=NumpyDatasetType.interleaved_fsl,
                 tokenizer=tokenizer_config,
                 mix_base_dir=root_dir,
                 generate_doc_lengths=INTRA_DOCUMENT_MASKING,
                 sequence_length=CONTEXT_LENGTH,
                 work_dir=get_work_dir(root_dir),
+                docs_per_instance=4,
+                chunks_per_doc=4,
+                seed=1234,
+                interleaving_exempt_paths=interleaving_exempt_paths,
             ),
             data_loader=NumpyDataLoaderConfig(
-                global_batch_size= 64 * CONTEXT_LENGTH,  # NOTE: this is specified in TOKENS, not instances.
+                global_batch_size=64
+                * CONTEXT_LENGTH,  # NOTE: this is specified in TOKENS, not instances.
                 seed=34521,  # NOTE: can update this to change data order.
                 num_workers=4,
             ),
@@ -240,8 +259,9 @@ class LcContTrain(Config):
                 GPUMemoryMonitorCallback(),
             )
             # .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0)
-            .with_callback("config_saver", ConfigSaverCallback())
-            .with_callback("garbage_collector", GarbageCollectorCallback())
+            .with_callback("config_saver", ConfigSaverCallback()).with_callback(
+                "garbage_collector", GarbageCollectorCallback()
+            )
             # .with_callback(
             #     "downstream_evaluator",
             #     DownstreamEvaluatorCallbackConfig(
