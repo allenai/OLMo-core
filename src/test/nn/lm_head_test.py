@@ -14,10 +14,8 @@ from olmo_core.distributed.utils import get_local_tensor, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType, LMLossImplementation
+from olmo_core.testing import requires_gpu, requires_multi_gpu, run_distributed_test
 from olmo_core.utils import get_default_device, seed_all
-
-from ..distributed.utils import requires_multi_gpu, run_distributed_test
-from ..utils import requires_gpu
 
 
 def test_lm_head_builder_config():
@@ -118,6 +116,14 @@ def run_lm_head_tp(
         z_loss_multiplier=z_loss_multiplier,
     )
     _, local_loss, local_ce_loss, local_z_loss = local_output
+
+    # The loss for optimizing ('local_loss') will have been reduced across the TP group, but not the losses
+    # for logging ('local_ce_loss' and 'local_z_loss').
+    dist.all_reduce(local_ce_loss)
+    local_ce_loss.div_(get_world_size())
+    dist.all_reduce(local_z_loss)
+    local_z_loss.div_(get_world_size())
+
     local_loss.backward()
     assert local_inputs.grad is not None
 

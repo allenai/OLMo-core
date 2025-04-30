@@ -2,8 +2,7 @@ import pytest
 import torch
 
 from olmo_core.nn.moe.router import MoELinearRouter, MoERouterGatingFunction
-
-from ...utils import DEVICES
+from olmo_core.testing import DEVICES
 
 
 @pytest.mark.parametrize("device", DEVICES)
