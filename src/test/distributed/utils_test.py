@@ -4,8 +4,7 @@ import pytest
 import torch.distributed as dist
 
 import olmo_core.distributed.utils as dist_utils
-
-from .utils import BACKENDS, run_distributed_test
+from olmo_core.testing import BACKENDS, run_distributed_test
 
 
 def scatter_object():
