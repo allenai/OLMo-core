@@ -1233,6 +1233,7 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         include_instance_metadata: Optional[bool] = None,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
         label_mask_paths: Optional[List[PathOrStr]] = None,
+        bos_token_id: Optional[int] = None,
     ):
         if sequence_length % docs_per_instance != 0:
             raise OLMoConfigurationError(
@@ -1256,6 +1257,7 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         self._docs_per_instance = docs_per_instance
         self._chunks_per_doc = chunks_per_doc
         self._seed = seed
+        self._bos_token_id = bos_token_id
 
     @property
     def fingerprint_fields(self) -> Tuple[str, ...]:
@@ -1264,6 +1266,7 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
             "pad_token_id",
             "eos_token_id",
             "dtype",
+            "_bos_token_id",
             "_docs_per_instance",
             "_seed",
         )
@@ -1345,25 +1348,35 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
 
         item: Dict[str, Any] = {}
 
-        non_special_token_indices = [
-            torch.nonzero(
-                torch.logical_and(
-                    doc["input_ids"] != self.pad_token_id,
-                    doc["input_ids"] != self.eos_token_id,
-                ),
+        docs_non_special_token_indices = []
+        for doc in docs:
+            special_tokens_mask = torch.logical_or(
+                doc["input_ids"] == self.pad_token_id,
+                doc["input_ids"] == self.eos_token_id,
+            )
+            if self._bos_token_id is not None:
+                special_tokens_mask = torch.logical_or(
+                    special_tokens_mask,
+                    doc["input_ids"] == self._bos_token_id,
+                )
+
+            non_special_token_indices = torch.nonzero(
+                torch.logical_not(special_tokens_mask),
                 as_tuple=True,
             )
-            for doc in docs
-        ]
+            docs_non_special_token_indices.append(non_special_token_indices)
 
         item["input_ids"] = self._remove_special_tokens_and_interleave(
-            [doc["input_ids"] for doc in docs], non_special_token_indices
+            [doc["input_ids"] for doc in docs], docs_non_special_token_indices
         )
         item["label_mask"] = self._remove_special_tokens_and_interleave(
-            [doc["label_mask"] for doc in docs], non_special_token_indices
+            [doc["label_mask"] for doc in docs], docs_non_special_token_indices
         )
 
-        # Add an eos token if there is space after interleaving.
+        # Add bos and tokens if there is space after interleaving.
+        if self._bos_token_id is not None and len(item["input_ids"]) < self.sequence_length:
+            item["input_ids"] = F.pad(item["input_ids"], (1, 0), value=self._bos_token_id)
+            item["label_mask"] = F.pad(item["label_mask"], (1, 0), value=True)
         if len(item["input_ids"]) < self.sequence_length:
             item["input_ids"] = F.pad(item["input_ids"], (0, 1), value=self.eos_token_id)
             item["label_mask"] = F.pad(item["label_mask"], (0, 1), value=True)
@@ -2563,6 +2576,7 @@ class NumpyDatasetConfig(Config):
                 include_instance_metadata=self.include_instance_metadata,
                 instance_filter_config=self.instance_filter_config,
                 label_mask_paths=label_mask_paths,
+                bos_token_id=self.tokenizer.bos_token_id,
             )
         elif self.name == NumpyDatasetType.vsl:
             if self.max_sequence_length is None:
