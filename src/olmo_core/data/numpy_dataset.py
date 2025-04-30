@@ -1280,20 +1280,20 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
             item_size = self.indices_dtype(0).itemsize
 
             interleavable_indices_path = self._get_interleaveable_indices_path()
-            self._num_interleavable_instances = (
-                get_file_size(interleavable_indices_path) // item_size
-            )
+            num_interleavable_instances = get_file_size(interleavable_indices_path) // item_size
 
             interleaving_exempt_indices_path = self._get_interleaving_exempt_indices_path()
-            self._num_interleaving_exempt_instances = (
+            num_interleaving_exempt_instances = (
                 (get_file_size(interleaving_exempt_indices_path) // item_size)
                 if interleaving_exempt_indices_path.is_file()
                 else 0
             )
 
+            self._num_interleavable_instances = num_interleavable_instances
+            self._num_interleaving_exempt_instances = num_interleaving_exempt_instances
             self._num_instances = (
-                self._num_interleavable_instances // self._docs_per_instance
-                + self._num_interleaving_exempt_instances
+                num_interleavable_instances // self._docs_per_instance
+                + num_interleaving_exempt_instances
             )
         return self._num_instances
 
