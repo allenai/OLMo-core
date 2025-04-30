@@ -2,6 +2,7 @@
 Launch experiments on `Beaker <https://beaker.org>`_.
 """
 
+import binascii
 import hashlib
 import logging
 import tempfile
@@ -12,18 +13,18 @@ from typing import List, Optional, Set, Tuple
 
 from beaker import (
     Beaker,
-    Dataset,
-    DatasetConflict,
-    DatasetNotFound,
-    Experiment,
-    ExperimentSpec,
-    ImageNotFound,
-    Job,
-    Priority,
-    RetrySpec,
-    TaskResources,
-    TaskSpec,
+    BeakerDataset,
+    BeakerDatasetFileAlgorithmType,
+    BeakerExperimentSpec,
+    BeakerJobPriority,
+    BeakerRetrySpec,
+    BeakerSortOrder,
+    BeakerTaskResources,
+    BeakerTaskSpec,
+    BeakerWorkload,
+    BeakerWorkloadStatus,
 )
+from beaker.exceptions import BeakerDatasetConflict, BeakerImageNotFound
 from rich.prompt import Confirm
 
 from ..config import Config, StrEnum
@@ -46,7 +47,7 @@ __all__ = [
 ]
 
 
-BeakerPriority = Priority
+BeakerPriority = BeakerJobPriority
 
 _DEFAULT_TORCH = "2.7.0".replace(".", "")
 _DEFAULT_CUDA = "12.6".replace(".", "")
@@ -184,7 +185,7 @@ class BeakerLaunchConfig(Config):
     shared filesystem (like weka or NFS).
     """
 
-    priority: Priority = Priority.normal
+    priority: BeakerPriority = BeakerPriority.normal
     """
     The job priority.
     """
@@ -232,10 +233,6 @@ class BeakerLaunchConfig(Config):
     If not set, this will be initialized automatically from your working directory.
     """
 
-    # NOTE: don't assign a type here because omegaconf can't validate arbitrary classes
-    #  _beaker: Optional[Beaker] = None
-    _beaker = None
-
     @property
     def default_env_vars(self) -> List[Tuple[str, str]]:
         """
@@ -255,15 +252,6 @@ class BeakerLaunchConfig(Config):
         if self.shared_filesystem:
             env_vars.append((OLMO_SHARED_FS_ENV_VAR, "1"))
         return env_vars
-
-    @property
-    def beaker(self) -> Beaker:
-        """
-        The Beaker client.
-        """
-        if self._beaker is None:
-            self._beaker = Beaker.from_env(default_workspace=self.workspace)
-        return self._beaker
 
     def _get_env_vars(self) -> List[Tuple[str, str]]:
         env_vars: List[Tuple[str, str]] = []
@@ -296,8 +284,10 @@ class BeakerLaunchConfig(Config):
 
         return torchrun
 
-    def _create_script_dataset(self, script_name: str, script: List[str]) -> Dataset:
-        workspace_id = self.beaker.workspace.get(self.workspace).id
+    def _create_script_dataset(
+        self, beaker: Beaker, script_name: str, script: List[str]
+    ) -> BeakerDataset:
+        workspace = beaker.workspace.get(self.workspace)
 
         # Hash contents.
         sha256_hash = hashlib.sha256()
@@ -305,12 +295,21 @@ class BeakerLaunchConfig(Config):
             sha256_hash.update(line.encode())
 
         # Create unique name for dataset.
-        dataset_name = f"olmo-core-v{VERSION}-{workspace_id}-{sha256_hash.hexdigest()[:6]}"
+        dataset_name = f"olmo-core-v{VERSION}-{workspace.id}-{sha256_hash.hexdigest()[:6]}"
 
-        dataset: Dataset
-        try:
-            dataset = self.beaker.dataset.get(dataset_name)
-        except DatasetNotFound:
+        def get_dataset() -> Optional[BeakerDataset]:
+            matching_datasets = list(
+                beaker.dataset.list(
+                    workspace=workspace, name_or_description=dataset_name, results=False
+                )
+            )
+            if matching_datasets:
+                return matching_datasets[0]
+            else:
+                return None
+
+        dataset = get_dataset()
+        if dataset is None:
             # Create it.
             log.info(f"Creating script dataset '{dataset_name}'...")
             try:
@@ -320,31 +319,65 @@ class BeakerLaunchConfig(Config):
                     with open(script_path, "w") as script_file:
                         for line in script:
                             script_file.write(line + "\n")
-                    dataset = self.beaker.dataset.create(dataset_name, script_path)
-            except DatasetConflict:  # could be in a race with another process.
+                    dataset = beaker.dataset.create(dataset_name, script_path)
+            except BeakerDatasetConflict:  # could be in a race with another process.
                 time.sleep(1.0)
-                dataset = self.beaker.dataset.get(dataset_name)
+                dataset = get_dataset()
+
+        if dataset is None:
+            raise RuntimeError(f"Failed to resolve entrypoint dataset '{dataset_name}'")
+
+        # Verify contents.
+        ds_files = list(beaker.dataset.list_files(dataset))
+        for retry in range(1, 4):
+            ds_files = list(beaker.dataset.list_files(dataset))
+            if len(ds_files) >= 1:
+                break
+            else:
+                time.sleep(1.5**retry)
+
+        if len(ds_files) != 1:
+            raise RuntimeError(
+                f"Entrypoint dataset {beaker.dataset.url(dataset)} is missing the "
+                f"required entrypoint file. Please run again."
+            )
+
+        if ds_files[0].HasField("digest"):
+            digest = ds_files[0].digest
+            expected_value = binascii.hexlify(digest.value).decode()
+            hasher = BeakerDatasetFileAlgorithmType(digest.algorithm).hasher()
+            for line in script:
+                hasher.update(line.encode())
+            actual_value = binascii.hexlify(hasher.digest()).decode()
+            if actual_value != expected_value:
+                raise RuntimeError(
+                    f"Checksum failed for entrypoint dataset {beaker.dataset.url(dataset)}\n"
+                    f"This could be a bug, or it could mean someone has tampered with the dataset.\n"
+                    f"If you're sure no one has tampered with it, you can delete the dataset from "
+                    f"the Beaker dashboard and try again.\n"
+                    f"Actual digest:\n{digest}"
+                )
 
         return dataset
 
-    def _resolve_beaker_image(self) -> str:
+    def _resolve_beaker_image_id(self, beaker: Beaker) -> str:
         image = self.beaker_image
         try:
-            return self.beaker.image.get(image).id
-        except ImageNotFound as exc:
+            return beaker.image.get(image).id
+        except BeakerImageNotFound as exc:
             # Image name was already a full name, so it probably doesn't exist.
             if "/" in image:
                 raise
 
             # Try pre-pending 'petew', since that's the account that we usually build the images from.
             try:
-                return self.beaker.image.get(f"petew/{image}").id
-            except ImageNotFound:
+                return beaker.image.get(f"petew/{image}").id
+            except BeakerImageNotFound:
                 raise exc
 
     def build_experiment_spec(
-        self, torchrun: bool = True, entrypoint: Optional[str] = None
-    ) -> ExperimentSpec:
+        self, beaker: Beaker, torchrun: bool = True, entrypoint: Optional[str] = None
+    ) -> BeakerExperimentSpec:
         """
         Get the Beaker experiment spec corresponding to this config instance.
         """
@@ -391,12 +424,12 @@ class BeakerLaunchConfig(Config):
             entrypoint = entrypoint or "python"
             entrypoint_script.append(f'{entrypoint} "$@"')
 
-        entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
+        entrypoint_dataset = self._create_script_dataset(beaker, "entrypoint.sh", entrypoint_script)
 
         task_spec = (
-            TaskSpec.new(
+            BeakerTaskSpec.new(
                 self.task_name,
-                beaker_image=self._resolve_beaker_image(),
+                beaker_image=self._resolve_beaker_image_id(beaker),
                 priority=self.priority,
                 preemptible=self.preemptible,
                 arguments=self.cmd,
@@ -414,7 +447,9 @@ class BeakerLaunchConfig(Config):
                 propagate_failure=False if self.num_nodes > 1 else None,
                 propagate_preemption=True if self.num_nodes > 1 else None,
                 synchronized_start_timeout="90m" if self.num_nodes > 1 else None,
-                resources=TaskResources(gpu_count=self.num_gpus, shared_memory=self.shared_memory),
+                resources=BeakerTaskResources(
+                    gpu_count=self.num_gpus, shared_memory=self.shared_memory
+                ),
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
             .with_constraint(cluster=self.clusters)
@@ -441,16 +476,16 @@ class BeakerLaunchConfig(Config):
             for bucket in self.weka_buckets:
                 task_spec = task_spec.with_dataset(bucket.mount, weka=bucket.bucket)
 
-        return ExperimentSpec(
+        return BeakerExperimentSpec(
             description=self.description,
             budget=self.budget,
             tasks=[task_spec],
-            retry=None if not self.retries else RetrySpec(allowed_task_retries=self.retries),
+            retry=None if not self.retries else BeakerRetrySpec(allowed_task_retries=self.retries),
         )
 
     def launch(
         self, follow: bool = False, torchrun: bool = True, entrypoint: Optional[str] = None
-    ) -> Experiment:
+    ) -> BeakerWorkload:
         """
         Launch a Beaker experiment using this config.
 
@@ -465,76 +500,80 @@ class BeakerLaunchConfig(Config):
 
         :returns: The Beaker experiment.
         """
-        spec = self.build_experiment_spec(torchrun=torchrun, entrypoint=entrypoint)
-        experiment = self.beaker.experiment.create(self.name, spec)
-        log.info(f"Experiment submitted, see progress at {self.beaker.experiment.url(experiment)}")
+        with Beaker.from_env(default_workspace=self.workspace) as beaker:
+            spec = self.build_experiment_spec(beaker, torchrun=torchrun, entrypoint=entrypoint)
+            workload = beaker.experiment.create(name=self.name, spec=spec)
+            log.info(f"Experiment submitted, see progress at {beaker.workload.url(workload)}")
 
-        if not follow:
-            return experiment
+            if not follow:
+                return workload
 
-        try:
-            follow_experiment(self.beaker, experiment)
-        except KeyboardInterrupt:
-            log.warning("Caught keyboard interrupt...")
-            if Confirm.ask("Would you like to cancel the experiment?"):
-                self.beaker.experiment.stop(experiment)
-                log.warning(f"Experiment stopped: {self.beaker.experiment.url(experiment)}")
-            else:
-                log.info(
-                    "You can follow the experiment on the Beaker UI: "
-                    f"{self.beaker.experiment.url(experiment)}"
-                )
+            try:
+                follow_experiment(beaker, workload)
+            except KeyboardInterrupt:
+                log.warning("Caught keyboard interrupt...")
+                if Confirm.ask("Would you like to cancel the experiment?"):
+                    beaker.workload.cancel(workload)
+                    log.warning(f"Experiment stopped: {beaker.workload.url(workload)}")
+                else:
+                    log.info(
+                        "You can follow the experiment on the Beaker UI: "
+                        f"{beaker.workload.url(workload)}"
+                    )
 
-        return experiment
+            return workload
 
 
-def follow_experiment(beaker: Beaker, experiment: Experiment, tail_lines: Optional[int] = None):
+def follow_experiment(beaker: Beaker, workload: BeakerWorkload, tail_lines: Optional[int] = None):
     # Wait for job to start...
-    job: Optional[Job] = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
-    if job is None:
+    while (job := beaker.workload.get_latest_job(workload)) is None:
         log.info("Waiting for job to be created...")
-        while job is None:
-            time.sleep(1.0)
-            job = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
+        time.sleep(1.0)
 
     # Pull events until job is running (or fails)...
     events = set()
-    while not (job.is_finalized or job.is_running):
+    while not (job.status.HasField("finalized") or job.status.HasField("started")):
         job = beaker.job.get(job.id)
-        for event in sorted(
-            beaker.job.summarized_events(job), key=lambda event: event.latest_occurrence
+        for event in beaker.job.list_summarized_events(
+            job, sort_order=BeakerSortOrder.descending, sort_field="latest_occurrence"
         ):
-            if event not in events:
-                events.add(event)
+            event_hashable = (event.latest_occurrence.ToSeconds(), event.latest_message)
+            if event_hashable not in events:
+                events.add(event_hashable)
                 log.info(f"❯ {event.latest_message}")
                 if event.status.lower() == "started":
                     break
         else:
             time.sleep(1.0)
             continue
+
         break
 
     # Stream logs...
     log.info("Showing logs:")
     print()
     time.sleep(2.0)  # wait a moment to make sure logs are available before experiment finishes
-    for job_log in beaker.job.follow_structured(job, tail_lines=tail_lines):
-        print(job_log.message)
+    for job_log in beaker.job.logs(job, tail_lines=tail_lines):
+        print(job_log.message.decode())
     print()
     log.info("End logs")
 
-    # Refresh the job.
-    job = beaker.job.get(job.id)
-    exit_code = job.status.exit_code
+    # Waiting for job to finalize...
+    while not job.status.HasField("finalized"):
+        log.info("Waiting for job to finalize...")
+        time.sleep(1.0)
+        job = beaker.job.get(job.id)
 
-    if exit_code is None:
+    status = job.status.status
+    if status == BeakerWorkloadStatus.succeeded:
+        log.info(f"Job completed successfully: {beaker.workload.url(workload)}")
+    elif status == BeakerWorkloadStatus.canceled:
         raise BeakerExperimentFailedError(
-            f"Experiment failed, see {beaker.experiment.url(experiment)} for details"
+            f"Job was canceled, see {beaker.workload.url(workload)} for details"
         )
-    elif exit_code > 0:
+    elif status == BeakerWorkloadStatus.failed:
         raise BeakerExperimentFailedError(
-            f"Experiment exited with non-zero code ({exit_code}), "
-            f"see {beaker.experiment.url(experiment)} for details"
+            f"Job failed with exit code {job.status.exit_code}, see {beaker.workload.url(workload)} for details"
         )
     else:
-        log.info(f"Experiment completed successfully: {beaker.experiment.url(experiment)}")
+        raise ValueError(f"unexpected job status '{status}'")

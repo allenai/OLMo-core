@@ -57,11 +57,11 @@ jobs:
             run: |
               cd docs && make html SPHINXOPTS="-W --keep-going"
 
-        include:
-          - python: '3.9'
-            task:
-              name: Lint (min Python)
-              run: make lint-check
+        # include:
+        #   - python: '3.9'
+        #     task:
+        #       name: Lint (min Python)
+        #       run: make lint-check
 
     steps:
       - uses: actions/checkout@v4

@@ -3,7 +3,8 @@ from functools import lru_cache
 from typing import List, Optional
 
 import torch
-from beaker import Beaker, BeakerError
+from beaker import Beaker, BeakerGpuType
+from beaker.exceptions import BeakerConfigurationError
 
 from olmo_core.io import is_url
 from olmo_core.launch.beaker import (
@@ -19,19 +20,11 @@ log = logging.getLogger(__name__)
 
 
 @lru_cache()
-def get_beaker_client() -> Optional[Beaker]:
-    try:
-        return Beaker.from_env(check_for_upgrades=False)
-    except BeakerError:
-        return None
-
-
-@lru_cache()
 def get_beaker_username() -> Optional[str]:
-    beaker = get_beaker_client()
-    if beaker is not None:
-        return beaker.account.whoami().name
-    else:
+    try:
+        with Beaker.from_env(check_for_upgrades=False) as beaker:
+            return beaker.user_name
+    except BeakerConfigurationError:
         return None
 
 
@@ -138,9 +131,10 @@ def get_gpu_type(cluster: str) -> str:
     elif cluster == "local":
         return torch.get_default_device().type
     else:
-        log.warning(f"Missing cluster '{cluster}' in CLUSTER_TO_GPU_TYPE mapping")
-        beaker = get_beaker_client()
-        assert beaker is not None
-        nodes = beaker.cluster.nodes(cluster)
-        assert nodes and nodes[0].limits.gpu_type
-        return nodes[0].limits.gpu_type
+        log.warning(f"Missing cluster '{cluster}' in 'CLUSTER_TO_GPU_TYPE' mapping")
+        with Beaker.from_env(check_for_upgrades=False) as beaker:
+            cl = beaker.cluster.get(cluster)
+            gpu_type = list(beaker.node.list(cluster=cl, limit=1))[0].node_resources.gpu_type
+            gpu_type_str = BeakerGpuType(gpu_type).name.replace("_", " ")
+            log.warning(f"Guessing '{gpu_type_str}' GPU type for '{cluster}'")
+            return gpu_type_str
