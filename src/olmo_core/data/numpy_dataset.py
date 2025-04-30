@@ -1257,9 +1257,7 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         self._chunks_per_doc = chunks_per_doc
         self._seed = seed
         self._bos_token_id = bos_token_id
-        self._interleaving_exempt_paths = (
-            set(interleaving_exempt_paths) if interleaving_exempt_paths else None
-        )
+        self._interleaving_exempt_paths = interleaving_exempt_paths
         self._num_interleaving_exempt_instances = None
         self._num_interleavable_instances = None
 
