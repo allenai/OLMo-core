@@ -16,7 +16,6 @@ from beaker import (
     BeakerDataset,
     BeakerDatasetFileAlgorithmType,
     BeakerExperimentSpec,
-    BeakerJobPriority,
     BeakerRetrySpec,
     BeakerSortOrder,
     BeakerTaskResources,
@@ -47,7 +46,12 @@ __all__ = [
 ]
 
 
-BeakerPriority = BeakerJobPriority
+class BeakerPriority(StrEnum):
+    low = "low"
+    normal = "normal"
+    high = "high"
+    urgent = "urgent"
+
 
 _DEFAULT_TORCH = "2.7.0".replace(".", "")
 _DEFAULT_CUDA = "12.6".replace(".", "")
