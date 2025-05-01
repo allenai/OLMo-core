@@ -25,7 +25,13 @@ from beaker import (
     BeakerWorkload,
     BeakerWorkloadStatus,
 )
-from beaker.exceptions import BeakerDatasetConflict, BeakerImageNotFound
+from beaker.exceptions import (
+    BeakerDatasetConflict,
+    BeakerError,
+    BeakerImageNotFound,
+    HTTPError,
+    RpcError,
+)
 from rich.prompt import Confirm
 
 from ..config import Config, StrEnum
@@ -512,6 +518,12 @@ class BeakerLaunchConfig(Config):
                         "You can follow the experiment on the Beaker UI: "
                         f"{beaker.workload.url(workload)}"
                     )
+            except (BeakerError, RpcError, HTTPError):
+                log.error(
+                    f"Unexpected error while following job.\n"
+                    f"You can follow the experiment on the Beaker UI: {beaker.workload.url(workload)}"
+                )
+                raise
 
             return workload
 
