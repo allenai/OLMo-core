@@ -17,6 +17,7 @@ from beaker import (
     BeakerDatasetFileAlgorithmType,
     BeakerExperimentSpec,
     BeakerImage,
+    BeakerJob,
     BeakerRetrySpec,
     BeakerSortOrder,
     BeakerTaskResources,
@@ -298,7 +299,7 @@ class BeakerLaunchConfig(Config):
         # Hash contents.
         sha256_hash = hashlib.sha256()
         for line in script:
-            sha256_hash.update(line.encode())
+            sha256_hash.update((line + "\n").encode())
 
         # Create unique name for dataset.
         dataset_name = f"olmo-core-v{VERSION}-{workspace.id}-{sha256_hash.hexdigest()[:6]}"
@@ -353,7 +354,7 @@ class BeakerLaunchConfig(Config):
             expected_value = binascii.hexlify(digest.value).decode()
             hasher = BeakerDatasetFileAlgorithmType(digest.algorithm).hasher()
             for line in script:
-                hasher.update(line.encode())
+                hasher.update((line + "\n").encode())
             actual_value = binascii.hexlify(hasher.digest()).decode()
             if actual_value != expected_value:
                 raise RuntimeError(
@@ -361,7 +362,7 @@ class BeakerLaunchConfig(Config):
                     f"This could be a bug, or it could mean someone has tampered with the dataset.\n"
                     f"If you're sure no one has tampered with it, you can delete the dataset from "
                     f"the Beaker dashboard and try again.\n"
-                    f"Actual digest:\n{digest}"
+                    f"Expected digest:\n{digest}"
                 )
 
         return dataset
@@ -521,10 +522,14 @@ def follow_experiment(beaker: Beaker, workload: BeakerWorkload, tail_lines: Opti
         log.info("Waiting for job to be created...")
         time.sleep(1.0)
 
+    def refresh_job() -> BeakerJob:
+        assert job is not None
+        return beaker.job.get(job.id)
+
     # Pull events until job is running (or fails)...
     events = set()
     while not (job.status.HasField("finalized") or job.status.HasField("started")):
-        job = beaker.job.get(job.id)
+        job = refresh_job()
         for event in beaker.job.list_summarized_events(
             job, sort_order=BeakerSortOrder.descending, sort_field="latest_occurrence"
         ):
@@ -544,16 +549,17 @@ def follow_experiment(beaker: Beaker, workload: BeakerWorkload, tail_lines: Opti
     log.info("Showing logs:")
     print()
     time.sleep(2.0)  # wait a moment to make sure logs are available before experiment finishes
-    for job_log in beaker.job.logs(job, tail_lines=tail_lines):
+    for job_log in beaker.job.logs(job, follow=True, tail_lines=tail_lines):
         print(job_log.message.decode())
     print()
     log.info("End logs")
 
     # Waiting for job to finalize...
-    while not job.status.HasField("finalized"):
+    job = refresh_job()
+    if not job.status.HasField("finalized"):
         log.info("Waiting for job to finalize...")
-        time.sleep(1.0)
-        job = beaker.job.get(job.id)
+        while not (job := refresh_job()).status.HasField("finalized"):
+            time.sleep(1.0)
 
     status = job.status.status
     if status == BeakerWorkloadStatus.succeeded:
