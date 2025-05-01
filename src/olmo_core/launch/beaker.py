@@ -16,6 +16,7 @@ from beaker import (
     BeakerDataset,
     BeakerDatasetFileAlgorithmType,
     BeakerExperimentSpec,
+    BeakerImage,
     BeakerRetrySpec,
     BeakerSortOrder,
     BeakerTaskResources,
@@ -55,6 +56,7 @@ class BeakerPriority(StrEnum):
 
 _DEFAULT_TORCH = "2.7.0".replace(".", "")
 _DEFAULT_CUDA = "12.6".replace(".", "")
+_DEFAULT_BUILD_ACCOUNT = "petew"
 
 
 class OLMoCoreBeakerImage(StrEnum):
@@ -364,21 +366,6 @@ class BeakerLaunchConfig(Config):
 
         return dataset
 
-    def _resolve_beaker_image_id(self, beaker: Beaker) -> str:
-        image = self.beaker_image
-        try:
-            return beaker.image.get(image).id
-        except BeakerImageNotFound as exc:
-            # Image name was already a full name, so it probably doesn't exist.
-            if "/" in image:
-                raise
-
-            # Try pre-pending 'petew', since that's the account that we usually build the images from.
-            try:
-                return beaker.image.get(f"petew/{image}").id
-            except BeakerImageNotFound:
-                raise exc
-
     def build_experiment_spec(
         self, beaker: Beaker, torchrun: bool = True, entrypoint: Optional[str] = None
     ) -> BeakerExperimentSpec:
@@ -433,7 +420,7 @@ class BeakerLaunchConfig(Config):
         task_spec = (
             BeakerTaskSpec.new(
                 self.task_name,
-                beaker_image=self._resolve_beaker_image_id(beaker),
+                beaker_image=resolve_beaker_image(beaker, self.beaker_image).id,
                 priority=self.priority,
                 preemptible=self.preemptible,
                 arguments=self.cmd,
@@ -581,3 +568,38 @@ def follow_experiment(beaker: Beaker, workload: BeakerWorkload, tail_lines: Opti
         )
     else:
         raise ValueError(f"unexpected job status '{status}'")
+
+
+def resolve_beaker_image(beaker: Beaker, image: str) -> BeakerImage:
+    try:
+        return beaker.image.get(image)
+    except BeakerImageNotFound:
+        pass
+
+    # If image name is already a full name then it probably doesn't exist.
+    if "/" in image:
+        raise BeakerImageNotFound(image)
+
+    # Try pre-pending 'petew', since that's the account that we usually build the images from.
+    try:
+        return beaker.image.get(f"petew/{image}")
+    except BeakerImageNotFound:
+        pass
+
+    matches = [im for im in beaker.image.list(name_or_description=image) if im.name == image]
+    if not matches:
+        raise BeakerImageNotFound(image)
+    elif len(matches) == 1:
+        return matches[0]
+
+    current_user = beaker.user.get()
+    author_ids = [current_user.id]
+    if current_user.name != _DEFAULT_BUILD_ACCOUNT:
+        author_ids.append(beaker.user.get(_DEFAULT_BUILD_ACCOUNT).id)
+
+    for author_id in author_ids:
+        matches_for_author = [im for im in matches if im.author_id == author_id]
+        if matches_for_author:
+            return matches_for_author[0]
+
+    raise BeakerImageNotFound(image)
