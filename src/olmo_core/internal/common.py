@@ -111,7 +111,7 @@ def build_launch_config(
             "conda shell.bash activate base",
             #  "pip install 'ai2-olmo-eval @ git+https://git@github.com/allenai/OLMo-in-loop-evals.git@epwalsh/debug'",
             "pip install -e '.[all]'",
-            "pip install --upgrade beaker-py",
+            "pip install beaker-py==1.36.2",
             # Quickly try a new version of PyTorch like this
             #  "pip install --upgrade --pre torch==2.6.0.dev20241112+cu121 --index-url https://download.pytorch.org/whl/nightly/cu121",
             "pip freeze",
