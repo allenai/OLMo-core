@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed training on single GPU when using a `SkipStepOptimizer`.
 - Fixed the initialization of the `CosWithWarmupAndLinearDecay` learning rate scheduler
 
+### Removed
+
+- Removed support for Python versions under 3.10.
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 
