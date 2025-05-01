@@ -172,7 +172,7 @@ jobs:
           echo "BEAKER_IMAGE=$(make get-full-beaker-image-name IMAGE_NAME=${{ matrix.task.image }})" >> $GITHUB_ENV
 
       - name: GPU Tests
-        uses: allenai/beaker-run-action@v2.0.0
+        uses: allenai/beaker-run-action@v2.0
         if: env.BEAKER_TOKEN != ''
         with:
           spec: |
