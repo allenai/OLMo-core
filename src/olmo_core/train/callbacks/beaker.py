@@ -109,10 +109,10 @@ class BeakerCallback(Callback):
         self._last_update = time.monotonic()
 
     def _set_description(self, progress: TrainingProgress):
-        from beaker import BeakerError, HTTPError
+        from beaker.exceptions import BeakerError, HTTPError, RpcError
         from requests.exceptions import RequestException
 
-        assert self.experiment_id is not None
+        assert self.workload is not None
 
         description = f"[{progress}] "
 
@@ -124,5 +124,5 @@ class BeakerCallback(Callback):
 
         try:
             self.client.workload.update(self.workload, description=description.strip())
-        except (RequestException, BeakerError, HTTPError) as e:
+        except (RequestException, BeakerError, HTTPError, RpcError) as e:
             log.warning(f"Failed to update Beaker experiment description: {e}")
