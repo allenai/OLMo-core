@@ -130,13 +130,12 @@ class LcContTrain(Config):
 
         tokenizer_config = TokenizerConfig.dolma2()
 
-        interleaving_exempt_paths = []
         with open("src/scripts/train/lc_cont_train/lc_v1.txt") as f:
             base_dir = root_dir.rstrip("/") + "/"
 
             assert tokenizer_config.identifier is not None
-            data_paths, _ = AnnealingDataMix.data_mix.build(base_dir, tokenizer_config.identifier)
-
+            interleaving_exempt_paths, _ = AnnealingDataMix.data_mix.build(base_dir, tokenizer_config.identifier)
+            
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#"):
@@ -144,8 +143,8 @@ class LcContTrain(Config):
 
                 lc_path = f"{base_dir}{line}"
 
-                if lc_path in data_paths:
-                    interleaving_exempt_paths.append(lc_path)
+                if lc_path in interleaving_exempt_paths:
+                    interleaving_exempt_paths.remove(lc_path)
 
         return LcContTrain(
             run_name=run_name,
