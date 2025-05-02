@@ -179,9 +179,9 @@ class LcContTrain(Config):
                         # f"blocks.{i}.attention" for i in range(0, 32, AC_ATTENTION_INTERVAL)
                     # ]
                 # ),
-                # ac_config=TransformerActivationCheckpointingConfig(
-                #     mode=TransformerActivationCheckpointingMode.selected_ops,
-                # ),
+                ac_config=TransformerActivationCheckpointingConfig(
+                    mode=TransformerActivationCheckpointingMode.selected_ops,
+                ),
                 float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
                 max_grad_norm=1.0,
                 scheduler=LinearWithWarmup(warmup_steps=0, alpha_f=0.0),
