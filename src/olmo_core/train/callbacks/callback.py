@@ -144,6 +144,11 @@ class Callback(Stateful):
         """
         del exc
 
+    def close(self):
+        """
+        Always called at the end of training, regardless of the result (even on errors).
+        """
+
 
 @dataclass
 class CallbackConfig(Callback, Config):

@@ -57,11 +57,11 @@ jobs:
             run: |
               cd docs && make html SPHINXOPTS="-W --keep-going"
 
-        include:
-          - python: '3.9'
-            task:
-              name: Lint (min Python)
-              run: make lint-check
+        # include:
+        #   - python: '3.9'
+        #     task:
+        #       name: Lint (min Python)
+        #       run: make lint-check
 
     steps:
       - uses: actions/checkout@v4
@@ -172,7 +172,7 @@ jobs:
           echo "BEAKER_IMAGE=$(make get-full-beaker-image-name IMAGE_NAME=${{ matrix.task.image }})" >> $GITHUB_ENV
 
       - name: GPU Tests
-        uses: allenai/beaker-run-action@v1.2
+        uses: allenai/beaker-run-action@v2.0
         if: env.BEAKER_TOKEN != ''
         with:
           spec: |

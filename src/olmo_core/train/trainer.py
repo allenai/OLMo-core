@@ -663,6 +663,8 @@ class Trainer:
 
     def _shutdown(self):
         self._log_metrics()
+        for callback in self._iter_callbacks():
+            callback.close()
         self.thread_pool.shutdown(wait=True, cancel_futures=False)
         self._thread_pool = None
         gc_cuda()
