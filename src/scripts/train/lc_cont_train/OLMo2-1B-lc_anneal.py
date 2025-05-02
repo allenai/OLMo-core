@@ -165,7 +165,7 @@ class LcContTrain(Config):
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
                 ),
                 tp_config=TransformerTensorParallelConfig(
-                    degree=2,
+                    degree=4,
                     # enable_async=True,
                     # loss_parallel=True,
                 ),
