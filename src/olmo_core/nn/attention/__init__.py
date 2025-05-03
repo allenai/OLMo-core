@@ -339,7 +339,6 @@ class Attention(AttentionBase):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         scale: Optional[float] = None,
-        window_size: int = -1,
     ) -> torch.Tensor:
         att: torch.Tensor
         if self.cp_enabled:
@@ -398,11 +397,6 @@ class Attention(AttentionBase):
             ):
                 raise RuntimeError(
                     f"{self.__class__.__name__} requires flash-attn (use_flash=True) for intra-document masking"
-                )
-
-            if window_size != (-1, -1):
-                raise RuntimeError(
-                    f"{self.__class__.__name__} requires flash-attn (use_flash=True) for windowed attention"
                 )
 
             # NOTE: PyTorch's SDPA doesn't support GQA, so we have to do this.
