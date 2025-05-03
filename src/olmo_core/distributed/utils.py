@@ -49,6 +49,11 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             if multi_node:
                 # Only for multi-node
                 set_env_var("NCCL_SOCKET_IFNAME", "ib")
+        elif "titan" in get_node_hostname():
+            set_env_var("NCCL_IB_HCA", "=mlx5_0,mlx5_3,mlx5_4,mlx5_5,mlx5_6,mlx5_11,mlx5_12,mlx5_13")
+            if multi_node:
+                # Only for multi-node
+                set_env_var("NCCL_SOCKET_IFNAME", "ib")
         elif "pluto" in get_node_hostname():
             set_env_var("NCCL_IB_HCA", "^=mlx5_1,mlx5_2")
         elif "augusta" in get_node_hostname():
