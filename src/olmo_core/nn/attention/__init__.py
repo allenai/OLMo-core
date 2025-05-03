@@ -145,7 +145,7 @@ class AttentionConfig(Config):
         Build the corresponding attention module.
 
         :param d_model: The model dimensionality.
-        :param init_device: The device initialize the parameters on, e.g. "cpu", "meta".
+        :param init_device: The device to initialize the parameters on, e.g. "cpu", "meta".
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
