@@ -1,8 +1,7 @@
 import logging
 import math
 from dataclasses import dataclass, field
-from functools import cached_property
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -110,11 +109,6 @@ class MuPScalingStrategy(StrEnum):
     muP chooses scaling constants such that the initialization stds of parameters are not scaled.
     """
 
-    table_8 = "table_8"
-    """
-    The muP settings from Table 8 of the muP paper.
-    """
-
 
 @dataclass
 class MuPConfig(Config):
@@ -209,7 +203,7 @@ class MuP:
     optimizer: MuPOptimizerType
     scaling_strategy: MuPScalingStrategy = MuPScalingStrategy.constant_inputs
 
-    @cached_property
+    @property
     def _scaling_type(self) -> MuPParamScalingType:
         scaling_input = not math.isclose(self.input_scaling, 1)
         scaling_output = not math.isclose(self.output_scaling, 1)
@@ -223,110 +217,91 @@ class MuP:
         else:
             return MuPParamScalingType.constant
 
-    @cached_property
+    @property
+    def _base_mup_scalars(self) -> Tuple[float, float, float]:
+        """
+        Returns the trio of (input multiplier, init std multiplier, optimizer LR multiplier)
+        """
+
+        # These scalars come from Table 3 of the muP paper.
+        base_scalars_map: Dict[
+            MuPOptimizerType, Dict[MuPParamScalingType, Tuple[float, float, float]]
+        ] = {
+            MuPOptimizerType.adam: {
+                MuPParamScalingType.scaling_input: (1.0 / self.input_scaling, 1.0, 1.0),
+                MuPParamScalingType.scaling_input_output: (
+                    1.0,
+                    1.0 / math.sqrt(self.input_scaling),
+                    1.0 / self.input_scaling,
+                ),
+            },
+            MuPOptimizerType.adam_coupled_wd: {
+                MuPParamScalingType.scaling_input: (1.0 / self.input_scaling, 1.0, 1.0),
+                MuPParamScalingType.scaling_input_output: (
+                    1.0,
+                    1.0 / math.sqrt(self.input_scaling),
+                    1.0 / self.input_scaling,
+                ),
+            },
+        }
+
+        input_multiplier, init_std_multiplier, lr_multiplier = base_scalars_map.get(
+            self.optimizer, {}
+        ).get(self._scaling_type, (1.0, 1.0, 1.0))
+
+        # Lemma J.1 of the muP paper allows for scaling the input multiplier up by a factor K by
+        # scaling down the init std and LR a corresponding amount. The LR is scaled down by
+        # K for Adam variants since Adam normalizes gradients, and K^2 for SGD variants since SGD
+        # updates are proportional to gradient.
+        scale_lr_twice = self.optimizer not in (
+            MuPOptimizerType.adam,
+            MuPOptimizerType.adam_coupled_wd,
+        )
+        if self.scaling_strategy == MuPScalingStrategy.constant_inputs:
+            input_rescaling = 1 / input_multiplier
+            init_std_rescaling = input_multiplier
+            lr_rescaling = input_multiplier**2 if scale_lr_twice else input_multiplier
+        elif self.scaling_strategy == MuPScalingStrategy.constant_init_std:
+            input_rescaling = init_std_multiplier
+            init_std_rescaling = 1 / init_std_multiplier
+            lr_rescaling = (
+                (1 / init_std_multiplier) ** 2 if scale_lr_twice else 1 / init_std_multiplier
+            )
+        elif self.scaling_strategy == MuPScalingStrategy.constant_lr:
+            input_rescaling = lr_multiplier
+            init_std_rescaling = 1 / lr_multiplier
+            lr_rescaling = 1 / lr_multiplier
+            if scale_lr_twice:
+                input_rescaling = math.sqrt(input_rescaling)
+                init_std_rescaling = math.sqrt(init_std_rescaling)
+        else:
+            raise NotImplementedError(self.scaling_strategy)
+
+        input_multiplier *= input_rescaling
+        init_std_multiplier *= init_std_rescaling
+        lr_multiplier *= lr_rescaling
+
+        return (input_multiplier, init_std_multiplier, lr_multiplier)
+
+    @property
     def input_multiplier(self) -> Optional[float]:
-        scaling_type = self._scaling_type
+        input_multiplier = self._base_mup_scalars[0]
 
-        optimizer = self.optimizer
-        if optimizer == MuPOptimizerType.adam_coupled_wd:
-            optimizer = MuPOptimizerType.adam
+        return input_multiplier if not math.isclose(input_multiplier, 1.0) else None
 
-        input_multiplier_map: Dict[
-            MuPOptimizerType, Dict[MuPScalingStrategy, Dict[MuPParamScalingType, float]]
-        ] = {
-            MuPOptimizerType.adam: {
-                MuPScalingStrategy.constant_inputs: {},
-                MuPScalingStrategy.constant_lr: {
-                    MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
-                    MuPParamScalingType.scaling_input_output: 1.0 / self.input_scaling,
-                },
-                MuPScalingStrategy.constant_init_std: {
-                    MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
-                    MuPParamScalingType.scaling_input_output: 1.0 / math.sqrt(self.input_scaling),
-                },
-                MuPScalingStrategy.table_8: {
-                    MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
-                },
-            }
-        }
-
-        if optimizer not in input_multiplier_map:
-            raise NotImplementedError(optimizer)
-
-        if self.scaling_strategy not in input_multiplier_map[optimizer]:
-            raise NotImplementedError(self.scaling_strategy)
-
-        return input_multiplier_map[optimizer][self.scaling_strategy].get(scaling_type)
-
-    @cached_property
+    @property
     def init_std_multiplier(self) -> Optional[float]:
-        scaling_type = self._scaling_type
+        init_std_multiplier = self._base_mup_scalars[1]
 
-        optimizer = self.optimizer
-        if optimizer == MuPOptimizerType.adam_coupled_wd:
-            optimizer = MuPOptimizerType.adam
+        return init_std_multiplier if not math.isclose(init_std_multiplier, 1.0) else None
 
-        init_std_multiplier_map: Dict[
-            MuPOptimizerType, Dict[MuPScalingStrategy, Dict[MuPParamScalingType, float]]
-        ] = {
-            MuPOptimizerType.adam: {
-                MuPScalingStrategy.constant_inputs: {
-                    MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
-                    MuPParamScalingType.scaling_input_output: 1.0 / math.sqrt(self.input_scaling),
-                },
-                MuPScalingStrategy.constant_lr: {
-                    MuPParamScalingType.scaling_input_output: math.sqrt(self.input_scaling),
-                },
-                MuPScalingStrategy.constant_init_std: {},
-                MuPScalingStrategy.table_8: {
-                    MuPParamScalingType.scaling_input_output: 1.0 / math.sqrt(self.input_scaling),
-                },
-            }
-        }
-
-        if optimizer not in init_std_multiplier_map:
-            raise NotImplementedError(optimizer)
-
-        if self.scaling_strategy not in init_std_multiplier_map[optimizer]:
-            raise NotImplementedError(self.scaling_strategy)
-
-        return init_std_multiplier_map[optimizer][self.scaling_strategy].get(scaling_type)
-
-    @cached_property
+    @property
     def lr_multiplier(self) -> Optional[float]:
-        scaling_type = self._scaling_type
+        lr_multiplier = self._base_mup_scalars[2]
 
-        optimizer = self.optimizer
-        if optimizer == MuPOptimizerType.adam_coupled_wd:
-            optimizer = MuPOptimizerType.adam
+        return lr_multiplier if not math.isclose(lr_multiplier, 1.0) else None
 
-        lr_multiplier_map: Dict[
-            MuPOptimizerType, Dict[MuPScalingStrategy, Dict[MuPParamScalingType, float]]
-        ] = {
-            MuPOptimizerType.adam: {
-                MuPScalingStrategy.constant_inputs: {
-                    MuPParamScalingType.scaling_input: 1.0 / self.input_scaling,
-                    MuPParamScalingType.scaling_input_output: 1.0 / self.input_scaling,
-                },
-                MuPScalingStrategy.constant_lr: {},
-                MuPScalingStrategy.constant_init_std: {
-                    MuPParamScalingType.scaling_input_output: 1.0 / math.sqrt(self.input_scaling),
-                },
-                MuPScalingStrategy.table_8: {
-                    MuPParamScalingType.scaling_input_output: 1.0 / self.input_scaling,
-                },
-            }
-        }
-
-        if optimizer not in lr_multiplier_map:
-            raise NotImplementedError(optimizer)
-
-        if self.scaling_strategy not in lr_multiplier_map[optimizer]:
-            raise NotImplementedError(self.scaling_strategy)
-
-        return lr_multiplier_map[optimizer][self.scaling_strategy].get(scaling_type)
-
-    @cached_property
+    @property
     def attention_multiplier(self) -> Optional[float]:
         scaling_type = self._scaling_type
         if scaling_type not in (MuPParamScalingType.constant, MuPParamScalingType.scaling_input):
@@ -343,7 +318,7 @@ class MuP:
     @classmethod
     def scale_input(cls, mup: Optional["MuP"], x: torch.Tensor) -> torch.Tensor:
         """
-        Convenient wrapper for applying muP input multiplier to reduce lines of code.
+        Convenient wrapper for applying the muP input multiplier.
         This just performs ``x * mup_input_multiplier``, if the multiplier exists.
         """
         if mup is None or mup.input_multiplier is None:
@@ -354,7 +329,7 @@ class MuP:
     @classmethod
     def scale_init_std(cls, mup: Optional["MuP"], std: float) -> float:
         """
-        Convenient wrapper for applying muP init std multiplier to reduce lines of code.
+        Convenient wrapper for applying the muP init std multiplier.
         This just performs ``std * mup_std_multiplier``, if the multiplier exists.
         """
         if mup is None or mup.init_std_multiplier is None:
@@ -365,7 +340,7 @@ class MuP:
     @classmethod
     def scale_lr(cls, mup: Optional["MuP"], lr: float) -> float:
         """
-        Convenient wrapper for applying muP LR multiplier to reduce lines of code.
+        Convenient wrapper for applying the muP LR multiplier.
         This just performs ``lr * mup_lr_multiplier``, if the multiplier exists.
         """
         if mup is None or mup.lr_multiplier is None:
@@ -376,7 +351,7 @@ class MuP:
     @classmethod
     def scale_coupled_wd(cls, mup: Optional["MuP"], weight_decay: float) -> float:
         """
-        Convenient wrapper for un-applying muP LR multiplier to coupled weight decay to reduce lines of code.
+        Convenient wrapper for un-applying muP LR multiplier to coupled weight decay.
         This just performs ``weight_decay / mup_lr_multiplier``, if the multiplier exists.
         """
         if mup is None or mup.lr_multiplier is None:
