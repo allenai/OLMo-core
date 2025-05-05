@@ -25,6 +25,7 @@ from olmo_core.io import file_exists, join_path
 from olmo_core.nn.conversion.state_mapping import TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import save_hf_model
 from olmo_core.nn.hf.convert import get_converter_to_hf
+from olmo_core.nn.mup import MuPScalingStrategy
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.utils import get_default_device, prepare_cli_environment
@@ -66,7 +67,25 @@ def convert_checkpoint_to_hf(
     if "float8_config" in transformer_config_dict:
         del transformer_config_dict["float8_config"]
 
-    model = TransformerConfig.from_dict(transformer_config_dict).build()
+    model_config = TransformerConfig.from_dict(transformer_config_dict)
+
+    if (
+        model_config.block.attention.mup is not None
+        and model_config.block.attention.mup.scaling_strategy != MuPScalingStrategy.constant_inputs
+    ):
+        raise NotImplementedError(
+            f"Conversion of muP models to HF is not yet supported for muP models not using {MuPScalingStrategy.constant_inputs} strategy."
+        )
+    if (
+        (feed_forward := model_config.block.feed_forward) is not None
+        and feed_forward.mup is not None
+        and feed_forward.mup.scaling_strategy != MuPScalingStrategy.constant_inputs
+    ):
+        raise NotImplementedError(
+            f"Conversion of muP models to HF is not yet supported for muP models not using {MuPScalingStrategy.constant_inputs} strategy."
+        )
+
+    model = model_config.build()
     device = device or get_default_device()
     model.to_empty(device=device)
 
