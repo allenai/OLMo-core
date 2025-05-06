@@ -228,6 +228,7 @@ class Transformer(nn.Module):
         device = device or self.device
         log.info(f"Inside init_weights; calling to_empty")
         self.to_empty(device=device)
+        log.info(f"Inside init_weights; finished calling to_empty")
 
         params_were_reset = False
         for module in self.modules():
