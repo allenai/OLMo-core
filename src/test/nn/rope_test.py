@@ -6,8 +6,7 @@ from olmo_core.nn.rope import (
     FusedRotaryEmbedding,
     RotaryEmbedding,
 )
-
-from ..utils import DEVICES, requires_flash_attn, requires_gpu
+from olmo_core.testing import DEVICES, requires_flash_attn, requires_gpu
 
 
 @pytest.mark.parametrize("device", DEVICES)

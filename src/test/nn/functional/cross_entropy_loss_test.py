@@ -2,8 +2,7 @@ import pytest
 import torch
 
 from olmo_core.nn.functional import cross_entropy_loss
-
-from ...utils import DEVICES
+from olmo_core.testing import DEVICES
 
 
 @pytest.mark.parametrize("device", DEVICES)

@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added option to set LR scheduler based on tokens instead of steps (e.g. `--train_module.scheduler.units=tokens`).
 - Added a "packed" numpy FSL variant that packs documents into sequences using the best-fit-decreasing bin packing algorithm following the work from [Fewer Truncates Improve Language Modeling](https://arxiv.org/pdf/2404.10830).
+- Added module `olmo_core.testing`.
+- Added a "interleaved" numpy FSL variant that interleaves several documents into sequences following the work from [LongSkywork: A Training Recipe for Efficiently Extending Context Length in Large Language Models](https://arxiv.org/pdf/2406.00605).
 
 ### Changed
 
@@ -25,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed an issue preventing tensor parallelism from working with `LMHead` when using the "fused_linear" loss implementation.
 - Fixed a bug with `LMHead` when using "fused_linear" loss implementation where the `ce_loss` output included the `z_loss` added to it.
 - Fixed training on single GPU when using a `SkipStepOptimizer`.
+- Fixed the initialization of the `CosWithWarmupAndLinearDecay` learning rate scheduler
+
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 

@@ -8,10 +8,13 @@ from olmo_core.distributed.parallel import (
 )
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.nn.moe.mlp import DroplessMoEMLP, MoEMLP
+from olmo_core.testing import (
+    requires_gpu,
+    requires_grouped_gemm,
+    requires_multi_gpu,
+    run_distributed_test,
+)
 from olmo_core.utils import get_default_device
-
-from ...distributed.utils import requires_multi_gpu, run_distributed_test
-from ...utils import requires_gpu, requires_grouped_gemm
 
 
 @requires_gpu

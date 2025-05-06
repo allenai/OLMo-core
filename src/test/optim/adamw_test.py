@@ -10,8 +10,7 @@ from olmo_core.distributed.checkpoint import (
     save_model_and_optim_state,
 )
 from olmo_core.optim import AdamWConfig, OptimGroupOverride, SkipStepAdamWConfig
-
-from ..utils import DEVICES
+from olmo_core.testing import DEVICES
 
 
 class MyModel(nn.Module):

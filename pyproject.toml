@@ -55,7 +55,7 @@ dev = [
     "sphinx-inline-tabs",
 ]
 beaker = [
-    "beaker-py>=1.36.0",
+    "beaker-py>=1.36.0,<2.0",
     "GitPython>=3.0,<4.0",
 ]
 wandb = [
@@ -155,7 +155,7 @@ module = "tests.*"
 strict_optional = false
 
 [tool.pytest.ini_options]
-testpaths = "tests/"
+testpaths = "src/test/"
 python_classes = [
   "Test*",
   "*Test",

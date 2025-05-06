@@ -7,10 +7,9 @@ import torch.distributed as dist
 
 from olmo_core.distributed.utils import barrier, get_rank
 from olmo_core.io import dir_is_empty, file_exists, is_url, normalize_path
+from olmo_core.testing import run_distributed_test
 from olmo_core.train.checkpoint import Checkpointer
 from olmo_core.train.train_module import BasicTrainModule
-
-from ..distributed.utils import run_distributed_test
 
 
 def run_checkpointer(base_dir, work_dir, model_factory):

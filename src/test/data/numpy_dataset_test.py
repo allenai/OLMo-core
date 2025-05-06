@@ -13,6 +13,7 @@ from olmo_core.data import (
     NumpyVSLDataset,
     TokenizerConfig,
 )
+from olmo_core.data.numpy_dataset import NumpyInterleavedFSLDataset
 from olmo_core.data.source_mixture import (
     SourceMixtureConfig,
     SourceMixtureDatasetConfig,
@@ -20,7 +21,7 @@ from olmo_core.data.source_mixture import (
 from olmo_core.data.types import NumpyDatasetDType
 from olmo_core.data.utils import get_document_indices, write_document_indices
 
-from ..utils import mk_mmaps
+from .utils import mk_mmaps
 
 
 def test_numpy_fsl_dataset(tmp_path: Path):
@@ -466,6 +467,308 @@ def test_numpy_vsl_dataset(tmp_path: Path):
     assert buckets[2][1].tolist() == [0, 3]  # instances of length 8
 
     assert ds.instances_per_bucket == ((2, 2), (4, 1), (8, 2))
+
+
+def test_numpy_interleaved_fsl_dataset(tmp_path: Path):
+    data1 = [1, 2, 3, 4, 5, 6, 7, 0, 8, 9, 10, 0]
+    mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
+    mmap1[:] = data1
+    mmap1.flush()
+
+    data2 = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 21, 22, 23, 24, 25, 0]
+    mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(len(data2),))
+    mmap2[:] = data2
+    mmap2.flush()
+
+    ds = NumpyInterleavedFSLDataset(
+        tmp_path / "mmap1.npy",
+        tmp_path / "mmap2.npy",
+        sequence_length=16,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=32_000,
+        seed=2,
+        docs_per_instance=2,
+        chunks_per_doc=4,
+    )
+    ds.work_dir = tmp_path
+    ds.prepare()
+
+    assert ds[0]["input_ids"].tolist() == [
+        21,
+        22,
+        11,
+        12,
+        23,
+        13,
+        14,
+        24,
+        15,
+        16,
+        25,
+        17,
+        18,
+        0,
+        -1,
+        -1,
+    ]
+    assert ds[0]["label_mask"].tolist() == [True] * 14 + [False] * 2
+    assert ds[1]["input_ids"].tolist() == [1, 2, 8, 3, 4, 9, 5, 6, 10, 7, 0, -1, -1, -1, -1, -1]
+    assert ds[1]["label_mask"].tolist() == [True] * 11 + [False] * 5
+    assert len(ds) == 2
+
+
+def test_numpy_interleaved_fsl_dataset_with_label_mask(tmp_path: Path):
+    data1 = [1, 2, 3, 4, 5, 6, 7, 0, 8, 9, 10, 0]
+    mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
+    mmap1[:] = data1
+    mmap1.flush()
+
+    data1_mask = [False, True, True, True, True, True, True, True] + [True, True, True, True]
+    mmap1_mask = np.memmap(
+        tmp_path / "mmap1_mask.npy", mode="w+", dtype=np.bool_, shape=(len(data1_mask),)
+    )
+    mmap1_mask[:] = data1_mask
+    mmap1_mask.flush()
+
+    data2 = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 21, 22, 23, 24, 25, 0]
+    mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(len(data2),))
+    mmap2[:] = data2
+    mmap2.flush()
+
+    data2_mask = [True, True, True, True, True, True, True, True, True, True, True] + [
+        True,
+        True,
+        True,
+        True,
+        True,
+        True,
+    ]
+    mmap2_mask = np.memmap(
+        tmp_path / "mmap2_mask.npy", mode="w+", dtype=np.bool_, shape=(len(data2_mask),)
+    )
+    mmap2_mask[:] = data2_mask
+    mmap2_mask.flush()
+
+    ds = NumpyInterleavedFSLDataset(
+        tmp_path / "mmap1.npy",
+        tmp_path / "mmap2.npy",
+        sequence_length=16,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=32_000,
+        seed=2,
+        docs_per_instance=2,
+        chunks_per_doc=4,
+        label_mask_paths=[tmp_path / "mmap1_mask.npy", tmp_path / "mmap2_mask.npy"],
+    )
+
+    ds.work_dir = tmp_path
+    ds.prepare()
+
+    assert ds[0]["input_ids"].tolist() == [
+        21,
+        22,
+        11,
+        12,
+        23,
+        13,
+        14,
+        24,
+        15,
+        16,
+        25,
+        17,
+        18,
+        0,
+        -1,
+        -1,
+    ]
+    assert ds[0]["label_mask"].tolist() == [True] * 14 + [False] * 2
+    assert ds[1]["input_ids"].tolist() == [1, 2, 8, 3, 4, 9, 5, 6, 10, 7, 0, -1, -1, -1, -1, -1]
+    assert ds[1]["label_mask"].tolist() == [False] + [True] * 10 + [False] * 5
+    assert len(ds) == 2
+
+
+def test_numpy_interleaved_fsl_dataset_with_bos_token(tmp_path: Path):
+    data1 = [99, 1, 2, 3, 4, 5, 6, 7, 0, 99, 8, 9, 10, 0]
+    mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
+    mmap1[:] = data1
+    mmap1.flush()
+
+    data2 = [99, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 99, 21, 22, 23, 24, 25, 0]
+    mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(len(data2),))
+    mmap2[:] = data2
+    mmap2.flush()
+
+    ds = NumpyInterleavedFSLDataset(
+        tmp_path / "mmap1.npy",
+        tmp_path / "mmap2.npy",
+        sequence_length=16,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=32_000,
+        seed=2,
+        docs_per_instance=2,
+        chunks_per_doc=4,
+        bos_token_id=99,
+    )
+    ds.work_dir = tmp_path
+    ds.prepare()
+
+    assert ds[0]["input_ids"].tolist() == [
+        99,
+        21,
+        22,
+        11,
+        12,
+        23,
+        13,
+        14,
+        24,
+        15,
+        16,
+        25,
+        17,
+        0,
+        -1,
+        -1,
+    ]
+    assert ds[0]["label_mask"].tolist() == [True] * 14 + [False] * 2
+    assert ds[1]["input_ids"].tolist() == [99, 1, 2, 8, 3, 4, 9, 5, 6, 10, 7, 0, -1, -1, -1, -1]
+    assert ds[1]["label_mask"].tolist() == [True] * 12 + [False] * 4
+    assert len(ds) == 2
+
+
+def test_numpy_interleaved_fsl_dataset_with_bos_token_and_label_mask(tmp_path: Path):
+    data1 = [99, 1, 2, 3, 4, 5, 6, 7, 0, 99, 8, 9, 10, 0]
+    mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
+    mmap1[:] = data1
+    mmap1.flush()
+
+    data1_mask = [True, False, True, True, True, True, True, True, True] + [
+        True,
+        True,
+        True,
+        True,
+        True,
+    ]
+    mmap1_mask = np.memmap(
+        tmp_path / "mmap1_mask.npy", mode="w+", dtype=np.bool_, shape=(len(data1_mask),)
+    )
+    mmap1_mask[:] = data1_mask
+    mmap1_mask.flush()
+
+    data2 = [99, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 99, 21, 22, 23, 24, 25, 0]
+    mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(len(data2),))
+    mmap2[:] = data2
+    mmap2.flush()
+
+    data2_mask = [True, True, True, True, True, True, True, True, True, True, True, True] + [
+        True,
+        True,
+        True,
+        True,
+        True,
+        True,
+        True,
+    ]
+    mmap2_mask = np.memmap(
+        tmp_path / "mmap2_mask.npy", mode="w+", dtype=np.bool_, shape=(len(data2_mask),)
+    )
+    mmap2_mask[:] = data2_mask
+    mmap2_mask.flush()
+
+    ds = NumpyInterleavedFSLDataset(
+        tmp_path / "mmap1.npy",
+        tmp_path / "mmap2.npy",
+        sequence_length=16,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=32_000,
+        seed=2,
+        docs_per_instance=2,
+        chunks_per_doc=4,
+        label_mask_paths=[tmp_path / "mmap1_mask.npy", tmp_path / "mmap2_mask.npy"],
+        bos_token_id=99,
+    )
+
+    ds.work_dir = tmp_path
+    ds.prepare()
+
+    assert ds[0]["input_ids"].tolist() == [
+        99,
+        21,
+        22,
+        11,
+        12,
+        23,
+        13,
+        14,
+        24,
+        15,
+        16,
+        25,
+        17,
+        0,
+        -1,
+        -1,
+    ]
+    assert ds[0]["label_mask"].tolist() == [True] * 14 + [False] * 2
+    assert ds[1]["input_ids"].tolist() == [99, 1, 2, 8, 3, 4, 9, 5, 6, 10, 7, 0, -1, -1, -1, -1]
+    assert ds[1]["label_mask"].tolist() == [True] + [False] + [True] * 10 + [False] * 4
+    assert len(ds) == 2
+
+
+def test_numpy_interleaved_fsl_dataset_with_interleaving_exempt_paths(tmp_path: Path):
+    data1 = [1, 2, 3, 4, 5, 6, 7, 0, 8, 9, 10, 0]
+    mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
+    mmap1[:] = data1
+    mmap1.flush()
+
+    data2 = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 21, 22, 23, 24, 25, 0]
+    mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(len(data2),))
+    mmap2[:] = data2
+    mmap2.flush()
+
+    ds = NumpyInterleavedFSLDataset(
+        tmp_path / "mmap1.npy",
+        tmp_path / "mmap2.npy",
+        sequence_length=16,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=32_000,
+        seed=3,
+        docs_per_instance=2,
+        chunks_per_doc=4,
+        interleaving_exempt_paths=[tmp_path / "mmap1.npy"],
+    )
+    ds.work_dir = tmp_path
+    ds.prepare()
+
+    assert ds[0]["input_ids"].tolist() == [1, 2, 3, 4, 5, 6, 7, 0] + [-1] * 8
+    assert ds[1]["input_ids"].tolist() == [8, 9, 10, 0] + [-1] * 12
+
+    assert ds[2]["input_ids"].tolist() == [
+        21,
+        22,
+        11,
+        12,
+        23,
+        13,
+        14,
+        24,
+        15,
+        16,
+        25,
+        17,
+        18,
+        0,
+        -1,
+        -1,
+    ]
+    assert ds[2]["label_mask"].tolist() == [True] * 14 + [False] * 2
+    assert len(ds) == 3
 
 
 def test_guess_dtype():

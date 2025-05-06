@@ -22,8 +22,7 @@ from olmo_core.distributed.checkpoint import (
     save_state_dict,
     unshard_checkpoint,
 )
-
-from .utils import (
+from olmo_core.testing import (
     BACKENDS,
     get_default_device,
     requires_multi_gpu,
