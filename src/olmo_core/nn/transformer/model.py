@@ -226,23 +226,41 @@ class Transformer(nn.Module):
             to ensure the weights are initialized differently for different stages.
         """
         device = device or self.device
+        log.info(f"Inside init_weights; calling to_empty")
         self.to_empty(device=device)
 
+        params_were_reset = False
         for module in self.modules():
             if hasattr(module, "reset_parameters"):
                 module.reset_parameters()  # type: ignore
+                params_were_reset = True
+
+        if params_were_reset:
+           log.info(f"Inside init_weights; finished resetting parameters")
+        else:
+           log.info(f"Inside init_weights; didn't have to reset params")
 
         seed = self.init_seed
         if pp_mesh is not None:
             seed += pp_mesh.get_local_rank()
+        log.info(f"Inside init_weights; calling torch.Generator() with device {device} and seed {seed}")
         generator = torch.Generator(device).manual_seed(seed)
 
+        embeddings_were_initialized = False
         if self.embeddings is not None:
             self.init_method.init_embeddings(
                 self.embeddings, d_model=self.d_model, std=self.init_std, generator=generator
             )
+            embeddings_were_initialized = True
 
+        if embeddings_were_initialized:
+            log.info(f"Inside init_weights; emebddings were initialized")
+        else:
+            log.info(f"Inside init_weights; didn't have to initialize embeddings")
+
+        block_idx = 0
         for block in self.blocks.values():
+            log.info(f"Inside init_weights; processing block {block_idx}")
             # This might fail if it's wrapped.
             #  assert isinstance(block, TransformerBlock)
             block = cast(TransformerBlock, block)
@@ -287,7 +305,10 @@ class Transformer(nn.Module):
             if max_seq_len is not None and att.rope is not None:
                 att.rope.warmup_cache(max_seq_len, device)
 
+            block_idx += 1
+
         if self.lm_head is not None:
+            log.info(f"Inside init_weights; calling init_final_w_out")
             self.init_method.init_final_w_out(
                 self.lm_head.w_out, d_model=self.d_model, std=self.init_std, generator=generator
             )
