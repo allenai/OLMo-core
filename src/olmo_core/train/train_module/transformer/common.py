@@ -145,13 +145,21 @@ def parallelize_model(
             raise NotImplementedError(dp_config.name)
 
     # Materialize and init parameters.
-    log.info("Initializing model weights...")
+    log.info(f"Initializing model weights from {len(model_parts)} parts...")
+    mi = 1
     for m in model_parts:
+        log.info(f"Initializing model weights for model {mi}/{len(model_parts)}:")
+        log.info(f"  max_sequence_length: {max_sequence_length}")
+        log.info(f"  rank_microbatch_size: {rank_microbatch_size}")
+        log.info(f"  device: {device}")
+        log.info(f"  pp_mesh: {pp_mesh}")
         m.init_weights(
             max_seq_len=max_sequence_length,
             max_local_microbatch_size=rank_microbatch_size,
             device=device,
             pp_mesh=pp_mesh,
         )
+        mi += 1
+    log.info(f"Finished initializing model weights for model {mi}/{len(model_parts)}:")
 
     return model
