@@ -17,9 +17,9 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
-SEQUENCE_LENGTH = 4096
-GLOBAL_BATCH_SIZE = 1024 * SEQUENCE_LENGTH
-MAX_DURATION = int(4e12)
+SEQUENCE_LENGTH = 4096  # TODO: do we want to keep at 4k or go to 8k?
+GLOBAL_BATCH_SIZE = 1024 * SEQUENCE_LENGTH  # TODO: (dirkgr) batch size warmup
+MAX_DURATION = int(4e12)  # TODO: how long? Does this even matter with Shane's schedule?
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -108,7 +108,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 if __name__ == "__main__":
     main(
-        global_batch_size=GLOBAL_BATCH_SIZE,  # TODO: (dirkgr) batch size warmup
+        global_batch_size=GLOBAL_BATCH_SIZE,
         sequence_length=SEQUENCE_LENGTH,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
