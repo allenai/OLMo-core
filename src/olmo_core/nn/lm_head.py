@@ -411,6 +411,7 @@ class NormalizedLMHead(LMHead):
         """
         Reset the scaling parameter.
         """
+        print("reset_parameters in lm_head.py")
         nn.init.ones_(self.sz)
         with torch.no_grad():
             self.sz.mul_(self.sz_init_scaling)

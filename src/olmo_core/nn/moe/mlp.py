@@ -164,6 +164,7 @@ class MoEMLP(MoEMLPBase):
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
+        print("reset_parameters in mlp.py MoEMLP")
         # Setting a=sqrt(5) in kaiming_uniform is the same as initializing with
         # uniform(-1/sqrt(in_features), 1/sqrt(in_features)). For details, see
         # https://github.com/pytorch/pytorch/issues/57109
@@ -247,6 +248,7 @@ class DroplessMoEMLP(MoEMLPBase):
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
+        print("reset_parameters in mlp.py DroplessMoEMLP")
         # Setting a=sqrt(5) in kaiming_uniform is the same as initializing with
         # uniform(-1/sqrt(in_features), 1/sqrt(in_features)). For details, see
         # https://github.com/pytorch/pytorch/issues/57109

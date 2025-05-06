@@ -563,6 +563,7 @@ class NormalizedAttention(Attention):
         self.reset_parameters()
 
     def reset_parameters(self):
+        print("reset_parameters in attention/__init__.py")
         nn.init.ones_(self.sq)
         nn.init.ones_(self.sk)
         with torch.no_grad():

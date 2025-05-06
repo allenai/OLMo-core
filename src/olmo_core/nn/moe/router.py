@@ -216,6 +216,7 @@ class MoERouter(nn.Module):
         self._z_loss: Optional[_HiddenTensor] = None
 
     def reset_parameters(self):
+        print("reset_parameters in router.py MoERouter")
         self._batch_size_per_expert = hide_from_torch(
             torch.zeros(self.num_experts, device=self.device)
         )
@@ -551,6 +552,7 @@ class MoELinearRouter(MoERouter):
         return self.weight.device if self.weight.device.type != "meta" else torch.device("cpu")
 
     def reset_parameters(self) -> None:
+        print("reset_parameters in router.py MoELinearRouter")
         super().reset_parameters()
         nn.init.trunc_normal_(self.weight, std=0.02, a=-3 * 0.02, b=3 * 0.02)
 

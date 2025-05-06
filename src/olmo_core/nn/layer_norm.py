@@ -149,6 +149,7 @@ class LayerNorm(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
+        print("reset_parameters in layer_norm.py")
         if self.weight is not None:
             torch.nn.init.ones_(self.weight)
         if self.bias is not None:

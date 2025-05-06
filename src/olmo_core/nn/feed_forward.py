@@ -190,6 +190,7 @@ class NormalizedFeedForward(FeedForward):
         self.reset_parameters()
 
     def reset_parameters(self):
+        print("reset_parameters in feed_forward.py")
         nn.init.ones_(self.sw1)
         nn.init.ones_(self.sw3)
         with torch.no_grad():

@@ -252,6 +252,7 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         self.reset_parameters()
 
     def reset_parameters(self):
+        print("reset_parameters in block.py")
         nn.init.ones_(self.attn_alpha)
         nn.init.ones_(self.mlp_alpha)
         with torch.no_grad():
