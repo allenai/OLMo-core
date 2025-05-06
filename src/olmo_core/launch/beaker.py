@@ -7,6 +7,7 @@ import logging
 import tempfile
 import time
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import List, Optional, Set, Tuple
 
@@ -488,7 +489,7 @@ class BeakerLaunchConfig(Config):
         return experiment
 
 
-def follow_experiment(beaker: Beaker, experiment: Experiment, tail_lines: Optional[int] = None):
+def follow_experiment(beaker: Beaker, experiment: Experiment, tail: bool = False):
     # Wait for job to start...
     job: Optional[Job] = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
     if job is None:
@@ -517,9 +518,15 @@ def follow_experiment(beaker: Beaker, experiment: Experiment, tail_lines: Option
     # Stream logs...
     log.info("Showing logs:")
     print()
-    time.sleep(2.0)  # wait a moment to make sure logs are available before experiment finishes
-    for job_log in beaker.job.follow_structured(job, tail_lines=tail_lines):
-        print(job_log.message)
+    for line_bytes in beaker.job.follow(
+        job,
+        include_timestamps=False,
+        since=None if not tail else timedelta(seconds=10),
+    ):
+        line = line_bytes.decode(errors="ignore")
+        if line.endswith("\n"):
+            line = line[:-1]
+        print(line)
     print()
     log.info("End logs")
 
