@@ -200,6 +200,7 @@ class LcContTrain(Config):
                 mix_base_dir=root_dir,
                 generate_doc_lengths=INTRA_DOCUMENT_MASKING,
                 sequence_length=CONTEXT_LENGTH,
+                max_target_sequence_length = 131072,
                 work_dir=get_work_dir(root_dir),
             ),
             data_loader=NumpyDataLoaderConfig(
