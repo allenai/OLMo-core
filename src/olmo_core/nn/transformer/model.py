@@ -245,6 +245,12 @@ class Transformer(nn.Module):
                     print(f"Inside init_weights (tid={mg_tid}); source file {mg_filename} line {mg_line_num}: {line}", end="")
                     mg_line_num += 1
 
+                print(f"Inside init_weights (tid={mg_tid}); module weight is: {module.weight}")
+                print(f"Inside init_weights (tid={mg_tid}); calling init.normal_(weight)")
+                from torch.nn import init
+                init.normal_(module.weight)
+                print(f"Inside init_weights (tid={mg_tid}); finished calling init.normal_(weight)")
+
                 module.reset_parameters()  # type: ignore
                 params_were_reset = True
             else:
