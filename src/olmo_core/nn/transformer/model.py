@@ -237,7 +237,7 @@ class Transformer(nn.Module):
         params_were_reset = False
         for module in self.modules():
             if hasattr(module, "reset_parameters"):
-                print(f"Inside init_weights (tid={mg_tid}); resetting parameters of module {module.__name__}")
+                print(f"Inside init_weights (tid={mg_tid}); resetting parameters; module={module}")
                 import inspect
                 mg_filename = inspect.getfile(module.reset_parameters)
                 mg_lines, mg_line_num = inspect.getsourcelines(module.reset_parameters)
@@ -248,7 +248,7 @@ class Transformer(nn.Module):
                 module.reset_parameters()  # type: ignore
                 params_were_reset = True
             else:
-                print(f"Inside init_weights (tid={mg_tid}); module {module.__name__} has no reset_parameters function")
+                print(f"Inside init_weights (tid={mg_tid}); module has no reset_parameters function: module={module}")
 
         if params_were_reset:
            print(f"Inside init_weights (tid={mg_tid}); finished resetting parameters")
