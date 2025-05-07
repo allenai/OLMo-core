@@ -172,9 +172,13 @@ class AttentionConfig(Config):
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
 
-        sliding_window_config = kwargs.pop("sliding_window", None)
-        if sliding_window_config is not None and sliding_window_config.should_use_swa(layer_idx, n_layers):
-            kwargs['window_size'] = sliding_window_config.window_size
+        sliding_window_config: Optional[SlidingWindowAttentionConfig] = kwargs.pop(
+            "sliding_window", None
+        )
+        if sliding_window_config is not None and sliding_window_config.should_use_swa(
+            layer_idx, n_layers
+        ):
+            kwargs["window_size"] = sliding_window_config.window_size
 
         kwargs.update(
             dtype=kwargs.pop("dtype").as_pt(),
@@ -189,11 +193,15 @@ class AttentionConfig(Config):
             elif self.name == "fused":
                 kwargs.pop("use_flash", None)
                 if "window_size" in kwargs:
-                    raise OLMoConfigurationError("'window_size' is not supported with fused attention")
+                    raise OLMoConfigurationError(
+                        "'window_size' is not supported with fused attention"
+                    )
                 return FusedAttention(**kwargs)
             elif self.name == "normalized":
                 if "window_size" in kwargs:
-                    raise OLMoConfigurationError("'window_size' is not supported with normalized attention")
+                    raise OLMoConfigurationError(
+                        "'window_size' is not supported with normalized attention"
+                    )
                 return NormalizedAttention(**kwargs)
             else:
                 raise NotImplementedError(self.name)
@@ -311,9 +319,7 @@ class Attention(AttentionBase):
                     f"'window_size' is only supported with 'use_flash=True' (got {use_flash})"
                 )
             if window_size <= 0:
-                raise OLMoConfigurationError(
-                    f"'window_size' must be positive (got {window_size})"
-                )
+                raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
             self.window_size = (window_size, 0)
         else:
             self.window_size = (-1, -1)
