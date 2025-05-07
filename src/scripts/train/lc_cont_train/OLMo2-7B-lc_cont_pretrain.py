@@ -244,7 +244,7 @@ class LcContTrain(Config):
             # .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0)
             .with_callback("config_saver", ConfigSaverCallback())
             .with_callback("garbage_collector", GarbageCollectorCallback())
-            .with_recommended_evals(tokenizer_config, CONTEXT_LENGTH, cluster, eval_interval=1000)
+            .with_recommended_evals(tokenizer_config, CONTEXT_LENGTH, cluster)
         ).merge(overrides)
 
 
