@@ -157,9 +157,9 @@ class AttentionConfig(Config):
     def build(
         self,
         d_model: int,
+        *,
         layer_idx: int,
         n_layers: int,
-        *,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ) -> "AttentionBase":
