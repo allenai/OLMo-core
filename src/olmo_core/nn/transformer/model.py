@@ -226,17 +226,17 @@ class Transformer(nn.Module):
             to ensure the weights are initialized differently for different stages.
         """
         device = device or self.device
-        log.info(f"Inside init_weights; calling to_empty")
+        print(f"Inside init_weights; calling to_empty")
         self.to_empty(device=device)
-        log.info(f"Inside init_weights; finished calling to_empty")
+        print(f"Inside init_weights; finished calling to_empty")
 
         params_were_reset = False
         import threading
         mg_tid = threading.get_native_id()
         for module in self.modules():
-            log.info(f"Inside init_weights (tid={mg_tid}); considering module {module}")
+            print(f"Inside init_weights (tid={mg_tid}); considering module {module}")
             if hasattr(module, "reset_parameters"):
-                log.info(f"Inside init_weights (tid={mg_tid}); resetting parameters")
+                print(f"Inside init_weights (tid={mg_tid}); resetting parameters")
                 import inspect
                 mg_filename = inspect.getfile(module.reset_parameters)
                 mg_lines, mg_line_num = inspect.getsourcelines(module.reset_parameters)
@@ -248,9 +248,9 @@ class Transformer(nn.Module):
                 params_were_reset = True
 
         if params_were_reset:
-           log.info(f"Inside init_weights; finished resetting parameters")
+           print(f"Inside init_weights; finished resetting parameters")
         else:
-           log.info(f"Inside init_weights; didn't have to reset params")
+           print(f"Inside init_weights; didn't have to reset params")
 
         seed = self.init_seed
         if pp_mesh is not None:
