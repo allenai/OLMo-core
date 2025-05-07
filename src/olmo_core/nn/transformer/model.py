@@ -247,8 +247,24 @@ class Transformer(nn.Module):
 
                 print(f"Inside init_weights (tid={mg_tid}); module weight is: {module.weight}")
                 print(f"Inside init_weights (tid={mg_tid}); calling init.normal_(weight)")
-                from torch.nn import init
-                init.normal_(module.weight)
+                # A copy of the init.normal_ from PyTorch, with print statements showing activity:
+                # https://github.com/pytorch/pytorch/blob/172e6415299e93629497d9660c525c8bf60af912/torch/nn/init.py#L169
+                def normal_(
+                        tensor: torch.Tensor,
+                        mean: float = 0.0,
+                        std: float = 1.0,
+                        generator: _Optional[torch.Generator] = None,
+                ) -> Tensor:
+                  print(f"Inside init_weights (tid={mg_tid}); in fake normal_ function")
+                  if torch.overrides.has_torch_function_variadic(tensor):
+                      print(f"Inside init_weights (tid={mg_tid}); calling handle_torch_function")
+                      return torch.overrides.handle_torch_function(
+                          normal_, (tensor,), tensor=tensor, mean=mean, std=std, generator=generator
+                      )
+                  print(f"Inside init_weights (tid={mg_tid}); calling _no_grad_normal")
+                  return _no_grad_normal_(tensor, mean, std, generator)
+
+                normal_(module.weight)
                 print(f"Inside init_weights (tid={mg_tid}); finished calling init.normal_(weight)")
 
                 module.reset_parameters()  # type: ignore
