@@ -117,6 +117,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
 
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
+    cancel_check_interval = 10
+
     #  assert common.launch is not None
     #  assert len(common.launch.clusters) == 1
     #  cluster = common.launch.clusters[0]
@@ -126,7 +128,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_folder=common.save_folder,
             save_overwrite=True,
             metrics_collect_interval=5,
-            cancel_check_interval=5,
+            cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
         )
         .with_callback(
@@ -144,7 +146,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 workspace="ai2",
                 project="OLMoE",
                 enabled=True,
-                cancel_check_interval=10,
+                cancel_check_interval=cancel_check_interval,
             ),
         )
         .with_callback(
@@ -153,8 +155,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 name=common.run_name,
                 entity="ai2-llm",
                 project="OLMoE",
-                enabled=False,
-                cancel_check_interval=10,
+                enabled=True,
+                cancel_check_interval=cancel_check_interval,
             ),
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
