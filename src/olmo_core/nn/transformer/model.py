@@ -235,7 +235,12 @@ class Transformer(nn.Module):
             log.info(f"Inside init_weights; considering module {module}")
             if hasattr(module, "reset_parameters"):
                 log.info(f"Inside init_weights; resetting parameters")
-                print("testing print")
+                import inspect
+                print("module.reset_parameters file:", inspect.getfile(module.reset_parameters))
+                print("module.reset_parameters source:")
+                print("-"*80)
+                print(inspect.getsource(module.reset_parameters))
+                print("-"*80)
                 module.reset_parameters()  # type: ignore
                 params_were_reset = True
 
