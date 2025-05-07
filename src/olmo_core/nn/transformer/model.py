@@ -231,16 +231,19 @@ class Transformer(nn.Module):
         log.info(f"Inside init_weights; finished calling to_empty")
 
         params_were_reset = False
+        import threading
+        mg_tid = threading.get_native_id()
         for module in self.modules():
-            log.info(f"Inside init_weights; considering module {module}")
+            log.info(f"Inside init_weights (tid={mg_tid}); considering module {module}")
             if hasattr(module, "reset_parameters"):
-                log.info(f"Inside init_weights; resetting parameters")
+                log.info(f"Inside init_weights (tid={mg_tid}); resetting parameters")
                 import inspect
-                print("module.reset_parameters file:", inspect.getfile(module.reset_parameters))
-                print("module.reset_parameters source:")
-                print("-"*80)
-                print(inspect.getsource(module.reset_parameters))
-                print("-"*80)
+                mg_filename = inspect.getfile(module.reset_parameters)
+                mg_lines, mg_line_num = inspect.getsourcelines(module.reset_parameters)
+                for line in mg_lines:
+                    print(f"Inside init_weights (tid={mg_tid}); source file {mg_filename} line {mg_line_num}: {line}", end="")
+                    mg_line_num += 1
+
                 module.reset_parameters()  # type: ignore
                 params_were_reset = True
 
