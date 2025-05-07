@@ -1,7 +1,7 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import List, Optional, Union
 
 import torch
 import torch.distributed as dist
@@ -55,6 +55,25 @@ __all__ = [
 ]
 
 
+@dataclass
+class SlidingWindowAttentionConfig(Config):
+    pattern: List[bool]
+    window_size: int = 4096
+    force_first: bool = True
+    force_last: bool = True
+
+    def should_use_swa(self, layer_idx: int, n_layers: int) -> bool:
+        if self.force_first:
+            if layer_idx == 0:
+                return True
+            layer_idx -= 1
+            n_layers -= 1
+        if self.force_last:
+            if layer_idx == n_layers - 1:
+                return True
+        return self.pattern[layer_idx % len(self.pattern)]
+
+
 class AttentionType(StrEnum):
     """
     An enumeration of the different attention implementations.
@@ -99,6 +118,7 @@ class AttentionConfig(Config):
     dropout: Optional[float] = None
     use_flash: Optional[bool] = None
     dtype: DType = DType.float32
+    sliding_window: Optional[SlidingWindowAttentionConfig] = None
 
     def num_params(self, d_model: int) -> int:
         """
@@ -144,6 +164,8 @@ class AttentionConfig(Config):
         self,
         d_model: int,
         *,
+        layer_idx: int,
+        n_layers: int,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ) -> "AttentionBase":
@@ -151,10 +173,19 @@ class AttentionConfig(Config):
         Build the corresponding attention module.
 
         :param d_model: The model dimensionality.
-        :param init_device: The device initialize the parameters on, e.g. "cpu", "meta".
+        :param init_device: The device to initialize the parameters on, e.g. "cpu", "meta".
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
+
+        sliding_window_config: Optional[SlidingWindowAttentionConfig] = kwargs.pop(
+            "sliding_window", None
+        )
+        if sliding_window_config is not None and sliding_window_config.should_use_swa(
+            layer_idx, n_layers
+        ):
+            kwargs["window_size"] = sliding_window_config.window_size
+
         kwargs.update(
             dtype=kwargs.pop("dtype").as_pt(),
             d_model=d_model,
@@ -167,8 +198,16 @@ class AttentionConfig(Config):
                 return Attention(**kwargs)
             elif self.name == "fused":
                 kwargs.pop("use_flash", None)
+                if "window_size" in kwargs:
+                    raise OLMoConfigurationError(
+                        "'window_size' is not supported with fused attention"
+                    )
                 return FusedAttention(**kwargs)
             elif self.name == "normalized":
+                if "window_size" in kwargs:
+                    raise OLMoConfigurationError(
+                        "'window_size' is not supported with normalized attention"
+                    )
                 return NormalizedAttention(**kwargs)
             else:
                 raise NotImplementedError(self.name)
@@ -237,6 +276,7 @@ class Attention(AttentionBase):
         qk_norm: Optional[LayerNormConfig] = None,
         dropout: float = 0.0,
         use_flash: bool = False,
+        window_size: Optional[int] = None,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
@@ -277,6 +317,19 @@ class Attention(AttentionBase):
             self.rope = rope_class
 
         self.use_flash = use_flash
+
+        # Translate window size so that we only look left, not right.
+        if window_size is not None:
+            if not use_flash:
+                raise OLMoConfigurationError(
+                    f"'window_size' is only supported with 'use_flash=True' (got {use_flash})"
+                )
+            if window_size <= 0:
+                raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
+            self.window_size = (window_size, 0)
+        else:
+            self.window_size = (-1, -1)
+
         self._cp_pg: Optional[dist.ProcessGroup] = None
         self._cp_enabled = False
         self._cp_load_balancer: Optional[RingAttentionLoadBalancerType] = None
@@ -323,6 +376,7 @@ class Attention(AttentionBase):
                 dropout_p=self.dropout_p,
                 causal=True,
                 softmax_scale=scale,
+                window_size=self.window_size,
             )
         elif self.use_flash:
             att = dispatch_flash_attn(
@@ -338,6 +392,7 @@ class Attention(AttentionBase):
                 dropout_p=self.dropout_p,
                 softmax_scale=scale,
                 causal=True,
+                window_size=self.window_size,
             )
         else:
             # Fall back to PyTorch's SDPA...

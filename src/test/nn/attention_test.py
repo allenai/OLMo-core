@@ -210,10 +210,10 @@ def test_attention_with_intra_document_masking():
         ),
     ],
 )
-def test_attention_buidler_config(attn_config: AttentionConfig):
+def test_attention_builder_config(attn_config: AttentionConfig):
     d_model = 64
 
-    attn = attn_config.build(d_model)
+    attn = attn_config.build(d_model, layer_idx=0, n_layers=1)
 
     # Make sure the estimated number of params matches the actual number of params.
     n_params = sum(p.numel() for p in attn.parameters())

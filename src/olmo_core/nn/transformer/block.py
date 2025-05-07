@@ -108,7 +108,9 @@ class TransformerBlock(TransformerBlockBase):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
-        self.attention = attention.build(d_model, init_device=init_device, cache=cache)
+        self.attention = attention.build(
+            d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
+        )
         if attention_norm is not None:
             self.attention_norm = attention_norm.build(d_model, init_device=init_device)
         else:
@@ -229,7 +231,9 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
-        self.attention = attention.build(d_model, init_device=init_device, cache=cache)
+        self.attention = attention.build(
+            d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
+        )
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
 
         self.attn_alpha_init_value = 0.05
@@ -352,7 +356,9 @@ class MoETransformerBlock(TransformerBlockBase):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
-        self.attention = attention.build(d_model, init_device=init_device, cache=cache)
+        self.attention = attention.build(
+            d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
+        )
         if attention_norm is not None:
             self.attention_norm = attention_norm.build(d_model, init_device=init_device)
         else:
