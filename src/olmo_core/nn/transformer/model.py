@@ -254,7 +254,7 @@ class Transformer(nn.Module):
                         mean: float = 0.0,
                         std: float = 1.0,
                         generator = None,
-                ) -> Tensor:
+                ) -> torch.Tensor:
                   print(f"Inside init_weights (tid={mg_tid}); in fake normal_ function")
                   if torch.overrides.has_torch_function_variadic(tensor):
                       print(f"Inside init_weights (tid={mg_tid}); calling handle_torch_function")
