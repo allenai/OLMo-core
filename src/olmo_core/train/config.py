@@ -161,7 +161,7 @@ class TrainerConfig(Config):
             DownstreamEvaluatorCallbackConfig(
                 tasks=tasks,
                 tokenizer=tokenizer,
-                eval_interval=10000,
+                eval_interval=1000,
             ),
         ).with_callback(
             "lm_evaluator",
@@ -174,7 +174,7 @@ class TrainerConfig(Config):
                     tokenizer=tokenizer,
                     work_dir=get_work_dir(get_root_dir(cluster)),
                 ),
-                eval_interval=10000,
+                eval_interval=1000,
             ),
         )
 

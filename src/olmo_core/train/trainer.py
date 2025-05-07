@@ -63,6 +63,8 @@ from .common import (
 from .train_module import TrainModule
 from .utils import EnvRngStates, check_metrics_consistent, move_metrics, reduce_metrics
 
+SEQ_LEN_METRIC = "data/sequence length"
+
 log = logging.getLogger(__name__)
 
 
@@ -1153,6 +1155,8 @@ class Trainer:
                 global_num_tokens := self.data_loader.global_num_tokens_in_batch(batch)
             ) is not None:
                 self.global_train_tokens_seen += global_num_tokens
+
+            self.record_metric(SEQ_LEN_METRIC, float(batch["input_ids"].shape[1]))
 
             for callback in self._iter_callbacks():
                 callback.pre_step(batch)
