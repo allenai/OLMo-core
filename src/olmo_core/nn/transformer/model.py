@@ -262,7 +262,8 @@ class Transformer(nn.Module):
                           normal_, (tensor,), tensor=tensor, mean=mean, std=std, generator=generator
                       )
                   print(f"Inside init_weights (tid={mg_tid}); calling _no_grad_normal")
-                  return _no_grad_normal_(tensor, mean, std, generator)
+                  with torch.no_grad():
+                      return tensor.normal_(mean, std, generator=generator)
 
                 normal_(module.weight)
                 print(f"Inside init_weights (tid={mg_tid}); finished calling init.normal_(weight)")
