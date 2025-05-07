@@ -226,17 +226,18 @@ class Transformer(nn.Module):
             to ensure the weights are initialized differently for different stages.
         """
         device = device or self.device
-        print(f"Inside init_weights; calling to_empty")
-        self.to_empty(device=device)
-        print(f"Inside init_weights; finished calling to_empty")
 
-        params_were_reset = False
         import threading
         mg_tid = threading.get_native_id()
+
+        print(f"Inside init_weights (tid={mg_tid}); calling to_empty")
+        self.to_empty(device=device)
+        print(f"Inside init_weights (tid={mg_tid}); finished calling to_empty")
+
+        params_were_reset = False
         for module in self.modules():
-            print(f"Inside init_weights (tid={mg_tid}); considering module {module}")
             if hasattr(module, "reset_parameters"):
-                print(f"Inside init_weights (tid={mg_tid}); resetting parameters")
+                print(f"Inside init_weights (tid={mg_tid}); resetting parameters of module {module.__name__}")
                 import inspect
                 mg_filename = inspect.getfile(module.reset_parameters)
                 mg_lines, mg_line_num = inspect.getsourcelines(module.reset_parameters)
@@ -246,16 +247,18 @@ class Transformer(nn.Module):
 
                 module.reset_parameters()  # type: ignore
                 params_were_reset = True
+            else:
+                print(f"Inside init_weights (tid={mg_tid}); module {module.__name__} has no reset_parameters function")
 
         if params_were_reset:
-           print(f"Inside init_weights; finished resetting parameters")
+           print(f"Inside init_weights (tid={mg_tid}); finished resetting parameters")
         else:
-           print(f"Inside init_weights; didn't have to reset params")
+           print(f"Inside init_weights (tid={mg_tid}); didn't have to reset params")
 
         seed = self.init_seed
         if pp_mesh is not None:
             seed += pp_mesh.get_local_rank()
-        log.info(f"Inside init_weights; calling torch.Generator() with device {device} and seed {seed}")
+        log.info(f"Inside init_weights (tid={mg_tid}); calling torch.Generator() with device {device} and seed {seed}")
         generator = torch.Generator(device).manual_seed(seed)
 
         embeddings_were_initialized = False
@@ -266,13 +269,13 @@ class Transformer(nn.Module):
             embeddings_were_initialized = True
 
         if embeddings_were_initialized:
-            log.info(f"Inside init_weights; emebddings were initialized")
+            print(f"Inside init_weights (tid={mg_tid}); embeddings were initialized")
         else:
-            log.info(f"Inside init_weights; didn't have to initialize embeddings")
+            print(f"Inside init_weights (tid={mg_tid}); didn't have to initialize embeddings")
 
         block_idx = 0
         for block in self.blocks.values():
-            log.info(f"Inside init_weights; processing block {block_idx}")
+            print(f"Inside init_weights (tid={mg_tid}); processing block {block_idx}")
             # This might fail if it's wrapped.
             #  assert isinstance(block, TransformerBlock)
             block = cast(TransformerBlock, block)
@@ -320,7 +323,7 @@ class Transformer(nn.Module):
             block_idx += 1
 
         if self.lm_head is not None:
-            log.info(f"Inside init_weights; calling init_final_w_out")
+            print(f"Inside init_weights (tid={mg_tid}); calling init_final_w_out")
             self.init_method.init_final_w_out(
                 self.lm_head.w_out, d_model=self.d_model, std=self.init_std, generator=generator
             )
