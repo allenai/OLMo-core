@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import sys
+from pathlib import Path
 
 import rich
 import torch
@@ -52,6 +53,8 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/dirkg/baseline27
 
     # Get step number and max steps to infer where the learning rate left off.
     checkpoint = checkpoint.rstrip("/")
+    if Path("/weka").is_dir():
+        checkpoint = re.sub("^weka://", "/weka/", checkpoint)
     checkpoint_train_state = torch.load(
         resource_path(f"{checkpoint}/train", "rank0.pt"), weights_only=False
     )
@@ -105,6 +108,5 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/dirkg/baseline27
     # fix up the launch config
     config.launch.cmd.insert(3, checkpoint)
     config.launch.cmd[2] = run_name
-    config.trainer.load_path = re.sub("^weka://", "/weka/", config.trainer.load_path)
 
     cmd.run(config)
