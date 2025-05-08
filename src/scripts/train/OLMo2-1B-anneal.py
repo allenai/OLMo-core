@@ -9,6 +9,7 @@ Run the script without any arguments to see usage info.
 import importlib
 import json
 import logging
+import re
 import sys
 
 import rich
@@ -104,5 +105,6 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/dirkg/baseline27
     # fix up the launch config
     config.launch.cmd.insert(3, checkpoint)
     config.launch.cmd[2] = run_name
+    config.trainer.load_path = re.sub("^weka://", "/weka/", config.trainer.load_path)
 
     cmd.run(config)
