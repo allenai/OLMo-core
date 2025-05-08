@@ -168,7 +168,7 @@ class LcContTrain(Config):
                 tp_config=TransformerTensorParallelConfig(
                     degree=TP_DEGREE,
                     enable_async=True,
-                    loss_parallel=True,
+                    # loss_parallel=True,
                 ),
                 # cp_config=TransformerContextParallelConfig.llama3(degree=CP_DEGREE)
                 # if INTRA_DOCUMENT_MASKING
