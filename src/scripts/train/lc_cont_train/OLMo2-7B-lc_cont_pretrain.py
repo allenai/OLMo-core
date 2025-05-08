@@ -64,7 +64,7 @@ from olmo_core.utils import get_default_device, prepare_cli_environment, seed_al
 # TODO: pull this from the checkpoint when https://github.com/allenai/OLMo-core/pull/143 merges.
 
 
-CONTEXT_LENGTH = 2 * 4096
+CONTEXT_LENGTH = 4 * 4096
 TP_DEGREE = 4
 AC_ATTENTION_INTERVAL = 4
 INTRA_DOCUMENT_MASKING = True
@@ -165,11 +165,11 @@ class LcContTrain(Config):
                     reduce_dtype=DType.float32,
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
                 ),
-                # tp_config=TransformerTensorParallelConfig(
-                    # degree=TP_DEGREE,
-                    # enable_async=True,
-                    # loss_parallel=True,
-                # ),
+                tp_config=TransformerTensorParallelConfig(
+                    degree=TP_DEGREE,
+                    enable_async=True,
+                    loss_parallel=True,
+                ),
                 # cp_config=TransformerContextParallelConfig.llama3(degree=CP_DEGREE)
                 # if INTRA_DOCUMENT_MASKING
                 # else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE),
@@ -192,7 +192,7 @@ class LcContTrain(Config):
                 # compile=True,
             #     fused_ops=False,
                 use_flash=True,
-                rope_theta =int(1.0 * 10 ** 6),
+                rope_theta =int(2.0 * 10 ** 6),
             ),
             dataset=NumpyDatasetConfig.from_data_mix(
                 AnnealingDataMix.data_mix,
@@ -218,7 +218,7 @@ class LcContTrain(Config):
                 load_path=load_path,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
-                max_duration=Duration.tokens(int(50e9)),
+                max_duration=Duration.tokens(int(80e9)),
             )
             .with_callback(
                 "checkpointer",
