@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a "packed" numpy FSL variant that packs documents into sequences using the best-fit-decreasing bin packing algorithm following the work from [Fewer Truncates Improve Language Modeling](https://arxiv.org/pdf/2404.10830).
 - Added module `olmo_core.testing`.
 - Added a "interleaved" numpy FSL variant that interleaves several documents into sequences following the work from [LongSkywork: A Training Recipe for Efficiently Extending Context Length in Large Language Models](https://arxiv.org/pdf/2406.00605).
+- Added sliding window attention as a feature
+- Added `BatchSizeSchedulerCallback` for setting a batch size schedule over the course of a training run.
 
 ### Changed
 
