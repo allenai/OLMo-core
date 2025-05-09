@@ -570,6 +570,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             if current_global_batch_size != self.global_batch_size:
                 if self.num_workers > 0:
                     log.info("Batch size has changed, reinitializing data loading workers...")
+                current_global_batch_size = self.global_batch_size
                 batch_iterator = _build_batch_iterator()
 
     def _get_dataset_item(self, idx: int) -> Dict[str, Any]:
