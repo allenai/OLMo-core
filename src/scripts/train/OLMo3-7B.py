@@ -8,7 +8,8 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig, SchedulerUnits
+from olmo_core.optim.scheduler import WSD
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
@@ -37,7 +38,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         rank_microbatch_size=rank_microbatch_size,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=SkipStepAdamWConfig(
-            lr=3e-4,  # TODO: (shane) set based on muP?
+            lr=1.6e-4,
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
@@ -55,7 +56,11 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
-        scheduler=CosWithWarmup(warmup_steps=2000),  # TODO: (shane) use WSD w/ sqrt scaling
+        scheduler=WSD(
+            units=SchedulerUnits.steps,
+            warmup=2000,
+            decay=(int(50e9 / GLOBAL_BATCH_SIZE))
+        ),
     )
 
 
