@@ -723,7 +723,8 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
         # Account for change in batch size / sequence length.
         self.batches_processed = self.tokens_processed // self.global_batch_size
         log.info(
-            f"Data loader will resume from batch {self.batches_processed}/{self.total_batches}"
+            f"Data loader will resume from batch {self.batches_processed:,d}/{self.total_batches:,d} "
+            f"based on batch size of {self.global_batch_size:,d} tokens"
         )
 
         assert isinstance(self.dataset, NumpyFSLDatasetBase)

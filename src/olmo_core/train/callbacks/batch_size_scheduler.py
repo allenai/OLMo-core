@@ -2,12 +2,12 @@ import dataclasses
 import logging
 import math
 from dataclasses import dataclass
-from typing import List, Optional, Union
+from typing import List, Optional
 
 import torch
 
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.optim import Scheduler, SkipStepAdamW
+from olmo_core.optim import INITIAL_LR_FIELD, LR_FIELD, Scheduler, SkipStepAdamW
 
 from ..common import Duration
 from ..train_module import TransformerPipelineTrainModule, TransformerTrainModule
@@ -85,6 +85,10 @@ class BatchSizeSchedulerCallback(Callback):
 
     def post_checkpoint_loaded(self, *args):
         del args
+        # NOTE: we set the batch size correctly after loading a checkpoint because
+        # the "initial_lr_field" in the optimizer state always gets reset to the value from
+        # the config, not the checkpoint, and same for the "batches_processed" field in the
+        # data loader.
         self._maybe_update_batch_size_and_lr()
 
     def pre_load_batch(self):
@@ -147,15 +151,21 @@ class BatchSizeSchedulerCallback(Callback):
         )
         for optim_idx, optim in enumerate(optimizers):
             for group_idx, group in enumerate(optim.param_groups):
-                new_lr: Union[float, torch.Tensor]
-                if scheduler is not None:
-                    if group.get(scheduler.initial_lr_field) is None:
-                        group[scheduler.initial_lr_field] = group[scheduler.lr_field]
-                    group[scheduler.initial_lr_field] *= lr_adjustment_factor
-                    new_lr = group[scheduler.initial_lr_field]
-                else:
-                    group["lr"] *= lr_adjustment_factor
-                    new_lr = group["lr"]
+                lr_field = LR_FIELD if scheduler is None else scheduler.lr_field
+                initial_lr_field = (
+                    INITIAL_LR_FIELD if scheduler is None else scheduler.initial_lr_field
+                )
+
+                if group.get(initial_lr_field) is None:
+                    group[initial_lr_field] = group[lr_field]
+
+                group[initial_lr_field] *= lr_adjustment_factor
+
+                # Only set the actual LR if there's no scheduler. Schedulers update the LR based
+                # on the initial LR.
+                if scheduler is None:
+                    group[lr_field] = group[initial_lr_field]
+
                 log.info(
-                    f"Set base LR for optimizer {optim_idx+1}, group {group_idx+1} to {float(new_lr):.8f}"
+                    f"Set base LR for optimizer {optim_idx+1}, group {group_idx+1} to {float(group[initial_lr_field]):.8f}"
                 )
