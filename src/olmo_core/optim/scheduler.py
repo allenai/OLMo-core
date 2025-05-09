@@ -9,6 +9,7 @@ import torch
 
 from ..config import StrEnum
 from ..exceptions import OLMoConfigurationError
+from .config import INITIAL_LR_FIELD, LR_FIELD
 
 if TYPE_CHECKING:
     from olmo_core.train import Trainer
@@ -27,8 +28,8 @@ class Scheduler(metaclass=ABCMeta):
     Learning rate scheduler base class.
     """
 
-    lr_field: str = "lr"
-    initial_lr_field: str = "initial_lr"
+    lr_field: str = LR_FIELD
+    initial_lr_field: str = INITIAL_LR_FIELD
     units: SchedulerUnits = SchedulerUnits.steps
 
     @abstractmethod
@@ -60,7 +61,7 @@ class Scheduler(metaclass=ABCMeta):
 
         # Ensure 'initial_lr' is set.
         if group.get(self.initial_lr_field) is None:
-            group[self.initial_lr_field] = group["lr"]
+            group[self.initial_lr_field] = group[self.lr_field]
 
         # Set new LR.
         if self.units == SchedulerUnits.steps:

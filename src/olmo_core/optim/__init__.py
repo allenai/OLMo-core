@@ -1,6 +1,6 @@
 from .adam import AdamConfig
 from .adamw import AdamWConfig, SkipStepAdamW, SkipStepAdamWConfig
-from .config import OptimConfig, OptimGroupOverride
+from .config import INITIAL_LR_FIELD, LR_FIELD, OptimConfig, OptimGroupOverride
 from .lion import Lion, LionConfig, SkipStepLion, SkipStepLionConfig
 from .scheduler import (
     ConstantScheduler,
@@ -36,4 +36,6 @@ __all__ = [
     "InvSqrtWithWarmup",
     "LinearWithWarmup",
     "SequentialScheduler",
+    "LR_FIELD",
+    "INITIAL_LR_FIELD",
 ]
