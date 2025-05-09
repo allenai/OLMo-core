@@ -105,7 +105,7 @@ class BatchSizeSchedulerCallback(Callback):
                     # When increasing the batch size, need to wait until 'batches_processed' is divisible
                     # by the factor that batch size is being increased by.
                     ratio = target_batch_size // self.current_batch_size
-                    if self.trainer.data_loader.batches_processed % ratio != 0:
+                    if self.trainer.data_loader.batches_processed % ratio == 0:
                         self._update_batch_size_and_lr(target_batch_size)
                 elif target_batch_size < self.current_batch_size:
                     assert self.current_batch_size % target_batch_size == 0
