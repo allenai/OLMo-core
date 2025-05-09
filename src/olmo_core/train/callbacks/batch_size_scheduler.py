@@ -7,7 +7,7 @@ from typing import List, Optional, Tuple, Union
 import torch
 
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.optim import Scheduler
+from olmo_core.optim import Scheduler, SkipStepAdamW
 
 from ..common import Duration
 from ..train_module import TransformerPipelineTrainModule, TransformerTrainModule
@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 class BatchSizeSchedulerCallback(Callback):
     """
     A callback for setting a batch size scheduler over the course of a training run.
-    Also adjusts the base learning rate for transformer train modules by a factor of
+    Also adjusts the base learning rate with Adam optimizers for transformer train modules by a factor of
     ``sqrt(new_batch_size / current_batch_size)``.
     """
 
@@ -120,21 +120,29 @@ class BatchSizeSchedulerCallback(Callback):
             log.warning(
                 f"Unable to adjust learning rate for {self.trainer.train_module.__class__.__name__} train module class"
             )
-        else:
-            log.info(
-                f"Adjusting base learning rate by a factor of {lr_adjustment_factor:.4f} = sqrt({ratio})"
-            )
-            for optim_idx, optim in enumerate(optimizers):
-                for group_idx, group in enumerate(optim.param_groups):
-                    new_lr: Union[float, torch.Tensor]
-                    if scheduler is not None:
-                        if group.get(scheduler.initial_lr_field) is None:
-                            group[scheduler.initial_lr_field] = group[scheduler.lr_field]
-                        group[scheduler.initial_lr_field] *= lr_adjustment_factor
-                        new_lr = group[scheduler.initial_lr_field]
-                    else:
-                        group["lr"] *= lr_adjustment_factor
-                        new_lr = group["lr"]
-                    log.info(
-                        f"Set base LR for optimizer {optim_idx+1}, group {group_idx+1} to {float(new_lr):.8f}"
-                    )
+            return
+
+        for optim in optimizers:
+            if not isinstance(optim, (torch.optim.Adam, torch.optim.AdamW, SkipStepAdamW)):
+                log.warning(
+                    f"Unable to adjust learning rate for {optim.__class__.__name__} optimizer"
+                )
+                return
+
+        log.info(
+            f"Adjusting base learning rate by a factor of {lr_adjustment_factor:.4f} = sqrt({ratio})"
+        )
+        for optim_idx, optim in enumerate(optimizers):
+            for group_idx, group in enumerate(optim.param_groups):
+                new_lr: Union[float, torch.Tensor]
+                if scheduler is not None:
+                    if group.get(scheduler.initial_lr_field) is None:
+                        group[scheduler.initial_lr_field] = group[scheduler.lr_field]
+                    group[scheduler.initial_lr_field] *= lr_adjustment_factor
+                    new_lr = group[scheduler.initial_lr_field]
+                else:
+                    group["lr"] *= lr_adjustment_factor
+                    new_lr = group["lr"]
+                log.info(
+                    f"Set base LR for optimizer {optim_idx+1}, group {group_idx+1} to {float(new_lr):.8f}"
+                )
