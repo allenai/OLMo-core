@@ -80,6 +80,9 @@ class BatchSizeSchedulerCallback(Callback):
     def pre_load_batch(self):
         self._maybe_update_batch_size_and_lr()
 
+    def post_step(self):
+        self.trainer.record_metric("train/global batch size", self.current_batch_size)
+
     def _maybe_update_batch_size_and_lr(self):
         # Find latest event in the schedule to apply.
         for target_batch_size, event_start in reversed(self.schedule):
