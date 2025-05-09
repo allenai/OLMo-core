@@ -60,7 +60,7 @@ class Scheduler(metaclass=ABCMeta):
 
         # Ensure 'initial_lr' is set.
         if group.get(self.initial_lr_field) is None:
-            group[self.initial_lr_field] = group["lr"]
+            group[self.initial_lr_field] = group[self.lr_field]
 
         # Set new LR.
         if self.units == SchedulerUnits.steps:
