@@ -357,6 +357,11 @@ class MuP:
         if mup is None or mup.lr_multiplier is None:
             return weight_decay
 
+        if not mup.optimizer.coupled_weight_decay:
+            raise RuntimeError(
+                f"Scaling coupled weight decay is not supported for optimizer {mup.optimizer} with uncoupled weight decay"
+            )
+
         return weight_decay / mup.lr_multiplier
 
     @classmethod

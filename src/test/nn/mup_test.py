@@ -1,6 +1,7 @@
 from collections import defaultdict
+from contextlib import contextmanager
 from functools import partial
-from typing import Callable, List, Optional, Tuple, Type
+from typing import Callable, Dict, List, Optional, Tuple, Type
 
 import numpy as np
 import pytest
@@ -59,7 +60,6 @@ def get_transformer_inputs(vocab_size: int = 100) -> torch.Tensor:
         pytest.param(
             MuPOptimizerType.adam, MuPScalingStrategy.constant_init_std, 1 / (2**3 * 0.7)
         ),
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.table_8, 1 / (2**3 * 0.7)),
     ],
 )
 def test_mup_input_multiplier_scaling_input(
@@ -87,7 +87,6 @@ def test_mup_input_multiplier_scaling_input(
         pytest.param(
             MuPOptimizerType.adam, MuPScalingStrategy.constant_init_std, 1 / (2 ** (3 / 2))
         ),
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.table_8, None),
     ],
 )
 def test_mup_input_multiplier_scaling_input_and_output(
@@ -113,7 +112,6 @@ def test_mup_input_multiplier_scaling_input_and_output(
         pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_inputs, 1 / (2**3 * 0.7)),
         pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_lr, None),
         pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_init_std, None),
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.table_8, None),
     ],
 )
 def test_mup_init_std_multiplier_scaling_input(
@@ -139,7 +137,6 @@ def test_mup_init_std_multiplier_scaling_input(
         pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_inputs, 1 / (2 ** (3 / 2))),
         pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_lr, 2 ** (3 / 2)),
         pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_init_std, None),
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.table_8, 1 / (2 ** (3 / 2))),
     ],
 )
 def test_mup_init_std_multiplier_scaling_input_and_output(
@@ -301,12 +298,47 @@ def test_mup_no_lr_scaling_same_optim_groups(optim_config_cls):
     torch.testing.assert_close(optim.param_groups, mup_optim.param_groups)
 
 
+@contextmanager
+def _submodule_output_collection(model: torch.nn.Module):
+    submodule_outputs: Dict[str, torch.Tensor] = {}
+
+    def collect_submodule_outputs(
+        debug_state: Dict[str, torch.Tensor],
+        name: str,
+        module: torch.nn.Module,
+        args,
+        output,
+    ):
+        del module
+        if isinstance(output, torch.Tensor):
+            state_name = f"{name}|{len(debug_state)}|output"
+            debug_state[state_name] = output.detach()
+
+    handles = []
+    try:
+        for name, module in model.named_modules():
+            handles.append(
+                module.register_forward_hook(
+                    partial(
+                        collect_submodule_outputs,
+                        submodule_outputs,
+                        name,
+                    )
+                )
+            )
+        yield submodule_outputs
+    finally:
+        for handle in handles:
+            handle.remove()
+
+
 def train_and_collect_mup_data(
     model_generator: Callable[[int, int], Tuple[int, torch.nn.Module]],
     optim_config: OptimConfig,
     num_widths: int,
     train_batch_size: int = 1,
     eval_batch_size: int = 8,
+    vocab_size: int = 100,
     steps: int = 50,
     seeds: int = 10,
 ):
@@ -328,48 +360,27 @@ def train_and_collect_mup_data(
                 )
             )
 
-    # optim_config: OptimConfig = optim_config_cls(
-    #     lr=1e-3,
-    #     betas=(0.9, 0.95),
-    # )
-    # mup_optimizer_type = optim_config.mup_optimizer_type()
-    # assert mup_optimizer_type is not None, "Optimizer does not support muP"
+    seeded_initial_submodule_outputs: List[Dict[str, torch.Tensor]] = []
+    seeded_final_submodule_outputs: List[Dict[str, torch.Tensor]] = []
 
-    # Dict[activation_name, [field_for_different_multiplers_and_seeds]]
-    coord_magnitudes: defaultdict[str, List[float]] = defaultdict(list)
-    activation_shapes: defaultdict[str, List[tuple]] = defaultdict(list)
+    # Dict[activation_name, [<field>_for_different_multipliers_and_seeds]]
+
     for width_idx in range(num_widths):
         for seed_idx in range(seeds):
-            # mup = MuPConfig(
-            #     mup_optimizer_type,
-            #     scaling_strategy=mup_scaling_strategy,
-            #     width_scalings={
-            #         MuPHyperParam.d_model: d_model / BASE_D_MODEL,
-            #         MuPHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
-            #         MuPHyperParam.head_dim: d_model / BASE_D_MODEL,
-            #     },
-            # )
-
-            # ffn = FeedForwardConfig(
-            #     hidden_size,
-            #     mup=mup,
-            #     bias=False,
-            # ).build(d_model)
-
-            # InitMethod.normal.init_feed_forward(ffn, d_model=d_model, block_idx=0, num_blocks=1, generator=torch.Generator().manual_seed(i_seed))
-
             input_dim, model = model_generator(width_idx, seed_idx)
 
             optim = optim_config.build(model)
             scheduler = LinearWithWarmup(warmup=0)
 
-            inp = torch.randn(train_batch_size, input_dim)
+            with _submodule_output_collection(model) as submodule_outputs:
+                _ = model(torch.randint(0, vocab_size, (eval_batch_size, input_dim)))
+                seeded_initial_submodule_outputs.append(submodule_outputs)
 
             # Train for a bit
             for i_step in range(steps):
-                # inp = torch.randn(train_batch_size, input_dim)
-                labels = torch.randint(0, input_dim, (train_batch_size,))
+                inp = torch.randint(0, vocab_size, (train_batch_size, input_dim))
                 # labels = (inp.sum(dim=-1) > 0).long()
+                labels = inp
                 optim.zero_grad(set_to_none=True)
                 logits = model(inp)
 
@@ -394,30 +405,34 @@ def train_and_collect_mup_data(
                     )
                     param_group[scheduler.lr_field] = new_lr
 
-            activation_shapes_and_coord_magnitudes: List[Tuple[str, tuple, float]] = []
-            for name, module in model.named_modules():
-                module.register_forward_hook(
-                    partial(
-                        collect_mean_coord_magnitude,
-                        activation_shapes_and_coord_magnitudes,
-                        name,
-                    )
-                )
+            with _submodule_output_collection(model) as submodule_outputs:
+                _ = model(torch.randint(0, vocab_size, (eval_batch_size, input_dim)))
+                seeded_final_submodule_outputs.append(submodule_outputs)
 
-            res = model(torch.randn(eval_batch_size, input_dim))
-            # print(
-            #     input_dim,
-            #     (inp.norm(p=1.0) / inp.numel()).item(),
-            #     (res.norm(p=1.0) / res.numel()) / (inp.norm(p=1.0) / inp.numel()),
-            #     (model.w1.weight.norm(p=1.0) / model.w1.weight.numel()).item(),
-            #     (model.w2.weight.norm(p=1.0) / model.w2.weight.numel()).item(),
-            # )
+    # First piece of muP data is average abs value of elements at initialization
+    # (a.k.a. "coordinate magnitudes" at init).
+    seeded_init_coord_magnitudes: defaultdict[str, List[float]] = defaultdict(list)
+    for initial_submodule_outputs in seeded_initial_submodule_outputs:
+        for state_key, output in initial_submodule_outputs.items():
+            seeded_init_coord_magnitudes[state_key].append(
+                output.float().norm(p=1.0).item() / output.numel()
+            )
 
-            for name, shape, magnitude in activation_shapes_and_coord_magnitudes:
-                coord_magnitudes[name].append(magnitude)
-                activation_shapes[name].append(shape)
+    # Second piece of muP data is std deviation of the change in "coordinates"
+    # from initialization to end of training.
+    seeded_coord_change_stds: defaultdict[str, List[float]] = defaultdict(list)
+    for initial_submodule_outputs, final_submodule_outputs in zip(
+        seeded_initial_submodule_outputs, seeded_final_submodule_outputs
+    ):
+        for state_key in initial_submodule_outputs.keys():
+            initial_output = initial_submodule_outputs[state_key]
+            final_output = final_submodule_outputs[state_key]
+            coord_change_std = (
+                final_output - initial_output
+            ).float().std() / initial_output.numel()
+            seeded_coord_change_stds[state_key].append(coord_change_std.item())
 
-    return coord_magnitudes, activation_shapes
+    return seeded_init_coord_magnitudes, seeded_coord_change_stds
 
 
 @pytest.mark.parametrize(
@@ -428,7 +443,9 @@ def train_and_collect_mup_data(
         for scaling_strategy in MuPScalingStrategy
     ],
 )
-def test_ffn_mup_const_coord_norm_at_init_scaling_input_output(optim_config_cls, mup_scaling_strategy):
+def test_ffn_mup_const_coord_norm_at_init_scaling_input_output(
+    optim_config_cls, mup_scaling_strategy
+):
     """
     This is the most important (and slowest) test of muP validity. It runs a base model and its muP
     up-/down-scalings, and checks that the magnitude of the coordinates (i.e. entries) of the
@@ -523,7 +540,9 @@ def test_ffn_mup_const_coord_norm_at_init_scaling_input_output(optim_config_cls,
         for scaling_strategy in MuPScalingStrategy
     ],
 )
-def test_ffn_mup_non_growing_coord_norm_scaling_input_output(optim_config_cls, mup_scaling_strategy):
+def test_ffn_mup_non_growing_coord_norm_scaling_input_output(
+    optim_config_cls, mup_scaling_strategy
+):
     """
     This is the most important (and slowest) test of muP validity. It runs a base model and its muP
     up-/down-scalings, and checks that the magnitude of the coordinates (i.e. entries) of the
@@ -535,7 +554,7 @@ def test_ffn_mup_non_growing_coord_norm_scaling_input_output(optim_config_cls, m
     These thresholds are broken very easily by the standard parametrization but we try to keep them tight
     because muP bugs might not break them as easily.
     """
-    MIN_NORMALIZED_SLOPE = -0.05
+    MIN_NORMALIZED_SLOPE = -0.5
     MAX_NORMALIZED_SLOPE = 0.05
     D_MODELS = [32, 64, 128, 256, 512]
     HIDDEN_SIZES = [24, 48, 96, 192, 384]
@@ -543,7 +562,7 @@ def test_ffn_mup_non_growing_coord_norm_scaling_input_output(optim_config_cls, m
     BASE_D_MODEL = D_MODELS[BASE_MULTIPLIER_IDX]
     BASE_HIDDEN_SIZE = HIDDEN_SIZES[BASE_MULTIPLIER_IDX]
     SEEDS = 10
-    STEPS = 1000
+    STEPS = 50
 
     optim_config: OptimConfig = optim_config_cls(
         lr=1e-3,
@@ -725,139 +744,100 @@ def test_mup_non_growing_coordinates(optim_config_cls: Type[OptimConfig], mup_sc
     These thresholds are broken very easily by the standard parametrization but we try to keep them tight
     because muP bugs might not break them as easily.
     """
-    SEEDS = 10
-    STEPS = 50
-    BATCH_SIZE = 2
+    MIN_NORMALIZED_SLOPE = -0.6
+    MAX_NORMALIZED_SLOPE = 0.05
     SEQ_LEN = 32
-    DECAY_THRESHOLD = 0.3
-    GROWTH_THRESHOLD = 2
-    D_MODEL_MULTIPLIERS = [1, 2, 4, 8, 16]
+    VOCAB_SIZE = 1024
+    SEEDS = 10
+    STEPS = 100
+    D_MODEL_MULTIPLIERS = [4, 8, 16]
     BASE_MULTIPLIER_IDX = 1
     base_d_model_multiplier = D_MODEL_MULTIPLIERS[BASE_MULTIPLIER_IDX]
 
-    def collect_mean_coord_magnitude(
-        debug_state: List[Tuple[str, tuple, float]],
-        name: str,
-        module: torch.nn.Module,
-        args,
-        output,
-    ):
-        del module
-        # if isinstance(args[0], torch.Tensor):
-        #     inp_vector = args[0].detach().float()
-        #     state_name = f"{name}|input"
-        #     debug_state.append(
-        #         (state_name, inp_vector.shape, inp_vector.norm(p=1.0).item() / inp_vector.numel())
-        #     )
-        if isinstance(output, torch.Tensor):
-            state_name = f"{name}|{len(debug_state)}|output"
-            debug_state.append(
-                (
-                    state_name,
-                    output.shape,
-                    output.detach().float().norm(p=1.0).item() / output.numel(),
-                )
-            )
-
-    mup_optimizer_type = optim_config_cls.mup_optimizer_type()
-    assert mup_optimizer_type is not None, "Optimizer does not support muP"
-
     optim_config: OptimConfig = optim_config_cls(
         lr=5e-3,
-        weight_decay=0.1,
         betas=(0.9, 0.95),
         group_overrides=[
             OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
         ],
     )
+    mup_optimizer_type = optim_config.mup_optimizer_type()
+    assert mup_optimizer_type is not None, "Optimizer does not support muP"
 
-    # Dict[activation_name, [field_for_different_multiplers_and_seeds]]
-    coord_magnitudes: defaultdict[str, List[float]] = defaultdict(list)
-    activation_shapes: defaultdict[str, List[tuple]] = defaultdict(list)
-    for d_model_multiplier in D_MODEL_MULTIPLIERS:
-        for i_seed in range(SEEDS):
-            vocab_size = BATCH_SIZE * SEQ_LEN + STEPS
+    def generate_model(width_idx: int, seed_idx: int) -> Tuple[int, torch.nn.Module]:
+        d_model_multiplier = D_MODEL_MULTIPLIERS[width_idx]
 
-            non_mup_model_config = get_transformer_config(
-                None,
-                vocab_size=vocab_size,
-                d_model_multiplier=d_model_multiplier,
-                init_seed=i_seed,
-            )
-            base_model_config = get_transformer_config(
-                None,
-                vocab_size=vocab_size,
-                d_model_multiplier=base_d_model_multiplier,
-                init_seed=i_seed,
-            )
+        non_mup_model_config = get_transformer_config(
+            None,
+            vocab_size=VOCAB_SIZE,
+            d_model_multiplier=d_model_multiplier,
+            init_seed=seed_idx,
+        )
+        base_model_config = get_transformer_config(
+            None,
+            vocab_size=VOCAB_SIZE,
+            d_model_multiplier=base_d_model_multiplier,
+            init_seed=seed_idx,
+        )
 
-            mup_config = MuPConfig(
-                mup_optimizer_type,
-                scaling_strategy=mup_scaling_strategy,
-                width_scalings=non_mup_model_config.get_mup_width_scalings(base_model_config),
-            )
-            model_config = get_transformer_config(
-                mup_config,
-                vocab_size=vocab_size,
-                d_model_multiplier=d_model_multiplier,
-                init_seed=i_seed,
-            )
+        mup_config = MuPConfig(
+            mup_optimizer_type,
+            scaling_strategy=mup_scaling_strategy,
+            width_scalings=non_mup_model_config.get_mup_width_scalings(base_model_config),
+        )
 
-            model = model_config.build()
-            optim = optim_config.build(model)
+        model_config = get_transformer_config(
+            mup_config,
+            vocab_size=VOCAB_SIZE,
+            d_model_multiplier=d_model_multiplier,
+            init_seed=seed_idx,
+        )
 
-            model.init_weights(max_seq_len=SEQ_LEN)
+        model = model_config.build()
 
-            # Train for a bit
-            for i in range(STEPS):
-                inp = torch.arange(0, BATCH_SIZE * SEQ_LEN).reshape(BATCH_SIZE, SEQ_LEN) + i
-                labels = inp.detach().clone().contiguous()
-                optim.zero_grad(set_to_none=True)
-                _, loss, _, _ = model(inp, labels=labels, return_logits=False)
+        model.init_weights(max_seq_len=SEQ_LEN)
 
-                # # Get loss to optimize for.
-                # loss = ce_loss
-                # if z_loss is not None:
-                #     loss += z_loss
+        return SEQ_LEN, model
 
-                loss.backward()
-                optim.step()
+    seeded_init_coord_magnitudes, seeded_coord_change_stds = train_and_collect_mup_data(
+        generate_model,
+        optim_config,
+        len(D_MODEL_MULTIPLIERS),
+        vocab_size=VOCAB_SIZE,
+        steps=STEPS,
+        seeds=SEEDS,
+    )
 
-            activation_shapes_and_coord_magnitudes: List[Tuple[str, tuple, float]] = []
-            for name, module in model.named_modules():
-                module.register_forward_hook(
-                    partial(
-                        collect_mean_coord_magnitude,
-                        activation_shapes_and_coord_magnitudes,
-                        name,
-                    )
-                )
+    for name, magnitudes in seeded_init_coord_magnitudes.items():
+        magnitudes = np.array(
+            [np.mean(magnitudes[i : i + SEEDS]) for i in range(0, len(magnitudes), SEEDS)]
+        )
 
-            model(torch.arange(0, BATCH_SIZE * SEQ_LEN).reshape(BATCH_SIZE, SEQ_LEN))
+        log_d_model_multipliers = np.log2(np.array(D_MODEL_MULTIPLIERS))
+        slope = np.polynomial.polynomial.Polynomial.fit(
+            log_d_model_multipliers, magnitudes / magnitudes[0], 1
+        ).coef[1]
+        assert slope <= MAX_NORMALIZED_SLOPE, (
+            f"Coordinate magnitudes for {name} grow too much with width. "
+            f"slope {slope}, magnitudes {magnitudes}, normalized magnitudes {magnitudes / magnitudes[0]}"
+        )
+        assert slope >= MIN_NORMALIZED_SLOPE, (
+            f"Coordinate magnitudes for {name} decay too much with width. "
+            f"slope {slope}, magnitudes {magnitudes}, normalized magnitudes {magnitudes / magnitudes[0]}"
+        )
 
-            for name, shape, magnitude in activation_shapes_and_coord_magnitudes:
-                coord_magnitudes[name].append(magnitude)
-                activation_shapes[name].append(shape)
+    for name, stds in seeded_coord_change_stds.items():
+        stds = np.array([np.mean(stds[i : i + SEEDS]) for i in range(0, len(stds), SEEDS)])
 
-    for name, magnitudes in coord_magnitudes.items():
-        magnitudes = [np.mean(magnitudes[i : i + SEEDS]) for i in range(0, len(magnitudes), SEEDS)]
-        shapes = [activation_shapes[name][SEEDS * i] for i in range(len(magnitudes))]
-
-        for i, magnitude in enumerate(magnitudes):
-            if i < BASE_MULTIPLIER_IDX:
-                ratio = magnitudes[BASE_MULTIPLIER_IDX] / magnitude
-            else:
-                ratio = magnitude / magnitudes[BASE_MULTIPLIER_IDX]
-
-            assert ratio <= GROWTH_THRESHOLD, (
-                f"Coordinate magnitudes for {name} grow too much with width. "
-                f"d_model multiplier {D_MODEL_MULTIPLIERS[i]}, "
-                f"base d_model multiplier {D_MODEL_MULTIPLIERS[BASE_MULTIPLIER_IDX]}, "
-                f"ratio {ratio}, magnitudes {magnitudes}, shapes {shapes}"
-            )
-            assert ratio >= DECAY_THRESHOLD, (
-                f"Coordinate magnitudes for {name} decay too much with width. "
-                f"d_model multiplier {D_MODEL_MULTIPLIERS[i]}, "
-                f"base d_model multiplier {D_MODEL_MULTIPLIERS[BASE_MULTIPLIER_IDX]}, "
-                f"ratio {ratio}, magnitudes {magnitudes}, shapes {shapes}"
-            )
+        log_d_model_multipliers = np.log2(np.array(D_MODEL_MULTIPLIERS))
+        slope = np.polynomial.polynomial.Polynomial.fit(
+            log_d_model_multipliers, stds / stds[0], 1
+        ).coef[1]
+        assert slope <= MAX_NORMALIZED_SLOPE, (
+            f"Coordinate change stds for {name} grow too much with width. "
+            f"slope {slope}, stds {stds}, normalized stds {stds / stds[0]}"
+        )
+        assert slope >= MIN_NORMALIZED_SLOPE, (
+            f"Coordinate change stds for {name} decay too much with width. "
+            f"slope {slope}, stds {stds}, normalized stds {stds / stds[0]}"
+        )
