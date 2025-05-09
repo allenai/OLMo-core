@@ -19,7 +19,7 @@ from olmo_core.train.train_module import (
 
 SEQUENCE_LENGTH = 4096  # TODO: do we want to keep at 4k or go to 8k?
 GLOBAL_BATCH_SIZE = 1024 * SEQUENCE_LENGTH  # TODO: (dirkgr) batch size warmup
-MAX_DURATION = int(6e12)
+MAX_DURATION = int(500e9)  # int(6e12)
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
