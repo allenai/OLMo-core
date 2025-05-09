@@ -2,7 +2,7 @@ import dataclasses
 import logging
 import math
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Union
 
 import torch
 
@@ -24,26 +24,35 @@ class BatchSizeSchedulerCallback(Callback):
     ``sqrt(new_batch_size / current_batch_size)``.
     """
 
-    schedule: List[Tuple[int, Duration]] = dataclasses.field(default_factory=list)
+    batch_sizes: List[int] = dataclasses.field(default_factory=list)
     """
-    Defines the schedule. Each tuple in the schedule represents a target batch size after a point
-    in training.
+    Defines the batch sizes to apply, in order.
+    """
+
+    schedule: List[Duration] = dataclasses.field(default_factory=list)
+    """
+    Defines the schedule at which to apply each batch size.
     """
 
     def __post_init__(self):
+        if len(self.batch_sizes) != len(self.schedule):
+            raise OLMoConfigurationError(
+                "batch_sizes and schedules should have the same number of items"
+            )
+
         if not self.schedule:
             return
 
-        if len(set([duration.unit for _, duration in self.schedule])) > 1:
+        if len(set([duration.unit for duration in self.schedule])) > 1:
             raise OLMoConfigurationError(
                 "batch size scheduler must use consistent units for all points in the schedule"
             )
 
-        batch_size, event_start = self.schedule[0]
+        batch_size, event_start = self.batch_sizes[0], self.schedule[0]
         if event_start.value != 0:
             raise OLMoConfigurationError("batch size schedule must start at 0")
 
-        for next_batch_size, next_event_start in self.schedule[1:]:
+        for next_batch_size, next_event_start in zip(self.batch_sizes[1:], self.schedule[1:]):
             if next_event_start.value <= event_start.value:
                 raise OLMoConfigurationError(
                     "subsequent events in the batch size schedule must be configured to occur after previous events"
@@ -85,7 +94,7 @@ class BatchSizeSchedulerCallback(Callback):
 
     def _maybe_update_batch_size_and_lr(self):
         # Find latest event in the schedule to apply.
-        for target_batch_size, event_start in reversed(self.schedule):
+        for target_batch_size, event_start in reversed(list(zip(self.batch_sizes, self.schedule))):
             if event_start.due(
                 step=self.trainer.global_step,
                 tokens=self.trainer.global_train_tokens_seen,
