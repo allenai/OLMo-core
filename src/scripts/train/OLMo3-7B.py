@@ -72,23 +72,20 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     assert len(common.launch.clusters) == 1
     cluster = common.launch.clusters[0]
 
-    return (
-        TrainerConfig(
+    config = TrainerConfig(
             save_folder=common.save_folder,
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
-        )
-        .with_callback(
+        ).with_callback(
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
                 ephemeral_save_interval=250,
                 save_async=True,
             ),
-        )
-        .with_callback(
+        ).with_callback(
             "comet",
             CometCallback(
                 name=common.run_name,
@@ -97,8 +94,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
-        )
-        .with_callback(
+        ).with_callback(
             "wandb",
             WandBCallback(
                 name=common.run_name,
@@ -107,10 +103,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
-        )
-        .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster)
-    )
-
+        ).with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster)
+    config.callbacks['downstream_evaluator'].eval_interval = 1000
+    config.callbacks['lm_evaluator'].eval_interval = 1000
+    return config 
 
 if __name__ == "__main__":
     main(
