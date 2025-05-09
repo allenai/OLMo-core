@@ -8,7 +8,7 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig, SchedulerUnits
+from olmo_core.optim import OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
 from olmo_core.optim.scheduler import WSD
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
@@ -60,7 +60,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             units=SchedulerUnits.steps,
             warmup=2000,
             decay=(int(50e9 / GLOBAL_BATCH_SIZE)),
-            decay_fraction=None
+            decay_fraction=None,
         ),
     )
 
@@ -72,20 +72,23 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     assert len(common.launch.clusters) == 1
     cluster = common.launch.clusters[0]
 
-    config = TrainerConfig(
+    config = (
+        TrainerConfig(
             save_folder=common.save_folder,
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
-        ).with_callback(
+        )
+        .with_callback(
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
                 ephemeral_save_interval=250,
                 save_async=True,
             ),
-        ).with_callback(
+        )
+        .with_callback(
             "comet",
             CometCallback(
                 name=common.run_name,
@@ -94,7 +97,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
-        ).with_callback(
+        )
+        .with_callback(
             "wandb",
             WandBCallback(
                 name=common.run_name,
@@ -103,10 +107,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
-        ).with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster)
-    config.callbacks['downstream_evaluator'].eval_interval = 1000
-    config.callbacks['lm_evaluator'].eval_interval = 1000
-    return config 
+        )
+        .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster)
+    )
+    config.callbacks["downstream_evaluator"].eval_interval = 1000
+    config.callbacks["lm_evaluator"].eval_interval = 1000
+    return config
+
 
 if __name__ == "__main__":
     main(
