@@ -59,7 +59,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         scheduler=WSD(
             units=SchedulerUnits.steps,
             warmup=2000,
-            decay=(int(50e9 / GLOBAL_BATCH_SIZE))
+            decay=(int(50e9 / GLOBAL_BATCH_SIZE)),
+            decay_fraction=None
         ),
     )
 
