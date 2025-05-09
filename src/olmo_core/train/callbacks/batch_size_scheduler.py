@@ -2,7 +2,7 @@ import dataclasses
 import logging
 import math
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 import torch
 
@@ -124,11 +124,17 @@ class BatchSizeSchedulerCallback(Callback):
             log.info(
                 f"Adjusting base learning rate by a factor of {lr_adjustment_factor:.4f} = sqrt({ratio})"
             )
-            for optim in optimizers:
-                for group in optim.param_groups:
+            for optim_idx, optim in enumerate(optimizers):
+                for group_idx, group in enumerate(optim.param_groups):
+                    new_lr: Union[float, torch.Tensor]
                     if scheduler is not None:
                         if group.get(scheduler.initial_lr_field) is None:
                             group[scheduler.initial_lr_field] = group[scheduler.lr_field]
                         group[scheduler.initial_lr_field] *= lr_adjustment_factor
+                        new_lr = group[scheduler.initial_lr_field]
                     else:
                         group["lr"] *= lr_adjustment_factor
+                        new_lr = group["lr"]
+                    log.info(
+                        f"Set base LR for optimizer {optim_idx+1}, group {group_idx+1} to {float(new_lr):.8f}"
+                    )
