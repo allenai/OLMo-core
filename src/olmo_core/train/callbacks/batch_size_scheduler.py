@@ -83,7 +83,8 @@ class BatchSizeSchedulerCallback(Callback):
     def post_attach(self):
         self._maybe_update_batch_size_and_lr()
 
-    def post_checkpoint_loaded(self):
+    def post_checkpoint_loaded(self, *args):
+        del args
         self._maybe_update_batch_size_and_lr()
 
     def pre_load_batch(self):
