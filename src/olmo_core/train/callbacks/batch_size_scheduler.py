@@ -43,7 +43,7 @@ class BatchSizeSchedulerCallback(Callback):
         if not self.schedule:
             return
 
-        if len(set([duration.unit for duration in self.schedule])) > 1:
+        if len({duration.unit for duration in self.schedule}) > 1:
             raise OLMoConfigurationError(
                 "batch size scheduler must use consistent units for all points in the schedule"
             )
@@ -134,17 +134,15 @@ class BatchSizeSchedulerCallback(Callback):
             scheduler = self.trainer.train_module.scheduler
 
         if not optimizers:
-            log.warning(
+            raise NotImplementedError(
                 f"Unable to adjust learning rate for {self.trainer.train_module.__class__.__name__} train module class"
             )
-            return
 
         for optim in optimizers:
             if not isinstance(optim, (torch.optim.Adam, torch.optim.AdamW, SkipStepAdamW)):
-                log.warning(
+                raise NotImplementedError(
                     f"Unable to adjust learning rate for {optim.__class__.__name__} optimizer"
                 )
-                return
 
         log.info(
             f"Adjusting base learning rate by a factor of {lr_adjustment_factor:.4f} = sqrt({ratio})"
