@@ -12,7 +12,12 @@ from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
 from olmo_core.optim.scheduler import WSD
 from olmo_core.train import Duration, TrainerConfig
-from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
+from olmo_core.train.callbacks import (
+    BatchSizeSchedulerCallback,
+    CheckpointerCallback,
+    CometCallback,
+    WandBCallback,
+)
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -20,8 +25,8 @@ from olmo_core.train.train_module import (
 )
 
 SEQUENCE_LENGTH = 2 * 4096
-GLOBAL_BATCH_SIZE = 512 * SEQUENCE_LENGTH  # TODO: (dirkgr) batch size warmup
-MAX_DURATION = int(500e9)  # int(6e12)
+GLOBAL_BATCH_SIZE = 512 * SEQUENCE_LENGTH  # batch size at step 0
+MAX_DURATION = int(500e9)  # int(6e12), don't forget to adjust the LR when you increase this
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -120,6 +125,17 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     )
     config.callbacks["downstream_evaluator"].eval_interval = 1000
     config.callbacks["lm_evaluator"].eval_interval = 1000
+
+    # batch size warmup
+    config.callbacks["batchwup"] = BatchSizeSchedulerCallback(
+        batch_sizes=[GLOBAL_BATCH_SIZE, GLOBAL_BATCH_SIZE * 2, GLOBAL_BATCH_SIZE * 4],
+        schedule=[
+            Duration.tokens(0),
+            Duration.tokens(int(60e9)),
+            Duration.tokens(int(120e9)),
+        ],
+    )
+
     return config
 
 
