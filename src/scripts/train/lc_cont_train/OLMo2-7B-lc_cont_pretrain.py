@@ -192,7 +192,7 @@ class LcContTrain(Config):
                 # compile=True,
             #     fused_ops=False,
                 use_flash=True,
-                rope_theta =int(2.0 * 10 ** 6),
+                rope_theta =int(9.0 * 10 ** 6),
             ),
             dataset=NumpyDatasetConfig.from_data_mix(
                 AnnealingDataMix.data_mix,
