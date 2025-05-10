@@ -36,6 +36,10 @@ class TransformerBlockBase(nn.Module):
         super().__init__()
         self.n_layers = n_layers
 
+    @property
+    def is_moe(self) -> bool:
+        return False
+
     @abstractmethod
     def forward(
         self,
@@ -359,6 +363,10 @@ class MoETransformerBlock(TransformerBlockBase):
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
         self._ep_enabled = False
         self._tp_enabled = False
+
+    @property
+    def is_moe(self) -> bool:
+        return True
 
     @property
     def router(self) -> MoERouter:
