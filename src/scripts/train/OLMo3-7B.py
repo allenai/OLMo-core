@@ -73,7 +73,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
 
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
-    cancel_check_interval = 10
+    cancel_check_interval = 50
 
     assert common.launch is not None
     assert len(common.launch.clusters) == 1
