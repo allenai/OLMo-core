@@ -64,7 +64,7 @@ from olmo_core.utils import get_default_device, prepare_cli_environment, seed_al
 # TODO: pull this from the checkpoint when https://github.com/allenai/OLMo-core/pull/143 merges.
 
 
-CONTEXT_LENGTH = 8 * 4096
+CONTEXT_LENGTH = 16 * 4096
 TP_DEGREE = 4
 AC_ATTENTION_INTERVAL = 4
 INTRA_DOCUMENT_MASKING = True
@@ -218,7 +218,7 @@ class LcContTrain(Config):
                 load_path=load_path,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
-                max_duration=Duration.tokens(int(110e9)),
+                max_duration=Duration.tokens(int(140e9)),
             )
             .with_callback(
                 "checkpointer",
