@@ -27,7 +27,7 @@ from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import (
     TransformerConfig,
 )
-from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
+9from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.optim import (
     LinearWithWarmup,
     OptimGroupOverride,
@@ -174,12 +174,12 @@ class LcContTrain(Config):
                 # if INTRA_DOCUMENT_MASKING
                 # else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE),
                 # ac_config=TransformerActivationCheckpointingConfig(),
-                # ac_config=TransformerActivationCheckpointingConfig(
-                    # mode=TransformerActivationCheckpointingMode.selected_modules,
-                    # modules=[f"blocks.{i}.feed_forward" for i in range(32)] + [
-                        # f"blocks.{i}.attention" for i in range(0, 32, AC_ATTENTION_INTERVAL)
-                    # ]
-                # ),
+                ac_config=TransformerActivationCheckpointingConfig(
+                    mode=TransformerActivationCheckpointingMode.selected_modules,
+                    modules=[f"blocks.{i}.feed_forward" for i in range(32)] + [
+                        f"blocks.{i}.attention" for i in range(0, 32, AC_ATTENTION_INTERVAL)
+                    ]
+                ),
                 # ac_config=TransformerActivationCheckpointingConfig(
                 #     mode=TransformerActivationCheckpointingMode.selected_ops,
                 # ),
