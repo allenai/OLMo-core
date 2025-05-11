@@ -27,7 +27,7 @@ from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import (
     TransformerConfig,
 )
-9from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
+from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.optim import (
     LinearWithWarmup,
     OptimGroupOverride,
