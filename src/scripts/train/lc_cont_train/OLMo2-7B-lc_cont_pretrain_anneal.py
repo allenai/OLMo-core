@@ -272,6 +272,9 @@ def train(config: LcContTrain):
     cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
+    if not trainer.maybe_load_checkpoint(trainer.save_folder):
+        trainer.load_checkpoint(LcContTrain.load_path, load_trainer_state=False)
+
     # Train.
     trainer.fit()
 
