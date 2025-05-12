@@ -64,7 +64,7 @@ def build_launch_config(
     task_name: str = "train",
     workspace: str = "ai2/OLMo-core",
     budget: str = "ai2/oe-training",
-    nccl_debug: bool = False,
+    nccl_debug: bool = True,
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
 ) -> BeakerLaunchConfig:
