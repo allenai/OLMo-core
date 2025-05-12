@@ -631,7 +631,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
             "global_indices",
             seed=self.seed if self.shuffle else None,
             epoch=self.epoch if self.shuffle else None,
-            size=self.total_size,
+            dataset_size=len(self.dataset),
             chunk=self.chunk_size if self.chunk_size > 1 else None,
         )
         return Path(self.work_dir) / f"{global_indices_fname}.npy"
