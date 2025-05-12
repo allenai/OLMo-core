@@ -159,7 +159,7 @@ def build_common_components(
             root_dir=root_dir,
             cmd=[script, cmd_to_launch, run_name, cluster, *overrides],
             cluster=cluster,
-            nccl_debug=False,
+            nccl_debug=True,
             beaker_image=beaker_image,
             num_nodes=num_nodes,
         )
@@ -179,12 +179,14 @@ def build_common_components(
         ),
         work_dir=get_work_dir(root_dir),
         generate_doc_lengths=intra_document_masking,
-        instance_filter_config=None
-        if not include_instance_filter
-        else InstanceFilterConfig(
-            repetition_max_period=13,
-            repetition_min_period=1,
-            repetition_max_count=32,
+        instance_filter_config=(
+            None
+            if not include_instance_filter
+            else InstanceFilterConfig(
+                repetition_max_period=13,
+                repetition_min_period=1,
+                repetition_max_count=32,
+            )
         ),
     )
 
