@@ -77,7 +77,8 @@ class AnnealingDataMix(DataMixBase):
     name (without the '.txt' extension) below.
     """
 
-    data_mix = "lc_pretrain_mix"
+    # data_mix = "lc_pretrain_mix"
+    data_mix = "lc50_dolmino50_v1"
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
@@ -185,7 +186,7 @@ class LcContTrain(Config):
                 # ),
                 float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
                 max_grad_norm=1.0,
-                scheduler=LinearWithWarmup(warmup_steps=0, alpha_f=1.0),
+                scheduler=LinearWithWarmup(warmup_steps=0, alpha_f=0.0),
             ),
             model=TransformerConfig.olmo2_7B(
                 vocab_size=tokenizer_config.padded_vocab_size(),
