@@ -15,10 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a "interleaved" numpy FSL variant that interleaves several documents into sequences following the work from [LongSkywork: A Training Recipe for Efficiently Extending Context Length in Large Language Models](https://arxiv.org/pdf/2406.00605).
 - Added sliding window attention as a feature
 - Added `BatchSizeSchedulerCallback` for setting a batch size schedule over the course of a training run.
+- The `BeakerCallback` will save the config and Python requirements to the results dataset.
+- Added `from_file` method to `Config` class.
 
 ### Changed
 
 - Output of `LMHead` when `labels` is passed as input is now a 4-tuple instead of a 3-tuple, with `(logits, loss, ce_loss, z_loss)`, where `loss` is the combined loss (`ce_loss + z_loss`).
+- The `ConfigSaver` callback will automatically set the config to save for other callbacks (`WandBCallback`, `CometCallback`, and `BeakerCallback` as of now).
 
 ### Fixed
 
