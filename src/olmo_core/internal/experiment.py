@@ -28,7 +28,6 @@ from olmo_core.train import (
 from olmo_core.train.callbacks import (
     BeakerCallback,
     Callback,
-    CometCallback,
     ConfigSaverCallback,
     DownstreamEvaluatorCallbackConfig,
     GarbageCollectorCallback,
@@ -36,7 +35,6 @@ from olmo_core.train.callbacks import (
     LMEvaluatorCallbackConfig,
     ProfilerCallback,
     SlackNotifierCallback,
-    WandBCallback,
 )
 from olmo_core.train.train_module import TransformerTrainModuleConfig
 from olmo_core.utils import prepare_cli_environment, seed_all
@@ -313,8 +311,6 @@ def train(config: ExperimentConfig):
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
-    cast(CometCallback, trainer.callbacks["comet"]).config = config_dict
-    cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
     # Train.
