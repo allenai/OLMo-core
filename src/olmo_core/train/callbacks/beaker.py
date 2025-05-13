@@ -93,6 +93,7 @@ class BeakerCallback(Callback):
             try:
                 with requirements_path.open("w") as requirements_file:
                     requirements_file.write(f"# python={platform.python_version()}\n")
+                with requirements_path.open("a") as requirements_file:
                     subprocess.call(
                         ["pip", "freeze"],
                         stdout=requirements_file,
