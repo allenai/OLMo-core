@@ -1,8 +1,12 @@
+import json
 import logging
 import os
+import platform
+import subprocess
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Optional
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, Optional
 
 from olmo_core.distributed.utils import get_rank
 from olmo_core.exceptions import OLMoEnvironmentError
@@ -19,6 +23,7 @@ log = logging.getLogger(__name__)
 
 
 BEAKER_EXPERIMENT_ID_ENV_VAR = "BEAKER_EXPERIMENT_ID"
+BEAKER_RESULT_DIR = "/results"
 
 
 @dataclass
@@ -32,6 +37,14 @@ class BeakerCallback(Callback):
     update_interval: Optional[int] = None
     description: Optional[str] = None
     enabled: Optional[bool] = None
+    config: Optional[Dict[str, Any]] = None
+    """
+    A JSON-serializable config to save to the results dataset as ``config.json``.
+    """
+    result_dir: str = BEAKER_RESULT_DIR
+    """
+    The directory of the Beaker results dataset where the config and other data will be saved.
+    """
 
     _client = None
     _url = None
@@ -71,6 +84,32 @@ class BeakerCallback(Callback):
             self.client = Beaker.from_env(check_for_upgrades=False)
             self.workload = self.client.workload.get(self.experiment_id)
             log.info(f"Running in Beaker experiment {self.client.workload.url(self.workload)}")
+
+            # Ensure result dataset directory exists.
+            result_dir = Path(self.result_dir) / "olmo-core"
+            result_dir.mkdir(parents=True, exist_ok=True)
+
+            # Save config to result dir.
+            if self.config is not None:
+                config_path = result_dir / "config.json"
+                with config_path.open("w") as config_file:
+                    log.info(f"Saving config to '{config_path}'")
+                    json.dump(self.config, config_file)
+
+            # Try saving Python requirements.
+            requirements_path = result_dir / "requirements.txt"
+            try:
+                with requirements_path.open("w") as requirements_file:
+                    requirements_file.write(f"# python={platform.python_version()}\n")
+                with requirements_path.open("a") as requirements_file:
+                    subprocess.call(
+                        ["pip", "freeze"],
+                        stdout=requirements_file,
+                        stderr=subprocess.DEVNULL,
+                        timeout=10,
+                    )
+            except Exception as e:
+                log.exception(f"Error saving Python packages: {e}")
 
             # Try to get W&B/Comet URL of experiment.
             for callback in self.trainer.callbacks.values():
