@@ -17,7 +17,7 @@ from .comet import CometCallback
 from .wandb import WandBCallback
 
 if TYPE_CHECKING:
-    from beaker import Beaker
+    from beaker import Beaker, BeakerWorkload
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +49,7 @@ class BeakerCallback(Callback):
     _client = None
     _url = None
     _last_update: Optional[float] = None
+    _workload = None
 
     @property
     def client(self) -> "Beaker":
@@ -57,6 +58,14 @@ class BeakerCallback(Callback):
     @client.setter
     def client(self, client: "Beaker"):
         self._client = client
+
+    @property
+    def workload(self) -> "BeakerWorkload":
+        return self._workload  # type: ignore
+
+    @workload.setter
+    def workload(self, workload: "BeakerWorkload"):
+        self._workload = workload
 
     def post_attach(self):
         if self.enabled is None and BEAKER_EXPERIMENT_ID_ENV_VAR in os.environ:
@@ -72,10 +81,9 @@ class BeakerCallback(Callback):
 
             from beaker import Beaker
 
-            self.client = Beaker.from_env()
-            log.info(
-                f"Running in Beaker experiment {self.client.experiment.url(self.experiment_id)}"
-            )
+            self.client = Beaker.from_env(check_for_upgrades=False)
+            self.workload = self.client.workload.get(self.experiment_id)
+            log.info(f"Running in Beaker experiment {self.client.workload.url(self.workload)}")
 
             # Ensure result dataset directory exists.
             result_dir = Path(self.result_dir) / "olmo-core"
@@ -127,6 +135,11 @@ class BeakerCallback(Callback):
         if self.enabled and get_rank() == 0:
             self._update()
 
+    def close(self):
+        if self._client is not None:
+            self._client.close()
+            self._client = None
+
     def _update(self):
         self.trainer.thread_pool.submit(
             self._set_description,
@@ -135,10 +148,10 @@ class BeakerCallback(Callback):
         self._last_update = time.monotonic()
 
     def _set_description(self, progress: TrainingProgress):
-        from beaker import BeakerError, HTTPError
+        from beaker.exceptions import BeakerError, HTTPError, RpcError
         from requests.exceptions import RequestException
 
-        assert self.experiment_id is not None
+        assert self.workload is not None
 
         description = f"[{progress}] "
 
@@ -149,6 +162,6 @@ class BeakerCallback(Callback):
             description = f"{description}{self._url} "
 
         try:
-            self.client.experiment.set_description(self.experiment_id, description.strip())
-        except (RequestException, BeakerError, HTTPError) as e:
+            self.client.workload.update(self.workload, description=description.strip())
+        except (RequestException, BeakerError, HTTPError, RpcError) as e:
             log.warning(f"Failed to update Beaker experiment description: {e}")
