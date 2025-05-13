@@ -27,6 +27,11 @@ class NumpyDatasetType(StrEnum):
     Packed fixed sequence length ➡️ :class:`NumpyPackedFSLDataset`.
     """
 
+    interleaved_fsl = "interleaved_fsl"
+    """
+    Padded fixed sequence length with interleaved documents ➡️ :class:`NumpyInterleavedFSLDataset`.
+    """
+
     vsl = "vsl"
     """
     Variable sequenced length ➡️ :class:`NumpyVSLDataset`.

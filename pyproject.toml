@@ -55,7 +55,7 @@ dev = [
     "sphinx-inline-tabs",
 ]
 beaker = [
-    "beaker-py>=1.36.0",
+    "beaker-py>=1.36.0,<2.0",
     "GitPython>=3.0,<4.0",
 ]
 wandb = [
