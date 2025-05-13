@@ -1,6 +1,7 @@
 """
 Train a 7B OLMo model. Run this script without any arguments to see usage info.
 """
+from datetime import datetime
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
@@ -78,6 +79,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     assert len(common.launch.clusters) == 1
     cluster = common.launch.clusters[0]
 
+    run_name = f"{common.run_name}-{datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%z")}"
+
     config = (
         TrainerConfig(
             save_folder=common.save_folder,
@@ -97,7 +100,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "comet",
             CometCallback(
-                name=common.run_name,
+                name=run_name,
                 workspace="ai2",
                 project="olmo3",
                 enabled=True,
@@ -107,7 +110,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "wandb",
             WandBCallback(
-                name=common.run_name,
+                name=run_name,
+                group=common.run_name,
                 entity="ai2-llm",
                 project="olmo3",
                 enabled=True,
