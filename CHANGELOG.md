@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added sliding window attention as a feature
 - Added `BatchSizeSchedulerCallback` for setting a batch size schedule over the course of a training run.
 - The `BeakerCallback` will save the config and Python requirements to the results dataset.
+- Added `from_file` method to `Config` class.
 
 ### Changed
 
