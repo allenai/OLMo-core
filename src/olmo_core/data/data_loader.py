@@ -633,6 +633,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
             epoch=self.epoch if self.shuffle else None,
             dataset_size=len(self.dataset),
             chunk=self.chunk_size if self.chunk_size > 1 else None,
+            v=1,  # tick if logic changes
         )
         return Path(self.work_dir) / f"{global_indices_fname}.npy"
 
@@ -659,15 +660,13 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
             ).reshape((1, -1))
             indices = indices.reshape(-1)
 
-        # Remove tail of data to make it evenly divisible.
-        indices = indices[: self.total_size]
         return indices
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         # NOTE: Make sure the logic here matches that in '_get_local_instance_indices()'
 
         # NOTE: 'indices' are global instance indices.
-        indices = self.get_global_indices()
+        indices = self.get_global_indices()[: self.total_size]
 
         # Slice up by batch.
         assert isinstance(self.dataset, NumpyFSLDatasetBase)
@@ -687,6 +686,9 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
     def _get_local_instance_indices(self, indices: np.ndarray) -> Iterable[int]:
         # NOTE: 'indices' are global instance indices.
         # Make sure the logic here matches that in '__getitem__()'
+
+        # Remove tail of data to make it evenly divisible.
+        indices = indices[: self.total_size]
 
         # Slice up by batch.
         assert isinstance(self.dataset, NumpyFSLDatasetBase)
