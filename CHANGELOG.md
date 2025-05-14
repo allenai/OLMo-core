@@ -17,11 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `BatchSizeSchedulerCallback` for setting a batch size schedule over the course of a training run.
 - The `BeakerCallback` will save the config and Python requirements to the results dataset.
 - Added `from_file` method to `Config` class.
+- Added support for converting to HF models in lower precisions.
 
 ### Changed
 
 - Output of `LMHead` when `labels` is passed as input is now a 4-tuple instead of a 3-tuple, with `(logits, loss, ce_loss, z_loss)`, where `loss` is the combined loss (`ce_loss + z_loss`).
 - The `ConfigSaver` callback will automatically set the config to save for other callbacks (`WandBCallback`, `CometCallback`, and `BeakerCallback` as of now).
+- Changed default precision of converted HF models in `src/examples/huggingface/convert_checkpoint_to_hf.py` to bfloat16.
 
 ### Fixed
 
