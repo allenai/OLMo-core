@@ -239,7 +239,10 @@ def validate_conversion(
                     f"{olmo_core_state_name}, {hf_state_name} dtype mismatch: {olmo_core_tensor.dtype} {hf_tensor.dtype}"
                 )
             if len(olmo_core_tensor.shape) == len(hf_tensor.shape):
-                common_shape = tuple(min(olmo_core_dim, hf_dim) for olmo_core_dim, hf_dim in zip(olmo_core_tensor.shape, hf_tensor.shape))
+                common_shape = tuple(
+                    min(olmo_core_dim, hf_dim)
+                    for olmo_core_dim, hf_dim in zip(olmo_core_tensor.shape, hf_tensor.shape)
+                )
                 for i, dim in enumerate(common_shape):
                     olmo_core_tensor = olmo_core_tensor.narrow(i, 0, dim)
                     hf_tensor = hf_tensor.narrow(i, 0, dim)
@@ -247,7 +250,9 @@ def validate_conversion(
                     f"{olmo_core_state_name}, {hf_state_name} element diff abs mean: {(olmo_core_tensor - hf_tensor).float().abs().mean()}"
                 )
 
-    torch.testing.assert_close(hf_logits[..., :vocab_size].float(), logits[..., :vocab_size].float(), rtol=1e-4, atol=1e-4)
+    torch.testing.assert_close(
+        hf_logits[..., :vocab_size].float(), logits[..., :vocab_size].float(), rtol=1e-4, atol=1e-4
+    )
 
 
 def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:

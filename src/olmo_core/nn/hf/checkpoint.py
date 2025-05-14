@@ -145,7 +145,9 @@ def save_hf_model(
 
     model_state_dict = {key: get_full_tensor(state) for key, state in model_state_dict.items()}
     if dtype is not None:
-        model_state_dict = {key: state.to(dtype=dtype.as_pt()) for key, state in model_state_dict.items()}
+        model_state_dict = {
+            key: state.to(dtype=dtype.as_pt()) for key, state in model_state_dict.items()
+        }
 
     hf_state_dict: Dict[str, torch.Tensor] = convert_state_to_hf(hf_config, model_state_dict)
 
