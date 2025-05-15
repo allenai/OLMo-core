@@ -16,7 +16,7 @@ from olmo_core.train import (
     prepare_training_environment,
     teardown_training_environment,
 )
-from olmo_core.train.callbacks import CometCallback, ConfigSaverCallback, WandBCallback
+from olmo_core.train.callbacks import ConfigSaverCallback
 from olmo_core.train.train_module import TransformerTrainModuleConfig
 from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
 
@@ -90,8 +90,6 @@ class SubCmd(StrEnum):
 
                 # Record the config to W&B/Comet and each checkpoint dir.
                 config_dict = config.as_config_dict()
-                cast(CometCallback, trainer.callbacks["comet"]).config = config_dict
-                cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
                 cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
                 # Train.
