@@ -6,7 +6,8 @@ log = logging.getLogger("olmo_core.logging_test")
 
 
 def main():
-    import torch
+    import datasets
+    import transformers
 
     print("Starting test...")
     log.debug("Debug message!")
