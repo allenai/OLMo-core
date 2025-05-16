@@ -67,7 +67,11 @@ class TrainerConfig(Config):
         return out
 
     def with_recommended_evals(
-        self, tokenizer: TokenizerConfig, sequence_length: int, cluster: str
+        self,
+        tokenizer: TokenizerConfig,
+        sequence_length: int,
+        cluster: str,
+        eval_interval: int = 10_000,
     ) -> "TrainerConfig":
         """
         Return a new trainer config with added callbacks for downstream evaluation and validation sets.
@@ -161,7 +165,7 @@ class TrainerConfig(Config):
             DownstreamEvaluatorCallbackConfig(
                 tasks=tasks,
                 tokenizer=tokenizer,
-                eval_interval=10000,
+                eval_interval=eval_interval,
             ),
         ).with_callback(
             "lm_evaluator",
@@ -174,7 +178,7 @@ class TrainerConfig(Config):
                     tokenizer=tokenizer,
                     work_dir=get_work_dir(get_root_dir(cluster)),
                 ),
-                eval_interval=10000,
+                eval_interval=eval_interval,
             ),
         )
 
