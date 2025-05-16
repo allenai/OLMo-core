@@ -16,3 +16,4 @@ def main():
 
 if __name__ == "__main__":
     prepare_cli_environment()
+    main()
