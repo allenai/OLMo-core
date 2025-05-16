@@ -61,11 +61,12 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),
         float8_config=Float8Config(
+            enabled=False,
             ao=AOFloat8LinearConfig(
                 enable_fsdp_float8_all_gather=True,
                 force_recompute_fp8_weight_in_bwd=True,
                 round_scales_to_power_of_2=True,
-            )
+            ),
         ),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
