@@ -39,12 +39,13 @@ build :
 # NOTE: When upgrading dependency versions (like for torch) make sure:
 #  * The corresponding versions specified in 'pyproject.toml' include the new version.
 #  * The versions installed in '.github/actions/setup-venv/action.yml' match if necessary.
-CUDA_VERSION = 12.6.3
+# NOTE: See https://hub.docker.com/r/nvidia/cuda/tags?name=devel-ubuntu22.04 for available CUDA versions.
+CUDA_VERSION = 12.8.1
 CUDA_VERSION_PATH=cu$(shell echo $(CUDA_VERSION) | cut -d"." -f1-2 | tr -d .)
 PYTHON_VERSION = 3.11
 TORCH_VERSION = 2.7.0
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
-INSTALL_CHANNEL = whl/test
+INSTALL_CHANNEL = whl
 GROUPED_GEMM_VERSION = "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
 FLASH_ATTN_VERSION = 2.7.4.post1
 RING_FLASH_ATTN_VERSION = 0.1.4
