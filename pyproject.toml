@@ -62,7 +62,7 @@ wandb = [
     "wandb",
 ]
 comet = [
-    "comet_ml",
+    "comet_ml<=3.49.7",
 ]
 transformers = [
     "transformers",
