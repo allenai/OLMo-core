@@ -5,7 +5,7 @@ from datetime import datetime
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.float8 import Float8Config
+from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.transformer import TransformerConfig
@@ -60,7 +60,13 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),
-        float8_config=Float8Config(enabled=False),
+        float8_config=Float8Config(
+            ao=AOFloat8LinearConfig(
+                enable_fsdp_float8_all_gather=True,
+                force_recompute_fp8_weight_in_bwd=True,
+                round_scales_to_power_of_2=True,
+            )
+        ),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
         scheduler=WSD(
@@ -118,10 +124,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 cancel_check_interval=cancel_check_interval,
             ),
         )
-        .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster)
+        .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster, eval_interval=1000)
     )
-    config.callbacks["downstream_evaluator"].eval_interval = 1000
-    config.callbacks["lm_evaluator"].eval_interval = 1000
 
     # batch size warmup
     config.callbacks["batchwup"] = BatchSizeSchedulerCallback(
