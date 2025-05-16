@@ -57,8 +57,8 @@ LIGER_KERNEL_VERSION = 0.5.4
 
 VERSION = $(shell python src/olmo_core/version.py)
 VERSION_SHORT = $(shell python src/olmo_core/version.py short)
-IMAGE_SUFFIX = ""
-IMAGE_TAG = tch$(TORCH_VERSION_SHORT)$(CUDA_VERSION_PATH)$(IMAGE_SUFFIX)
+IMAGE_SUFFIX = $(shell date "+%Y-%m-%d")
+IMAGE_TAG = tch$(TORCH_VERSION_SHORT)$(CUDA_VERSION_PATH)-$(IMAGE_SUFFIX)
 
 .PHONY : docker-image
 docker-image :
@@ -74,7 +74,6 @@ docker-image :
 		--build-arg RING_FLASH_ATTN_VERSION=$(RING_FLASH_ATTN_VERSION) \
 		--build-arg LIGER_KERNEL_VERSION=$(LIGER_KERNEL_VERSION) \
 		--target release \
-		--progress plain \
 		-t olmo-core:$(IMAGE_TAG) .
 	echo "Built image 'olmo-core:$(IMAGE_TAG)', size: $$(docker inspect -f '{{ .Size }}' olmo-core:$(IMAGE_TAG) | numfmt --to=si)"
 
@@ -82,10 +81,6 @@ docker-image :
 ghcr-image : docker-image
 	docker tag olmo-core:$(IMAGE_TAG) ghcr.io/allenai/olmo-core:$(IMAGE_TAG)
 	docker push ghcr.io/allenai/olmo-core:$(IMAGE_TAG)
-	docker tag olmo-core:$(IMAGE_TAG) ghcr.io/allenai/olmo-core:$(IMAGE_TAG)-v$(VERSION_SHORT)
-	docker push ghcr.io/allenai/olmo-core:$(IMAGE_TAG)-v$(VERSION_SHORT)
-	docker tag olmo-core:$(IMAGE_TAG) ghcr.io/allenai/olmo-core:$(IMAGE_TAG)-v$(VERSION)
-	docker push ghcr.io/allenai/olmo-core:$(IMAGE_TAG)-v$(VERSION)
 	docker tag olmo-core:$(IMAGE_TAG) ghcr.io/allenai/olmo-core:latest
 	docker push ghcr.io/allenai/olmo-core:latest
 
@@ -95,8 +90,6 @@ BEAKER_USER = $(shell beaker account whoami --format=json | jq -r '.[0].name')
 .PHONY : beaker-image
 beaker-image : docker-image
 	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(IMAGE_TAG) olmo-core-$(IMAGE_TAG) $(BEAKER_WORKSPACE)
-	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(IMAGE_TAG) olmo-core-$(IMAGE_TAG)-v$(VERSION_SHORT) $(BEAKER_WORKSPACE)
-	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(IMAGE_TAG) olmo-core-$(IMAGE_TAG)-v$(VERSION) $(BEAKER_WORKSPACE)
 
 .PHONY : get-beaker-workspace
 get-beaker-workspace :
