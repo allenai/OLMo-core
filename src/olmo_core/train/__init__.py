@@ -129,7 +129,9 @@ def prepare_training_environment(
         torch.set_default_device(get_default_device())
 
     # Configure logging, warning filters, exception hooks, and other CLI settings.
+    print("Root log level:", logging.getLogger().level)
     prepare_cli_environment(log_filter_type=log_filter_type)
+    print("Root log level:", logging.getLogger().level)
 
     # Add custom cached-path clients.
     add_cached_path_clients()
