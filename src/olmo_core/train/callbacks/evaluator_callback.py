@@ -410,7 +410,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
         )
 
         evaluators: List[Evaluator] = []
-        for task in self.tasks:
+        for task in sorted(self.tasks):
             evaluators.append(
                 DownstreamEvaluator(
                     name="downstream",

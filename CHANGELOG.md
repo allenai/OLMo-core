@@ -13,10 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a "packed" numpy FSL variant that packs documents into sequences using the best-fit-decreasing bin packing algorithm following the work from [Fewer Truncates Improve Language Modeling](https://arxiv.org/pdf/2404.10830).
 - Added module `olmo_core.testing`.
 - Added a "interleaved" numpy FSL variant that interleaves several documents into sequences following the work from [LongSkywork: A Training Recipe for Efficiently Extending Context Length in Large Language Models](https://arxiv.org/pdf/2406.00605).
+- Added sliding window attention as a feature
+- Added `BatchSizeSchedulerCallback` for setting a batch size schedule over the course of a training run.
+- The `BeakerCallback` will save the config and Python requirements to the results dataset.
+- Added `from_file` method to `Config` class.
 
 ### Changed
 
 - Output of `LMHead` when `labels` is passed as input is now a 4-tuple instead of a 3-tuple, with `(logits, loss, ce_loss, z_loss)`, where `loss` is the combined loss (`ce_loss + z_loss`).
+- The `ConfigSaver` callback will automatically set the config to save for other callbacks (`WandBCallback`, `CometCallback`, and `BeakerCallback` as of now).
 
 ### Fixed
 
@@ -28,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed a bug with `LMHead` when using "fused_linear" loss implementation where the `ce_loss` output included the `z_loss` added to it.
 - Fixed training on single GPU when using a `SkipStepOptimizer`.
 - Fixed the initialization of the `CosWithWarmupAndLinearDecay` learning rate scheduler
-
+- Ensured eval tasks are sorted to maintain the same order across ranks (the cookbook was configuring these in an unsorted way).
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 

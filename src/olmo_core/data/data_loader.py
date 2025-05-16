@@ -84,7 +84,7 @@ class DataLoaderBase(ABC):
         fs_local_rank: int = 0,
     ):
         self.work_dir = work_dir
-        self.global_batch_size = global_batch_size
+        self._global_batch_size = global_batch_size
         assert dp_rank < dp_world_size
         self.dp_world_size = dp_world_size
         self.dp_rank = dp_rank
@@ -97,6 +97,37 @@ class DataLoaderBase(ABC):
         """
 
         self._epoch: Optional[int] = None
+
+    @property
+    def global_batch_size(self) -> int:
+        return self._global_batch_size
+
+    @global_batch_size.setter
+    def global_batch_size(self, new_global_batch_size: int):
+        if not isinstance(new_global_batch_size, int):
+            raise TypeError(f"expected int, got {type(new_global_batch_size)}")
+
+        if new_global_batch_size > self.global_batch_size:
+            if new_global_batch_size % self.global_batch_size != 0:
+                raise RuntimeError("global batch size can only be increased by an integer factor")
+
+            ratio = new_global_batch_size // self.global_batch_size
+            if self.batches_processed % ratio != 0:
+                raise RuntimeError(
+                    f"increasing global batch size by a factor of {ratio} can only be done after processing "
+                    f"N x {ratio} batches to avoid duplicating or losing data. Currently {self.batches_processed:d} "
+                    f"batches have been processed, which is not divisible by {ratio}."
+                )
+
+            self.batches_processed //= ratio
+        elif new_global_batch_size < self.global_batch_size:
+            if self.global_batch_size % new_global_batch_size != 0:
+                raise RuntimeError("global batch size can only be decreased by an integer factor")
+
+            ratio = self.global_batch_size // new_global_batch_size
+            self.batches_processed *= ratio
+
+        self._global_batch_size = new_global_batch_size
 
     @property
     def epoch(self) -> int:
@@ -350,6 +381,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         num_workers: int = 0,
         prefetch_factor: Optional[int] = None,
         target_device_type: str = "cpu",
+        shuffle: bool = True,
     ) -> "NumpyDataLoaderBase":
         """
         Construct the corresponding :class:`NumpyDataLoaderBase` instance for the given :class:`NumpyDatasetBase`.
@@ -368,6 +400,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             num_workers=num_workers,
             prefetch_factor=prefetch_factor,
             target_device_type=target_device_type,
+            shuffle=shuffle,
         )
         data_loader: DataLoaderBase
         if isinstance(dataset, NumpyFSLDatasetBase):
@@ -513,8 +546,6 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         return out
 
     def _iter_batches(self) -> Iterable[Dict[str, Any]]:
-        current_global_batch_size = self.global_batch_size
-
         def _build_batch_iterator():
             return iter(
                 torch.utils.data.DataLoader(
@@ -528,12 +559,18 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                 ),
             )
 
+        current_global_batch_size = self.global_batch_size
         batch_iterator = _build_batch_iterator()
         while (batch := next(batch_iterator, None)) is not None:
             yield batch
 
             # If batch size has changed, re-initialize the workers.
+            # NOTE: base class handles the logic of adjusting `self.batches_processed` when
+            # `self.global_batch_size` is changed through the property setter.
             if current_global_batch_size != self.global_batch_size:
+                if self.num_workers > 0:
+                    log.info("Batch size has changed, reinitializing data loading workers...")
+                current_global_batch_size = self.global_batch_size
                 batch_iterator = _build_batch_iterator()
 
     def _get_dataset_item(self, idx: int) -> Dict[str, Any]:
@@ -594,8 +631,9 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
             "global_indices",
             seed=self.seed if self.shuffle else None,
             epoch=self.epoch if self.shuffle else None,
-            size=self.total_size,
+            dataset_size=len(self.dataset),
             chunk=self.chunk_size if self.chunk_size > 1 else None,
+            v=1,  # tick if logic changes
         )
         return Path(self.work_dir) / f"{global_indices_fname}.npy"
 
@@ -622,15 +660,13 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
             ).reshape((1, -1))
             indices = indices.reshape(-1)
 
-        # Remove tail of data to make it evenly divisible.
-        indices = indices[: self.total_size]
         return indices
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         # NOTE: Make sure the logic here matches that in '_get_local_instance_indices()'
 
         # NOTE: 'indices' are global instance indices.
-        indices = self.get_global_indices()
+        indices = self.get_global_indices()[: self.total_size]
 
         # Slice up by batch.
         assert isinstance(self.dataset, NumpyFSLDatasetBase)
@@ -650,6 +686,9 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
     def _get_local_instance_indices(self, indices: np.ndarray) -> Iterable[int]:
         # NOTE: 'indices' are global instance indices.
         # Make sure the logic here matches that in '__getitem__()'
+
+        # Remove tail of data to make it evenly divisible.
+        indices = indices[: self.total_size]
 
         # Slice up by batch.
         assert isinstance(self.dataset, NumpyFSLDatasetBase)
@@ -686,7 +725,8 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
         # Account for change in batch size / sequence length.
         self.batches_processed = self.tokens_processed // self.global_batch_size
         log.info(
-            f"Data loader will resume from batch {self.batches_processed}/{self.total_batches}"
+            f"Data loader will resume from batch {self.batches_processed:,d}/{self.total_batches:,d} "
+            f"based on batch size of {self.global_batch_size:,d} tokens"
         )
 
         assert isinstance(self.dataset, NumpyFSLDatasetBase)
