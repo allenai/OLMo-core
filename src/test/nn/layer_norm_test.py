@@ -9,8 +9,7 @@ from olmo_core.nn.layer_norm import (
     LayerNormType,
     RMSNorm,
 )
-
-from ..utils import requires_flash_attn, requires_gpu
+from olmo_core.testing import requires_flash_attn, requires_gpu
 
 
 @requires_gpu

@@ -114,6 +114,13 @@ class TrainerConfig(Config):
             "codex_mbpp_gold_bpb_0shot",
             # Sanity check for MCQA ability
             "copycolors_10way",
+            # Basic Skills
+            "basic_skills_arithmetic_rc_5shot",
+            "basic_skills_coding_rc_5shot",
+            "basic_skills_common_knowledge_rc_5shot",
+            "basic_skills_logical_reasoning_rc_5shot",
+            "basic_skills_pattern_rc_5shot",
+            "basic_skills_string_operations_rc_5shot",
         ]
 
         # For training runs where we expect the model to acquire MC
@@ -151,6 +158,13 @@ class TrainerConfig(Config):
             "codex_mbpp_gold_bpb_0shot",
             # Sanity check for MCQA ability
             "copycolors_10way",
+            # Basic Skills
+            "basic_skills_arithmetic_rc_5shot",
+            "basic_skills_coding_rc_5shot",
+            "basic_skills_common_knowledge_rc_5shot",
+            "basic_skills_logical_reasoning_rc_5shot",
+            "basic_skills_pattern_rc_5shot",
+            "basic_skills_string_operations_rc_5shot",
         ]
         # Unfortunately we need the same metrics for everything, so we run them all.
         tasks = list(set(tasks_small_compute + tasks_large_compute))

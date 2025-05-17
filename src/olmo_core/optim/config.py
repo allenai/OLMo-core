@@ -10,6 +10,7 @@ from typing import (
     Iterable,
     List,
     Optional,
+    Set,
     Tuple,
     Type,
     TypeVar,
@@ -32,6 +33,9 @@ __all__ = [
 log = logging.getLogger(__name__)
 
 Opt = TypeVar("Opt", bound=torch.optim.Optimizer)
+
+LR_FIELD = "lr"
+INITIAL_LR_FIELD = "initial_lr"
 
 
 @dataclass
@@ -69,7 +73,7 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         due to the LR being restored to a float instead of a tensor.
     """
 
-    fixed_fields: Tuple[str, ...] = ("initial_lr",)
+    fixed_fields: Tuple[str, ...] = (INITIAL_LR_FIELD,)
     """
     These are fields that should not be overridden by the value in a checkpoint after
     loading optimizer state.
@@ -78,6 +82,38 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
     @property
     def device(self) -> torch.device:
         return get_default_device()
+
+    def _expand_param_globs(
+        self,
+        go: OptimGroupOverride,
+        all_params: Dict[str, Any],
+        frozen_param_names: Set[str],
+        g_idx: int,
+        strict: bool = True,
+    ) -> OptimGroupOverride:
+        param_names: List[str] = []
+        for pattern in go.params:
+            matches = 0
+            for name in list(all_params.keys()):
+                if fnmatch(name, pattern):
+                    param_names.append(name)
+                    matches += 1
+
+            if matches == 0:
+                for name in frozen_param_names:
+                    if fnmatch(name, pattern):
+                        log.warning(
+                            f"optim group {g_idx} override pattern '{pattern}' matches a frozen parameter and will be ignored"
+                        )
+                        break
+                else:
+                    msg = f"optim group {g_idx} override pattern '{pattern}' does not match any parameters"
+                    if strict:
+                        raise OLMoConfigurationError(msg)
+                    else:
+                        log.warning(msg)
+
+        return OptimGroupOverride(param_names, go.opts.copy())
 
     def build_groups(
         self, model: nn.Module, strict: bool = True
@@ -97,42 +133,23 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
             else:
                 frozen_params.add(n)
 
-        if self.group_overrides is None:
-            return all_params.values()
+        group_overrides = [
+            self._expand_param_globs(go, all_params, frozen_params, g_idx, strict=strict)
+            for g_idx, go in enumerate(self.group_overrides or [])
+        ]
 
-        # Build groups.
-        param_groups: List[Dict[str, Any]] = []
-        for g_idx, go in enumerate(self.group_overrides):
-            group: Dict[str, Any] = {"params": [], **go.opts}
-            for pattern in go.params:
-                matches = 0
-                for name in list(all_params.keys()):
-                    if fnmatch(name, pattern):
-                        group["params"].append(all_params.pop(name))
-                        matches += 1
+        # Treat no overrides as its own override group
+        overriden_param_names = {name for go in group_overrides for name in go.params}
+        default_override = OptimGroupOverride(
+            [name for name in all_params.keys() if name not in overriden_param_names], {}
+        )
+        group_overrides.append(default_override)
 
-                if matches == 0:
-                    for name in frozen_params:
-                        if fnmatch(name, pattern):
-                            log.warning(
-                                f"optim group {g_idx} override pattern '{pattern}' matches a frozen parameter and will be ignored"
-                            )
-                            break
-                    else:
-                        msg = f"optim group {g_idx} override pattern '{pattern}' does not match any parameters"
-                        if strict:
-                            raise OLMoConfigurationError(msg)
-                        else:
-                            log.warning(msg)
-
-            if len(group["params"]) > 0:
-                param_groups.append(group)
-
-        # Put any left-over params into a default group.
-        if all_params:
-            param_groups.append({"params": list(all_params.values())})
-
-        return param_groups
+        return [
+            {"params": [all_params[param_name] for param_name in go.params], **go.opts}
+            for go in group_overrides
+            if len(go.params) > 0
+        ]
 
     @classmethod
     @abstractmethod
@@ -162,18 +179,18 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         fixed_fields_per_group: List[Dict[str, Any]] = [{} for _ in optim.param_groups]
         for fixed_fields, group in zip(fixed_fields_per_group, optim.param_groups):
             lr: Optional[float] = None
-            if "lr" in group:
-                lr = group["lr"]
-            elif hasattr(self, "lr"):
-                lr = getattr(self, "lr")
+            if LR_FIELD in group:
+                lr = group[LR_FIELD]
+            elif hasattr(self, LR_FIELD):
+                lr = getattr(self, LR_FIELD)
 
             if lr is not None:
                 if self.compile:
                     # 'lr' should be a tensor.
-                    group["lr"] = move_to_device(torch.tensor(lr), self.device)
+                    group[LR_FIELD] = move_to_device(torch.tensor(lr), self.device)
                 else:
-                    group["lr"] = lr
-                group.setdefault("initial_lr", lr)
+                    group[LR_FIELD] = lr
+                group.setdefault(INITIAL_LR_FIELD, lr)
 
             for k in self.fixed_fields:
                 if k in group:

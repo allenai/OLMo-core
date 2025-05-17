@@ -17,7 +17,11 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 
 from olmo_core.data.utils import get_labels, split_batch
-from olmo_core.distributed.checkpoint import _swap_param_keys
+from olmo_core.distributed.checkpoint import (
+    merge_state_dicts,
+    prune_state_dict,
+    swap_param_keys,
+)
 from olmo_core.distributed.parallel import (
     DataParallelType,
     build_world_mesh,
@@ -259,7 +263,13 @@ class TransformerTrainModule(TrainModule):
 
         state_dict = self._get_state_dict(load_opts, optim=optim)
         if self.load_key_mapping is not None:
-            _swap_param_keys(state_dict, self.load_key_mapping, metadata=metadata)
+            swap_param_keys(state_dict, self.load_key_mapping, metadata=metadata)
+
+        if not load_opts.strict:
+            # Remove any keys in the 'state_dict' that are not present in the checkpoint.
+            pruned_keys = prune_state_dict(state_dict, set(metadata.state_dict_metadata.keys()))
+            if pruned_keys:
+                log.warning(f"Checkpoint is missing the following keys: {pruned_keys}")
 
         return state_dict
 
@@ -267,15 +277,30 @@ class TransformerTrainModule(TrainModule):
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        load_optim = "optim" in state_dict
+
         if self.load_key_mapping is not None:
-            _swap_param_keys(state_dict, self.load_key_mapping, reverse=True, quiet=True)
+            swap_param_keys(state_dict, self.load_key_mapping, reverse=True, quiet=True)
+
+        # NOTE: `dist_cp_sd.set_(model|optimizer)_state_dict()` doesn't respect `strict=False`
+        # option with missing keys, so we have to handle that on our own.
+        if not self.state_dict_load_opts.strict:
+            flatten_optimizer_state_dict = (
+                False if not load_optim else ("state" not in state_dict["optim"])
+            )
+            load_opts = replace(
+                self.state_dict_load_opts, flatten_optimizer_state_dict=flatten_optimizer_state_dict
+            )
+            full_state_dict = self._get_state_dict(load_opts, optim=load_optim)
+            merge_state_dicts(state_dict, full_state_dict)
+
         dist_cp_sd.set_model_state_dict(
             self.model,
             state_dict["model"],
             options=self.state_dict_load_opts,
         )
         gc_cuda()
-        if "optim" in state_dict:
+        if load_optim:
             dist_cp_sd.set_optimizer_state_dict(
                 self.model,
                 self.optim,
@@ -323,7 +348,7 @@ class TransformerTrainModule(TrainModule):
                 input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
 
                 # Run forward pass, get losses.
-                _, ce_loss, z_loss = self.model_forward(
+                _, loss, ce_loss, z_loss = self.model_forward(
                     input_ids,
                     labels=labels,
                     ignore_index=self.label_ignore_index,
@@ -333,11 +358,6 @@ class TransformerTrainModule(TrainModule):
                     return_logits=False,
                     **model_kwargs,
                 )
-
-                # Get loss to optimize for.
-                loss = ce_loss
-                if z_loss is not None:
-                    loss += z_loss
 
                 # Update total batch CE and Z loss.
                 ce_batch_loss += get_local_tensor(ce_loss.detach())
@@ -361,10 +381,11 @@ class TransformerTrainModule(TrainModule):
         # Record loss metrics.
         if isinstance(self.optim, SkipStepOptimizer):
             # Need to reduce the loss right away for the SkipStepOptimizer.
-            ce_batch_loss.div_(self._reduce_divide_factor)
-            dist.all_reduce(ce_batch_loss)
-            ce_batch_loss.div_(self.world_size)
-            ce_batch_loss.mul_(self._reduce_divide_factor)
+            if is_distributed():
+                ce_batch_loss.div_(self._reduce_divide_factor)
+                dist.all_reduce(ce_batch_loss)
+                ce_batch_loss.div_(self.world_size)
+                ce_batch_loss.mul_(self._reduce_divide_factor)
             self.record_ce_loss(ce_batch_loss)
             self.optim.latest_loss = ce_batch_loss
         else:
@@ -378,7 +399,7 @@ class TransformerTrainModule(TrainModule):
                 namespace="train",
             )
             self.record_metric(
-                "Z loss (unscaled)",
+                "Z loss unscaled",
                 z_batch_loss / self.z_loss_multiplier,
                 ReduceType.mean,
                 namespace="train",
@@ -440,38 +461,8 @@ class TransformerTrainModule(TrainModule):
         # Maybe adjust learning rate.
         if self.scheduler is not None:
             for group_idx, group in enumerate(self.optim.param_groups):
-                if (lr_field := self.scheduler.lr_field) not in group and (
-                    initial_lr_field := self.scheduler.initial_lr_field
-                ) not in group:
-                    group_fields_list = "\n - ".join(
-                        [f"{k}: {v}" for k, v in group.items() if k != "params"]
-                    )
-                    raise RuntimeError(
-                        f"learning rate field '{lr_field}' and initial learning rate field "
-                        f"'{initial_lr_field}' not found in optimizer param group {group_idx} "
-                        f"with {len(group['params'])} parameter(s):\n"
-                        f" - {group_fields_list}"
-                    )
-
-                # Ensure 'initial_lr' is set.
-                if group.get(self.scheduler.initial_lr_field) is None:
-                    group[self.scheduler.initial_lr_field] = group["lr"]
-
-                # Set new LR.
-                new_lr = self.scheduler.get_lr(
-                    group[self.scheduler.initial_lr_field],
-                    self.trainer.global_step,
-                    self.trainer.max_steps,
-                )
-
-                if isinstance(current_lr := group.get(self.scheduler.lr_field), torch.Tensor):
-                    current_lr.fill_(new_lr)
-                else:
-                    group[self.scheduler.lr_field] = new_lr
-
-                self.trainer.record_metric(
-                    f"LR (group {group_idx})", group[self.scheduler.lr_field], namespace="optim"
-                )
+                new_lr = self.scheduler.set_lr(group, self.trainer)
+                self.trainer.record_metric(f"LR (group {group_idx})", new_lr, namespace="optim")
 
         # Step optimizer.
         self.optim.step()

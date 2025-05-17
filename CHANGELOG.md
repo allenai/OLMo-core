@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added option to set LR scheduler based on tokens instead of steps (e.g. `--train_module.scheduler.units=tokens`).
+- Added a "packed" numpy FSL variant that packs documents into sequences using the best-fit-decreasing bin packing algorithm following the work from [Fewer Truncates Improve Language Modeling](https://arxiv.org/pdf/2404.10830).
+- Added module `olmo_core.testing`.
+- Added a "interleaved" numpy FSL variant that interleaves several documents into sequences following the work from [LongSkywork: A Training Recipe for Efficiently Extending Context Length in Large Language Models](https://arxiv.org/pdf/2406.00605).
+- Added sliding window attention as a feature
+- Added `BatchSizeSchedulerCallback` for setting a batch size schedule over the course of a training run.
+- The `BeakerCallback` will save the config and Python requirements to the results dataset.
+- Added `from_file` method to `Config` class.
+- Added in-loop evals for OLMES basic skills eval
+
+### Changed
+
+- Output of `LMHead` when `labels` is passed as input is now a 4-tuple instead of a 3-tuple, with `(logits, loss, ce_loss, z_loss)`, where `loss` is the combined loss (`ce_loss + z_loss`).
+- The `ConfigSaver` callback will automatically set the config to save for other callbacks (`WandBCallback`, `CometCallback`, and `BeakerCallback` as of now).
+
+### Fixed
+
+- Modify `TokenizerConfig.from_hf()` to fallback to tokenizer_config.json if config.json is not found.
+- Fixed loading checkpoints with missing keys from transformer train modules using torch 2.7.
+- Made MoE load balancing loss more robust.
+- Fixed a bug with `ReorderedNormTransformerBlock` when using fine-grained FSDP wrapping and activation checkpointing together.
+- Fixed an issue preventing tensor parallelism from working with `LMHead` when using the "fused_linear" loss implementation.
+- Fixed a bug with `LMHead` when using "fused_linear" loss implementation where the `ce_loss` output included the `z_loss` added to it.
+- Fixed training on single GPU when using a `SkipStepOptimizer`.
+- Fixed the initialization of the `CosWithWarmupAndLinearDecay` learning rate scheduler
+- Ensured eval tasks are sorted to maintain the same order across ranks (the cookbook was configuring these in an unsorted way).
+
+## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
+
+### Added
+
 - Added 50B Dolmino 11/24 mix.
 - Added support for auxiliary-loss-free MoE load-balancing, similar to DeepSeek-v3. You can activate this by setting `bias_gamma` to a non-zero float in your `MoERouter` config.
 - Added support for sequence-level MoE load balancing loss.
@@ -20,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Also added lower-level methods for converting state between the formats.
 - Added the ability to run the evaluator callback on `.pre_train()` by setting `eval_on_startup=True`, and to cancel the run after the first time evals run by setting `cancel_after_first_eval=True`.
 - Added support for label mask files with numpy FSL datasets.
+- Added a `git` configuration to `BeakerLaunchConfig`.
 
 ### Changed
 
@@ -29,6 +61,7 @@ Also added lower-level methods for converting state between the formats.
 - Undo a fix applied to `olmo_core.data.numpy_dataset.NumpyFSLDatasetMixture` that was generating a mismatch between the shape of instances in the dataset and the shape of instances in the data loader.
 - Made the 1B and 7B scripts more similar to each other.
 - Changed underlying logic and top-level arguments of `convert_checkpoint_from_hf.py` and `convert_checkpoint_to_hf.py`.
+- Beaker experiments launched with the `BeakerLaunchConfig` will now log with ANSI colors enabled.
 
 ### Fixed
 
@@ -36,7 +69,9 @@ Also added lower-level methods for converting state between the formats.
 - Fixed a bug where the trainer might try to save a duplicate final checkpoint if the run that already completed was restarted.
 - When submitting a Beaker job from a branch that's tracking a GitHub fork, OLMo-core now instructs Beaker to pull from the fork instead of from the main repo.
 - Made Beaker image resolution more robust.
+- Having `t_max` overrides in the default model configs is confusing and error prone, so we removed them.
 - Beaker launcher will only clone a single branch at runtime when possible, which can be much faster.
+
 
 ## [v2.0.1](https://github.com/allenai/OLMo-core/releases/tag/v2.0.1) - 2025-03-18
 

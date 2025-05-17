@@ -7,9 +7,8 @@ from torch.distributed.tensor import Shard, distribute_tensor
 
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
 from olmo_core.nn.cross_entropy_loss import CrossEntropyLoss
+from olmo_core.testing import requires_multi_gpu, run_distributed_test
 from olmo_core.utils import get_default_device
-
-from ..distributed.utils import requires_multi_gpu, run_distributed_test
 
 
 def compute_loss(

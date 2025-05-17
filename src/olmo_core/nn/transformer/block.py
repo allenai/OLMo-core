@@ -107,7 +107,9 @@ class TransformerBlock(TransformerBlockBase):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
-        self.attention = attention.build(d_model, init_device=init_device, cache=cache)
+        self.attention = attention.build(
+            d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
+        )
         self.attention_norm = layer_norm.build(d_model, init_device=init_device)
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
         self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
@@ -200,21 +202,6 @@ class ReorderedNormTransformerBlock(TransformerBlock):
         h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
-    def apply_fsdp(
-        self,
-        dp_mesh: Optional[DeviceMesh] = None,
-        prefetch_factor: int = 0,
-        wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
-        **fsdp_kwargs,
-    ):
-        if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
-            fsdp_mlp = cast(FSDPModule, fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs))
-            fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
-            if prefetch_factor > 0:
-                fsdp_root.set_modules_to_forward_prefetch([fsdp_mlp])
-        else:
-            fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
-
 
 @beta_feature
 class NormalizedTransformerBlock(TransformerBlockBase):
@@ -237,7 +224,9 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
-        self.attention = attention.build(d_model, init_device=init_device, cache=cache)
+        self.attention = attention.build(
+            d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
+        )
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
 
         self.attn_alpha_init_value = 0.05
@@ -304,6 +293,7 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         **fsdp_kwargs,
     ):
         if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
+            fully_shard(self.attention, mesh=dp_mesh, **fsdp_kwargs)
             fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs)
 
         fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
@@ -313,6 +303,9 @@ class NormalizedTransformerBlock(TransformerBlockBase):
             and prefetch_factor > 0
         ):
             cast(FSDPModule, self).set_modules_to_forward_prefetch(
+                [cast(FSDPModule, self.attention)]
+            )
+            cast(FSDPModule, self.attention).set_modules_to_forward_prefetch(
                 [cast(FSDPModule, self.feed_forward)]
             )
 
@@ -355,7 +348,9 @@ class MoETransformerBlock(TransformerBlockBase):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
-        self.attention = attention.build(d_model, init_device=init_device, cache=cache)
+        self.attention = attention.build(
+            d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
+        )
         self.attention_norm = layer_norm.build(d_model, init_device=init_device)
         self.feed_forward_moe = feed_forward_moe.build(
             d_model=d_model, n_layers=n_layers, init_device=init_device, cache=cache
@@ -508,12 +503,14 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
         **fsdp_kwargs,
     ):
         if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
+            fsdp_att = cast(FSDPModule, fully_shard(self.attention, mesh=dp_mesh, **fsdp_kwargs))
             fsdp_moe = cast(
                 FSDPModule, fully_shard(self.feed_forward_moe, mesh=dp_mesh, **fsdp_kwargs)
             )
             fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
             if prefetch_factor > 0:
-                fsdp_root.set_modules_to_forward_prefetch([fsdp_moe])
+                fsdp_root.set_modules_to_forward_prefetch([fsdp_att])
+                fsdp_att.set_modules_to_forward_prefetch([fsdp_moe])
         else:
             fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
 
