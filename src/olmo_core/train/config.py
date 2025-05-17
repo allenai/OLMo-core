@@ -113,31 +113,31 @@ class TrainerConfig(Config):
             "codex_humaneval_gold_bpb_0shot",
             "codex_mbpp_gold_bpb_0shot",
             # Sanity check for MCQA ability
-            "copycolors_10way",
+            "copycolors_10way_fast",
         ]
 
         # For training runs where we expect the model to acquire MC
         tasks_large_compute = [
             # OLMES Core 9(-ish) MC
-            "arc_challenge_test_mc_5shot",
-            "arc_easy_test_mc_5shot",
+            "arc_challenge_test_mc_5shot_fast",
+            "arc_easy_test_mc_5shot_fast",
             "hellaswag_rc_5shot",  # 1K subset of HellaSwag
-            "csqa_val_mc_5shot",
-            "piqa_val_mc_5shot",
-            "socialiqa_val_mc_5shot",
+            "csqa_val_mc_5shot_fast",
+            "piqa_val_mc_5shot_fast",
+            "socialiqa_val_mc_5shot_fast",
             "winogrande_val_rc_5shot",
             # Too noisy to be worth tracking
-            # "boolq_val_mc_5shot",
-            # "openbookqa_test_mc_5shot",
+            # "boolq_val_mc_5shot_fast",
+            # "openbookqa_test_mc_5shot_fast",
             # MMLU MC BPB
-            "mmlu_stem_val_mc_5shot",
-            "mmlu_humanities_val_mc_5shot",
-            "mmlu_social_sciences_val_mc_5shot",
-            "mmlu_other_val_mc_5shot",
-            "mmlu_stem_test_mc_5shot",
-            "mmlu_humanities_test_mc_5shot",
-            "mmlu_social_sciences_test_mc_5shot",
-            "mmlu_other_test_mc_5shot",
+            "mmlu_stem_val_mc_5shot_fast",
+            "mmlu_humanities_val_mc_5shot_fast",
+            "mmlu_social_sciences_val_mc_5shot_fast",
+            "mmlu_other_val_mc_5shot_fast",
+            "mmlu_stem_test_mc_5shot_fast",
+            "mmlu_humanities_test_mc_5shot_fast",
+            "mmlu_social_sciences_test_mc_5shot_fast",
+            "mmlu_other_test_mc_5shot_fast",
             # Gen tasks BPB
             "gsm8k_gold_bpb_5shot",
             "minerva_math_algebra_gold_bpb_0shot",
@@ -150,7 +150,7 @@ class TrainerConfig(Config):
             "codex_humaneval_gold_bpb_0shot",
             "codex_mbpp_gold_bpb_0shot",
             # Sanity check for MCQA ability
-            "copycolors_10way",
+            "copycolors_10way_fast",
         ]
         # Unfortunately we need the same metrics for everything, so we run them all.
         tasks = list(set(tasks_small_compute + tasks_large_compute))
