@@ -200,7 +200,7 @@ class SourceMixtureDatasetConfig(Config):
 
         if not self.source_configs:
             raise OLMoConfigurationError("source_configs must not be empty")
-
+        log.info(self.source_configs)
         summed_weights = np.sum([source.target_ratio for source in self.source_configs])
 
         if not np.allclose(summed_weights, 1.0):
