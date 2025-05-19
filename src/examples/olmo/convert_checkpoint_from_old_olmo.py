@@ -81,8 +81,8 @@ OLD_OLMO_TO_OLMO_CORE_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
 
 def _get_converter() -> StateConverter:
     mapping_templates = {
-        hf_key: StateMappingTemplate(hf_key, olmo_core_key)
-        for hf_key, olmo_core_key in OLD_OLMO_TO_OLMO_CORE_MAPPINGS.items()
+        old_olmo_key: StateMappingTemplate(old_olmo_key, olmo_core_key)
+        for old_olmo_key, olmo_core_key in OLD_OLMO_TO_OLMO_CORE_MAPPINGS.items()
     }
     mapping_templates.update(OLD_OLMO_TO_OLMO_CORE_TEMPLATE_MAPPINGS)
 
@@ -260,13 +260,12 @@ def convert_checkpoint_from_old_olmo(
     transformer_config_dict: Dict[str, Any],
     tokenizer_config_dict: Dict[str, Any],
     *,
-    max_sequence_length: int = -1,
     validate: bool = True,
     debug: bool = False,
     device: torch.device | None = None,
 ) -> None:
     """
-    Convert a HF checkpoint to an OLMo core checkpoint.
+    Convert an old OLMo checkpoint to an OLMo core checkpoint.
 
     Args:
         old_olmo_checkpoint_path: Path to the original OLMo unsharded checkpoint
@@ -274,9 +273,6 @@ def convert_checkpoint_from_old_olmo(
         transformer_config_dict: Dictionary form of OLMo core model config
         tokenizer_config_dict: Dictionary form of OLMo core tokenizer config
     """
-    if max_sequence_length <= 0:
-        raise ValueError(f"Missing or invalid sequence length: {max_sequence_length}")
-
     # Remove deprecated transformer config options
     if "compile" in transformer_config_dict:
         del transformer_config_dict["compile"]
@@ -543,7 +539,7 @@ def parse_args():
         "--checkpoint-input-path",
         type=str,
         required=True,
-        help="Local or remote directory containing the HF checkpoint, or the model id of a HF Hub repo.",
+        help="Local or remote directory containing the old OLMo checkpoint.",
     )
 
     parser.add_argument(
@@ -556,19 +552,19 @@ def parse_args():
     parser.add_argument(
         "-m",
         "--model-arch",
-        help="OLMo Core model architecture corresponding to the HF model. New architectures should be added to ``_get_transformer_config``. This is required when an OLMo Core experiment config is not provided.",
+        help="OLMo Core model architecture corresponding to the old OLMo model. New architectures should be added to ``_get_transformer_config``. This is required when an OLMo Core experiment config is not provided.",
     )
     parser.add_argument(
         "-t",
         "--tokenizer",
         type=str,
         default="dolma2",
-        help="OLMo Core tokenizer corresponding to the HF model. New tokenizers should be added to ``_get_tokenizer_config``. This is required when an OLMo Core experiment config is not provided.",
+        help="OLMo Core tokenizer corresponding to the old OLMo model. New tokenizers should be added to ``_get_tokenizer_config``. This is required when an OLMo Core experiment config is not provided.",
     )
 
     parser.add_argument(
         "-o",
-        "--huggingface-output-dir",
+        "--output-dir",
         type=Path,
         required=True,
         help="Local or remote directory where the converted checkpoint should be saved.",
@@ -622,10 +618,9 @@ def main():
 
     convert_checkpoint_from_old_olmo(
         old_olmo_checkpoint_path=args.checkpoint_input_path,
-        output_path=args.huggingface_output_dir,
+        output_path=args.output_dir,
         transformer_config_dict=transformer_config_dict,
         tokenizer_config_dict=tokenizer_config_dict,
-        max_sequence_length=args.max_sequence_length,
         validate=args.validate,
         debug=args.debug,
         device=args.device,
