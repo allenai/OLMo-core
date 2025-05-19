@@ -9,6 +9,8 @@ import torch
 
 from olmo_core.nn.cross_entropy_loss import CrossEntropyLoss
 from olmo_core.nn.feed_forward import FeedForwardConfig
+from olmo_core.nn.moe.moe import MoEConfig
+from olmo_core.nn.moe.router import MoERouterConfig
 from olmo_core.nn.mup import (
     MuPConfig,
     MuPHyperParam,
@@ -338,27 +340,20 @@ def train_and_collect_mup_data(
     num_widths: int,
     train_batch_size: int = 1,
     eval_batch_size: int = 8,
+    sequence_length: int = 16,
     vocab_size: int = 100,
     steps: int = 50,
     seeds: int = 10,
+    has_embedding_dim: bool = False,
 ):
-    def collect_mean_coord_magnitude(
-        debug_state: List[Tuple[str, tuple, float]],
-        name: str,
-        module: torch.nn.Module,
-        args,
-        output,
-    ):
-        del module
-        if isinstance(output, torch.Tensor):
-            state_name = f"{name}|{len(debug_state)}|output"
-            debug_state.append(
-                (
-                    state_name,
-                    output.shape,
-                    output.detach().float().norm(p=1.0).item() / output.numel(),
-                )
-            )
+    def _get_input(*, is_training: bool = True, input_dim: Optional[int] = None) -> torch.Tensor:
+        batch_size = train_batch_size if is_training else eval_batch_size
+        if has_embedding_dim:
+            assert input_dim is not None
+            return torch.randn(batch_size, sequence_length, input_dim)
+
+        return torch.randint(0, vocab_size, (batch_size, sequence_length))
+
 
     seeded_initial_submodule_outputs: List[Dict[str, torch.Tensor]] = []
     seeded_final_submodule_outputs: List[Dict[str, torch.Tensor]] = []
@@ -373,14 +368,14 @@ def train_and_collect_mup_data(
             scheduler = LinearWithWarmup(warmup=0)
 
             with _submodule_output_collection(model) as submodule_outputs:
-                _ = model(torch.randint(0, vocab_size, (eval_batch_size, input_dim)))
+                _ = model(_get_input(is_training=False, input_dim=input_dim))
                 seeded_initial_submodule_outputs.append(submodule_outputs)
 
             # Train for a bit
             for i_step in range(steps):
-                inp = torch.randint(0, vocab_size, (train_batch_size, input_dim))
-                # labels = (inp.sum(dim=-1) > 0).long()
-                labels = inp
+                inp = _get_input(is_training=True, input_dim=input_dim)
+                labels = (inp.sum(dim=-1) > 0).long() if has_embedding_dim else inp
+                # labels = inp
                 optim.zero_grad(set_to_none=True)
                 logits = model(inp)
 
@@ -406,7 +401,7 @@ def train_and_collect_mup_data(
                     param_group[scheduler.lr_field] = new_lr
 
             with _submodule_output_collection(model) as submodule_outputs:
-                _ = model(torch.randint(0, vocab_size, (eval_batch_size, input_dim)))
+                _ = model(_get_input(is_training=False, input_dim=input_dim))
                 seeded_final_submodule_outputs.append(submodule_outputs)
 
     # First piece of muP data is average abs value of elements at initialization
@@ -540,6 +535,114 @@ def test_ffn_mup_const_coord_norm_at_init_scaling_input_output(
         for scaling_strategy in MuPScalingStrategy
     ],
 )
+def test_moe_mup_const_coord_norm_at_init_scaling_input_output(
+    optim_config_cls, mup_scaling_strategy
+):
+    """
+    This is the most important (and slowest) test of muP validity. It runs a base model and its muP
+    up-/down-scalings, and checks that the magnitude of the coordinates (i.e. entries) of the
+    intermediate activations are not growing/decaying.
+
+    Growing coordinates are never expected in muP beyond noise, so the acceptable threshold of growth
+    is set closer to 1. Decaying is expected in attention logits and layers with scaling inputs at initialization,
+    and in general it takes a while for muP to get rid of decaying. Thus decay threshold is set further from 1.
+    These thresholds are broken very easily by the standard parametrization but we try to keep them tight
+    because muP bugs might not break them as easily.
+    """
+    MIN_NORMALIZED_SLOPE = -0.05
+    MAX_NORMALIZED_SLOPE = 0.05
+    D_MODELS = [128, 256, 512, 1024, 2048]
+    HIDDEN_SIZES = [100, 200, 300, 400, 500]
+    TOP_K = [2, 2, 2, 2, 2]
+    NUM_EXPERTS = [2, 4, 8, 16, 32]
+    BASE_MULTIPLIER_IDX = 2
+    BASE_D_MODEL = D_MODELS[BASE_MULTIPLIER_IDX]
+    BASE_HIDDEN_SIZE = HIDDEN_SIZES[BASE_MULTIPLIER_IDX]
+    SEEDS = 10
+    STEPS = 0
+
+    optim_config: OptimConfig = optim_config_cls(
+        lr=1e-3,
+        betas=(0.9, 0.95),
+    )
+    mup_optimizer_type = optim_config.mup_optimizer_type()
+    assert mup_optimizer_type is not None, "Optimizer does not support muP"
+
+    def generate_model(width_idx: int, seed_idx: int) -> Tuple[int, torch.nn.Module]:
+        d_model = D_MODELS[width_idx]
+        hidden_size = HIDDEN_SIZES[width_idx]
+        num_experts = NUM_EXPERTS[width_idx]
+        top_k = TOP_K[width_idx]
+
+        mup = MuPConfig(
+            mup_optimizer_type,
+            scaling_strategy=mup_scaling_strategy,
+            width_scalings={
+                MuPHyperParam.d_model: d_model / BASE_D_MODEL,
+                MuPHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
+                MuPHyperParam.head_dim: d_model / BASE_D_MODEL,
+            },
+        )
+
+        router = MoERouterConfig(
+            top_k=top_k,
+            normalize_expert_weights=2.0,
+        )
+
+        moe = MoEConfig(
+            num_experts=num_experts,
+            hidden_size=hidden_size,
+            router=router,
+            mup=mup,
+        ).build(d_model)
+
+        InitMethod.normal.init_feed_forward_moe(
+            moe,
+            d_model=d_model,
+            block_idx=0,
+            num_blocks=1,
+            generator=torch.Generator().manual_seed(seed_idx),
+        )
+
+        return d_model, moe
+
+    coord_magnitudes, activation_shapes = train_and_collect_mup_data(
+        generate_model,
+        optim_config,
+        len(D_MODELS),
+        steps=STEPS,
+        seeds=SEEDS,
+        has_embedding_dim=True,
+    )
+
+    for name, magnitudes in coord_magnitudes.items():
+        magnitudes = np.array(
+            [np.mean(magnitudes[i : i + SEEDS]) for i in range(0, len(magnitudes), SEEDS)]
+        )
+        shapes = [activation_shapes[name][SEEDS * i] for i in range(len(magnitudes))]
+
+        log_d_models = np.log2(np.array(D_MODELS))
+        slope = np.polynomial.polynomial.Polynomial.fit(
+            log_d_models, magnitudes / magnitudes[0], 1
+        ).coef[1]
+        assert slope <= MAX_NORMALIZED_SLOPE, (
+            f"Coordinate magnitudes for {name} grow too much with width. "
+            f"slope {slope}, magnitudes {magnitudes}, normalized magnitudes {magnitudes / magnitudes[0]} shapes {shapes}"
+        )
+        assert slope >= MIN_NORMALIZED_SLOPE, (
+            f"Coordinate magnitudes for {name} decay too much with width. "
+            f"slope {slope}, magnitudes {magnitudes}, normalized magnitudes {magnitudes / magnitudes[0]} shapes {shapes}"
+        )
+
+
+@pytest.mark.parametrize(
+    "optim_config_cls, mup_scaling_strategy",
+    [
+        pytest.param(optim_config_cls, scaling_strategy)
+        for optim_config_cls in [AdamConfig, AdamWConfig, SkipStepAdamWConfig]
+        for scaling_strategy in MuPScalingStrategy
+    ],
+)
 def test_ffn_mup_non_growing_coord_norm_scaling_input_output(
     optim_config_cls, mup_scaling_strategy
 ):
@@ -607,6 +710,7 @@ def test_ffn_mup_non_growing_coord_norm_scaling_input_output(
         len(D_MODELS),
         steps=STEPS,
         seeds=SEEDS,
+        has_embedding_dim=True,
     )
 
     for name, magnitudes in coord_magnitudes.items():
@@ -702,6 +806,7 @@ def test_ffn_mup_non_growing_coord_norm_scaling_d_model(optim_config_cls, mup_sc
         len(D_MODELS),
         steps=STEPS,
         seeds=SEEDS,
+        has_embedding_dim=True,
     )
 
     for name, magnitudes in coord_magnitudes.items():

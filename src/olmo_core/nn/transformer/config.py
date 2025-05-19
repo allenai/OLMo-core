@@ -463,6 +463,13 @@ class TransformerConfig(Config):
             / (base_model.d_model / base_model.block.attention.n_heads),
         }
 
+        if self.block.feed_forward_moe:
+            assert base_model.block.feed_forward_moe is not None
+            width_scalings[MuPHyperParam.num_experts] = (
+                self.block.feed_forward_moe.num_experts
+                / base_model.block.feed_forward_moe.num_experts
+            )
+
         return {
             hyper_param: scaling
             for hyper_param, scaling in width_scalings.items()

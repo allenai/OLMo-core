@@ -32,6 +32,7 @@ class MuPHyperParam(StrEnum):
     n_heads = "n_heads"
     n_kv_heads = "n_kv_heads"
     head_dim = "head_dim"
+    num_experts = "num_experts"
 
 
 class MuPOptimizerType(StrEnum):
@@ -324,7 +325,7 @@ class MuP:
         if mup is None or mup.input_multiplier is None:
             return x
 
-        return x * mup.input_multiplier
+        return (x * mup.input_multiplier).to(x.dtype)
 
     @classmethod
     def scale_init_std(cls, mup: Optional["MuP"], std: float) -> float:

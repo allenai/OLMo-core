@@ -35,6 +35,24 @@ class InitMethod(StrEnum):
     dependent on either ``d_model`` or the layer index.
     """
 
+    def _init_weight(
+        self,
+        weight: torch.Tensor,
+        *,
+        std: float = 0.02,
+        generator: Optional[torch.Generator] = None,
+        mup: Optional[MuP] = None,
+    ):
+        std = MuP.scale_init_std(mup, std)
+        nn.init.trunc_normal_(
+            weight,
+            mean=0.0,
+            std=std,
+            a=-3 * std,
+            b=3 * std,
+            generator=generator,
+        )
+
     def _init_linear(
         self,
         m: nn.Linear,
@@ -43,15 +61,8 @@ class InitMethod(StrEnum):
         generator: Optional[torch.Generator] = None,
         mup: Optional[MuP] = None,
     ):
-        std = MuP.scale_init_std(mup, std)
-        nn.init.trunc_normal_(
-            m.weight,
-            mean=0.0,
-            std=std,
-            a=-3 * std,
-            b=3 * std,
-            generator=generator,
-        )
+        self._init_weight(m.weight, std=std, generator=generator, mup=mup)
+
         if m.bias is not None:
             nn.init.zeros_(m.bias)
 
@@ -166,35 +177,12 @@ class InitMethod(StrEnum):
         elif self == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
 
-        nn.init.trunc_normal_(
-            cast(MoELinearRouter, m.router).weight,
-            mean=0.0,
-            std=std,
-            a=-3 * std,
-            b=3 * std,
-            generator=generator,
+        router = cast(MoELinearRouter, m.router)
+        self._init_weight(
+            router.weight, std=std, generator=generator, mup=router.mups.get("router")
         )
-        nn.init.trunc_normal_(
-            cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w1,
-            mean=0.0,
-            std=std,
-            a=-3 * std,
-            b=3 * std,
-            generator=generator,
-        )
-        nn.init.trunc_normal_(
-            cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w2,
-            mean=0.0,
-            std=std,
-            a=-3 * std,
-            b=3 * std,
-            generator=generator,
-        )
-        nn.init.trunc_normal_(
-            cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w3,
-            mean=0.0,
-            std=std,
-            a=-3 * std,
-            b=3 * std,
-            generator=generator,
-        )
+
+        mlp = cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp)
+        self._init_weight(mlp.w1, std=std, generator=generator, mup=mlp.mups.get("w1"))
+        self._init_weight(mlp.w2, std=std, generator=generator, mup=mlp.mups.get("w2"))
+        self._init_weight(mlp.w3, std=std, generator=generator, mup=mlp.mups.get("w3"))
