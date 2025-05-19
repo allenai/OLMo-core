@@ -5,9 +5,12 @@ import math
 from datetime import datetime
 
 from olmo_core.config import DType
+from olmo_core.data.mixes import DataMix
+from olmo_core.data.numpy_dataset import NumpyDatasetConfig
+from olmo_core.data.types import NumpyDatasetType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
-from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
+from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
@@ -20,6 +23,10 @@ from olmo_core.train.callbacks import (
     CometCallback,
     WandBCallback,
 )
+from olmo_core.train.callbacks.evaluator_callback import (
+    DownstreamEvaluatorCallbackConfig,
+    LMEvaluatorCallbackConfig,
+)
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -27,8 +34,11 @@ from olmo_core.train.train_module import (
 )
 
 SEQUENCE_LENGTH = 8192
-GLOBAL_BATCH_SIZE = 1024 * 4096  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
+GLOBAL_BATCH_SIZE = (
+    1024 * 4096
+)  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
 MAX_DURATION = int(500e9)  # int(6e12), don't forget to adjust the LR when you increase this
+EVAL_INTERVAL = 1000
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -100,6 +110,35 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     run_name = f"{common.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
 
+    tasks = [
+        "arc_challenge_test_bpb_5shot",
+        "arc_challenge_test_mc_5shot_fast",
+        "arc_easy_test_bpb_5shot",
+        "arc_easy_test_mc_5shot_fast",
+        "basic_skills_arithmetic_rc_5shot",
+        "basic_skills_coding_rc_5shot",
+        "basic_skills_common_knowledge_rc_5shot",
+        "basic_skills_logical_reasoning_rc_5shot",
+        "basic_skills_pattern_rc_5shot",
+        "basic_skills_string_operations_rc_5shot",
+        "codex_humaneval_gold_bpb_0shot",
+        "codex_mbpp_gold_bpb_0shot",
+        "copycolors_10way_fast",
+        "hellaswag_bpb_5shot",
+        "minerva_math_500_gold_bpb_0shot",
+        "mmlu_humanities_test_bpb_5shot",
+        "mmlu_humanities_test_mc_5shot_fast",
+        "mmlu_other_test_bpb_5shot",
+        "mmlu_other_test_mc_5shot_fast",
+        "mmlu_social_sciences_test_bpb_5shot",
+        "mmlu_social_sciences_test_mc_5shot_fast",
+        "mmlu_stem_test_bpb_5shot",
+        "mmlu_stem_test_mc_5shot_fast",
+        "mt_mbpp_cpp_gold_bpb_3shot",
+        "mt_mbpp_java_gold_bpb_3shot",
+        "mt_mbpp_rust_gold_bpb_3shot",
+    ]
+
     config = (
         TrainerConfig(
             save_folder=common.save_folder,
@@ -137,7 +176,28 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 cancel_check_interval=cancel_check_interval,
             ),
         )
-        .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster, eval_interval=1000)
+        .with_callback(
+            "downstream_evaluator",
+            DownstreamEvaluatorCallbackConfig(
+                tasks=tasks,
+                tokenizer=common.tokenizer,
+                eval_interval=EVAL_INTERVAL,
+            ),
+        )
+        .with_callback(
+            "lm_evaluator",
+            LMEvaluatorCallbackConfig(
+                eval_dataset=NumpyDatasetConfig.from_data_mix(
+                    DataMix.v3_small_ppl_validation,
+                    name=NumpyDatasetType.padded_fsl,
+                    mix_base_dir=get_root_dir(cluster),
+                    sequence_length=SEQUENCE_LENGTH,
+                    tokenizer=common.tokenizer,
+                    work_dir=get_work_dir(get_root_dir(cluster)),
+                ),
+                eval_interval=EVAL_INTERVAL,
+            ),
+        )
     )
 
     # batch size warmup
