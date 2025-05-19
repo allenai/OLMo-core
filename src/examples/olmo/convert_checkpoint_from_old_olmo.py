@@ -260,7 +260,6 @@ def convert_checkpoint_from_old_olmo(
     transformer_config_dict: Dict[str, Any],
     tokenizer_config_dict: Dict[str, Any],
     *,
-    model_id: str | None = None,
     max_sequence_length: int = -1,
     validate: bool = True,
     debug: bool = False,
@@ -335,7 +334,6 @@ def convert_checkpoint_from_old_olmo(
             model,
             tokenizer_config.vocab_size,
             optim=optim,
-            model_id=model_id,
             debug=debug,
             device=device,
         )
@@ -425,7 +423,6 @@ def validate_conversion(
     model: Transformer,
     vocab_size: int,
     optim: torch.optim.Optimizer | None = None,
-    model_id: str | None = None,
     debug: bool = False,
     device: torch.device | None = None,
 ):
@@ -584,10 +581,6 @@ def parse_args():
         help="Max sequence length supported by the model.",
     )
     parser.add_argument(
-        "--model-id",
-        help="Model id of the HF Hub repo corresponding to the model. Use to get model specific mappings in :mod:`olmo_core.nn.hf.convert`",
-    )
-    parser.add_argument(
         "--skip-validation",
         dest="validate",
         action="store_false",
@@ -632,7 +625,6 @@ def main():
         output_path=args.huggingface_output_dir,
         transformer_config_dict=transformer_config_dict,
         tokenizer_config_dict=tokenizer_config_dict,
-        model_id=args.model_id,
         max_sequence_length=args.max_sequence_length,
         validate=args.validate,
         debug=args.debug,
