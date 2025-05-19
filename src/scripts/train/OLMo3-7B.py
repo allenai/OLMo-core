@@ -1,6 +1,7 @@
 """
 Train a 7B OLMo model. Run this script without any arguments to see usage info.
 """
+import math
 from datetime import datetime
 
 from olmo_core.config import DType
@@ -45,7 +46,10 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         rank_microbatch_size=rank_microbatch_size,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=SkipStepAdamWConfig(
-            lr=1.6e-4,
+            lr=1.6e-4
+            * math.sqrt(
+                GLOBAL_BATCH_SIZE / (4096 * 512)
+            ),  # 1.6e-4 was used for 2M batch size, adjusting it accordingly
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
