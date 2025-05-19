@@ -110,8 +110,8 @@ class TrainerConfig(Config):
             "minerva_math_number_theory_gold_bpb_0shot",
             "minerva_math_prealgebra_gold_bpb_0shot",
             "minerva_math_precalculus_gold_bpb_0shot",
-            "codex_humaneval_gold_bpb_0shot",
-            "codex_mbpp_gold_bpb_0shot",
+            "codex_humaneval_gold_bpb_3shot",
+            "codex_mbpp_gold_bpb_3shot",
             # MT MBPP tasks
             "mt_mbpp_rust_gold_bpb_3shot",
             "mt_mbpp_java_gold_bpb_3shot",
@@ -158,8 +158,8 @@ class TrainerConfig(Config):
             "minerva_math_number_theory_gold_bpb_0shot",
             "minerva_math_prealgebra_gold_bpb_0shot",
             "minerva_math_precalculus_gold_bpb_0shot",
-            "codex_humaneval_gold_bpb_0shot",
-            "codex_mbpp_gold_bpb_0shot",
+            "codex_humaneval_gold_bpb_3shot",
+            "codex_mbpp_gold_bpb_3shot",
             # MT MBPP tasks
             "mt_mbpp_rust_gold_bpb_3shot",
             "mt_mbpp_java_gold_bpb_3shot",

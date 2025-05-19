@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `from_file` method to `Config` class.
 - Added in-loop evals for OLMES basic skills eval
 - Added in-loop fast MCQA for in-loop evals and translated MBPP tasks
+- Added in-loop few-shot HumanEval BPB
 
 ### Changed
 
