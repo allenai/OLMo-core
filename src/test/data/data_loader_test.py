@@ -6,6 +6,7 @@ import pytest
 
 from olmo_core.data import (
     DataCollator,
+    NumpyDataLoaderBase,
     NumpyFSLDataLoader,
     NumpyFSLDataset,
     NumpyVSLDataLoader,
@@ -227,6 +228,68 @@ def test_fsl_data_loader_with_seq_len_warmup(tmp_path: Path, shuffle: bool):
 
     assert get_all_tokens(2) == get_all_tokens(4) == get_all_tokens(8)
     assert get_all_tokens(2, 8) == get_all_tokens(4, 8) == get_all_tokens(8, 8)
+
+
+@pytest.mark.parametrize(
+    "num_workers", [pytest.param(0, id="no-workers"), pytest.param(1, id="with-workers")]
+)
+def test_numpy_data_loader_while_changing_batch_size(
+    tmp_path: Path, num_workers: int, num_tokens: int = 1024, sequence_length: int = 8
+):
+    mmap1 = np.memmap(tmp_path / "tokens.npy", dtype=np.uint16, mode="w+", shape=(num_tokens,))
+    mmap1[:] = list(range(num_tokens))
+    mmap1.flush()
+
+    dataset = NumpyFSLDataset(
+        tmp_path / "tokens.npy",
+        sequence_length=sequence_length,
+        pad_token_id=-1,
+        eos_token_id=-1,
+        vocab_size=32_000,
+    )
+
+    batch_size = sequence_length * 4
+
+    data_loader = NumpyDataLoaderBase.wrap_numpy_dataset(
+        dataset,
+        global_batch_size=batch_size,
+        collator=DataCollator(pad_token_id=-1),
+        num_workers=num_workers,
+        num_threads=0,
+        work_dir=tmp_path,
+    )
+    data_loader.reshuffle()
+
+    assert len(data_loader) == num_tokens // batch_size  # 32
+    batch_iterator = iter(data_loader)
+
+    # Process some batches with starting batch size.
+    for _ in range(4):
+        batch = next(batch_iterator)
+        assert batch["input_ids"].numel() == batch_size
+    assert data_loader.batches_processed == 4
+
+    # Double batch size. This is allowed because we've processed 4 batches so far, which is divisible by 2.
+    batch_size *= 2
+    data_loader.global_batch_size = batch_size
+
+    assert len(data_loader) == num_tokens // batch_size  # 16
+    assert isinstance(data_loader.batches_processed, int)
+    assert data_loader.batches_processed == 2
+
+    for _ in range(6):
+        batch = next(batch_iterator)
+        assert batch["input_ids"].numel() == batch_size
+
+    assert data_loader.batches_processed == 8
+
+    # Now cut batch size in half.
+    batch_size //= 2
+    data_loader.global_batch_size = batch_size
+
+    assert len(data_loader) == num_tokens // batch_size  # 16
+    assert isinstance(data_loader.batches_processed, int)
+    assert data_loader.batches_processed == 16
 
 
 @pytest.mark.parametrize(

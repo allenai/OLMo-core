@@ -22,7 +22,7 @@ dependencies = [
     "omegaconf",
     "safetensors",
     "importlib_resources",
-    "ai2-olmo-eval==0.7.1",
+    "ai2-olmo-eval==0.8.2",
 ]
 
 [project.urls]
@@ -55,7 +55,7 @@ dev = [
     "sphinx-inline-tabs",
 ]
 beaker = [
-    "beaker-py>=1.36.0",
+    "beaker-py>=1.36.0,<2.0",
     "GitPython>=3.0,<4.0",
 ]
 wandb = [
