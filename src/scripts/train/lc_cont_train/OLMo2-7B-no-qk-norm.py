@@ -193,7 +193,7 @@ class LcContTrain(Config):
                 # compile=True,
             #     fused_ops=False,
                 use_flash=True,
-                qk_norm=False,
+                qk_norm=True,
                 rope_theta =int(0.5 * 10 ** 6),
             ),
             dataset=NumpyDatasetConfig.from_data_mix(
