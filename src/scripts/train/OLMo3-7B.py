@@ -5,12 +5,9 @@ import math
 from datetime import datetime
 
 from olmo_core.config import DType
-from olmo_core.data.mixes import DataMix
-from olmo_core.data.numpy_dataset import NumpyDatasetConfig
-from olmo_core.data.types import NumpyDatasetType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
-from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE, get_root_dir, get_work_dir
+from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
@@ -22,10 +19,6 @@ from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
     WandBCallback,
-)
-from olmo_core.train.callbacks.evaluator_callback import (
-    DownstreamEvaluatorCallbackConfig,
-    LMEvaluatorCallbackConfig,
 )
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
@@ -176,27 +169,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 cancel_check_interval=cancel_check_interval,
             ),
         )
-        .with_callback(
-            "downstream_evaluator",
-            DownstreamEvaluatorCallbackConfig(
-                tasks=tasks,
-                tokenizer=common.tokenizer,
-                eval_interval=EVAL_INTERVAL,
-            ),
-        )
-        .with_callback(
-            "lm_evaluator",
-            LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyDatasetConfig.from_data_mix(
-                    DataMix.v3_small_ppl_validation,
-                    name=NumpyDatasetType.padded_fsl,
-                    mix_base_dir=get_root_dir(cluster),
-                    sequence_length=SEQUENCE_LENGTH,
-                    tokenizer=common.tokenizer,
-                    work_dir=get_work_dir(get_root_dir(cluster)),
-                ),
-                eval_interval=EVAL_INTERVAL,
-            ),
+        .with_recommended_evals(
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
         )
     )
 
