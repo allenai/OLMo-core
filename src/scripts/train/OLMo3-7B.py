@@ -103,35 +103,6 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     run_name = f"{common.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
 
-    tasks = [
-        "arc_challenge_test_bpb_5shot",
-        "arc_challenge_test_mc_5shot_fast",
-        "arc_easy_test_bpb_5shot",
-        "arc_easy_test_mc_5shot_fast",
-        "basic_skills_arithmetic_rc_5shot",
-        "basic_skills_coding_rc_5shot",
-        "basic_skills_common_knowledge_rc_5shot",
-        "basic_skills_logical_reasoning_rc_5shot",
-        "basic_skills_pattern_rc_5shot",
-        "basic_skills_string_operations_rc_5shot",
-        "codex_humaneval_gold_bpb_0shot",
-        "codex_mbpp_gold_bpb_0shot",
-        "copycolors_10way_fast",
-        "hellaswag_bpb_5shot",
-        "minerva_math_500_gold_bpb_0shot",
-        "mmlu_humanities_test_bpb_5shot",
-        "mmlu_humanities_test_mc_5shot_fast",
-        "mmlu_other_test_bpb_5shot",
-        "mmlu_other_test_mc_5shot_fast",
-        "mmlu_social_sciences_test_bpb_5shot",
-        "mmlu_social_sciences_test_mc_5shot_fast",
-        "mmlu_stem_test_bpb_5shot",
-        "mmlu_stem_test_mc_5shot_fast",
-        "mt_mbpp_cpp_gold_bpb_3shot",
-        "mt_mbpp_java_gold_bpb_3shot",
-        "mt_mbpp_rust_gold_bpb_3shot",
-    ]
-
     config = (
         TrainerConfig(
             save_folder=common.save_folder,
