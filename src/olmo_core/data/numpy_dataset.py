@@ -1480,7 +1480,573 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         return (
             self.work_dir / f"dataset-{self.fingerprint}" / "interleaving-exempt-docs-indices.npy"
         )
+    
 
+class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
+    """
+    A version of :class:`NumpyFSLDataset` that creates a single instance by chunking documents and
+    interleaving these chunks. The resulting instances may be packed with smaller docs out to ``sequence_length``.
+    """
+
+    def __init__(
+        self,
+        *paths: PathOrStr,
+        sequence_length: int,
+        pad_token_id: int,
+        eos_token_id: int,
+        vocab_size: int,
+        seed: int,
+        docs_per_instance: int,
+        chunks_per_doc: int,
+        dtype: NumpyUIntTypes = np.uint16,
+        metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
+        include_instance_metadata: Optional[bool] = None,
+        instance_filter_config: Optional[InstanceFilterConfig] = None,
+        label_mask_paths: Optional[List[PathOrStr]] = None,
+        bos_token_id: Optional[int] = None,
+        interleavable_paths: Optional[List[PathOrStr]] = None,
+    ):
+        if sequence_length % docs_per_instance != 0:
+            raise OLMoConfigurationError(
+                "'sequence_length' must be a multiple of 'docs_per_instance'"
+            )
+        if sequence_length % chunks_per_doc != 0:
+            raise OLMoConfigurationError("'sequence_length' must be a multiple of 'chunks_per_doc'")
+
+        super().__init__(
+            *paths,
+            sequence_length=sequence_length,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            vocab_size=vocab_size,
+            dtype=dtype,
+            metadata=metadata,
+            include_instance_metadata=include_instance_metadata,
+            instance_filter_config=instance_filter_config,
+            label_mask_paths=label_mask_paths,
+        )
+        self._docs_per_instance = docs_per_instance
+        self._chunks_per_doc = chunks_per_doc
+        self._seed = seed
+        self._bos_token_id = bos_token_id
+        self._interleavable_paths = interleavable_paths
+        self._num_not_interleaved = None
+        self._num_interleavable_instances = None
+        self._interleaved_array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
+
+    @property
+    def fingerprint_fields(self) -> Tuple[str, ...]:
+        return (
+            "vocab_size",
+            "pad_token_id",
+            "eos_token_id",
+            "dtype",
+            "_bos_token_id",
+            "_docs_per_instance",
+            "_seed",
+            "_interleavable_paths",
+        )
+    
+
+
+    def __len__(self) -> int:
+        if self._num_instances is None:
+            self._num_instances = self.offsets[-1][1]
+            self._num_not_interleaved = self.offsets[-1][1]
+            if self._interleavable_paths:   # total is all FSL offsets plus interleaving docs 
+                item_size = self.indices_dtype(0).itemsize
+                interleavable_indices_path = self._get_interleaveable_indices_path()
+                self._num_interleavable_instances = get_file_size(interleavable_indices_path) // item_size
+
+                #self._num_interleavable_instances = self.interleaved_offsets[-1][1]
+
+                self._num_instances += self._num_interleavable_instances // self._docs_per_instance
+        return self._num_instances
+    
+    
+    def _get_interleaveable_indices_path(self) -> Path:
+        return self.work_dir / f"dataset-{self.fingerprint}" / "interleavable-docs-indices.npy"
+
+    def _get_interleaving_exempt_indices_path(self) -> Path:
+        return (
+            self.work_dir / f"dataset-{self.fingerprint}" / "interleaving-exempt-docs-indices.npy"
+        )
+    
+
+    # Took this from PaddedFSL dataset-- need to understand if there's a reason it's not in FSLDataset 
+    # (but relatively sure it's just because FSL dataset doesn't need to use it, not because it differs)
+    @property
+    def indices_dtype(
+        self,
+    ) -> NumpyUIntTypes:
+        return np.uint32
+    
+    def _get_instance_indices_path(self, source_path: PathOrStr) -> Path:
+        return self._get_indices_path(source_path, "instance-indices")
+
+    # get correct offsets for start of each interleavable doc
+    @property
+    def interleaved_offsets(self) -> Tuple[Tuple[int, int], ...]:
+        assert self._interleavable_paths
+
+        if self._interleaved_array_instance_offsets is None:
+            item_size = self.indices_dtype(0).itemsize
+            num_instances_per_path = self.map(
+                lambda path, _: get_file_size(self._get_instance_indices_path(path))
+                // (item_size * 2),
+                _paths=self._interleavable_paths # only do this for instances we want to interleave
+            )
+            array_instance_offsets = []
+            start_offset = 0
+            for num_instances in num_instances_per_path:
+                array_instance_offsets.append((start_offset, start_offset + num_instances))
+                start_offset += num_instances
+            self._interleaved_array_instance_offsets = tuple(array_instance_offsets)
+        return self._interleaved_array_instance_offsets
+    
+
+    def _write_docs_interleaving_indices(self):
+        interleavable_indices_path = self._get_interleaveable_indices_path()
+        interleaving_exempt_indices_path = self._get_interleaving_exempt_indices_path()
+        if interleaving_exempt_indices_path.is_file() and (
+            self._interleavable_paths is None or interleavable_indices_path.is_file()
+        ):
+            log.info(
+                f"Reusing all document interleaving indices at:\n'{interleavable_indices_path}'" # TODO: make more informative for no-interleaving case
+            )
+        else:
+            log.info(
+                f"Generating all document interleaving indices to:\n'{interleavable_indices_path}..."
+            )
+
+            interleaving_exempt_doc_indices = range(self.offsets[-1][1]) #everything is interleaving exempt 
+            #[
+            #    instance_num
+            #    for i_offset, (start, end) in enumerate(self.offsets)
+            #    for instance_num in range(start, end)
+            #] 
+
+            with memmap_to_write(
+                interleaving_exempt_indices_path,
+                dtype=self.indices_dtype,
+                shape=(len(interleaving_exempt_doc_indices),),
+            ) as interleaving_exempt_indices:
+                interleaving_exempt_indices[:] = interleaving_exempt_doc_indices
+
+            # TODO: this isn't really right because offsets are not guaranteed to be start of a document anymore
+            # TODO: need to figure out how to get the indices for start of each doc and end
+            # interleaved_offsets provides us a second index of the data that includes index for start and end of each doc
+            # TODO: can we do this just for the paths we care about duplicating? otherwise this is a lot of extra effort 
+            if self._interleavable_paths:
+
+                log.info(self.interleaved_offsets)
+                interleavable_doc_indices = [
+                        instance_num
+                        for i_offset, (start, end) in enumerate(self.interleaved_offsets)
+                        for instance_num in range(start, end)
+                    ]
+                log.info(f"doc indices are {interleavable_doc_indices}")
+
+                with memmap_to_write(
+                    interleavable_indices_path,
+                    dtype=self.indices_dtype,
+                    shape=(len(interleavable_doc_indices),),
+                ) as interleavable_indices:
+                    interleavable_indices[:] = get_rng(self._seed).permutation(
+                        interleavable_doc_indices
+                    )
+
+    # TODO: figure out how to append these to the existing offsets list-- no, maintain two offsets lists
+    # TODO: add interleaving back into get_item
+    # That might fix it?? 
+
+
+    def _remove_special_tokens_and_interleave(
+        self,
+        tensors: List[torch.Tensor],
+        tensors_non_special_indices: List[Tuple[torch.Tensor, ...]],
+    ) -> torch.Tensor:
+        cleaned_tensors: List[torch.Tensor] = [
+            tensor[non_special_indices]
+            for tensor, non_special_indices in zip(tensors, tensors_non_special_indices)
+        ]
+
+        chunked_tensors = [
+            cleaned_tensor.tensor_split(self._chunks_per_doc) for cleaned_tensor in cleaned_tensors
+        ]
+        return torch.cat(
+            [
+                chunked_tensor[i]
+                for i in range(self._chunks_per_doc)
+                for chunked_tensor in chunked_tensors
+            ]
+        )
+
+
+    def _read_varlen_chunk_from_array(self, path: PathOrStr, index: int, dtype=None) -> torch.Tensor:
+        indices_path = self._get_instance_indices_path(path)
+        indices = load_array_slice_into_tensor(
+            indices_path, index * 2, index * 2 + 2, self.indices_dtype
+        )
+        start_idx, end_idx = indices
+        data = load_array_slice_into_tensor(path, int(start_idx), int(end_idx), dtype or self.dtype)
+        return data
+
+
+    def _get_interleaved_item(self, index: int) -> Dict[str,Any]:
+        # TODO: yikes this is a hack
+        # basically we need .__get_item__() but we want to get from interleaved_offsets instead of offsets
+        # should redo this at some point 
+        assert self._interleavable_paths is not None # we should be interleaving at this point
+
+        index = int(index)  # in case this is a numpy int type.
+        pos_index = index if index >= 0 else len(self) + index
+
+        # The index of the array within 'self.paths'.
+        array_index: Optional[int] = None
+        # The index within the corresponding array.
+        array_local_index: Optional[int] = None
+        for i, (offset_start, offset_end) in enumerate(self.interleaved_offsets):
+            if offset_start <= pos_index < offset_end:
+                array_index = i
+                array_local_index = pos_index - offset_start
+                break
+
+        if array_index is None or array_local_index is None:
+            raise IndexError(f"{index} is out of bounds for dataset of size {len(self)}")
+
+        # Read the data from file.
+        input_ids = self._read_varlen_chunk_from_array(self._interleavable_paths[array_index], array_local_index)
+        out: Dict[str, Any] = {"input_ids": input_ids}
+
+        if self._label_mask_paths is not None:
+            label_mask = self._read_varlen_chunk_from_array(
+                self._label_mask_paths[array_index], array_local_index, dtype=np.bool_
+            )
+            out["label_mask"] = label_mask
+
+        if self.instance_filter_config is not None:
+            out["instance_mask"] = self._validate_instance(input_ids, self.instance_filter_config)
+
+        if self._include_instance_metadata:
+            metadata = self._metadata[array_index]
+            out["metadata"] = deepcopy(metadata)
+
+        if self._generate_doc_lengths:
+            out["doc_lens"] = get_document_lengths(input_ids, self.eos_token_id)
+
+        return out
+
+
+
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        index = int(index)  # in case this is a numpy int type.
+        pos_index = index if index >= 0 else len(self) + index
+
+        assert self._num_not_interleaved is not None
+        if pos_index < self._num_not_interleaved:
+            # this is just an FSL dataset, treat it like one 
+            return super().__getitem__(pos_index)
+
+        # else: we need to do some interleaving 
+        pos_index -= self._num_not_interleaved
+        assert self._num_interleavable_instances is not None
+        assert pos_index < self._num_interleavable_instances
+
+        interleaving_indices_path = self._get_interleaveable_indices_path()
+
+        # TODO: somehow this is giving us BAD data 
+        interleaving_indices = load_array_slice_into_tensor(
+            interleaving_indices_path,
+            pos_index * self._docs_per_instance,
+            pos_index * self._docs_per_instance + self._docs_per_instance,
+            self.indices_dtype,
+        ).tolist()
+        log.info(f"interleaving indices: {interleaving_indices}")
+
+        docs: List[Dict[str, Any]] = []
+        for doc_index in interleaving_indices:
+            doc = self._get_interleaved_item(doc_index)
+            log.info(f"doc retrieved for {doc_index} is {doc}")
+            # don't pad docs here, do the interleaving first 
+            if "label_mask" not in doc:
+                doc["label_mask"] = torch.ones_like(doc["input_ids"])
+
+            # Shrink the documents down, so that interleaving them does not exceed the sequence length.
+            doc["input_ids"] = doc["input_ids"][: self.sequence_length // self._docs_per_instance]
+            doc["label_mask"] = doc["label_mask"][: self.sequence_length // self._docs_per_instance]
+
+            docs.append(doc)
+
+        for doc in docs:
+            if doc.keys() != docs[0].keys():
+                raise RuntimeError(
+                    f"Trying to interleave documents when dataset docs have different keys: {docs[0].keys()}, {doc.keys()}."
+                )
+
+        log.info(f"{len(docs)} docs to interleave ")
+        item: Dict[str, Any] = {}
+
+        docs_non_special_token_indices = []
+        for doc in docs:
+            special_tokens_mask = torch.logical_or(
+                doc["input_ids"] == self.pad_token_id,
+                doc["input_ids"] == self.eos_token_id,
+            )
+            if self._bos_token_id is not None:
+                special_tokens_mask = torch.logical_or(
+                    special_tokens_mask,
+                    doc["input_ids"] == self._bos_token_id,
+                )
+
+            non_special_token_indices = torch.nonzero(
+                torch.logical_not(special_tokens_mask),
+                as_tuple=True,
+            )
+            docs_non_special_token_indices.append(non_special_token_indices)
+            
+            
+        log.info(f"time to interleave f{docs}")    
+        item["input_ids"] = self._remove_special_tokens_and_interleave(
+            [doc["input_ids"] for doc in docs], docs_non_special_token_indices
+        )
+        item["label_mask"] = self._remove_special_tokens_and_interleave(
+            [doc["label_mask"] for doc in docs], docs_non_special_token_indices
+        )
+
+
+        log.info(f"interleaved to an item; before padding: {item['input_ids']}")
+        # Add bos and tokens if there is space after interleaving.
+        if self._bos_token_id is not None and len(item["input_ids"]) < self.sequence_length:
+            item["input_ids"] = F.pad(item["input_ids"], (1, 0), value=self._bos_token_id)
+            item["label_mask"] = F.pad(item["label_mask"], (1, 0), value=True)
+        if len(item["input_ids"]) < self.sequence_length:
+            item["input_ids"] = F.pad(item["input_ids"], (0, 1), value=self.eos_token_id)
+            item["label_mask"] = F.pad(item["label_mask"], (0, 1), value=True)
+
+        pad_shape = (0, self.sequence_length - len(item["input_ids"]))
+        item["input_ids"] = F.pad(item["input_ids"], pad_shape, value=self.pad_token_id)
+        item["label_mask"] = F.pad(item["label_mask"], pad_shape, value=False)
+
+        if "instance_mask" in docs[0]:
+            item["instance_mask"] = all([doc["instance_mask"] for doc in docs])
+
+        if "metadata" in docs[0]:
+            metadata = docs[0]["metadata"]
+            for doc in docs:
+                doc_metadata = docs[0]["metadata"]
+                if metadata != doc_metadata:
+                    raise RuntimeError(
+                        f"Trying to interleave documents when dataset docs have different metadata: {metadata}, {doc_metadata}."
+                    )
+            item["metadata"] = metadata
+
+        if "doc_lens" in docs[0]:
+            raise RuntimeError("Document lengths unexpectedly found.")
+
+        return item
+
+    def _write_instance_indices(self):
+        if self._interleavable_paths is None:
+            return # only do this for interleavable paths 
+
+        paths_needed: List[PathOrStr] = []
+        for path in self._interleavable_paths:
+            indices_path = self._get_instance_indices_path(path)
+            if indices_path.is_file():
+                log.info(f"Reusing instance indices for '{path}' at:\n'{indices_path}'")
+            elif path not in paths_needed:
+                paths_needed.append(path)
+
+        if paths_needed:
+            with concurrent.futures.ProcessPoolExecutor() as executor:
+                futures = []
+                for path in paths_needed:
+                    indices_path = self._get_instance_indices_path(path)
+                    log.info(f"Gathering instance indices for '{path}'...")
+                    future = executor.submit(
+                        run_worker_func,
+                        segment_documents_into_instances,
+                        path,
+                        indices_path,
+                        max_sequence_length=self.sequence_length,
+                        eos_token_id=self.eos_token_id,
+                        dtype=self.dtype,
+                        indices_dtype=self.indices_dtype,
+                    )
+                    futures.append(future)
+
+                concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
+
+                # Log results.
+                for path, future in zip(paths_needed, futures):
+                    _, total_instances = future.result()
+                    log.info(
+                        f"Created {total_instances:,d} instances of sequence length up to "
+                        f"{self.sequence_length} from '{path}'"
+                    )
+
+    def prepare(self):
+        if self.fs_local_rank == 0:
+            log.info("Gathering dataset document and interleaving indices...")
+            self._write_instance_indices() #TODO: do we need to do this/ 
+            self._write_docs_interleaving_indices()
+        barrier()
+        len(self)
+
+
+    """
+
+    def __len__(self) -> int:
+        if self._num_instances is None:
+            item_size = self.indices_dtype(0).itemsize
+
+            interleavable_indices_path = self._get_interleaveable_indices_path()
+            num_interleavable_instances = get_file_size(interleavable_indices_path) // item_size
+
+            interleaving_exempt_indices_path = self._get_interleaving_exempt_indices_path()
+            num_interleaving_exempt_instances = (
+                (get_file_size(interleaving_exempt_indices_path) // item_size)
+                if interleaving_exempt_indices_path.is_file()
+                else 0
+            )
+
+            self._num_interleavable_instances = num_interleavable_instances
+            self._num_interleaving_exempt_instances = num_interleaving_exempt_instances
+            self._num_instances = (
+                num_interleavable_instances // self._docs_per_instance
+                + num_interleaving_exempt_instances
+            )
+        return self._num_instances
+
+
+    def _remove_special_tokens_and_interleave(
+        self,
+        tensors: List[torch.Tensor],
+        tensors_non_special_indices: List[Tuple[torch.Tensor, ...]],
+    ) -> torch.Tensor:
+        cleaned_tensors: List[torch.Tensor] = [
+            tensor[non_special_indices]
+            for tensor, non_special_indices in zip(tensors, tensors_non_special_indices)
+        ]
+
+        chunked_tensors = [
+            cleaned_tensor.tensor_split(self._chunks_per_doc) for cleaned_tensor in cleaned_tensors
+        ]
+        return torch.cat(
+            [
+                chunked_tensor[i]
+                for i in range(self._chunks_per_doc)
+                for chunked_tensor in chunked_tensors
+            ]
+        )
+
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        index = int(index)  # in case this is a numpy int type.
+        pos_index = index if index >= 0 else len(self) + index
+
+        assert self._num_interleaving_exempt_instances is not None
+        if self._interleaving_exempt_paths and pos_index < self._num_interleaving_exempt_instances:
+            interleaving_exempt_indices_path = self._get_interleaving_exempt_indices_path()
+            doc_index = load_array_slice_into_tensor(
+                interleaving_exempt_indices_path,
+                pos_index,
+                pos_index + 1,
+                self.indices_dtype,
+            ).tolist()[0]
+
+            return super().__getitem__(doc_index)
+
+        pos_index -= self._num_interleaving_exempt_instances
+        assert self._num_interleavable_instances is not None
+        assert pos_index < self._num_interleavable_instances
+
+        interleaving_indices_path = self._get_interleaveable_indices_path()
+        interleaving_indices = load_array_slice_into_tensor(
+            interleaving_indices_path,
+            pos_index * self._docs_per_instance,
+            pos_index * self._docs_per_instance + self._docs_per_instance,
+            self.indices_dtype,
+        ).tolist()
+
+        docs: List[Dict[str, Any]] = []
+        for doc_index in interleaving_indices:
+            doc = super().__getitem__(doc_index)
+
+            # Shrink the documents down, so that interleaving them does not exceed the sequence length.
+            doc["input_ids"] = doc["input_ids"][: self.sequence_length // self._docs_per_instance]
+            doc["label_mask"] = doc["label_mask"][: self.sequence_length // self._docs_per_instance]
+
+            docs.append(doc)
+
+        for doc in docs:
+            if doc.keys() != docs[0].keys():
+                raise RuntimeError(
+                    f"Trying to interleave documents when dataset docs have different keys: {docs[0].keys()}, {doc.keys()}."
+                )
+
+        item: Dict[str, Any] = {}
+
+        docs_non_special_token_indices = []
+        for doc in docs:
+            special_tokens_mask = torch.logical_or(
+                doc["input_ids"] == self.pad_token_id,
+                doc["input_ids"] == self.eos_token_id,
+            )
+            if self._bos_token_id is not None:
+                special_tokens_mask = torch.logical_or(
+                    special_tokens_mask,
+                    doc["input_ids"] == self._bos_token_id,
+                )
+
+            non_special_token_indices = torch.nonzero(
+                torch.logical_not(special_tokens_mask),
+                as_tuple=True,
+            )
+            docs_non_special_token_indices.append(non_special_token_indices)
+
+        item["input_ids"] = self._remove_special_tokens_and_interleave(
+            [doc["input_ids"] for doc in docs], docs_non_special_token_indices
+        )
+        item["label_mask"] = self._remove_special_tokens_and_interleave(
+            [doc["label_mask"] for doc in docs], docs_non_special_token_indices
+        )
+
+        # Add bos and tokens if there is space after interleaving.
+        if self._bos_token_id is not None and len(item["input_ids"]) < self.sequence_length:
+            item["input_ids"] = F.pad(item["input_ids"], (1, 0), value=self._bos_token_id)
+            item["label_mask"] = F.pad(item["label_mask"], (1, 0), value=True)
+        if len(item["input_ids"]) < self.sequence_length:
+            item["input_ids"] = F.pad(item["input_ids"], (0, 1), value=self.eos_token_id)
+            item["label_mask"] = F.pad(item["label_mask"], (0, 1), value=True)
+
+        pad_shape = (0, self.sequence_length - len(item["input_ids"]))
+        item["input_ids"] = F.pad(item["input_ids"], pad_shape, value=self.pad_token_id)
+        item["label_mask"] = F.pad(item["label_mask"], pad_shape, value=False)
+
+        if "instance_mask" in docs[0]:
+            item["instance_mask"] = all([doc["instance_mask"] for doc in docs])
+
+        if "metadata" in docs[0]:
+            metadata = docs[0]["metadata"]
+            for doc in docs:
+                doc_metadata = docs[0]["metadata"]
+                if metadata != doc_metadata:
+                    raise RuntimeError(
+                        f"Trying to interleave documents when dataset docs have different metadata: {metadata}, {doc_metadata}."
+                    )
+            item["metadata"] = metadata
+
+        if "doc_lens" in docs[0]:
+            raise RuntimeError("Document lengths unexpectedly found.")
+
+        return item
+
+    def _get_instance_indices_path(self, source_path: PathOrStr) -> Path:
+        return self._get_indices_path(source_path, "instance-indices", str(self._docs_per_instance))
+
+
+    """
 
 @dataclass
 class VSLCurriculum:
