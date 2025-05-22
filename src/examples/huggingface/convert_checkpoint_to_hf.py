@@ -228,9 +228,20 @@ def validate_conversion(
                 log.info(
                     f"{olmo_core_state_name}, {hf_state_name} shape mismatch: {olmo_core_tensor.shape} {hf_tensor.shape}"
                 )
-            else:
+            if olmo_core_tensor.dtype != hf_tensor.dtype:
                 log.info(
-                    f"{olmo_core_state_name}, {hf_state_name} norm diff: {torch.norm(olmo_core_tensor - hf_tensor)}"
+                    f"{olmo_core_state_name}, {hf_state_name} dtype mismatch: {olmo_core_tensor.dtype} {hf_tensor.dtype}"
+                )
+            if len(olmo_core_tensor.shape) == len(hf_tensor.shape):
+                common_shape = tuple(
+                    min(olmo_core_dim, hf_dim)
+                    for olmo_core_dim, hf_dim in zip(olmo_core_tensor.shape, hf_tensor.shape)
+                )
+                for i, dim in enumerate(common_shape):
+                    olmo_core_tensor = olmo_core_tensor.narrow(i, 0, dim)
+                    hf_tensor = hf_tensor.narrow(i, 0, dim)
+                log.info(
+                    f"{olmo_core_state_name}, {hf_state_name} element diff abs mean: {(olmo_core_tensor - hf_tensor).float().abs().mean()}"
                 )
 
     torch.testing.assert_close(hf_logits[..., :vocab_size], logits[..., :vocab_size])
