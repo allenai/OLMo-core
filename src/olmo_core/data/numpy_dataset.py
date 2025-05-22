@@ -1505,6 +1505,7 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
         label_mask_paths: Optional[List[PathOrStr]] = None,
         bos_token_id: Optional[int] = None,
         interleavable_paths: Optional[List[PathOrStr]] = None,
+        exclude_interleaved: bool = False,
     ):
         if sequence_length % docs_per_instance != 0:
             raise OLMoConfigurationError(
@@ -1533,6 +1534,7 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
         self._num_not_interleaved = None
         self._num_interleavable_instances = None
         self._interleaved_array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
+        self._exclude_interleaved = exclude_interleaved
 
     @property
     def fingerprint_fields(self) -> Tuple[str, ...]:
@@ -1545,6 +1547,7 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
             "_docs_per_instance",
             "_seed",
             "_interleavable_paths",
+            "_exclude_interleaved"
         )
     
 
@@ -1612,7 +1615,7 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
             self._interleavable_paths is None or interleavable_indices_path.is_file()
         ):
             log.info(
-                f"Reusing all document interleaving indices at:\n'{interleavable_indices_path}'" # TODO: make more informative for no-interleaving case
+                f"Reusing all document interleaving indices at:\n'{interleavable_indices_path}'" 
             )
         else:
             log.info(
@@ -1633,10 +1636,6 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
             ) as interleaving_exempt_indices:
                 interleaving_exempt_indices[:] = interleaving_exempt_doc_indices
 
-            # TODO: this isn't really right because offsets are not guaranteed to be start of a document anymore
-            # TODO: need to figure out how to get the indices for start of each doc and end
-            # interleaved_offsets provides us a second index of the data that includes index for start and end of each doc
-            # TODO: can we do this just for the paths we care about duplicating? otherwise this is a lot of extra effort 
             if self._interleavable_paths:
                 interleavable_doc_indices = [
                         instance_num
@@ -1738,7 +1737,16 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
         assert self._num_not_interleaved is not None
         if pos_index < self._num_not_interleaved:
             # this is just an FSL dataset, treat it like one 
-            return super().__getitem__(pos_index)
+
+            interleaving_exempt_indices_path = self._get_interleaving_exempt_indices_path()
+            doc_index = load_array_slice_into_tensor(
+                interleaving_exempt_indices_path,
+                pos_index,
+                pos_index + 1,
+                self.indices_dtype,
+            ).tolist()[0]
+
+            return super().__getitem__(doc_index)
 
         # else: we need to do some interleaving 
         pos_index -= self._num_not_interleaved
@@ -1747,7 +1755,6 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
 
         interleaving_indices_path = self._get_interleaveable_indices_path()
 
-        # TODO: somehow this is giving us BAD data 
         interleaving_indices = load_array_slice_into_tensor(
             interleaving_indices_path,
             pos_index * self._docs_per_instance,
@@ -1876,7 +1883,7 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
     def prepare(self):
         if self.fs_local_rank == 0:
             log.info("Gathering dataset document and interleaving indices...")
-            self._write_instance_indices() #TODO: do we need to do this/ 
+            self._write_instance_indices() #TODO: do we need to do this? not positive
             self._write_docs_interleaving_indices()
         barrier()
         len(self)
