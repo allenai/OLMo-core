@@ -1556,6 +1556,7 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
         if self._num_instances is None:
             self._num_instances = self.offsets[-1][1]
             self._num_not_interleaved = self.offsets[-1][1]
+            """
             if self._interleavable_paths:   # total is all FSL offsets plus interleaving docs 
                 item_size = self.indices_dtype(0).itemsize
                 interleavable_indices_path = self._get_interleaveable_indices_path()
@@ -1564,6 +1565,7 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
                 #self._num_interleavable_instances = self.interleaved_offsets[-1][1]
 
                 self._num_instances += self._num_interleavable_instances // self._docs_per_instance
+            """
         return self._num_instances
     
     
@@ -1735,6 +1737,7 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
         pos_index = index if index >= 0 else len(self) + index
 
         assert self._num_not_interleaved is not None
+        assert pos_index < self._num_not_interleaved # TEST: turned interleaving off in len(), so should never fail this 
         if pos_index < self._num_not_interleaved:
             # this is just an FSL dataset, treat it like one 
 
@@ -1749,6 +1752,7 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
             return super().__getitem__(doc_index)
 
         # else: we need to do some interleaving 
+        assert False # TEST: turned off interleaving; how did we get here?
         pos_index -= self._num_not_interleaved
         assert self._num_interleavable_instances is not None
         assert pos_index < self._num_interleavable_instances
