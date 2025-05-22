@@ -1638,14 +1638,11 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
             # interleaved_offsets provides us a second index of the data that includes index for start and end of each doc
             # TODO: can we do this just for the paths we care about duplicating? otherwise this is a lot of extra effort 
             if self._interleavable_paths:
-
-                log.info(self.interleaved_offsets)
                 interleavable_doc_indices = [
                         instance_num
                         for i_offset, (start, end) in enumerate(self.interleaved_offsets)
                         for instance_num in range(start, end)
                     ]
-                log.info(f"doc indices are {interleavable_doc_indices}")
 
                 with memmap_to_write(
                     interleavable_indices_path,
@@ -1655,11 +1652,6 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
                     interleavable_indices[:] = get_rng(self._seed).permutation(
                         interleavable_doc_indices
                     )
-
-    # TODO: figure out how to append these to the existing offsets list-- no, maintain two offsets lists
-    # TODO: add interleaving back into get_item
-    # That might fix it?? 
-
 
     def _remove_special_tokens_and_interleave(
         self,
@@ -1762,12 +1754,10 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
             pos_index * self._docs_per_instance + self._docs_per_instance,
             self.indices_dtype,
         ).tolist()
-        log.info(f"interleaving indices: {interleaving_indices}")
 
         docs: List[Dict[str, Any]] = []
         for doc_index in interleaving_indices:
             doc = self._get_interleaved_item(doc_index)
-            log.info(f"doc retrieved for {doc_index} is {doc}")
             # don't pad docs here, do the interleaving first 
             if "label_mask" not in doc:
                 doc["label_mask"] = torch.ones_like(doc["input_ids"])
@@ -1784,7 +1774,6 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
                     f"Trying to interleave documents when dataset docs have different keys: {docs[0].keys()}, {doc.keys()}."
                 )
 
-        log.info(f"{len(docs)} docs to interleave ")
         item: Dict[str, Any] = {}
 
         docs_non_special_token_indices = []
@@ -1806,7 +1795,6 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
             docs_non_special_token_indices.append(non_special_token_indices)
             
             
-        log.info(f"time to interleave f{docs}")    
         item["input_ids"] = self._remove_special_tokens_and_interleave(
             [doc["input_ids"] for doc in docs], docs_non_special_token_indices
         )
@@ -1815,7 +1803,6 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
         )
 
 
-        log.info(f"interleaved to an item; before padding: {item['input_ids']}")
         # Add bos and tokens if there is space after interleaving.
         if self._bos_token_id is not None and len(item["input_ids"]) < self.sequence_length:
             item["input_ids"] = F.pad(item["input_ids"], (1, 0), value=self._bos_token_id)
