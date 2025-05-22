@@ -1895,159 +1895,6 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
         len(self)
 
 
-    """
-
-    def __len__(self) -> int:
-        if self._num_instances is None:
-            item_size = self.indices_dtype(0).itemsize
-
-            interleavable_indices_path = self._get_interleaveable_indices_path()
-            num_interleavable_instances = get_file_size(interleavable_indices_path) // item_size
-
-            interleaving_exempt_indices_path = self._get_interleaving_exempt_indices_path()
-            num_interleaving_exempt_instances = (
-                (get_file_size(interleaving_exempt_indices_path) // item_size)
-                if interleaving_exempt_indices_path.is_file()
-                else 0
-            )
-
-            self._num_interleavable_instances = num_interleavable_instances
-            self._num_interleaving_exempt_instances = num_interleaving_exempt_instances
-            self._num_instances = (
-                num_interleavable_instances // self._docs_per_instance
-                + num_interleaving_exempt_instances
-            )
-        return self._num_instances
-
-
-    def _remove_special_tokens_and_interleave(
-        self,
-        tensors: List[torch.Tensor],
-        tensors_non_special_indices: List[Tuple[torch.Tensor, ...]],
-    ) -> torch.Tensor:
-        cleaned_tensors: List[torch.Tensor] = [
-            tensor[non_special_indices]
-            for tensor, non_special_indices in zip(tensors, tensors_non_special_indices)
-        ]
-
-        chunked_tensors = [
-            cleaned_tensor.tensor_split(self._chunks_per_doc) for cleaned_tensor in cleaned_tensors
-        ]
-        return torch.cat(
-            [
-                chunked_tensor[i]
-                for i in range(self._chunks_per_doc)
-                for chunked_tensor in chunked_tensors
-            ]
-        )
-
-    def __getitem__(self, index: int) -> Dict[str, Any]:
-        index = int(index)  # in case this is a numpy int type.
-        pos_index = index if index >= 0 else len(self) + index
-
-        assert self._num_interleaving_exempt_instances is not None
-        if self._interleaving_exempt_paths and pos_index < self._num_interleaving_exempt_instances:
-            interleaving_exempt_indices_path = self._get_interleaving_exempt_indices_path()
-            doc_index = load_array_slice_into_tensor(
-                interleaving_exempt_indices_path,
-                pos_index,
-                pos_index + 1,
-                self.indices_dtype,
-            ).tolist()[0]
-
-            return super().__getitem__(doc_index)
-
-        pos_index -= self._num_interleaving_exempt_instances
-        assert self._num_interleavable_instances is not None
-        assert pos_index < self._num_interleavable_instances
-
-        interleaving_indices_path = self._get_interleaveable_indices_path()
-        interleaving_indices = load_array_slice_into_tensor(
-            interleaving_indices_path,
-            pos_index * self._docs_per_instance,
-            pos_index * self._docs_per_instance + self._docs_per_instance,
-            self.indices_dtype,
-        ).tolist()
-
-        docs: List[Dict[str, Any]] = []
-        for doc_index in interleaving_indices:
-            doc = super().__getitem__(doc_index)
-
-            # Shrink the documents down, so that interleaving them does not exceed the sequence length.
-            doc["input_ids"] = doc["input_ids"][: self.sequence_length // self._docs_per_instance]
-            doc["label_mask"] = doc["label_mask"][: self.sequence_length // self._docs_per_instance]
-
-            docs.append(doc)
-
-        for doc in docs:
-            if doc.keys() != docs[0].keys():
-                raise RuntimeError(
-                    f"Trying to interleave documents when dataset docs have different keys: {docs[0].keys()}, {doc.keys()}."
-                )
-
-        item: Dict[str, Any] = {}
-
-        docs_non_special_token_indices = []
-        for doc in docs:
-            special_tokens_mask = torch.logical_or(
-                doc["input_ids"] == self.pad_token_id,
-                doc["input_ids"] == self.eos_token_id,
-            )
-            if self._bos_token_id is not None:
-                special_tokens_mask = torch.logical_or(
-                    special_tokens_mask,
-                    doc["input_ids"] == self._bos_token_id,
-                )
-
-            non_special_token_indices = torch.nonzero(
-                torch.logical_not(special_tokens_mask),
-                as_tuple=True,
-            )
-            docs_non_special_token_indices.append(non_special_token_indices)
-
-        item["input_ids"] = self._remove_special_tokens_and_interleave(
-            [doc["input_ids"] for doc in docs], docs_non_special_token_indices
-        )
-        item["label_mask"] = self._remove_special_tokens_and_interleave(
-            [doc["label_mask"] for doc in docs], docs_non_special_token_indices
-        )
-
-        # Add bos and tokens if there is space after interleaving.
-        if self._bos_token_id is not None and len(item["input_ids"]) < self.sequence_length:
-            item["input_ids"] = F.pad(item["input_ids"], (1, 0), value=self._bos_token_id)
-            item["label_mask"] = F.pad(item["label_mask"], (1, 0), value=True)
-        if len(item["input_ids"]) < self.sequence_length:
-            item["input_ids"] = F.pad(item["input_ids"], (0, 1), value=self.eos_token_id)
-            item["label_mask"] = F.pad(item["label_mask"], (0, 1), value=True)
-
-        pad_shape = (0, self.sequence_length - len(item["input_ids"]))
-        item["input_ids"] = F.pad(item["input_ids"], pad_shape, value=self.pad_token_id)
-        item["label_mask"] = F.pad(item["label_mask"], pad_shape, value=False)
-
-        if "instance_mask" in docs[0]:
-            item["instance_mask"] = all([doc["instance_mask"] for doc in docs])
-
-        if "metadata" in docs[0]:
-            metadata = docs[0]["metadata"]
-            for doc in docs:
-                doc_metadata = docs[0]["metadata"]
-                if metadata != doc_metadata:
-                    raise RuntimeError(
-                        f"Trying to interleave documents when dataset docs have different metadata: {metadata}, {doc_metadata}."
-                    )
-            item["metadata"] = metadata
-
-        if "doc_lens" in docs[0]:
-            raise RuntimeError("Document lengths unexpectedly found.")
-
-        return item
-
-    def _get_instance_indices_path(self, source_path: PathOrStr) -> Path:
-        return self._get_indices_path(source_path, "instance-indices", str(self._docs_per_instance))
-
-
-    """
-
 @dataclass
 class VSLCurriculum:
     """
@@ -2830,6 +2677,10 @@ class NumpyDatasetConfig(Config):
     """
     A list of paths that are exempt from interleaving in :class:`NumpyInterleavedFSLDataset`.
     """
+    interleavable_paths: Optional[List[str]] = None
+    """
+    A list of paths that will be used for interleaving in :class:`NumpyPackedInterleavedFSLDataset`.
+    """
     expand_glob: bool = False
     """
     Treat the :data:`paths` as globs.
@@ -3237,6 +3088,77 @@ class NumpyDatasetConfig(Config):
                 label_mask_paths=label_mask_paths,
                 bos_token_id=self.tokenizer.bos_token_id,
                 interleaving_exempt_paths=interleaving_exempt_paths,
+            )
+        elif self.name == NumpyDatasetType.packed_interleaved_fsl:
+            if self.sequence_length is None:
+                raise OLMoConfigurationError(
+                    "'sequence_length' is required for interleaved FSL dataset"
+                )
+            if self.docs_per_instance is None:
+                raise OLMoConfigurationError(
+                    "'docs_per_instance' is required for interleaved FSL dataset"
+                )
+            if self.chunks_per_doc is None:
+                raise OLMoConfigurationError(
+                    "'chunks_per_doc' is required for interleaved FSL dataset"
+                )
+            if self.seed is None:
+                raise OLMoConfigurationError("'seed' is required for interleaved FSL dataset")
+            if self.max_target_sequence_length is not None:
+                raise OLMoConfigurationError(
+                    "'max_target_sequence_length' is only valid for the (non-padded) FSL dataset"
+                )
+            if self.generate_doc_lengths:
+                raise OLMoConfigurationError(
+                    "'generate_doc_lengths' is only valid for the (non-padded) FSL dataset"
+                )
+            if self.max_sequence_length is not None:
+                if self.max_target_sequence_length is None:
+                    raise OLMoConfigurationError(
+                        "'max_sequence_length' is only a valid field for VSL datasets, "
+                        "did you mean to set 'max_target_sequence_length' instead?"
+                    )
+                else:
+                    raise OLMoConfigurationError(
+                        "'max_sequence_length' is only a valid field for VSL datasets"
+                    )
+            if self.min_sequence_length is not None:
+                raise OLMoConfigurationError(
+                    "'min_sequence_length' is only a valid field for VSL datasets"
+                )
+            if self.vsl_curriculum is not None:
+                raise OLMoConfigurationError(
+                    "'vsl_curriculum' is only a valid field for VSL datasets"
+                )
+            if self.long_doc_strategy is not None:
+                raise OLMoConfigurationError(
+                    "'long_doc_strategy' is only a valid field for the packed FSL dataset"
+                )
+            if self.interleavable_paths is None:
+                raise OLMoConfigurationError(
+                    "Weird: 'interleavable_paths' is none, so this will be a standard FSL loader. Use NumpyFSLDataset instead"
+                )
+
+            interleavable_paths = cast(
+                Optional[List[PathOrStr]], self.interleavable_paths
+            )
+
+            dataset = NumpyPackedInterleavedFSLDataset(
+                *paths,
+                sequence_length=self.sequence_length,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+                vocab_size=self.tokenizer.vocab_size,
+                seed=self.seed,
+                docs_per_instance=self.docs_per_instance,
+                chunks_per_doc=self.chunks_per_doc,
+                dtype=self.get_dtype(),
+                metadata=metadata,
+                include_instance_metadata=self.include_instance_metadata,
+                instance_filter_config=self.instance_filter_config,
+                label_mask_paths=label_mask_paths,
+                bos_token_id=self.tokenizer.bos_token_id,
+                interleavable_paths=interleavable_paths,
             )
         elif self.name == NumpyDatasetType.vsl:
             if self.max_sequence_length is None:
