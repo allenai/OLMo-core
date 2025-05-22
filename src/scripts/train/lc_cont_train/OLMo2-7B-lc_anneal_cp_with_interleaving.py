@@ -219,7 +219,7 @@ class LcContTrain(Config):
                 docs_per_instance=4,
                 chunks_per_doc=4,
                 seed=1234,
-                interleavable_paths=None, #TODO
+                interleavable_paths=interleavable_paths, 
                 #interleaving_exempt_paths=interleaving_exempt_paths,
             ),
             data_loader=NumpyDataLoaderConfig(
