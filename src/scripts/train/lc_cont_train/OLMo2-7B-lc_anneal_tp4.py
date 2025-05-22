@@ -76,7 +76,7 @@ class AnnealingDataMix(DataMixBase):
     name (without the '.txt' extension) below.
     """
 
-    data_mix = "lc50_dolmino50_v1"
+    data_mix = "lc_full_dist_50_dolmino50_v1"
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
@@ -216,7 +216,7 @@ class LcContTrain(Config):
                 load_path=load_path,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
-                max_duration=Duration.tokens(int(100e9)),
+                max_duration=Duration.tokens(int(50e9)),
             )
             .with_callback(
                 "checkpointer",
