@@ -1766,7 +1766,13 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
                 self.indices_dtype,
             ).tolist()[0]
 
-            return super().__getitem__(doc_index)
+            item = super().__getitem__(doc_index)
+            if "label_mask" in item:
+                assert len(item['input_ids']) == len(item["label_mask"])
+            else:
+                log.info("no label mask found")
+
+            return item
 
         # else: we need to do some interleaving 
         pos_index -= self._num_not_interleaved 
@@ -1863,6 +1869,9 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
 
         if "doc_lens" in docs[0]:
             raise RuntimeError("Document lengths unexpectedly found.")
+        
+    
+        assert len(item['input_ids']) == len(item["label_mask"])
 
         return item
 
