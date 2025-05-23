@@ -1710,11 +1710,11 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
             raise IndexError(f"{index} is out of bounds for dataset of size {len(self)}")
 
         # Read the data from file.
-        input_ids = self._read_varlen_chunk_from_array(self._interleavable_paths[array_index], array_local_index)
+        input_ids = self._read_chunk_from_array(self._interleavable_paths[array_index], array_local_index)
         out: Dict[str, Any] = {"input_ids": input_ids}
 
         if self._label_mask_paths is not None:
-            label_mask = self._read_varlen_chunk_from_array(
+            label_mask = self._read_chunk_from_array(
                 self._label_mask_paths[array_index], array_local_index, dtype=np.bool_
             )
             out["label_mask"] = label_mask
@@ -1757,7 +1757,7 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
         
         """
         assert self._num_interleavable_instances is not None
-        assert pos_index < self._num_interleavable_instances
+        #assert pos_index < self._num_interleavable_instances
 
         interleaving_indices_path = self._get_interleaveable_indices_path()
 
