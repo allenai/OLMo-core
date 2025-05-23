@@ -1535,6 +1535,7 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
         self._num_interleavable_instances = None
         self._interleaved_array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
         self._exclude_interleaved = exclude_interleaved
+        self._any_non_interleaved = len([p for p in self.paths if p not in self._interleavable_paths]) > 0
 
     @property
     def fingerprint_fields(self) -> Tuple[str, ...]:
@@ -1553,6 +1554,7 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
 
 
     def __len__(self) -> int:
+        assert self._num_instances # should now be calculated elsewhere
         if self._num_instances is None:
             item_size = self.indices_dtype(0).itemsize
 
@@ -1560,8 +1562,11 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
             #self._num_not_interleaved = self.offsets[-1][1]
             
             #self._num_instances = 0 # TEST: turning off the non-interleaved section
-            interleaving_exempt_indices_path = self._get_interleaving_exempt_indices_path()
-            self._num_not_interleaved = ((get_file_size(interleaving_exempt_indices_path) // item_size))
+            if self._any_non_interleaved:    
+                interleaving_exempt_indices_path = self._get_interleaving_exempt_indices_path()
+                self._num_not_interleaved = ((get_file_size(interleaving_exempt_indices_path) // item_size))
+            else:
+                self._num_not_interleaved = 0
             self._num_instances = self._num_not_interleaved
 
             if self._interleavable_paths:   # total is all FSL offsets plus interleaving docs 
@@ -1627,26 +1632,33 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
                 f"Generating all document interleaving indices to:\n'{interleavable_indices_path}..."
             )
 
-            interleaving_exempt_doc_indices = [
-                    instance_num
-                    for i_offset, (start, end) in enumerate(self.offsets)
-                    for instance_num in range(start, end)
-                    if self.paths[i_offset] not in self._interleavable_paths # exclude interleavable paths from these offsets 
-            ]  
 
-            with memmap_to_write(
-                interleaving_exempt_indices_path,
-                dtype=self.indices_dtype,
-                shape=(len(interleaving_exempt_doc_indices),),
-            ) as interleaving_exempt_indices:
-                interleaving_exempt_indices[:] = interleaving_exempt_doc_indices
+            if self._any_non_interleaved:
+                interleaving_exempt_doc_indices = [
+                        instance_num
+                        for i_offset, (start, end) in enumerate(self.offsets)
+                        for instance_num in range(start, end)
+                        if self.paths[i_offset] not in self._interleavable_paths # exclude interleavable paths from these offsets 
+                ]  
 
+
+                self._num_not_interleaved = len(interleaving_exempt_doc_indices)
+                if len(interleaving_exempt_doc_indices) > 0:
+                    with memmap_to_write(
+                        interleaving_exempt_indices_path,
+                        dtype=self.indices_dtype,
+                        shape=(len(interleaving_exempt_doc_indices),),
+                    ) as interleaving_exempt_indices:
+                        interleaving_exempt_indices[:] = interleaving_exempt_doc_indices
+                else:
+                    self._any_non_interleaved = False # there wre non-interleavable paths, but all files were too short to make a training example 
             if self._interleavable_paths:
                 interleavable_doc_indices = [
                         instance_num
                         for i_offset, (start, end) in enumerate(self.interleaved_offsets)
                         for instance_num in range(start, end)
                     ]
+                self._num_interleavable_instances = len(interleavable_doc_indices) // self._docs_per_instance
 
                 with memmap_to_write(
                     interleavable_indices_path,
@@ -1656,6 +1668,8 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
                     interleavable_indices[:] = get_rng(self._seed).permutation(
                         interleavable_doc_indices
                     )
+
+            self._num_instances = self._num_interleavable_instances + self._num_not_interleaved
 
     def _remove_special_tokens_and_interleave(
         self,
