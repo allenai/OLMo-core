@@ -1559,12 +1559,12 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
             
             #self._num_instances = 0 # TEST: turning off the non-interleaved section
 
-            """if self._interleavable_paths:   # total is all FSL offsets plus interleaving docs 
+            if self._interleavable_paths:   # total is all FSL offsets plus interleaving docs 
                 item_size = self.indices_dtype(0).itemsize
                 interleavable_indices_path = self._get_interleaveable_indices_path()
                 self._num_interleavable_instances = get_file_size(interleavable_indices_path) // item_size
 
-                self._num_instances += self._num_interleavable_instances // self._docs_per_instance"""
+                self._num_instances += self._num_interleavable_instances // self._docs_per_instance
         return self._num_instances
     
     
@@ -1623,7 +1623,14 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
                 f"Generating all document interleaving indices to:\n'{interleavable_indices_path}..."
             )
 
-            interleaving_exempt_doc_indices = range(self.offsets[-1][1]) #everything is interleaving exempt 
+            interleaving_exempt_doc_indices = [
+                    instance_num
+                    for i_offset, (start, end) in enumerate(self.offsets)
+                    for instance_num in range(start, end)
+                    if self.paths[i_offset] not in self._interleavable_paths # exclude interleavable paths from these offsets 
+            ]  
+
+            #range(self.offsets[-1][1]) #everything is interleaving exempt 
             #[
             #    instance_num
             #    for i_offset, (start, end) in enumerate(self.offsets)
