@@ -1238,6 +1238,8 @@ def test_numpy_packed_interleaved_fsl_dataset_with_one_interleaving_path(tmp_pat
     assert len(ds) == 2 # since this uses FSL instead of PaddedFSL, it won't actually use doc1 because it's too short 
 
 
+
+
 # if we pass 'None' as the interleaving paths, should work exactly as an FSL dataset
 def test_numpy_packed_interleaved_fsl_dataset_no_interleaving(tmp_path: Path):
     mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(16,))
@@ -1316,6 +1318,78 @@ def test_numpy_packed_interleaved_fsl_dataset_with_label_mask_no_interleaving(tm
 
     assert ds[7]["input_ids"].tolist() == [28, 29, 30, 31]
     assert ds[7]["label_mask"].tolist() == [True, True, True, True]
+
+
+
+
+# only allow interleaving of a single doc 
+def test_numpy_packed_interleaved_fsl_dataset_no_sharing(tmp_path: Path):
+    data1 = [1, 2, 3, 4, 5, 6, 7, 0, 8, 9, 10, 0, 11, 12, 13, 14, 15, 16, 0]
+    mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
+    mmap1[:] = data1
+    mmap1.flush()
+
+    data2 = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 21, 22, 23, 24, 25, 0]
+    mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(len(data2),))
+    mmap2[:] = data2
+    mmap2.flush()
+
+    ds = NumpyPackedInterleavedFSLDataset(
+        tmp_path / "mmap1.npy",
+        tmp_path / "mmap2.npy",
+        sequence_length=16,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=32_000,
+        seed=3,
+        docs_per_instance=2,
+        chunks_per_doc=4,
+        interleavable_paths=[tmp_path / "mmap2.npy"],
+    )
+    ds.work_dir = tmp_path
+    ds.prepare()
+
+
+    assert ds[0]["input_ids"].tolist() == [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        0,
+        8,
+        9,
+        10,
+        0,
+        11,
+        12,
+        13,
+        14
+    ]
+
+    assert ds[1]["input_ids"].tolist() == [
+        21,
+        22,
+        11,
+        12,
+        23,
+        13,
+        14,
+        24,
+        15,
+        16,
+        25,
+        17,
+        18,
+        0,
+        -1,
+        -1,
+    ]
+
+    assert len(ds) == 2 # since this uses FSL instead of PaddedFSL, it won't actually use doc1 because it's too short 
+
 
 
 
