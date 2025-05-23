@@ -1554,7 +1554,6 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
 
 
     def __len__(self) -> int:
-        assert self._num_instances # should now be calculated elsewhere
         if self._num_instances is None:
             item_size = self.indices_dtype(0).itemsize
 
@@ -1574,6 +1573,7 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
                 self._num_interleavable_instances = get_file_size(interleavable_indices_path) // item_size
 
                 self._num_instances += self._num_interleavable_instances // self._docs_per_instance
+            log.info(f"Counted {self._num_not_interleaved} non-interleaving data points and {self._num_interleavable_instances} interleaved data points for a total of {self._num_instances} instances.")
         return self._num_instances
     
     
