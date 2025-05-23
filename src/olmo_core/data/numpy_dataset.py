@@ -1557,7 +1557,7 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
             self._num_instances = self.offsets[-1][1]
             self._num_not_interleaved = self.offsets[-1][1]
             
-            self._num_instances = 0 # TEST: turning off the non-interleaved section
+            #self._num_instances = 0 # TEST: turning off the non-interleaved section
 
             if self._interleavable_paths:   # total is all FSL offsets plus interleaving docs 
                 item_size = self.indices_dtype(0).itemsize
@@ -1565,7 +1565,6 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
                 self._num_interleavable_instances = get_file_size(interleavable_indices_path) // item_size
 
                 self._num_instances += self._num_interleavable_instances // self._docs_per_instance
-                log.info(f"num_instances: {self._num_instances}")
         return self._num_instances
     
     
@@ -1736,7 +1735,7 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
         index = int(index)  # in case this is a numpy int type.
         pos_index = index if index >= 0 else len(self) + index
 
-        """ TEST: turn off non-interleaved (so everything is interleaved now)
+        #TEST: turn off non-interleaved (so everything is interleaved now)
         assert self._num_not_interleaved is not None
         if pos_index < self._num_not_interleaved:
             # this is just an FSL dataset, treat it like one 
@@ -1754,12 +1753,12 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
         # else: we need to do some interleaving 
         pos_index -= self._num_not_interleaved 
         
-        """
+        
         assert self._num_interleavable_instances is not None
-        #assert pos_index < self._num_interleavable_instances
+        assert pos_index < self._num_interleavable_instances
 
         interleaving_indices_path = self._get_interleaveable_indices_path()
-        log.info(f"interleaving indices path: {interleaving_indices_path}")
+        #log.info(f"interleaving indices path: {interleaving_indices_path}")
 
         interleaving_indices = load_array_slice_into_tensor(
             interleaving_indices_path,
@@ -1768,12 +1767,12 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
             self.indices_dtype,
         ).tolist()
 
-        log.info(f"interleaving indices: {interleaving_indices}")
+        #log.info(f"interleaving indices: {interleaving_indices}")
 
         docs: List[Dict[str, Any]] = []
         for doc_index in interleaving_indices:
             doc = self._get_interleaved_item(doc_index)
-            log.info(f"this doc: {doc}")
+            #log.info(f"this doc: {doc}")
             # don't pad docs here, do the interleaving first 
             if "label_mask" not in doc:
                 doc["label_mask"] = torch.ones_like(doc["input_ids"])
