@@ -22,7 +22,7 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerType,
 )
-from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
@@ -123,7 +123,12 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
-        scheduler=CosWithWarmup(warmup_steps=2000),
+        scheduler=WSD(
+            units=SchedulerUnits.steps,
+            warmup=2000,
+            decay=(int(50e9 / GLOBAL_BATCH_SIZE)),
+            decay_fraction=None,
+        ),
     )
 
 
@@ -191,10 +196,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 if __name__ == "__main__":
     main(
         global_batch_size=GLOBAL_BATCH_SIZE,
+        sequence_length=SEQUENCE_LENGTH,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
-        num_nodes=8,
     )
