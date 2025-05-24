@@ -155,7 +155,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             CometCallback(
                 name=common.run_name,
                 workspace="ai2",
-                project="OLMoE",
+                project="olmo3",
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
@@ -165,7 +165,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=common.run_name,
                 entity="ai2-llm",
-                project="OLMoE",
+                project="olmo3",
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
