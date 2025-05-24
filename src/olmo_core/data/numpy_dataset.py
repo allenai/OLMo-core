@@ -1770,7 +1770,8 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
             if "label_mask" in item:
                 assert len(item['input_ids']) == len(item["label_mask"])
             else:
-                log.info("no label mask found")
+                # since interleaving has label masks, need to also make them for these guys 
+                item["label_mask"] =  torch.ones_like(item["input_ids"], dtype=torch.bool)
 
             return item
 
