@@ -1535,7 +1535,7 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
         self._num_interleavable_instances = None
         self._interleaved_array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
         self._exclude_interleaved = exclude_interleaved
-        self._any_non_interleaved = len([p for p in self.paths if p not in self._interleavable_paths]) > 0
+        self._any_non_interleaved = (not exclude_interleaved) or len([p for p in self.paths if p not in self._interleavable_paths]) > 0
 
     @property
     def fingerprint_fields(self) -> Tuple[str, ...]:
@@ -1638,11 +1638,10 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
                         instance_num
                         for i_offset, (start, end) in enumerate(self.offsets)
                         for instance_num in range(start, end)
-                        if self.paths[i_offset] not in self._interleavable_paths # exclude interleavable paths from these offsets 
+                        if (not self._exclude_interleaved) or (self.paths[i_offset] not in self._interleavable_paths) # exclude interleavable paths from these offsets 
                 ]  
 
 
-                self._num_not_interleaved = len(interleaving_exempt_doc_indices)
                 if len(interleaving_exempt_doc_indices) > 0:
                     with memmap_to_write(
                         interleaving_exempt_indices_path,
@@ -1658,7 +1657,6 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
                         for i_offset, (start, end) in enumerate(self.interleaved_offsets)
                         for instance_num in range(start, end)
                     ]
-                self._num_interleavable_instances = len(interleavable_doc_indices) // self._docs_per_instance
 
                 with memmap_to_write(
                     interleavable_indices_path,
@@ -1669,7 +1667,6 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
                         interleavable_doc_indices
                     )
 
-            self._num_instances = self._num_interleavable_instances + self._num_not_interleaved
 
     def _remove_special_tokens_and_interleave(
         self,
