@@ -500,6 +500,17 @@ def segment_documents_into_instances(
     if sample is not None:
         max_instances, seed = sample
         rng = get_rng(seed)
+
+        if len(indices) == 0:
+            print(f"Indices: {indices}")
+            print(f"Max instances: {max_instances}")
+            print(f"Path: {path}")
+            print(f"Target: {target}")
+            print(f"Max sequence length: {max_sequence_length}")
+            print("dtype:", dtype)
+            print(f"indices_dtype: {indices_dtype}")
+            indices = rng.choice(indices.reshape(-1, 2), size=max_instances).reshape(-1)
+
         indices = rng.choice(indices.reshape(-1, 2), size=max_instances).reshape(-1)
 
     if indices.size == 0:
