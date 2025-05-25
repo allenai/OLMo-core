@@ -487,13 +487,21 @@ def segment_documents_into_instances(
     Returns the number of original documents and the number of resulting instances documents.
     """
     total_og_docs = 0
-    idx_gen = (
+    """idx_gen = (
         idx
         for start_idx, end_idx in iter_document_indices(
             path, eos_token_id=eos_token_id, dtype=dtype
         )
         for idx in (start_idx, start_idx + min(end_idx - start_idx, max_sequence_length))
-    )
+    )"""
+
+    def debug_idx_gen():
+        for start_idx, end_idx in iter_document_indices(path, eos_token_id=eos_token_id, dtype=dtype):
+            print(f"start_idx: {start_idx}, end_idx: {end_idx}")
+            yield start_idx
+            yield start_idx + min(end_idx - start_idx, max_sequence_length)
+
+    idx_gen = debug_idx_gen()
     indices = np.fromiter(idx_gen, dtype=indices_dtype)
     total_og_docs = len(indices) // 2
 
