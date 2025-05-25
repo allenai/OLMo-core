@@ -213,7 +213,11 @@ def iter_document_indices(
             ) from e
 
         with gzip.open(metadata_path, "rt") as f:
-            for line in f:
+            lines = f.readlines()
+            if str(data_path) == "s3://...":
+                print(f"Using metadata file: {metadata_path} with length {len(lines)} lines: {lines}")
+
+            for line in lines:
                 start_index, end_index, *_ = line.split(",")
                 yield int(start_index), int(end_index)
 
@@ -487,24 +491,26 @@ def segment_documents_into_instances(
     Returns the number of original documents and the number of resulting instances documents.
     """
     total_og_docs = 0
-    """idx_gen = (
+    idx_gen = (
         idx
         for start_idx, end_idx in iter_document_indices(
             path, eos_token_id=eos_token_id, dtype=dtype
         )
         for idx in (start_idx, start_idx + min(end_idx - start_idx, max_sequence_length))
-    )"""
+    )
 
-    def debug_idx_gen():
-        for start_idx, end_idx in iter_document_indices(path, eos_token_id=eos_token_id, dtype=dtype):
-            if "s3://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve/software" in str(path):
-                print(f"start_idx: {start_idx}, end_idx: {end_idx}")
-            yield start_idx
-            yield start_idx + min(end_idx - start_idx, max_sequence_length)
-
-    idx_gen = debug_idx_gen()
     indices = np.fromiter(idx_gen, dtype=indices_dtype)
     total_og_docs = len(indices) // 2
+
+    if len(indices) == 0:
+        count = 0
+        print(f"No documents found in '{path}' with eos_token_id={eos_token_id} and dtype={dtype}")
+        for start_idx, end_idx in iter_document_indices(path, eos_token_id=eos_token_id, dtype=dtype):
+            print(f"start_idx: {start_idx}, end_idx: {end_idx} for {path}")
+            count += 1
+
+        print(f"Final count: {count}")
+
 
     if sample is not None:
         max_instances, seed = sample
