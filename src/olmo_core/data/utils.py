@@ -497,7 +497,7 @@ def segment_documents_into_instances(
 
     def debug_idx_gen():
         for start_idx, end_idx in iter_document_indices(path, eos_token_id=eos_token_id, dtype=dtype):
-            if path == "s3://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve/software/part-029-00000.npy":
+            if "s3://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve/software" in str(path):
                 print(f"start_idx: {start_idx}, end_idx: {end_idx}")
             yield start_idx
             yield start_idx + min(end_idx - start_idx, max_sequence_length)
