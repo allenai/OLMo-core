@@ -214,7 +214,7 @@ def iter_document_indices(
 
         with gzip.open(metadata_path, "rt") as f:
             lines = f.readlines()
-            if str(data_path) == "s3://...":
+            if str(data_path) == "s3://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve/software/part-029-00000.npy" or str(data_path) == "s3://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve/software/part-013-00000.npy":
                 print(f"Using metadata file: {metadata_path} with length {len(lines)} lines: {lines}")
 
             for line in lines:
