@@ -58,7 +58,9 @@ def _get_moe_hf_config(model: MoETransformer) -> PretrainedConfig:
         num_experts_per_tok=block.feed_forward_moe.router.top_k,
         num_experts=block.feed_forward_moe.router.num_experts,
         tie_word_embeddings=False,
-        shared_mlp=block.feed_forward_moe.shared_mlp is not None,
+        shared_mlp_intermediate_size=block.feed_forward_moe.shared_mlp.hidden_size
+        if block.feed_forward_moe.shared_mlp is not None
+        else None,
     )
 
 
