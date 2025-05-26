@@ -8,14 +8,20 @@ architectures that have support in the `transformers` library.
 import json
 import logging
 from argparse import ArgumentParser
+from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Generator, Optional, Tuple
 
 import torch
 from cached_path import cached_path
-from transformers import AutoConfig, AutoModelForCausalLM, OlmoCoreConfig, OlmoCoreForCausalLM
+from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    OlmoCoreConfig,
+    OlmoCoreForCausalLM,
+)
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.data.tokenizer import TokenizerConfig
@@ -23,6 +29,16 @@ from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.io import file_exists, join_path
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.utils import get_default_device, prepare_cli_environment
+
+try:
+    from accelerate import init_empty_weights
+except ImportError:
+
+    @contextmanager
+    def init_empty_weights(include_buffers: bool = False) -> Generator[None, None, None]:
+        log.warning("accelerate not installed, will initialize weights.")
+        yield None
+
 
 log = logging.getLogger(__name__)
 
@@ -62,7 +78,8 @@ def convert_checkpoint_to_hf(
         del transformer_config_dict["float8_config"]
 
     hf_config = OlmoCoreConfig(transformer_config_dict)
-    hf_model = OlmoCoreForCausalLM(hf_config)
+    with init_empty_weights():
+        hf_model = OlmoCoreForCausalLM(hf_config)
     model = hf_model.olmo_core_model
 
     device = device or get_default_device()
