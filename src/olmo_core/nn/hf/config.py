@@ -5,7 +5,6 @@ from olmo_core.nn.attention import Attention
 from olmo_core.nn.moe.mlp import MoEMLP
 from olmo_core.nn.transformer.block import (
     MoEReorderedNormTransformerBlock,
-    MoETransformerBlock,
     ReorderedNormTransformerBlock,
 )
 from olmo_core.nn.transformer.model import (
@@ -59,6 +58,7 @@ def _get_moe_hf_config(model: MoETransformer) -> PretrainedConfig:
         num_experts_per_tok=block.feed_forward_moe.router.top_k,
         num_experts=block.feed_forward_moe.router.num_experts,
         tie_word_embeddings=False,
+        shared_mlp=block.feed_forward_moe.shared_mlp is not None,
     )
 
 

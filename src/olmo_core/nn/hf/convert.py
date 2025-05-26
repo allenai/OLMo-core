@@ -45,6 +45,9 @@ HF_TO_OLMO_CORE_MAPPINGS: Dict[str, str] = {
     f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight": f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1",
     f"model.layers.{LAYER}.mlp.experts.{EXPERT}.down_proj.weight": f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w2",
     f"model.layers.{LAYER}.mlp.experts.{EXPERT}.up_proj.weight": f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w3",
+    f"model.layers.{LAYER}.mlp.shared_mlp.gate_proj.weight": f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w1.weight",
+    f"model.layers.{LAYER}.mlp.shared_mlp.down_proj.weight": f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w2.weight",
+    f"model.layers.{LAYER}.mlp.shared_mlp.up_proj.weight": f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w3.weight",
 }
 
 
@@ -131,6 +134,9 @@ OLMO_CORE_TO_HF_MAPPINGS: Dict[str, str] = {
     f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1": f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight",
     f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w2": f"model.layers.{LAYER}.mlp.experts.{EXPERT}.down_proj.weight",
     f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w3": f"model.layers.{LAYER}.mlp.experts.{EXPERT}.up_proj.weight",
+    f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w1.weight": f"model.layers.{LAYER}.mlp.shared_mlp.gate_proj.weight",
+    f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w2.weight": f"model.layers.{LAYER}.mlp.shared_mlp.down_proj.weight",
+    f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w3.weight": f"model.layers.{LAYER}.mlp.shared_mlp.up_proj.weight",
 }
 
 
