@@ -28,6 +28,7 @@ from .loss import MoELoadBalancingLossGranularity
 from .mlp import DroplessMoEMLP, MoEMLP
 from .parallel_mlp import ParallelDroplessMLP, ParallelMLP, ParallelMLPBase
 from .router import MoERouterConfig
+from ..layer_norm import LayerNormConfig, LayerNormType
 
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
@@ -72,7 +73,10 @@ class MoEConfig(Config):
     z_loss_weight: Optional[float] = None
     scale_loss_by_num_layers: bool = True
     dtype: DType = DType.float32
-
+    shared_expert_norm: Optional[LayerNormConfig] = None
+    routed_expert_norm: Optional[LayerNormConfig] = None
+    
+    
     def num_params(self, d_model: int) -> int:
         num_params = 0
         num_params += self.router.num_params(d_model, self.num_experts)
@@ -140,6 +144,8 @@ class MoEBase(nn.Module):
         scale_loss_by_num_layers: bool = True,
         dtype: torch.dtype = torch.float32,
         cache: Optional[BufferCache] = None,
+        shared_expert_norm: Optional[LayerNormConfig] = None,
+        routed_expert_norm: Optional[LayerNormConfig] = None,
         **kwargs,
     ):
         super().__init__()
@@ -173,6 +179,21 @@ class MoEBase(nn.Module):
             else shared_mlp.build(d_model, dtype=dtype, init_device=init_device)
         )
         self._ep_enabled = False
+        
+        if shared_expert_norm is not None:
+            self.shared_expert_norm = shared_expert_norm.build(
+                size=d_model,
+                init_device=init_device,
+            )
+        else:
+            self.shared_expert_norm = None
+        if routed_expert_norm is not None:
+            self.routed_expert_norm = routed_expert_norm.build(
+                size=d_model,
+                init_device=init_device,
+            )
+        else:
+            self.routed_expert_norm = None
 
     @property
     def num_experts(self) -> int:
@@ -237,12 +258,18 @@ class MoEBase(nn.Module):
         if router_aux_loss is not None:
             x = attach_auxiliary_loss(x, router_aux_loss)
 
+        # shared experts
         shared_out: Optional[torch.Tensor] = None
         if self.shared_mlp is not None:
             shared_out = self.shared_mlp(x)
-
+            if self.shared_expert_norm is not None:
+                shared_out = self.shared_expert_norm(shared_out)
+        
+        # routed experts
         out = self.experts(x, expert_weights, expert_indices, batch_size_per_expert)
-
+        if self.routed_expert_norm is not None:
+            out = self.routed_expert_norm(out)
+            
         if shared_out is not None:
             shared_out = shared_out / (self.top_k + 1)
             out = shared_out.add(out, alpha=self.top_k / (self.top_k + 1))
@@ -346,6 +373,8 @@ class MoE(MoEBase):
         n_layers: int = 1,
         dtype: torch.dtype = torch.float32,
         cache: Optional[BufferCache] = None,
+        shared_expert_norm: Optional[LayerNormConfig] = None,
+        routed_expert_norm: Optional[LayerNormConfig] = None,
     ):
         super().__init__(
             d_model=d_model,
@@ -362,6 +391,8 @@ class MoE(MoEBase):
             dtype=dtype,
             capacity_factor=capacity_factor,
             cache=cache,
+            shared_expert_norm=shared_expert_norm,
+            routed_expert_norm=routed_expert_norm,
         )
 
     def _init_parallel_mlp(  # type: ignore[override]

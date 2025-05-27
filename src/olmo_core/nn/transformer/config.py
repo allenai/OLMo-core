@@ -133,9 +133,13 @@ class TransformerBlockConfig(Config):
     """
     The attention config.
     """
-    layer_norm: Optional[LayerNormConfig] = None
+    attention_norm: Optional[LayerNormConfig] = None
     """
-    The layer norm config.
+    The attention layer norm config.
+    """
+    feed_forward_norm: Optional[LayerNormConfig] = None
+    """
+    The feed forward layer norm config.
     """
     feed_forward: Optional[FeedForwardConfig] = None
     """
@@ -214,18 +218,18 @@ class TransformerBlockConfig(Config):
 
         # Block attention params.
         block_params += self.attention.num_params(d_model)
-        if self.layer_norm is not None:
-            block_params += self.layer_norm.num_params(d_model)
+        if self.attention_norm is not None:
+            block_params += self.attention_norm.num_params(d_model)
 
         # Block feed forward (dense and/or sparse).
         if self.feed_forward is not None:
             block_params += self.feed_forward.num_params(d_model)
-            if self.layer_norm is not None:
-                block_params += self.layer_norm.num_params(d_model)
+            if self.feed_forward_norm is not None:
+                block_params += self.feed_forward_norm.num_params(d_model)
         if self.feed_forward_moe is not None:
             block_params += self.feed_forward_moe.num_params(d_model)
-            if self.layer_norm is not None:
-                block_params += self.layer_norm.num_params(d_model)
+            if self.feed_forward_norm is not None:
+                block_params += self.feed_forward_norm.num_params(d_model)
 
         return block_params
 

@@ -6,6 +6,7 @@ from .scheduler import (
     ConstantScheduler,
     ConstantWithWarmup,
     CosWithWarmup,
+    CosWithWarmupAndLinearDecay,
     InvSqrtWithWarmup,
     LinearWithWarmup,
     Scheduler,
@@ -31,6 +32,7 @@ __all__ = [
     "ConstantScheduler",
     "ConstantWithWarmup",
     "CosWithWarmup",
+    "CosWithWarmupAndLinearDecay"
     "InvSqrtWithWarmup",
     "LinearWithWarmup",
     "SequentialScheduler",

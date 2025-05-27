@@ -99,7 +99,8 @@ class TransformerBlock(TransformerBlockBase):
         n_layers: int,
         attention: AttentionConfig,
         feed_forward: FeedForwardConfig,
-        layer_norm: LayerNormConfig,
+        attention_norm: Optional[LayerNormConfig],
+        feed_forward_norm: Optional[LayerNormConfig],
         dropout: float = 0.0,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
@@ -108,9 +109,15 @@ class TransformerBlock(TransformerBlockBase):
         self.d_model = d_model
         self.block_idx = block_idx
         self.attention = attention.build(d_model, init_device=init_device, cache=cache)
-        self.attention_norm = layer_norm.build(d_model, init_device=init_device)
+        if attention_norm is not None:
+            self.attention_norm = attention_norm.build(d_model, init_device=init_device)
+        else:
+            self.attention_norm = lambda x: x # identity
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
-        self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
+        if feed_forward_norm is not None:
+            self.feed_forward_norm = feed_forward_norm.build(d_model, init_device=init_device)
+        else:
+            self.feed_forward_norm = lambda x: x # identity
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
 
     def forward(
@@ -336,7 +343,8 @@ class MoETransformerBlock(TransformerBlockBase):
         n_layers: int,
         attention: AttentionConfig,
         feed_forward_moe: MoEConfig,
-        layer_norm: LayerNormConfig,
+        attention_norm: Optional[LayerNormConfig] = None,
+        feed_forward_norm: Optional[LayerNormConfig] = None,
         dropout: float = 0.0,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
@@ -345,11 +353,17 @@ class MoETransformerBlock(TransformerBlockBase):
         self.d_model = d_model
         self.block_idx = block_idx
         self.attention = attention.build(d_model, init_device=init_device, cache=cache)
-        self.attention_norm = layer_norm.build(d_model, init_device=init_device)
+        if attention_norm is not None:
+            self.attention_norm = attention_norm.build(d_model, init_device=init_device)
+        else:
+            self.attention_norm = lambda x: x # identity
         self.feed_forward_moe = feed_forward_moe.build(
             d_model=d_model, n_layers=n_layers, init_device=init_device, cache=cache
         )
-        self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
+        if feed_forward_norm is not None:
+            self.feed_forward_norm = feed_forward_norm.build(d_model, init_device=init_device)
+        else:
+            self.feed_forward_norm = lambda x: x # identity
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
         self._ep_enabled = False
         self._tp_enabled = False
