@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Output of `LMHead` when `labels` is passed as input is now a 4-tuple instead of a 3-tuple, with `(logits, loss, ce_loss, z_loss)`, where `loss` is the combined loss (`ce_loss + z_loss`).
 - The `ConfigSaver` callback will automatically set the config to save for other callbacks (`WandBCallback`, `CometCallback`, and `BeakerCallback` as of now).
+- Fixed bug causing slow evals in BPB/RC in-loop evals due to fast MC
 
 ### Fixed
 
