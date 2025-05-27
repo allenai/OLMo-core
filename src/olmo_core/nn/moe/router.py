@@ -68,7 +68,9 @@ class MoERouterType(StrEnum):
     """
     ➡️ :class:`MoELinearRouter`
     """
-
+    
+    ema_default_vector = "ema_default_vector" 
+    
 
 class MoERouterGatingFunction(StrEnum):
     softmax = "softmax"
@@ -567,3 +569,38 @@ class MoELinearRouter(MoERouter):
         self.register_parameter(
             "weight", nn.Parameter(distribute_tensor(self.weight, tp_mesh, [Replicate()]))
         )
+
+def default_vector_ema_pytorch(
+    expert_outputs: torch.Tensor,     # (tokens, d_model)
+    expert_ids: torch.Tensor,         # (tokens,)
+    scores: torch.Tensor,             # (tokens, N)
+    default_vector: torch.Tensor,     # (N, d_model)
+    beta: float,
+    top_k: int,
+) -> torch.Tensor:
+    """
+    • updates `default_vector` in‑place with an EMA of expert outputs
+    • returns the “default contribution” to be added to the sparse MoE output
+    """
+
+    N, d = default_vector.shape
+    dev = expert_outputs.device
+
+    # ---- per‑expert batch mean -------------------------------------------
+    sums = torch.zeros_like(default_vector)
+    counts = torch.zeros(N, device=dev, dtype=torch.long)
+    sums.index_add_(0, expert_ids, expert_outputs)
+    counts.index_add_(0, expert_ids, torch.ones_like(expert_ids, dtype=torch.long))
+    counts = counts.clamp(min=1).unsqueeze(1)
+    batch_mean = sums / counts
+
+    # ---- EMA -------------------------------------------------------------
+    default_vector.mul_(beta).add_(batch_mean, alpha=1.0 - beta)
+
+    # ---- default contribution -------------------------------------------
+    # expert_ids is flattened (tokens*K).  Reshape to (tokens, K) so we
+    # can zero‑out selected columns in `scores`.
+    tokens = scores.size(0)
+    ids_matrix = expert_ids.view(tokens, top_k)
+    masked_scores = scores.scatter(1, ids_matrix, 0.0)
+    return masked_scores @ default_vector        # (tokens, d_model)

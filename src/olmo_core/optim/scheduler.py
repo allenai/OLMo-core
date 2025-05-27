@@ -391,6 +391,8 @@ class CosWithWarmupAndLinearDecay(CosWithWarmup):
 
         if self.decay_fraction is not None and (self.decay_fraction < 0 or self.decay_fraction > 1):
             raise OLMoConfigurationError("'decay_fraction' must be between 0 and 1.")
+        
+        super().__post_init__()
 
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
@@ -401,11 +403,14 @@ class CosWithWarmupAndLinearDecay(CosWithWarmup):
         else:
             decay = self.decay
 
+        # linear decay starts after the cosine schedule is *COMPLETE*
         if current >= t_max - decay:
-            final_cosine_lr = super().get_lr(initial_lr, t_max - decay, t_max)
+            # final_cosine_lr = super().get_lr(initial_lr, t_max - decay, t_max)
+            final_cosine_lr = initial_lr * self.alpha_f
             return _linear_decay(final_cosine_lr, t_max - current, decay, self.decay_min_lr)
 
-        return super().get_lr(initial_lr, current, t_max)
+        # return super().get_lr(initial_lr, current, t_max)
+        return super().get_lr(initial_lr, current, t_max - decay)
 
 
 def _linear_warmup(

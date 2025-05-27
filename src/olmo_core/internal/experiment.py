@@ -74,9 +74,10 @@ class SubCmd(StrEnum):
     prep = "prep"
     launch_prep = "launch_prep"
     dry_run = "dry_run"
+    utils = "utils"
 
     def prepare_environment(self):
-        if self in (SubCmd.launch, SubCmd.dry_run, SubCmd.prep, SubCmd.launch_prep):
+        if self in (SubCmd.launch, SubCmd.dry_run, SubCmd.prep, SubCmd.launch_prep, SubCmd.utils):
             prepare_cli_environment()
         elif self == SubCmd.train:
             prepare_training_environment()
