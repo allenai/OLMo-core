@@ -16,6 +16,24 @@ class TemplatePlaceholder(StrEnum):
     """"""
 
 
+class StateType(StrEnum):
+    """
+    The category the state being converted corresponds to.
+    """
+
+    weight = "weight"
+    """
+    The state being converted corresponds to a weight. This is useful for converting between checkpoints,
+    where the state is the weight itself.
+    """
+
+    module = "module"
+    """
+    The state being converted corresponds to a modules. This can be useful for comparing activations between
+    different implementations of the same model, where the states are the activations of submodules.
+    """
+
+
 @dataclass
 class StateMappingTemplate:
     """
@@ -38,6 +56,8 @@ class StateMappingTemplate:
     """
     The key or keys of the state(s) being mapping to.
     """
+
+    state_type: StateType = StateType.weight
 
     source_key_per_placeholder: TemplatePlaceholder | None = None
     """
@@ -203,6 +223,7 @@ class StateMappingTemplate:
         return StateMapping(
             source_keys,
             dest_keys,
+            state_type=self.state_type,
             source_concat_dim=self.source_concat_dim,
             unflatten_dim=unflatten_dim,
             dims_permutation=self.dims_permutation,
@@ -231,6 +252,8 @@ class StateMapping:
     """
     The key or keys of the state(s) being mapping to.
     """
+
+    state_type: StateType = StateType.weight
 
     source_concat_dim: int = 0
     """

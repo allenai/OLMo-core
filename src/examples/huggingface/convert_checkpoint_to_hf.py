@@ -27,7 +27,7 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.io import file_exists, join_path
-from olmo_core.nn.conversion.state_mapping import TemplatePlaceholder
+from olmo_core.nn.conversion.state_mapping import StateType, TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import save_hf_model
 from olmo_core.nn.hf.convert import get_converter_to_hf
 from olmo_core.nn.transformer.config import TransformerConfig
@@ -218,16 +218,16 @@ def validate_conversion(
             placeholder_bounds[TemplatePlaceholder.EXPERT] = n_experts
 
         olmo_debug_empty_state = {key.split("|")[0]: None for key in olmo_core_state.keys()}
-        state_mapping = state_converter.get_mappings(olmo_debug_empty_state, placeholder_bounds)
+        state_mapping = state_converter.get_mappings(olmo_debug_empty_state, placeholder_bounds, state_type=StateType.module)
         del olmo_debug_empty_state
 
-        simple_param_name_mapping = {
+        simple_module_name_mapping = {
             mapping.source_keys[0]: mapping.dest_keys
             for mapping in state_mapping
             if len(mapping.source_keys) == 1
         }
 
-        log.info(f"simple mapping: {simple_param_name_mapping}")
+        log.info(f"simple mapping: {simple_module_name_mapping}")
         log.info(f"hf_state keys: {hf_state.keys()}")
         log.info(f"olmo_core_state keys: {olmo_core_state.keys()}")
 
@@ -235,19 +235,23 @@ def validate_conversion(
             olmo_core_state.items(), key=lambda item: item[1][0]
         ):
             olmo_core_key, state_type = olmo_core_state_name.split("|")
-            if olmo_core_key in simple_param_name_mapping:
-                olmo_core_param_name = olmo_core_key
+            if olmo_core_key in simple_module_name_mapping:
+                olmo_core_module_name = olmo_core_key
             else:
-                log.warning(f"No 1-to-many param mapping found for module {olmo_core_key}, cannot compare to HF")
+                log.warning(
+                    f"No 1-to-many param mapping found for module {olmo_core_key}, cannot compare to HF"
+                )
                 continue
 
-            hf_param_names = simple_param_name_mapping[olmo_core_param_name]
+            hf_param_names = simple_module_name_mapping[olmo_core_module_name]
             for i_key, hf_param_name in enumerate(hf_param_names):
                 hf_state_name = f"{hf_param_name}|{state_type}"
                 if f"{hf_param_name}|{state_type}" in hf_state:
                     hf_state_name = f"{hf_param_name}|{state_type}"
                 else:
-                    log.warning(f"No HF state found for param {hf_state_name}, cannot compare to OLMo Core")
+                    log.warning(
+                        f"No HF state found for param {hf_state_name}, cannot compare to OLMo Core"
+                    )
                     continue
 
                 _, hf_tensor = hf_state[hf_state_name]

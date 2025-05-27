@@ -6,6 +6,7 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.conversion.state_converter import StateConverter
 from olmo_core.nn.conversion.state_mapping import (
     StateMappingTemplate,
+    StateType,
     TemplatePlaceholder,
 )
 
@@ -106,53 +107,66 @@ HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
 }
 
 
-#: Map of OLMo Core keys to Hugging Face keys, that is used to determine how OLMo Core state
+#: Map of OLMo Core weight keys to Hugging Face weight keys, that is used to determine how OLMo Core state
 #: maps to HF state. You may configure this to change how OLMo Core state maps to HF state.
 #:
 #: This map only captures one-to-one mappings from OLMo Core to HF. For many-to-many mappings
 #: or mappings that require additional manipulation of state, see :data:`OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS`.
-OLMO_CORE_TO_HF_MAPPINGS: Dict[str, str] = {
-    "embeddings": "model.embed_tokens",
+OLMO_CORE_TO_HF_WEIGHT_MAPPINGS: Dict[str, str] = {
     "embeddings.weight": "model.embed_tokens.weight",
-    "lm_head.norm": "model.norm",
     "lm_head.norm.weight": "model.norm.weight",
-    "lm_head.w_out": "lm_head",
     "lm_head.w_out.weight": "lm_head.weight",
     # Attention.
-    f"blocks.{LAYER}.attention.w_q": f"model.layers.{LAYER}.self_attn.q_proj",
     f"blocks.{LAYER}.attention.w_q.weight": f"model.layers.{LAYER}.self_attn.q_proj.weight",
-    f"blocks.{LAYER}.attention.w_k": f"model.layers.{LAYER}.self_attn.k_proj",
     f"blocks.{LAYER}.attention.w_k.weight": f"model.layers.{LAYER}.self_attn.k_proj.weight",
-    f"blocks.{LAYER}.attention.w_v": f"model.layers.{LAYER}.self_attn.v_proj",
     f"blocks.{LAYER}.attention.w_v.weight": f"model.layers.{LAYER}.self_attn.v_proj.weight",
-    f"blocks.{LAYER}.attention.w_out": f"model.layers.{LAYER}.self_attn.o_proj",
     f"blocks.{LAYER}.attention.w_out.weight": f"model.layers.{LAYER}.self_attn.o_proj.weight",
     # MLP.
-    f"blocks.{LAYER}.feed_forward.w1": f"model.layers.{LAYER}.mlp.gate_proj",
     f"blocks.{LAYER}.feed_forward.w1.weight": f"model.layers.{LAYER}.mlp.gate_proj.weight",
-    f"blocks.{LAYER}.feed_forward.w2": f"model.layers.{LAYER}.mlp.down_proj",
     f"blocks.{LAYER}.feed_forward.w2.weight": f"model.layers.{LAYER}.mlp.down_proj.weight",
-    f"blocks.{LAYER}.feed_forward.w3": f"model.layers.{LAYER}.mlp.up_proj",
     f"blocks.{LAYER}.feed_forward.w3.weight": f"model.layers.{LAYER}.mlp.up_proj.weight",
     # Layer norms.
-    f"blocks.{LAYER}.attention_norm": f"model.layers.{LAYER}.post_attention_layernorm",
     f"blocks.{LAYER}.attention_norm.weight": f"model.layers.{LAYER}.post_attention_layernorm.weight",
-    f"blocks.{LAYER}.feed_forward_norm": f"model.layers.{LAYER}.post_feedforward_layernorm",
     f"blocks.{LAYER}.feed_forward_norm.weight": f"model.layers.{LAYER}.post_feedforward_layernorm.weight",
-    f"blocks.{LAYER}.attention.q_norm": f"model.layers.{LAYER}.self_attn.q_norm",
     f"blocks.{LAYER}.attention.q_norm.weight": f"model.layers.{LAYER}.self_attn.q_norm.weight",
-    f"blocks.{LAYER}.attention.k_norm": f"model.layers.{LAYER}.self_attn.k_norm",
     f"blocks.{LAYER}.attention.k_norm.weight": f"model.layers.{LAYER}.self_attn.k_norm.weight",
     # MoEMLP.
-    f"blocks.{LAYER}.feed_forward_moe.router": f"model.layers.{LAYER}.mlp.gate",
     # f"blocks.{LAYER}.feed_forward_moe.router.weight": f"model.layers.{LAYER}.mlp.gate.weight",
+    f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w1.weight": f"model.layers.{LAYER}.mlp.shared_mlp.gate_proj.weight",
+    f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w2.weight": f"model.layers.{LAYER}.mlp.shared_mlp.down_proj.weight",
+    f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w3.weight": f"model.layers.{LAYER}.mlp.shared_mlp.up_proj.weight",
+}
+
+
+#: Map of OLMo Core module keys to Hugging Face module keys, that is used to determine how OLMo Core state
+#: maps to HF state. You may configure this to change how OLMo Core state maps to HF state.
+#:
+#: This map only captures one-to-one mappings from OLMo Core to HF. For many-to-many mappings
+#: or mappings that require additional manipulation of state, see :data:`OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS`.
+OLMO_CORE_TO_HF_MODULE_MAPPINGS: Dict[str, str] = {
+    "embeddings": "model.embed_tokens",
+    "lm_head.norm": "model.norm",
+    "lm_head.w_out": "lm_head",
+    # Attention.
+    f"blocks.{LAYER}.attention.w_q": f"model.layers.{LAYER}.self_attn.q_proj",
+    f"blocks.{LAYER}.attention.w_k": f"model.layers.{LAYER}.self_attn.k_proj",
+    f"blocks.{LAYER}.attention.w_v": f"model.layers.{LAYER}.self_attn.v_proj",
+    f"blocks.{LAYER}.attention.w_out": f"model.layers.{LAYER}.self_attn.o_proj",
+    # MLP.
+    f"blocks.{LAYER}.feed_forward.w1": f"model.layers.{LAYER}.mlp.gate_proj",
+    f"blocks.{LAYER}.feed_forward.w2": f"model.layers.{LAYER}.mlp.down_proj",
+    f"blocks.{LAYER}.feed_forward.w3": f"model.layers.{LAYER}.mlp.up_proj",
+    # Layer norms.
+    f"blocks.{LAYER}.attention_norm": f"model.layers.{LAYER}.post_attention_layernorm",
+    f"blocks.{LAYER}.feed_forward_norm": f"model.layers.{LAYER}.post_feedforward_layernorm",
+    f"blocks.{LAYER}.attention.q_norm": f"model.layers.{LAYER}.self_attn.q_norm",
+    f"blocks.{LAYER}.attention.k_norm": f"model.layers.{LAYER}.self_attn.k_norm",
+    # MoEMLP.
+    f"blocks.{LAYER}.feed_forward_moe.router": f"model.layers.{LAYER}.mlp.gate",
     f"blocks.{LAYER}.feed_forward_moe.shared_mlp": f"model.layers.{LAYER}.mlp.shared_mlp",
     f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w1": f"model.layers.{LAYER}.mlp.shared_mlp.gate_proj",
-    f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w1.weight": f"model.layers.{LAYER}.mlp.shared_mlp.gate_proj.weight",
     f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w2": f"model.layers.{LAYER}.mlp.shared_mlp.down_proj",
-    f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w2.weight": f"model.layers.{LAYER}.mlp.shared_mlp.down_proj.weight",
     f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w3": f"model.layers.{LAYER}.mlp.shared_mlp.up_proj",
-    f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w3.weight": f"model.layers.{LAYER}.mlp.shared_mlp.up_proj.weight",
 }
 
 
@@ -164,6 +178,12 @@ OLMO_CORE_TO_HF_MAPPINGS: Dict[str, str] = {
 #: For simple one-to-one mappings from OLMo Core to HF, see
 #: :data:`OLMO_CORE_TO_HF_MAPPINGS`.
 OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
+    f"blocks.{LAYER}.feed_forward_moe.experts.mlp": StateMappingTemplate(
+        f"blocks.{LAYER}.feed_forward_moe.experts.mlp",
+        f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj",
+        state_type=StateType.module,
+        dest_key_per_placeholder=TemplatePlaceholder.EXPERT,
+    ),
     f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1": StateMappingTemplate(
         f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1",
         f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight",
@@ -258,8 +278,12 @@ def convert_state_from_hf(
 
 def _get_converter_to_hf() -> StateConverter:
     mapping_templates = [
-        StateMappingTemplate(olmo_core_key, hf_key)
-        for olmo_core_key, hf_key in OLMO_CORE_TO_HF_MAPPINGS.items()
+        StateMappingTemplate(olmo_core_key, hf_key, state_type=StateType.module)
+        for olmo_core_key, hf_key in OLMO_CORE_TO_HF_MODULE_MAPPINGS.items()
+    ]
+    mapping_templates = [
+        StateMappingTemplate(olmo_core_key, hf_key, state_type=StateType.weight)
+        for olmo_core_key, hf_key in OLMO_CORE_TO_HF_WEIGHT_MAPPINGS.items()
     ]
     mapping_templates += list(OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS.values())
     return StateConverter(mapping_templates)
