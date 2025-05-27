@@ -222,11 +222,9 @@ def validate_conversion(
         assert state_mapping is not None
 
         simple_key_mapping = {
-            mapping.source_keys[0]
-            .replace(".weight", ""): mapping.dest_keys[0]
-            .replace(".weight", "")
+            mapping.source_keys[0]: mapping.dest_keys
             for mapping in state_mapping
-            if len(mapping.source_keys) == 1 and len(mapping.dest_keys) == 1
+            if len(mapping.source_keys) == 1
         }
 
         log.info(f"simple mapping: {simple_key_mapping}")
@@ -240,34 +238,37 @@ def validate_conversion(
             if olmo_core_key not in simple_key_mapping:
                 continue
 
-            hf_state_name = f"{simple_key_mapping[olmo_core_key]}|{state_type}"
-            if hf_state_name not in hf_state:
-                continue
+            hf_keys = simple_key_mapping[olmo_core_key]
+            for i_key, hf_key in enumerate(hf_keys):
+                hf_state_name = f"{hf_key}|{state_type}"
+                if hf_state_name not in hf_state:
+                    continue
 
-            _, hf_tensor = hf_state[hf_state_name]
+                _, hf_tensor = hf_state[hf_state_name]
+                hf_tensor = hf_tensor.chunk(len(hf_keys), 0)[i_key]
 
-            if olmo_core_tensor.shape != hf_tensor.shape:
-                log.info(
-                    f"{olmo_core_state_name}, {hf_state_name} shape mismatch: {olmo_core_tensor.shape} {hf_tensor.shape}"
-                )
-            if olmo_core_tensor.dtype != hf_tensor.dtype:
-                log.info(
-                    f"{olmo_core_state_name}, {hf_state_name} dtype mismatch: {olmo_core_tensor.dtype} {hf_tensor.dtype}"
-                )
-            if len(olmo_core_tensor.squeeze().shape) == len(hf_tensor.squeeze().shape):
-                olmo_core_tensor = olmo_core_tensor.squeeze()
-                hf_tensor = hf_tensor.squeeze()
+                if olmo_core_tensor.shape != hf_tensor.shape:
+                    log.info(
+                        f"{olmo_core_state_name}, {hf_state_name} shape mismatch: {olmo_core_tensor.shape} {hf_tensor.shape}"
+                    )
+                if olmo_core_tensor.dtype != hf_tensor.dtype:
+                    log.info(
+                        f"{olmo_core_state_name}, {hf_state_name} dtype mismatch: {olmo_core_tensor.dtype} {hf_tensor.dtype}"
+                    )
+                if len(olmo_core_tensor.squeeze().shape) == len(hf_tensor.squeeze().shape):
+                    olmo_core_tensor = olmo_core_tensor.squeeze()
+                    hf_tensor = hf_tensor.squeeze()
 
-                common_shape = tuple(
-                    min(olmo_core_dim, hf_dim)
-                    for olmo_core_dim, hf_dim in zip(olmo_core_tensor.shape, hf_tensor.shape)
-                )
-                for i, dim in enumerate(common_shape):
-                    olmo_core_tensor = olmo_core_tensor.narrow(i, 0, dim)
-                    hf_tensor = hf_tensor.narrow(i, 0, dim)
-                log.info(
-                    f"{olmo_core_state_name}, {hf_state_name} element diff abs mean: {(olmo_core_tensor - hf_tensor).float().abs().mean()}"
-                )
+                    common_shape = tuple(
+                        min(olmo_core_dim, hf_dim)
+                        for olmo_core_dim, hf_dim in zip(olmo_core_tensor.shape, hf_tensor.shape)
+                    )
+                    for i, dim in enumerate(common_shape):
+                        olmo_core_tensor = olmo_core_tensor.narrow(i, 0, dim)
+                        hf_tensor = hf_tensor.narrow(i, 0, dim)
+                    log.info(
+                        f"{olmo_core_state_name}, {hf_state_name} element diff abs mean: {(olmo_core_tensor - hf_tensor).float().abs().mean()}"
+                    )
 
     torch.testing.assert_close(hf_logits[..., :vocab_size], logits[..., :vocab_size])
 
