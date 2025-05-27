@@ -170,7 +170,7 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
             router_logits = output.detach().clone()
             routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
             # Like topk, but we keep all the data. This will hopefully go ok.
-            routing_weights, routing_indices = torch.sort(routing_weights, dim=-1)
+            routing_weights, routing_indices = torch.sort(routing_weights, descending=True, dim=-1)
             output = routing_weights
         if model_type == "olmo_core" and re.match(r"blocks.\d+.feed_forward_moe.router", name):
             # Special casing for OLMo Core moe router
