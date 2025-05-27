@@ -7,10 +7,10 @@ architectures that have support in the `transformers` library.
 
 import json
 import logging
+import re
 from argparse import ArgumentParser
 from functools import partial
 from pathlib import Path
-import re
 from tempfile import TemporaryDirectory
 from typing import Any, Dict, Optional, Tuple
 
@@ -21,6 +21,7 @@ except ImportError:
 
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
+import torch.nn.functional as F
 from cached_path import cached_path
 from transformers import AutoConfig, AutoModelForCausalLM
 
@@ -155,9 +156,26 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
         args,
         output,
     ):
-        if model_type == "hf" and re.match(r"model.layers.\d+.mlp", name) and isinstance(output, tuple):
-            # Special casing for moe mlp
+        if (
+            model_type == "hf"
+            and re.match(r"model.layers.\d+.mlp", name)
+            and isinstance(output, tuple)
+        ):
+            # Special casing for HF moe mlp
             assert isinstance(output[0], torch.Tensor), (name, output)
+            output = output[0]
+        if model_type == "hf" and re.match(r"model.layers.\d+.mlp.gate", name):
+            # Special casing for HF moe router
+            assert isinstance(output, torch.Tensor), (name, output)
+            router_logits = output.detach().clone()
+            routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
+            # Like topk, but we keep all the data. This will hopefully go ok.
+            routing_weights = torch.sort(routing_weights, dim=-1)
+            output = routing_weights
+        if model_type == "olmo_core" and re.match(r"blocks.\d+.feed_forward_moe.router", name):
+            # Special casing for OLMo Core moe router
+            assert isinstance(output, tuple), (name, output)
+            assert isinstance(output[0], torch.Tensor), (name, output[0])
             output = output[0]
 
         if len(args) >= 1 and isinstance(args[0], torch.Tensor):
@@ -271,7 +289,9 @@ def validate_conversion(
 
                 _, hf_tensor = hf_state[hf_state_name]
                 if hf_tensor.shape[0] < len(hf_param_names):
-                    log.warning(f"Unable to chunk HF state {hf_state_name} into {len(hf_param_names)} pieces")
+                    log.warning(
+                        f"Unable to chunk HF state {hf_state_name} into {len(hf_param_names)} pieces"
+                    )
                     continue
                 hf_tensor = hf_tensor.tensor_split(len(hf_param_names), dim=0)[i_key]
 
