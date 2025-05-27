@@ -13,6 +13,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Dict, Optional, Tuple
 
+try:
+    import flash_attn  # type: ignore
+except ImportError:
+    flash_attn = None
+
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from cached_path import cached_path
@@ -68,8 +73,25 @@ def convert_checkpoint_to_hf(
     if "float8_config" in transformer_config_dict:
         del transformer_config_dict["float8_config"]
 
-    model = TransformerConfig.from_dict(transformer_config_dict).build()
+    # Check if validation is being performed and flash attn is requested but cannot run.
     device = device or get_default_device()
+    if (
+        validate
+        and (flash_attn is None or device != torch.device("cuda"))
+        and (attention := transformer_config_dict.get("block", {}).get("attention")) is not None
+    ):
+        if attention["name"] == "fused":
+            log.warning(
+                "Running conversion without cuda or flash attention on a model requiring flash attention, validation would fail so we are disabling it."
+            )
+            validate = False
+        elif attention["use_flash"]:
+            log.info(
+                "Flash attention or cuda is unavailable, turning off flash attention to stop validation from failing."
+            )
+            attention["use_flash"] = False
+
+    model = TransformerConfig.from_dict(transformer_config_dict).build()
     model.to_empty(device=device)
 
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
