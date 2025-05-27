@@ -218,7 +218,9 @@ def validate_conversion(
             placeholder_bounds[TemplatePlaceholder.EXPERT] = n_experts
 
         olmo_debug_empty_state = {key.split("|")[0]: None for key in olmo_core_state.keys()}
-        state_mapping = state_converter.get_mappings(olmo_debug_empty_state, placeholder_bounds, state_type=StateType.module)
+        state_mapping = state_converter.get_mappings(
+            olmo_debug_empty_state, placeholder_bounds, state_type=StateType.module
+        )
         del olmo_debug_empty_state
 
         simple_module_name_mapping = {
