@@ -146,6 +146,7 @@ OLMO_CORE_TO_HF_MAPPINGS: Dict[str, str] = {
     # MoEMLP.
     f"blocks.{LAYER}.feed_forward_moe.router": f"model.layers.{LAYER}.mlp.gate",
     # f"blocks.{LAYER}.feed_forward_moe.router.weight": f"model.layers.{LAYER}.mlp.gate.weight",
+    f"blocks.{LAYER}.feed_forward_moe.shared_mlp": f"model.layers.{LAYER}.mlp.shared_mlp",
     f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w1": f"model.layers.{LAYER}.mlp.shared_mlp.gate_proj",
     f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w1.weight": f"model.layers.{LAYER}.mlp.shared_mlp.gate_proj.weight",
     f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w2": f"model.layers.{LAYER}.mlp.shared_mlp.down_proj",
