@@ -168,7 +168,7 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
             # Special casing for HF moe router
             assert isinstance(output, torch.Tensor), (name, output)
             router_logits = output.detach().clone()
-            routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
+            routing_weights = F.sigmoid(router_logits)
             # Like topk, but we keep all the data. This will hopefully go ok.
             routing_weights, routing_indices = torch.sort(routing_weights, descending=True, dim=-1)
             output = routing_weights
