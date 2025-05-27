@@ -257,6 +257,9 @@ def validate_conversion(
                     continue
 
                 _, hf_tensor = hf_state[hf_state_name]
+                if hf_tensor.shape[0] < len(hf_param_names):
+                    log.warning(f"Unable to chunk HF state {hf_state_name} into {len(hf_param_names)} pieces")
+                    continue
                 hf_tensor = hf_tensor.chunk(len(hf_param_names), 0)[i_key]
 
                 if olmo_core_tensor.shape != hf_tensor.shape:
