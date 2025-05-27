@@ -5,6 +5,7 @@ Note that this script is architecture-dependent, meaning it may only work for OL
 architectures that have support in the `transformers` library.
 """
 
+from collections import defaultdict
 import json
 import logging
 from argparse import ArgumentParser
@@ -171,6 +172,23 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
     return olmo_core_debug_state, hf_debug_state
 
 
+def _get_debug_state_by_param_and_type(debug_state: dict[str, Any], param_names: set[str]) -> dict[str, dict[str, Any]]:
+    debug_state_by_param_and_type: defaultdict[str, dict[str, Any]] = defaultdict(dict)
+    for state_name, (_, state) in debug_state:
+        state_module_name, state_type = state_name.split("|")
+
+        if state_module_name in param_names:
+            pass
+        elif f"{state_module_name}.weight" in param_names:
+            state_module_name = f"{state_module_name}.weight"
+        else:
+            raise RuntimeError(f"Cannot find model param corresponding to activation recorded for module {state_module_name}")
+
+        debug_state_by_param_and_type[state_type][state_module_name] = state
+
+    return debug_state_by_param_and_type
+
+
 def validate_conversion(
     hf_path: str | Path,
     model: Transformer,
@@ -188,9 +206,12 @@ def validate_conversion(
 
     log.info("Loading converted checkpoint for validation...")
     hf_model = AutoModelForCausalLM.from_pretrained(hf_path).to(device).eval()
+    hf_param_names = set(hf_model.state_dict().keys())
 
     olmo_core_state, hf_state = {}, {}
-    state_mapping = None
+    state_key_mapping = None
+    state_converter = None
+    placeholder_bounds = None
     if debug:
         olmo_core_state, hf_state = _register_debug_hooks(hf_model, model)
         state_converter = get_converter_to_hf()
@@ -206,7 +227,7 @@ def validate_conversion(
         if n_experts:
             placeholder_bounds[TemplatePlaceholder.EXPERT] = n_experts
 
-        state_mapping = state_converter.get_mappings(model.state_dict(), placeholder_bounds)
+        state_key_mapping = state_converter.get_mappings(model.state_dict(), placeholder_bounds)
 
     log.info("Running OLMo core and HF models for validation...")
     with torch.no_grad():
@@ -219,55 +240,86 @@ def validate_conversion(
         logits = model(input_ids=input_ids)
 
     if debug:
-        assert state_mapping is not None
+        assert state_key_mapping is not None
+        assert state_converter is not None
+        assert placeholder_bounds is not None
 
-        simple_key_mapping = {
-            mapping.source_keys[0]
-            .replace(".weight", ""): mapping.dest_keys[0]
-            .replace(".weight", "")
-            for mapping in state_mapping
-            if len(mapping.source_keys) == 1 and len(mapping.dest_keys) == 1
+        key_mapping = {
+            mapping.source_keys: mapping.dest_keys
+            for mapping in state_key_mapping
         }
 
-        log.info(f"simple mapping: {simple_key_mapping}")
-        log.info(f"hf_state keys: {hf_state.keys()}")
-        log.info(f"olmo_core_state keys: {olmo_core_state.keys()}")
+        olmo_core_param_names = set(model.state_dict().keys())
 
-        for olmo_core_state_name, (_, olmo_core_tensor) in sorted(
-            olmo_core_state.items(), key=lambda item: item[1][0]
-        ):
-            olmo_core_key, state_type = olmo_core_state_name.split("|")
-            if olmo_core_key not in simple_key_mapping:
-                continue
+        olmo_state_by_param_and_type = _get_debug_state_by_param_and_type(olmo_core_state, olmo_core_param_names)
+        hf_state_by_param_and_type = _get_debug_state_by_param_and_type(hf_state, hf_param_names)
 
-            hf_state_name = f"{simple_key_mapping[olmo_core_key]}|{state_type}"
-            if hf_state_name not in hf_state:
-                continue
+        converted_olmo_state_by_param_and_type = {
+            state_type: state_converter.convert(olmo_state_by_param, placeholder_bounds)
+            for state_type, olmo_state_by_param in olmo_state_by_param_and_type.items()
+        }
 
-            _, hf_tensor = hf_state[hf_state_name]
+        if converted_olmo_state_by_param_and_type.keys() != hf_state_by_param_and_type.keys():
+            converted_olmo_only_types = converted_olmo_state_by_param_and_type.keys() - hf_state_by_param_and_type.keys()
+            log.warning(f"Converted OLMo Core-only state types: {converted_olmo_only_types}")
+            hf_only_types = hf_state_by_param_and_type.keys() - converted_olmo_state_by_param_and_type.keys()
+            log.warning(f"HF-only state types {hf_only_types}")
+            raise RuntimeError("Found state types unique to converted OLMo Core or HF.")
 
-            if olmo_core_tensor.shape != hf_tensor.shape:
-                log.info(
-                    f"{olmo_core_state_name}, {hf_state_name} shape mismatch: {olmo_core_tensor.shape} {hf_tensor.shape}"
-                )
-            if olmo_core_tensor.dtype != hf_tensor.dtype:
-                log.info(
-                    f"{olmo_core_state_name}, {hf_state_name} dtype mismatch: {olmo_core_tensor.dtype} {hf_tensor.dtype}"
-                )
-            if len(olmo_core_tensor.squeeze().shape) == len(hf_tensor.squeeze().shape):
-                olmo_core_tensor = olmo_core_tensor.squeeze()
-                hf_tensor = hf_tensor.squeeze()
+        log.info(f"key mapping: {key_mapping}")
 
-                common_shape = tuple(
-                    min(olmo_core_dim, hf_dim)
-                    for olmo_core_dim, hf_dim in zip(olmo_core_tensor.shape, hf_tensor.shape)
-                )
-                for i, dim in enumerate(common_shape):
-                    olmo_core_tensor = olmo_core_tensor.narrow(i, 0, dim)
-                    hf_tensor = hf_tensor.narrow(i, 0, dim)
-                log.info(
-                    f"{olmo_core_state_name}, {hf_state_name} element diff abs mean: {(olmo_core_tensor - hf_tensor).float().abs().mean()}"
-                )
+        for state_type, hf_state_by_param in hf_state_by_param_and_type.items():
+            converted_olmo_state_by_param = converted_olmo_state_by_param_and_type[state_type]
+            log.info(f"state_type: {state_type}")
+            log.info(f"hf_state keys: {hf_state_by_param.keys()}")
+            log.info(f"converted olmo_core_state keys: {converted_olmo_state_by_param.keys()}")
+
+            for olmo_core_state_name in sorted(
+                olmo_core_state.keys(), key=lambda key: olmo_core_state[key][0]
+            ):
+                olmo_core_key, state_type = olmo_core_state_name.split("|")
+
+                if olmo_core_key in olmo_core_param_names:
+                    pass
+                elif f"{olmo_core_key}.weight" in olmo_core_param_names:
+                    olmo_core_key = f"{olmo_core_key}.weight"
+                else:
+                    raise RuntimeError(f"Cannot find olmo param corresponding to activation recorded for module {olmo_core_key}")
+
+                source_and_dest_keys = [
+                    (source_keys, dest_keys)
+                    for source_keys, dest_keys in key_mapping
+                    if olmo_core_key in source_keys
+                ]
+                assert len(source_and_dest_keys) == 1
+                olmo_core_keys, hf_keys = source_and_dest_keys[0]
+
+                for hf_key in hf_keys:
+                    hf_tensor = hf_state_by_param[hf_key]
+                    olmo_core_tensor = converted_olmo_state_by_param[hf_key]
+
+                    if olmo_core_tensor.shape != hf_tensor.shape:
+                        log.info(
+                            f"({olmo_core_keys}) {hf_key} shape mismatch: {olmo_core_tensor.shape} {hf_tensor.shape}"
+                        )
+                    if olmo_core_tensor.dtype != hf_tensor.dtype:
+                        log.info(
+                            f"({olmo_core_keys}) {hf_key} dtype mismatch: {olmo_core_tensor.dtype} {hf_tensor.dtype}"
+                        )
+                    if len(olmo_core_tensor.squeeze().shape) == len(hf_tensor.squeeze().shape):
+                        olmo_core_tensor = olmo_core_tensor.squeeze()
+                        hf_tensor = hf_tensor.squeeze()
+
+                        common_shape = tuple(
+                            min(olmo_core_dim, hf_dim)
+                            for olmo_core_dim, hf_dim in zip(olmo_core_tensor.shape, hf_tensor.shape)
+                        )
+                        for i, dim in enumerate(common_shape):
+                            olmo_core_tensor = olmo_core_tensor.narrow(i, 0, dim)
+                            hf_tensor = hf_tensor.narrow(i, 0, dim)
+                        log.info(
+                            f"({olmo_core_keys}) {hf_key} element diff abs mean: {(olmo_core_tensor - hf_tensor).float().abs().mean()}"
+                        )
 
     torch.testing.assert_close(hf_logits[..., :vocab_size], logits[..., :vocab_size])
 
