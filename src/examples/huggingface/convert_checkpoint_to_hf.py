@@ -235,7 +235,12 @@ def validate_conversion(
             olmo_core_state.items(), key=lambda item: item[1][0]
         ):
             olmo_core_key, state_type = olmo_core_state_name.split("|")
-            if olmo_core_key not in simple_key_mapping:
+            if olmo_core_key in simple_key_mapping:
+                pass
+            elif f"{olmo_core_key}.weight" in simple_key_mapping:
+                olmo_core_key = f"{olmo_core_key}.weight"
+            else:
+                log.warning(f"No unique param found for module {olmo_core_key}, cannot compare to HF")
                 continue
 
             hf_keys = simple_key_mapping[olmo_core_key]
