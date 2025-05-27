@@ -254,7 +254,10 @@ def validate_conversion(
                 log.info(
                     f"{olmo_core_state_name}, {hf_state_name} dtype mismatch: {olmo_core_tensor.dtype} {hf_tensor.dtype}"
                 )
-            if len(olmo_core_tensor.shape) == len(hf_tensor.shape):
+            if len(olmo_core_tensor.squeeze().shape) == len(hf_tensor.squeeze().shape):
+                olmo_core_tensor = olmo_core_tensor.squeeze()
+                hf_tensor = hf_tensor.squeeze()
+
                 common_shape = tuple(
                     min(olmo_core_dim, hf_dim)
                     for olmo_core_dim, hf_dim in zip(olmo_core_tensor.shape, hf_tensor.shape)
