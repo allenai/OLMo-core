@@ -221,13 +221,13 @@ def validate_conversion(
     if debug:
         assert state_mapping is not None
 
-        simple_key_mapping = {
+        simple_param_name_mapping = {
             mapping.source_keys[0]: mapping.dest_keys
             for mapping in state_mapping
             if len(mapping.source_keys) == 1
         }
 
-        log.info(f"simple mapping: {simple_key_mapping}")
+        log.info(f"simple mapping: {simple_param_name_mapping}")
         log.info(f"hf_state keys: {hf_state.keys()}")
         log.info(f"olmo_core_state keys: {olmo_core_state.keys()}")
 
@@ -235,22 +235,27 @@ def validate_conversion(
             olmo_core_state.items(), key=lambda item: item[1][0]
         ):
             olmo_core_key, state_type = olmo_core_state_name.split("|")
-            if olmo_core_key in simple_key_mapping:
-                pass
-            elif f"{olmo_core_key}.weight" in simple_key_mapping:
-                olmo_core_key = f"{olmo_core_key}.weight"
+            if olmo_core_key in simple_param_name_mapping:
+                olmo_core_param_name = olmo_core_key
+            elif f"{olmo_core_key}.weight" in simple_param_name_mapping:
+                olmo_core_param_name = f"{olmo_core_key}.weight"
             else:
-                log.warning(f"No unique param found for module {olmo_core_key}, cannot compare to HF")
+                log.warning(f"No 1-to-many param mapping found for module {olmo_core_key}, cannot compare to HF")
                 continue
 
-            hf_keys = simple_key_mapping[olmo_core_key]
-            for i_key, hf_key in enumerate(hf_keys):
-                hf_state_name = f"{hf_key}|{state_type}"
-                if hf_state_name not in hf_state:
+            hf_param_names = simple_param_name_mapping[olmo_core_param_name]
+            for i_key, hf_param_name in enumerate(hf_param_names):
+                hf_state_name = f"{hf_param_name}|{state_type}"
+                if f"{hf_param_name}|{state_type}" in hf_state:
+                    hf_state_name = f"{hf_param_name}|{state_type}"
+                elif f"{hf_param_name.removesuffix('.weight')}|{state_type}" in hf_state:
+                    hf_state_name = f"{hf_param_name.removesuffix('.weight')}|{state_type}"
+                else:
+                    log.warning(f"No HF state found for param {hf_state_name}, cannot compare to OLMo Core")
                     continue
 
                 _, hf_tensor = hf_state[hf_state_name]
-                hf_tensor = hf_tensor.chunk(len(hf_keys), 0)[i_key]
+                hf_tensor = hf_tensor.chunk(len(hf_param_names), 0)[i_key]
 
                 if olmo_core_tensor.shape != hf_tensor.shape:
                     log.info(
