@@ -162,6 +162,7 @@ OLMO_CORE_TO_HF_MODULE_MAPPINGS: Dict[str, str] = {
     f"blocks.{LAYER}.attention.q_norm": f"model.layers.{LAYER}.self_attn.q_norm",
     f"blocks.{LAYER}.attention.k_norm": f"model.layers.{LAYER}.self_attn.k_norm",
     # MoEMLP.
+    f"blocks.{LAYER}.feed_forward_moe": f"model.layers.{LAYER}.mlp",
     f"blocks.{LAYER}.feed_forward_moe.router": f"model.layers.{LAYER}.mlp.gate",
     f"blocks.{LAYER}.feed_forward_moe.shared_mlp": f"model.layers.{LAYER}.mlp.shared_mlp",
     f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w1": f"model.layers.{LAYER}.mlp.shared_mlp.gate_proj",
@@ -178,12 +179,6 @@ OLMO_CORE_TO_HF_MODULE_MAPPINGS: Dict[str, str] = {
 #: For simple one-to-one mappings from OLMo Core to HF, see
 #: :data:`OLMO_CORE_TO_HF_MAPPINGS`.
 OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
-    f"blocks.{LAYER}.feed_forward_moe.experts": StateMappingTemplate(
-        f"blocks.{LAYER}.feed_forward_moe.experts",
-        f"model.layers.{LAYER}.mlp.experts.{EXPERT}",
-        state_type=StateType.module,
-        dest_key_per_placeholder=TemplatePlaceholder.EXPERT,
-    ),
     f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1": StateMappingTemplate(
         f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1",
         f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight",
