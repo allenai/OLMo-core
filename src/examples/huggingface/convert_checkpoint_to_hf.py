@@ -188,25 +188,11 @@ def validate_conversion(
 
     log.info("Loading converted checkpoint for validation...")
     hf_model = AutoModelForCausalLM.from_pretrained(hf_path).to(device).eval()
+    hf_config = hf_model.config
 
     olmo_core_state, hf_state = {}, {}
-    state_mapping = None
     if debug:
         olmo_core_state, hf_state = _register_debug_hooks(hf_model, model)
-        state_converter = get_converter_to_hf()
-
-        if not hasattr(hf_model.config, "num_hidden_layers"):
-            raise ValueError(f"Number of hidden layers missing in HF config: {hf_model.config}")
-        n_layers: int = hf_model.config.num_hidden_layers
-        n_experts: int | None = getattr(hf_model.config, "num_experts", None)
-
-        placeholder_bounds = {
-            TemplatePlaceholder.LAYER: n_layers,
-        }
-        if n_experts:
-            placeholder_bounds[TemplatePlaceholder.EXPERT] = n_experts
-
-        state_mapping = state_converter.get_mappings(model.state_dict(), placeholder_bounds)
 
     log.info("Running OLMo core and HF models for validation...")
     with torch.no_grad():
@@ -219,7 +205,21 @@ def validate_conversion(
         logits = model(input_ids=input_ids)
 
     if debug:
-        assert state_mapping is not None
+        state_converter = get_converter_to_hf()
+        if not hasattr(hf_config, "num_hidden_layers"):
+            raise ValueError(f"Number of hidden layers missing in HF config: {hf_config}")
+        n_layers: int = hf_config.num_hidden_layers
+        n_experts: int | None = getattr(hf_config, "num_experts", None)
+
+        placeholder_bounds = {
+            TemplatePlaceholder.LAYER: n_layers,
+        }
+        if n_experts:
+            placeholder_bounds[TemplatePlaceholder.EXPERT] = n_experts
+
+        olmo_debug_empty_state = {key.split("|")[0]: None for key in olmo_core_state.keys()}
+        state_mapping = state_converter.get_mappings(olmo_debug_empty_state, placeholder_bounds)
+        del olmo_debug_empty_state
 
         simple_param_name_mapping = {
             mapping.source_keys[0]: mapping.dest_keys
@@ -237,8 +237,6 @@ def validate_conversion(
             olmo_core_key, state_type = olmo_core_state_name.split("|")
             if olmo_core_key in simple_param_name_mapping:
                 olmo_core_param_name = olmo_core_key
-            elif f"{olmo_core_key}.weight" in simple_param_name_mapping:
-                olmo_core_param_name = f"{olmo_core_key}.weight"
             else:
                 log.warning(f"No 1-to-many param mapping found for module {olmo_core_key}, cannot compare to HF")
                 continue
@@ -248,8 +246,6 @@ def validate_conversion(
                 hf_state_name = f"{hf_param_name}|{state_type}"
                 if f"{hf_param_name}|{state_type}" in hf_state:
                     hf_state_name = f"{hf_param_name}|{state_type}"
-                elif f"{hf_param_name.removesuffix('.weight')}|{state_type}" in hf_state:
-                    hf_state_name = f"{hf_param_name.removesuffix('.weight')}|{state_type}"
                 else:
                     log.warning(f"No HF state found for param {hf_state_name}, cannot compare to OLMo Core")
                     continue

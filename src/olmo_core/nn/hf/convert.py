@@ -112,30 +112,45 @@ HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
 #: This map only captures one-to-one mappings from OLMo Core to HF. For many-to-many mappings
 #: or mappings that require additional manipulation of state, see :data:`OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS`.
 OLMO_CORE_TO_HF_MAPPINGS: Dict[str, str] = {
+    "embeddings": "model.embed_tokens",
     "embeddings.weight": "model.embed_tokens.weight",
+    "lm_head.norm": "model.norm",
     "lm_head.norm.weight": "model.norm.weight",
+    "lm_head.w_out": "lm_head",
     "lm_head.w_out.weight": "lm_head.weight",
     # Attention.
+    f"blocks.{LAYER}.attention.w_q": f"model.layers.{LAYER}.self_attn.q_proj",
     f"blocks.{LAYER}.attention.w_q.weight": f"model.layers.{LAYER}.self_attn.q_proj.weight",
+    f"blocks.{LAYER}.attention.w_k": f"model.layers.{LAYER}.self_attn.k_proj",
     f"blocks.{LAYER}.attention.w_k.weight": f"model.layers.{LAYER}.self_attn.k_proj.weight",
+    f"blocks.{LAYER}.attention.w_v": f"model.layers.{LAYER}.self_attn.v_proj",
     f"blocks.{LAYER}.attention.w_v.weight": f"model.layers.{LAYER}.self_attn.v_proj.weight",
+    f"blocks.{LAYER}.attention.w_out": f"model.layers.{LAYER}.self_attn.o_proj",
     f"blocks.{LAYER}.attention.w_out.weight": f"model.layers.{LAYER}.self_attn.o_proj.weight",
     # MLP.
+    f"blocks.{LAYER}.feed_forward.w1": f"model.layers.{LAYER}.mlp.gate_proj",
     f"blocks.{LAYER}.feed_forward.w1.weight": f"model.layers.{LAYER}.mlp.gate_proj.weight",
+    f"blocks.{LAYER}.feed_forward.w2": f"model.layers.{LAYER}.mlp.down_proj",
     f"blocks.{LAYER}.feed_forward.w2.weight": f"model.layers.{LAYER}.mlp.down_proj.weight",
+    f"blocks.{LAYER}.feed_forward.w3": f"model.layers.{LAYER}.mlp.up_proj",
     f"blocks.{LAYER}.feed_forward.w3.weight": f"model.layers.{LAYER}.mlp.up_proj.weight",
     # Layer norms.
+    f"blocks.{LAYER}.attention_norm": f"model.layers.{LAYER}.post_attention_layernorm",
     f"blocks.{LAYER}.attention_norm.weight": f"model.layers.{LAYER}.post_attention_layernorm.weight",
+    f"blocks.{LAYER}.feed_forward_norm": f"model.layers.{LAYER}.post_feedforward_layernorm",
     f"blocks.{LAYER}.feed_forward_norm.weight": f"model.layers.{LAYER}.post_feedforward_layernorm.weight",
+    f"blocks.{LAYER}.attention.q_norm": f"model.layers.{LAYER}.self_attn.q_norm",
     f"blocks.{LAYER}.attention.q_norm.weight": f"model.layers.{LAYER}.self_attn.q_norm.weight",
+    f"blocks.{LAYER}.attention.k_norm": f"model.layers.{LAYER}.self_attn.k_norm",
     f"blocks.{LAYER}.attention.k_norm.weight": f"model.layers.{LAYER}.self_attn.k_norm.weight",
     # MoEMLP.
-    f"blocks.{LAYER}.feed_forward_moe.router.weight": f"model.layers.{LAYER}.mlp.gate.weight",
-    f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1": f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight",
-    f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w2": f"model.layers.{LAYER}.mlp.experts.{EXPERT}.down_proj.weight",
-    f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w3": f"model.layers.{LAYER}.mlp.experts.{EXPERT}.up_proj.weight",
+    f"blocks.{LAYER}.feed_forward_moe.router": f"model.layers.{LAYER}.mlp.gate",
+    # f"blocks.{LAYER}.feed_forward_moe.router.weight": f"model.layers.{LAYER}.mlp.gate.weight",
+    f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w1": f"model.layers.{LAYER}.mlp.shared_mlp.gate_proj",
     f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w1.weight": f"model.layers.{LAYER}.mlp.shared_mlp.gate_proj.weight",
+    f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w2": f"model.layers.{LAYER}.mlp.shared_mlp.down_proj",
     f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w2.weight": f"model.layers.{LAYER}.mlp.shared_mlp.down_proj.weight",
+    f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w3": f"model.layers.{LAYER}.mlp.shared_mlp.up_proj",
     f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w3.weight": f"model.layers.{LAYER}.mlp.shared_mlp.up_proj.weight",
 }
 
