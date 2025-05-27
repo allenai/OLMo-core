@@ -10,6 +10,7 @@ import logging
 from argparse import ArgumentParser
 from functools import partial
 from pathlib import Path
+import re
 from tempfile import TemporaryDirectory
 from typing import Any, Dict, Optional, Tuple
 
@@ -145,11 +146,17 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
 
     def module_hook(
         debug_state: Dict[str, Tuple[int, torch.Tensor]],
+        model_type: str,
         name: str,
         _: torch.nn.Module,
         args,
         output,
     ):
+        if model_type == "hf" and re.match(r"model.layers.\d+.mlp", name) and isinstance(output, tuple):
+            # Special casing for moe mlp
+            assert isinstance(output[0], torch.Tensor), (name, output)
+            output = output[0]
+
         if len(args) >= 1 and isinstance(args[0], torch.Tensor):
             state_name = f"{name}|input"
             input = args[0].detach()
@@ -164,9 +171,9 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
             debug_state[state_name] = (len(debug_state), output.float())
 
     for name, module in model.named_modules():
-        module.register_forward_hook(partial(module_hook, olmo_core_debug_state, name))
+        module.register_forward_hook(partial(module_hook, olmo_core_debug_state, "olmo_core", name))
     for name, module in hf_model.named_modules():
-        module.register_forward_hook(partial(module_hook, hf_debug_state, name))
+        module.register_forward_hook(partial(module_hook, hf_debug_state, "hf", name))
 
     return olmo_core_debug_state, hf_debug_state
 
