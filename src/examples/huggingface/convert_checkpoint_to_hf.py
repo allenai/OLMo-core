@@ -182,7 +182,8 @@ def _get_debug_state_by_param_and_type(debug_state: dict[str, tuple[int, torch.T
         elif f"{state_module_name}.weight" in param_names:
             state_module_name = f"{state_module_name}.weight"
         else:
-            raise RuntimeError(f"Cannot find model param corresponding to activation recorded for module {state_module_name}")
+            log.warning(f"Cannot find model param corresponding to activation recorded for module {state_module_name}")
+            continue
 
         debug_state_by_param_and_type[state_type][state_module_name] = state
 
