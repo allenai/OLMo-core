@@ -281,7 +281,7 @@ def _get_converter_to_hf() -> StateConverter:
         StateMappingTemplate(olmo_core_key, hf_key, state_type=StateType.module)
         for olmo_core_key, hf_key in OLMO_CORE_TO_HF_MODULE_MAPPINGS.items()
     ]
-    mapping_templates = [
+    mapping_templates += [
         StateMappingTemplate(olmo_core_key, hf_key, state_type=StateType.weight)
         for olmo_core_key, hf_key in OLMO_CORE_TO_HF_WEIGHT_MAPPINGS.items()
     ]
