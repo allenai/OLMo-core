@@ -178,9 +178,9 @@ OLMO_CORE_TO_HF_MODULE_MAPPINGS: Dict[str, str] = {
 #: For simple one-to-one mappings from OLMo Core to HF, see
 #: :data:`OLMO_CORE_TO_HF_MAPPINGS`.
 OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
-    f"blocks.{LAYER}.feed_forward_moe.experts.mlp": StateMappingTemplate(
-        f"blocks.{LAYER}.feed_forward_moe.experts.mlp",
-        f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj",
+    f"blocks.{LAYER}.feed_forward_moe.experts": StateMappingTemplate(
+        f"blocks.{LAYER}.feed_forward_moe.experts",
+        f"model.layers.{LAYER}.mlp.experts.{EXPERT}",
         state_type=StateType.module,
         dest_key_per_placeholder=TemplatePlaceholder.EXPERT,
     ),
