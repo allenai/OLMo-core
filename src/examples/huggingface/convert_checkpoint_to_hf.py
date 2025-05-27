@@ -172,8 +172,9 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
     return olmo_core_debug_state, hf_debug_state
 
 
-def _get_debug_state_by_param_and_type(debug_state: dict[str, Any], param_names: set[str]) -> dict[str, dict[str, Any]]:
+def _get_debug_state_by_param_and_type(debug_state: dict[str, tuple[int, torch.Tensor]], param_names: set[str]) -> dict[str, dict[str, Any]]:
     debug_state_by_param_and_type: defaultdict[str, dict[str, Any]] = defaultdict(dict)
+    log.info(f"Debug state: {debug_state}")
     for state_name, (_, state) in debug_state:
         state_module_name, state_type = state_name.split("|")
 
