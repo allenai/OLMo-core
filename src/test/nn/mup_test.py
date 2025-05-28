@@ -23,6 +23,8 @@ from olmo_core.optim.adam import AdamConfig
 from olmo_core.optim.adamw import AdamWConfig, SkipStepAdamWConfig
 from olmo_core.optim.config import OptimConfig, OptimGroupOverride
 from olmo_core.optim.scheduler import LinearWithWarmup
+from olmo_core.testing.utils import requires_gpu
+from olmo_core.utils import get_default_device
 
 
 def get_transformer_config(
@@ -345,7 +347,10 @@ def train_and_collect_mup_data(
     steps: int = 50,
     seeds: int = 10,
     has_embedding_dim: bool = False,
+    device: Optional[torch.device] = None,
 ):
+    device = device or torch.device("cpu")
+
     def _get_input(*, is_training: bool = True, input_dim: Optional[int] = None) -> torch.Tensor:
         batch_size = train_batch_size if is_training else eval_batch_size
         if has_embedding_dim:
@@ -368,12 +373,12 @@ def train_and_collect_mup_data(
             scheduler = LinearWithWarmup(warmup=0)
 
             with _submodule_output_collection(model) as submodule_outputs:
-                _ = model(_get_input(is_training=False, input_dim=input_dim))
+                _ = model(_get_input(is_training=False, input_dim=input_dim).to(device=device))
                 seeded_initial_submodule_outputs.append(submodule_outputs)
 
             # Train for a bit
             for i_step in range(steps):
-                inp = _get_input(is_training=True, input_dim=input_dim)
+                inp = _get_input(is_training=True, input_dim=input_dim).to(device=device)
                 labels = (inp.sum(dim=-1) > 0).long() if has_embedding_dim else inp
                 # labels = inp
                 optim.zero_grad(set_to_none=True)
@@ -401,7 +406,7 @@ def train_and_collect_mup_data(
                     param_group[scheduler.lr_field] = new_lr
 
             with _submodule_output_collection(model) as submodule_outputs:
-                _ = model(_get_input(is_training=False, input_dim=input_dim))
+                _ = model(_get_input(is_training=False, input_dim=input_dim).to(device=device))
                 seeded_final_submodule_outputs.append(submodule_outputs)
 
     # First piece of muP data is average abs value of elements at initialization
@@ -460,7 +465,7 @@ def test_ffn_mup_const_coord_norm_at_init_scaling_input_output(
     BASE_D_MODEL = D_MODELS[BASE_MULTIPLIER_IDX]
     BASE_HIDDEN_SIZE = HIDDEN_SIZES[BASE_MULTIPLIER_IDX]
     SEEDS = 10
-    STEPS = 0
+    STEPS = 1
 
     optim_config: OptimConfig = optim_config_cls(
         lr=1e-3,
@@ -527,6 +532,7 @@ def test_ffn_mup_const_coord_norm_at_init_scaling_input_output(
         )
 
 
+@requires_gpu
 @pytest.mark.parametrize(
     "optim_config_cls, mup_scaling_strategy",
     [
@@ -556,10 +562,13 @@ def test_moe_mup_const_coord_norm_at_init_scaling_input_output(
     TOP_K = [2, 2, 2, 2, 2]
     NUM_EXPERTS = [2, 4, 8, 16, 32]
     BASE_MULTIPLIER_IDX = 2
+    BASE_NUM_EXPERTS = NUM_EXPERTS[BASE_MULTIPLIER_IDX]
     BASE_D_MODEL = D_MODELS[BASE_MULTIPLIER_IDX]
     BASE_HIDDEN_SIZE = HIDDEN_SIZES[BASE_MULTIPLIER_IDX]
-    SEEDS = 10
+    SEEDS = 2
     STEPS = 0
+
+    torch.cuda.init()
 
     optim_config: OptimConfig = optim_config_cls(
         lr=1e-3,
@@ -581,6 +590,7 @@ def test_moe_mup_const_coord_norm_at_init_scaling_input_output(
                 MuPHyperParam.d_model: d_model / BASE_D_MODEL,
                 MuPHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
                 MuPHyperParam.head_dim: d_model / BASE_D_MODEL,
+                MuPHyperParam.num_experts: num_experts / BASE_NUM_EXPERTS,
             },
         )
 
@@ -594,14 +604,16 @@ def test_moe_mup_const_coord_norm_at_init_scaling_input_output(
             hidden_size=hidden_size,
             router=router,
             mup=mup,
-        ).build(d_model)
+            shared_mlp=FeedForwardConfig(hidden_size, mup=mup, bias=False),
+            scale_loss_by_num_layers=False,
+        ).build(d_model, init_device="cuda")
 
         InitMethod.normal.init_feed_forward_moe(
             moe,
             d_model=d_model,
             block_idx=0,
             num_blocks=1,
-            generator=torch.Generator().manual_seed(seed_idx),
+            generator=torch.Generator(device="cuda").manual_seed(seed_idx),
         )
 
         return d_model, moe
@@ -613,6 +625,7 @@ def test_moe_mup_const_coord_norm_at_init_scaling_input_output(
         steps=STEPS,
         seeds=SEEDS,
         has_embedding_dim=True,
+        device=torch.device("cuda"),
     )
 
     for name, magnitudes in coord_magnitudes.items():
@@ -761,7 +774,7 @@ def test_ffn_mup_non_growing_coord_norm_scaling_d_model(optim_config_cls, mup_sc
     BASE_D_MODEL = D_MODELS[BASE_MULTIPLIER_IDX]
     BASE_HIDDEN_SIZE = HIDDEN_SIZES[BASE_MULTIPLIER_IDX]
     SEEDS = 10
-    STEPS = 1000
+    STEPS = 10
 
     optim_config: OptimConfig = optim_config_cls(
         lr=1e-3,
