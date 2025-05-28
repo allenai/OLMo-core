@@ -16,7 +16,7 @@ on:
 
 env:
   # Change this to invalidate existing cache.
-  CACHE_PREFIX: v0
+  CACHE_PREFIX: v1
   PYTHONPATH: ./src/
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -109,7 +109,7 @@ jobs:
       matrix:
         task:
           - name: Test (GPU)
-            image: olmo-core-tch270cu126
+            image: petew/olmo-core-tch270cu128-2025-05-16
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
@@ -119,21 +119,21 @@ jobs:
                 src/test/
 
           - name: Test checkpoint (GPU)
-            image: olmo-core-tch270cu126
+            image: petew/olmo-core-tch270cu128-2025-05-16
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/distributed/checkpoint*
 
           - name: Test transformer (GPU)
-            image: olmo-core-tch270cu126
+            image: petew/olmo-core-tch270cu128-2025-05-16
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/transformer*
 
           - name: Test MoE (GPU)
-            image: olmo-core-tch270cu126
+            image: petew/olmo-core-tch270cu128-2025-05-16
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
@@ -166,11 +166,6 @@ jobs:
           token: ${{ env.BEAKER_TOKEN }}
           workspace: ${{ env.BEAKER_WORKSPACE }}
 
-      - name: Get full image name
-        if: env.BEAKER_TOKEN != ''
-        run:
-          echo "BEAKER_IMAGE=$(make get-full-beaker-image-name IMAGE_NAME=${{ matrix.task.image }})" >> $GITHUB_ENV
-
       - name: GPU Tests
         uses: allenai/beaker-run-action@v1.2
         if: env.BEAKER_TOKEN != ''
@@ -182,7 +177,7 @@ jobs:
             tasks:
               - name: tests
                 image:
-                  beaker: ${{ env.BEAKER_IMAGE }}
+                  beaker: ${{ matrix.task.image }}
                 context:
                   priority: normal
                   preemptible: true
