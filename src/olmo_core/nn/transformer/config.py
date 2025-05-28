@@ -926,7 +926,8 @@ class TransformerConfig(Config):
             ),
             feed_forward=feed_forward,
             feed_forward_moe=feed_forward_moe,
-            layer_norm=layer_norm,
+            feed_forward_norm=layer_norm,
+            attention_norm=layer_norm,
         )
 
         return cls(
