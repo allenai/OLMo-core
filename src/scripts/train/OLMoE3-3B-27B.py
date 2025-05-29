@@ -53,7 +53,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     config = TransformerConfig.llama_like(
         d_model=d_model,
         vocab_size=common.tokenizer.padded_vocab_size(),
-        n_layers=32,
+        n_layers=16,
         n_heads=16,
         name=TransformerType.moe,
         block_name=TransformerBlockType.moe_reordered_norm,
@@ -63,11 +63,11 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         feed_forward_moe=MoEConfig(
             name=MoEType.default,
             num_experts=128,
-            hidden_size=1024,
+            hidden_size=2048,
             capacity_factor=1.25,
             router=MoERouterConfig(top_k=8, gating_function=MoERouterGatingFunction.sigmoid),
-            shared_mlp=FeedForwardConfig(hidden_size=2560, bias=False),
-            lb_loss_weight=0.05,
+            shared_mlp=FeedForwardConfig(hidden_size=8192, bias=False),
+            lb_loss_weight=0.01,
             z_loss_weight=None,
             lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
             scale_loss_by_num_layers=False,
