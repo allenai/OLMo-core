@@ -19,6 +19,7 @@ tmp/
 /*.iml
 pyrightconfig.json
 .ruff.toml
+uv.lock
 
 
 # jupyter notebooks
