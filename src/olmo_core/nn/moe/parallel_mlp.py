@@ -15,7 +15,7 @@ from olmo_core.utils import ensure_multiple_of, get_default_device, move_to_devi
 
 from ..buffer_cache import BufferCache
 from .mlp import DroplessMoEMLP, MoEMLP, MoEMLPBase
-
+import nvtx
 __all__ = ["ParallelMLPBase", "ParallelMLP", "ParallelDroplessMLP"]
 
 
@@ -124,6 +124,7 @@ class ParallelMLPBase(nn.Module):
 
         return indices.int(), bin_ids, bins
 
+    @nvtx.annotate("ParallelMLPBase.forward", color='blue')
     def forward(
         self,
         x: torch.Tensor,

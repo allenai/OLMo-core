@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor.parallel import parallelize_module
 from torch.distributed.tensor.placement_types import Placement, Replicate
+import nvtx
 
 from ..config import Config, DType, StrEnum
 from ..doc_utils import beta_feature
@@ -97,7 +98,6 @@ class FeedForwardConfig(Config):
                 f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
             ) from e
 
-
 class FeedForward(nn.Module):
     """
     Basic feed-forward module with SwiGLU activation.
@@ -119,6 +119,7 @@ class FeedForward(nn.Module):
         self.w2 = nn.Linear(hidden_size, d_model, bias=bias, dtype=dtype, device=init_device)
         self.w3 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
 
+    @nvtx.annotate("FeedForward.forward", color='blue')
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Run the feed-forward on the input ``x``.

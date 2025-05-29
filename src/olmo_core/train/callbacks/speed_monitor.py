@@ -64,22 +64,22 @@ class SpeedMonitorCallback(Callback):
             and isinstance(self.trainer.train_module, TransformerTrainModule)
         ):
             device_name = torch.cuda.get_device_name(self.trainer.device)
-            if self.trainer.train_module.autocast_precision == torch.bfloat16:
-                if "A100" in device_name:
-                    self.device_peak_flops = int(312e12)
-                elif "H100" in device_name:
-                    # data from https://www.nvidia.com/en-us/data-center/h100/
-                    # NOTE: Specifications are one-half lower without sparsity.
-                    if "NVL" in device_name:
-                        self.device_peak_flops = int(1979e12)
-                    elif "PCIe" in device_name:
-                        self.device_peak_flops = int(756e12)
-                    else:  # for SXM and other variants
-                        self.device_peak_flops = int(989e12)
-                elif "B200" in device_name:
-                    self.device_peak_flops = int(2200e12)
-                else:  # for other GPU types, assume A100
-                    self.device_peak_flops = int(312e12)
+            # if self.trainer.train_module.autocast_precision == torch.bfloat16:
+            if "A100" in device_name:
+                self.device_peak_flops = int(312e12)
+            elif "H100" in device_name:
+                # data from https://www.nvidia.com/en-us/data-center/h100/
+                # NOTE: Specifications are one-half lower without sparsity.
+                if "NVL" in device_name:
+                    self.device_peak_flops = int(1979e12)
+                elif "PCIe" in device_name:
+                    self.device_peak_flops = int(756e12)
+                else:  # for SXM and other variants
+                    self.device_peak_flops = int(989e12)
+            elif "B200" in device_name:
+                self.device_peak_flops = int(2200e12)
+            else:  # for other GPU types, assume A100
+                self.device_peak_flops = int(312e12)
 
     def pre_load_batch(self):
         self._batch_load_start = time.perf_counter()
@@ -133,13 +133,15 @@ class SpeedMonitorCallback(Callback):
         self.trainer.record_metric("throughput/device/BPS", bps)
         self.trainer.record_metric("throughput/device/BPS (actual avg)", bps_avg)
 
-        if (
-            num_flops_per_token := self._get_num_flops_per_token(self._step_seq_len)
-        ) is not None and self.device_peak_flops is not None:
-            # model FLOPS utilization
-            # For its definition and calculation, please refer to the PaLM paper:
-            # https://arxiv.org/abs/2204.02311
-            mfu = 100 * num_flops_per_token * tps / self.device_peak_flops
-            mfu_avg = 100 * num_flops_per_token * tps_avg / self.device_peak_flops
-            self.trainer.record_metric("throughput/device/MFU", mfu)
-            self.trainer.record_metric("throughput/device/MFU (actual avg)", mfu_avg)
+        # if (
+        #     num_flops_per_token := self._get_num_flops_per_token(self._step_seq_len)
+        # ) is not None and self.device_peak_flops is not None:
+        #     # model FLOPS utilization
+        #     # For its definition and calculation, please refer to the PaLM paper:
+        #     # https://arxiv.org/abs/2204.02311
+        #     mfu = 100 * num_flops_per_token * tps / self.device_peak_flops
+        #     mfu_avg = 100 * num_flops_per_token * tps_avg / self.device_peak_flops
+        #     tflops_per_gpu = num_flops_per_token * tps / 1e12
+        #     self.trainer.record_metric("throughput/device/MFU", mfu)
+        #     self.trainer.record_metric("throughput/device/MFU (actual avg)", mfu_avg)
+        #     self.trainer.record_metric("throughput/device/TFLOPs_per_GPU", tflops_per_gpu)

@@ -38,6 +38,8 @@ from .ring import (
     RingAttentionLoadBalancerType,
     RingAttentionZigZagLoadBalancer,
 )
+import nvtx
+
 
 __all__ = [
     "AttentionType",
@@ -432,7 +434,7 @@ class Attention(AttentionBase):
 
         return att
 
-    # @nvtx.annotate("Attention.forward", color=NVTX_COLOR)
+    @nvtx.annotate("Attention.forward", color='red')
     def forward(
         self,
         x: torch.Tensor,

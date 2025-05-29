@@ -756,6 +756,7 @@ class Transformer(nn.Module):
         return self.num_params - self.embeddings.weight.numel()
 
     def num_flops_per_token(self, seq_len: int) -> int:
+        # BUG: this flops calculation is terible
         """
         Get the approximate number of flops per token.
         """
@@ -772,7 +773,7 @@ class Transformer(nn.Module):
         #    but recomputation should not be counted in calculating MFU           (+0)
         # 3. each matmul performs 1 multiplication and 1 addition                 (*2)
         # 4. we follow the convention and do not account for sparsity in causal attention
-        flop_per_token = 6 * self.num_non_embedding_params + 12 * n * h * q * t
+        flop_per_token = 6 * self.num_non_embedding_params + 12 * n * h * q * t # BUG: num_non_embedding_params should only count active params for moe
 
         return flop_per_token
 

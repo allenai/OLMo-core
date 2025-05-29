@@ -25,7 +25,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device
 
 from .loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
-
+import nvtx
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
 
@@ -337,6 +337,7 @@ class MoERouter(nn.Module):
             noise = torch.rand_like(x)
             return x * (low + noise * (high - low))
 
+    @nvtx.annotate("MoERouter.get_top_k", color='blue')
     def get_top_k(self, scores: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         expert_weights: torch.Tensor
         expert_indices: torch.Tensor
@@ -414,6 +415,7 @@ class MoERouter(nn.Module):
         if (z_loss := self.z_loss) is not None:
             z_loss.zero_()
 
+    @nvtx.annotate("MoERouter.forward", color='blue')
     def forward(
         self,
         x: torch.Tensor,
