@@ -2,6 +2,7 @@ from .adam import AdamConfig
 from .adamw import AdamWConfig, SkipStepAdamW, SkipStepAdamWConfig
 from .config import INITIAL_LR_FIELD, LR_FIELD, OptimConfig, OptimGroupOverride
 from .lion import Lion, LionConfig, SkipStepLion, SkipStepLionConfig
+from .muon import MuonWithAuxAdamConfig
 from .scheduler import (
     ConstantScheduler,
     ConstantWithWarmup,
@@ -26,6 +27,7 @@ __all__ = [
     "Lion",
     "SkipStepLionConfig",
     "SkipStepLion",
+    "MuonWithAuxAdamConfig",
     "Scheduler",
     "SchedulerUnits",
     "ConstantScheduler",

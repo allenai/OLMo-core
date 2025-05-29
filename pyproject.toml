@@ -23,6 +23,7 @@ dependencies = [
     "safetensors",
     "importlib_resources",
     "ai2-olmo-eval==0.8.3",
+    "lovely-tensors>=0.1.18",
 ]
 
 [project.urls]

@@ -170,10 +170,9 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         kwargs.pop("group_overrides")
         kwargs.pop("compile")
         kwargs.pop("fixed_fields")
-
-        optim: torch.optim.Optimizer = self.optimizer()(
-            self.build_groups(model, strict=strict), **kwargs
-        )
+        param_groups = self.build_groups(model, strict=strict)
+        print(param_groups)
+        optim: torch.optim.Optimizer = self.optimizer()(param_groups, **kwargs)
 
         # Set 'lr' and 'initial_lr' in each group if needed.
         fixed_fields_per_group: List[Dict[str, Any]] = [{} for _ in optim.param_groups]
@@ -204,9 +203,7 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
                 [f"{k}: {v}" for k, v in optim.param_groups[g_idx].items() if k != "params"]
             )
             if group_fields_list:
-                log.info(
-                    f"Group {g_idx}, {len(group['params'])} parameter(s):\n - {group_fields_list}"
-                )
+                log.info(f"Group {g_idx}, {len(group['params'])} parameter(s):\n - {group_fields_list}")
             else:
                 log.info(f"Group {g_idx}, {len(group['params'])} parameter(s)")
 

@@ -1,10 +1,13 @@
+import logging
 from dataclasses import dataclass
 from typing import Type
 
-import torch
-from muon import MuonWithAuxAdam
+import torch.distributed as dist
+from muon import MuonWithAuxAdam, SingleDeviceMuonWithAuxAdam
 
 from .config import OptimConfig
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -14,11 +17,13 @@ class MuonWithAuxAdamConfig(OptimConfig):  # NOTE: omagaconf doesn't like "Optim
     See https://github.com/KellerJordan/Muon for more details.
     """
 
-    lr: float = 1e-3
-    momentum: float = 0.95
-    weight_decay: float = 1e-2
-    use_muon: bool = True
-
     @classmethod
-    def optimizer(cls) -> Type[torch.optim.AdamW]:
-        return MuonWithAuxAdam
+    def optimizer(cls) -> Type[MuonWithAuxAdam]:
+        try:
+            dist.get_world_size()
+            return MuonWithAuxAdam
+        except ValueError:
+            log.warning(
+                "MuonWithAuxAdam is not available in single-device mode, using SingleDeviceMuonWithAuxAdam instead."
+            )
+            return SingleDeviceMuonWithAuxAdam
