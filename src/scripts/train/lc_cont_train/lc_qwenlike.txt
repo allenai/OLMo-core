@@ -1,0 +1,96 @@
+#SOURCE: s3://ai2-llm/preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e16/allenai/dolma2-tokenizer/(141.38 MT)
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e16/allenai/dolma2-tokenizer/part-030-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e16/allenai/dolma2-tokenizer/part-026-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e16/allenai/dolma2-tokenizer/part-041-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e16/allenai/dolma2-tokenizer/part-043-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e16/allenai/dolma2-tokenizer/part-050-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e16/allenai/dolma2-tokenizer/part-033-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e16/allenai/dolma2-tokenizer/part-036-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e16/allenai/dolma2-tokenizer/part-059-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e16/allenai/dolma2-tokenizer/part-071-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e16/allenai/dolma2-tokenizer/part-073-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e16/allenai/dolma2-tokenizer/part-063-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e16/allenai/dolma2-tokenizer/part-084-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e16/allenai/dolma2-tokenizer/part-080-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e16/allenai/dolma2-tokenizer/part-102-00000.npy
+#SOURCE: s3://ai2-llm/preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e17/allenai/dolma2-tokenizer/(16.617 MT)
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e17/allenai/dolma2-tokenizer/part-001-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e17/allenai/dolma2-tokenizer/part-037-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e17/allenai/dolma2-tokenizer/part-020-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e17/allenai/dolma2-tokenizer/part-094-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e17/allenai/dolma2-tokenizer/part-051-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e17/allenai/dolma2-tokenizer/part-017-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e17/allenai/dolma2-tokenizer/part-057-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e17/allenai/dolma2-tokenizer/part-039-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e17/allenai/dolma2-tokenizer/part-064-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e17/allenai/dolma2-tokenizer/part-055-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e17/allenai/dolma2-tokenizer/part-100-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e17/allenai/dolma2-tokenizer/part-080-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e17/allenai/dolma2-tokenizer/part-042-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e17/allenai/dolma2-tokenizer/part-107-00000.npy
+#SOURCE: s3://ai2-llm/preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e18/allenai/dolma2-tokenizer/(2.4904 MT)
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e18/allenai/dolma2-tokenizer/part-41-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e18/allenai/dolma2-tokenizer/part-30-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e18/allenai/dolma2-tokenizer/part-34-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e18/allenai/dolma2-tokenizer/part-36-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e18/allenai/dolma2-tokenizer/part-16-00000.npy
+#SOURCE: s3://ai2-llm/preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e19/allenai/dolma2-tokenizer/(1.2938 MT)
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e19/allenai/dolma2-tokenizer/part-08-00000.npy
+preprocessed/dolmino-mix-0325-part-4k-1M-en-lowtable/olmocr-s2orc-0325/length_2e19/allenai/dolma2-tokenizer/part-06-00000.npy
+#SOURCE: s3://ai2-llm/preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e16/allenai/dolma2-tokenizer/(4.2426 GT)
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e16/allenai/dolma2-tokenizer/part-117-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e16/allenai/dolma2-tokenizer/part-013-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e16/allenai/dolma2-tokenizer/part-022-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e16/allenai/dolma2-tokenizer/part-124-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e16/allenai/dolma2-tokenizer/part-046-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e16/allenai/dolma2-tokenizer/part-078-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e16/allenai/dolma2-tokenizer/part-031-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e16/allenai/dolma2-tokenizer/part-001-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e16/allenai/dolma2-tokenizer/part-121-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e16/allenai/dolma2-tokenizer/part-084-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e16/allenai/dolma2-tokenizer/part-044-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e16/allenai/dolma2-tokenizer/part-063-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e16/allenai/dolma2-tokenizer/part-101-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e16/allenai/dolma2-tokenizer/part-073-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e16/allenai/dolma2-tokenizer/part-107-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e16/allenai/dolma2-tokenizer/part-098-00000.npy
+#SOURCE: s3://ai2-llm/preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e17/allenai/dolma2-tokenizer/(429.72 MT)
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e17/allenai/dolma2-tokenizer/part-058-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e17/allenai/dolma2-tokenizer/part-036-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e17/allenai/dolma2-tokenizer/part-015-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e17/allenai/dolma2-tokenizer/part-092-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e17/allenai/dolma2-tokenizer/part-119-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e17/allenai/dolma2-tokenizer/part-009-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e17/allenai/dolma2-tokenizer/part-000-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e17/allenai/dolma2-tokenizer/part-057-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e17/allenai/dolma2-tokenizer/part-049-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e17/allenai/dolma2-tokenizer/part-076-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e17/allenai/dolma2-tokenizer/part-077-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e17/allenai/dolma2-tokenizer/part-093-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e17/allenai/dolma2-tokenizer/part-007-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e17/allenai/dolma2-tokenizer/part-017-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e17/allenai/dolma2-tokenizer/part-125-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e17/allenai/dolma2-tokenizer/part-071-00000.npy
+#SOURCE: s3://ai2-llm/preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e18/allenai/dolma2-tokenizer/(15.809 MT)
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e18/allenai/dolma2-tokenizer/part-012-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e18/allenai/dolma2-tokenizer/part-054-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e18/allenai/dolma2-tokenizer/part-022-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e18/allenai/dolma2-tokenizer/part-027-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e18/allenai/dolma2-tokenizer/part-015-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e18/allenai/dolma2-tokenizer/part-097-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e18/allenai/dolma2-tokenizer/part-009-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e18/allenai/dolma2-tokenizer/part-021-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e18/allenai/dolma2-tokenizer/part-096-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e18/allenai/dolma2-tokenizer/part-112-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e18/allenai/dolma2-tokenizer/part-092-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e18/allenai/dolma2-tokenizer/part-084-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e18/allenai/dolma2-tokenizer/part-111-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e18/allenai/dolma2-tokenizer/part-017-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e18/allenai/dolma2-tokenizer/part-083-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e18/allenai/dolma2-tokenizer/part-016-00000.npy
+preprocessed/dclm/baseline-4k-1M-global-dedup/length_2e18/allenai/dolma2-tokenizer/part-110-00000.npy
+#SOURCE: s3://ai2-llm/preprocessed/gutenberg-apr2025/v1/step_final_dedup/allenai/dolma2-tokenizer/(422.23 MT)
+preprocessed/gutenberg-apr2025/v1/step_final_dedup/allenai/dolma2-tokenizer/part-00-00000.npy
+preprocessed/gutenberg-apr2025/v1/step_final_dedup/allenai/dolma2-tokenizer/part-11-00000.npy
+preprocessed/gutenberg-apr2025/v1/step_final_dedup/allenai/dolma2-tokenizer/part-10-00000.npy
+preprocessed/gutenberg-apr2025/v1/step_final_dedup/allenai/dolma2-tokenizer/part-06-00000.npy
