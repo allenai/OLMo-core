@@ -19,6 +19,22 @@ from .config import OptimConfig
 log = logging.getLogger(__name__)
 
 
+class MuonWithAuxAdamWrapper(MuonWithAuxAdam):
+    """Wrapper for MuonWithAuxAdam that accepts a closure argument in step()."""
+
+    def step(self, closure=None):
+        """Override step to accept closure argument (ignored)."""
+        return super().step()
+
+
+class SingleDeviceMuonWithAuxAdamWrapper(SingleDeviceMuonWithAuxAdam):
+    """Wrapper for SingleDeviceMuonWithAuxAdam that accepts a closure argument in step()."""
+
+    def step(self, closure=None):
+        """Override step to accept closure argument (ignored)."""
+        return super().step()
+
+
 @dataclass
 class MuonWithAuxAdamConfig(OptimConfig):  # NOTE: omagaconf doesn't like "OptimConfig[torch.optim.AdamW]"
     """
@@ -30,12 +46,12 @@ class MuonWithAuxAdamConfig(OptimConfig):  # NOTE: omagaconf doesn't like "Optim
     def optimizer(cls) -> Type[MuonWithAuxAdam]:
         try:
             dist.get_world_size()
-            return MuonWithAuxAdam
+            return MuonWithAuxAdamWrapper
         except ValueError:
             log.warning(
                 "MuonWithAuxAdam is not available in single-device mode, using SingleDeviceMuonWithAuxAdam instead."
             )
-            return SingleDeviceMuonWithAuxAdam
+            return SingleDeviceMuonWithAuxAdamWrapper
 
     def build_groups(
         self, model: nn.Module, strict: bool = True
