@@ -1095,7 +1095,7 @@ class TransformerConfig(Config):
                     hidden_size=shared_expert_hidden_size,
                     bias=False,
                     mup=mup,
-                    mup_hidden_size_hyper_param=MuPHyperParam.shared_expert_hidden_size,
+                    hidden_size_mup_hyper_param=MuPHyperParam.shared_expert_hidden_size,
                 ),
                 lb_loss_weight=lb_loss_weight,
                 z_loss_weight=z_loss_weight,

@@ -1,3 +1,4 @@
+import logging
 from collections import defaultdict
 from contextlib import contextmanager
 from functools import partial
@@ -24,7 +25,8 @@ from olmo_core.optim.adamw import AdamWConfig, SkipStepAdamWConfig
 from olmo_core.optim.config import OptimConfig, OptimGroupOverride
 from olmo_core.optim.scheduler import LinearWithWarmup
 from olmo_core.testing.utils import requires_gpu
-from olmo_core.utils import get_default_device
+
+log = logging.getLogger(__name__)
 
 
 def get_transformer_config(
@@ -359,7 +361,6 @@ def train_and_collect_mup_data(
 
         return torch.randint(0, vocab_size, (batch_size, sequence_length))
 
-
     seeded_initial_submodule_outputs: List[Dict[str, torch.Tensor]] = []
     seeded_final_submodule_outputs: List[Dict[str, torch.Tensor]] = []
 
@@ -559,14 +560,16 @@ def test_moe_mup_const_coord_norm_at_init_scaling_input_output(
     MAX_NORMALIZED_SLOPE = 0.05
     D_MODELS = [128, 256, 512, 1024, 2048]
     HIDDEN_SIZES = [100, 200, 300, 400, 500]
+    SHARED_EXPERT_HIDDEN_SIZES = [16, 32, 48, 64, 72]
     TOP_K = [2, 2, 2, 2, 2]
     NUM_EXPERTS = [2, 4, 8, 16, 32]
     BASE_MULTIPLIER_IDX = 2
     BASE_NUM_EXPERTS = NUM_EXPERTS[BASE_MULTIPLIER_IDX]
     BASE_D_MODEL = D_MODELS[BASE_MULTIPLIER_IDX]
     BASE_HIDDEN_SIZE = HIDDEN_SIZES[BASE_MULTIPLIER_IDX]
-    SEEDS = 2
-    STEPS = 0
+    BASE_SHARED_EXPERT_HIDDEN_SIZE = SHARED_EXPERT_HIDDEN_SIZES[BASE_MULTIPLIER_IDX]
+    SEEDS = 5
+    STEPS = 3
 
     torch.cuda.init()
 
@@ -582,6 +585,7 @@ def test_moe_mup_const_coord_norm_at_init_scaling_input_output(
         hidden_size = HIDDEN_SIZES[width_idx]
         num_experts = NUM_EXPERTS[width_idx]
         top_k = TOP_K[width_idx]
+        shared_expert_hidden_size = SHARED_EXPERT_HIDDEN_SIZES[width_idx]
 
         mup = MuPConfig(
             mup_optimizer_type,
@@ -591,6 +595,8 @@ def test_moe_mup_const_coord_norm_at_init_scaling_input_output(
                 MuPHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
                 MuPHyperParam.head_dim: d_model / BASE_D_MODEL,
                 MuPHyperParam.num_experts: num_experts / BASE_NUM_EXPERTS,
+                MuPHyperParam.shared_expert_hidden_size: shared_expert_hidden_size
+                / BASE_SHARED_EXPERT_HIDDEN_SIZE,
             },
         )
 
@@ -604,8 +610,12 @@ def test_moe_mup_const_coord_norm_at_init_scaling_input_output(
             hidden_size=hidden_size,
             router=router,
             mup=mup,
-            shared_mlp=FeedForwardConfig(hidden_size, mup=mup, bias=False),
-            scale_loss_by_num_layers=False,
+            shared_mlp=FeedForwardConfig(
+                shared_expert_hidden_size,
+                mup=mup,
+                bias=False,
+                hidden_size_mup_hyper_param=MuPHyperParam.shared_expert_hidden_size,
+            ),
         ).build(d_model, init_device="cuda")
 
         InitMethod.normal.init_feed_forward_moe(
@@ -628,6 +638,8 @@ def test_moe_mup_const_coord_norm_at_init_scaling_input_output(
         device=torch.device("cuda"),
     )
 
+    growing_param_names = []
+    decaying_param_names = []
     for name, magnitudes in coord_magnitudes.items():
         magnitudes = np.array(
             [np.mean(magnitudes[i : i + SEEDS]) for i in range(0, len(magnitudes), SEEDS)]
@@ -638,14 +650,22 @@ def test_moe_mup_const_coord_norm_at_init_scaling_input_output(
         slope = np.polynomial.polynomial.Polynomial.fit(
             log_d_models, magnitudes / magnitudes[0], 1
         ).coef[1]
-        assert slope <= MAX_NORMALIZED_SLOPE, (
-            f"Coordinate magnitudes for {name} grow too much with width. "
-            f"slope {slope}, magnitudes {magnitudes}, normalized magnitudes {magnitudes / magnitudes[0]} shapes {shapes}"
-        )
-        assert slope >= MIN_NORMALIZED_SLOPE, (
-            f"Coordinate magnitudes for {name} decay too much with width. "
-            f"slope {slope}, magnitudes {magnitudes}, normalized magnitudes {magnitudes / magnitudes[0]} shapes {shapes}"
-        )
+        if slope >= MAX_NORMALIZED_SLOPE:
+            log.error(
+                f"Coordinate magnitudes for {name} grow too much with width. "
+                f"slope {slope}, magnitudes {magnitudes}, normalized magnitudes {magnitudes / magnitudes[0]} shapes {shapes}"
+            )
+            growing_param_names.append(name)
+        if slope < MIN_NORMALIZED_SLOPE:
+            log.error(
+                f"Coordinate magnitudes for {name} decay too much with width. "
+                f"slope {slope}, magnitudes {magnitudes}, normalized magnitudes {magnitudes / magnitudes[0]} shapes {shapes}"
+            )
+            decaying_param_names.append(name)
+
+    assert (
+        len(growing_param_names) == 0 and len(decaying_param_names) == 0
+    ), f"Growing parameters: {growing_param_names}. Decaying parameters: {decaying_param_names}."
 
 
 @pytest.mark.parametrize(

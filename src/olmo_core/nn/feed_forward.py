@@ -52,7 +52,7 @@ class FeedForwardConfig(Config):
     """
     The muP config.
     """
-    mup_hidden_size_hyper_param: Optional[MuPHyperParam] = None
+    hidden_size_mup_hyper_param: Optional[MuPHyperParam] = None
     """
     When using muP, this specifies which hyper parameter modifies the hidden size. Defaults
     to ``MuPHyperParam.hidden_size``.
@@ -122,7 +122,7 @@ class FeedForward(nn.Module):
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
         mup: Optional[MuPConfig] = None,
-        mup_hidden_size_hyper_param: Optional[MuPHyperParam] = None,
+        hidden_size_mup_hyper_param: Optional[MuPHyperParam] = None,
     ):
         super().__init__()
         self.d_model = d_model
@@ -132,15 +132,15 @@ class FeedForward(nn.Module):
         self.w3 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
         self.mups: Dict[str, MuP] = {}
         if mup:
-            mup_hidden_size_hyper_param = mup_hidden_size_hyper_param or MuPHyperParam.hidden_size
+            hidden_size_mup_hyper_param = hidden_size_mup_hyper_param or MuPHyperParam.hidden_size
             self.mups["w1.weight"] = mup.build(
-                {MuPHyperParam.d_model: 1}, {mup_hidden_size_hyper_param: 1}
+                {MuPHyperParam.d_model: 1}, {hidden_size_mup_hyper_param: 1}
             )
             self.mups["w2.weight"] = mup.build(
-                {mup_hidden_size_hyper_param: 1}, {MuPHyperParam.d_model: 1}
+                {hidden_size_mup_hyper_param: 1}, {MuPHyperParam.d_model: 1}
             )
             self.mups["w3.weight"] = mup.build(
-                {MuPHyperParam.d_model: 1}, {mup_hidden_size_hyper_param: 1}
+                {MuPHyperParam.d_model: 1}, {hidden_size_mup_hyper_param: 1}
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
