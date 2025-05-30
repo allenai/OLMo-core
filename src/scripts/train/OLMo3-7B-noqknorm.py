@@ -37,6 +37,7 @@ EVAL_INTERVAL = 1000
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     config = TransformerConfig.olmo2_7B(
         vocab_size=common.tokenizer.padded_vocab_size(), qk_norm=False
+        block_name=TransformerBlockType.default      
     )
 
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
