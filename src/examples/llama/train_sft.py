@@ -22,7 +22,6 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
-    Duration,
     TrainerConfig,
     prepare_training_environment,
     teardown_training_environment,
@@ -33,7 +32,6 @@ from olmo_core.train.callbacks import (
     ConfigSaverCallback,
     DownstreamEvaluatorCallbackConfig,
     GPUMemoryMonitorCallback,
-    LMEvaluatorCallbackConfig,
     ProfilerCallback,
     WandBCallback,
 )
@@ -48,22 +46,24 @@ SEQUENCE_LENGTH = 1024
 # This will read stream data from the public endpoints by default, but that might be a lot slower
 # than reading data locally.
 DATA_ROOT = os.environ.get("OLMO_DATA_ROOT", "http://olmo-data.org/examples/c4-en/gpt2").rstrip("/")
-DATA_PATHS = [
-    f"{DATA_ROOT}/c4-train.00000-00099.npy",
-    f"{DATA_ROOT}/c4-train.00100-00199.npy",
-    f"{DATA_ROOT}/c4-train.00200-00299.npy",
-    f"{DATA_ROOT}/c4-train.00300-00399.npy",
-    f"{DATA_ROOT}/c4-train.00400-00499.npy",
-    f"{DATA_ROOT}/c4-train.00500-00599.npy",
-    f"{DATA_ROOT}/c4-train.00600-00699.npy",
-    f"{DATA_ROOT}/c4-train.00700-00799.npy",
-    f"{DATA_ROOT}/c4-train.00800-00899.npy",
-    f"{DATA_ROOT}/c4-train.00900-00999.npy",
-    f"{DATA_ROOT}/c4-train.01000-01023.npy",
-]
+# DATA_PATHS = [
+#     f"{DATA_ROOT}/c4-train.00000-00099.npy",
+#     f"{DATA_ROOT}/c4-train.00100-00199.npy",
+#     f"{DATA_ROOT}/c4-train.00200-00299.npy",
+#     f"{DATA_ROOT}/c4-train.00300-00399.npy",
+#     f"{DATA_ROOT}/c4-train.00400-00499.npy",
+#     f"{DATA_ROOT}/c4-train.00500-00599.npy",
+#     f"{DATA_ROOT}/c4-train.00600-00699.npy",
+#     f"{DATA_ROOT}/c4-train.00700-00799.npy",
+#     f"{DATA_ROOT}/c4-train.00800-00899.npy",
+#     f"{DATA_ROOT}/c4-train.00900-00999.npy",
+#     f"{DATA_ROOT}/c4-train.01000-01023.npy",
+# ]
 DATA_PATHS = ["oi_token_ids.npy"]
 EVAL_DATA_PATHS = [f"{DATA_ROOT}/c4-validation.00000-00008.npy"]
-DATA_WORK_DIR = "/home/costa/Documents/go/github.com/vwxyzjn/OLMo-core/dataset-cache"
+DATA_WORK_DIR = (
+    "/home/costa/Documents/go/github.com/vwxyzjn/OLMo-core/dataset-cache"  # NOTE: different dataset cache!
+)
 
 
 @dataclass
@@ -80,7 +80,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     tokenizer_config = TokenizerConfig.gpt2()
 
     model_config = TransformerConfig.llama2_271M(
-        vocab_size=128256,  # a little bigger than actual vocab size to make it a multiple of 128
+        vocab_size=128256,  # a little bigger than actual vocab size to make it a multiple of 128  # NOTE: hardcoded!
     )
 
     dataset_config = NumpyDatasetConfig(
@@ -93,19 +93,17 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=1 * SEQUENCE_LENGTH,
+        global_batch_size=1 * SEQUENCE_LENGTH,  # NOTE: small batch size!
         seed=0,
         num_workers=4,
     )
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=1 * SEQUENCE_LENGTH,
+        rank_microbatch_size=1 * SEQUENCE_LENGTH,  # NOTE: small microbatch size! (only 1 GPU)
         max_sequence_length=dataset_config.effective_sequence_length,
         optim=AdamWConfig(
             lr=1e-3,
-            group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-            ],
+            group_overrides=[OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))],
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
@@ -149,6 +147,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         )
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("profiler", ProfilerCallback(enabled=False))
+        # NOTE: removed lm_evaluator callback
         .with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(

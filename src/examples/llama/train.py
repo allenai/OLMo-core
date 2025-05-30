@@ -102,9 +102,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         max_sequence_length=dataset_config.effective_sequence_length,
         optim=AdamWConfig(
             lr=1e-3,
-            group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-            ],
+            group_overrides=[OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))],
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
@@ -197,6 +195,8 @@ def main(run_name: str, overrides: List[str]):
 
     # Save config to W&B and each checkpoint dir.
     config_dict = config.as_config_dict()
+    cast(CometCallback, trainer.callbacks["comet"]).config = config_dict
+    cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
     # Train.

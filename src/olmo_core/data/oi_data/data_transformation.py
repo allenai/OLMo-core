@@ -1,6 +1,4 @@
-"""
-This script is taken from https://github.com/allenai/open-instruct/blob/main/open_instruct/dataset_transformation.py
-"""
+# this file deals with dataset pre-processing before training
 
 # 1. PPO (prompt)
 # 2. SFT (prompt + demonstration), there is also packing.
@@ -72,6 +70,7 @@ from transformers.utils.hub import (
     try_to_load_from_cache,
 )
 
+from open_instruct.utils import hf_whoami
 
 
 # ----------------------------------------------------------------------------
@@ -87,9 +86,13 @@ def custom_cached_file(model_name_or_path: str, filename: str, revision: str = N
         else:
             return None
     else:
-        return try_to_load_from_cache(
+        resolved_file = try_to_load_from_cache(
             model_name_or_path, filename, cache_dir=TRANSFORMERS_CACHE, revision=revision, repo_type=repo_type
         )
+        # special return value from try_to_load_from_cache
+        if resolved_file == _CACHED_NO_EXIST:
+            return None
+        return resolved_file
 
 
 def get_commit_hash(
@@ -140,6 +143,19 @@ def visualize_token(tokens: list[int], tokenizer: PreTrainedTokenizer):
     rich_text = Text()
     for i, token in enumerate(tokens):
         color = COLORS[i % len(COLORS)]
+        decoded_token = tokenizer.decode(token)
+        rich_text.append(f"{decoded_token}", style=color)
+    console.print(rich_text)
+
+
+def visualize_token_role(tokens: list[int], masks: list[int], tokenizer: PreTrainedTokenizer):
+    i = 0
+    console = Console()
+    rich_text = Text()
+    # for i, token in enumerate():
+    for i in range(min(len(tokens), len(masks))):
+        token = tokens[i]
+        color = COLORS[masks[i] % len(COLORS)]
         decoded_token = tokenizer.decode(token)
         rich_text.append(f"{decoded_token}", style=color)
     console.print(rich_text)
@@ -212,6 +228,25 @@ CHAT_TEMPLATES = {
         "{% endif %}"
         "{% endfor %}"
     ),
+    "tulu_thinker": (
+        "{% for message in messages %}"
+        "{% if message['role'] == 'system' %}"
+        "{{ '<|system|>\n' + message['content'] + '\n' }}"
+        "{% elif message['role'] == 'user' %}"
+        "{{ '<|user|>\n' + message['content'] + '\n' }}"
+        "{% elif message['role'] == 'assistant' %}"
+        "{% set content = message['content'] %}"
+        "{% if not loop.last %}"
+        "{{ '<|assistant|>\n' + content + eos_token + '\n' }}"
+        "{% else %}"
+        "{{ '<|assistant|>\n' + content + eos_token }}"
+        "{% endif %}"
+        "{% endif %}"
+        "{% if loop.last and add_generation_prompt %}"
+        "{{ '<|assistant|>\n<think>' }}"
+        "{% endif %}"
+        "{% endfor %}"
+    ),
     "tulu_thinker_r1_style": (
         "A conversation between User and Assistant. "
         "The user asks a question, and the Assistant solves it. "
@@ -236,33 +271,6 @@ CHAT_TEMPLATES = {
         "{{ '<|assistant|>\n' + content + eos_token + '\n' }}"
         "{% else %}"
         "{{ '<|assistant|>\n' + content + eos_token }}"
-        "{% endif %}"
-        "{% endif %}"
-        "{% if loop.last and add_generation_prompt %}"
-        "{{ '<|assistant|>\n<think>' }}"
-        "{% endif %}"
-        "{% endfor %}"
-    ),
-    "tulu_thinker_r1_style_costah": (
-        "A conversation between User and Assistant. "
-        "The user asks a question, and the Assistant solves it. "
-        "The assistant first thinks about the reasoning process in "
-        "the mind and then provides the user with the answer. "
-        "The reasoning process and answer are enclosed within <think> </think> "
-        "and <answer> </answer> tags, respectively, "
-        "i.e., <think> reasoning process here </think> "
-        "<answer> answer here </answer>."
-        "\n\n"
-        "{% for message in messages %}"
-        "{% if message['role'] == 'system' %}"
-        "{{ '<|system|>\n' + message['content'] + '\n' }}"
-        "{% elif message['role'] == 'user' %}"
-        "{{ '<|user|>\n' + message['content'] + '\n' }}"
-        "{% elif message['role'] == 'assistant' %}"
-        "{% if not loop.last %}"
-        "{{ '<|assistant|>\n'  + message['content'] + eos_token + '\n' }}"
-        "{% else %}"
-        "{{ '<|assistant|>\n'  + message['content'] + eos_token }}"
         "{% endif %}"
         "{% endif %}"
         "{% if loop.last and add_generation_prompt %}"
@@ -319,7 +327,45 @@ CHAT_TEMPLATES = {
         "\n\n"
         "{% for message in messages %}"
         "{{ '\n\n' if not loop.first else '' }}"
-        "{{ message['role'].capitalize() + ': You must put your answer inside <answer> </answer> tags, i.e., <answer> answer here </answer>. And your final answer will be extracted automatically by the \\\\boxed{} tag. This is the problem: ' + message['content'] + '\n' }}" # \\\\boxed{} is for jinjia template escape
+        "{{ message['role'].capitalize() + ': You must put your answer inside <answer> </answer> tags, i.e., <answer> answer here </answer>. And your final answer will be extracted automatically by the \\\\boxed{} tag. This is the problem: ' + message['content'] + '\n' }}"  # \\\\boxed{} is for jinja template escape
+        "{% if loop.last and add_generation_prompt %}"
+        "{{ 'Assistant: <think>' }}"
+        "{% endif %}"
+        "{% endfor %}"
+    ),
+    "r1_simple_chat_postpend_think_tool_vllm": (
+        "A conversation between User and Assistant. "
+        "The User asks a question, and the Assistant solves it. "
+        "The Assistant first thinks about the reasoning process in "
+        "the mind and then provides the User with the answer. "
+        "\n\n"
+        "When given a question, the Assistant must conduct reasoning inside the <think> "
+        "and </think> tags. During reasoning, the Assistant may write and execute python "
+        "code using the <code> </code> tag, in order to solve the problem or verify the answer. "
+        "Then the Assistant will get the stdout and stderr in the <output> and </output> tags. "
+        "For example, the code could be\n"
+        "<code>\n"
+        "x, y = 1, 2\n"
+        "result = x + y\n"
+        "print(result)\n"
+        "</code>\n"
+        "or\n"
+        "<code>\n"
+        "import sympy as sp\n"
+        "from sympy import Symbol\n"
+        "x = Symbol('x')\n"
+        "y = Symbol('y')\n"
+        "solution = sp.solve(x**2 + y**2 - 1, (x, y))\n"
+        "print(solution)\n"
+        "</code>\n"
+        "The Assistant will always `print` the result of the code execution in order to see it in the <output> tag. "
+        "The Assistant may use the <code> </code> tag multiple times. "
+        "When the Assistant is done reasoning, it should provide the answer inside the <answer> "
+        "and </answer> tag."
+        "\n\n"
+        "{% for message in messages %}"
+        "{{ '\n\n' if not loop.first else '' }}"
+        "{{ message['role'].capitalize() + ': You must put your answer inside <answer> </answer> tags, i.e., <answer> answer here </answer>. And your final answer will be extracted automatically by the \\\\boxed{} tag. This is the problem: ' + message['content'] + '\n' }}"  # \\\\boxed{} is for jinjia template escape
         "{% if loop.last and add_generation_prompt %}"
         "{{ 'Assistant: <think>' }}"
         "{% endif %}"
@@ -366,7 +412,9 @@ def get_tokenizer_tulu_v1(tc: "TokenizerConfig"):
         # OLMo newer models use this tokenizer
         if tokenizer.bos_token is None:
             tokenizer.bos_token = tokenizer.eos_token
-            assert tc.add_bos, "For OLMo with GPTNeoX, you must add bos token to the beginning of the input sequence."
+            assert tc.add_bos, (
+                "For OLMo with GPTNeoX, you must add bos token to the beginning of the input sequence."
+            )
         # else, pythia / other models
         else:
             num_added_tokens = tokenizer.add_special_tokens(
@@ -374,9 +422,9 @@ def get_tokenizer_tulu_v1(tc: "TokenizerConfig"):
                     "pad_token": "<pad>",
                 }
             )
-            assert (
-                num_added_tokens <= 1
-            ), "GPTNeoXTokenizer should only add one special token - the pad_token (or no tokens if already set in SFT)."
+            assert num_added_tokens <= 1, (
+                "GPTNeoXTokenizer should only add one special token - the pad_token (or no tokens if already set in SFT)."
+            )
     # NOTE: (Costa) I just commented the `OPTForCausalLM` because we are not likely to use it.
     # elif isinstance(tokenizer, GPT2Tokenizer) and isinstance(model, OPTForCausalLM):
     #     num_added_tokens = tokenizer.add_special_tokens({"unk_token": "<unk>"})
@@ -391,7 +439,9 @@ def get_tokenizer_tulu_v1(tc: "TokenizerConfig"):
         tokenizer.chat_template = CHAT_TEMPLATES[tc.chat_template_name]
     else:
         try:
-            tokenizer.chat_template = AutoTokenizer.from_pretrained(tc.tokenizer_name_or_path).chat_template
+            tokenizer.chat_template = AutoTokenizer.from_pretrained(
+                tc.tokenizer_name_or_path, revision=tc.tokenizer_revision
+            ).chat_template
         except Exception:
             raise ValueError(f"Could not find chat template for {tc.tokenizer_name_or_path}.")
 
@@ -424,14 +474,16 @@ def get_tokenizer_tulu_v2_1(tc: "TokenizerConfig"):
             assert num_added_tokens in [
                 0,
                 1,
-            ], "LlamaTokenizer should only add one special token - the pad_token, or no tokens if pad token present."
+            ], (
+                "LlamaTokenizer should only add one special token - the pad_token, or no tokens if pad token present."
+            )
         elif isinstance(tokenizer, GPTNeoXTokenizerFast):
             # OLMo newer models use this tokenizer
             if tokenizer.bos_token is None:
                 tokenizer.bos_token = tokenizer.eos_token
-                assert (
-                    tc.add_bos
-                ), "For OLMo with GPTNeoX, you must add bos token to the beginning of the input sequence."
+                assert tc.add_bos, (
+                    "For OLMo with GPTNeoX, you must add bos token to the beginning of the input sequence."
+                )
             # else, pythia / other models
             else:
                 num_added_tokens = tokenizer.add_special_tokens(
@@ -439,9 +491,9 @@ def get_tokenizer_tulu_v2_1(tc: "TokenizerConfig"):
                         "pad_token": "<pad>",
                     }
                 )
-                assert (
-                    num_added_tokens <= 1
-                ), "GPTNeoXTokenizer should only add one special token - the pad_token (or no tokens if already set in SFT)."
+                assert num_added_tokens <= 1, (
+                    "GPTNeoXTokenizer should only add one special token - the pad_token (or no tokens if already set in SFT)."
+                )
         # NOTE: (Costa) I just commented the `OPTForCausalLM` because we are not likely to use it.
         # elif isinstance(tokenizer, GPT2Tokenizer) and isinstance(model, OPTForCausalLM):
         #     num_added_tokens = tokenizer.add_special_tokens({"unk_token": "<unk>"})
@@ -449,9 +501,9 @@ def get_tokenizer_tulu_v2_1(tc: "TokenizerConfig"):
             num_added_tokens = tokenizer.add_special_tokens({"pad_token": "<pad>"})
             assert num_added_tokens == 1, "We detected no padding token but add_special_tokens did not add one."
 
-    assert (
-        tokenizer.pad_token_id != tokenizer.eos_token_id
-    ), "pad token and eos token matching causes issues in our setup."
+    assert tokenizer.pad_token_id != tokenizer.eos_token_id, (
+        "pad token and eos token matching causes issues in our setup."
+    )
 
     # set the tokenizer chat template to the training format
     # this will be used for encoding the training examples
@@ -460,7 +512,9 @@ def get_tokenizer_tulu_v2_1(tc: "TokenizerConfig"):
         tokenizer.chat_template = CHAT_TEMPLATES[tc.chat_template_name]
     else:
         try:
-            tokenizer.chat_template = AutoTokenizer.from_pretrained(tc.tokenizer_name_or_path).chat_template
+            tokenizer.chat_template = AutoTokenizer.from_pretrained(
+                tc.tokenizer_name_or_path, revision=tc.tokenizer_revision
+            ).chat_template
         except Exception:
             raise ValueError(f"Could not find chat template for {tc.tokenizer_name_or_path}.")
 
@@ -499,14 +553,16 @@ def get_tokenizer_tulu_v2_2(tc: "TokenizerConfig"):
             assert num_added_tokens in [
                 0,
                 1,
-            ], "LlamaTokenizer should only add one special token - the pad_token, or no tokens if pad token present."
+            ], (
+                "LlamaTokenizer should only add one special token - the pad_token, or no tokens if pad token present."
+            )
         elif isinstance(tokenizer, GPTNeoXTokenizerFast):
             # OLMo newer models use this tokenizer
             if tokenizer.bos_token is None:
                 tokenizer.bos_token = tokenizer.eos_token
-                assert (
-                    tc.add_bos
-                ), "For OLMo with GPTNeoX, you must add bos token to the beginning of the input sequence."
+                assert tc.add_bos, (
+                    "For OLMo with GPTNeoX, you must add bos token to the beginning of the input sequence."
+                )
             # else, pythia / other models
             else:
                 num_added_tokens = tokenizer.add_special_tokens(
@@ -514,9 +570,9 @@ def get_tokenizer_tulu_v2_2(tc: "TokenizerConfig"):
                         "pad_token": "<pad>",
                     }
                 )
-                assert (
-                    num_added_tokens <= 1
-                ), "GPTNeoXTokenizer should only add one special token - the pad_token (or no tokens if already set in SFT)."
+                assert num_added_tokens <= 1, (
+                    "GPTNeoXTokenizer should only add one special token - the pad_token (or no tokens if already set in SFT)."
+                )
         # NOTE: (Costa) I just commented the `OPTForCausalLM` because we are not likely to use it.
         # elif isinstance(tokenizer, GPT2Tokenizer) and isinstance(model, OPTForCausalLM):
         #     num_added_tokens = tokenizer.add_special_tokens({"unk_token": "<unk>"})
@@ -524,9 +580,9 @@ def get_tokenizer_tulu_v2_2(tc: "TokenizerConfig"):
             num_added_tokens = tokenizer.add_special_tokens({"pad_token": "<pad>"})
             assert num_added_tokens == 1, "We detected no padding token but add_special_tokens did not add one."
 
-    assert (
-        tokenizer.pad_token_id != tokenizer.eos_token_id
-    ), "pad token and eos token matching causes issues in our setup."
+    assert tokenizer.pad_token_id != tokenizer.eos_token_id, (
+        "pad token and eos token matching causes issues in our setup."
+    )
 
     # set the tokenizer chat template to the training format
     # this will be used for encoding the training examples
@@ -535,7 +591,9 @@ def get_tokenizer_tulu_v2_2(tc: "TokenizerConfig"):
         tokenizer.chat_template = CHAT_TEMPLATES[tc.chat_template_name]
     else:
         try:
-            tokenizer.chat_template = AutoTokenizer.from_pretrained(tc.tokenizer_name_or_path).chat_template
+            tokenizer.chat_template = AutoTokenizer.from_pretrained(
+                tc.tokenizer_name_or_path, revision=tc.tokenizer_revision
+            ).chat_template
         except Exception:
             raise ValueError(f"Could not find chat template for {tc.tokenizer_name_or_path}.")
 
@@ -1008,9 +1066,9 @@ class DatasetConfig:
 
 
 def get_dataset_v1(dc: DatasetConfig, tc: TokenizerConfig):
-    assert len(dc.transform_fn) == len(
-        dc.transform_fn_args
-    ), f"transform_fn and transform_fn_args must have the same length: {dc.transform_fn=} != {dc.transform_fn_args=}"
+    assert len(dc.transform_fn) == len(dc.transform_fn_args), (
+        f"transform_fn and transform_fn_args must have the same length: {dc.transform_fn=} != {dc.transform_fn_args=}"
+    )
     # beaker specific logic; we may get assigned 15.5 CPU, so we convert it to float then int
     num_proc = int(float(os.environ.get("BEAKER_ASSIGNED_CPU_COUNT", multiprocessing.cpu_count())))
 
@@ -1058,7 +1116,7 @@ def compute_config_hash(dcs: List[DatasetConfig], tc: TokenizerConfig) -> str:
 class DatasetTransformationCache:
     def __init__(self, config_hash: str, hf_entity: Optional[str] = None):
         self.config_hash = config_hash
-        self.hf_entity = hf_entity
+        self.hf_entity = hf_entity or hf_whoami()["name"]
 
     def load_or_transform_dataset(
         self, dcs: List[DatasetConfig], tc: TokenizerConfig, dataset_skip_cache: bool = False
@@ -1071,7 +1129,9 @@ class DatasetTransformationCache:
 
         # Check if the revision exists
         if revision_exists(repo_name, self.config_hash, repo_type="dataset"):
-            print(f"✅ Found cached dataset at https://huggingface.co/datasets/{repo_name}/tree/{self.config_hash}")
+            print(
+                f"✅ Found cached dataset at https://huggingface.co/datasets/{repo_name}/tree/{self.config_hash}"
+            )
             if dataset_skip_cache:
                 print("dataset_skip_cache is True, so we will not load the dataset from cache")
             else:
@@ -1098,7 +1158,9 @@ class DatasetTransformationCache:
             revision=self.config_hash,
             commit_message=f"Cache combined dataset with configs hash: {self.config_hash}",
         )
-        print(f"🚀 Pushed transformed dataset to https://huggingface.co/datasets/{repo_name}/tree/{self.config_hash}")
+        print(
+            f"🚀 Pushed transformed dataset to https://huggingface.co/datasets/{repo_name}/tree/{self.config_hash}"
+        )
 
         model_card = ModelCard(
             f"""\
@@ -1263,10 +1325,14 @@ def test_sft_dpo_same_tokenizer():
         tokenizer_name_or_path="meta-llama/Llama-3.1-8B", tokenizer_revision="main", chat_template_name="tulu"
     )
     sft_to_dpo_tc = TokenizerConfig(
-        tokenizer_name_or_path="allenai/Llama-3.1-Tulu-3-8B-SFT", tokenizer_revision="main", chat_template_name="tulu"
+        tokenizer_name_or_path="allenai/Llama-3.1-Tulu-3-8B-SFT",
+        tokenizer_revision="main",
+        chat_template_name="tulu",
     )
     dpo_to_rl_tc = TokenizerConfig(
-        tokenizer_name_or_path="allenai/Llama-3.1-Tulu-3-8B-DPO", tokenizer_revision="main", chat_template_name="tulu"
+        tokenizer_name_or_path="allenai/Llama-3.1-Tulu-3-8B-DPO",
+        tokenizer_revision="main",
+        chat_template_name="tulu",
     )
 
     def equal_tokenizer(tc1, tc2):
@@ -1277,9 +1343,9 @@ def test_sft_dpo_same_tokenizer():
         assert tok1.is_fast == tok2.is_fast, "is_fast should be the same"
         assert tok1.padding_side == tok2.padding_side, "padding_side should be the same"
         assert tok1.truncation_side == tok2.truncation_side, "truncation_side should be the same"
-        assert (
-            tok1.clean_up_tokenization_spaces == tok2.clean_up_tokenization_spaces
-        ), "clean_up_tokenization_spaces should be the same"
+        assert tok1.clean_up_tokenization_spaces == tok2.clean_up_tokenization_spaces, (
+            "clean_up_tokenization_spaces should be the same"
+        )
         assert tok1.added_tokens_decoder == tok2.added_tokens_decoder, "added_tokens_decoder should be the same"
 
     equal_tokenizer(base_to_sft_tc, sft_to_dpo_tc)
@@ -1316,9 +1382,9 @@ def test_sft_dpo_same_tokenizer_olmo():
         assert tok1.is_fast == tok2.is_fast, "is_fast should be the same"
         assert tok1.padding_side == tok2.padding_side, "padding_side should be the same"
         assert tok1.truncation_side == tok2.truncation_side, "truncation_side should be the same"
-        assert (
-            tok1.clean_up_tokenization_spaces == tok2.clean_up_tokenization_spaces
-        ), "clean_up_tokenization_spaces should be the same"
+        assert tok1.clean_up_tokenization_spaces == tok2.clean_up_tokenization_spaces, (
+            "clean_up_tokenization_spaces should be the same"
+        )
         assert tok1.added_tokens_decoder == tok2.added_tokens_decoder, "added_tokens_decoder should be the same"
 
     equal_tokenizer(base_to_sft_tc, sft_to_dpo_tc)
