@@ -8,8 +8,7 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import CosWithWarmup, OptimGroupOverride
-from olmo_core.optim.muon import MuonWithAuxAdamConfig
+from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
@@ -23,7 +22,7 @@ MAX_DURATION = int(4e12)
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    return TransformerConfig.olmo2_1B_v2(vocab_size=common.tokenizer.padded_vocab_size())
+    return TransformerConfig.olmo2_370M(vocab_size=common.tokenizer.padded_vocab_size())
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
@@ -33,39 +32,18 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         if all("B200" in g for g in gpus):
             rank_microbatch_size *= 2
 
-    lr = 4e-4
-
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
         max_sequence_length=common.dataset.effective_sequence_length,
-        optim=MuonWithAuxAdamConfig(
-            group_overrides=[
-                # Muon Params
-                OptimGroupOverride(
-                    params=["blocks.*.feed_forward.*.weight"],
-                    opts=dict(use_muon=True, lr=lr, momentum=0.95),
-                ),
-                OptimGroupOverride(
-                    params=["blocks.*.attention.w_*.weight"],
-                    opts=dict(use_muon=True, lr=lr, momentum=0.95),
-                ),
-                # Adam Params
-                OptimGroupOverride(
-                    params=["lm_head.w_out.weight"], opts=dict(use_muon=False, lr=lr, betas=(0.9, 0.95))
-                ),
-                OptimGroupOverride(
-                    params=["embeddings.weight"],
-                    opts=dict(use_muon=False, lr=lr, betas=(0.9, 0.95), weight_decay=0.0),
-                ),
-                OptimGroupOverride(
-                    params=["*norm.weight"],
-                    opts=dict(use_muon=False, lr=lr, betas=(0.9, 0.95), weight_decay=0.0),
-                ),
-            ],
+        optim=SkipStepAdamWConfig(
+            lr=4e-4,
+            weight_decay=0.033,
+            betas=(0.9, 0.95),
+            group_overrides=[OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))],
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
+            name=DataParallelType.ddp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
