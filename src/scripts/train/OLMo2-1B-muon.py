@@ -43,7 +43,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
                 # Muon Params
                 OptimGroupOverride(params=["blocks.*"], opts=dict(use_muon=True, lr=lr, momentum=0.95)),
                 # Adam Params
-                OptimGroupOverride(params=["lm_head.weight"], opts=dict(use_muon=False, lr=lr, betas=(0.9, 0.95))),
+                OptimGroupOverride(
+                    params=["lm_head.w_out.weight"], opts=dict(use_muon=False, lr=lr, betas=(0.9, 0.95))
+                ),
                 OptimGroupOverride(
                     params=["embeddings.weight"],
                     opts=dict(use_muon=False, lr=lr, betas=(0.9, 0.95), weight_decay=0.0),
