@@ -470,6 +470,15 @@ class TransformerConfig(Config):
                 / base_model.block.feed_forward_moe.num_experts
             )
 
+            if self.block.feed_forward_moe.shared_mlp is not None:
+                if base_model.block.feed_forward_moe.shared_mlp is None:
+                    raise ValueError("Model has shared mlp but base model does not.")
+
+                width_scalings[MuPHyperParam.shared_expert_hidden_size] = (
+                    self.block.feed_forward_moe.shared_mlp.hidden_size
+                    / base_model.block.feed_forward_moe.shared_mlp.hidden_size
+                )
+
         return {
             hyper_param: scaling
             for hyper_param, scaling in width_scalings.items()
@@ -1053,6 +1062,7 @@ class TransformerConfig(Config):
         z_loss_weight: Optional[float] = 0.001,
         reordered_norm: bool = False,
         hybrid: bool = False,
+        mup: Optional[MuPConfig] = None,
         **kwargs,
     ) -> "TransformerConfig":
         block_name: TransformerBlockType
@@ -1078,12 +1088,19 @@ class TransformerConfig(Config):
                 hidden_size=expert_hidden_size,
                 capacity_factor=capacity_factor,
                 router=MoERouterConfig(top_k=top_k),
+                mup=mup,
                 shared_mlp=None
                 if shared_expert_hidden_size is None
-                else FeedForwardConfig(hidden_size=shared_expert_hidden_size, bias=False),
+                else FeedForwardConfig(
+                    hidden_size=shared_expert_hidden_size,
+                    bias=False,
+                    mup=mup,
+                    mup_hidden_size_hyper_param=MuPHyperParam.shared_expert_hidden_size,
+                ),
                 lb_loss_weight=lb_loss_weight,
                 z_loss_weight=z_loss_weight,
             ),
+            mup=mup,
             **kwargs,
         )
 

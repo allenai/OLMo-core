@@ -33,6 +33,7 @@ class MuPHyperParam(StrEnum):
     n_kv_heads = "n_kv_heads"
     head_dim = "head_dim"
     num_experts = "num_experts"
+    shared_expert_hidden_size = "shared_expert_hidden_size"
 
 
 class MuPOptimizerType(StrEnum):
