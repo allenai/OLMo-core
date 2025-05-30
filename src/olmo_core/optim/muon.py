@@ -55,18 +55,25 @@ class MuonWithAuxAdamConfig(OptimConfig):  # NOTE: omagaconf doesn't like "Optim
                 try:
                     use_muon = group["use_muon"]
                 except KeyError as ex:
+                    # Log the parameters in the group before raising the error
+                    param_names = []
+                    for param in group["params"]:
+                        param_name = next((name for name, p in model.named_parameters() if p is param), None)
+                        param_names.append(param_name or "unknown")
+                    log.error(f"Parameters in group without 'use_muon' specified: {param_names}")
+
                     raise ValueError(
                         "MuonWithAuxAdam requires 'use_muon' to be specified in the optimizer group options."
                     ) from ex
 
                 for param in group["params"]:
+                    param_name = next((name for name, p in model.named_parameters() if p is param), None)
+
                     if use_muon and param.ndim < 2:
                         raise ValueError(
-                            f"Parameter with ndim={param.ndim} should not have use_muon=True. "
+                            f"Parameter '{param_name}' with ndim={param.ndim} should not have use_muon=True. "
                             "Only parameters with ndim >= 2 should use Muon."
                         )
-
-                    param_name = next((name for name, p in model.named_parameters() if p is param), None)
 
                     if (
                         use_muon
