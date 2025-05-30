@@ -318,7 +318,7 @@ class Attention(AttentionBase):
                 causal=True,
                 softmax_scale=scale,
             )
-        elif self.use_flash:
+        elif self.use_flash and False:
             att = dispatch_flash_attn(
                 q,
                 k,
