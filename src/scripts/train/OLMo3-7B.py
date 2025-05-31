@@ -10,7 +10,7 @@ from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
-from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.transformer import TransformerBlockType, TransformerConfig
 from olmo_core.optim import OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
 from olmo_core.optim.scheduler import WSD
 from olmo_core.train import Duration, TrainerConfig
@@ -36,7 +36,8 @@ EVAL_INTERVAL = 1000
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     config = TransformerConfig.olmo2_7B(vocab_size=common.tokenizer.padded_vocab_size())
-
+    config.block.name = TransformerBlockType.default
+    config.block.attention.qk_norm = None
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_first=False, pattern=[False, False, False, True]
     )
