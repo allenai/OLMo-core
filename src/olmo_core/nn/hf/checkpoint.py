@@ -116,7 +116,7 @@ def save_hf_model(
     save_overwrite: bool = False,
 ):
     hf_config = get_hf_config(model)
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
 
     model_state_dict = {key: get_full_tensor(state) for key, state in model_state_dict.items()}
     hf_state_dict: Dict[str, torch.Tensor] = convert_state_to_hf(hf_config, model_state_dict)
@@ -131,7 +131,7 @@ def save_hf_model(
 
     for key in hf_state_dict:
         if "mlp.gate.weight" in key:
-            import pdb; pdb.set_trace()
+            # import pdb; pdb.set_trace() swj change
             hf_state_dict[key] = hf_state_dict[key].unflatten(0, (4, 4096))
     model.load_state_dict(hf_state_dict, assign=True)
 
