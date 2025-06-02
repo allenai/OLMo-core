@@ -91,6 +91,9 @@ def convert_checkpoint_to_hf(
             )
             attention["use_flash"] = False
 
+            if "sliding_window" in attention:
+                del attention["sliding_window"]
+
     model = TransformerConfig.from_dict(transformer_config_dict).build()
     model.to_empty(device=device)
 

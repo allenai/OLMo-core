@@ -18,10 +18,10 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
         )
 
     block = next(iter(model.blocks.values()))
-    if not isinstance(block, ReorderedNormTransformerBlock):
-        raise NotImplementedError(
-            f"Block is not a {ReorderedNormTransformerBlock.__name__}, unable to build HF config for {model.__class__.__name__}"
-        )
+    # if not isinstance(block, ReorderedNormTransformerBlock):
+    #     raise NotImplementedError(
+    #         f"Block is not a {ReorderedNormTransformerBlock.__name__}, unable to build HF config for {model.__class__.__name__}"
+    #     )
 
     if not isinstance(block.attention, Attention):
         raise NotImplementedError(

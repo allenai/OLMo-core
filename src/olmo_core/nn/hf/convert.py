@@ -122,8 +122,8 @@ OLMO_CORE_TO_HF_MAPPINGS: Dict[str, str] = {
     f"blocks.{LAYER}.feed_forward.w2.weight": f"model.layers.{LAYER}.mlp.down_proj.weight",
     f"blocks.{LAYER}.feed_forward.w3.weight": f"model.layers.{LAYER}.mlp.up_proj.weight",
     # Layer norms.
-    f"blocks.{LAYER}.attention_norm.weight": f"model.layers.{LAYER}.post_attention_layernorm.weight",
-    f"blocks.{LAYER}.feed_forward_norm.weight": f"model.layers.{LAYER}.post_feedforward_layernorm.weight",
+    f"blocks.{LAYER}.attention_norm.weight": f"model.layers.{LAYER}.input_layernorm.weight",
+    f"blocks.{LAYER}.feed_forward_norm.weight": f"model.layers.{LAYER}.post_attention_layernorm.weight",
     f"blocks.{LAYER}.attention.q_norm.weight": f"model.layers.{LAYER}.self_attn.q_norm.weight",
     f"blocks.{LAYER}.attention.k_norm.weight": f"model.layers.{LAYER}.self_attn.k_norm.weight",
     # MoEMLP.
