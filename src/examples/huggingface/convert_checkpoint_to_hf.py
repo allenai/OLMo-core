@@ -30,6 +30,7 @@ from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.io import file_exists, join_path
+from olmo_core.nn.attention import AttentionType
 from olmo_core.nn.conversion.state_mapping import StateType, TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import save_hf_model
 from olmo_core.nn.hf.convert import get_converter_to_hf
@@ -75,25 +76,24 @@ def convert_checkpoint_to_hf(
     if "float8_config" in transformer_config_dict:
         del transformer_config_dict["float8_config"]
 
+    model_config = TransformerConfig.from_dict(transformer_config_dict)
+
     # Check if validation is being performed and flash attn is requested but cannot run.
     device = device or get_default_device()
-    if (
-        validate
-        and (flash_attn is None or device != torch.device("cuda"))
-        and (attention := transformer_config_dict.get("block", {}).get("attention")) is not None
-    ):
-        if attention["name"] == "fused":
+    if validate and (flash_attn is None or device != torch.device("cuda")):
+        if model_config.block.attention.name == AttentionType.fused:
             log.warning(
                 "Running conversion without cuda or flash attention on a model requiring flash attention, validation would fail so we are disabling it."
             )
             validate = False
-        elif attention["use_flash"]:
+        elif model_config.block.attention.use_flash:
             log.info(
-                "Flash attention or cuda is unavailable, turning off flash attention to stop validation from failing."
+                "Flash attention or cuda is unavailable, turning off flash attention and sliding window to stop validation from failing."
             )
-            attention["use_flash"] = False
+            model_config.block.attention.use_flash = False
+            model_config.block.attention.sliding_window = None
 
-    model = TransformerConfig.from_dict(transformer_config_dict).build()
+    model = model_config.build()
     model.to_empty(device=device)
 
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
