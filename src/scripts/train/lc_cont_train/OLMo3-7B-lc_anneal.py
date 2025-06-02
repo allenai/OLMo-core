@@ -19,6 +19,7 @@ from olmo_core.data import (
     TokenizerConfig,
     TokenizerName,
 )
+from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
@@ -26,6 +27,7 @@ from olmo_core.io import resource_path
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import (
     TransformerConfig,
+    TransformerBlockType,
 )
 from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.optim import (
@@ -43,8 +45,6 @@ from olmo_core.train.train_module import (
     # TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
-    # TransformerTensorParallelConfig,
-    TransformerContextParallelConfig,
     TransformerTrainModuleConfig,
 )
 from olmo_core.train.callbacks import (
@@ -333,14 +333,11 @@ def train(config: LcContTrain):
     # world_mesh = config.model.build_mesh(device=device)
 
     # Build components.
+
     model = config.model.build(
         init_device="meta",
     )
-    model.block.name = TransformerBlockType.default
-    model.block.attention.qk_norm = None
-    model.block.attention.sliding_window = SlidingWindowAttentionConfig(
-        force_first=False, pattern=[False, False, False, True]
-    )
+
     dataset = config.dataset.build()
     train_module = config.train_module.build(model, device)
     data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
@@ -394,6 +391,13 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         load_path="gs://ai2-llm/checkpoints/petew/OLMo3-integrationtest-3/step77000/model_and_optim/",
         cluster=cluster,
         overrides=overrides,
+    )
+
+    model_config = config.model
+    model_config.block.name = TransformerBlockType.default
+    model_config.block.attention.qk_norm = None
+    model_config.block.attention.sliding_window = SlidingWindowAttentionConfig(
+        force_first=False, pattern=[False, False, False, True]
     )
 
     # Print the config for debugging and then execute the command.
