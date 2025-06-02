@@ -78,11 +78,7 @@ def convert_checkpoint_to_hf(
 
     model_config = TransformerConfig.from_dict(transformer_config_dict)
 
-    if torch.cuda.is_available():
-        torch.cuda.init()
-
     # Check if validation is being performed and flash attn is requested but cannot run.
-    device = device or get_default_device()
     if validate and (flash_attn is None or device != torch.device("cuda")):
         if model_config.block.attention.name == AttentionType.fused:
             log.warning(
@@ -97,7 +93,7 @@ def convert_checkpoint_to_hf(
             model_config.block.attention.sliding_window = None
 
     model = model_config.build()
-    model.to_empty(device=device)
+    model.to_empty(device=torch.device("cpu"))
 
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
     vocab_size = tokenizer_config.vocab_size
@@ -233,7 +229,7 @@ def validate_conversion(
     del hf_model
 
     if dtype:
-        model = model.to(dtype.as_pt())
+        model = model.to(device=device, dtype=dtype.as_pt())
     model.eval()
     with torch.no_grad():
         logits = model(input_ids=input_ids)
@@ -380,7 +376,7 @@ def parse_args():
     parser.add_argument(
         "--device",
         type=torch.device,
-        help="The device on which conversion and validation occurs. Defaults to CUDA or MPS if available and initialized.",
+        help="The device on which validation occurs (conversion occurs on cpu). Defaults to CUDA or MPS if available and initialized.",
     )
     parser.add_argument(
         "--dtype",
