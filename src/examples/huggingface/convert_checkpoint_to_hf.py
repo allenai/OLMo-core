@@ -8,10 +8,11 @@ architectures that have support in the `transformers` library.
 import json
 import logging
 from argparse import ArgumentParser
+from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Generator, Optional, Tuple
 
 try:
     import flash_attn  # type: ignore
@@ -19,21 +20,31 @@ except ImportError:
     flash_attn = None
 
 import torch
-import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from cached_path import cached_path
-from transformers import AutoConfig, AutoModelForCausalLM
+from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    OlmoCoreConfig,
+    OlmoCoreForCausalLM,
+)
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.io import file_exists, join_path
-from olmo_core.nn.conversion.state_mapping import TemplatePlaceholder
-from olmo_core.nn.hf.checkpoint import save_hf_model
-from olmo_core.nn.hf.convert import get_converter_to_hf
-from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.utils import get_default_device, prepare_cli_environment
+
+try:
+    from accelerate import init_empty_weights
+except ImportError:
+
+    @contextmanager
+    def init_empty_weights(include_buffers: bool = False) -> Generator[None, None, None]:
+        log.warning("accelerate not installed, will initialize weights.")
+        yield None
+
 
 log = logging.getLogger(__name__)
 
@@ -91,11 +102,14 @@ def convert_checkpoint_to_hf(
             )
             attention["use_flash"] = False
 
-    model = TransformerConfig.from_dict(transformer_config_dict).build()
-    model.to_empty(device=device)
+    hf_config = OlmoCoreConfig(transformer_config_dict)
+    with init_empty_weights():
+        hf_model = OlmoCoreForCausalLM(hf_config)
+    model = hf_model.olmo_core_model
+
+    model.to_empty(device=torch.device("cpu"))
 
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
-    vocab_size = tokenizer_config.vocab_size
 
     with TemporaryDirectory() as work_dir:
         model_and_optim_dir = join_path(original_checkpoint_path, "model_and_optim")
@@ -105,31 +119,18 @@ def convert_checkpoint_to_hf(
             model,
             work_dir=work_dir,
         )
-        log.info(f"Saving checkpoint to '{output_path}'")
-        state_dict_options = dist_cp_sd.StateDictOptions(
-            flatten_optimizer_state_dict=True, cpu_offload=True
-        )
-        model_state_dict = dist_cp_sd.get_model_state_dict(model, options=state_dict_options)
 
-        save_hf_model(
-            output_path,
-            model_state_dict,
-            model,
-            dtype=dtype,
-            vocab_size=vocab_size,
-            work_dir=work_dir,
-            save_overwrite=True,
-        )
-        # checkpointer.save(output_path, train_module, train_state={}, format=output_format)
+        log.info(f"Saving checkpoint to '{output_path}'")
+        hf_model.save_pretrained(output_path)
         log.info(f"Successfully saved converted model to '{output_path}'")
 
     log.info("Fixing HF config using tokenizer config data and script arguments")
-    huggingface_config = AutoConfig.from_pretrained(output_path)
-    huggingface_config.max_position_embeddings = max_sequence_length
-    huggingface_config.pad_token_id = tokenizer_config.pad_token_id
-    huggingface_config.bos_token_id = tokenizer_config.bos_token_id
-    huggingface_config.eos_token_id = tokenizer_config.eos_token_id
-    huggingface_config.save_pretrained(output_path)
+    hf_config = AutoConfig.from_pretrained(output_path)
+    hf_config.max_position_embeddings = max_sequence_length
+    hf_config.pad_token_id = tokenizer_config.pad_token_id
+    hf_config.bos_token_id = tokenizer_config.bos_token_id
+    hf_config.eos_token_id = tokenizer_config.eos_token_id
+    hf_config.save_pretrained(output_path)
     log.info("Successfully fixed config using tokenizer config data and script arguments")
 
     if validate:
@@ -194,23 +195,8 @@ def validate_conversion(
     hf_model = AutoModelForCausalLM.from_pretrained(hf_path, torch_dtype="auto").to(device).eval()
 
     olmo_core_state, hf_state = {}, {}
-    state_mapping = None
     if debug:
         olmo_core_state, hf_state = _register_debug_hooks(hf_model, model)
-        state_converter = get_converter_to_hf()
-
-        if not hasattr(hf_model.config, "num_hidden_layers"):
-            raise ValueError(f"Number of hidden layers missing in HF config: {hf_model.config}")
-        n_layers: int = hf_model.config.num_hidden_layers
-        n_experts: int | None = getattr(hf_model.config, "num_experts", None)
-
-        placeholder_bounds = {
-            TemplatePlaceholder.LAYER: n_layers,
-        }
-        if n_experts:
-            placeholder_bounds[TemplatePlaceholder.EXPERT] = n_experts
-
-        state_mapping = state_converter.get_mappings(model.state_dict(), placeholder_bounds)
 
     log.info("Running OLMo core and HF models for validation...")
     with torch.no_grad():
@@ -218,24 +204,12 @@ def validate_conversion(
 
     del hf_model
 
-    if dtype:
-        model = model.to(dtype.as_pt())
+    model = model.to(device=device, dtype=dtype.as_pt() if dtype else None)
     model.eval()
     with torch.no_grad():
         logits = model(input_ids=input_ids)
 
     if debug:
-        assert state_mapping is not None
-
-        simple_key_mapping = {
-            mapping.source_keys[0]
-            .replace(".weight", ""): mapping.dest_keys[0]
-            .replace(".weight", "")
-            for mapping in state_mapping
-            if len(mapping.source_keys) == 1 and len(mapping.dest_keys) == 1
-        }
-
-        log.info(f"simple mapping: {simple_key_mapping}")
         log.info(f"hf_state keys: {hf_state.keys()}")
         log.info(f"olmo_core_state keys: {olmo_core_state.keys()}")
 
@@ -243,22 +217,18 @@ def validate_conversion(
             olmo_core_state.items(), key=lambda item: item[1][0]
         ):
             olmo_core_key, state_type = olmo_core_state_name.split("|")
-            if olmo_core_key not in simple_key_mapping:
-                continue
-
-            hf_state_name = f"{simple_key_mapping[olmo_core_key]}|{state_type}"
-            if hf_state_name not in hf_state:
-                continue
+            hf_key = f"olmo_core_model.{olmo_core_key}".rstrip(".")
+            hf_state_name = f"{hf_key}|{state_type}"
 
             _, hf_tensor = hf_state[hf_state_name]
 
             if olmo_core_tensor.shape != hf_tensor.shape:
                 log.info(
-                    f"{olmo_core_state_name}, {hf_state_name} shape mismatch: {olmo_core_tensor.shape} {hf_tensor.shape}"
+                    f"{olmo_core_state_name} shape mismatch: {olmo_core_tensor.shape} {hf_tensor.shape}"
                 )
             if olmo_core_tensor.dtype != hf_tensor.dtype:
                 log.info(
-                    f"{olmo_core_state_name}, {hf_state_name} dtype mismatch: {olmo_core_tensor.dtype} {hf_tensor.dtype}"
+                    f"{olmo_core_state_name} dtype mismatch: {olmo_core_tensor.dtype} {hf_tensor.dtype}"
                 )
             if len(olmo_core_tensor.shape) == len(hf_tensor.shape):
                 common_shape = tuple(
@@ -269,7 +239,7 @@ def validate_conversion(
                     olmo_core_tensor = olmo_core_tensor.narrow(i, 0, dim)
                     hf_tensor = hf_tensor.narrow(i, 0, dim)
                 log.info(
-                    f"{olmo_core_state_name}, {hf_state_name} element diff abs mean: {(olmo_core_tensor - hf_tensor).float().abs().mean()}"
+                    f"{olmo_core_state_name} element diff abs mean: {(olmo_core_tensor - hf_tensor).float().abs().mean()}"
                 )
 
     torch.testing.assert_close(
