@@ -13,12 +13,18 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Dict, Optional, Tuple
 
+try:
+    import flash_attn  # type: ignore
+except ImportError:
+    flash_attn = None
+
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from cached_path import cached_path
 from transformers import AutoConfig, AutoModelForCausalLM
 
 from olmo_core.aliases import PathOrStr
+from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.io import file_exists, join_path
@@ -38,6 +44,7 @@ def convert_checkpoint_to_hf(
     transformer_config_dict: Dict[str, Any],
     tokenizer_config_dict: Dict[str, Any],
     *,
+    dtype: Optional[DType] = None,
     max_sequence_length: int = -1,
     validate: bool = True,
     debug: bool = False,
@@ -66,8 +73,25 @@ def convert_checkpoint_to_hf(
     if "float8_config" in transformer_config_dict:
         del transformer_config_dict["float8_config"]
 
-    model = TransformerConfig.from_dict(transformer_config_dict).build()
+    # Check if validation is being performed and flash attn is requested but cannot run.
     device = device or get_default_device()
+    if (
+        validate
+        and (flash_attn is None or device != torch.device("cuda"))
+        and (attention := transformer_config_dict.get("block", {}).get("attention")) is not None
+    ):
+        if attention["name"] == "fused":
+            log.warning(
+                "Running conversion without cuda or flash attention on a model requiring flash attention, validation would fail so we are disabling it."
+            )
+            validate = False
+        elif attention["use_flash"]:
+            log.info(
+                "Flash attention or cuda is unavailable, turning off flash attention to stop validation from failing."
+            )
+            attention["use_flash"] = False
+
+    model = TransformerConfig.from_dict(transformer_config_dict).build()
     model.to_empty(device=device)
 
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
@@ -91,6 +115,7 @@ def convert_checkpoint_to_hf(
             output_path,
             model_state_dict,
             model,
+            dtype=dtype,
             vocab_size=vocab_size,
             work_dir=work_dir,
             save_overwrite=True,
@@ -110,7 +135,7 @@ def convert_checkpoint_to_hf(
     if validate:
         log.info("Validating converted model")
         validate_conversion(
-            output_path, model, tokenizer_config.vocab_size, debug=debug, device=device
+            output_path, model, tokenizer_config.vocab_size, debug=debug, dtype=dtype, device=device
         )
         log.info("Validation completed successful")
 
@@ -133,13 +158,13 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
             input = args[0].detach()
             for i, size in enumerate(input.shape):
                 input = input.narrow(i, 0, min(size, MAX_DIM_SIZE))
-            debug_state[state_name] = (len(debug_state), input.float())
+            debug_state[state_name] = (len(debug_state), input)
         if isinstance(output, torch.Tensor):
             state_name = f"{name}|output"
             output = output.detach()
             for i, size in enumerate(output.shape):
                 output = output.narrow(i, 0, min(size, MAX_DIM_SIZE))
-            debug_state[state_name] = (len(debug_state), output.float())
+            debug_state[state_name] = (len(debug_state), output)
 
     for name, module in model.named_modules():
         module.register_forward_hook(partial(module_hook, olmo_core_debug_state, name))
@@ -154,6 +179,7 @@ def validate_conversion(
     model: Transformer,
     vocab_size: int,
     debug: bool = False,
+    dtype: DType | None = None,
     device: torch.device | None = None,
 ):
     if torch.cuda.is_available():
@@ -165,7 +191,7 @@ def validate_conversion(
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
 
     log.info("Loading converted checkpoint for validation...")
-    hf_model = AutoModelForCausalLM.from_pretrained(hf_path).to(device).eval()
+    hf_model = AutoModelForCausalLM.from_pretrained(hf_path, torch_dtype="auto").to(device).eval()
 
     olmo_core_state, hf_state = {}, {}
     state_mapping = None
@@ -192,6 +218,8 @@ def validate_conversion(
 
     del hf_model
 
+    if dtype:
+        model = model.to(dtype.as_pt())
     model.eval()
     with torch.no_grad():
         logits = model(input_ids=input_ids)
@@ -228,12 +256,25 @@ def validate_conversion(
                 log.info(
                     f"{olmo_core_state_name}, {hf_state_name} shape mismatch: {olmo_core_tensor.shape} {hf_tensor.shape}"
                 )
-            else:
+            if olmo_core_tensor.dtype != hf_tensor.dtype:
                 log.info(
-                    f"{olmo_core_state_name}, {hf_state_name} norm diff: {torch.norm(olmo_core_tensor - hf_tensor)}"
+                    f"{olmo_core_state_name}, {hf_state_name} dtype mismatch: {olmo_core_tensor.dtype} {hf_tensor.dtype}"
+                )
+            if len(olmo_core_tensor.shape) == len(hf_tensor.shape):
+                common_shape = tuple(
+                    min(olmo_core_dim, hf_dim)
+                    for olmo_core_dim, hf_dim in zip(olmo_core_tensor.shape, hf_tensor.shape)
+                )
+                for i, dim in enumerate(common_shape):
+                    olmo_core_tensor = olmo_core_tensor.narrow(i, 0, dim)
+                    hf_tensor = hf_tensor.narrow(i, 0, dim)
+                log.info(
+                    f"{olmo_core_state_name}, {hf_state_name} element diff abs mean: {(olmo_core_tensor - hf_tensor).float().abs().mean()}"
                 )
 
-    torch.testing.assert_close(hf_logits[..., :vocab_size], logits[..., :vocab_size])
+    torch.testing.assert_close(
+        hf_logits[..., :vocab_size].float(), logits[..., :vocab_size].float(), rtol=1e-4, atol=1e-4
+    )
 
 
 def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
@@ -292,6 +333,12 @@ def parse_args():
         type=torch.device,
         help="The device on which conversion and validation occurs. Defaults to CUDA or MPS if available and initialized.",
     )
+    parser.add_argument(
+        "--dtype",
+        help="The torch dtype that model weights should be saved as. Defaults to bfloat16 due to https://github.com/allenai/olmo-cookbook/issues/60.",
+        type=DType,
+        default=DType.bfloat16,
+    )
     return parser.parse_args()
 
 
@@ -313,6 +360,7 @@ def main():
         output_path=args.huggingface_output_dir,
         transformer_config_dict=transformer_config_dict,
         tokenizer_config_dict=tokenizer_config_dict,
+        dtype=args.dtype,
         max_sequence_length=args.max_sequence_length,
         validate=args.validate,
         debug=args.debug,

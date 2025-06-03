@@ -18,11 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `BeakerCallback` will save the config and Python requirements to the results dataset.
 - Added `from_file` method to `Config` class.
 - Added in-loop evals for OLMES basic skills eval
+- Added in-loop fast MCQA for in-loop evals and translated MBPP tasks
+- Added in-loop few-shot HumanEval BPB
+- Added `fast` and `full` in-loop recommendations, where `fast` is a roughly 2-3x faster subset of `full`
+- Added support for converting to HF models in lower precisions.
 
 ### Changed
 
 - Output of `LMHead` when `labels` is passed as input is now a 4-tuple instead of a 3-tuple, with `(logits, loss, ce_loss, z_loss)`, where `loss` is the combined loss (`ce_loss + z_loss`).
 - The `ConfigSaver` callback will automatically set the config to save for other callbacks (`WandBCallback`, `CometCallback`, and `BeakerCallback` as of now).
+- Fixed bug causing slow evals in BPB/RC in-loop evals due to fast MC
+- Changed default precision of converted HF models in `src/examples/huggingface/convert_checkpoint_to_hf.py` to bfloat16.
+- Changed default cluster to `saturn` in `src/examples/llama/train_launch.py`.
 
 ### Fixed
 
@@ -35,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed training on single GPU when using a `SkipStepOptimizer`.
 - Fixed the initialization of the `CosWithWarmupAndLinearDecay` learning rate scheduler
 - Ensured eval tasks are sorted to maintain the same order across ranks (the cookbook was configuring these in an unsorted way).
+- W&B callback uses working directory instead of save folder for local cache.
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 
