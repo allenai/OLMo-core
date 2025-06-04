@@ -544,7 +544,8 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         *,
         d_model: int,
         n_layers: int,
-        layer_norm: LayerNormConfig,
+        feed_forward_norm: LayerNormConfig,
+        attention_norm: LayerNormConfig,
         feed_forward: FeedForwardConfig,
         init_device: str = "cpu",
         **kwargs,
@@ -552,12 +553,14 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         super().__init__(
             d_model=d_model,
             n_layers=n_layers,
-            layer_norm=layer_norm,
+            # layer_norm=layer_norm, # note: split into attention and feed_forward norms
+            feed_forward_norm=feed_forward_norm,
+            attention_norm=attention_norm,
             init_device=init_device,
             **kwargs,
         )
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
-        self.feed_forward_moe_norm = layer_norm.build(d_model, init_device=init_device)
+        self.feed_forward_moe_norm = feed_forward_norm.build(d_model, init_device=init_device)
         self._use_combined_forward: Optional[bool] = None
 
     @property

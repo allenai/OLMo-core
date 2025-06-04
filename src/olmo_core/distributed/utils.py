@@ -39,7 +39,7 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
 
     # Force processes to synchronize at init process group.
     set_env_var("TORCH_DIST_INIT_BARRIER", "1")
-
+    print(f"get_node_hostname(): {get_node_hostname()}", )
     # Set host-specific env var defaults.
     if _running_in_beaker():
         multi_node = int(os.environ.get(OLMO_NUM_NODES_ENV_VAR, "1")) > 1

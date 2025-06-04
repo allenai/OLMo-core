@@ -35,33 +35,35 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
+from dataclasses import replace
+import sys
 
 log = logging.getLogger(__name__)
 
 
 SEQUENCE_LENGTH = 4096
 GLOBAL_BATCH_SIZE = (
-    1024 * SEQUENCE_LENGTH
+    1024 * 4096
 )  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
 MAX_DURATION = int(500e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
-NUM_EXPERTS = 64
-TOP_K = 8
-NUM_LAYERS=30
-MOE_HIDDEN_SIZE = 768
-USE_SHARED_MLP = False  # Use shared MLP in MoE blocks
-SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP in MoE blocks
+NUM_EXPERTS = 60
+TOP_K = 4
+NUM_LAYERS=16
+MOE_HIDDEN_SIZE = 1024
+# USE_SHARED_MLP = False  # Use shared MLP in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 4096  # Hidden size for shared MLP in MoE blocks
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    d_model = 1536
+    d_model = 2048
 
     config = TransformerConfig.llama_like(
         d_model=d_model,
         vocab_size=common.tokenizer.padded_vocab_size(),
         n_layers=NUM_LAYERS,
-        n_heads=12,
+        n_heads=16,
         name=TransformerType.moe,
-        block_name=TransformerBlockType.moe_reordered_norm,
+        block_name=TransformerBlockType.moe_hybrid_reordered_norm,
         qk_norm=True,
         rope_theta=500_000,
         layer_norm_eps=1e-6,
@@ -71,32 +73,37 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             hidden_size=MOE_HIDDEN_SIZE,
             capacity_factor=1.25,
             router=MoERouterConfig(top_k=TOP_K, gating_function=MoERouterGatingFunction.sigmoid),
-            shared_mlp=FeedForwardConfig(hidden_size=SHARED_MLP_HIDDEN_SIZE, bias=False) if USE_SHARED_MLP else None,
+            shared_mlp=None,
             lb_loss_weight=0.05,
             z_loss_weight=None,
             lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
             scale_loss_by_num_layers=False,
         ),
-        #  feed_forward=FeedForwardConfig(hidden_size=hidden_size, bias=False),
+        feed_forward=FeedForwardConfig(hidden_size=SHARED_MLP_HIDDEN_SIZE, bias=False),
         init_std=0.01,
     )
 
     # First block will be a regular transformer block (no MoE component).
-    #  config.block_overrides = {
-    #      0: dataclasses.replace(
-    #          config.block, name=TransformerBlockType.reordered_norm, feed_forward_moe=None
-    #      ),
-    #  }
+    config.block_overrides = {
+        0: replace(
+            config.block, 
+            name=TransformerBlockType.reordered_norm, 
+            feed_forward_moe=None,
+            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
+            
+            # feed_forward=FeedForwardConfig(hidden_size=2560, bias=False),
+        ),
+    }
 
     return config
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     return TransformerTrainModuleConfig(
-        rank_microbatch_size=2 * SEQUENCE_LENGTH,
+        rank_microbatch_size=4 * SEQUENCE_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=SkipStepAdamWConfig(
-            lr=5e-5
+            lr=1.6e-4
             * math.sqrt(
                 GLOBAL_BATCH_SIZE / (4096 * 512)
             ),  # 1.6e-4 was used for 2M batch size, adjusting it accordingly
@@ -113,7 +120,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.bfloat16,
             #  num_replicas=1,  # to enable full-way expert parallel
-            shard_degree=64,
+            shard_degree=32,
             prefetch_factor=1,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),
@@ -142,11 +149,15 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     # assert common.launch is not None
     # assert len(common.launch.clusters) == 1
+    script, cmd, run_name, cluster, *overrides = sys.argv
     # cluster = common.launch.clusters[0]
-    cluster = 'ai2/jupiter-cirrascale-2'
+    # cluster = 'ai2/jupiter-cirrascale-2'
+    # cluster = 'ai2/augusta-google-1'
+    
     return (
         TrainerConfig(
-            save_folder=f'/workspace/tmp/{common.run_name}',
+            # save_folder=f'/workspace/tmp/{common.run_name}',
+            save_folder=common.save_folder,
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
@@ -216,5 +227,4 @@ if __name__ == "__main__":
         include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
         finalize_config=finalize_config,
-        
     )
