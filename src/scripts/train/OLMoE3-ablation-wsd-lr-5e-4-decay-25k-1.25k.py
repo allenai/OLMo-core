@@ -52,6 +52,17 @@ MOE_HIDDEN_SIZE = 1024
 USE_SHARED_MLP = False  # Use shared MLP in MoE blocks
 SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP in MoE blocks
 
+
+###### decay 
+START_STEP = 25000
+DECAY_STEPS= 1250
+LOAD_CKPT = f'/weka/oe-training-default/tianhua/ws-megatron/tmp/OLMoE3-ablation-wsd-lr-5e-4/step{START_STEP}'
+TOTAL_TOKENS = (START_STEP+ DECAY_STEPS) * GLOBAL_BATCH_SIZE  # 4096 is the sequence length, 1024 is the batch size at step 0
+MAX_DURATION = int(TOTAL_TOKENS)
+############
+
+
+
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = 2048
 
@@ -93,7 +104,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     return TransformerTrainModuleConfig(
-        rank_microbatch_size=4 * SEQUENCE_LENGTH,
+        rank_microbatch_size=2 * SEQUENCE_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=SkipStepAdamWConfig(
             lr=5e-4
@@ -113,7 +124,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.bfloat16,
             #  num_replicas=1,  # to enable full-way expert parallel
-            shard_degree=64,
+            shard_degree=8,
             prefetch_factor=1,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),
@@ -151,6 +162,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
+            load_path=LOAD_CKPT,  # Load from the before decay
         )
         .with_callback(
             "checkpointer",

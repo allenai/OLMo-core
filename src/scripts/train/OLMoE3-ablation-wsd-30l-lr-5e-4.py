@@ -41,25 +41,25 @@ log = logging.getLogger(__name__)
 
 SEQUENCE_LENGTH = 4096
 GLOBAL_BATCH_SIZE = (
-    1024 * 4096
+    1024 * SEQUENCE_LENGTH
 )  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
 MAX_DURATION = int(500e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
 NUM_EXPERTS = 64
 TOP_K = 8
-NUM_LAYERS=16
-MOE_HIDDEN_SIZE = 1024
+NUM_LAYERS=30
+MOE_HIDDEN_SIZE = 768
 USE_SHARED_MLP = False  # Use shared MLP in MoE blocks
 SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP in MoE blocks
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    d_model = 2048
+    d_model = 1536
 
     config = TransformerConfig.llama_like(
         d_model=d_model,
         vocab_size=common.tokenizer.padded_vocab_size(),
         n_layers=NUM_LAYERS,
-        n_heads=16,
+        n_heads=12,
         name=TransformerType.moe,
         block_name=TransformerBlockType.moe_reordered_norm,
         qk_norm=True,
@@ -93,13 +93,13 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     return TransformerTrainModuleConfig(
-        rank_microbatch_size=4 * SEQUENCE_LENGTH,
+        rank_microbatch_size=2 * SEQUENCE_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=SkipStepAdamWConfig(
             lr=5e-4
             * math.sqrt(
                 GLOBAL_BATCH_SIZE / (4096 * 512)
-            ),  # 5e-4 was used for 2M batch size, adjusting it accordingly
+            ),  # 1.6e-4 was used for 2M batch size, adjusting it accordingly
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
@@ -113,7 +113,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.bfloat16,
             #  num_replicas=1,  # to enable full-way expert parallel
-            shard_degree=64,
+            shard_degree=32,
             prefetch_factor=1,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),

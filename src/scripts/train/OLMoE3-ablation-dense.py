@@ -116,7 +116,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.bfloat16,
             #  num_replicas=1,  # to enable full-way expert parallel
-            shard_degree=8,
+            shard_degree=64,
             prefetch_factor=1,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),
