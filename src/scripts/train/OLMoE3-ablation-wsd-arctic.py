@@ -156,7 +156,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     
     return (
         TrainerConfig(
-            save_folder=f'/workspace/tmp/{common.run_name}',
+            # save_folder=f'/workspace/tmp/{common.run_name}',
+            save_folder=common.save_folder,
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
