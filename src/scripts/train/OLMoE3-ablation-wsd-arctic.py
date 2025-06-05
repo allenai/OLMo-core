@@ -100,7 +100,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     return TransformerTrainModuleConfig(
-        rank_microbatch_size=2 * SEQUENCE_LENGTH,
+        rank_microbatch_size=4 * SEQUENCE_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=SkipStepAdamWConfig(
             lr=1.6e-4
@@ -120,7 +120,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.bfloat16,
             #  num_replicas=1,  # to enable full-way expert parallel
-            shard_degree=8,
+            shard_degree=32,
             prefetch_factor=1,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),
@@ -186,8 +186,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=common.run_name,
                 entity="ai2-llm",
-                project="tianhua-moe",
-                # project="olmo3",
+                # project="tianhua-moe",
+                project="olmo3",
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
