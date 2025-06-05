@@ -36,6 +36,8 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 from dataclasses import replace
+import sys
+
 log = logging.getLogger(__name__)
 
 
@@ -147,7 +149,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     # assert common.launch is not None
     # assert len(common.launch.clusters) == 1
-    cluster = common.launch.clusters[0]
+    script, cmd, run_name, cluster, *overrides = sys.argv
+    # cluster = common.launch.clusters[0]
     # cluster = 'ai2/jupiter-cirrascale-2'
     # cluster = 'ai2/augusta-google-1'
     
