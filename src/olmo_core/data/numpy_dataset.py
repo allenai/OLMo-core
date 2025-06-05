@@ -2704,6 +2704,10 @@ class NumpyDatasetConfig(Config):
     """
     A list of paths that are exempt from interleaving in :class:`NumpyInterleavedFSLDataset`.
     """
+    exclude_interleaved: Optional[bool] = False
+    """
+    Take interleavable paths out of the non-interleaving data pool in :class:`NumpyPackedInterleavedFSLDataset`.
+    """
     interleavable_paths: Optional[List[str]] = None
     """
     A list of paths that will be used for interleaving in :class:`NumpyPackedInterleavedFSLDataset`.
@@ -3178,6 +3182,7 @@ class NumpyDatasetConfig(Config):
                 label_mask_paths=label_mask_paths,
                 bos_token_id=self.tokenizer.bos_token_id,
                 interleavable_paths=interleavable_paths,
+                exclude_interleaved=exclude_interleaved,
             )
         elif self.name == NumpyDatasetType.vsl:
             if self.max_sequence_length is None:

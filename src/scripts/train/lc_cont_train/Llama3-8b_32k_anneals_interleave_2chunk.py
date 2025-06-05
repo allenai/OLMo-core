@@ -22,6 +22,7 @@ from olmo_core.data import (
     TokenizerConfig,
     TokenizerName,
 )
+from olmo_core.data.types import NumpyDatasetType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
@@ -68,7 +69,7 @@ from olmo_core.utils import get_default_device, prepare_cli_environment, seed_al
 # TODO: pull this from the checkpoint when https://github.com/allenai/OLMo-core/pull/143 merges.
 
 
-CONTEXT_LENGTH = 4 * 16384
+CONTEXT_LENGTH = 2 * 16384
 
 
 class AnnealingDataMix(DataMixBase):
@@ -77,7 +78,7 @@ class AnnealingDataMix(DataMixBase):
     name (without the '.txt' extension) below.
     """
 
-    pl_exact_repro_mix = "prolong_phase1_exact_repro"
+    data_mix = "prolong_phase1_exact_repro"
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
@@ -133,7 +134,23 @@ class LcContTrain(Config):
         root_dir = get_root_dir(cluster)
 
         tokenizer_config = TokenizerConfig.llama3()
+        with open(f"src/scripts/train/lc_cont_train/prolong_phase1_exact_repro_lc_only.txt") as f:
+            base_dir = root_dir.rstrip("/") + "/"
 
+            assert tokenizer_config.identifier is not None
+            all_paths, _ = AnnealingDataMix.data_mix.build(base_dir, tokenizer_config.identifier)
+            interleavable_paths = []
+
+            # TODO: hacky rewrite, pretty sure this could be done way better (but it won't take long to run anyway)
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+
+                lc_path = f"{base_dir}{line}"
+
+                if lc_path in all_paths:
+                    interleavable_paths.append(lc_path)
 
         return LcContTrain(
             run_name=run_name,
@@ -158,7 +175,7 @@ class LcContTrain(Config):
                 ),
                 max_sequence_length=CONTEXT_LENGTH,
                 compile_model=True,
-                compile_loss=True,
+                # compile_loss=True,
                 z_loss_multiplier=1e-5,
                 dp_config=TransformerDataParallelConfig(
                     name=DataParallelType.fsdp,
@@ -168,7 +185,7 @@ class LcContTrain(Config):
                 ),
                 tp_config=TransformerTensorParallelConfig(
                     degree=2,
-                    loss_parallel=True,
+                    #loss_parallel=True,
                 ),
                 ac_config=TransformerActivationCheckpointingConfig(),
                 float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
@@ -181,20 +198,26 @@ class LcContTrain(Config):
                 rope_theta = 8 * 10 **6,
             ),
             dataset=NumpyDatasetConfig.from_data_mix(
-                AnnealingDataMix.pl_exact_repro_mix,
+                AnnealingDataMix.data_mix,
+                name=NumpyDatasetType.packed_interleaved_fsl,
                 tokenizer=tokenizer_config,
                 mix_base_dir=root_dir,
                 generate_doc_lengths=True,
                 sequence_length=CONTEXT_LENGTH,
                 work_dir=get_work_dir(root_dir),
+                docs_per_instance=8,
+                exclude_interleaved=True, # don't reuse datapoints between interleaved and non-interleaved paths
+                chunks_per_doc=2,
+                seed=1234,
+                interleavable_paths=interleavable_paths, 
             ),
             data_loader=NumpyDataLoaderConfig(
-                global_batch_size= 64 * CONTEXT_LENGTH,  # NOTE: this is specified in TOKENS, not instances.
+                global_batch_size= 64 * 2 * CONTEXT_LENGTH,  # NOTE: this is specified in TOKENS, not instances. # NOTE: added *2 factor to keep batch size at 4M tokens with 32k context 
                 seed=34521,  # NOTE: can update this to change data order.
                 num_workers=4,
             ),
             trainer=TrainerConfig(
-                save_folder=f"gs://ai2-llm/checkpoints/dustins/{run_name}",
+                save_folder=f"gs://ai2-llm/checkpoints/amandab/{run_name}",
                 # save_folder=f"/weka/oe-training-default/ai2-llm/checkpoints/dustins/{run_name}",
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
@@ -203,6 +226,7 @@ class LcContTrain(Config):
                 load_path=load_path,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
+                hard_stop=Duration.tokens(int(10e8)), # stop at 10B tokens for this run 
                 max_duration=Duration.tokens(int(20e9)),
             )
             .with_callback(

@@ -30,6 +30,8 @@ class TokenizerName(StrEnum):
     """
 
 
+    llama3 = "llama3"
+
 @dataclass
 class TokenizerConfig(Config):
     """
@@ -80,6 +82,19 @@ class TokenizerConfig(Config):
             identifier=TokenizerName.dolma2,
         )
 
+    @classmethod
+    def llama3(cls) -> "TokenizerConfig":
+        """
+        Get a :data:`~TokenizerName.llama3` tokenizer config.
+        """
+        return cls(
+            vocab_size=128256,
+            eos_token_id=128009,
+            bos_token_id=128000,
+            pad_token_id=0,
+            identifier=TokenizerName.llama3,
+        )
+    
     @classmethod
     def gpt_neox_olmo_dolma_v1_5(cls) -> "TokenizerConfig":
         """
