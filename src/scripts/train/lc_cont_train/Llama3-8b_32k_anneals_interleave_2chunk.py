@@ -206,7 +206,7 @@ class LcContTrain(Config):
                 sequence_length=CONTEXT_LENGTH,
                 work_dir=get_work_dir(root_dir),
                 docs_per_instance=8,
-                exclude_interleaved=True, # don't reuse datapoints between interleaved and non-interleaved paths
+                exclude_interleaved=False, # reuse datapoints between interleaved and non-interleaved paths
                 chunks_per_doc=2,
                 seed=1234,
                 interleavable_paths=interleavable_paths, 
