@@ -81,11 +81,14 @@ class BaselineModelLadder(ModelLadder):
         return config
 
     def get_rank_microbatch_size(self, *, size: ModelSize, gpu_type: str) -> int:
-        if gpu_type.lower() in ("mps", "cpu"):
+        gpu_type_lower = gpu_type.lower()
+        if gpu_type_lower in ("mps", "cpu"):
             return 4096
-        else:
-            assert "h100" in gpu_type.lower()
+        elif gpu_type_lower in ("a100", "h100"):  # 80GB
             return self.MBZ_SIZES[size]
+        elif gpu_type_lower in ("b100",):  # 200GB
+            return self.MBZ_SIZES[size] * 2  # todo: may need to tune this, rough heuristic
+        raise ValueError(f"Unsupported GPU type: {gpu_type}")
 
 
 def build_ladder(root_dir: str) -> BaselineModelLadder:
