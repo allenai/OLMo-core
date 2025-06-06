@@ -66,6 +66,10 @@ def convert_checkpoint_to_hf(
     if "float8_config" in transformer_config_dict:
         del transformer_config_dict["float8_config"]
 
+    # HACK for llama 3 error 
+    if transformer_config_dict['block']['_CLASS_'] == "olmo_core.nn.transformer.block.TransformerBlockConfig":
+        transformer_config_dict['block']['_CLASS_'] = "olmo_core.nn.transformer.config.TransformerBlockConfig"
+    
     model = TransformerConfig.from_dict(transformer_config_dict).build()
     device = device or get_default_device()
     model.to_empty(device=device)
@@ -276,7 +280,7 @@ def main():
     assert tokenizer_config_dict is not None
 
     convert_checkpoint_to_hf(
-        original_checkpoint_path=args.checkpoint_input_path,
+        original_checkpoint_path=args.checkpoint_input_path + "/model_and_optim", # amanda: unclear why this must be done; but if I pass dir+/model_and_optim as path, it can't find the config, so this is a workaround
         output_path=args.huggingface_output_dir,
         transformer_config_dict=transformer_config_dict,
         tokenizer_config_dict=tokenizer_config_dict,
