@@ -86,7 +86,7 @@ class BaselineModelLadder(ModelLadder):
             return 4096
         elif gpu_type_lower in ("a100", "h100"):  # 80GB
             return self.MBZ_SIZES[size]
-        elif gpu_type_lower in ("b100", "NVIDIA B200"):  # 200GB
+        elif gpu_type_lower in ("b100", "nvidia b200"):  # 200GB
             return self.MBZ_SIZES[size] * 2  # todo: may need to tune this, rough heuristic
         raise ValueError(f"Unsupported GPU type: {gpu_type}")
 
