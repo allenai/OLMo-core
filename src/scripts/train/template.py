@@ -169,7 +169,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             "wandb",
             WandBCallback(
                 name=run_name,
-                entity="ai2",
+                entity="ai2-llm",
                 project=WANDB_PROJECT,
                 cancel_check_interval=10,
                 enabled=WANDB_PROJECT is not None,
