@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed the initialization of the `CosWithWarmupAndLinearDecay` learning rate scheduler
 - Ensured eval tasks are sorted to maintain the same order across ranks (the cookbook was configuring these in an unsorted way).
 - W&B callback uses working directory instead of save folder for local cache.
+- Reset speed monitor callback after changing batch size.
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 
