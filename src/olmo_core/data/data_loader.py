@@ -1,6 +1,5 @@
 """
 Distributed, deterministic, stateful data loaders used by the :class:`~olmo_core.train.Trainer`.
-
 """
 
 import logging
@@ -276,7 +275,7 @@ class TextDataLoaderBase(DataLoaderBase):
             dp_rank=dp_rank,
             fs_local_rank=fs_local_rank,
         )
-        self.collator = collator
+        self.collator = collator  # Collator us unused at this level of abstraction?
         """
         The data collator.
         """
@@ -738,8 +737,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
 
         if state_dict["max_target_sequence_length"] != self.dataset.max_target_sequence_length:
             raise RuntimeError(
-                "Restoring an FSL dataset state with a different 'max_target_sequence_length' "
-                "is not supported"
+                "Restoring an FSL dataset state with a different 'max_target_sequence_length' is not supported"
             )
 
 
