@@ -27,7 +27,7 @@ from olmo_core.io import resource_path
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
-from olmo_core.optim import AdamWConfig, LinearWithWarmup, OptimGroupOverride
+from olmo_core.optim import AdamWConfig, CosWithWarmup, LinearWithWarmup, OptimGroupOverride
 from olmo_core.train import (
     Duration,
     TrainerConfig,
@@ -73,13 +73,13 @@ class AnnealingDataMix(DataMixBase):
     """
 
     # data_mix = "lc50_dolmino50_v1"
-    data_mix = "lc_full_dist_50_dolmino50_v1"
+    data_mix = "prolong_phase1_exact_repro"
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
             base_dir = base_dir + "/"
 
-        assert tokenizer == TokenizerName.dolma2
+        assert tokenizer == TokenizerName.llama3
         paths = []
         labels = []
 
@@ -128,9 +128,9 @@ class LcContTrain(Config):
     ) -> "LcContTrain":
         root_dir = get_root_dir(cluster)
 
-        tokenizer_config = TokenizerConfig.dolma2()
+        tokenizer_config = TokenizerConfig.llama3()
 
-        with open("src/scripts/train/lc_cont_train/lc_qwenlike.txt") as f:
+        with open("src/scripts/train/lc_cont_train/prolong_phase1_exact_repro_lc_only.txt") as f:
             base_dir = root_dir.rstrip("/") + "/"
 
             assert tokenizer_config.identifier is not None
@@ -161,7 +161,7 @@ class LcContTrain(Config):
             train_module=TransformerTrainModuleConfig(
                 rank_microbatch_size=1 * CONTEXT_LENGTH,
                 optim=AdamWConfig(
-                    lr=0.000061499,
+                    lr=1 * 1e-5,
                     weight_decay=0.1,
                     betas=(0.9, 0.95),
                     group_overrides=[
@@ -199,7 +199,7 @@ class LcContTrain(Config):
                 # ),
                 float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
                 max_grad_norm=1.0,
-                scheduler=LinearWithWarmup(warmup_steps=0, alpha_f=0.0),
+                scheduler=CosWithWarmup(warmup_steps=475, alpha_f=0.0),
             ),
             model=TransformerConfig.olmo2_7B(
                 vocab_size=tokenizer_config.padded_vocab_size(),
@@ -411,7 +411,7 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         cmd="train",
         run_name=run_name,
         # load_path="gs://ai2-llm/checkpoints/dustins/OLMo-2-1124-7B_pre_anneal_oc/",
-        load_path="gs://ai2-llm/checkpoints/shanea/OLMo-medium/peteish7/step928646/model_and_optim/",
+        load_path="gs://ai2-llm/checkpoints/dustins/Meta-Llama-3-8B-Instruct",
         cluster=cluster,
         overrides=overrides,
     )
