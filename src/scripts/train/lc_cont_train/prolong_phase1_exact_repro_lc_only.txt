@@ -1,4 +1,4 @@
-preprocessed/prolong_64K_llama_tokenizer/book-65536_npy/proc00-64.npy
+preprocessed/prolong_64K_llama_tokenizer/thestackv1_concat_by_repo-65536_npy/proc03-64.npy
 preprocessed/prolong_64K_llama_tokenizer/book-65536_npy/proc01-64.npy
 preprocessed/prolong_64K_llama_tokenizer/book-65536_npy/proc02-64.npy
 preprocessed/prolong_64K_llama_tokenizer/book-65536_npy/proc03-64.npy
@@ -129,7 +129,6 @@ preprocessed/prolong_64K_llama_tokenizer/textbooks_npy/proc63-64.npy
 preprocessed/prolong_64K_llama_tokenizer/thestackv1_concat_by_repo-65536_npy/proc00-64.npy
 preprocessed/prolong_64K_llama_tokenizer/thestackv1_concat_by_repo-65536_npy/proc01-64.npy
 preprocessed/prolong_64K_llama_tokenizer/thestackv1_concat_by_repo-65536_npy/proc02-64.npy
-preprocessed/prolong_64K_llama_tokenizer/thestackv1_concat_by_repo-65536_npy/proc03-64.npy
 preprocessed/prolong_64K_llama_tokenizer/thestackv1_concat_by_repo-65536_npy/proc04-64.npy
 preprocessed/prolong_64K_llama_tokenizer/thestackv1_concat_by_repo-65536_npy/proc05-64.npy
 preprocessed/prolong_64K_llama_tokenizer/thestackv1_concat_by_repo-65536_npy/proc06-64.npy
