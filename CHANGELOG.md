@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added in-loop few-shot HumanEval BPB
 - Added `fast` and `full` in-loop recommendations, where `fast` is a roughly 2-3x faster subset of `full`
 - Added support for converting to HF models in lower precisions.
+- Added support for headwise QK norm.
+- Add BOS token in in-loop evals, when specified by the tokenizer (`ai2-olmo-eval==0.8.4`)
 
 ### Changed
 
