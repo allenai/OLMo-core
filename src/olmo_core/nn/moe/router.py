@@ -69,6 +69,8 @@ class MoERouterType(StrEnum):
     ➡️ :class:`MoELinearRouter`
     """
     
+    orthogonal = "orthogonal"
+    
     ema_default_vector = "ema_default_vector" 
     
 
@@ -145,6 +147,8 @@ class MoERouterConfig(Config):
         try:
             if self.name == MoERouterType.default:
                 return MoELinearRouter(**kwargs)
+            elif self.name == MoERouterType.orthogonal:
+                return 
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
@@ -441,6 +445,9 @@ class MoERouter(nn.Module):
             scores = logits.softmax(dim=-1)
         elif self.gating_function == MoERouterGatingFunction.sigmoid:
             scores = F.sigmoid(logits)
+            # to avoid NaNs in the load balancing loss
+            # if all logits of a token are very negative for all experts, sigmoid gives 0 for all experts, causing NaNs when we div by the sum.
+            scores = scores + 1e-7  
         else:
             raise NotImplementedError(self.gating_function)
 
