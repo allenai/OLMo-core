@@ -36,6 +36,10 @@ INTRA_DOCUMENT_MASKING = True
 # 64K length, 32 GPUs, no FP8, intra-doc masking -> 3,250 TPS
 # 64K length, 32 GPUs, FP8, intra-doc masking    -> 3,500 TPS
 
+NUM_GPUS = 32
+assert NUM_GPUS % 8 == 0
+NUM_NODES = NUM_GPUS // 8
+
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     return TransformerConfig.olmo2_7B(
@@ -125,4 +129,5 @@ if __name__ == "__main__":
         trainer_config_builder=build_trainer_config,
         include_default_evals=False,
         intra_document_masking=INTRA_DOCUMENT_MASKING,
+        num_nodes=NUM_NODES,
     )
