@@ -37,7 +37,7 @@ def get_beaker_username() -> Optional[str]:
 
 def get_root_dir(cluster: str) -> str:
     root_dir: str = "weka://oe-training-default/ai2-llm"
-    if "cirrascale" in cluster or cluster == "ai2/test-h100":
+    if "cirrascale" in cluster or cluster == "ai2/vboost-test":
         root_dir = "/weka/oe-training-default/ai2-llm"
     elif "google" in cluster:
         root_dir = "gs://ai2-llm"
