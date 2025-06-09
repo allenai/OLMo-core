@@ -77,7 +77,10 @@ class AnnealingDataMix(DataMixBase):
     """
 
     # data_mix = "lc_full_dist_50_dolmino50_v1"
-    data_mix = "synth_baseline_10b_sc"
+    synth_baseline_10b_sc = "synth_baseline_10b_sc"
+    synth_baseline_10b_lc = "synth_baseline_10b_lc"
+    synth_target_10b_synth = "synth_target_10b_synth"
+    
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
@@ -97,6 +100,15 @@ class AnnealingDataMix(DataMixBase):
 
         return paths, labels
 
+    @classmethod
+    def get_data_mix(cls, data_mix: str) -> DataMixBase:
+        if data_mix == "synth_baseline_10b_sc":
+            return cls.synth_baseline_10b_sc
+        elif data_mix == "synth_baseline_10b_lc":
+            return cls.synth_baseline_10b_lc
+        elif data_mix == "synth_target_10b_synth":
+            return cls.synth_target_10b_synth
+        raise ValueError(f"Invalid data mix: {data_mix}")
 
 @dataclass
 class LcContTrain(Config):
@@ -128,6 +140,7 @@ class LcContTrain(Config):
         run_name: str,
         load_path: str,
         cluster: str,
+        data_mix: str,
         overrides: List[str],
     ) -> "LcContTrain":
         root_dir = get_root_dir(cluster)
@@ -141,7 +154,7 @@ class LcContTrain(Config):
             launch=build_launch_config(
                 name=run_name,
                 root_dir=root_dir,
-                cmd=[script, cmd, run_name, cluster, *overrides],
+                cmd=[script, cmd, run_name, cluster, data_mix, *overrides],
                 cluster=cluster,
                 nccl_debug=False,
             ),
@@ -196,7 +209,7 @@ class LcContTrain(Config):
                 rope_theta = 8 * 10 ** 6,
             ),
             dataset=NumpyDatasetConfig.from_data_mix(
-                AnnealingDataMix.data_mix,
+                AnnealingDataMix.get_data_mix(data_mix),
                 tokenizer=tokenizer_config,
                 # mix_base_dir=root_dir,
                 mix_base_dir='s3://ai2-llm',
@@ -358,7 +371,7 @@ if __name__ == "__main__":
     USAGE = f"""
 LC extend a 7B model.
 
-[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]launch|train|dry_run[/] [i b]RUN_NAME PRETRAIN_CHECKPOINT CLUSTER[/] [i][OVERRIDES...][/]
+[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]launch|train|dry_run[/] [i b]RUN_NAME PRETRAIN_CHECKPOINT CLUSTER DATA_MIX[/] [i][OVERRIDES...][/]
 
 [b]Subcommands[/]
 [b magenta]launch:[/]      Launch the script on Beaker with the [b magenta]train[/] subcommand.
@@ -367,7 +380,7 @@ LC extend a 7B model.
 [b magenta]dry_run:[/]     Print the config for debugging.
 
 [b]Examples[/]
-$ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
+$ [i]python {sys.argv[0]} launch run01 data_mix --launch.num_nodes=2[/]
 """.strip()
 
     # Parse command line arguments.
@@ -375,7 +388,7 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         rich.get_console().print(USAGE, highlight=False)
         sys.exit(1)
 
-    script, cmd, run_name, cluster, *overrides = sys.argv
+    script, cmd, run_name, cluster, data_mix, *overrides = sys.argv
 
     # Prepare the environment for the given command.
     if cmd in ("launch", "dry_run"):
@@ -393,6 +406,7 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         load_path="gs://ai2-llm/checkpoints/dustins/OLMo-2-1124-7B_pre_anneal_oc/",
         # load_path="gs://ai2-llm/checkpoints/shanea/OLMo-medium/peteish7/step928646/model_and_optim/",
         cluster=cluster,
+        data_mix=data_mix,
         overrides=overrides,
     )
 
