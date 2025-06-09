@@ -167,6 +167,7 @@ class LcContTrain(Config):
                 ),
                 tp_config=TransformerTensorParallelConfig(
                     degree=4,
+                    # degree=1,
                     # enable_async=True,
                     # loss_parallel=True,
                 ),
@@ -197,7 +198,8 @@ class LcContTrain(Config):
             dataset=NumpyDatasetConfig.from_data_mix(
                 AnnealingDataMix.data_mix,
                 tokenizer=tokenizer_config,
-                mix_base_dir=root_dir,
+                # mix_base_dir=root_dir,
+                mix_base_dir='s3://ai2-llm',
                 generate_doc_lengths=INTRA_DOCUMENT_MASKING,
                 sequence_length=CONTEXT_LENGTH,
                 work_dir=get_work_dir(root_dir),
@@ -388,7 +390,8 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         script=script,
         cmd="train",
         run_name=run_name,
-        load_path="gs://ai2-llm/checkpoints/dustins/OLMo-2-1124-7B_pre_anneal_oc/",
+        load_path="s3://ai2-llm/checkpoints/dustins/long-contexts/OLMo-2-1124-7B",
+        # load_path="gs://ai2-llm/checkpoints/dustins/OLMo-2-1124-7B_pre_anneal_oc/",
         # load_path="gs://ai2-llm/checkpoints/shanea/OLMo-medium/peteish7/step928646/model_and_optim/",
         cluster=cluster,
         overrides=overrides,

@@ -1,15 +1,22 @@
+debug:
+	torchrun --nproc_per_node=1 \
+	src/scripts/train/lc_cont_train/OLMo2-7B-lc_anneal_tp4_synth.py \
+		train \
+		debug \
+		--train_module.state_dict_load_opts='{flatten_optimizer_state_dict: true, strict: false}' \
+		--trainer.max_duration.value=10_000_000_000 \
+
+
 synth_baseline_10b_sc:
 	python src/scripts/train/lc_cont_train/OLMo2-7B-lc_anneal_tp4_synth.py \
 		launch \
 		synth_baseline_10b_sc \
 		ai2/augusta-google-1 \
-		--launch.num_nodes=4 \
+		--launch.num_nodes=1 \
 		--launch.priority=high \
 		--launch.workspace=ai2/long-contexts \
 		--train_module.state_dict_load_opts='{flatten_optimizer_state_dict: true, strict: false}' \
 		--trainer.max_duration.value=10_000_000_000 \
-		--dataset.mix=synth_baseline_10b_sc \
-		--dataset.mix_base_dir='s3://ai2-llm'
 
 synth_baseline_10b_lc:
 	python src/scripts/train/lc_cont_train/OLMo2-7B-lc_anneal_tp4_synth.py \
@@ -21,8 +28,6 @@ synth_baseline_10b_lc:
 		--launch.workspace=ai2/long-contexts \
 		--train_module.state_dict_load_opts='{flatten_optimizer_state_dict: true, strict: false}' \
 		--trainer.max_duration.value=10_000_000_000 \
-		--dataset.mix=synth_baseline_10b_lc \
-		--dataset.mix_base_dir='s3://ai2-llm'
 
 
 synth_target_10b_synth:
@@ -35,5 +40,3 @@ synth_target_10b_synth:
 		--launch.workspace=ai2/long-contexts \
 		--train_module.state_dict_load_opts='{flatten_optimizer_state_dict: true, strict: false}' \
 		--trainer.max_duration.value=10_000_000_000 \
-		--dataset.mix=synth_target_10b_synth \
-		--dataset.mix_base_dir='s3://ai2-llm'
