@@ -390,7 +390,6 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         script=script,
         cmd="train",
         run_name=run_name,
-        # load_path="s3://ai2-llm/checkpoints/dustins/long-contexts/OLMo-2-1124-7B",
         load_path="gs://ai2-llm/checkpoints/dustins/OLMo-2-1124-7B_pre_anneal_oc/",
         # load_path="gs://ai2-llm/checkpoints/shanea/OLMo-medium/peteish7/step928646/model_and_optim/",
         cluster=cluster,

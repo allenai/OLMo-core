@@ -12,7 +12,7 @@ synth_baseline_10b_sc:
 		launch \
 		synth_baseline_10b_sc \
 		ai2/augusta-google-1 \
-		--launch.num_nodes=1 \
+		--launch.num_nodes=4 \
 		--launch.priority=high \
 		--launch.workspace=ai2/long-contexts \
 		--train_module.state_dict_load_opts='{flatten_optimizer_state_dict: true, strict: false}' \
