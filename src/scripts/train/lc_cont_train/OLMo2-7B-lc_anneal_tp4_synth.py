@@ -210,9 +210,9 @@ class LcContTrain(Config):
                 num_workers=4,
             ),
             trainer=TrainerConfig(
-                # save_folder=f"gs://ai2-llm/checkpoints/dustins/{run_name}",
+                save_folder=f"gs://ai2-llm/checkpoints/tongc/{run_name}",
                 # save_folder=f"/weka/oe-training-default/ai2-llm/checkpoints/dustins/{run_name}",
-                save_folder=f"/weka/oe-training-default/ai2-llm/checkpoints/tongc/{run_name}",
+                # save_folder=f"/weka/oe-training-default/ai2-llm/checkpoints/tongc/{run_name}",
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
                 ),
