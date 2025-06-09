@@ -1891,6 +1891,7 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
                 for path in paths_needed:
                     indices_path = self._get_instance_indices_path(path)
                     log.info(f"Gathering instance indices for '{path}'...")
+                    log.info(f"EOS token id: {self.eos_token_id} and dtype: {self.dtype}")
                     future = executor.submit(
                         run_worker_func,
                         segment_documents_into_instances,

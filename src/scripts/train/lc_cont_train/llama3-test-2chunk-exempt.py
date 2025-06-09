@@ -147,6 +147,10 @@ class LcContTrain(Config):
 
                 if lc_path in all_paths:
                     interleavable_paths.append(lc_path)
+        
+        print(f"tokenizer BOS: {tokenizer_config.bos_token_id}")
+        print(f"tokenizer EOS: {tokenizer_config.eos_token_id}")
+
 
         return LcContTrain(
             run_name=run_name,
