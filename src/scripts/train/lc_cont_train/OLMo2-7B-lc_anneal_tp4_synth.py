@@ -77,9 +77,9 @@ class AnnealingDataMix(DataMixBase):
     """
 
     # data_mix = "lc_full_dist_50_dolmino50_v1"
-    synth_baseline_10b_sc = "synth_baseline_10b_sc"
-    synth_baseline_10b_lc = "synth_baseline_10b_lc"
-    synth_target_10b_synth = "synth_target_10b_synth"
+    longctx_synth_10b_lc = "longctx_synth_10b_lc"
+    longctx_synth_10b_sc = "longctx_synth_10b_sc"
+    longctx_synth_10b_synth = "longctx_synth_10b_synth"
     
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
@@ -102,12 +102,12 @@ class AnnealingDataMix(DataMixBase):
 
     @classmethod
     def get_data_mix(cls, data_mix: str) -> DataMixBase:
-        if data_mix == "synth_baseline_10b_sc":
-            return cls.synth_baseline_10b_sc
-        elif data_mix == "synth_baseline_10b_lc":
-            return cls.synth_baseline_10b_lc
-        elif data_mix == "synth_target_10b_synth":
-            return cls.synth_target_10b_synth
+        if data_mix == "longctx_synth_10b_lc":
+            return cls.longctx_synth_10b_lc
+        elif data_mix == "longctx_synth_10b_sc":
+            return cls.longctx_synth_10b_sc
+        elif data_mix == "longctx_synth_10b_synth":
+            return cls.longctx_synth_10b_synth
         raise ValueError(f"Invalid data mix: {data_mix}")
 
 @dataclass
