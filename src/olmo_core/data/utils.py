@@ -311,7 +311,7 @@ def get_document_lengths(
     :param input_ids: An integer-type tensor of token IDs.
     :param eos_token_id: The ID of the EOS token (use to denote document boundaries).
     :param bos_token_id: The ID of the BOS token (use to denote document boundaries). When provided,
-    every document must start with a BOS token.
+        every document must start with a BOS token.
     """
 
     if bos_token_id is None:
