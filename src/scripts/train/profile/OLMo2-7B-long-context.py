@@ -18,6 +18,7 @@ from olmo_core.train.callbacks import (
     ProfilerCallback,
     WandBCallback,
 )
+from olmo_core.train.callbacks.checkpointer import CheckpointerCallback
 from olmo_core.train.common import Duration
 from olmo_core.train.train_module import (
     TransformerContextParallelConfig,
@@ -79,7 +80,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
-            max_duration=Duration.steps(100),
+            max_duration=Duration.steps(11),
         )
         .with_callback(
             "comet",
@@ -102,9 +103,16 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             ),
         )
         .with_callback(
-            "profiler", ProfilerCallback(skip_first=3, wait=10, warmup=2, active=3, repeat=1)
+            "profiler",
+            ProfilerCallback(  # profile steps 7-9
+                enabled=True, skip_first=1, wait=3, warmup=1, active=2, repeat=1
+            ),
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
+        .with_callback(
+            "checkpointer",
+            CheckpointerCallback(enabled=False),  # no need to checkpoint here
+        )
     )
 
 
