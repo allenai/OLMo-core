@@ -184,5 +184,6 @@ class ProfilerCallback(Callback):
         output_dir.mkdir(exist_ok=True, parents=True)
         trace_path = output_dir / f"rank-{get_rank()}-step-{prof.step_num}.chrome_trace.json.gz"
         prof.export_chrome_trace(str(trace_path))
+        log.info(f"Chrome trace saved to working dir: '{trace_path}'")
         final_path = self.trainer.persist_working_file(trace_path)
-        log.info(f"Chrome trace saved to '{final_path}'")
+        log.info(f"Chrome trace saved to save dir: '{final_path}'")
