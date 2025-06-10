@@ -43,22 +43,22 @@ log = logging.getLogger(__name__)
 # Tyler's Results:
 # 64K length, 16 GPUs, no FP8, intra-doc masking, CP8, DP2 -> 3,735 TPS (bootlenecked by AllGather_RING)
 # 64K length, 16 GPUs, no FP8, intra-doc masking, TP4, DP4 -> OOM
-# 64K length, 16 GPUs, no FP8, intra-doc masking, TP4, DP4, AC4 ->
-# 64K length, 16 GPUs, no FP8, intra-doc masking, CP4, DP4, AC4 ->
+# 64K length, 16 GPUs, no FP8, intra-doc masking, TP4, DP4, AC -> 5,412 TPS
+# 64K length, 16 GPUs, no FP8, intra-doc masking, CP4, DP4, AC -> 3,977 TPS
 
 CONTEXT_LENGTH = 4 * 16_384
 # GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH  # cp8, dp4
 GLOBAL_BATCH_SIZE = 32 * CONTEXT_LENGTH  # cp8, dp2
 INTRA_DOCUMENT_MASKING = True
 
-
 NUM_GPUS = 16
 assert NUM_GPUS % 8 == 0
 NUM_NODES = NUM_GPUS // 8
 
-AC_ATTENTION_INTERVAL = 4
+AC_ATTENTION_INTERVAL = None
 TP_DEGREE = None
 CP_DEGREE = 4
+GQA_RATIO = 0.25
 
 log.info(
     f"TP_DEGREE: {TP_DEGREE}, CP_DEGREE: {CP_DEGREE}, NUM_GPUS: {NUM_GPUS}, NUM_NODES: {NUM_NODES}"
@@ -67,7 +67,9 @@ log.info(
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     return TransformerConfig.olmo2_7B(
-        vocab_size=common.tokenizer.padded_vocab_size(), use_flash=True
+        vocab_size=common.tokenizer.padded_vocab_size(),
+        use_flash=True,
+        n_kv_heads=int(32 * GQA_RATIO) if GQA_RATIO else None,
     )
 
 
