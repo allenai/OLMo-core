@@ -91,6 +91,10 @@ class AttentionType(StrEnum):
     """
     ➡️ :class:`NormalizedAttention`
     """
+    mla = "mla"
+    """
+    ➡️ :class:`MultiHeadLatentAttention`
+    """
 
 
 @dataclass
@@ -117,6 +121,13 @@ class AttentionConfig(Config):
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
     use_head_qk_norm: Optional[bool] = None
 
+    q_lora_rank: Optional[int] = None
+    kv_lora_rank: Optional[int] = None
+    qk_rope_head_dim: int = 64
+    qk_nope_head_dim: Optional[int] = None
+    v_head_dim: Optional[int] = None
+    softcap: Optional[float] = None
+
     def num_params(self, d_model: int) -> int:
         """
         The number of params that the attention implementation will have once built.
@@ -130,33 +141,72 @@ class AttentionConfig(Config):
 
         params = 0
 
-        # Block attention Q projection.
-        params += d_model * d_model
-        if bias:
-            params += d_model
+        if self.name == AttentionType.mla:
+            q_lora_rank = self.q_lora_rank if self.q_lora_rank else 0
+            kv_lora_rank = self.kv_lora_rank if self.kv_lora_rank is not None else d_model // 2
+            qk_rope_head_dim = self.qk_rope_head_dim
+            qk_nope_head_dim = self.qk_nope_head_dim if self.qk_nope_head_dim is not None else (head_dim - qk_rope_head_dim)
+            qk_head_dim = qk_nope_head_dim + qk_rope_head_dim
+            v_head_dim = self.v_head_dim if self.v_head_dim is not None else head_dim
 
-        # Block attention KV projections.
-        params += 2 * d_model * n_kv_heads * head_dim
-        if bias:
-            params += 2 * n_kv_heads * head_dim
-
-        # Block attention QK norm.
-        if self.qk_norm is not None:
-            if self.use_head_qk_norm:
-                params += 2 * self.qk_norm.num_params(head_dim)
+            if q_lora_rank == 0:
+                params += d_model * (n_heads * qk_head_dim)
+                if bias:
+                    params += n_heads * qk_head_dim
             else:
-                params += 2 * self.qk_norm.num_params(d_model)
+                params += d_model * q_lora_rank 
+                params += q_lora_rank * (n_heads * qk_head_dim)  
+                if bias:
+                    params += n_heads * qk_head_dim
 
-        # Block attention out.
-        params += d_model * d_model
-        if bias:
-            params += d_model
+            params += d_model * (kv_lora_rank + qk_rope_head_dim)
+            params += kv_lora_rank * (n_kv_heads * (qk_nope_head_dim + v_head_dim))
+            if bias:
+                params += n_kv_heads * (qk_nope_head_dim + v_head_dim)
 
-        # Block QK scaling factors.
-        if self.name == AttentionType.normalized:
-            head_dim = d_model // n_heads
-            params += n_heads * head_dim
-            params += n_kv_heads * head_dim
+            params += (n_heads * v_head_dim) * d_model
+            if bias:
+                params += d_model
+
+            # Block attention QK norm.
+            if self.qk_norm is not None:
+                if q_lora_rank > 0:
+                    params += self.qk_norm.num_params(q_lora_rank)
+                else:
+                    if self.use_head_qk_norm:
+                        params += self.qk_norm.num_params(qk_head_dim)
+                    else:
+                        params += self.qk_norm.num_params(n_heads * qk_head_dim)
+                params += self.qk_norm.num_params(kv_lora_rank)
+
+        else:
+            # Block attention Q projection.
+            params += d_model * d_model
+            if bias:
+                params += d_model
+
+            # Block attention KV projections.
+            params += 2 * d_model * n_kv_heads * head_dim
+            if bias:
+                params += 2 * n_kv_heads * head_dim
+
+            # Block attention QK norm.
+            if self.qk_norm is not None:
+                if self.use_head_qk_norm:
+                    params += 2 * self.qk_norm.num_params(head_dim)
+                else:
+                    params += 2 * self.qk_norm.num_params(d_model)
+
+            # Block attention out.
+            params += d_model * d_model
+            if bias:
+                params += d_model
+
+            # Block QK scaling factors.
+            if self.name == AttentionType.normalized:
+                head_dim = d_model // n_heads
+                params += n_heads * head_dim
+                params += n_kv_heads * head_dim
 
         return params
 
@@ -209,6 +259,12 @@ class AttentionConfig(Config):
                         "'window_size' is not supported with normalized attention"
                     )
                 return NormalizedAttention(**kwargs)
+            elif self.name == "mla":
+                if "window_size" in kwargs:
+                    raise OLMoConfigurationError(
+                        "'window_size' is not supported with MLA attention"
+                    )
+                return MultiHeadLatentAttention(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
