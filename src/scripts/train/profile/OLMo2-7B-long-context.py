@@ -19,6 +19,7 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.callbacks.checkpointer import CheckpointerCallback
+from olmo_core.train.callbacks.console_logger import ConsoleLoggerCallback
 from olmo_core.train.common import Duration
 from olmo_core.train.train_module import (
     TransformerContextParallelConfig,
@@ -31,12 +32,14 @@ log = logging.getLogger(__name__)
 
 
 CONTEXT_LENGTH = 4 * 16_384
+# GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH  # cp8, dp4
+GLOBAL_BATCH_SIZE = 32 * CONTEXT_LENGTH  # cp8, dp2
 INTRA_DOCUMENT_MASKING = True
 # 64K length, 32 GPUs, FP8, no intra-doc masking -> 2,750 TPS
 # 64K length, 32 GPUs, no FP8, intra-doc masking -> 3,250 TPS
 # 64K length, 32 GPUs, FP8, intra-doc masking    -> 3,500 TPS
 
-NUM_GPUS = 32
+NUM_GPUS = 16
 assert NUM_GPUS % 8 == 0
 NUM_NODES = NUM_GPUS // 8
 
@@ -84,14 +87,14 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
-            max_duration=Duration.steps(11),
+            max_duration=Duration.steps(30),
         )
         .with_callback(
             "comet",
             CometCallback(
                 name=common.run_name,
                 workspace="ai2",
-                project="OLMo-core-7B",
+                project="OLMo-core-7B-long-context-profile",
                 enabled=False,
                 cancel_check_interval=10,
             ),
@@ -101,15 +104,21 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=common.run_name,
                 entity="ai2-llm",
-                project="OLMo-core-7B",
+                project="OLMo-core-7B-long-context-profile",
                 enabled=False,
                 cancel_check_interval=10,
             ),
         )
         .with_callback(
             "profiler",
-            ProfilerCallback(  # profile steps 7-9
-                enabled=True, skip_first=1, wait=3, warmup=1, active=2, repeat=1
+            ProfilerCallback(
+                enabled=True,
+                skip_first=15,
+                wait=3,
+                warmup=1,
+                active=2,
+                repeat=1,
+                export_chrome_trace=True,
             ),
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
@@ -117,13 +126,14 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "checkpointer",
             CheckpointerCallback(enabled=False),  # no need to checkpoint here
         )
+        .with_callback("console_logger", ConsoleLoggerCallback(metrics_log_interval=4))
     )
 
 
 if __name__ == "__main__":
     main(
         sequence_length=CONTEXT_LENGTH,
-        global_batch_size=64 * CONTEXT_LENGTH,
+        global_batch_size=GLOBAL_BATCH_SIZE,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
