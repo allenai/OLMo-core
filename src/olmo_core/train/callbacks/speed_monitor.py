@@ -121,18 +121,20 @@ class SpeedMonitorCallback(Callback):
         total_time = counter - self._start_time
         self._step_last_logged = counter
 
-        tps: Optional[float] = None
-        tps_avg: Optional[float] = None
+        device_tps: Optional[float] = None
+        device_tps_avg: Optional[float] = None
         if self._step_tokens and self._total_tokens:
-            tps = self._step_tokens / step_time
-            tps_avg = self._total_tokens / total_time
-            self.trainer.record_metric("throughput/device/TPS", tps)
-            self.trainer.record_metric("throughput/device/TPS (actual avg)", tps_avg)
+            device_tps = self._step_tokens / step_time
+            device_tps_avg = self._total_tokens / total_time
+            self.trainer.record_metric("throughput/device/TPS", device_tps)
+            self.trainer.record_metric("throughput/device/TPS (actual avg)", device_tps_avg)
 
         if self.trainer.global_train_tokens_seen is not None:
             self.trainer.record_metric(
                 "throughput/total tokens", self.trainer.global_train_tokens_seen
             )
+            global_tps = self.trainer.global_train_tokens_seen / total_time
+            self.trainer.record_metric("throughput/TPS (actual avg)", global_tps)
 
         bps = 1 / step_time
         bps_avg = self._total_steps / total_time
@@ -148,13 +150,13 @@ class SpeedMonitorCallback(Callback):
         if (
             (num_flops_per_token := self._get_num_flops_per_token(self._step_seq_len)) is not None
             and self.device_peak_flops is not None
-            and tps is not None
-            and tps_avg is not None
+            and device_tps is not None
+            and device_tps_avg is not None
         ):
             # model FLOPS utilization
             # For its definition and calculation, please refer to the PaLM paper:
             # https://arxiv.org/abs/2204.02311
-            mfu = 100 * num_flops_per_token * tps / self.device_peak_flops
-            mfu_avg = 100 * num_flops_per_token * tps_avg / self.device_peak_flops
+            mfu = 100 * num_flops_per_token * device_tps / self.device_peak_flops
+            mfu_avg = 100 * num_flops_per_token * device_tps_avg / self.device_peak_flops
             self.trainer.record_metric("throughput/device/MFU", mfu)
             self.trainer.record_metric("throughput/device/MFU (actual avg)", mfu_avg)
