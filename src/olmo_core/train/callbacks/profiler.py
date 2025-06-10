@@ -36,6 +36,18 @@ class ProfilerCallback(Callback):
     """
     Repeat the cycle start at ``wait`` steps.
     """
+    with_stack: bool = True
+    """
+    Whether to record source information (file and line number) for the ops.
+    """
+    profile_memory: bool = False
+    """
+    Whether to track tensor memory allocation/deallocation
+    """
+    export_chrome_trace: bool = True
+    """
+    Whether to export the trace to a chrome trace file.
+    """
     enabled: bool = True
     """
     Set to ``False`` to disable profiling.
@@ -67,8 +79,8 @@ class ProfilerCallback(Callback):
             profile(
                 activities=activities,
                 record_shapes=False,
-                profile_memory=False,
-                with_stack=True,
+                profile_memory=self.profile_memory,
+                with_stack=self.with_stack,
                 schedule=profiling_schedule,
                 on_trace_ready=self._on_trace_ready,
             )
@@ -92,11 +104,12 @@ class ProfilerCallback(Callback):
         output = self._profiler.key_averages().table(sort_by="self_cpu_time_total", row_limit=32)
         log.info(f"Profile by total CPU time at step {self._profiler.step_num}:\n{output}")
 
-        log.info("Saving chrome trace from profiler...")
-        output_dir = self.trainer.work_dir / "profiler"
-        output_dir.mkdir(exist_ok=True, parents=True)
-        trace_path = output_dir / f"step-{prof.step_num}.chrome_trace.json.gz"
-        prof.export_chrome_trace(str(trace_path))
-        log.info(f"Chrome trace saved to working dir: '{trace_path}'")
-        final_path = self.trainer.persist_working_file(trace_path)
-        log.info(f"Chrome trace saved to save dir: '{final_path}'")
+        if self.export_chrome_trace:
+            log.info("Saving chrome trace from profiler...")
+            output_dir = self.trainer.work_dir / "profiler"
+            output_dir.mkdir(exist_ok=True, parents=True)
+            trace_path = output_dir / f"step-{prof.step_num}.chrome_trace.json.gz"
+            prof.export_chrome_trace(str(trace_path))
+            log.info(f"Chrome trace saved to working dir: '{trace_path}'")
+            final_path = self.trainer.persist_working_file(trace_path)
+            log.info(f"Chrome trace saved to save dir: '{final_path}'")
