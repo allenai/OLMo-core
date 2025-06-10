@@ -52,7 +52,7 @@ log = logging.getLogger(__name__)
 # 16 GPUs, 32*CL bs -- CP4, DP4, GQA(1/4) -> OOM
 # ---
 # 32 GPUs, 64*CL bs -- CP8, DP4, GQA(1/4) ->
-# 32 GPUs, 64*CL bs -- CP4, DP4, AC, GQA(1/4) ->
+# 32 GPUs, 64*CL bs -- CP4, DP8, AC, GQA(1/4) ->
 # 32 GPUs, 64*CL bs -- TP4, DP8, AC, GQA(1/4) ->
 # 32 GPUs, 64*CL bs -- TP4, DP8, AC ->
 
@@ -66,9 +66,9 @@ NUM_GPUS = 32
 assert NUM_GPUS % 8 == 0
 NUM_NODES = NUM_GPUS // 8
 
-AC_ATTENTION_INTERVAL = None
+AC_ATTENTION_INTERVAL = 4
 TP_DEGREE = None
-CP_DEGREE = 8
+CP_DEGREE = 4
 GQA_RATIO = 0.25
 
 log.info(
