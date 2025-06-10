@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import parallelize_module
+from torch.distributed import all_gather
 
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
@@ -384,6 +385,12 @@ class Attention(AttentionBase):
                 window_size=self.window_size,
             )
         elif self.use_flash:
+            
+            if scale is None:
+                scale = float(self.head_dim ** -0.5)
+            else:
+                scale = float(scale)
+            
             att = dispatch_flash_attn(
                 q,
                 k,
@@ -786,8 +793,11 @@ class MultiHeadLatentAttention(AttentionBase):
         self.softcap = softcap
         self.use_flash = use_flash
         
-        if use_flash:
-            raise OLMoConfigurationError("MLA does not currently support flash attention")
+        if self.use_flash and self.softcap is not None:
+            raise OLMoConfigurationError("Flash attention does not support softcap")
+        
+        if self.use_flash and self.qk_nope_head_dim > 0:
+            raise OLMoConfigurationError("Flash attention requires all dimensions to use RoPE")
         
         if self.q_lora_rank == 0:
             self.w_q = nn.Linear(d_model, self.n_heads * self.qk_head_dim, bias=bias, dtype=dtype, device=init_device)
@@ -831,6 +841,7 @@ class MultiHeadLatentAttention(AttentionBase):
         self._cp_pg: Optional[dist.ProcessGroup] = None
         self._cp_enabled = False
         self._cp_load_balancer: Optional[RingAttentionLoadBalancerType] = None
+        self._cp_mesh: Optional[DeviceMesh] = None
     
     @property
     def cp_enabled(self) -> bool:
@@ -852,7 +863,15 @@ class MultiHeadLatentAttention(AttentionBase):
     ) -> torch.Tensor:
         
         if self.cp_enabled:
-            raise RuntimeError("MLA does not currently support context parallelism")
+            if self._cp_load_balancer is None or self._cp_mesh is None:
+                raise RuntimeError("Context parallelism load balancer or mesh not set")
+            
+            sharded_tensors = self._cp_load_balancer.build(self._cp_mesh).batch_shard(
+                inputs=[q, k, v],
+                seq_dims=[1, 1, 1],  
+                pad_values=[0.0, 0.0, 0.0]  
+            )
+            q, k, v = sharded_tensors
         
         if any(opt is not None for opt in (cu_doc_lens, cu_doc_lens_q, cu_doc_lens_k, max_doc_len, max_doc_len_q, max_doc_len_k)):
             raise RuntimeError("MLA does not currently support intra-document masking")
@@ -869,26 +888,44 @@ class MultiHeadLatentAttention(AttentionBase):
         #        (batch_size, n_kv_heads, seq_len, head_dim),
         #        (batch_size, n_kv_heads, seq_len, head_dim)
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
-        
         if scale is None:
-            scale = self.qk_head_dim ** -0.5
+            scale = float(self.qk_head_dim ** -0.5)
+        else:
+            scale = float(scale)
         
-        scores = torch.matmul(q, k.transpose(2, 3)) * scale
+        if self.use_flash:
+            # Create causal mask
+            causal_mask = torch.triu(torch.ones(T, T, device=q.device, dtype=torch.bool), diagonal=1)
+            causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)  # Add batch and head dimensions
+            
+            # Use flash attention
+            att = F.scaled_dot_product_attention(
+                q, k, v,
+                attn_mask=causal_mask,
+                dropout_p=self.dropout_p if self.training else 0.0,
+                scale=scale
+            )
+        else:
+            scores = torch.matmul(q, k.transpose(2, 3)) * scale
+            
+            if self.softcap is not None:
+                scores = scores / self.softcap
+                scores = torch.tanh(scores)
+                scores = scores * self.softcap
+            
+            scores = scores.masked_fill(
+                torch.triu(torch.ones(T, T, device=scores.device, dtype=torch.bool), diagonal=1).unsqueeze(0).unsqueeze(0),
+                float("-inf")
+            )
+            
+            attn_weights = F.softmax(scores, dim=-1, dtype=torch.float32).to(q.dtype)
+            attn_weights = F.dropout(attn_weights, p=self.dropout_p, training=self.training)
+            att = torch.matmul(attn_weights, v)
         
-        if self.softcap is not None:
-            scores = scores / self.softcap
-            scores = torch.tanh(scores)
-            scores = scores * self.softcap
-        
-        scores = scores.masked_fill(
-            torch.triu(torch.ones(T, T, device=scores.device, dtype=torch.bool), diagonal=1).unsqueeze(0).unsqueeze(0),
-            float("-inf")
-        )
-        
-        attn_weights = F.softmax(scores, dim=-1, dtype=torch.float32).to(q.dtype)
-        attn_weights = F.dropout(attn_weights, p=self.dropout_p, training=self.training)
-        att = torch.matmul(attn_weights, v)
         att = att.transpose(1, 2).contiguous()
+        
+        if self.cp_enabled:
+            att = all_gather(att, group=self._cp_pg)
         
         return att
     
@@ -1001,7 +1038,6 @@ class MultiHeadLatentAttention(AttentionBase):
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
-        """Apply tensor parallelism to MLA."""
         rowwise_parallel, colwise_parallel, prepare_module_input = get_tp_wrappers(
             float8_enabled=float8_enabled
         )
@@ -1014,28 +1050,20 @@ class MultiHeadLatentAttention(AttentionBase):
                 desired_input_layouts=(Replicate(),),
             ),
         )
-        
-        # Parallelize the projections
         plan = {
             "w_out": rowwise_parallel(
                 output_layouts=output_layout, use_local_output=use_local_output
             ),
         }
-        
-        # Handle query projection parallelization
         if self.q_lora_rank == 0:
             plan["w_q"] = colwise_parallel(
                 output_layouts=None if self.q_norm is None or self.use_head_qk_norm else Shard(1),
                 use_local_output=self.q_norm is None or self.use_head_qk_norm,
             )
         else:
-            # For LoRA query projection, keep compression layer replicated
             plan["w_q"] = colwise_parallel()
-        
-        # KV projections - keep compression layers replicated
+
         plan["wkv_b"] = colwise_parallel()
-        
-        # Add norm parallelization if needed
         if self.q_norm is not None and not self.use_head_qk_norm and self.q_lora_rank == 0:
             plan["q_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(-1))
         
@@ -1046,13 +1074,11 @@ class MultiHeadLatentAttention(AttentionBase):
         )
     
     def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
-        """
-        Prepare the module for context-parallelism.
-        
-        .. note::
-            MLA does not currently support context parallelism.
-        """
-        raise NotImplementedError("MLA does not currently support context parallelism")
+
+        self._cp_pg = cp_mesh.get_group()
+        self._cp_enabled = True
+        self._cp_load_balancer = load_balancer
+        self._cp_mesh = cp_mesh 
 
 
 class FusedAttention(AttentionBase):
