@@ -506,7 +506,7 @@ def _flatten_dims(
             out_names.append(n)
     device_mesh[dims]._flatten(mesh_dim_name=name)
     new_names = tuple(out_names)
-    return device_mesh[new_names], new_names
+    return device_mesh, new_names
 
 
 def flatten_mesh(device_mesh: DeviceMesh, name: Optional[str] = None):

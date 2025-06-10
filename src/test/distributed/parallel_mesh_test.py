@@ -36,6 +36,11 @@ def _build_and_check_world_mesh(dp_degree, tp_degree, cp_degree, pp_degree, ep_d
         with pytest.raises(OLMoConfigurationError):
             build_world_mesh(dp=dp_cfg, tp=tp_cfg, cp=cp_cfg, pp=pp_cfg, ep=ep_cfg)
         return
+    # Expert parallelism is (currently) only compatible with HSDP
+    if dp_cfg is not None and dp_cfg.name != DataParallelType.hsdp and ep_cfg is not None:
+        with pytest.raises(OLMoConfigurationError):
+            build_world_mesh(dp=dp_cfg, tp=tp_cfg, cp=cp_cfg, pp=pp_cfg, ep=ep_cfg)
+        return
 
     # Build the mesh
     mesh = build_world_mesh(dp=dp_cfg, tp=tp_cfg, cp=cp_cfg, pp=pp_cfg, ep=ep_cfg)
@@ -102,17 +107,22 @@ def _build_and_check_world_mesh(dp_degree, tp_degree, cp_degree, pp_degree, ep_d
 @pytest.mark.parametrize(
     "dp_degree,tp_degree,cp_degree,pp_degree,ep_degree,world_size",
     [
-        pytest.param(1, 0, 0, 0, 0, 4, id="dp_only"),
-        pytest.param(1, 2, 0, 0, 0, 4, id="dp_tp"),
-        pytest.param(1, 0, 2, 0, 0, 4, id="dp_cp"),
-        pytest.param(1, 0, 0, 2, 0, 4, id="dp_pp"),
-        pytest.param(1, 0, 0, 0, 2, 4, id="dp_ep"),
+        pytest.param(4, 0, 0, 0, 0, 4, id="dp_only"),
+        pytest.param(2, 2, 0, 0, 0, 4, id="dp_tp"),
+        pytest.param(2, 0, 2, 0, 0, 4, id="dp_cp"),
+        pytest.param(2, 0, 0, 2, 0, 4, id="dp_pp"),
+        pytest.param(2, 0, 0, 0, 2, 4, id="dp_ep"),
         pytest.param(1, 2, 2, 0, 0, 4, id="dp_tp_cp"),
         pytest.param(1, 2, 0, 2, 0, 8, id="dp_tp_pp"),
         pytest.param(1, 0, 2, 2, 0, 8, id="dp_cp_pp"),
-        pytest.param(1, 0, 0, 2, 2, 8, id="dp_ep_pp"),
+        pytest.param(1, 0, 0, 2, 2, 8, id="dp_pp_ep"),
         pytest.param(1, 2, 2, 2, 0, 8, id="dp_tp_cp_pp"),
-        pytest.param(1, 2, 0, 0, 2, 4, id="ep_tp_error"),
+        pytest.param(1, 0, 2, 0, 2, 4, id="dp_cp_ep"),
+        pytest.param(1, 0, 2, 2, 2, 8, id="dp_cp_ep_pp"),
+        pytest.param(1, 2, 2, 0, 2, 8, id="dp_tp_ep_cp_error"),
+        pytest.param(1, 2, 0, 0, 2, 4, id="dp_tp_ep_error"),
+        pytest.param(1, 2, 0, 2, 2, 8, id="dp_tp_ep_pp_error"),
+        pytest.param(1, 2, 2, 2, 2, 16, id="dp_tp_ep_cp_pp_error"),
     ],
 )
 def test_build_world_mesh_parameterized(
@@ -124,7 +134,6 @@ def test_build_world_mesh_parameterized(
     ep_degree: int,
     world_size: int,
 ):
-    # Skip NCCL backend if there aren't enough GPUs for the desired world size
     if "nccl" in backend and torch.cuda.device_count() < world_size:
         pytest.skip("Not enough GPUs available for this test.")
 
@@ -133,5 +142,5 @@ def test_build_world_mesh_parameterized(
         backend=backend,
         world_size=world_size,
         func_args=(dp_degree, tp_degree, cp_degree, pp_degree, ep_degree),
-        start_method="spawn",
+        start_method="spawn" if backend == "gloo" else None,
     )
