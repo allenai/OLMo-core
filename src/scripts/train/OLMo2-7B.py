@@ -30,7 +30,6 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         qk_rope_head_dim=64,
         qk_nope_head_dim=0,
         v_head_dim=128,
-        softcap=1.0,
         use_flash=True,
     )
 

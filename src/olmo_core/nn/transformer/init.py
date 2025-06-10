@@ -93,6 +93,14 @@ class InitMethod(StrEnum):
         elif isinstance(m, FusedAttention) or hasattr(m, "w_qkv"):
             m = cast(FusedAttention, m)
             self._init_linear(m.w_qkv, std=std, generator=generator)
+        elif hasattr(m, "wq_a"):
+            from ..attention import MultiHeadLatentAttention
+            m = cast(MultiHeadLatentAttention, m)
+            if m.q_lora_rank > 0:
+                self._init_linear(cast(nn.Linear, m.wq_a), std=std, generator=generator)
+            self._init_linear(cast(nn.Linear, m.w_q), std=std, generator=generator)
+            self._init_linear(cast(nn.Linear, m.wkv_a), std=std, generator=generator)
+            self._init_linear(cast(nn.Linear, m.wkv_b), std=std, generator=generator)
         else:
             raise NotImplementedError(m)
 
@@ -103,7 +111,7 @@ class InitMethod(StrEnum):
         elif self == InitMethod.normalized:
             std = std / (2 * num_blocks) ** 0.5
 
-        self._init_linear(m.w_out, std=std, generator=generator)
+        self._init_linear(cast(nn.Linear, m.w_out), std=std, generator=generator)
 
     def init_feed_forward(
         self,
