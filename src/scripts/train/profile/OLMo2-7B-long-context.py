@@ -67,8 +67,8 @@ assert NUM_GPUS % 8 == 0
 NUM_NODES = NUM_GPUS // 8
 
 AC_ATTENTION_INTERVAL = 4
-TP_DEGREE = None
-CP_DEGREE = 4
+TP_DEGREE = 4
+CP_DEGREE = None
 GQA_RATIO = 0.25
 
 log.info(
