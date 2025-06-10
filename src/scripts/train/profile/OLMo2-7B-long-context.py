@@ -45,8 +45,10 @@ log = logging.getLogger(__name__)
 # 16 GPUs, no FP8, intra-doc masking, TP4, DP4 -> OOM
 # 16 GPUs, no FP8, intra-doc masking, TP4, DP4, AC -> 5,412 TPS
 # 16 GPUs, no FP8, intra-doc masking, CP4, DP4, AC -> 3,977 TPS
-# 16 GPUs, no FP8, intra-doc masking, CP4, DP4, GQA ->
+# 16 GPUs, no FP8, intra-doc masking, CP4, DP4, GQA -> OOM
+# 16 GPUs, no FP8, intra-doc masking, CP4, DP4, AC, GQA ->
 # 16 GPUs, no FP8, intra-doc masking, CP8, DP2, GQA ->
+# 16 GPUs, no FP8, intra-doc masking, TP4, DP4, AC, GQA ->
 
 
 CONTEXT_LENGTH = 4 * 16_384
@@ -58,9 +60,9 @@ NUM_GPUS = 16
 assert NUM_GPUS % 8 == 0
 NUM_NODES = NUM_GPUS // 8
 
-AC_ATTENTION_INTERVAL = None
-TP_DEGREE = 4
-CP_DEGREE = None
+AC_ATTENTION_INTERVAL = 4
+TP_DEGREE = None
+CP_DEGREE = 4
 GQA_RATIO = 0.25
 
 log.info(
