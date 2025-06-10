@@ -50,6 +50,7 @@ __all__ = [
     "RingAttentionLoadBalancer",
     "RingAttentionZigZagLoadBalancer",
     "RingAttentionLlama3LoadBalancer",
+    "MultiHeadLatentAttention",
 ]
 
 
@@ -735,6 +736,323 @@ class NormalizedAttention(Attention):
 
     def _normalize_matrix(self, w: torch.Tensor, dim: int = -1):
         w.copy_(l2_normalize(w, dim=dim))
+
+
+class MultiHeadLatentAttention(AttentionBase):
+    
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        n_heads: int,
+        n_kv_heads: Optional[int] = None,
+        bias: bool = True,
+        rope: Optional[RoPEConfig] = None,
+        clip_qkv: Optional[float] = None,
+        qk_norm: Optional[LayerNormConfig] = None,
+        dropout: float = 0.0,
+        use_flash: bool = False,
+        window_size: Optional[int] = None,
+        dtype: torch.dtype = torch.float32,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+        use_head_qk_norm: bool = False,
+
+        q_lora_rank: Optional[int] = None,
+        kv_lora_rank: Optional[int] = None,
+        qk_rope_head_dim: int = 64,
+        qk_nope_head_dim: Optional[int] = None,
+        v_head_dim: Optional[int] = None,
+        softcap: Optional[float] = None,
+    ):
+        super().__init__()
+        
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.n_kv_heads = n_kv_heads or n_heads
+        self.n_rep = self.n_heads // self.n_kv_heads
+        self.head_dim = d_model // n_heads
+        
+        self.v_head_dim = v_head_dim if v_head_dim is not None else self.head_dim
+        self.qk_rope_head_dim = qk_rope_head_dim
+        self.qk_nope_head_dim = qk_nope_head_dim if qk_nope_head_dim is not None else (self.head_dim - qk_rope_head_dim)
+        self.qk_head_dim = self.qk_nope_head_dim + self.qk_rope_head_dim
+        self.q_lora_rank = q_lora_rank if q_lora_rank else 0
+        self.kv_lora_rank = kv_lora_rank if kv_lora_rank is not None else d_model // 2
+        
+        self.clip_qkv = clip_qkv
+        self.dropout_p = dropout
+        self.use_head_qk_norm = use_head_qk_norm
+        self.softcap = softcap
+        self.use_flash = use_flash
+        
+        if use_flash:
+            raise OLMoConfigurationError("MLA does not currently support flash attention")
+        
+        if self.q_lora_rank == 0:
+            self.w_q = nn.Linear(d_model, self.n_heads * self.qk_head_dim, bias=bias, dtype=dtype, device=init_device)
+        else:
+            self.wq_a = nn.Linear(d_model, self.q_lora_rank, bias=False, dtype=dtype, device=init_device)
+            self.w_q = nn.Linear(self.q_lora_rank, self.n_heads * self.qk_head_dim, bias=bias, dtype=dtype, device=init_device)
+        
+        self.wkv_a = nn.Linear(d_model, self.kv_lora_rank + self.qk_rope_head_dim, bias=False, dtype=dtype, device=init_device)
+        self.wkv_b = nn.Linear(
+            self.kv_lora_rank,
+            self.n_kv_heads * (self.qk_nope_head_dim + self.v_head_dim),
+            bias=bias, dtype=dtype, device=init_device
+        )
+        
+        self.w_out = nn.Linear(self.n_heads * self.v_head_dim, d_model, bias=bias, dtype=dtype, device=init_device)
+        self.q_norm: Optional[LayerNorm] = None
+        self.k_norm: Optional[LayerNorm] = None
+        if qk_norm is not None:
+            if self.q_lora_rank > 0:
+                self.q_norm = qk_norm.build(size=self.q_lora_rank, init_device=init_device)
+            else:
+                if use_head_qk_norm:
+                    self.q_norm = qk_norm.build(size=self.qk_head_dim, init_device=init_device)
+                else:
+                    self.q_norm = qk_norm.build(size=self.n_heads * self.qk_head_dim, init_device=init_device)
+            
+            self.k_norm = qk_norm.build(size=self.kv_lora_rank, init_device=init_device)
+        
+        self.rope: Optional[Union[RotaryEmbedding, ComplexRotaryEmbedding]] = None
+        if rope is not None:
+            if rope.name == "fused":
+                raise OLMoConfigurationError("fused RoPE is not compatible with MLA")
+            rope_class = rope.build(self.qk_rope_head_dim, cache=cache)
+            assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
+            self.rope = rope_class
+        
+        if window_size is not None:
+            raise OLMoConfigurationError("MLA does not currently support window_size")
+        self.window_size = (-1, -1)
+        
+        self._cp_pg: Optional[dist.ProcessGroup] = None
+        self._cp_enabled = False
+        self._cp_load_balancer: Optional[RingAttentionLoadBalancerType] = None
+    
+    @property
+    def cp_enabled(self) -> bool:
+        return self._cp_enabled
+    
+    def sdpa(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens_q: Optional[torch.Tensor] = None,
+        cu_doc_lens_k: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        max_doc_len_q: Optional[int] = None,
+        max_doc_len_k: Optional[int] = None,
+        local_k_slice: Optional[slice] = None,
+        scale: Optional[float] = None,
+    ) -> torch.Tensor:
+        
+        if self.cp_enabled:
+            raise RuntimeError("MLA does not currently support context parallelism")
+        
+        if any(opt is not None for opt in (cu_doc_lens, cu_doc_lens_q, cu_doc_lens_k, max_doc_len, max_doc_len_q, max_doc_len_k)):
+            raise RuntimeError("MLA does not currently support intra-document masking")
+        
+        B, T, H, D = q.shape
+        if self.n_rep > 1:
+            # NOTE: PyTorch's SDPA doesn't support GQA, so we have to do this.
+            # shape: (batch_size, n_heads, seq_len, head_dim)
+            k = repeat_kv(k, self.n_rep)
+            v = repeat_kv(v, self.n_rep)
+        
+        # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
+        # shape: (batch_size, n_heads, seq_len, head_dim),
+        #        (batch_size, n_kv_heads, seq_len, head_dim),
+        #        (batch_size, n_kv_heads, seq_len, head_dim)
+        q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+        
+        if scale is None:
+            scale = self.qk_head_dim ** -0.5
+        
+        scores = torch.matmul(q, k.transpose(2, 3)) * scale
+        
+        if self.softcap is not None:
+            scores = scores / self.softcap
+            scores = torch.tanh(scores)
+            scores = scores * self.softcap
+        
+        scores = scores.masked_fill(
+            torch.triu(torch.ones(T, T, device=scores.device, dtype=torch.bool), diagonal=1).unsqueeze(0).unsqueeze(0),
+            float("-inf")
+        )
+        
+        attn_weights = F.softmax(scores, dim=-1, dtype=torch.float32).to(q.dtype)
+        attn_weights = F.dropout(attn_weights, p=self.dropout_p, training=self.training)
+        att = torch.matmul(attn_weights, v)
+        att = att.transpose(1, 2).contiguous()
+        
+        return att
+    
+    def forward(
+        self,
+        x: torch.Tensor,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens_q: Optional[torch.Tensor] = None,
+        cu_doc_lens_k: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        max_doc_len_q: Optional[int] = None,
+        max_doc_len_k: Optional[int] = None,
+        local_k_slice: Optional[slice] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+
+        B, T, _ = x.shape
+        
+        if self.q_lora_rank == 0:
+            queries = self.w_q(x)
+            if self.clip_qkv is not None:
+                queries.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
+            if self.q_norm is not None and not self.use_head_qk_norm:
+                queries = self.q_norm(queries)
+        else:
+            q_compressed = self.wq_a(x)
+            if self.q_norm is not None:
+                q_compressed = self.q_norm(q_compressed)
+            queries = self.w_q(q_compressed)
+            if self.clip_qkv is not None:
+                queries.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
+        
+        queries = queries.view(B, T, self.n_heads, self.qk_head_dim)
+        if self.use_head_qk_norm and self.q_norm is not None and self.q_lora_rank == 0:
+            queries = self.q_norm(queries)
+        
+        kv = self.wkv_a(x)
+        kv_compressed, k_pe = torch.split(
+            kv,
+            [self.kv_lora_rank, self.qk_rope_head_dim],
+            dim=-1
+        )
+        if self.k_norm is not None:
+            kv_compressed = self.k_norm(kv_compressed)
+        
+        kv_decompressed = self.wkv_b(kv_compressed)
+        if self.clip_qkv is not None:
+            kv_decompressed.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
+        
+        kv_decompressed = kv_decompressed.view(
+            B, T, self.n_kv_heads, 
+            self.qk_nope_head_dim + self.v_head_dim
+        )
+        k_nope, values = torch.split(
+            kv_decompressed,
+            [self.qk_nope_head_dim, self.v_head_dim],
+            dim=-1
+        )
+        
+        k_pe = k_pe.view(B, T, 1, self.qk_rope_head_dim).expand(-1, -1, self.n_kv_heads, -1)
+        if self.qk_nope_head_dim > 0:
+            q_nope, q_pe = torch.split(
+                queries, 
+                [self.qk_nope_head_dim, self.qk_rope_head_dim], 
+                dim=-1
+            )
+            if self.rope is not None:
+                q_pe, k_pe = self.rope(
+                    q_pe, k_pe, head_first=False, 
+                    pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
+                )
+            queries = torch.cat([q_nope, q_pe], dim=-1)
+            keys = torch.cat([k_nope, k_pe], dim=-1)
+        else:
+            if self.rope is not None:
+                queries, keys = self.rope(
+                    queries, k_pe, head_first=False,
+                    pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
+                )
+            else:
+                keys = k_pe
+        
+        # shape: (batch_size, seq_len, n_heads, head_dim)
+        att = self.sdpa(
+            queries,
+            keys,
+            values,
+            cu_doc_lens=cu_doc_lens,
+            cu_doc_lens_q=cu_doc_lens_q,
+            cu_doc_lens_k=cu_doc_lens_k,
+            max_doc_len=max_doc_len,
+            max_doc_len_q=max_doc_len_q,
+            max_doc_len_k=max_doc_len_k,
+            local_k_slice=local_k_slice,
+        )
+
+        # shape: (batch_size, seq_len, d_model)
+        att = att.view(B, T, -1)
+        
+        # shape: (batch_size, seq_len, d_model)
+        return self.w_out(att)
+    
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        input_layout: Optional[Placement] = None,
+        output_layout: Optional[Placement] = None,
+        use_local_output: bool = True,
+        float8_enabled: bool = False,
+    ):
+        """Apply tensor parallelism to MLA."""
+        rowwise_parallel, colwise_parallel, prepare_module_input = get_tp_wrappers(
+            float8_enabled=float8_enabled
+        )
+        
+        parallelize_module(
+            self,
+            device_mesh=tp_mesh,
+            parallelize_plan=prepare_module_input(
+                input_layouts=None if input_layout is None else (input_layout,),
+                desired_input_layouts=(Replicate(),),
+            ),
+        )
+        
+        # Parallelize the projections
+        plan = {
+            "w_out": rowwise_parallel(
+                output_layouts=output_layout, use_local_output=use_local_output
+            ),
+        }
+        
+        # Handle query projection parallelization
+        if self.q_lora_rank == 0:
+            plan["w_q"] = colwise_parallel(
+                output_layouts=None if self.q_norm is None or self.use_head_qk_norm else Shard(1),
+                use_local_output=self.q_norm is None or self.use_head_qk_norm,
+            )
+        else:
+            # For LoRA query projection, keep compression layer replicated
+            plan["w_q"] = colwise_parallel()
+        
+        # KV projections - keep compression layers replicated
+        plan["wkv_b"] = colwise_parallel()
+        
+        # Add norm parallelization if needed
+        if self.q_norm is not None and not self.use_head_qk_norm and self.q_lora_rank == 0:
+            plan["q_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(-1))
+        
+        parallelize_module(
+            module=self,
+            device_mesh=tp_mesh,
+            parallelize_plan=plan,
+        )
+    
+    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+        """
+        Prepare the module for context-parallelism.
+        
+        .. note::
+            MLA does not currently support context parallelism.
+        """
+        raise NotImplementedError("MLA does not currently support context parallelism")
 
 
 class FusedAttention(AttentionBase):
