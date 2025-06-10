@@ -5,6 +5,7 @@ Run this script without any arguments to see usage info.
 
 import logging
 
+# ruff: noqa: F401
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
@@ -27,6 +28,7 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
+from olmo_core.train.train_module.transformer.config import TransformerTensorParallelConfig
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +37,7 @@ CONTEXT_LENGTH = 4 * 16_384
 # GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH  # cp8, dp4
 GLOBAL_BATCH_SIZE = 32 * CONTEXT_LENGTH  # cp8, dp2
 INTRA_DOCUMENT_MASKING = True
+
 # 64K length, 32 GPUs, FP8, no intra-doc masking -> 2,750 TPS
 # 64K length, 32 GPUs, no FP8, intra-doc masking -> 3,250 TPS
 # 64K length, 32 GPUs, FP8, intra-doc masking    -> 3,500 TPS
@@ -71,9 +74,10 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
         ),
-        cp_config=TransformerContextParallelConfig.llama3(degree=8)
-        if INTRA_DOCUMENT_MASKING
-        else TransformerContextParallelConfig.zig_zag(degree=8),
+        tp_config=TransformerTensorParallelConfig(degree=4),
+        # cp_config=TransformerContextParallelConfig.llama3(degree=8)
+        # if INTRA_DOCUMENT_MASKING
+        # else TransformerContextParallelConfig.zig_zag(degree=8),
         float8_config=Float8Config(enabled=False),
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
