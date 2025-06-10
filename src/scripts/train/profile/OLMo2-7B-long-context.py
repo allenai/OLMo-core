@@ -55,11 +55,10 @@ log = logging.getLogger(__name__)
 # 32 GPUs, 64*CL bs -- TP4, DP8, AC -> 5,029 TPS/device = 40,232 TPS total
 # 32 GPUs, 64*CL bs -- CP4, DP8, AC, GQA(1/4) -> 4,700 TPS/device = 37,600 TPS total  (only use 64% of GPU RAM)
 # 32 GPUs, 64*CL bs -- CP8, DP4, GQA(1/4) -> 5,032 TPS/device = 20,128 TPS total
-# 32 GPUs, 64*CL bs -- CP4, DP8, AC, GQA(1/4), ubs=2 ->
+# 32 GPUs, 64*CL bs -- CP2, TP2, DP4, AC, GQA(1/4)
 
 
 CONTEXT_LENGTH = 4 * 16_384
-RANK_MICROBATCH_SIZE = 2 * CONTEXT_LENGTH
 GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH  # cp8, dp4
 # GLOBAL_BATCH_SIZE = 32 * CONTEXT_LENGTH  # cp8, dp2
 INTRA_DOCUMENT_MASKING = True
@@ -69,8 +68,8 @@ assert NUM_GPUS % 8 == 0
 NUM_NODES = NUM_GPUS // 8
 
 AC_ATTENTION_INTERVAL = 4
-TP_DEGREE = None
-CP_DEGREE = 4
+TP_DEGREE = 2
+CP_DEGREE = 2
 GQA_RATIO = 1 / 4
 
 log.info(
@@ -88,7 +87,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     return TransformerTrainModuleConfig(
-        rank_microbatch_size=RANK_MICROBATCH_SIZE,
+        rank_microbatch_size=1 * CONTEXT_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=AdamWConfig(
             lr=1e-5,
