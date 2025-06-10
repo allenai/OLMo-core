@@ -43,7 +43,8 @@ log = logging.getLogger(__name__)
 # Tyler's Results:
 # 64K length, 16 GPUs, no FP8, intra-doc masking, CP8, DP2 -> 3,735 TPS (bootlenecked by AllGather_RING)
 # 64K length, 16 GPUs, no FP8, intra-doc masking, TP4, DP4 -> OOM
-
+# 64K length, 16 GPUs, no FP8, intra-doc masking, TP4, DP4, AC4 ->
+# 64K length, 16 GPUs, no FP8, intra-doc masking, CP4, DP4, AC4 ->
 
 CONTEXT_LENGTH = 4 * 16_384
 # GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH  # cp8, dp4
@@ -56,8 +57,8 @@ assert NUM_GPUS % 8 == 0
 NUM_NODES = NUM_GPUS // 8
 
 AC_ATTENTION_INTERVAL = 4
-TP_DEGREE = 4
-CP_DEGREE = None
+TP_DEGREE = None
+CP_DEGREE = 4
 
 log.info(
     f"TP_DEGREE: {TP_DEGREE}, CP_DEGREE: {CP_DEGREE}, NUM_GPUS: {NUM_GPUS}, NUM_NODES: {NUM_NODES}"
