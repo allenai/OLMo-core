@@ -11,6 +11,7 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import (
@@ -28,9 +29,20 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-from olmo_core.train.train_module.transformer.config import TransformerTensorParallelConfig
+from olmo_core.train.train_module.transformer.config import (
+    TransformerActivationCheckpointingConfig,
+    TransformerTensorParallelConfig,
+)
 
 log = logging.getLogger(__name__)
+
+# 64K length, 32 GPUs, FP8, no intra-doc masking -> 2,750 TPS
+# 64K length, 32 GPUs, no FP8, intra-doc masking -> 3,250 TPS
+# 64K length, 32 GPUs, FP8, intra-doc masking    -> 3,500 TPS
+
+# Tyler's Results:
+# 64K length, 16 GPUs, no FP8, intra-doc masking, CP8, DP2 -> 3,735 TPS (bootlenecked by AllGather_RING)
+# 64K length, 16 GPUs, no FP8, intra-doc masking, TP4, DP4 -> OOM
 
 
 CONTEXT_LENGTH = 4 * 16_384
@@ -38,13 +50,18 @@ CONTEXT_LENGTH = 4 * 16_384
 GLOBAL_BATCH_SIZE = 32 * CONTEXT_LENGTH  # cp8, dp2
 INTRA_DOCUMENT_MASKING = True
 
-# 64K length, 32 GPUs, FP8, no intra-doc masking -> 2,750 TPS
-# 64K length, 32 GPUs, no FP8, intra-doc masking -> 3,250 TPS
-# 64K length, 32 GPUs, FP8, intra-doc masking    -> 3,500 TPS
 
 NUM_GPUS = 16
 assert NUM_GPUS % 8 == 0
 NUM_NODES = NUM_GPUS // 8
+
+AC_ATTENTION_INTERVAL = 4
+TP_DEGREE = 4
+CP_DEGREE = None
+
+log.info(
+    f"TP_DEGREE: {TP_DEGREE}, CP_DEGREE: {CP_DEGREE}, NUM_GPUS: {NUM_GPUS}, NUM_NODES: {NUM_NODES}"
+)
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -74,10 +91,21 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
         ),
-        tp_config=TransformerTensorParallelConfig(degree=4),
-        cp_config=TransformerContextParallelConfig.llama3(degree=2)
-        if INTRA_DOCUMENT_MASKING
-        else TransformerContextParallelConfig.zig_zag(degree=2),
+        tp_config=TransformerTensorParallelConfig(degree=TP_DEGREE) if TP_DEGREE else None,
+        cp_config=(
+            TransformerContextParallelConfig.llama3(degree=CP_DEGREE)
+            if INTRA_DOCUMENT_MASKING
+            else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE)
+        )
+        if CP_DEGREE
+        else None,
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.selected_modules,
+            modules=[f"blocks.{i}.feed_forward" for i in range(32)]
+            + [f"blocks.{i}.attention" for i in range(0, 32, AC_ATTENTION_INTERVAL)],
+        )
+        if AC_ATTENTION_INTERVAL
+        else None,
         float8_config=Float8Config(enabled=False),
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
