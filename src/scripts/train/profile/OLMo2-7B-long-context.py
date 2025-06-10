@@ -40,29 +40,35 @@ log = logging.getLogger(__name__)
 # 64K length, 32 GPUs, no FP8, intra-doc masking -> 3,250 TPS
 # 64K length, 32 GPUs, FP8, intra-doc masking    -> 3,500 TPS
 
-# Tyler's Results (64K length):
-# 16 GPUs, no FP8, intra-doc masking, CP8, DP2 -> 3,735 TPS (bootlenecked by AllGather_RING)
-# 16 GPUs, no FP8, intra-doc masking, TP4, DP4 -> OOM
-# 16 GPUs, no FP8, intra-doc masking, TP4, DP4, AC -> 5,412 TPS
-# 16 GPUs, no FP8, intra-doc masking, CP4, DP4, AC -> 3,977 TPS
-# 16 GPUs, no FP8, intra-doc masking, CP4, DP4, GQA -> OOM
-# 16 GPUs, no FP8, intra-doc masking, CP4, DP4, AC, GQA ->
-# 16 GPUs, no FP8, intra-doc masking, CP8, DP2, GQA ->
-# 16 GPUs, no FP8, intra-doc masking, TP4, DP4, AC, GQA ->
+# Tyler's Results (64K context length, no FP8, intra-doc masking):
+# ---
+# 16 GPUs, 32*CL bs -- CP8, DP2, GQA(1/4) -> 5,876 TPS (!! faster w/ fewer data-parallel groups)
+# 16 GPUs, 32*CL bs -- TP4, DP4, AC, GQA(1/4) -> 5,822 TPS
+# 16 GPUs, 32*CL bs -- CP4, DP4, AC, GQA(1/4) -> 5,443 TPS
+# 16 GPUs, 32*CL bs -- TP4, DP4, AC -> 5,412 TPS (suggested by Dustin & Amanda)
+# 16 GPUs, 32*CL bs -- CP4, DP4, AC -> 3,977 TPS
+# 16 GPUs, 32*CL bs -- CP8, DP2 -> 3,735 TPS (bottlenecked by AllGather_RING)
+# 16 GPUs, 32*CL bs -- TP4, DP4 -> OOM
+# 16 GPUs, 32*CL bs -- CP4, DP4, GQA(1/4) -> OOM
+# ---
+# 32 GPUs, 64*CL bs -- CP8, DP4, GQA(1/4) ->
+# 32 GPUs, 64*CL bs -- CP4, DP4, AC, GQA(1/4) ->
+# 32 GPUs, 64*CL bs -- TP4, DP8, AC, GQA(1/4) ->
+# 32 GPUs, 64*CL bs -- TP4, DP8, AC ->
 
 
 CONTEXT_LENGTH = 4 * 16_384
-# GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH  # cp8, dp4
-GLOBAL_BATCH_SIZE = 32 * CONTEXT_LENGTH  # cp8, dp2
+GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH  # cp8, dp4
+# GLOBAL_BATCH_SIZE = 32 * CONTEXT_LENGTH  # cp8, dp2
 INTRA_DOCUMENT_MASKING = True
 
-NUM_GPUS = 16
+NUM_GPUS = 32
 assert NUM_GPUS % 8 == 0
 NUM_NODES = NUM_GPUS // 8
 
-AC_ATTENTION_INTERVAL = 4
-TP_DEGREE = 4
-CP_DEGREE = None
+AC_ATTENTION_INTERVAL = None
+TP_DEGREE = None
+CP_DEGREE = 8
 GQA_RATIO = 0.25
 
 log.info(
