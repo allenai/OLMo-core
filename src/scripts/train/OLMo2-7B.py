@@ -22,7 +22,17 @@ MAX_DURATION = int(4e12)
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    return TransformerConfig.olmo2_7B(vocab_size=common.tokenizer.padded_vocab_size())
+    return TransformerConfig.olmo2_7B(
+        vocab_size=common.tokenizer.padded_vocab_size(),
+        use_mla=True,
+        q_lora_rank=64,
+        kv_lora_rank=2048,
+        qk_rope_head_dim=64,
+        qk_nope_head_dim=0,
+        v_head_dim=128,
+        softcap=1.0,
+        use_flash=True,
+    )
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:

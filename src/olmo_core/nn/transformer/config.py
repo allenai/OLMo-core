@@ -870,6 +870,14 @@ class TransformerConfig(Config):
         rope_scaling: Optional[RoPEScalingConfig] = None,
         feed_forward: Optional[FeedForwardConfig] = None,
         feed_forward_moe: Optional[MoEConfig] = None,
+        # MLA specific parameters
+        use_mla: bool = False,
+        q_lora_rank: Optional[int] = None,
+        kv_lora_rank: Optional[int] = None,
+        qk_rope_head_dim: int = 64,
+        qk_nope_head_dim: Optional[int] = None,
+        v_head_dim: Optional[int] = None,
+        softcap: Optional[float] = None,
         **kwargs,
     ) -> "TransformerConfig":
         """
@@ -880,6 +888,13 @@ class TransformerConfig(Config):
         :param fused_ops: Use fused operations where possible.
         :param use_flash: Use flash-attn.
         :param dtype: The default data type to use for all parameters.
+        :param use_mla: Whether to use MultiHeadLatentAttention.
+        :param q_lora_rank: LoRA rank for query projection in MLA.
+        :param kv_lora_rank: LoRA rank for key-value projection in MLA.
+        :param qk_rope_head_dim: Head dimension for RoPE in MLA.
+        :param qk_nope_head_dim: Head dimension for non-RoPE part in MLA.
+        :param v_head_dim: Head dimension for value projection in MLA.
+        :param softcap: Softcap value for attention scores in MLA.
         """
         # Resolve hidden size of FFN in blocks.
         hidden_size = int(8 * d_model / 3)
@@ -897,7 +912,11 @@ class TransformerConfig(Config):
 
         # Decide on attention/rope implementations.
         att_type = AttentionType.default
-        if rope_type is None:
+        if use_mla:
+            att_type = AttentionType.mla
+            if rope_type is None:
+                rope_type = RoPEType.default
+        elif rope_type is None:
             rope_type = RoPEType.default
             if fused_ops and n_kv_heads is None:  # fused attention not compatible with MQA/GQA.
                 att_type = AttentionType.fused
@@ -919,6 +938,13 @@ class TransformerConfig(Config):
                 qk_norm=layer_norm if qk_norm else None,
                 use_flash=use_flash,
                 dtype=dtype,
+                # MLA specific configs
+                q_lora_rank=q_lora_rank,
+                kv_lora_rank=kv_lora_rank,
+                qk_rope_head_dim=qk_rope_head_dim,
+                qk_nope_head_dim=qk_nope_head_dim,
+                v_head_dim=v_head_dim,
+                softcap=softcap,
             ),
             feed_forward=feed_forward,
             feed_forward_moe=feed_forward_moe,
