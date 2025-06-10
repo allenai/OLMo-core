@@ -5,7 +5,7 @@ import torch.nn as nn
 
 from olmo_core.config import StrEnum
 
-from ..attention import Attention, AttentionBase, FusedAttention
+from ..attention import Attention, AttentionBase, FusedAttention, MultiHeadLatentAttention
 from ..feed_forward import FeedForward
 from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP
 
@@ -86,21 +86,20 @@ class InitMethod(StrEnum):
             std = d_model**-0.5
 
         # NOTE: isinstance checks could fail with AC wrappers
-        if isinstance(m, Attention) or hasattr(m, "w_q"):
-            m = cast(Attention, m)
-            for w in (m.w_q, m.w_k, m.w_v):
-                self._init_linear(w, std=std, generator=generator)
-        elif isinstance(m, FusedAttention) or hasattr(m, "w_qkv"):
-            m = cast(FusedAttention, m)
-            self._init_linear(m.w_qkv, std=std, generator=generator)
-        elif hasattr(m, "wq_a"):
-            from ..attention import MultiHeadLatentAttention
+        if hasattr(m, "wq_a"):
             m = cast(MultiHeadLatentAttention, m)
             if m.q_lora_rank > 0:
                 self._init_linear(cast(nn.Linear, m.wq_a), std=std, generator=generator)
             self._init_linear(cast(nn.Linear, m.w_q), std=std, generator=generator)
             self._init_linear(cast(nn.Linear, m.wkv_a), std=std, generator=generator)
             self._init_linear(cast(nn.Linear, m.wkv_b), std=std, generator=generator)
+        elif isinstance(m, Attention) or hasattr(m, "w_q"):
+            m = cast(Attention, m)
+            for w in (m.w_q, m.w_k, m.w_v):
+                self._init_linear(w, std=std, generator=generator)
+        elif isinstance(m, FusedAttention) or hasattr(m, "w_qkv"):
+            m = cast(FusedAttention, m)
+            self._init_linear(m.w_qkv, std=std, generator=generator)
         else:
             raise NotImplementedError(m)
 
