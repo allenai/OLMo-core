@@ -1,3 +1,4 @@
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any, ClassVar, Dict, Optional
@@ -9,6 +10,8 @@ from olmo_core.distributed.utils import get_world_size
 from ..common import ReduceType
 from ..train_module import TransformerTrainModule
 from .callback import Callback
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -160,3 +163,13 @@ class SpeedMonitorCallback(Callback):
             mfu_avg = 100 * num_flops_per_token * device_tps_avg / self.device_peak_flops
             self.trainer.record_metric("throughput/device/MFU", mfu)
             self.trainer.record_metric("throughput/device/MFU (actual avg)", mfu_avg)
+        else:
+            # Log why MFU is not being recorded
+            if num_flops_per_token is None:
+                log.debug("MFU not recorded: num_flops_per_token is None")
+            if self.device_peak_flops is None:
+                log.debug("MFU not recorded: device_peak_flops is None")
+            if device_tps is None:
+                log.debug("MFU not recorded: device_tps is None")
+            if device_tps_avg is None:
+                log.debug("MFU not recorded: device_tps_avg is None")

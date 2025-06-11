@@ -23,8 +23,7 @@ if [[ $# -ne 1 ]]; then
 fi
 
 CLUSTER=$1
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-PY_SCRIPT="$SCRIPT_DIR/OLMo2-7B-long-context.py"
+PY_SCRIPT="src/scripts/train/profile/OLMo2-7B-long-context.py"
 DATE=$(date +%y%m%d)
 
 # CONSTANTS -------------------------------------------------------------------
@@ -99,6 +98,7 @@ for cfg in "${CONFIG_MATRIX[@]}"; do
   fi
 
   # Combine overrides array into single command call.
+  echo "[CMD] python $PY_SCRIPT launch $RUN_NAME $CLUSTER ${OVERRIDES[@]}"
   python "$PY_SCRIPT" launch "$RUN_NAME" "$CLUSTER" "${OVERRIDES[@]}"
 
 done
