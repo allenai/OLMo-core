@@ -106,9 +106,11 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
-            prefetch_factor=1,
+            # prefetch_factor=1,
         ),
-        tp_config=TransformerTensorParallelConfig(degree=TP_DEGREE) if TP_DEGREE else None,
+        tp_config=TransformerTensorParallelConfig(degree=TP_DEGREE, enable_async=True)
+        if TP_DEGREE
+        else None,
         cp_config=(
             TransformerContextParallelConfig.llama3(degree=CP_DEGREE)
             if INTRA_DOCUMENT_MASKING
