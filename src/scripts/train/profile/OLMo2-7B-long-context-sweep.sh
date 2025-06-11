@@ -41,9 +41,9 @@ calc_gbs () {
 # name  bs_factor  num_gpus  tp  cp  ac_enabled  gqa_ratio
 # -----------------------------------------------------------------------------
 CONFIG_MATRIX=(
-  # "tp4_dp4_ac_gqa 32 16 4 none true 0.25"
-  "cp4_dp4_ac_gqa 32 16 none 4 true 0.25"
-  "cp2_tp2_dp4_ac_gqa 32 16 2 2 true 0.25"
+  "tp4_dp4_ac_gqa 32 16 4 none true 0.25"
+  # "cp4_dp4_ac_gqa 32 16 none 4 true 0.25"
+  # "cp2_tp2_dp4_ac_gqa 32 16 2 2 true 0.25"
   "tp4_dp4_ac 32 16 4 none true none"
   "cp4_dp4_ac 32 16 none 4 true none"
   "cp8_dp2_gqa 32 16 none 8 false 0.25"
@@ -94,7 +94,7 @@ for cfg in "${CONFIG_MATRIX[@]}"; do
 
   # GQA / n_kv_heads override
   if [[ "$GQA" == "none" ]]; then
-    OVERRIDES+=("--model.n_kv_heads=null")
+    OVERRIDES+=("--model.block.attention.n_kv_heads=null")
   fi
 
   # Combine overrides array into single command call.
