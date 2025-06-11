@@ -166,10 +166,10 @@ class SpeedMonitorCallback(Callback):
         else:
             # Log why MFU is not being recorded
             if num_flops_per_token is None:
-                log.debug("MFU not recorded: num_flops_per_token is None")
+                log.info("MFU not recorded: num_flops_per_token is None")
             if self.device_peak_flops is None:
-                log.debug("MFU not recorded: device_peak_flops is None")
+                log.info("MFU not recorded: device_peak_flops is None")
             if device_tps is None:
-                log.debug("MFU not recorded: device_tps is None")
+                log.info("MFU not recorded: device_tps is None")
             if device_tps_avg is None:
-                log.debug("MFU not recorded: device_tps_avg is None")
+                log.info("MFU not recorded: device_tps_avg is None")
