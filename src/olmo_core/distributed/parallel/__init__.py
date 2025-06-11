@@ -314,10 +314,15 @@ def _get_model_mesh(device_mesh: DeviceMesh) -> Tuple[DeviceMesh, Tuple[str, ...
             MeshDimName.dp,
             MeshDimName.ep,
             name=MeshDimName.dp_ep,
+            dim_names=dim_names,
         )
     elif MeshDimName.ep_replicate in dim_names and MeshDimName.ep_shard in dim_names:
         device_mesh, dim_names = _flatten_dims(
-            device_mesh, MeshDimName.ep_replicate, MeshDimName.ep_shard, name=MeshDimName.dp
+            device_mesh,
+            MeshDimName.ep_replicate,
+            MeshDimName.ep_shard,
+            name=MeshDimName.dp,
+            dim_names=dim_names,
         )
 
     # Context parallel dimension gets flattened into the adjacent DP dimension.
@@ -328,7 +333,11 @@ def _get_model_mesh(device_mesh: DeviceMesh) -> Tuple[DeviceMesh, Tuple[str, ...
         last_dp_dim = dim_names[dim_names.index(MeshDimName.cp) - 1]
         assert last_dp_dim.startswith("dp")
         device_mesh, dim_names = _flatten_dims(
-            device_mesh, last_dp_dim, MeshDimName.cp, name=MeshDimName.dp_cp
+            device_mesh,
+            last_dp_dim,
+            MeshDimName.cp,
+            name=MeshDimName.dp_cp,
+            dim_names=dim_names,
         )
 
     return device_mesh, dim_names
@@ -372,6 +381,7 @@ def get_dp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
             MeshDimName.dp,
             MeshDimName.ep,
             name=MeshDimName.dp_ep,
+            dim_names=dim_names,
         )
     elif MeshDimName.ep_replicate in dim_names and MeshDimName.ep_shard in dim_names:
         device_mesh, dim_names = _flatten_dims(
@@ -379,6 +389,7 @@ def get_dp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
             MeshDimName.ep_replicate,
             MeshDimName.ep_shard,
             name=MeshDimName.dp,
+            dim_names=dim_names,
         )
 
     # Flattened context parallel dimensions should not be in this mesh since ranks within the
@@ -484,7 +495,7 @@ def get_pp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
 
 def get_pp_stage_mesh(device_mesh: DeviceMesh, pp_mesh: Optional[DeviceMesh] = None) -> DeviceMesh:
     """
-    Get the pipeline-parallel sub-mesh for a single stage.
+    Get the sub-mesh for a single pipeline stage.
 
     :param device_mesh: The world mesh created by :func:`build_world_mesh()`.
     :param pp_mesh: Optional pipeline parallel mesh. If not provided, it will be
@@ -503,30 +514,51 @@ def get_pp_stage_mesh(device_mesh: DeviceMesh, pp_mesh: Optional[DeviceMesh] = N
 
 
 def _flatten_dims(
-    device_mesh: DeviceMesh, *dims: str, name: Optional[str] = None
+    device_mesh: DeviceMesh,
+    *dims: str,
+    name: Optional[str] = None,
+    dim_names: Optional[Tuple[str, ...]] = None,
 ) -> Tuple[DeviceMesh, Tuple[str, ...]]:
+    """
+    Flatten *dims* into a single dimension called *name*.
+
+    :param device_mesh: The world-mesh object. Only views of *device_mesh* are actually mutated.
+    :param dims: The existing dimension names to merge.
+    :param name: New dimension name. If ``None`` we join *dims* with "_".
+    :param dim_names: Optional cached list of current dimension names. Supplying this avoids
+        relying on ``device_mesh.mesh_dim_names`` (which is stale after a prior
+        flatten) and therefore allows chaining multiple flatten operations.
+
+    :returns: The root mesh (now indexable by the new dimension names
+        as well as the original names) and the new dimension names.
+    """
     if name is None:
         name = "_".join(dims)
+
+    curr_names = list(dim_names or device_mesh.mesh_dim_names or [])
+    if not curr_names:
+        raise RuntimeError("Could not determine current dimension names for flattening")
+
     log.info(f"Flattening mesh dimensions {dims} into {name}")
-    assert (names := device_mesh.mesh_dim_names) is not None
-    out_names = []
-    for n in names:
+
+    out_names: list[str] = []
+    for n in curr_names:
         if n in dims:
             if name not in out_names:
                 out_names.append(name)
         else:
             out_names.append(n)
 
-    flatten_mesh(device_mesh[dims], name)
+    flatten_mesh(device_mesh[dims], name)  # in-place flatten on sub-mesh
     new_names = tuple(out_names)
 
-    # Sanity-check: we should now be able to take a view of the parent mesh using the merged
-    # dimension names. If this fails the in-place flatten hasn't propagated correctly.
     try:
+        # NOTE: device_mesh.mesh_dim_names is not updated based on the flatten operation.
+        # We need to check that the root mesh is indexable by the new dimension names.
         _ = device_mesh[new_names]
-    except Exception as exc:  # pylint: disable=broad-except
+    except KeyError as exc:
         raise RuntimeError(
-            f"Flattening failed: device mesh does not recognize the new "
+            "Flattening failed: root device mesh does not recognize the new "
             f"dimension names {new_names}. Original dims: {dims}."
         ) from exc
 
