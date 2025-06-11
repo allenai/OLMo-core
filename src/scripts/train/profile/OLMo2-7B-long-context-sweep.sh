@@ -44,10 +44,10 @@ CONFIG_MATRIX=(
   "tp4_dp4_ac_gqa 32 16 4 none true 0.25"
   # "cp4_dp4_ac_gqa 32 16 none 4 true 0.25"
   # "cp2_tp2_dp4_ac_gqa 32 16 2 2 true 0.25"
-  "tp4_dp4_ac 32 16 4 none true none"
-  "cp4_dp4_ac 32 16 none 4 true none"
+  # "tp4_dp4_ac 32 16 4 none true none"
+  # "cp4_dp4_ac 32 16 none 4 true none"
   "cp8_dp2_gqa 32 16 none 8 false 0.25"
-  "cp8_dp2 32 16 none 8 false none"
+  # "cp8_dp2 32 16 none 8 false none"
 )
 
 # -----------------------------------------------------------------------------
@@ -56,7 +56,7 @@ CONFIG_MATRIX=(
 for cfg in "${CONFIG_MATRIX[@]}"; do
   read -r NAME BS_FACTOR NUM_GPUS TP CP AC GQA <<< "$cfg"
 
-  RUN_NAME="${NAME}-${DATE}"
+  RUN_NAME="${NAME}-${DATE}-$(date +%H%M%S)"
   GLOBAL_BS=$(calc_gbs "$BS_FACTOR")
   NUM_NODES=$((NUM_GPUS/8))
 
@@ -66,7 +66,7 @@ for cfg in "${CONFIG_MATRIX[@]}"; do
   # Build override list
   # ---------------------------------------------------------------
   OVERRIDES=(
-    "--trainer.callbacks.profiler.enabled=False"
+    "--trainer.callbacks.profiler.enabled=True"
     "--trainer.callbacks.wandb.enabled=True"
     "--data_loader.global_batch_size=${GLOBAL_BS}"
     "--launch.num_nodes=${NUM_NODES}"
