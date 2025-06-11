@@ -125,7 +125,7 @@ def _build_and_check_world_mesh(dp_degree, tp_degree, cp_degree, pp_degree, ep_d
         pytest.param(1, 2, 2, 2, 2, 16, id="dp_tp_ep_cp_pp_error"),
     ],
 )
-def test_build_world_mesh_parameterized(
+def test_build_world_mesh(
     backend: str,
     dp_degree: int,
     tp_degree: int,
