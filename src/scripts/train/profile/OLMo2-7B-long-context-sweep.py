@@ -334,7 +334,7 @@ def main():
 
         # Build experiment config.
         exp_config = build_config(
-            script=__file__,
+            script=sys.argv[0],
             cmd=SubCmd.launch,
             run_name=run_name,
             cluster=cluster,
