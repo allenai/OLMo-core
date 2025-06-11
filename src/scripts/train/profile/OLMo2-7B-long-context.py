@@ -165,7 +165,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 skip_first=15,
                 wait=3,
                 warmup=1,
-                active=2,
+                active=1,
                 repeat=1,
                 export_chrome_trace=True,
                 with_stack=False,
