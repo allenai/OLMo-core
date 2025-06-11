@@ -255,6 +255,11 @@ def build_world_mesh(
 
 
 def get_device_mesh_info(device_mesh: DeviceMesh) -> str:
+    """
+    Get a human-readable string representation of a ``DeviceMesh``.
+
+    :param device_mesh: The device mesh to get info for.
+    """
     shape: str
     if device_mesh.mesh_dim_names is not None:
         shape = ", ".join(
@@ -316,6 +321,9 @@ def _get_model_mesh(device_mesh: DeviceMesh) -> Tuple[DeviceMesh, Tuple[str, ...
         )
 
     # Context parallel dimension gets flattened into the adjacent DP dimension.
+    # NOTE: We do this because for param-synchronization purposes a CP group behaves like an extra
+    # DP replica set. CP splits the context across ranks but every CP rank still holds a copy of
+    # the model parameters. Gradients need to be reduced across the union of DP ranks and CP ranks.
     if MeshDimName.cp in dim_names:
         last_dp_dim = dim_names[dim_names.index(MeshDimName.cp) - 1]
         assert last_dp_dim.startswith("dp")
@@ -329,7 +337,7 @@ def _get_model_mesh(device_mesh: DeviceMesh) -> Tuple[DeviceMesh, Tuple[str, ...
 def get_dp_model_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     """
     Get the right sub-mesh for a data parallel model wrapper like FSDP or DDP from a ``DeviceMesh``
-    created by :func:`build_worald_mesh()`.
+    created by :func:`build_world_mesh()`.
 
     .. important::
         You should use :func:`get_dp_mesh()` instead for getting the sub-mesh to assign ranks
@@ -476,7 +484,11 @@ def get_pp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
 
 def get_pp_stage_mesh(device_mesh: DeviceMesh, pp_mesh: Optional[DeviceMesh] = None) -> DeviceMesh:
     """
-    Get the sub-mesh for a pipeline stage.
+    Get the pipeline-parallel sub-mesh for a single stage.
+
+    :param device_mesh: The world mesh created by :func:`build_world_mesh()`.
+    :param pp_mesh: Optional pipeline parallel mesh. If not provided, it will be
+        extracted from the device_mesh using :func:`get_pp_mesh()`.
     """
     if pp_mesh is None:
         pp_mesh = get_pp_mesh(device_mesh)
@@ -504,10 +516,31 @@ def _flatten_dims(
                 out_names.append(name)
         else:
             out_names.append(n)
-    device_mesh[dims]._flatten(mesh_dim_name=name)
+
+    flatten_mesh(device_mesh[dims], name)
     new_names = tuple(out_names)
+
+    # Sanity-check: we should now be able to take a view of the parent mesh using the merged
+    # dimension names. If this fails the in-place flatten hasn't propagated correctly.
+    try:
+        _ = device_mesh[new_names]
+    except Exception as exc:  # pylint: disable=broad-except
+        raise RuntimeError(
+            f"Flattening failed: device mesh does not recognize the new "
+            f"dimension names {new_names}. Original dims: {dims}."
+        ) from exc
+
     return device_mesh, new_names
 
 
-def flatten_mesh(device_mesh: DeviceMesh, name: Optional[str] = None):
+def flatten_mesh(device_mesh: DeviceMesh, name: Optional[str] = None) -> DeviceMesh:
+    """
+    Flatten a multi-dimensional ``DeviceMesh`` into a 1D ``DeviceMesh``.
+
+    :param device_mesh: The multi-dimensional ``DeviceMesh`` to flatten.
+    :param name: Optional name for the flattened dimension.
+
+    .. important::
+        The ``device_mesh`` is modified in-place.
+    """
     return device_mesh._flatten(mesh_dim_name=name)
