@@ -44,6 +44,7 @@ log = logging.getLogger(__name__)
 # ---
 # 16 GPUs, 32*CL bs -- TP4, DP4, AC, GQA(1/4) -> 5,822 TPS/device = 23,288 TPS total
 # 16 GPUs, 32*CL bs -- CP4, DP4, AC, GQA(1/4) -> 5,443 TPS/device = 21,772 TPS total
+# 16 GPUs, 32*CL bs -- CP2, TP2, DP4, AC, GQA(1/4) -> 5,334 TPS/device = 21,336 TPS total
 # 16 GPUs, 32*CL bs -- TP4, DP4, AC -> 5,412 TPS/device = 21,648 TPS total (suggested by Dustin & Amanda)
 # 16 GPUs, 32*CL bs -- CP4, DP4, AC -> 3,977 TPS/device = 15,908 TPS total
 # 16 GPUs, 32*CL bs -- CP8, DP2, GQA(1/4) -> 5,876 TPS/device = 11,752 TPS total
@@ -53,23 +54,23 @@ log = logging.getLogger(__name__)
 # ---
 # 32 GPUs, 64*CL bs -- TP4, DP8, AC, GQA(1/4) -> 5,371 TPS/device = 42,968 TPS total
 # 32 GPUs, 64*CL bs -- TP4, DP8, AC -> 5,029 TPS/device = 40,232 TPS total
+# 32 GPUs, 64*CL bs -- CP2, TP2, DP8, AC, GQA(1/4) -> 4,768 TPS/device = 38,144 TPS total
 # 32 GPUs, 64*CL bs -- CP4, DP8, AC, GQA(1/4) -> 4,700 TPS/device = 37,600 TPS total  (only use 64% of GPU RAM)
 # 32 GPUs, 64*CL bs -- CP8, DP4, GQA(1/4) -> 5,032 TPS/device = 20,128 TPS total
-# 32 GPUs, 64*CL bs -- CP2, TP2, DP4, AC, GQA(1/4)
-
+#
 
 CONTEXT_LENGTH = 4 * 16_384
-GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH  # cp8, dp4
-# GLOBAL_BATCH_SIZE = 32 * CONTEXT_LENGTH
+# GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH  # cp8, dp4
+GLOBAL_BATCH_SIZE = 32 * CONTEXT_LENGTH
 INTRA_DOCUMENT_MASKING = True
 
-NUM_GPUS = 32
+NUM_GPUS = 16
 assert NUM_GPUS % 8 == 0
 NUM_NODES = NUM_GPUS // 8
 
 AC_ATTENTION_INTERVAL = 4
-TP_DEGREE = 2
-CP_DEGREE = 2
+TP_DEGREE = None
+CP_DEGREE = 4
 GQA_RATIO = 1 / 4
 
 log.info(
@@ -166,6 +167,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 active=2,
                 repeat=1,
                 export_chrome_trace=True,
+                with_stack=False,
             ),
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
