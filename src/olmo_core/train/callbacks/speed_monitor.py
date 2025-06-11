@@ -124,12 +124,14 @@ class SpeedMonitorCallback(Callback):
         tps: Optional[float] = None
         tps_avg: Optional[float] = None
         if self._step_tokens and self._total_tokens:
-            tps = self._step_tokens / step_time
+            tps = self._step_tokens / step_time  # can be interpreted as TPS per data-parallel group
             tps_avg = self._total_tokens / total_time
             self.trainer.record_metric("throughput/device/TPS", tps)
             self.trainer.record_metric("throughput/device/TPS (actual avg)", tps_avg)
 
         if self.trainer.global_train_tokens_seen is not None:
+            global_tps = self.trainer.global_train_tokens_seen / total_time
+            self.trainer.record_metric("throughput/total TPS (actual avg)", global_tps)
             self.trainer.record_metric(
                 "throughput/total tokens", self.trainer.global_train_tokens_seen
             )
