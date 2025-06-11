@@ -69,8 +69,8 @@ assert NUM_GPUS % 8 == 0
 NUM_NODES = NUM_GPUS // 8
 
 AC_ATTENTION_INTERVAL = 4
-TP_DEGREE = None
-CP_DEGREE = 4
+TP_DEGREE = 4
+CP_DEGREE = None
 GQA_RATIO = 1 / 4
 
 log.info(
@@ -106,6 +106,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
+            prefetch_factor=1,
         ),
         tp_config=TransformerTensorParallelConfig(degree=TP_DEGREE) if TP_DEGREE else None,
         cp_config=(
