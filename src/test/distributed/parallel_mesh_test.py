@@ -1,5 +1,3 @@
-import sys
-
 import pytest
 import torch
 
@@ -13,7 +11,10 @@ from olmo_core.distributed.parallel import (
     get_world_mesh,
 )
 from olmo_core.distributed.parallel.context_parallel import ContextParallelConfig
-from olmo_core.distributed.parallel.data_parallel import DataParallelConfig, DataParallelType
+from olmo_core.distributed.parallel.data_parallel import (
+    DataParallelConfig,
+    DataParallelType,
+)
 from olmo_core.distributed.parallel.expert_parallel import ExpertParallelConfig
 from olmo_core.distributed.parallel.pipeline_parallel import PipelineParallelConfig
 from olmo_core.distributed.parallel.tensor_parallel import TensorParallelConfig
