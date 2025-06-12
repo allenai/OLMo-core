@@ -10,7 +10,7 @@ from olmo_core.utils import ensure_multiple_of
 
 from ..attention import AttentionConfig, AttentionType
 from ..buffer_cache import BufferCache
-from ..feed_forward import FeedForwardConfig, FeedForwardType
+from ..feed_forward import FeedForwardConfig, FeedForwardType, DenseMoEFeedForwardConfig
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
