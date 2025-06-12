@@ -16,7 +16,7 @@ from olmo_core.train.train_module import (
 )
 
 SEQUENCE_LENGTH = 8192
-GLOBAL_BATCH_SIZE = 512 * SEQUENCE_LENGTH
+GLOBAL_BATCH_SIZE = 256 * SEQUENCE_LENGTH
 MAX_DURATION = int(4e12)
 
 
