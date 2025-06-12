@@ -45,10 +45,12 @@ from .block import (
     TransformerBlock,
     TransformerBlockBase,
 )
+from .flops import num_floating_point_operations_for_logits
 from .config import (
     TransformerActivationCheckpointingMode,
     TransformerBlockConfig,
     TransformerDataParallelWrappingStrategy,
+    TransformerConfig,
 )
 from .init import InitMethod
 
@@ -146,6 +148,8 @@ class Transformer(nn.Module):
         # later, like for pipeline parallelism.
         self.num_params
         self.num_non_embedding_params
+        
+        self.config: Optional[TransformerConfig] = None
 
     def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
         return block
@@ -756,26 +760,20 @@ class Transformer(nn.Module):
         return self.num_params - self.embeddings.weight.numel()
 
     def num_flops_per_token(self, seq_len: int) -> int:
-        # BUG: this flops calculation is terible
-        """
-        Get the approximate number of flops per token.
-        """
-        n, h, q, t = (
-            self.n_layers,
-            self.n_attn_heads,
-            self.d_model // self.n_attn_heads,
-            seq_len,
-        )
+        flops = []
+        
+        # calculate flops for each block (each block might have different config)
+        for block_idx in range(self.n_layers):
+            block_config = self.config.block
+            if self.config.block_overrides is not None and block_idx in self.config.block_overrides:
+                block_config = self.config.block_overrides[block_idx]
+            
+            flops.append(block_config.flops_per_token(self.d_model, seq_len)) 
+            
+        flops.append(num_floating_point_operations_for_logits(self.config, seq_len) / seq_len)
 
-        # Reasoning behind the factor of 12 for the self-attention part of the formula:
-        # 1. each self-attention has 2 matmul in the forward and 4 in the backward (6)
-        # 2. the flash attention does 1 more matmul recomputation in the backward
-        #    but recomputation should not be counted in calculating MFU           (+0)
-        # 3. each matmul performs 1 multiplication and 1 addition                 (*2)
-        # 4. we follow the convention and do not account for sparsity in causal attention
-        flop_per_token = 6 * self.num_non_embedding_params + 12 * n * h * q * t # BUG: num_non_embedding_params should only count active params for moe
-
-        return flop_per_token
+        return sum(flops)
+    
 
     def post_batch(self, dry_run: bool = False):
         """

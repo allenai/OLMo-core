@@ -156,5 +156,7 @@ class SpeedMonitorCallback(Callback):
             # https://arxiv.org/abs/2204.02311
             mfu = 100 * num_flops_per_token * tps / self.device_peak_flops
             mfu_avg = 100 * num_flops_per_token * tps_avg / self.device_peak_flops
+            tflops_per_gpu = num_flops_per_token * tps / 1e12
             self.trainer.record_metric("throughput/device/MFU", mfu)
             self.trainer.record_metric("throughput/device/MFU (actual avg)", mfu_avg)
+            self.trainer.record_metric("throughput/device/TFLOPs_per_GPU", tflops_per_gpu)
