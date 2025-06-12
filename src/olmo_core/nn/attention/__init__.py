@@ -829,7 +829,9 @@ class MultiHeadLatentAttention(AttentionBase):
         qk_nope_head_dim: Optional[int] = None,
         v_head_dim: Optional[int] = None,
         softcap: Optional[float] = None,
-        # attn_impl: Optional[str] = "naive",
+        max_seq_len: int = 4096,
+        batch_size: int = 1,
+        attn_impl: Optional[str] = "naive",
     ):
         super().__init__()
         
@@ -838,6 +840,8 @@ class MultiHeadLatentAttention(AttentionBase):
         self.n_kv_heads = n_kv_heads or n_heads
         self.n_rep = self.n_heads // self.n_kv_heads
         self.head_dim = d_model // n_heads
+        self.batch_size = batch_size
+        self.max_seq_len = max_seq_len
         
         self.v_head_dim = v_head_dim if v_head_dim is not None else self.head_dim
         self.qk_rope_head_dim = qk_rope_head_dim
@@ -851,7 +855,7 @@ class MultiHeadLatentAttention(AttentionBase):
         self.use_head_qk_norm = use_head_qk_norm
         self.softcap = softcap
         self.use_flash = use_flash
-        # self.n_local_heads = n_heads // dist.get_world_size()
+        self.n_local_heads = n_heads // dist.get_world_size()
         
         if self.use_flash and self.softcap is not None:
             raise OLMoConfigurationError("Flash attention does not support softcap")
@@ -876,12 +880,12 @@ class MultiHeadLatentAttention(AttentionBase):
         self.q_norm: Optional[LayerNorm] = None
         self.k_norm: Optional[LayerNorm] = None
 
-        # if attn_impl == "naive":
-        #     self.register_buffer("k_cache", torch.zeros(batch_size, batch_size, self.n_local_heads, self.qk_head_dim), persistent=False)
-        #     self.register_buffer("v_cache", torch.zeros(batch_size, args.max_seq_len, self.n_local_heads, self.v_head_dim), persistent=False)
-        # else:
-        #     self.register_buffer("kv_cache", torch.zeros(batch_size, batch_size, self.kv_lora_rank), persistent=False)
-        #     self.register_buffer("pe_cache", torch.zeros(batch_size, batch_size, self.qk_rope_head_dim), persistent=False)
+        if attn_impl == "naive":
+            self.register_buffer("k_cache", torch.zeros(self.batch_size, self.max_seq_len, self.n_local_heads, self.qk_head_dim, dtype=dtype, device=init_device), persistent=False)
+            self.register_buffer("v_cache", torch.zeros(self.batch_size, self.max_seq_len, self.n_local_heads, self.v_head_dim, dtype=dtype, device=init_device), persistent=False)
+        else:
+            self.register_buffer("kv_cache", torch.zeros(self.batch_size, self.max_seq_len, self.kv_lora_rank, dtype=dtype, device=init_device), persistent=False)
+            self.register_buffer("pe_cache", torch.zeros(self.batch_size, self.max_seq_len, self.qk_rope_head_dim, dtype=dtype, device=init_device), persistent=False)
 
         if qk_norm is not None:
             if self.q_lora_rank > 0:
