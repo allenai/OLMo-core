@@ -23,15 +23,17 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     return TransformerConfig.olmo2_1B_v2(
         vocab_size=common.tokenizer.padded_vocab_size(),
         use_mla=True,
-        q_lora_rank=256,        
-        kv_lora_rank=1024,       
-        qk_rope_head_dim=128,    
-        qk_nope_head_dim=0,    
-        v_head_dim=128,         
-        use_flash=True,
-        batch_size=GLOBAL_BATCH_SIZE,
-        max_seq_len=SEQUENCE_LENGTH,
-        attn_impl="absorb",
+        attention_config=dict(
+            q_lora_rank=256,        
+            kv_lora_rank=1024,       
+            qk_rope_head_dim=128,    
+            qk_nope_head_dim=0,    
+            v_head_dim=128,         
+            use_flash=True,
+            batch_size=GLOBAL_BATCH_SIZE,
+            max_seq_len=SEQUENCE_LENGTH,
+            attn_impl="absorb",
+        ),
     )
 
 
