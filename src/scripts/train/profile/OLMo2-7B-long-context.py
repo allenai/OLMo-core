@@ -69,8 +69,8 @@ assert NUM_GPUS % 8 == 0
 NUM_NODES = NUM_GPUS // 8
 
 AC_ATTENTION_INTERVAL = 4
-TP_DEGREE = 4
-CP_DEGREE = None
+TP_DEGREE = 8
+CP_DEGREE = 2
 GQA_RATIO = 1 / 4
 
 log.info(
@@ -118,13 +118,15 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         )
         if CP_DEGREE
         else None,
-        ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=[f"blocks.{i}.feed_forward" for i in range(32)]
-            + [f"blocks.{i}.attention" for i in range(0, 32, AC_ATTENTION_INTERVAL)],
-        )
-        if AC_ATTENTION_INTERVAL
-        else None,
+        # ac_config=TransformerActivationCheckpointingConfig(
+        #     mode=TransformerActivationCheckpointingMode.selected_modules,
+        #     modules=[
+        #         f"blocks.{i}.feed_forward" for i in range(32)
+        #     ]  # TODO: try to get rid of this! Its ok to recompute attention layers though.
+        #     + [f"blocks.{i}.attention" for i in range(0, 32, AC_ATTENTION_INTERVAL)],
+        # )
+        # if AC_ATTENTION_INTERVAL
+        # else None,
         float8_config=Float8Config(enabled=False),
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
