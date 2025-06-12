@@ -116,7 +116,7 @@ def build_config(
         name=f"{ladder.name}-{size}-{run_duration}",
         root_dir=root_dir,
         cmd=[script, SubCmd.train, size, run_duration, cluster, *overrides],
-        cluster=cluster,
+        constraint=cluster,
     ).merge(overrides, strict=False)
 
     dp_world_size = launch.num_nodes * launch.num_gpus

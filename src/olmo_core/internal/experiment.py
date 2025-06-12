@@ -39,7 +39,7 @@ from olmo_core.train.callbacks import (
 from olmo_core.train.train_module import TransformerTrainModuleConfig
 from olmo_core.utils import prepare_cli_environment, seed_all
 
-from .common import build_launch_config, get_beaker_username, get_root_dir, get_work_dir
+from .common import build_launch_config, get_beaker_username, get_work_dir
 
 log = logging.getLogger(__name__)
 
@@ -132,7 +132,7 @@ def build_common_components(
     script: str,
     cmd: SubCmd,
     run_name: str,
-    cluster: str,
+    constraint: str,
     overrides: List[str],
     *,
     global_batch_size: int,
@@ -143,7 +143,7 @@ def build_common_components(
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
 ) -> CommonComponents:
-    root_dir = get_root_dir(cluster)
+    root_dir = "/weka/oe-training-default/ai2-llm"
 
     cmd_to_launch = SubCmd.train
     if cmd == SubCmd.launch_prep:
@@ -155,8 +155,8 @@ def build_common_components(
         launch_config = build_launch_config(
             name=f"{run_name}-{cmd_to_launch}",
             root_dir=root_dir,
-            cmd=[script, cmd_to_launch, run_name, cluster, *overrides],
-            cluster=cluster,
+            cmd=[script, cmd_to_launch, run_name, constraint, *overrides],
+            constraint=constraint,
             nccl_debug=False,
             beaker_image=beaker_image,
             num_nodes=num_nodes,
@@ -241,7 +241,7 @@ def build_config(
     script: str,
     cmd: SubCmd,
     run_name: str,
-    cluster: str,
+    constraint: str,
     overrides: List[str],
     *,
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
@@ -250,7 +250,7 @@ def build_config(
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
     **kwargs,
 ) -> ExperimentConfig:
-    common = build_common_components(script, cmd, run_name, cluster, overrides, **kwargs)
+    common = build_common_components(script, cmd, run_name, constraint, overrides, **kwargs)
 
     model = model_config_builder(common)
 
@@ -331,7 +331,7 @@ def main(
     num_nodes: int = 1,
 ):
     usage = f"""
-[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
+[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER/HOSTNAME[/] [i][OVERRIDES...][/]
 
 [b]Subcommands[/]
 [b magenta]launch:[/]      Launch the script on Beaker with the [b magenta]train[/] subcommand.
@@ -352,7 +352,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         rich.get_console().print(usage, highlight=False)
         sys.exit(1)
 
-    script, cmd, run_name, cluster, *overrides = sys.argv
+    script, cmd, run_name, constraint, *overrides = sys.argv
 
     cmd = SubCmd(cmd)
     cmd.prepare_environment()
@@ -361,7 +361,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         script,
         cmd,
         run_name,
-        cluster,
+        constraint,
         overrides,
         global_batch_size=global_batch_size,
         model_config_builder=model_config_builder,

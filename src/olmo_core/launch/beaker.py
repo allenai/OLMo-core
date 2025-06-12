@@ -177,9 +177,9 @@ class BeakerLaunchConfig(Config):
     The amount of shared memory to use.
     """
 
-    clusters: List[str] = field(default_factory=lambda: ["ai2/jupiter-cirrascale-2"])
+    constraint: List[str] = field(default_factory=lambda: ["ai2/jupiter-cirrascale-2"])
     """
-    The allowed clusters to run on.
+    The allowed clusters or hostnames constraint.
     """
 
     shared_filesystem: bool = False
@@ -273,6 +273,14 @@ class BeakerLaunchConfig(Config):
         if self._beaker is None:
             self._beaker = Beaker.from_env(default_workspace=self.workspace)
         return self._beaker
+
+    def _get_constraint_type(self) -> str:
+        """
+        Decide if the constraint type is cluster or hostname.
+        """
+        if self.constraint[0].endswith(".reviz.ai2.in"):
+            return "hostname"
+        return "cluster"
 
     def _get_env_vars(self) -> List[Tuple[str, str]]:
         env_vars: List[Tuple[str, str]] = []
@@ -385,7 +393,7 @@ class BeakerLaunchConfig(Config):
         ] + self.setup_steps
 
         if torchrun:
-            if self.num_nodes > 1 and any(["augusta" in cluster for cluster in self.clusters]):
+            if self.num_nodes > 1 and any(["augusta" in cluster for cluster in self.constraint]):
                 entrypoint_script.append(
                     "BEAKER_REPLICA_RANK=$("
                     "python -m olmo_core.launch.reorder_ranks_in_gcp "
@@ -417,7 +425,7 @@ class BeakerLaunchConfig(Config):
                     if self.host_networking is not None
                     else (
                         self.num_nodes > 1
-                        or any(["augusta" in cluster for cluster in self.clusters])
+                        or any(["augusta" in cluster for cluster in self.constraint])
                     )
                 ),
                 propagate_failure=False if self.num_nodes > 1 else None,
@@ -427,10 +435,14 @@ class BeakerLaunchConfig(Config):
                 result_path=self.result_dir,
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
-            .with_constraint(cluster=self.clusters)
             .with_env_var(GIT_REPO_URL_ENV_VAR, self.git.repo_url)
             .with_env_var(GIT_REF_ENV_VAR, self.git.ref)
         )
+
+        if self._get_constraint_type == "cluster":
+            task_spec = task_spec.with_constraint(cluster=self.constraint)
+        else:
+            task_spec = task_spec.with_constraint(hostname=self.constraint)
 
         if self.git.branch is not None:
             task_spec = task_spec.with_env_var(GIT_BRANCH_ENV_VAR, self.git.branch)

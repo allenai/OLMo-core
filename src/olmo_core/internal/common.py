@@ -60,7 +60,7 @@ def build_launch_config(
     name: str,
     root_dir: str,
     cmd: List[str],
-    cluster: str,
+    constraint: str,
     task_name: str = "train",
     workspace: str = "ai2/OLMo-core",
     budget: str = "ai2/oe-training",
@@ -84,7 +84,7 @@ def build_launch_config(
         cmd=cmd,
         task_name=task_name,
         workspace=workspace,
-        clusters=[cluster],
+        constraint=[constraint],
         weka_buckets=weka_buckets,
         beaker_image=beaker_image,
         num_nodes=num_nodes,
@@ -125,7 +125,7 @@ def build_launch_config(
 
 CLUSTER_TO_GPU_TYPE = {
     "ai2/jupiter-cirrascale-2": "NVIDIA H100 80GB HBM3",
-    "ai2/test-h100": "NVIDIA H100 80GB HBM3",
+    "ai2/vboost-test": "NVIDIA H100 80GB HBM3",
     "ai2/pluto-cirrascale": "NVIDIA H100",
     "ai2/augusta-google-1": "NVIDIA H100",
     "ai2/titan-cirrascale": "NVIDIA B200",

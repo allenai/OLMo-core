@@ -27,7 +27,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     rank_microbatch_size = 8 * SEQUENCE_LENGTH
     if common.launch is not None:
-        gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
+        gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.constraint}
         if all("B200" in g for g in gpus):
             rank_microbatch_size *= 2
 
@@ -59,8 +59,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     if common.launch is None:
         cluster = "local"
     else:
-        assert len(common.launch.clusters) == 1
-        cluster = common.launch.clusters[0]
+        assert len(common.launch.constraint) == 1
+        cluster = common.launch.constraint[0]
 
     return (
         TrainerConfig(

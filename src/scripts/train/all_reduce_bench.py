@@ -94,14 +94,16 @@ class BenchmarkConfig(Config):
     launch: BeakerLaunchConfig
 
 
-def build_config(script: str, run_name: str, cluster: str, overrides: List[str]) -> BenchmarkConfig:
+def build_config(
+    script: str, run_name: str, constraint: str, overrides: List[str]
+) -> BenchmarkConfig:
     launch_config = BeakerLaunchConfig(
         name=f"{run_name}-{generate_uuid()[:8]}",
         budget="ai2/oe-training",
-        cmd=[script, SubCmd.run, run_name, cluster, *overrides],
+        cmd=[script, SubCmd.run, run_name, constraint, *overrides],
         task_name="benchmark",
         workspace="ai2/OLMo-core",
-        clusters=[cluster],
+        constraint=[constraint],
         beaker_image=OLMoCoreBeakerImage.stable,
         num_nodes=1,
         num_gpus=8,
@@ -161,7 +163,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         rich.get_console().print(usage, highlight=False)
         sys.exit(1)
 
-    script, cmd, run_name, cluster, *overrides = sys.argv
+    script, cmd, run_name, constraint, *overrides = sys.argv
 
     cmd = SubCmd(cmd)
     cmd.prepare_environment()
@@ -169,7 +171,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
     config = build_config(
         script,
         run_name,
-        cluster,
+        constraint,
         overrides,
     )
 

@@ -191,7 +191,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             name=run_name,
             root_dir=root_dir,
             cmd=[script, "train", run_name, *overrides],
-            cluster=BEAKER_CLUSTER,
+            constraint=BEAKER_CLUSTER,
             workspace=BEAKER_WORKSPACE,
             budget=BEAKER_BUDGET,
             num_nodes=NUM_NODES,
