@@ -164,21 +164,21 @@ class LcContTrain(Config):
                     reduce_dtype=DType.float32,
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
                 ),
-                # tp_config=TransformerTensorParallelConfig(
-                    # degree=4,
+                tp_config=TransformerTensorParallelConfig(
+                    degree=4,
                     # enable_async=True,
                     # loss_parallel=True,
-                # ),
+                ),
                 # cp_config=TransformerContextParallelConfig.llama3(degree=CP_DEGREE)
                 # if INTRA_DOCUMENT_MASKING
                 # else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE),
                 # ac_config=TransformerActivationCheckpointingConfig(),
-                ac_config=TransformerActivationCheckpointingConfig(
-                    mode=TransformerActivationCheckpointingMode.selected_modules,
-                    modules=[f"blocks.{i}.feed_forward" for i in range(32)] + [
-                        f"blocks.{i}.attention" for i in range(0, 32, AC_ATTENTION_INTERVAL)
-                    ]
-                ),
+                # ac_config=TransformerActivationCheckpointingConfig(
+                #     mode=TransformerActivationCheckpointingMode.selected_modules,
+                #     modules=[f"blocks.{i}.feed_forward" for i in range(32)] + [
+                #         f"blocks.{i}.attention" for i in range(0, 32, AC_ATTENTION_INTERVAL)
+                #     ]
+                # ),
                 # ac_config=TransformerActivationCheckpointingConfig(
                     # mode=TransformerActivationCheckpointingMode.selected_ops,
                 # ),
