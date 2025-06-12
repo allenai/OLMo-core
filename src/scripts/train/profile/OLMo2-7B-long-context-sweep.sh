@@ -41,13 +41,10 @@ calc_gbs () {
 # name  bs_factor  num_gpus  tp  cp  ac_enabled  gqa_ratio
 # -----------------------------------------------------------------------------
 CONFIG_MATRIX=(
-  "tp4_dp4_ac_gqa 32 16 4 none true 0.25"
-  # "cp4_dp4_ac_gqa 32 16 none 4 true 0.25"
-  # "cp2_tp2_dp4_ac_gqa 32 16 2 2 true 0.25"
-  # "tp4_dp4_ac 32 16 4 none true none"
-  # "cp4_dp4_ac 32 16 none 4 true none"
-  "cp8_dp2_gqa 32 16 none 8 false 0.25"
-  # "cp8_dp2 32 16 none 8 false none"
+  "tp8_cp2_dp1_gqa 32 16 8 2 false 0.25"
+  "tp8_dp2_gqa 32 16 8 none false 0.25"
+  "tp4_cp2_dp2_gqa 32 16 4 2 false 0.25"
+  "tp4_cp4_dp1_gqa 32 16 4 4 false 0.25"
 )
 
 # -----------------------------------------------------------------------------
