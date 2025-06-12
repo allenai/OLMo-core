@@ -42,21 +42,21 @@ log = logging.getLogger(__name__)
 
 # Tyler's Results (64K context length, no FP8, intra-doc masking):
 # ---
-# 16 GPUs, 32*CL bs -- TP4, DP4, AC, GQA(1/4) -> 5,822 TPS/device = 23,288 TPS total
-# 16 GPUs, 32*CL bs -- CP4, DP4, AC, GQA(1/4) -> 5,443 TPS/device = 21,772 TPS total
-# 16 GPUs, 32*CL bs -- CP2, TP2, DP4, AC, GQA(1/4) -> 5,334 TPS/device = 21,336 TPS total
-# 16 GPUs, 32*CL bs -- TP4, DP4, AC -> 5,412 TPS/device = 21,648 TPS total (suggested by Dustin & Amanda)
-# 16 GPUs, 32*CL bs -- CP4, DP4, AC -> 3,977 TPS/device = 15,908 TPS total
-# 16 GPUs, 32*CL bs -- CP8, DP2, GQA(1/4) -> 5,876 TPS/device = 11,752 TPS total
-# 16 GPUs, 32*CL bs -- CP8, DP2 -> 3,735 TPS/device = 7,470 TPS total (bottlenecked by AllGather_RING)
+# 16 GPUs, 32*CL bs -- CP8, DP2, GQA(1/4) -> 5,876 TPS/device
+# 16 GPUs, 32*CL bs -- TP4, DP4, AC, GQA(1/4) -> 5,822 TPS/device
+# 16 GPUs, 32*CL bs -- CP4, DP4, AC, GQA(1/4) -> 5,443 TPS/device
+# 16 GPUs, 32*CL bs -- TP4, DP4, AC -> 5,412 TPS/device (suggested by Dustin & Amanda)
+# 16 GPUs, 32*CL bs -- CP2, TP2, DP4, AC, GQA(1/4) -> 5,334 TPS/device
+# 16 GPUs, 32*CL bs -- CP4, DP4, AC -> 3,977 TPS/device
+# 16 GPUs, 32*CL bs -- CP8, DP2 -> 3,735 TPS/device (bottlenecked by AllGather_RING)
 # 16 GPUs, 32*CL bs -- TP4, DP4 -> OOM
 # 16 GPUs, 32*CL bs -- CP4, DP4, GQA(1/4) -> OOM
 # ---
-# 32 GPUs, 64*CL bs -- TP4, DP8, AC, GQA(1/4) -> 5,371 TPS/device = 42,968 TPS total
-# 32 GPUs, 64*CL bs -- TP4, DP8, AC -> 5,029 TPS/device = 40,232 TPS total
-# 32 GPUs, 64*CL bs -- CP2, TP2, DP8, AC, GQA(1/4) -> 4,768 TPS/device = 38,144 TPS total
-# 32 GPUs, 64*CL bs -- CP4, DP8, AC, GQA(1/4) -> 4,700 TPS/device = 37,600 TPS total  (only use 64% of GPU RAM)
-# 32 GPUs, 64*CL bs -- CP8, DP4, GQA(1/4) -> 5,032 TPS/device = 20,128 TPS total
+# 32 GPUs, 64*CL bs -- TP4, DP8, AC, GQA(1/4) -> 5,371 TPS/device
+# 32 GPUs, 64*CL bs -- CP8, DP4, GQA(1/4) -> 5,032 TPS/device
+# 32 GPUs, 64*CL bs -- TP4, DP8, AC -> 5,029 TPS/device
+# 32 GPUs, 64*CL bs -- CP2, TP2, DP8, AC, GQA(1/4) -> 4,768 TPS/device
+# 32 GPUs, 64*CL bs -- CP4, DP8, AC, GQA(1/4) -> 4,700 TPS/device (only uses 64% of GPU RAM)
 #
 
 CONTEXT_LENGTH = 4 * 16_384
