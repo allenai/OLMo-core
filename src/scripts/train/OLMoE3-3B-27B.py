@@ -2,13 +2,14 @@
 Train an OLMoE model. Run this script without any arguments to see usage info.
 """
 
+import dataclasses
 import logging
-import math
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
+from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.moe import (
     MoEConfig,
@@ -43,7 +44,7 @@ SEQUENCE_LENGTH = 4096
 GLOBAL_BATCH_SIZE = (
     1024 * 4096
 )  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
-MAX_DURATION = int(500e9)  # int(6e12), don't forget to adjust the LR when you increase this
+MAX_DURATION = int(700e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
 
 
@@ -53,35 +54,44 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     config = TransformerConfig.llama_like(
         d_model=d_model,
         vocab_size=common.tokenizer.padded_vocab_size(),
-        n_layers=16,
+        n_layers=32,
         n_heads=16,
+        n_kv_heads=4,
         name=TransformerType.moe,
-        block_name=TransformerBlockType.moe_reordered_norm,
+        block_name=TransformerBlockType.moe_hybrid_reordered_norm,
         qk_norm=True,
         rope_theta=500_000,
         layer_norm_eps=1e-6,
         feed_forward_moe=MoEConfig(
             name=MoEType.default,
             num_experts=128,
-            hidden_size=2048,
+            hidden_size=1024,
             capacity_factor=1.25,
             router=MoERouterConfig(top_k=8, gating_function=MoERouterGatingFunction.sigmoid),
-            shared_mlp=FeedForwardConfig(hidden_size=8192, bias=False),
-            lb_loss_weight=0.01,
+            #  shared_mlp=FeedForwardConfig(hidden_size=4096, bias=False),
+            lb_loss_weight=0.05,
             z_loss_weight=None,
             lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
             scale_loss_by_num_layers=False,
         ),
-        #  feed_forward=FeedForwardConfig(hidden_size=hidden_size, bias=False),
+        feed_forward=FeedForwardConfig(hidden_size=4096, bias=False),
         init_std=0.01,
     )
+    config.block.attention.sliding_window = SlidingWindowAttentionConfig(
+        force_first=False, pattern=[False, False, False, True]
+    )
+    config.block.attention.use_flash = True
+    config.block.attention.use_head_qk_norm = True
 
     # First block will be a regular transformer block (no MoE component).
-    #  config.block_overrides = {
-    #      0: dataclasses.replace(
-    #          config.block, name=TransformerBlockType.reordered_norm, feed_forward_moe=None
-    #      ),
-    #  }
+    config.block_overrides = {
+        0: dataclasses.replace(
+            config.block,
+            name=TransformerBlockType.reordered_norm,
+            feed_forward_moe=None,
+            feed_forward=FeedForwardConfig(hidden_size=4096 + 8 * 1024, bias=False),
+        ),
+    }
 
     return config
 
@@ -91,10 +101,11 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         rank_microbatch_size=2 * SEQUENCE_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=SkipStepAdamWConfig(
-            lr=1.6e-4
-            * math.sqrt(
-                GLOBAL_BATCH_SIZE / (4096 * 512)
-            ),  # 1.6e-4 was used for 2M batch size, adjusting it accordingly
+            #  lr=1.6e-4
+            #  * math.sqrt(
+            #      GLOBAL_BATCH_SIZE / (4096 * 512)
+            #  ),  # 1.6e-4 was used for 2M batch size, adjusting it accordingly
+            lr=5e-5,
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
@@ -126,7 +137,10 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         scheduler=WSD(
             units=SchedulerUnits.steps,
             warmup=2000,
-            decay=(int(50e9 / GLOBAL_BATCH_SIZE)),
+            decay=(
+                # NOTE: be aware of when decay will happen relative to batch_wup schedule
+                int(50e9 / (GLOBAL_BATCH_SIZE * 4))
+            ),
             decay_fraction=None,
         ),
     )
@@ -202,4 +216,5 @@ if __name__ == "__main__":
         trainer_config_builder=build_trainer_config,
         include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
+        intra_document_masking=True,
     )
