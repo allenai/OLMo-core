@@ -77,7 +77,7 @@ class AnnealingDataMix(DataMixBase):
     name (without the '.txt' extension) below.
     """
 
-    pl_exact_repro_mix = "prolong_phase1_exact_repro"
+    pl_exact_repro_mix = "prolong_phase1_some_retok"
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):

@@ -78,7 +78,7 @@ class AnnealingDataMix(DataMixBase):
     name (without the '.txt' extension) below.
     """
 
-    data_mix = "prolong_phase1_exact_repro"
+    data_mix = "prolong_phase1_some_retok"
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
@@ -134,7 +134,7 @@ class LcContTrain(Config):
         root_dir = get_root_dir(cluster)
 
         tokenizer_config = TokenizerConfig.llama3()
-        with open(f"src/scripts/train/lc_cont_train/prolong_phase1_exact_repro_lc_only.txt") as f:
+        with open(f"src/scripts/train/lc_cont_train/prolong_phase1_retok_lc.txt") as f:
             base_dir = root_dir.rstrip("/") + "/"
 
             assert tokenizer_config.identifier is not None
