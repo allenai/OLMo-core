@@ -207,7 +207,8 @@ class LcContTrain(Config):
                 num_workers=4,
             ),
             trainer=TrainerConfig(
-                save_folder=f"/weka/oe-training-default/ai2-llm/checkpoints/yapeic/{run_name}",
+                # save_folder=f"/weka/oe-training-default/ai2-llm/checkpoints/yapeic/{run_name}",
+                save_folder=f"gs://ai2-llm/checkpoints/yapeic/{run_name}",
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
                 ),
@@ -229,7 +230,7 @@ class LcContTrain(Config):
                 WandBCallback(
                     name=run_name,
                     entity="ai2-llm",
-                    project="long-contexts",
+                    project="yapei-1b",
                     enabled=True,
                     cancel_check_interval=10,
                 ),
@@ -385,7 +386,8 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         script=script,
         cmd="train",
         run_name=run_name,
-        load_path = "/weka/oe-training-default/ai2-llm/checkpoints/OLMo-small/peteish1/step1907359",
+        # load_path = "/weka/oe-training-default/ai2-llm/checkpoints/OLMo-small/peteish1/step1907359",
+        load_path="gs://ai2-llm/checkpoints/OLMo-small/peteish1/step1907359",
         cluster=cluster,
         overrides=overrides,
     )
