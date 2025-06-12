@@ -127,6 +127,9 @@ class AttentionConfig(Config):
     qk_nope_head_dim: Optional[int] = None
     v_head_dim: Optional[int] = None
     softcap: Optional[float] = None
+    max_seq_len: Optional[int] = 4096
+    batch_size: Optional[int] = 64
+    attn_impl: Optional[str] = "naive"
 
     def num_params(self, d_model: int) -> int:
         """

@@ -871,13 +871,17 @@ class TransformerConfig(Config):
         feed_forward: Optional[FeedForwardConfig] = None,
         feed_forward_moe: Optional[MoEConfig] = None,
         # MLA specific parameters
-        use_mla: bool = False,
+        use_mla: Optional[bool] = False,
         q_lora_rank: Optional[int] = None,
         kv_lora_rank: Optional[int] = None,
-        qk_rope_head_dim: int = 64,
+        qk_rope_head_dim: Optional[int] = 64,
         qk_nope_head_dim: Optional[int] = None,
         v_head_dim: Optional[int] = None,
         softcap: Optional[float] = None,
+        max_seq_len: Optional[int] = 4096,
+        batch_size: Optional[int] = 64,
+        attn_impl: Optional[str] = "naive",
+
         **kwargs,
     ) -> "TransformerConfig":
         """
@@ -945,6 +949,9 @@ class TransformerConfig(Config):
                 qk_nope_head_dim=qk_nope_head_dim,
                 v_head_dim=v_head_dim,
                 softcap=softcap,
+                max_seq_len=max_seq_len,
+                batch_size=batch_size,
+                attn_impl=attn_impl,
             ),
             feed_forward=feed_forward,
             feed_forward_moe=feed_forward_moe,
