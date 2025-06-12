@@ -15,8 +15,8 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
-SEQUENCE_LENGTH = 8192
-GLOBAL_BATCH_SIZE = 256 * SEQUENCE_LENGTH
+SEQUENCE_LENGTH = 4096
+GLOBAL_BATCH_SIZE = 512 * SEQUENCE_LENGTH
 MAX_DURATION = int(4e12)
 
 
@@ -78,7 +78,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
-            load_strategy=LoadStrategy.never,
+            # load_strategy=LoadStrategy.never,
         )
         .with_callback(
             "checkpointer",
