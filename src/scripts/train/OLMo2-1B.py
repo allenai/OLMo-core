@@ -16,7 +16,7 @@ from olmo_core.train.train_module import (
 )
 
 SEQUENCE_LENGTH = 16384  
-GLOBAL_BATCH_SIZE = 32 * SEQUENCE_LENGTH  
+GLOBAL_BATCH_SIZE = 16 * SEQUENCE_LENGTH  
 MAX_DURATION = int(4e12)  
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
