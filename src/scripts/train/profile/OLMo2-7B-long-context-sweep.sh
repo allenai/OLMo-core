@@ -38,24 +38,34 @@ calc_gbs () {
 
 # -----------------------------------------------------------------------------
 # EXPERIMENT DEFINITIONS
-# name  bs_factor  num_gpus  tp  cp  ac_enabled  gqa_ratio
+# name  bs_factor  num_gpus  tp  cp  ac_enabled  gqa_ratio  double_bs
 # -----------------------------------------------------------------------------
 CONFIG_MATRIX=(
-  "tp4_cp2_dp2_gqa_acattn 32 16 4 2 true 0.25"
-  "tp4_dp4_gqa_acattn 32 16 4 none true 0.25"
+  # "tp4_cp2_dp2_gqa_acattn 32 16 4 2 true 0.25 false"
+  # "tp4_dp4_gqa_acattn 32 16 4 none true 0.25 false"
+  "tp4_dp4_gqa_acattn 32 16 4 none true 0.25 true"
+  "tp4_cp4_dp1_gqa_acattn 32 16 4 4 true 0.25 true"
+  "tp4_cp4_dp1_gqa_acattn 32 16 4 4 true 0.25 false"
 )
 
 # -----------------------------------------------------------------------------
 # MAIN LOOP --------------------------------------------------------------------
 # -----------------------------------------------------------------------------
 for cfg in "${CONFIG_MATRIX[@]}"; do
-  read -r NAME BS_FACTOR NUM_GPUS TP CP AC GQA <<< "$cfg"
+  read -r NAME BS_FACTOR NUM_GPUS TP CP AC GQA DOUBLE_BS <<< "$cfg"
 
   RUN_NAME="${NAME}-${DATE}-$(date +%H%M%S)"
+
+  # Apply batch size doubling if requested
+  if [[ "$DOUBLE_BS" == "true" ]]; then
+    BS_FACTOR=$((BS_FACTOR * 2))
+    RUN_NAME="${RUN_NAME}-2xbs"
+  fi
+
   GLOBAL_BS=$(calc_gbs "$BS_FACTOR")
   NUM_NODES=$((NUM_GPUS/8))
 
-  echo "[INFO] Launching $RUN_NAME (GPUs=$NUM_GPUS, nodes=$NUM_NODES, tp=$TP, cp=$CP, ac=$AC, gqa=$GQA)"
+  echo "[INFO] Launching $RUN_NAME (GPUs=$NUM_GPUS, nodes=$NUM_NODES, tp=$TP, cp=$CP, ac=$AC, gqa=$GQA, double_bs=$DOUBLE_BS)"
 
   # ---------------------------------------------------------------
   # Build override list
