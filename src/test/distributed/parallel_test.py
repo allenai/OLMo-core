@@ -23,7 +23,8 @@ from olmo_core.distributed.parallel.pipeline_parallel import PipelineParallelCon
 from olmo_core.distributed.parallel.tensor_parallel import TensorParallelConfig
 from olmo_core.distributed.utils import get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.testing import BACKENDS, run_distributed_test
+from olmo_core.testing import run_distributed_test
+from olmo_core.testing.utils import requires_multi_gpu
 
 
 def _get_expected_dp_world_size(world_size, tp_degree, cp_degree, pp_degree, ep_degree, dp_type):
@@ -132,45 +133,49 @@ def _build_and_check_world_mesh(dp_degree, tp_degree, cp_degree, pp_degree, ep_d
             assert sub_mesh.shape == (degree,)
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
+PARALLEL_MESH_TESTCONFIGS = [
+    pytest.param(2, 0, 0, 0, 0, 2, id="dp_only"),
+    pytest.param(1, 2, 0, 0, 0, 2, id="dp_tp"),
+    pytest.param(1, 0, 2, 0, 0, 2, id="dp_cp"),
+    pytest.param(1, 0, 0, 2, 0, 2, id="dp_pp"),
+    pytest.param(1, 0, 0, 0, 2, 2, id="dp_ep"),
+    pytest.param(1, 1, 2, 0, 0, 2, id="dp_tp_cp"),
+    pytest.param(1, 1, 1, 2, 0, 2, id="dp_tp_cp_pp"),
+    pytest.param(1, 0, 1, 2, 2, 4, id="dp_cp_ep_pp"),
+    pytest.param(1, 2, 0, 0, 2, 4, id="dp_tp_ep_configerror"),
+]
+
+
 @pytest.mark.parametrize("dp_type", [DataParallelType.fsdp, DataParallelType.hsdp])
-@pytest.mark.parametrize(
-    "dp_degree,tp_degree,cp_degree,pp_degree,ep_degree,world_size",
-    [
-        pytest.param(4, 0, 0, 0, 0, 4, id="dp_only"),
-        pytest.param(2, 2, 0, 0, 0, 4, id="dp_tp"),
-        pytest.param(2, 0, 2, 0, 0, 4, id="dp_cp"),
-        pytest.param(2, 0, 0, 2, 0, 4, id="dp_pp"),
-        pytest.param(2, 0, 0, 0, 2, 4, id="dp_ep"),
-        pytest.param(1, 2, 2, 0, 0, 4, id="dp_tp_cp"),
-        pytest.param(1, 2, 0, 2, 0, 8, id="dp_tp_pp"),
-        pytest.param(1, 0, 2, 2, 0, 8, id="dp_cp_pp"),
-        pytest.param(1, 0, 0, 2, 2, 8, id="dp_pp_ep"),
-        pytest.param(1, 0, 2, 0, 2, 4, id="dp_cp_ep"),
-        pytest.param(1, 2, 2, 2, 0, 8, id="dp_tp_cp_pp"),
-        pytest.param(2, 0, 2, 2, 2, 16, id="dp_cp_ep_pp"),
-        pytest.param(2, 2, 0, 0, 2, 8, id="dp_tp_ep_configerror"),
-        pytest.param(2, 2, 0, 2, 2, 16, id="dp_tp_ep_pp_configerror"),
-        pytest.param(2, 2, 2, 2, 2, 32, id="dp_tp_ep_cp_pp_configerror"),
-    ],
-)
-def test_build_world_mesh(
-    backend: str,
-    dp_type: DataParallelType,
-    dp_degree: int,
-    tp_degree: int,
-    cp_degree: int,
-    pp_degree: int,
-    ep_degree: int,
-    world_size: int,
+@pytest.mark.parametrize("dp,tp,cp,pp,ep,world_size", PARALLEL_MESH_TESTCONFIGS)
+def test_build_world_mesh_cpu(
+    dp_type: DataParallelType, dp: int, tp: int, cp: int, pp: int, ep: int, world_size: int
 ):
-    if "nccl" in backend and torch.cuda.device_count() < world_size:
-        pytest.skip("Not enough GPUs available for this test.")
+    run_distributed_test(
+        _build_and_check_world_mesh,
+        backend="gloo",
+        world_size=world_size,
+        func_args=(dp, tp, cp, pp, ep, dp_type),
+        start_method="spawn",
+    )
+
+
+@requires_multi_gpu
+@pytest.mark.parametrize("dp_type", [DataParallelType.fsdp, DataParallelType.hsdp])
+@pytest.mark.parametrize("dp,tp,cp,pp,ep,world_size", PARALLEL_MESH_TESTCONFIGS)
+def test_build_world_mesh_gpu(
+    dp_type: DataParallelType, dp: int, tp: int, cp: int, pp: int, ep: int, world_size: int
+):
+    if torch.cuda.device_count() < world_size:
+        pytest.skip(
+            "Not enough GPUs available for this test (req: {}, avail: {})".format(
+                world_size, torch.cuda.device_count()
+            )
+        )
 
     run_distributed_test(
         _build_and_check_world_mesh,
-        backend=backend,
+        backend="nccl",
         world_size=world_size,
-        func_args=(dp_degree, tp_degree, cp_degree, pp_degree, ep_degree, dp_type),
-        start_method="spawn" if backend == "gloo" else None,
+        func_args=(dp, tp, cp, pp, ep, dp_type),
     )
