@@ -1,6 +1,7 @@
 import logging
 from contextlib import ExitStack
 from dataclasses import dataclass
+from typing import Literal
 
 from olmo_core.distributed.parallel import (
     get_cp_mesh,
@@ -60,11 +61,10 @@ class ProfilerCallback(Callback):
     """
     Set to ``False`` to disable profiling.
     """
-    ranks: list[int] | str | None = None
+    ranks: Literal["dp", "tp", "cp", "pp", "ep", "all"] | None = None
     """
     Ranks to profile. Can be:
     - ``None``: Only rank 0 is profiled
-    - List of integers: Specific ranks to profile
     - String shortcuts:
       - ``"dp"``: Profile one rank (rank 0) in each data parallel group
       - ``"tp"``: Profile one rank (rank 0) in each tensor parallel group
@@ -86,8 +86,6 @@ class ProfilerCallback(Callback):
 
         if self.ranks is None:
             return current_rank == 0
-        elif isinstance(self.ranks, list):
-            return current_rank in self.ranks
         elif isinstance(self.ranks, str):  # Handle string shortcuts for parallel groups
             world_mesh = get_world_mesh()
             if world_mesh is None:
