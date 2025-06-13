@@ -45,6 +45,7 @@ from olmo_core.testing import (
         pytest.param({"rope": RoPEConfig()}, id="rope"),
         pytest.param({"rope": RoPEConfig(name=RoPEType.complex)}, id="complex-rope"),
         pytest.param({"qk_norm": LayerNormConfig()}, id="qk-norm"),
+        pytest.param({"qk_norm": LayerNormConfig(), "use_head_qk_norm": True}, id="head-qk-norm"),
     ],
 )
 def test_attention(

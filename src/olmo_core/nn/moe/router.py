@@ -437,7 +437,7 @@ class MoERouter(nn.Module):
         if self.gating_function == MoERouterGatingFunction.softmax:
             scores = logits.softmax(dim=-1)
         elif self.gating_function == MoERouterGatingFunction.sigmoid:
-            scores = F.sigmoid(logits)
+            scores = F.sigmoid(logits) + 1e-7
         else:
             raise NotImplementedError(self.gating_function)
 

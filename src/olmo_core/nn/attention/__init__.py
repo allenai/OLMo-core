@@ -114,6 +114,7 @@ class AttentionConfig(Config):
     use_flash: Optional[bool] = None
     dtype: DType = DType.float32
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
+    use_head_qk_norm: Optional[bool] = None
     mup: Optional[MuPConfig] = None
 
     def num_params(self, d_model: int) -> int:
@@ -141,7 +142,10 @@ class AttentionConfig(Config):
 
         # Block attention QK norm.
         if self.qk_norm is not None:
-            params += 2 * self.qk_norm.num_params(d_model)
+            if self.use_head_qk_norm:
+                params += 2 * self.qk_norm.num_params(head_dim)
+            else:
+                params += 2 * self.qk_norm.num_params(d_model)
 
         # Block attention out.
         params += d_model * d_model
@@ -276,6 +280,7 @@ class Attention(AttentionBase):
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
+        use_head_qk_norm: bool = False,
         mup: Optional[MuPConfig] = None,
     ):
         super().__init__()
@@ -308,14 +313,19 @@ class Attention(AttentionBase):
             )
         self.clip_qkv = clip_qkv
         self.dropout_p = dropout
+        self.use_head_qk_norm = use_head_qk_norm
 
         self.q_norm: Optional[LayerNorm] = None
         self.k_norm: Optional[LayerNorm] = None
         if qk_norm is not None:
-            self.q_norm = qk_norm.build(size=d_model, init_device=init_device)
-            self.k_norm = qk_norm.build(
-                size=self.n_kv_heads * self.head_dim, init_device=init_device
-            )
+            if use_head_qk_norm:
+                self.q_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
+                self.k_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
+            else:
+                self.q_norm = qk_norm.build(size=d_model, init_device=init_device)
+                self.k_norm = qk_norm.build(
+                    size=self.n_kv_heads * self.head_dim, init_device=init_device
+                )
             if mup:
                 self.mups["q_norm.weight"] = mup.build({}, {})
                 self.mups["k_norm.weight"] = mup.build({}, {})
@@ -497,12 +507,13 @@ class Attention(AttentionBase):
             k.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
             v.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
 
-        if self.q_norm is not None:
-            q = self.q_norm(q)
-            q = MuP.scale_input(self.mups.get("q_norm.weight"), q)
-        if self.k_norm is not None:
-            k = self.k_norm(k)
-            k = MuP.scale_input(self.mups.get("k_norm.weight"), k)
+        if not self.use_head_qk_norm:
+            if self.q_norm is not None:
+                q = MuP.scale_input(self.mups.get("q_norm.weight"), q)
+                q = self.q_norm(q)
+            if self.k_norm is not None:
+                k = MuP.scale_input(self.mups.get("k_norm.weight"), k)
+                k = self.k_norm(k)
 
         # NOTE: use -1 instead of `n_heads` / `n_kv_heads` to infer actual local size when
         # using tensor parallelism.
@@ -512,6 +523,14 @@ class Attention(AttentionBase):
         k = k.view(B, T, -1, self.head_dim)
         # shape: (batch_size, seq_len, n_kv_heads, head_dim)
         v = v.view(B, T, -1, self.head_dim)
+
+        if self.use_head_qk_norm:
+            if self.q_norm is not None:
+                q = MuP.scale_input(self.mups.get("q_norm.weight"), q)
+                q = self.q_norm(q)
+            if self.k_norm is not None:
+                k = MuP.scale_input(self.mups.get("k_norm.weight"), k)
+                k = self.k_norm(k)
 
         if self.rope is not None:
             if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
