@@ -61,7 +61,7 @@ class ProfilerCallback(Callback):
     """
     Set to ``False`` to disable profiling.
     """
-    ranks: Literal["dp", "tp", "cp", "pp", "ep", "all"] | None = None
+    ranks: str | None = None
     """
     Ranks to profile. Can be:
     - ``None``: Only rank 0 is profiled
