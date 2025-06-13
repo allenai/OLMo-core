@@ -105,7 +105,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             name=DataParallelType.fsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
             # prefetch_factor=1,
         ),
         tp_config=TransformerTensorParallelConfig(degree=TP_DEGREE, enable_async=True)
@@ -170,7 +170,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 active=1,
                 repeat=1,
                 export_chrome_trace=True,
-                with_stack=False,
+                with_stack=True,
+                enable_cuda_sync_events=True,
                 ranks="all",
             ),
         )

@@ -1,7 +1,6 @@
 import logging
 from contextlib import ExitStack
 from dataclasses import dataclass
-from typing import Literal
 
 from olmo_core.distributed.parallel import (
     get_cp_mesh,
@@ -52,6 +51,11 @@ class ProfilerCallback(Callback):
     profile_memory: bool = False
     """
     Whether to track tensor memory allocation/deallocation
+    """
+    enable_cuda_sync_events: bool = False
+    """
+    Whether to enable recording of CUDA sync events. Useful for critical-path analysis with
+        https://hta.readthedocs.io/en/latest/source/features/lightweight_critical_path_analysis.html
     """
     enable_cuda_sync_events: bool = False
     """

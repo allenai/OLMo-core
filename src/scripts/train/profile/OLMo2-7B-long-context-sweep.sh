@@ -37,22 +37,23 @@ calc_gbs () {
 
 # -----------------------------------------------------------------------------
 # EXPERIMENT DEFINITIONS
-# name  bs_factor  num_gpus  tp  cp  ac_enabled  gqa_ratio  double_bs
+# name  bs_factor  num_gpus  tp  cp  ac_enabled  gqa_ratio  double_bs  profiling_enabled
 # -----------------------------------------------------------------------------
 CONFIG_MATRIX=(
-  # "tp4_cp2_dp2_gqa_acattn 32 16 4 2 true 0.25 false"
-  # "tp4_dp4_gqa_acattn 32 16 4 none true 0.25 false"
-  # "tp4_dp4_gqa_acattn 32 16 4 none true 0.25 true"
-  # "tp4_cp4_dp1_gqa_acattn 32 16 4 4 true 0.25 true"
-  # "tp4_cp4_dp1_gqa_acattn 32 16 4 4 true 0.25 false"
-  "tp4_cp2_dp2_gqa_smallbs 8 16 4 2 false 0.25 false"
+  # "tp4_cp2_dp2_gqa_acattn 32 16 4 2 true 0.25 false false"
+  # "tp4_dp4_gqa_acattn 32 16 4 none true 0.25 false false"
+  # "tp4_dp4_gqa_acattn 32 16 4 none true 0.25 true false"
+  # "tp4_cp4_dp1_gqa_acattn 32 16 4 4 true 0.25 true false"
+  # "tp4_cp4_dp1_gqa_acattn 32 16 4 4 true 0.25 false false"
+  "tp4_cp2_dp2_gqa_blocks_smallbs 8 16 4 2 false 0.25 false false"
+  "tp4_cp2_dp2_gqa_blocks 32 16 4 2 false 0.25 false true"
 )
 
 # -----------------------------------------------------------------------------
 # MAIN LOOP --------------------------------------------------------------------
 # -----------------------------------------------------------------------------
 for cfg in "${CONFIG_MATRIX[@]}"; do
-  read -r NAME BS_FACTOR NUM_GPUS TP CP AC GQA DOUBLE_BS <<< "$cfg"
+  read -r NAME BS_FACTOR NUM_GPUS TP CP AC GQA DOUBLE_BS PROFILING <<< "$cfg"
 
   RUN_NAME="${NAME}-${DATE}-$(date +%H%M%S)"
 
@@ -65,13 +66,13 @@ for cfg in "${CONFIG_MATRIX[@]}"; do
   GLOBAL_BS=$(calc_gbs "$BS_FACTOR")
   NUM_NODES=$((NUM_GPUS/8))
 
-  echo "[INFO] Launching $RUN_NAME (GPUs=$NUM_GPUS, nodes=$NUM_NODES, tp=$TP, cp=$CP, ac=$AC, gqa=$GQA, double_bs=$DOUBLE_BS)"
+  echo "[INFO] Launching $RUN_NAME (GPUs=$NUM_GPUS, nodes=$NUM_NODES, tp=$TP, cp=$CP, ac=$AC, gqa=$GQA, double_bs=$DOUBLE_BS, profiling=$PROFILING)"
 
   # ---------------------------------------------------------------
   # Build override list
   # ---------------------------------------------------------------
   OVERRIDES=(
-    "--trainer.callbacks.profiler.enabled=True"
+    "--trainer.callbacks.profiler.enabled=${PROFILING}"
     "--trainer.callbacks.wandb.enabled=True"
     "--data_loader.global_batch_size=${GLOBAL_BS}"
     "--launch.num_nodes=${NUM_NODES}"
