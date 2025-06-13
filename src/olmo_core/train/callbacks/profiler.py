@@ -1,7 +1,6 @@
 import logging
 from contextlib import ExitStack
 from dataclasses import dataclass
-from typing import Literal
 
 from olmo_core.distributed.parallel import (
     get_cp_mesh,
@@ -57,6 +56,11 @@ class ProfilerCallback(Callback):
     """
     Whether to export the trace to a chrome trace file.
     """
+    enable_cuda_sync_events: bool = False
+    """
+    Whether to enable recording of CUDA sync events. Useful for critical-path analysis with
+        https://hta.readthedocs.io/en/latest/source/features/lightweight_critical_path_analysis.html
+    """
     enabled: bool = True
     """
     Set to ``False`` to disable profiling.
@@ -66,11 +70,11 @@ class ProfilerCallback(Callback):
     Ranks to profile. Can be:
     - ``None``: Only rank 0 is profiled
     - String shortcuts:
-      - ``"dp"``: Profile one rank (rank 0) in each data parallel group
-      - ``"tp"``: Profile one rank (rank 0) in each tensor parallel group
-      - ``"cp"``: Profile one rank (rank 0) in each context parallel group
-      - ``"pp"``: Profile one rank (rank 0) in each pipeline parallel group
-      - ``"ep"``: Profile one rank (rank 0) in each expert parallel group
+      - ``"dp"``: Profile one rank (local rank 0) in each data parallel group
+      - ``"tp"``: Profile one rank (local rank 0) in each tensor parallel group
+      - ``"cp"``: Profile one rank (local rank 0) in each context parallel group
+      - ``"pp"``: Profile one rank (local rank 0) in each pipeline parallel group
+      - ``"ep"``: Profile one rank (local rank 0) in each expert parallel group
       - ``"all"``: Profile all ranks
 
     Useful in conjunction with https://github.com/facebookresearch/HolisticTraceAnalysis
@@ -129,7 +133,7 @@ class ProfilerCallback(Callback):
         if not self.enabled or not self._should_profile_rank():
             return
 
-        from torch.profiler import ProfilerActivity, profile, schedule
+        from torch.profiler import ProfilerActivity, _ExperimentalConfig, profile, schedule
 
         profiling_schedule = schedule(
             wait=self.wait,
@@ -142,6 +146,10 @@ class ProfilerCallback(Callback):
         if self.trainer.device.type == "cuda":
             activities.append(ProfilerActivity.CUDA)
 
+        experimental_config = None
+        if self.enable_cuda_sync_events:
+            experimental_config = _ExperimentalConfig(enable_cuda_sync_events=True)
+
         self._exit_stack = ExitStack()
         self._profiler = self._exit_stack.enter_context(
             profile(
@@ -151,6 +159,7 @@ class ProfilerCallback(Callback):
                 with_stack=self.with_stack,
                 schedule=profiling_schedule,
                 on_trace_ready=self._on_trace_ready,
+                experimental_config=experimental_config,
             )
         )
         self._first_batch = True
