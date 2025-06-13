@@ -24,7 +24,6 @@ from olmo_core.train.callbacks.checkpointer import CheckpointerCallback
 from olmo_core.train.callbacks.console_logger import ConsoleLoggerCallback
 from olmo_core.train.common import Duration
 from olmo_core.train.train_module import (
-    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
@@ -40,31 +39,11 @@ log = logging.getLogger(__name__)
 # 64K length, 32 GPUs, no FP8, intra-doc masking -> 3,250 TPS/device = 104,000 TPS overall
 # 64K length, 32 GPUs, FP8, intra-doc masking    -> 3,500 TPS/device = 112,000 TPS overall
 
-# Tyler's Results (64K context length, no FP8, intra-doc masking):
-# ---
-# 16 GPUs, 32*CL bs -- CP8, DP2, GQA(1/4) -> 5,876 TPS/device
-# 16 GPUs, 32*CL bs -- TP4, DP4, AC, GQA(1/4) -> 5,822 TPS/device
-# 16 GPUs, 32*CL bs -- CP4, DP4, AC, GQA(1/4) -> 5,443 TPS/device
-# 16 GPUs, 32*CL bs -- TP4, DP4, AC -> 5,412 TPS/device (suggested by Dustin & Amanda)
-# 16 GPUs, 32*CL bs -- CP2, TP2, DP4, AC, GQA(1/4) -> 5,334 TPS/device
-# 16 GPUs, 32*CL bs -- CP4, DP4, AC -> 3,977 TPS/device
-# 16 GPUs, 32*CL bs -- CP8, DP2 -> 3,735 TPS/device (bottlenecked by AllGather_RING)
-# 16 GPUs, 32*CL bs -- TP4, DP4 -> OOM
-# 16 GPUs, 32*CL bs -- CP4, DP4, GQA(1/4) -> OOM
-# ---
-# 32 GPUs, 64*CL bs -- TP4, DP8, AC, GQA(1/4) -> 5,371 TPS/device
-# 32 GPUs, 64*CL bs -- CP8, DP4, GQA(1/4) -> 5,032 TPS/device
-# 32 GPUs, 64*CL bs -- TP4, DP8, AC -> 5,029 TPS/device
-# 32 GPUs, 64*CL bs -- CP2, TP2, DP8, AC, GQA(1/4) -> 4,768 TPS/device
-# 32 GPUs, 64*CL bs -- CP4, DP8, AC, GQA(1/4) -> 4,700 TPS/device (only uses 64% of GPU RAM)
-#
-
 CONTEXT_LENGTH = 4 * 16_384
-# GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH  # cp8, dp4
-GLOBAL_BATCH_SIZE = 32 * CONTEXT_LENGTH
+GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH  # cp8, dp4
 INTRA_DOCUMENT_MASKING = True
 
-NUM_GPUS = 16
+NUM_GPUS = 32
 assert NUM_GPUS % 8 == 0
 NUM_NODES = NUM_GPUS // 8
 
