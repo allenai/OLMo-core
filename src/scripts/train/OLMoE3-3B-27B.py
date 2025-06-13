@@ -118,6 +118,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
+            fused=True,
             compile=False,  # doesn't work with FP8, only God knows why
         ),
         compile_model=True,
@@ -137,7 +138,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
                 force_recompute_fp8_weight_in_bwd=True,
                 round_scales_to_power_of_2=True,
             ),
-            enabled=True,
+            enabled=False,
         ),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
