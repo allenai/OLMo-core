@@ -2,6 +2,14 @@ import logging
 from contextlib import ExitStack
 from dataclasses import dataclass
 
+from olmo_core.distributed.parallel import (
+    get_cp_mesh,
+    get_dp_mesh,
+    get_ep_mesh,
+    get_pp_mesh,
+    get_tp_mesh,
+    get_world_mesh,
+)
 from olmo_core.distributed.utils import get_rank
 
 from .callback import Callback
@@ -52,13 +60,75 @@ class ProfilerCallback(Callback):
     """
     Set to ``False`` to disable profiling.
     """
+    ranks: list[int] | str | None = None
+    """
+    Ranks to profile. Can be:
+    - ``None``: Only rank 0 is profiled
+    - List of integers: Specific ranks to profile
+    - String shortcuts:
+      - ``"dp"``: Profile one rank (rank 0) in each data parallel group
+      - ``"tp"``: Profile one rank (rank 0) in each tensor parallel group
+      - ``"cp"``: Profile one rank (rank 0) in each context parallel group
+      - ``"pp"``: Profile one rank (rank 0) in each pipeline parallel group
+      - ``"ep"``: Profile one rank (rank 0) in each expert parallel group
+      - ``"all"``: Profile all ranks
+
+    Useful in conjunction with https://github.com/facebookresearch/HolisticTraceAnalysis
+      to analyze traces from a distributed training job.
+    """
 
     _exit_stack = None
     _profiler = None
     _first_batch: bool = True
 
+    def _should_profile_rank(self) -> bool:
+        current_rank = get_rank()
+
+        if self.ranks is None:
+            return current_rank == 0
+        elif isinstance(self.ranks, list):
+            return current_rank in self.ranks
+        elif isinstance(self.ranks, str):  # Handle string shortcuts for parallel groups
+            world_mesh = get_world_mesh()
+            if world_mesh is None:
+                if self.ranks != "all":
+                    log.warning("No world mesh available, falling back to rank 0 only")
+                return current_rank == 0
+
+            try:
+                if self.ranks == "dp":
+                    dp_mesh = get_dp_mesh(world_mesh)
+                    return dp_mesh.get_local_rank() == 0
+                elif self.ranks == "tp":
+                    tp_mesh = get_tp_mesh(world_mesh)
+                    return tp_mesh.get_local_rank() == 0
+                elif self.ranks == "cp":
+                    cp_mesh = get_cp_mesh(world_mesh)
+                    return cp_mesh.get_local_rank() == 0
+                elif self.ranks == "pp":
+                    pp_mesh = get_pp_mesh(world_mesh)
+                    return pp_mesh.get_local_rank() == 0
+                elif self.ranks == "ep":
+                    ep_mesh = get_ep_mesh(world_mesh)
+                    return ep_mesh.get_local_rank() == 0
+                elif self.ranks == "all":
+                    return True
+                else:
+                    log.warning(
+                        f"Unknown rank shortcut '{self.ranks}', falling back to rank 0 only"
+                    )
+                    return current_rank == 0
+            except RuntimeError as e:
+                log.warning(
+                    f"Failed to determine parallel mesh for '{self.ranks}': {e}, falling back to rank 0 only"
+                )
+                return current_rank == 0
+        else:
+            log.warning(f"Invalid ranks specification: {self.ranks}, falling back to rank 0 only")
+            return current_rank == 0
+
     def pre_train(self):
-        if not self.enabled or get_rank() != 0:
+        if not self.enabled or not self._should_profile_rank():
             return
 
         from torch.profiler import ProfilerActivity, profile, schedule
@@ -88,7 +158,7 @@ class ProfilerCallback(Callback):
         self._first_batch = True
 
     def pre_load_batch(self):
-        if not self.enabled or get_rank() != 0:
+        if not self.enabled or not self._should_profile_rank():
             return
 
         if self._first_batch:
@@ -108,8 +178,7 @@ class ProfilerCallback(Callback):
             log.info("Saving chrome trace from profiler...")
             output_dir = self.trainer.work_dir / "profiler"
             output_dir.mkdir(exist_ok=True, parents=True)
-            trace_path = output_dir / f"step-{prof.step_num}.chrome_trace.json.gz"
+            trace_path = output_dir / f"rank-{get_rank()}-step-{prof.step_num}.chrome_trace.json.gz"
             prof.export_chrome_trace(str(trace_path))
-            log.info(f"Chrome trace saved to working dir: '{trace_path}'")
             final_path = self.trainer.persist_working_file(trace_path)
             log.info(f"Chrome trace saved to save dir: '{final_path}'")

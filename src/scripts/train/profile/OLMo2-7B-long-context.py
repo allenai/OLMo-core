@@ -138,7 +138,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
-            max_duration=Duration.steps(30),
+            max_duration=Duration.steps(22),
         )
         .with_callback(
             "comet",
@@ -171,6 +171,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 repeat=1,
                 export_chrome_trace=True,
                 with_stack=False,
+                ranks="all",
             ),
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())

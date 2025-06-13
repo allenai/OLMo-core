@@ -43,9 +43,10 @@ calc_gbs () {
 CONFIG_MATRIX=(
   # "tp4_cp2_dp2_gqa_acattn 32 16 4 2 true 0.25 false"
   # "tp4_dp4_gqa_acattn 32 16 4 none true 0.25 false"
-  "tp4_dp4_gqa_acattn 32 16 4 none true 0.25 true"
-  "tp4_cp4_dp1_gqa_acattn 32 16 4 4 true 0.25 true"
-  "tp4_cp4_dp1_gqa_acattn 32 16 4 4 true 0.25 false"
+  # "tp4_dp4_gqa_acattn 32 16 4 none true 0.25 true"
+  # "tp4_cp4_dp1_gqa_acattn 32 16 4 4 true 0.25 true"
+  # "tp4_cp4_dp1_gqa_acattn 32 16 4 4 true 0.25 false"
+  "tp4_cp2_dp2_gqa_take2 32 16 4 2 false 0.25 false"
 )
 
 # -----------------------------------------------------------------------------
