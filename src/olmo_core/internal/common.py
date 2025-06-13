@@ -35,13 +35,13 @@ def get_beaker_username() -> Optional[str]:
         return None
 
 
-def get_root_dir(cluster: str) -> str:
-    root_dir: str = "weka://oe-training-default/ai2-llm"
-    if "cirrascale" in cluster or cluster == "ai2/vboost-test":
+def get_root_dir(constraint: str) -> str:
+    root_dir: str = "/weka/oe-training-default/ai2-llm"
+    if "cirrascale" in constraint or constraint == "ai2/vboost-test":
         root_dir = "/weka/oe-training-default/ai2-llm"
-    elif "google" in cluster:
+    elif "google" in constraint:
         root_dir = "gs://ai2-llm"
-    elif "local" in cluster:
+    elif "local" in constraint:
         root_dir = "gs://ai2-llm"
     return root_dir
 

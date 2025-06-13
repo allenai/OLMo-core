@@ -143,7 +143,7 @@ def build_common_components(
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
 ) -> CommonComponents:
-    root_dir = "/weka/oe-training-default/ai2-llm"
+    root_dir = get_root_dir(constraint)
 
     cmd_to_launch = SubCmd.train
     if cmd == SubCmd.launch_prep:

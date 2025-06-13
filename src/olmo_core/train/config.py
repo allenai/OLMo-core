@@ -67,7 +67,7 @@ class TrainerConfig(Config):
         return out
 
     def with_recommended_evals(
-        self, tokenizer: TokenizerConfig, sequence_length: int, cluster: str, task_set: str = "full"
+        self, tokenizer: TokenizerConfig, sequence_length: int, constr: str, task_set: str = "full"
     ) -> "TrainerConfig":
         """
         Return a new trainer config with added callbacks for downstream evaluation and validation sets.
@@ -229,10 +229,10 @@ class TrainerConfig(Config):
                 eval_dataset=NumpyDatasetConfig.from_data_mix(
                     DataMix.v3_small_ppl_validation,
                     name=NumpyDatasetType.padded_fsl,
-                    mix_base_dir=get_root_dir(cluster),
+                    mix_base_dir=get_root_dir(constr),
                     sequence_length=sequence_length,
                     tokenizer=tokenizer,
-                    work_dir=get_work_dir(get_root_dir(cluster)),
+                    work_dir=get_work_dir(get_root_dir(constr)),
                 ),
                 eval_interval=10000,
             ),

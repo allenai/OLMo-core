@@ -62,7 +62,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     assert common.launch is not None
     assert len(common.launch.constraint) == 1
-    cluster = common.launch.constraint[0]
+    constr = common.launch.constraint[0]
 
     return (
         TrainerConfig(
@@ -100,7 +100,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 cancel_check_interval=cancel_check_interval,
             ),
         )
-        .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster)
+        .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, constr)
     )
 
 
