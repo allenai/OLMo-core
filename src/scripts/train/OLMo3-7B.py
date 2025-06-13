@@ -30,7 +30,11 @@ SEQUENCE_LENGTH = 8192
 GLOBAL_BATCH_SIZE = (
     1024 * 4096
 )  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
-MAX_DURATION = int(500e9)  # int(6e12), don't forget to adjust the LR when you increase this
+MAX_DURATION = int(
+    10e12
+)  # Setting this higher than 6T (expected run time), in case we get to run longer since 1) we're using WSD and 2) our anneal will use different data
+ANNEAL_TOKENS = int(100e9)
+LR = 4.4e-5  # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes.
 EVAL_INTERVAL = 1000
 
 
@@ -63,10 +67,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         rank_microbatch_size=rank_microbatch_size,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=SkipStepAdamWConfig(
-            lr=1.6e-4
-            * math.sqrt(
-                GLOBAL_BATCH_SIZE / (4096 * 512)
-            ),  # 1.6e-4 was used for 2M batch size, adjusting it accordingly
+            lr=LR,
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
@@ -95,7 +96,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         scheduler=WSD(
             units=SchedulerUnits.steps,
             warmup=2000,
-            decay=(int(50e9 / GLOBAL_BATCH_SIZE)),
+            decay=(int(ANNEAL_TOKENS / GLOBAL_BATCH_SIZE)),
             decay_fraction=None,
         ),
     )
