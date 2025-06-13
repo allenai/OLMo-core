@@ -106,8 +106,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
     return TransformerTrainModuleConfig(
         rank_microbatch_size=2 * 4096,
         max_sequence_length=common.dataset.effective_sequence_length,
-        optim=SkipStepAdamWConfig(
-            #  optim=AdamWConfig(
+        #  optim=SkipStepAdamWConfig(
+        optim=AdamWConfig(
             #  lr=1.6e-4
             #  * math.sqrt(
             #      GLOBAL_BATCH_SIZE / (4096 * 512)
@@ -118,8 +118,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
-            #  fused=True,
-            compile=True,  # doesn't work with FP8, only God knows why
+            fused=True,
+            compile=False,  # doesn't work with FP8, only God knows why
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
