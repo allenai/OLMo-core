@@ -51,6 +51,7 @@ NUM_NODES = NUM_GPUS // 8
 # Node(TP = 4, CP = 2) x 4GPU(DP = 4)
 TP_DEGREE = 4
 CP_DEGREE = 2
+DP_REPLICAS = NUM_GPUS // 16
 
 GQA_RATIO = 1 / 4
 
@@ -84,10 +85,11 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         compile_model=True,
         z_loss_multiplier=1e-5,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp,
+            name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+            num_replicas=DP_REPLICAS,
         ),
         tp_config=TransformerTensorParallelConfig(degree=TP_DEGREE, enable_async=True)
         if TP_DEGREE
