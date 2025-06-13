@@ -23,7 +23,13 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerType,
 )
-from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
+from olmo_core.optim import (
+    WSD,
+    AdamWConfig,
+    OptimGroupOverride,
+    SchedulerUnits,
+    SkipStepAdamWConfig,
+)
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
@@ -100,7 +106,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
     return TransformerTrainModuleConfig(
         rank_microbatch_size=2 * 4096,
         max_sequence_length=common.dataset.effective_sequence_length,
-        optim=SkipStepAdamWConfig(
+        #  optim=SkipStepAdamWConfig(
+        optim=AdamWConfig(
             #  lr=1.6e-4
             #  * math.sqrt(
             #      GLOBAL_BATCH_SIZE / (4096 * 512)
