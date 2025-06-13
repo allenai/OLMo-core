@@ -68,9 +68,10 @@ NUM_GPUS = 16
 assert NUM_GPUS % 8 == 0
 NUM_NODES = NUM_GPUS // 8
 
-SELECTIVE_AC = True
-TP_DEGREE = 8
+SELECTIVE_AC = False
+TP_DEGREE = 4
 CP_DEGREE = 2
+HSDP_SHARD_DEGREE = 2
 GQA_RATIO = 1 / 4
 
 log.info(
@@ -102,10 +103,11 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         compile_model=True,
         z_loss_multiplier=1e-5,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp,
+            name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+            shard_degree=HSDP_SHARD_DEGREE,
             # prefetch_factor=1,
         ),
         tp_config=TransformerTensorParallelConfig(degree=TP_DEGREE, enable_async=True)
