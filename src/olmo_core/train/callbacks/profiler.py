@@ -1,6 +1,7 @@
 import logging
 from contextlib import ExitStack
 from dataclasses import dataclass
+from typing import Literal
 
 from olmo_core.distributed.parallel import (
     get_cp_mesh,

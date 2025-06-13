@@ -28,7 +28,6 @@ DATE=$(date +%y%m%d)
 
 # CONSTANTS -------------------------------------------------------------------
 CONTEXT_LEN=$((4*16384))   # 65,536
-TOKENS_PER_BATCH_FACTOR=32 # default factor for 16-GPU runs
 
 # Helper to compute global batch size (tokens) given factor.
 calc_gbs () {
@@ -46,7 +45,7 @@ CONFIG_MATRIX=(
   # "tp4_dp4_gqa_acattn 32 16 4 none true 0.25 true"
   # "tp4_cp4_dp1_gqa_acattn 32 16 4 4 true 0.25 true"
   # "tp4_cp4_dp1_gqa_acattn 32 16 4 4 true 0.25 false"
-  "tp4_cp2_dp2_gqa_take2 32 16 4 2 false 0.25 false"
+  "tp4_cp2_dp2_gqa_smallbs 8 16 4 2 false 0.25 false"
 )
 
 # -----------------------------------------------------------------------------
