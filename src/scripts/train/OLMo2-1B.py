@@ -24,7 +24,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         vocab_size=common.tokenizer.padded_vocab_size(),
         use_mla=True,
         q_lora_rank=256,        
-        kv_lora_rank=1024,       
+        kv_lora_rank=512,       
         qk_rope_head_dim=128,    
         qk_nope_head_dim=0,    
         v_head_dim=128,         
