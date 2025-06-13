@@ -73,7 +73,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
-            compile=True,
+            compile=False,
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
@@ -84,7 +84,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             shard_degree=32,
         ),
         float8_config=Float8Config(
-            enabled=False,
+            enabled=True,
             ao=AOFloat8LinearConfig(
                 enable_fsdp_float8_all_gather=True,
                 force_recompute_fp8_weight_in_bwd=True,
