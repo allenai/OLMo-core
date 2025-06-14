@@ -36,6 +36,10 @@ class TransformerBlockBase(nn.Module):
         super().__init__()
         self.n_layers = n_layers
 
+    @property
+    def is_moe(self) -> bool:
+        return False
+
     @abstractmethod
     def forward(
         self,
@@ -361,6 +365,10 @@ class MoETransformerBlock(TransformerBlockBase):
         self._tp_enabled = False
 
     @property
+    def is_moe(self) -> bool:
+        return True
+
+    @property
     def router(self) -> MoERouter:
         return self.feed_forward_moe.router
 
@@ -643,10 +651,10 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
                 fsdp_mlp = cast(
                     FSDPModule, fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs)
                 )
-                fsdp_moe = cast(
-                    FSDPModule,
-                    fully_shard(self.feed_forward_moe.experts.mlp, mesh=dp_mesh, **fsdp_kwargs),
-                )
+                #  fsdp_moe = cast(
+                #      FSDPModule,
+                #      fully_shard(self.feed_forward_moe.experts.mlp, mesh=dp_mesh, **fsdp_kwargs),
+                #  )
                 fsdp_shared_mlp = (
                     None
                     if self.feed_forward_moe.shared_mlp is None
@@ -658,7 +666,8 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
                 fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
 
                 if prefetch_factor > 0:
-                    fsdp_root.set_modules_to_forward_prefetch([fsdp_att, fsdp_moe])
+                    #  fsdp_root.set_modules_to_forward_prefetch([fsdp_att, fsdp_moe])
+                    fsdp_root.set_modules_to_forward_prefetch([fsdp_att])
                     if fsdp_shared_mlp is not None:
                         fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp, fsdp_shared_mlp])
                     else:
