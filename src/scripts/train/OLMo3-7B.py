@@ -170,7 +170,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 if __name__ == "__main__":
     main(
-        global_batch_size=GLOBAL_BATCH_SIZE,
+        global_batch_size=GLOBAL_BATCH_SIZE * 2,
         sequence_length=SEQUENCE_LENGTH,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
