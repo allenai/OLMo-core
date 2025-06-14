@@ -39,7 +39,6 @@ EVAL_INTERVAL = 1000
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     config = TransformerConfig.olmo2_1B(
         vocab_size=common.tokenizer.padded_vocab_size(),
-        n_kv_heads=8,
         n_layers=16,
         hidden_size_multiple_of=1024,
     )
