@@ -50,6 +50,7 @@ NUM_NODES = NUM_GPUS // 8
 AC_ATTENTION_INTERVAL = 4
 TP_DEGREE = 8
 CP_DEGREE = 2
+DP_REPLICAS = NUM_GPUS // 16
 GQA_RATIO = None
 
 log.info(
@@ -82,10 +83,11 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         compile_model=True,
         z_loss_multiplier=1e-5,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp,
+            name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+            num_replicas=DP_REPLICAS,
         ),
         tp_config=TransformerTensorParallelConfig(degree=4),
         ac_config=TransformerActivationCheckpointingConfig(
