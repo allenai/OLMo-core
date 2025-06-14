@@ -32,7 +32,10 @@ MAX_DURATION = int(
     10e12
 )  # Setting this higher than 6T (expected run time), in case we get to run longer since 1) we're using WSD and 2) our anneal will use different data
 ANNEAL_TOKENS = int(100e9)
-LR = 4.4e-5 * 2 # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes.
+LR = (
+    4.4e-5 * 2
+)  # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes.
+SAVE_INTERVAL = 10000
 EVAL_INTERVAL = 1000
 
 
@@ -84,7 +87,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         scheduler=WSD(
             units=SchedulerUnits.steps,
             warmup=2000,
-             decay=(int(ANNEAL_TOKENS / GLOBAL_BATCH_SIZE)),  # TODO: This isn't right because it doesn't take batchwup into account.
+            decay=(
+                int(ANNEAL_TOKENS / GLOBAL_BATCH_SIZE)
+            ),  # TODO: This isn't right because it doesn't take batchwup into account.
             decay_fraction=None,
         ),
     )
@@ -110,7 +115,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=1000,
+                save_interval=SAVE_INTERVAL,
                 ephemeral_save_interval=None,
                 save_async=True,
             ),
