@@ -19,6 +19,7 @@ from olmo_core.train.callbacks import (
     CometCallback,
     WandBCallback,
 )
+from olmo_core.train.common import LoadStrategy
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -112,8 +113,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     config = (
         TrainerConfig(
-            save_folder=common.save_folder,
+            # save_folder=common.save_folder,
+            save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
             save_overwrite=True,
+            load_strategy=LoadStrategy.always,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
