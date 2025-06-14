@@ -44,18 +44,16 @@ GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH  # cp8, dp4
 INTRA_DOCUMENT_MASKING = True
 
 NUM_GPUS = 32
-assert NUM_GPUS % 8 == 0
-NUM_NODES = NUM_GPUS // 8
+GPU_PER_NODE = 4
+assert NUM_GPUS % GPU_PER_NODE == 0
+NUM_NODES = NUM_GPUS // GPU_PER_NODE
 
 AC_ATTENTION_INTERVAL = 4
-TP_DEGREE = 8
-CP_DEGREE = 2
-DP_REPLICAS = NUM_GPUS // 16
+TP_DEGREE = 4
+DP_SHARDS = GPU_PER_NODE // TP_DEGREE
 GQA_RATIO = None
 
-log.info(
-    f"TP_DEGREE: {TP_DEGREE}, CP_DEGREE: {CP_DEGREE}, NUM_GPUS: {NUM_GPUS}, NUM_NODES: {NUM_NODES}"
-)
+log.info(f"TP_DEGREE: {TP_DEGREE}, CP_DEGREE: 0, NUM_GPUS: {NUM_GPUS}, NUM_NODES: {NUM_NODES}")
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -87,9 +85,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
-            num_replicas=DP_REPLICAS,
+            shard_degree=DP_SHARDS,
         ),
-        tp_config=TransformerTensorParallelConfig(degree=4),
+        tp_config=TransformerTensorParallelConfig(degree=TP_DEGREE, enable_async=True),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.selected_modules,
             modules=[f"blocks.{i}.feed_forward" for i in range(32)]
