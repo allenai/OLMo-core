@@ -35,7 +35,9 @@ MAX_DURATION = int(
     10e12
 )  # Setting this higher than 6T (expected run time), in case we get to run longer since 1) we're using WSD and 2) our anneal will use different data
 ANNEAL_TOKENS = int(100e9)
-LR = 4.4e-5 * math.sqrt(2)  # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes. Multiplied by sqrt(2) since global batch size has been manually doubled.
+LR = 4.4e-5 * math.sqrt(
+    2
+)  # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes. Multiplied by sqrt(2) since global batch size has been manually doubled.
 EVAL_INTERVAL = 1000
 
 
@@ -127,7 +129,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             CheckpointerCallback(
                 save_interval=1000,
                 ephemeral_save_interval=None,
-                save_async=True,
+                save_async=False,
             ),
         )
         .with_callback(
