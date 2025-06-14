@@ -157,10 +157,14 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     # batch size warmup
     config.callbacks["batchwup"] = BatchSizeSchedulerCallback(
-        batch_sizes=[GLOBAL_BATCH_SIZE, GLOBAL_BATCH_SIZE * 2, GLOBAL_BATCH_SIZE * 4],
+        batch_sizes=[
+            # GLOBAL_BATCH_SIZE,
+            GLOBAL_BATCH_SIZE * 2,
+            GLOBAL_BATCH_SIZE * 4,
+        ],
         schedule=[
             Duration.tokens(0),
-            Duration.tokens(167_772_160_000),
+            # Duration.tokens(167_772_160_000),
             Duration.tokens(503_316_480_000),
         ],
     )
