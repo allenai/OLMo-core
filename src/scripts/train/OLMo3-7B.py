@@ -2,6 +2,7 @@
 Train a 7B OLMo model. Run this script without any arguments to see usage info.
 """
 from datetime import datetime
+import math
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
@@ -34,7 +35,7 @@ MAX_DURATION = int(
     10e12
 )  # Setting this higher than 6T (expected run time), in case we get to run longer since 1) we're using WSD and 2) our anneal will use different data
 ANNEAL_TOKENS = int(100e9)
-LR = 4.4e-5  # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes.
+LR = 4.4e-5 * math.sqrt(2)  # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes. Multiplied by sqrt(2) since global batch size has been manually doubled.
 EVAL_INTERVAL = 1000
 
 
