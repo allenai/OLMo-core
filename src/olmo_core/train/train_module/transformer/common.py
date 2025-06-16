@@ -98,6 +98,7 @@ def parallelize_model(
                 ac_config.mode,
                 block_interval=ac_config.block_interval,
                 modules=ac_config.modules,
+                activation_memory_budget=ac_config.activation_memory_budget,
             )
         log.info(f"Applied '{ac_config.mode}' activation checkpointing to the model")
 
