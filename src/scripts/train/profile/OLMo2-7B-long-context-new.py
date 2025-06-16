@@ -51,9 +51,9 @@ NUM_NODES = NUM_GPUS // 8
 # Node(TP = 4, CP = 2) x 4GPU(DP = 4)
 TP_DEGREE = 4
 CP_DEGREE = 2
-DP_REPLICAS = NUM_GPUS // 16
+DP_SHARDS = 32
 
-GQA_RATIO = 1 / 4
+GQA_RATIO = None
 
 log.info(
     f"TP_DEGREE: {TP_DEGREE}, CP_DEGREE: {CP_DEGREE}, NUM_GPUS: {NUM_GPUS}, NUM_NODES: {NUM_NODES}"
@@ -89,7 +89,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
-            num_replicas=DP_REPLICAS,
+            shard_degree=DP_SHARDS,
         ),
         tp_config=TransformerTensorParallelConfig(degree=TP_DEGREE, enable_async=True)
         if TP_DEGREE
@@ -98,6 +98,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             TransformerContextParallelConfig.llama3(degree=CP_DEGREE)
             if INTRA_DOCUMENT_MASKING
             else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE)
+        ),
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.5
         ),
         float8_config=Float8Config(enabled=False),
         max_grad_norm=1.0,

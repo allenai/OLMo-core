@@ -44,7 +44,7 @@ GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH  # cp8, dp4
 INTRA_DOCUMENT_MASKING = True
 
 NUM_GPUS = 32
-GPU_PER_NODE = 4
+GPU_PER_NODE = 8
 assert NUM_GPUS % GPU_PER_NODE == 0
 NUM_NODES = NUM_GPUS // GPU_PER_NODE
 
@@ -89,9 +89,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ),
         tp_config=TransformerTensorParallelConfig(degree=TP_DEGREE, enable_async=True),
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=[f"blocks.{i}.feed_forward" for i in range(32)]
-            + [f"blocks.{i}.attention" for i in range(0, 32, AC_ATTENTION_INTERVAL)],
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=0.5,
         ),
         float8_config=Float8Config(enabled=False),
         max_grad_norm=1.0,
