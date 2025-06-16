@@ -1,8 +1,8 @@
 """
 Train a 7B OLMo model. Run this script without any arguments to see usage info.
 """
-from datetime import datetime
 import math
+from datetime import datetime
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
@@ -162,13 +162,14 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     config.callbacks["batchwup"] = BatchSizeSchedulerCallback(
         batch_sizes=[
             # GLOBAL_BATCH_SIZE,
-            GLOBAL_BATCH_SIZE * 2,
-            GLOBAL_BATCH_SIZE * 4,
+            #  GLOBAL_BATCH_SIZE * 2,
+            GLOBAL_BATCH_SIZE
+            * 4,
         ],
         schedule=[
             Duration.tokens(0),
             # Duration.tokens(167_772_160_000),
-            Duration.tokens(503_316_480_000),
+            #  Duration.tokens(503_316_480_000),
         ],
     )
 
