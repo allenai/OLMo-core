@@ -31,9 +31,7 @@ SEQUENCE_LENGTH = 8192
 GLOBAL_BATCH_SIZE = (
     1024 * 4096
 )  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
-MAX_DURATION = int(
-    10e12
-)  # Setting this higher than 6T (expected run time), in case we get to run longer since 1) we're using WSD and 2) our anneal will use different data
+MAX_DURATION = int(500e9)
 ANNEAL_TOKENS = int(100e9)
 LR = 4.4e-5 * math.sqrt(
     2
@@ -99,7 +97,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         scheduler=WSD(
             units=SchedulerUnits.steps,
             warmup=2000,
-            decay=(int(ANNEAL_TOKENS / GLOBAL_BATCH_SIZE)),
+            decay=(int(ANNEAL_TOKENS / (2 * GLOBAL_BATCH_SIZE))),
             decay_fraction=None,
         ),
     )
