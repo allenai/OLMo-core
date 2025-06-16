@@ -125,7 +125,12 @@ class ProfilerCallback(Callback):
         if not self.enabled or not self._should_profile_rank():
             return
 
-        from torch.profiler import ProfilerActivity, _ExperimentalConfig, profile, schedule
+        from torch.profiler import (
+            ProfilerActivity,
+            _ExperimentalConfig,
+            profile,
+            schedule,
+        )
 
         profiling_schedule = schedule(
             wait=self.wait,
