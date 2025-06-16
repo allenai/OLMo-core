@@ -122,8 +122,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         else None,
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=[f"blocks.{i}.attention" for i in range(0, 32)],
-            # + [f"blocks.{i}.feed_forward" for i in range(32)],  #  BAD!,
+            modules=[f"blocks.{i}.feed_forward" for i in range(32)],
         )
         if SELECTIVE_AC
         else None,

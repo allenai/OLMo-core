@@ -65,7 +65,10 @@ class TransformerBlockBase(nn.Module):
         raise NotImplementedError
 
     def apply_compile(self):
-        self.compile(fullgraph=False)
+        self.compile(
+            fullgraph=False,
+            mode="max-autotune",  # https://github.com/pytorch/pytorch/blob/main/torch/_inductor/__init__.py#L335
+        )
 
     @abstractmethod
     def apply_fsdp(
