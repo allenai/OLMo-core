@@ -7,7 +7,7 @@ from olmo_core.config import StrEnum
 
 from ..attention import Attention, AttentionBase, FusedAttention, MultiheadLatentAttention
 from ..feed_forward import FeedForward
-from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP
+from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP, MoEOrthogonalRouter
 
 
 class InitMethod(StrEnum):
@@ -159,14 +159,31 @@ class InitMethod(StrEnum):
         elif self == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
 
-        nn.init.trunc_normal_(
-            cast(MoELinearRouter, m.router).weight,
-            mean=0.0,
-            std=std,
-            a=-3 * std,
-            b=3 * std,
-            generator=generator,
-        )
+        if isinstance(m.router, MoELinearRouter):
+            nn.init.trunc_normal_(
+                cast(MoELinearRouter, m.router).weight,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
+        elif isinstance(m.router, MoEOrthogonalRouter):
+            nn.init.trunc_normal_(
+                cast(MoEOrthogonalRouter, m.router).weight,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
+            nn.init.orthogonal_(
+                cast(MoEOrthogonalRouter, m.router).weight,
+                gain=1,
+                generator=generator,
+            )
+            # x = cast(MoEOrthogonalRouter, m.router).weight.full_tensor()
+            # pass
         nn.init.trunc_normal_(
             cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w1,
             mean=0.0,

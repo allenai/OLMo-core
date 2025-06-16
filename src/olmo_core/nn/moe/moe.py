@@ -71,6 +71,7 @@ class MoEConfig(Config):
         MoELoadBalancingLossGranularity.local_batch
     )
     z_loss_weight: Optional[float] = None
+    orth_loss_weight: Optional[float] = None
     scale_loss_by_num_layers: bool = True
     dtype: DType = DType.float32
     shared_expert_norm: Optional[LayerNormConfig] = None
@@ -140,6 +141,7 @@ class MoEBase(nn.Module):
         lb_loss_weight: Optional[float] = None,
         lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
         z_loss_weight: Optional[float] = None,
+        orth_loss_weight: Optional[float] = None,
         n_layers: int = 1,
         scale_loss_by_num_layers: bool = True,
         dtype: torch.dtype = torch.float32,
@@ -154,6 +156,8 @@ class MoEBase(nn.Module):
                 lb_loss_weight = lb_loss_weight / n_layers
             if z_loss_weight is not None:
                 z_loss_weight = z_loss_weight / n_layers
+            if orth_loss_weight is not None:
+                orth_loss_weight = orth_loss_weight / n_layers
 
         self.router = router.build(
             d_model,
@@ -161,6 +165,7 @@ class MoEBase(nn.Module):
             lb_loss_weight=lb_loss_weight,
             lb_loss_granularity=lb_loss_granularity,
             z_loss_weight=z_loss_weight,
+            orth_loss_weight=orth_loss_weight,
             dtype=dtype,
             init_device=init_device,
         )
@@ -369,6 +374,7 @@ class MoE(MoEBase):
         lb_loss_weight: Optional[float] = None,
         lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
         z_loss_weight: Optional[float] = None,
+        orth_loss_weight: Optional[float] = None,
         scale_loss_by_num_layers: bool = True,
         n_layers: int = 1,
         dtype: torch.dtype = torch.float32,
@@ -386,6 +392,7 @@ class MoE(MoEBase):
             lb_loss_weight=lb_loss_weight,
             lb_loss_granularity=lb_loss_granularity,
             z_loss_weight=z_loss_weight,
+            orth_loss_weight=orth_loss_weight,
             scale_loss_by_num_layers=scale_loss_by_num_layers,
             n_layers=n_layers,
             dtype=dtype,

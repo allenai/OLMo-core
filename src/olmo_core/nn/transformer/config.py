@@ -303,7 +303,7 @@ class TransformerBlockConfig(Config):
         args.seq_length = seqlen
         args.d_model = d_model
         args.num_attention_heads = self.attention.n_heads
-        args.num_query_groups = self.attention.n_kv_heads
+        args.num_query_groups = self.attention.n_kv_heads if self.attention.n_kv_heads is not None else args.num_attention_heads # default to n_heads if n_kv_heads is not set
         
 
         per_seq_flops = num_floating_point_operations_for_single_layer(args, 1) # flops for a batch size of 1
