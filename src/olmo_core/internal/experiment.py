@@ -65,6 +65,7 @@ class ExperimentConfig(Config):
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
     init_seed: int = 12536
+    backend: Optional[str] = "cpu:gloo,cuda:nccl"
 
 
 class SubCmd(StrEnum):
@@ -78,9 +79,11 @@ class SubCmd(StrEnum):
 
     def prepare_environment(self):
         if self in (SubCmd.launch, SubCmd.dry_run, SubCmd.prep, SubCmd.launch_prep, SubCmd.utils):
+    def prepare_environment(self, config: ExperimentConfig):
+        if self in (SubCmd.launch, SubCmd.dry_run, SubCmd.prep, SubCmd.launch_prep):
             prepare_cli_environment()
         elif self == SubCmd.train:
-            prepare_training_environment()
+            prepare_training_environment(backend=config.backend)
         elif self == SubCmd.train_single:
             prepare_training_environment(backend=None)
         else:
@@ -356,7 +359,6 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
     script, cmd, run_name, cluster, *overrides = sys.argv
 
     cmd = SubCmd(cmd)
-    cmd.prepare_environment()
 
     config = build_config(
         script,
@@ -377,4 +379,5 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         num_nodes=num_nodes,
     )
 
+    cmd.prepare_environment(config)
     cmd.run(config)
