@@ -5,6 +5,8 @@ Run this script without any arguments to see usage info.
 
 import logging
 
+import torch
+
 # ruff: noqa: F401
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
@@ -35,6 +37,12 @@ from olmo_core.train.train_module.transformer.config import (
 
 log = logging.getLogger(__name__)
 
+# Check and enable TF32 for better performance
+log.info(f"torch.backends.cuda.matmul.allow_tf32: {torch.backends.cuda.matmul.allow_tf32}")
+torch.backends.cuda.matmul.allow_tf32 = True
+log.info("Enabled torch.backends.cuda.matmul.allow_tf32")
+
+
 # 64K length, 32 GPUs, FP8, no intra-doc masking -> 2,750 TPS/device = 88,000 TPS overall
 # 64K length, 32 GPUs, no FP8, intra-doc masking -> 3,250 TPS/device = 104,000 TPS overall
 # 64K length, 32 GPUs, FP8, intra-doc masking    -> 3,500 TPS/device = 112,000 TPS overall
@@ -50,7 +58,7 @@ NUM_NODES = NUM_GPUS // GPU_PER_NODE
 
 AC_ATTENTION_INTERVAL = 4
 TP_DEGREE = 4
-DP_SHARDS = NUM_GPUS
+DP_SHARDS = NUM_GPUS // TP_DEGREE
 GQA_RATIO = None
 
 log.info(f"TP_DEGREE: {TP_DEGREE}, CP_DEGREE: 0, NUM_GPUS: {NUM_GPUS}, NUM_NODES: {NUM_NODES}")
