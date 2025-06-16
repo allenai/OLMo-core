@@ -651,7 +651,7 @@ class Trainer:
 
         log.info("Callback order:")
         for i, callback_name in enumerate(self.callbacks.keys()):
-            log.info(f"  - Callback {i+1}: {callback_name}")
+            log.info(f"  - Callback {i + 1}: {callback_name}")
 
         log.info(f"Training for {self.max_steps:,d} steps")
 
@@ -1257,6 +1257,8 @@ class Trainer:
 
         first_batch = True
         for batch in self._iter_batches():
+            torch.compiler.cudagraph_mark_step_begin()
+
             # Bookkeeping.
             self.global_step += 1
             if (

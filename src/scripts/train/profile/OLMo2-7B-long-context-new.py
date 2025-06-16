@@ -6,6 +6,8 @@ Run this script without any arguments to see usage info.
 import logging
 
 # ruff: noqa: F401
+import torch
+
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
@@ -58,6 +60,12 @@ GQA_RATIO = None
 log.info(
     f"TP_DEGREE: {TP_DEGREE}, CP_DEGREE: {CP_DEGREE}, NUM_GPUS: {NUM_GPUS}, NUM_NODES: {NUM_NODES}"
 )
+
+
+# Check and enable TF32 for better performance
+log.info(f"torch.backends.cuda.matmul.allow_tf32: {torch.backends.cuda.matmul.allow_tf32}")
+torch.backends.cuda.matmul.allow_tf32 = True
+log.info("Enabled torch.backends.cuda.matmul.allow_tf32")
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
