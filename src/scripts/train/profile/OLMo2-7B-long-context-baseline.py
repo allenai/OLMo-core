@@ -43,9 +43,10 @@ GPU_PER_NODE = 8
 assert NUM_GPUS % GPU_PER_NODE == 0
 NUM_NODES = NUM_GPUS // GPU_PER_NODE
 
-AC_ATTENTION_INTERVAL = 4
 TP_DEGREE = 4
-DP_SHARDS = NUM_GPUS // TP_DEGREE
+DP_DEGREE = NUM_GPUS // TP_DEGREE
+AC_ATTENTION_INTERVAL = 4
+
 GQA = False
 
 log.info(f"TP_DEGREE: {TP_DEGREE}, CP_DEGREE: 0, NUM_GPUS: {NUM_GPUS}, NUM_NODES: {NUM_NODES}")
@@ -85,7 +86,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.selected_modules,
             modules=[f"blocks.{i}.feed_forward" for i in range(32)]
-            + [f"blocks.{i}.attention" for i in range(0, 32, AC_ATTENTION_INTERVAL)],
+            + [  # there is some memory to spare, so this could potentially be more aggressive
+                f"blocks.{i}.attention" for i in range(0, 32, AC_ATTENTION_INTERVAL)
+            ],
         ),
         float8_config=Float8Config(enabled=False),
         max_grad_norm=1.0,
