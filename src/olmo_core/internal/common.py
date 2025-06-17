@@ -156,7 +156,6 @@ def build_launch_config(
         ),
         google_creds,
     ]
-    env_secrets = [env_secret for env_secret in env_secrets if env_secret is not None]
 
     launch_config = BeakerLaunchConfig(
         name=f"{name}-{generate_uuid()[:8]}",
@@ -172,7 +171,7 @@ def build_launch_config(
         shared_filesystem=not is_url(root_dir),
         allow_dirty=False,
         env_vars=[BeakerEnvVar(name="NCCL_DEBUG", value="INFO" if nccl_debug else "WARN")],
-        env_secrets=env_secrets,
+        env_secrets=[env_secret for env_secret in env_secrets if env_secret is not None],
         setup_steps=[
             # Clone repo.
             'git clone "$REPO_URL" .',
