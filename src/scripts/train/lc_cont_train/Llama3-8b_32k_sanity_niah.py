@@ -146,7 +146,7 @@ class LcContTrain(Config):
                 nccl_debug=False,
             ),
             train_module = TransformerTrainModuleConfig(
-                rank_microbatch_size=2 * CONTEXT_LENGTH,
+                rank_microbatch_size= 4 * CONTEXT_LENGTH,
                  optim=AdamWConfig(
                     lr= 1 * 1e-5,
                     weight_decay=0.1,
@@ -166,10 +166,10 @@ class LcContTrain(Config):
                     reduce_dtype=DType.float32,
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
                 ),
-                tp_config=TransformerTensorParallelConfig(
-                    degree=2,
+                #tp_config=TransformerTensorParallelConfig(
+                #    degree=2,
                     #loss_parallel=True,
-                ),
+                #),
                 ac_config=TransformerActivationCheckpointingConfig(),
                 float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
                 max_grad_norm=1.0,
