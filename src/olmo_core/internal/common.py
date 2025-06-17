@@ -36,7 +36,7 @@ def get_beaker_username() -> Optional[str]:
         return None
 
 
-def beaker_secret_exists(secret: str) -> bool:
+def beaker_secret_exists(secret: str, workspace: Optional[str] = None) -> bool:
     beaker = get_beaker_client()
     if beaker is None:
         raise RuntimeError(
@@ -44,16 +44,16 @@ def beaker_secret_exists(secret: str) -> bool:
         )
 
     try:
-        beaker.secret.get(secret)
+        beaker.secret.get(secret, workspace=workspace)
         return True
     except SecretNotFound:
         return False
 
 
 def _to_beaker_env_secret(
-    name: str, secret: str, *, required: bool = True
+    name: str, secret: str, *, workspace: Optional[str] = None, required: bool = True
 ) -> Optional[BeakerEnvSecret]:
-    if beaker_secret_exists(secret):
+    if beaker_secret_exists(secret, workspace=workspace):
         return BeakerEnvSecret(name=name, secret=secret)
     elif required:
         raise OLMoConfigurationError(f"Secret {secret} not configured in beaker")
@@ -107,24 +107,51 @@ def build_launch_config(
 
     google_creds = (
         _to_beaker_env_secret(
-            name="GOOGLE_CREDENTIALS", secret="GOOGLE_CREDENTIALS", required=False
+            name="GOOGLE_CREDENTIALS",
+            secret="GOOGLE_CREDENTIALS",
+            required=False,
+            workspace=workspace,
         )
         if "google" not in cluster
         else None
     )
     env_secrets = [
-        _to_beaker_env_secret(name="BEAKER_TOKEN", secret=f"{beaker_user}_BEAKER_TOKEN"),
         _to_beaker_env_secret(
-            name="WANDB_API_KEY", secret=f"{beaker_user}_WANDB_API_KEY", required=False
+            name="BEAKER_TOKEN", secret=f"{beaker_user}_BEAKER_TOKEN", workspace=workspace
         ),
         _to_beaker_env_secret(
-            name="COMET_API_KEY", secret=f"{beaker_user}_COMET_API_KEY", required=False
+            name="WANDB_API_KEY",
+            secret=f"{beaker_user}_WANDB_API_KEY",
+            required=False,
+            workspace=workspace,
         ),
-        _to_beaker_env_secret(name="AWS_CONFIG", secret=f"{beaker_user}_AWS_CONFIG"),
-        _to_beaker_env_secret(name="AWS_CREDENTIALS", secret=f"{beaker_user}_AWS_CREDENTIALS"),
-        _to_beaker_env_secret(name="R2_ENDPOINT_URL", secret="R2_ENDPOINT_URL", required=False),
-        _to_beaker_env_secret(name="WEKA_ENDPOINT_URL", secret="WEKA_ENDPOINT_URL", required=False),
-        _to_beaker_env_secret(name="SLACK_WEBHOOK_URL", secret="SLACK_WEBHOOK_URL", required=False),
+        _to_beaker_env_secret(
+            name="COMET_API_KEY",
+            secret=f"{beaker_user}_COMET_API_KEY",
+            required=False,
+            workspace=workspace,
+        ),
+        _to_beaker_env_secret(
+            name="AWS_CONFIG", secret=f"{beaker_user}_AWS_CONFIG", workspace=workspace
+        ),
+        _to_beaker_env_secret(
+            name="AWS_CREDENTIALS", secret=f"{beaker_user}_AWS_CREDENTIALS", workspace=workspace
+        ),
+        _to_beaker_env_secret(
+            name="R2_ENDPOINT_URL", secret="R2_ENDPOINT_URL", required=False, workspace=workspace
+        ),
+        _to_beaker_env_secret(
+            name="WEKA_ENDPOINT_URL",
+            secret="WEKA_ENDPOINT_URL",
+            required=False,
+            workspace=workspace,
+        ),
+        _to_beaker_env_secret(
+            name="SLACK_WEBHOOK_URL",
+            secret="SLACK_WEBHOOK_URL",
+            required=False,
+            workspace=workspace,
+        ),
         google_creds,
     ]
     env_secrets = [env_secret for env_secret in env_secrets if env_secret is not None]
