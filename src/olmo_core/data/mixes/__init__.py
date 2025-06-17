@@ -35,6 +35,7 @@ class DataMix(DataMixBase):
     An enumeration of data mix names.
     """
 
+    OLMo_mix_0625 = "OLMo-mix-0625"
     OLMoE_mix_0824 = "OLMoE-mix-0824"
     dolma17 = "dolma17"
     v3_small_ppl_validation = "v3-small-ppl-validation"
