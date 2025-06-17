@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for headwise QK norm.
 - Add BOS token in in-loop evals, when specified by the tokenizer (`ai2-olmo-eval==0.8.4`)
 - Add support for BOS token matching EOS token for intra-document masking in FSL numpy datasets.
+- Added option to allow profiler to record on multiple ranks.
 
 ### Changed
 

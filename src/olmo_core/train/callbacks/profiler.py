@@ -52,10 +52,6 @@ class ProfilerCallback(Callback):
     """
     Whether to track tensor memory allocation/deallocation
     """
-    export_chrome_trace: bool = True
-    """
-    Whether to export the trace to a chrome trace file.
-    """
     enable_cuda_sync_events: bool = False
     """
     Whether to enable recording of CUDA sync events. Useful for critical-path analysis with
@@ -68,6 +64,7 @@ class ProfilerCallback(Callback):
     ranks: str | None = None
     """
     Ranks to profile. Can be:
+
     - ``None``: Only rank 0 is profiled
     - String shortcuts:
       - ``"dp"``: Profile one rank (local rank 0) in each data parallel group
@@ -78,7 +75,7 @@ class ProfilerCallback(Callback):
       - ``"all"``: Profile all ranks
 
     Useful in conjunction with https://github.com/facebookresearch/HolisticTraceAnalysis
-      to analyze traces from a distributed training job.
+    to analyze traces from a distributed training job.
     """
 
     _exit_stack = None
@@ -116,24 +113,25 @@ class ProfilerCallback(Callback):
                 elif self.ranks == "all":
                     return True
                 else:
-                    log.warning(
-                        f"Unknown rank shortcut '{self.ranks}', falling back to rank 0 only"
-                    )
-                    return current_rank == 0
+                    raise ValueError(f"Unknown rank shortcut '{self.ranks}'")
             except RuntimeError as e:
                 log.warning(
                     f"Failed to determine parallel mesh for '{self.ranks}': {e}, falling back to rank 0 only"
                 )
                 return current_rank == 0
         else:
-            log.warning(f"Invalid ranks specification: {self.ranks}, falling back to rank 0 only")
-            return current_rank == 0
+            raise TypeError(f"Invalid ranks specification: {self.ranks}")
 
     def pre_train(self):
         if not self.enabled or not self._should_profile_rank():
             return
 
-        from torch.profiler import ProfilerActivity, _ExperimentalConfig, profile, schedule
+        from torch.profiler import (
+            ProfilerActivity,
+            _ExperimentalConfig,
+            profile,
+            schedule,
+        )
 
         profiling_schedule = schedule(
             wait=self.wait,
@@ -181,11 +179,10 @@ class ProfilerCallback(Callback):
         output = self._profiler.key_averages().table(sort_by="self_cpu_time_total", row_limit=32)
         log.info(f"Profile by total CPU time at step {self._profiler.step_num}:\n{output}")
 
-        if self.export_chrome_trace:
-            log.info("Saving chrome trace from profiler...")
-            output_dir = self.trainer.work_dir / "profiler"
-            output_dir.mkdir(exist_ok=True, parents=True)
-            trace_path = output_dir / f"rank-{get_rank()}-step-{prof.step_num}.chrome_trace.json.gz"
-            prof.export_chrome_trace(str(trace_path))
-            final_path = self.trainer.persist_working_file(trace_path)
-            log.info(f"Chrome trace saved to save dir: '{final_path}'")
+        log.info("Saving chrome trace from profiler...")
+        output_dir = self.trainer.work_dir / "profiler"
+        output_dir.mkdir(exist_ok=True, parents=True)
+        trace_path = output_dir / f"rank-{get_rank()}-step-{prof.step_num}.chrome_trace.json.gz"
+        prof.export_chrome_trace(str(trace_path))
+        final_path = self.trainer.persist_working_file(trace_path)
+        log.info(f"Chrome trace saved to '{final_path}'")
