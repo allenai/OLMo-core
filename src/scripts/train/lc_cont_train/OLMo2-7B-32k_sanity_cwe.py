@@ -141,7 +141,7 @@ class LcContTrain(Config):
                 nccl_debug=False,
             ),
             train_module=TransformerTrainModuleConfig(
-                rank_microbatch_size=1 * CONTEXT_LENGTH,
+                rank_microbatch_size=2 * CONTEXT_LENGTH,
                 optim=AdamWConfig(
                     lr=0.000061499,
                     weight_decay=0.1,
@@ -217,6 +217,7 @@ class LcContTrain(Config):
                 load_path=load_path,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
+                hard_stop=Duration.tokens(int(10e8)), # stop at 1B tokens for this run 
                 max_duration=Duration.tokens(int(50e9)),
             )
             .with_callback(
