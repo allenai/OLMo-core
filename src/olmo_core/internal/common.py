@@ -56,9 +56,9 @@ def _to_beaker_env_secret(
     if beaker_secret_exists(secret, workspace=workspace):
         return BeakerEnvSecret(name=name, secret=secret)
     elif required:
-        raise OLMoConfigurationError(f"Secret {secret} not configured in beaker")
+        raise OLMoConfigurationError(f"Secret {secret} not configured in beaker workspace {workspace}")
     else:
-        log.info(f"Secret {secret} not configured in beaker")
+        log.info(f"Secret {secret} not configured in beaker workspace {workspace}")
         return None
 
 
