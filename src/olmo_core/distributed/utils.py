@@ -42,7 +42,15 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
 
     # Set host-specific env var defaults.
     if _running_in_beaker():
+        node_name = get_node_hostname()
+        msg = f"Running in beaker on node '{node_name}'"
+        if logging_configured():
+            log.warning(msg)
+        else:
+            print(msg)
+
         multi_node = int(os.environ.get(OLMO_NUM_NODES_ENV_VAR, "1")) > 1
+
         # See https://beaker-docs.apps.allenai.org/experiments/distributed-training.html
         if "jupiter" in get_node_hostname():
             set_env_var("NCCL_IB_HCA", "^=mlx5_bond_0")
