@@ -1,4 +1,3 @@
-import logging
 import time
 from dataclasses import dataclass
 from typing import Any, ClassVar, Dict, Optional
@@ -10,8 +9,6 @@ from olmo_core.distributed.utils import get_world_size
 from ..common import ReduceType
 from ..train_module import TransformerTrainModule
 from .callback import Callback
-
-log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -124,20 +121,18 @@ class SpeedMonitorCallback(Callback):
         total_time = counter - self._start_time
         self._step_last_logged = counter
 
-        device_tps: Optional[float] = None
-        device_tps_avg: Optional[float] = None
+        tps: Optional[float] = None
+        tps_avg: Optional[float] = None
         if self._step_tokens and self._total_tokens:
-            device_tps = self._step_tokens / step_time
-            device_tps_avg = self._total_tokens / total_time
-            self.trainer.record_metric("throughput/device/TPS", device_tps)
-            self.trainer.record_metric("throughput/device/TPS (actual avg)", device_tps_avg)
+            tps = self._step_tokens / step_time
+            tps_avg = self._total_tokens / total_time
+            self.trainer.record_metric("throughput/device/TPS", tps)
+            self.trainer.record_metric("throughput/device/TPS (actual avg)", tps_avg)
 
         if self.trainer.global_train_tokens_seen is not None:
             self.trainer.record_metric(
                 "throughput/total tokens", self.trainer.global_train_tokens_seen
             )
-            global_tps = self.trainer.global_train_tokens_seen / total_time
-            self.trainer.record_metric("throughput/TPS (actual avg)", global_tps)
 
         bps = 1 / step_time
         bps_avg = self._total_steps / total_time
@@ -153,23 +148,13 @@ class SpeedMonitorCallback(Callback):
         if (
             (num_flops_per_token := self._get_num_flops_per_token(self._step_seq_len)) is not None
             and self.device_peak_flops is not None
-            and device_tps is not None
-            and device_tps_avg is not None
+            and tps is not None
+            and tps_avg is not None
         ):
             # model FLOPS utilization
             # For its definition and calculation, please refer to the PaLM paper:
             # https://arxiv.org/abs/2204.02311
-            mfu = 100 * num_flops_per_token * device_tps / self.device_peak_flops
-            mfu_avg = 100 * num_flops_per_token * device_tps_avg / self.device_peak_flops
+            mfu = 100 * num_flops_per_token * tps / self.device_peak_flops
+            mfu_avg = 100 * num_flops_per_token * tps_avg / self.device_peak_flops
             self.trainer.record_metric("throughput/device/MFU", mfu)
             self.trainer.record_metric("throughput/device/MFU (actual avg)", mfu_avg)
-        else:
-            # Log why MFU is not being recorded
-            if num_flops_per_token is None:
-                log.info("MFU not recorded: num_flops_per_token is None")
-            if self.device_peak_flops is None:
-                log.info("MFU not recorded: device_peak_flops is None")
-            if device_tps is None:
-                log.info("MFU not recorded: device_tps is None")
-            if device_tps_avg is None:
-                log.info("MFU not recorded: device_tps_avg is None")
