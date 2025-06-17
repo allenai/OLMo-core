@@ -89,7 +89,7 @@ def build_launch_config(
     cmd: List[str],
     cluster: str,
     task_name: str = "train",
-    workspace: Optional[str] = None,
+    workspace: str = "ai2/OLMo-core",
     budget: str = "ai2/oe-training",
     nccl_debug: bool = False,
     beaker_image: str = OLMoCoreBeakerImage.stable,
