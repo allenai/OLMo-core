@@ -186,18 +186,22 @@ def has_flash_attn() -> bool:
 
 def set_env_var(name: str, value: str, override: bool = False, secret: bool = False):
     value_str = "****" if secret else value
-    msg: str
     if name in os.environ:
         if override and os.environ[name] != value:
-            msg = f"Overriding env var '{name}' to '{value_str}'"
+            log_or_print(log, f"Overriding env var '{name}' to '{value_str}'", logging.WARNING)
             os.environ[name] = value
         else:
-            msg = f"Env var '{name}' already set to '{value_str}'"
+            log_or_print(log, f"Env var '{name}' already set to '{value_str}'")
     else:
-        msg = f"Setting env var '{name}' to '{value_str}'"
+        log_or_print(log, f"Setting env var '{name}' to '{value_str}'")
         os.environ[name] = value
-    if logging_configured():
-        log.warning(msg)
+
+
+def log_or_print(logger: logging.Logger, msg: str, level: int = logging.INFO):
+    if _LOGGING_CONFIGURED or (
+        len(logging.getLogger().handlers) > 0 and logger.getEffectiveLevel() <= level
+    ):
+        logger.log(level, msg)
     else:
         print(msg)
 
