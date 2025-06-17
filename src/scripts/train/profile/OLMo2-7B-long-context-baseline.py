@@ -5,9 +5,6 @@ Run this script without any arguments to see usage info.
 
 import logging
 
-import torch
-
-# ruff: noqa: F401
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
@@ -37,18 +34,8 @@ from olmo_core.train.train_module.transformer.config import (
 
 log = logging.getLogger(__name__)
 
-# Check and enable TF32 for better performance
-log.info(f"torch.backends.cuda.matmul.allow_tf32: {torch.backends.cuda.matmul.allow_tf32}")
-torch.backends.cuda.matmul.allow_tf32 = True
-log.info("Enabled torch.backends.cuda.matmul.allow_tf32")
-
-
-# 64K length, 32 GPUs, FP8, no intra-doc masking -> 2,750 TPS/device = 88,000 TPS overall
-# 64K length, 32 GPUs, no FP8, intra-doc masking -> 3,250 TPS/device = 104,000 TPS overall
-# 64K length, 32 GPUs, FP8, intra-doc masking    -> 3,500 TPS/device = 112,000 TPS overall
-
 CONTEXT_LENGTH = 4 * 16_384
-GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH  # cp8, dp4
+GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH
 INTRA_DOCUMENT_MASKING = True
 
 NUM_GPUS = 32
@@ -59,7 +46,7 @@ NUM_NODES = NUM_GPUS // GPU_PER_NODE
 AC_ATTENTION_INTERVAL = 4
 TP_DEGREE = 4
 DP_SHARDS = NUM_GPUS // TP_DEGREE
-GQA_RATIO = None
+GQA = False
 
 log.info(f"TP_DEGREE: {TP_DEGREE}, CP_DEGREE: 0, NUM_GPUS: {NUM_GPUS}, NUM_NODES: {NUM_NODES}")
 
@@ -68,7 +55,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     return TransformerConfig.olmo2_7B(
         vocab_size=common.tokenizer.padded_vocab_size(),
         use_flash=True,
-        n_kv_heads=int(32 * GQA_RATIO) if GQA_RATIO else None,
+        n_kv_heads=int(32 // 4) if GQA else None,
         rope_theta=8 * 10**6,
     )
 
@@ -89,16 +76,16 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         compile_model=True,
         z_loss_multiplier=1e-5,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.hsdp,
+            name=DataParallelType.fsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
-            shard_degree=DP_SHARDS,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
         ),
-        tp_config=TransformerTensorParallelConfig(degree=TP_DEGREE, enable_async=True),
+        tp_config=TransformerTensorParallelConfig(degree=TP_DEGREE),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.selected_modules,
-            activation_memory_budget=0.5,
+            modules=[f"blocks.{i}.feed_forward" for i in range(32)]
+            + [f"blocks.{i}.attention" for i in range(0, 32, AC_ATTENTION_INTERVAL)],
         ),
         float8_config=Float8Config(enabled=False),
         max_grad_norm=1.0,
