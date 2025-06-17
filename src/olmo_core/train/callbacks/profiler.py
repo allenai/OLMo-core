@@ -64,6 +64,7 @@ class ProfilerCallback(Callback):
     ranks: str | None = None
     """
     Ranks to profile. Can be:
+
     - ``None``: Only rank 0 is profiled
     - String shortcuts:
       - ``"dp"``: Profile one rank (local rank 0) in each data parallel group
@@ -74,7 +75,7 @@ class ProfilerCallback(Callback):
       - ``"all"``: Profile all ranks
 
     Useful in conjunction with https://github.com/facebookresearch/HolisticTraceAnalysis
-      to analyze traces from a distributed training job.
+    to analyze traces from a distributed training job.
     """
 
     _exit_stack = None
