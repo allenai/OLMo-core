@@ -107,6 +107,16 @@ def build_launch_config(
             "Environment not configured correctly for Beaker, you may be missing the BEAKER_TOKEN env var."
         )
 
+    google_creds = (
+        _to_beaker_env_secret(
+            name="GOOGLE_CREDENTIALS",
+            secret="GOOGLE_CREDENTIALS",
+            required=False,
+            workspace=workspace,
+        )
+        if "google" not in cluster
+        else None
+    )
     env_secrets = [
         _to_beaker_env_secret(
             name="BEAKER_TOKEN", secret=f"{beaker_user}_BEAKER_TOKEN", workspace=workspace
@@ -144,10 +154,11 @@ def build_launch_config(
             required=False,
             workspace=workspace,
         ),
+        google_creds,
     ]
     env_secrets = [env_secret for env_secret in env_secrets if env_secret is not None]
 
-    return BeakerLaunchConfig(
+    launch_config = BeakerLaunchConfig(
         name=f"{name}-{generate_uuid()[:8]}",
         budget=budget,
         cmd=cmd,
@@ -181,6 +192,15 @@ def build_launch_config(
             "printenv AWS_CREDENTIALS > ~/.aws/credentials",
         ],
     )
+
+    if google_creds:
+        launch_config.setup_steps += [
+            "mkdir -p ~/.google",
+            f"printenv {google_creds.name} > ~/.google/credentials.json",
+            "export GOOGLE_APPLICATION_CREDENTIALS=$HOME/.google/credentials.json",
+        ]
+
+    return launch_config
 
 
 CLUSTER_TO_GPU_TYPE = {
