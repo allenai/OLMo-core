@@ -11,6 +11,7 @@ from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
+from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.moe import (
     MoEConfig,
     MoELoadBalancingLossGranularity,
@@ -38,8 +39,11 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
+    TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
+    TransformerExpertParallelConfig,
     TransformerTrainModuleConfig,
 )
 
@@ -72,7 +76,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             name=MoEType.default,
             num_experts=128,
             hidden_size=1024,
-            capacity_factor=1.25,
+            capacity_factor=1.05,
             router=MoERouterConfig(top_k=8, gating_function=MoERouterGatingFunction.sigmoid),
             #  shared_mlp=FeedForwardConfig(hidden_size=4096, bias=False),
             lb_loss_weight=0.05,
@@ -83,6 +87,9 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         feed_forward=FeedForwardConfig(hidden_size=4096, bias=False),
         init_std=0.01,
     )
+
+    config.lm_head.loss_implementation = LMLossImplementation.fused_linear
+
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_first=False, pattern=[False, False, False, True]
     )
@@ -131,7 +138,10 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             prefetch_factor=1,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),
-        #  ep_config=TransformerExpertParallelConfig(degree=-1),
+        ep_config=TransformerExpertParallelConfig(degree=-1),
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.selected_modules, modules=["*norm"]
+        ),
         float8_config=Float8Config(
             ao=AOFloat8LinearConfig(
                 enable_fsdp_float8_all_gather=True,
