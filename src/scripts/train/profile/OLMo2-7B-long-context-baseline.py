@@ -97,7 +97,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ),
         tp_config=TransformerTensorParallelConfig(degree=TP_DEGREE, enable_async=True),
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget,
+            mode=TransformerActivationCheckpointingMode.selected_modules,
             activation_memory_budget=0.5,
         ),
         float8_config=Float8Config(enabled=False),
@@ -144,7 +144,6 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 warmup=1,
                 active=1,
                 repeat=1,
-                export_chrome_trace=True,
                 with_stack=True,
                 enable_cuda_sync_events=True,
                 ranks="all",
