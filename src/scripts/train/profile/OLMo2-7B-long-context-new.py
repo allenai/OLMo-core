@@ -5,15 +5,11 @@ Run this script without any arguments to see usage info.
 
 import logging
 
-# ruff: noqa: F401
-import torch
-
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import (
@@ -31,16 +27,12 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 from olmo_core.train.train_module.transformer.config import (
-    TransformerActivationCheckpointingConfig,
     TransformerContextParallelConfig,
     TransformerTensorParallelConfig,
 )
 
 log = logging.getLogger(__name__)
 
-# 64K length, 32 GPUs, FP8, no intra-doc masking -> 2,750 TPS/device
-# 64K length, 32 GPUs, no FP8, intra-doc masking -> 3,250 TPS/device
-# 64K length, 32 GPUs, FP8, intra-doc masking    -> 3,500 TPS/device
 
 CONTEXT_LENGTH = 4 * 16_384
 GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH
@@ -50,29 +42,26 @@ NUM_GPUS = 32
 assert NUM_GPUS % 8 == 0
 NUM_NODES = NUM_GPUS // 8
 
-# Node(TP = 4, CP = 2) x 4GPU(DP = 4)
+# Node(TP = 4, CP = 2) x 2 DP shards x 2 DP replics
 TP_DEGREE = 4
 CP_DEGREE = 2
-DP_SHARDS = 32
+DP_SHARDS = 2
+DP_REPLICS = NUM_GPUS // (TP_DEGREE * CP_DEGREE * DP_SHARDS)
 
-GQA_RATIO = None
+# GQA greatly improves performance with llama3 style context-parallelism b/c
+# it cuts the amount of communication down to 1/4 the original amount.
+GQA = True
 
 log.info(
     f"TP_DEGREE: {TP_DEGREE}, CP_DEGREE: {CP_DEGREE}, NUM_GPUS: {NUM_GPUS}, NUM_NODES: {NUM_NODES}"
 )
 
 
-# Check and enable TF32 for better performance
-log.info(f"torch.backends.cuda.matmul.allow_tf32: {torch.backends.cuda.matmul.allow_tf32}")
-torch.backends.cuda.matmul.allow_tf32 = True
-log.info("Enabled torch.backends.cuda.matmul.allow_tf32")
-
-
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     return TransformerConfig.olmo2_7B(
         vocab_size=common.tokenizer.padded_vocab_size(),
         use_flash=True,
-        n_kv_heads=int(32 * GQA_RATIO) if GQA_RATIO else None,
+        n_kv_heads=int(32 // 4) if GQA else None,
         rope_theta=8 * 10**6,
     )
 
@@ -106,9 +95,6 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             TransformerContextParallelConfig.llama3(degree=CP_DEGREE)
             if INTRA_DOCUMENT_MASKING
             else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE)
-        ),
-        ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.5
         ),
         float8_config=Float8Config(enabled=False),
         max_grad_norm=1.0,
@@ -154,7 +140,6 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 warmup=1,
                 active=1,
                 repeat=1,
-                export_chrome_trace=True,
                 with_stack=True,
                 enable_cuda_sync_events=True,
                 ranks="all",
