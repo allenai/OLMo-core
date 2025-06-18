@@ -84,8 +84,8 @@ def build_sft_dataset(
         token_files = sorted(dataset_dir.glob("token_ids*.npy"))
         label_files = sorted(dataset_dir.glob("labels*.npy"))
 
-        paths.extend([str(f.relative_to(root_path)) for f in token_files])
-        label_mask_paths.extend([str(f.relative_to(root_path)) for f in label_files])
+        paths.extend([str(f) for f in token_files])
+        label_mask_paths.extend([str(f) for f in label_files])
 
     return NumpyDatasetConfig(
         # general config
