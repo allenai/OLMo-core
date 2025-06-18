@@ -74,7 +74,7 @@ jobs:
           python-version: ${{ matrix.python }}
           cache-prefix: ${{ env.CACHE_PREFIX }}
 
-      - name: Set Google credentials
+      - name: Setup Google credentials
         run: |
           mkdir -p $HOME/.google
           printenv GOOGLE_CREDENTIALS > $HOME/.google/credentials.json
