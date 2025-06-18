@@ -174,10 +174,9 @@ class SFTConfig(Config):
                     compile=True,
                 ),
                 dp_config=TransformerDataParallelConfig(
-                    name=DataParallelType.hsdp,
+                    name=DataParallelType.fsdp,
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
-                    shard_degree=NUM_GPUS,
                 ),
                 ac_config=TransformerActivationCheckpointingConfig(
                     mode=TransformerActivationCheckpointingMode.selected_modules,
