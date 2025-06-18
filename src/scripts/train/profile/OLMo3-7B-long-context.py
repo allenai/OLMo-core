@@ -92,7 +92,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE)
         ),
         float8_config=Float8Config(
-            enabled=True,
+            enabled=False,
             ao=AOFloat8LinearConfig(
                 enable_fsdp_float8_all_gather=True,
                 force_recompute_fp8_weight_in_bwd=True,

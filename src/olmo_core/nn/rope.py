@@ -1,3 +1,4 @@
+import logging
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
@@ -6,9 +7,13 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 
+from olmo_core.utils import log_once
+
 from ..config import Config, StrEnum
 from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "RoPEType",
