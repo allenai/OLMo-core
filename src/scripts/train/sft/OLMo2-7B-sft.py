@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import List, cast
 
 import rich
-import torch
 from rich import print
 
 from olmo_core.config import Config, DType
@@ -24,7 +23,6 @@ from olmo_core.data.types import LongDocStrategy, NumpyDatasetType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
-from olmo_core.io import resource_path
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import (
