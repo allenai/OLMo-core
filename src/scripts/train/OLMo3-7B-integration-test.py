@@ -20,7 +20,6 @@ from olmo_core.train.callbacks import (
     CometCallback,
     WandBCallback,
 )
-from olmo_core.train.common import LoadStrategy
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -31,13 +30,7 @@ SEQUENCE_LENGTH = 8192
 GLOBAL_BATCH_SIZE = (
     1024 * 4096
 )  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
-MAX_DURATION = int(
-    10e12
-)  # Setting this higher than 6T (expected run time), in case we get to run longer since 1) we're using WSD and 2) our anneal will use different data
-ANNEAL_TOKENS = int(100e9)
-LR = 4.4e-5 * math.sqrt(
-    4
-)  # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes. Multiplied by sqrt(4) since global batch size has been manually quadrupled.
+MAX_DURATION = int(500e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
 
 
@@ -70,7 +63,10 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         rank_microbatch_size=rank_microbatch_size,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=SkipStepAdamWConfig(
-            lr=LR,
+            lr=1.6e-4
+            * math.sqrt(
+                GLOBAL_BATCH_SIZE / (4096 * 512)
+            ),  # 1.6e-4 was used for 2M batch size, adjusting it accordingly
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
@@ -99,7 +95,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         scheduler=WSD(
             units=SchedulerUnits.steps,
             warmup=2000,
-            decay=(int(ANNEAL_TOKENS / (4 * GLOBAL_BATCH_SIZE))),
+            decay=(int(50e9 / GLOBAL_BATCH_SIZE)),
             decay_fraction=None,
         ),
     )
@@ -116,10 +112,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     config = (
         TrainerConfig(
-            # save_folder=common.save_folder,
-            save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
+            save_folder=common.save_folder,
             save_overwrite=True,
-            load_strategy=LoadStrategy.always,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
@@ -129,7 +123,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             CheckpointerCallback(
                 save_interval=1000,
                 ephemeral_save_interval=None,
-                save_async=False,
+                save_async=True,
             ),
         )
         .with_callback(
@@ -160,17 +154,12 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     # batch size warmup
     config.callbacks["batchwup"] = BatchSizeSchedulerCallback(
-        batch_sizes=[
-            GLOBAL_BATCH_SIZE,
-            GLOBAL_BATCH_SIZE * 2,
-            GLOBAL_BATCH_SIZE * 4,
-        ],
+        batch_sizes=[GLOBAL_BATCH_SIZE, GLOBAL_BATCH_SIZE * 2, GLOBAL_BATCH_SIZE * 4],
         schedule=[
             Duration.tokens(0),
             Duration.tokens(167_772_160_000),
             Duration.tokens(503_316_480_000),
         ],
-        enabled=False,
     )
 
     return config
@@ -178,7 +167,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 if __name__ == "__main__":
     main(
-        global_batch_size=GLOBAL_BATCH_SIZE * 4,
+        global_batch_size=GLOBAL_BATCH_SIZE,
         sequence_length=SEQUENCE_LENGTH,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
