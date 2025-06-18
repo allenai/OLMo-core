@@ -76,6 +76,7 @@ jobs:
 
       - name: Set Google credentials
         run: |
+          mkdir -p /.google
           printenv GOOGLE_CREDENTIALS > /.google/credentials.json
           echo "GOOGLE_APPLICATION_CREDENTIALS=/.google/credentials.json" >> $GITHUB_ENV
 
