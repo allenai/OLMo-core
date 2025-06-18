@@ -60,7 +60,7 @@ def test_save_and_load_locally_with_dtensors(backend, tmp_path):
 
 @pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize("throttle", [True, False])
-def test_save_and_load_remotely_with_dtensors(backend, s3_checkpoint_dir, throttle):
+def test_save_and_load_remotely_to_s3_with_dtensors(backend, s3_checkpoint_dir, throttle):
     from botocore.exceptions import NoCredentialsError
 
     try:
@@ -72,5 +72,23 @@ def test_save_and_load_remotely_with_dtensors(backend, s3_checkpoint_dir, thrott
         run_save_and_load_with_dtensors,
         backend=backend,
         func_args=(s3_checkpoint_dir, throttle),
+        start_method="spawn",  # NOTE: forking causes a crash with boto3
+    )
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("throttle", [True, False])
+def test_save_and_load_remotely_to_gcs_with_dtensors(backend, gcs_checkpoint_dir, throttle):
+    from google.auth.exceptions import DefaultCredentialsError
+
+    try:
+        dir_is_empty(gcs_checkpoint_dir)
+    except DefaultCredentialsError:
+        pytest.skip("Requires authentication with Google Cloud")
+
+    run_distributed_test(
+        run_save_and_load_with_dtensors,
+        backend=backend,
+        func_args=(gcs_checkpoint_dir, throttle),
         start_method="spawn",  # NOTE: forking causes a crash with boto3
     )
