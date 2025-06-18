@@ -39,10 +39,10 @@ assert NUM_GPUS % 8 == 0
 NUM_NODES = NUM_GPUS // 8
 
 # Node(TP = 4, CP = 2) x 2 DP shards x 2 DP replics
-TP_DEGREE = 4
-CP_DEGREE = 2
+TP_DEGREE = None
+CP_DEGREE = 8
 DP_SHARDS = 2
-DP_REPLICS = NUM_GPUS // (TP_DEGREE * CP_DEGREE * DP_SHARDS)
+# DP_REPLICAS = NUM_GPUS // (TP_DEGREE * CP_DEGREE * DP_SHARDS)
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -53,6 +53,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         hidden_size_multiple_of=1024,
     )
 
+    # NOTE: TP + CP + Sliding Window not yet supported
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_first=False, pattern=[False, False, False, True]
     )
