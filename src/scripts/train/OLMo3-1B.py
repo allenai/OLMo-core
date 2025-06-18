@@ -1,12 +1,10 @@
 """
-Train a 7B OLMo model. Run this script without any arguments to see usage info.
+Train a 1B OLMo model. Run this script without any arguments to see usage info.
 """
-import math
 from datetime import datetime
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
@@ -20,7 +18,6 @@ from olmo_core.train.callbacks import (
     CometCallback,
     WandBCallback,
 )
-from olmo_core.train.common import LoadStrategy
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -35,17 +32,17 @@ MAX_DURATION = int(
     10e12
 )  # Setting this higher than 6T (expected run time), in case we get to run longer since 1) we're using WSD and 2) our anneal will use different data
 ANNEAL_TOKENS = int(100e9)
-LR = 4.4e-5 * math.sqrt(
-    4
-)  # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes. Multiplied by sqrt(4) since global batch size has been manually quadrupled.
+LR = (
+    4.4e-5 * 2
+)  # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes.
+SAVE_INTERVAL = 10000
 EVAL_INTERVAL = 1000
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    config = TransformerConfig.olmo2_7B(
+    config = TransformerConfig.olmo2_1B(
         vocab_size=common.tokenizer.padded_vocab_size(),
-        n_kv_heads=8,
-        hidden_size_multiplier=1.2,
+        n_layers=16,
         hidden_size_multiple_of=1024,
     )
     #  config.block.name = TransformerBlockType.default
@@ -60,7 +57,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
-    rank_microbatch_size = 2 * SEQUENCE_LENGTH
+    rank_microbatch_size = 4 * SEQUENCE_LENGTH
     if common.launch is not None:
         gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
         if all("B200" in g for g in gpus):
@@ -71,7 +68,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=SkipStepAdamWConfig(
             lr=LR,
-            weight_decay=0.1,
+            weight_decay=0.033,
             betas=(0.9, 0.95),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
@@ -84,22 +81,15 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
-            shard_degree=32,
-        ),
-        float8_config=Float8Config(
-            enabled=True,
-            ao=AOFloat8LinearConfig(
-                enable_fsdp_float8_all_gather=True,
-                force_recompute_fp8_weight_in_bwd=True,
-                round_scales_to_power_of_2=True,
-            ),
         ),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
         scheduler=WSD(
             units=SchedulerUnits.steps,
             warmup=2000,
-            decay=(int(ANNEAL_TOKENS / (4 * GLOBAL_BATCH_SIZE))),
+            decay=(
+                int(ANNEAL_TOKENS / GLOBAL_BATCH_SIZE)
+            ),  # TODO: This isn't right because it doesn't take batchwup into account.
             decay_fraction=None,
         ),
     )
@@ -116,10 +106,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     config = (
         TrainerConfig(
-            # save_folder=common.save_folder,
             save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
             save_overwrite=True,
-            load_strategy=LoadStrategy.always,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
@@ -127,9 +115,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=1000,
+                save_interval=SAVE_INTERVAL,
                 ephemeral_save_interval=None,
-                save_async=False,
+                save_async=True,
             ),
         )
         .with_callback(
@@ -160,17 +148,12 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     # batch size warmup
     config.callbacks["batchwup"] = BatchSizeSchedulerCallback(
-        batch_sizes=[
-            GLOBAL_BATCH_SIZE,
-            GLOBAL_BATCH_SIZE * 2,
-            GLOBAL_BATCH_SIZE * 4,
-        ],
+        batch_sizes=[GLOBAL_BATCH_SIZE, GLOBAL_BATCH_SIZE * 2, GLOBAL_BATCH_SIZE * 4],
         schedule=[
             Duration.tokens(0),
             Duration.tokens(167_772_160_000),
             Duration.tokens(503_316_480_000),
         ],
-        enabled=False,
     )
 
     return config
@@ -178,7 +161,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 if __name__ == "__main__":
     main(
-        global_batch_size=GLOBAL_BATCH_SIZE * 4,
+        global_batch_size=GLOBAL_BATCH_SIZE,
         sequence_length=SEQUENCE_LENGTH,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
