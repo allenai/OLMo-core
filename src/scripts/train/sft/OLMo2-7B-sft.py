@@ -137,16 +137,8 @@ class SFTConfig(Config):
 
         tokenizer_config = TokenizerConfig.dolma2()
 
-        # Get step number and max steps to infer where the learning rate left off.
-        train_state = torch.load(
-            resource_path(f"{checkpoint}/train", "rank0.pt"), weights_only=False
-        )
-        last_pretrain_step: int = train_state["global_step"]
-        max_pretrain_steps: int = train_state.get("max_steps", 774861)  # default found in logs
-        log.info(
-            f"Will start SFT from checkpoint at step {last_pretrain_step:,d} of {max_pretrain_steps:,d}"
-        )
-
+        last_pretrain_step: int = 11921
+        log.info(f"Will start SFT from checkpoint at step {last_pretrain_step:,d}")
         run_name = f"tylerr-sft-attempt-from{last_pretrain_step}-{run_name}"
 
         config = SFTConfig(
