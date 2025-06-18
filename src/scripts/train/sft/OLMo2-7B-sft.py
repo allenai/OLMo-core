@@ -4,6 +4,7 @@ Run the script without any arguments to see usage info.
 """
 
 import logging
+import math
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,8 +62,8 @@ SEQUENCE_LENGTH = 4096
 GLOBAL_BATCH_SIZE = 64 * SEQUENCE_LENGTH
 MAX_DURATION = int(4e12)
 
-NUM_GPUS = 16
-NUM_NODES = NUM_GPUS // 8
+NUM_GPUS = 8
+NUM_NODES = math.ceil(NUM_GPUS / 8)
 
 
 def build_sft_dataset(
