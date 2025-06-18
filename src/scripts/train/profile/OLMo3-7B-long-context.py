@@ -1,114 +1,87 @@
 """
-Train a 7B OLMo model on long contexts. Configured for profiling.
+Train a 7B OLMo3 model on long contexts. Configured for profiling.
 Run this script without any arguments to see usage info.
 """
 
-import logging
-
-# ruff: noqa: F401
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.float8 import Float8Config
+from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
+from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
-from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
-from olmo_core.train import TrainerConfig
+from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.optim.scheduler import CosWithWarmup
+from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
+    CheckpointerCallback,
     CometCallback,
-    GPUMemoryMonitorCallback,
-    ProfilerCallback,
     WandBCallback,
 )
-from olmo_core.train.callbacks.checkpointer import CheckpointerCallback
 from olmo_core.train.callbacks.console_logger import ConsoleLoggerCallback
-from olmo_core.train.common import Duration
+from olmo_core.train.callbacks.gpu_memory_monitor import GPUMemoryMonitorCallback
+from olmo_core.train.callbacks.profiler import ProfilerCallback
 from olmo_core.train.train_module import (
-    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
 from olmo_core.train.train_module.transformer.config import (
-    TransformerActivationCheckpointingConfig,
+    TransformerContextParallelConfig,
     TransformerTensorParallelConfig,
 )
 
-log = logging.getLogger(__name__)
-
-# 64K length, 32 GPUs, FP8, no intra-doc masking -> 2,750 TPS/device = 88,000 TPS overall
-# 64K length, 32 GPUs, no FP8, intra-doc masking -> 3,250 TPS/device = 104,000 TPS overall
-# 64K length, 32 GPUs, FP8, intra-doc masking    -> 3,500 TPS/device = 112,000 TPS overall
-
-# Tyler's Results (64K context length, no FP8, intra-doc masking):
-# ---
-# 16 GPUs, 32*CL bs -- CP8, DP2, GQA(1/4) -> 5,876 TPS/device
-# 16 GPUs, 32*CL bs -- TP4, DP4, AC, GQA(1/4) -> 5,822 TPS/device
-# 16 GPUs, 32*CL bs -- CP4, DP4, AC, GQA(1/4) -> 5,443 TPS/device
-# 16 GPUs, 32*CL bs -- TP4, DP4, AC -> 5,412 TPS/device (suggested by Dustin & Amanda)
-# 16 GPUs, 32*CL bs -- CP2, TP2, DP4, AC, GQA(1/4) -> 5,334 TPS/device
-# 16 GPUs, 32*CL bs -- CP4, DP4, AC -> 3,977 TPS/device
-# 16 GPUs, 32*CL bs -- CP8, DP2 -> 3,735 TPS/device (bottlenecked by AllGather_RING)
-# 16 GPUs, 32*CL bs -- TP4, DP4 -> OOM
-# 16 GPUs, 32*CL bs -- CP4, DP4, GQA(1/4) -> OOM
-# ---
-# 32 GPUs, 64*CL bs -- TP4, DP8, AC, GQA(1/4) -> 5,371 TPS/device
-# 32 GPUs, 64*CL bs -- CP8, DP4, GQA(1/4) -> 5,032 TPS/device
-# 32 GPUs, 64*CL bs -- TP4, DP8, AC -> 5,029 TPS/device
-# 32 GPUs, 64*CL bs -- CP2, TP2, DP8, AC, GQA(1/4) -> 4,768 TPS/device
-# 32 GPUs, 64*CL bs -- CP4, DP8, AC, GQA(1/4) -> 4,700 TPS/device (only uses 64% of GPU RAM)
-#
-
 CONTEXT_LENGTH = 4 * 16_384
-# GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH  # cp8, dp4
-GLOBAL_BATCH_SIZE = 32 * CONTEXT_LENGTH
+GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH
 INTRA_DOCUMENT_MASKING = True
 
-NUM_GPUS = 16
+NUM_GPUS = 32
 assert NUM_GPUS % 8 == 0
 NUM_NODES = NUM_GPUS // 8
 
-SELECTIVE_AC = False
+# Node(TP = 4, CP = 2) x 2 DP shards x 2 DP replics
 TP_DEGREE = 4
 CP_DEGREE = 2
-HSDP_SHARD_DEGREE = 2
-GQA_RATIO = 1 / 4
-
-log.info(
-    f"TP_DEGREE: {TP_DEGREE}, CP_DEGREE: {CP_DEGREE}, NUM_GPUS: {NUM_GPUS}, NUM_NODES: {NUM_NODES}"
-)
+DP_SHARDS = 2
+DP_REPLICS = NUM_GPUS // (TP_DEGREE * CP_DEGREE * DP_SHARDS)
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    return TransformerConfig.olmo2_7B(
+    config = TransformerConfig.olmo2_7B(
         vocab_size=common.tokenizer.padded_vocab_size(),
-        use_flash=True,
-        n_kv_heads=int(32 * GQA_RATIO) if GQA_RATIO else None,
+        n_kv_heads=8,
+        hidden_size_multiplier=1.2,
+        hidden_size_multiple_of=1024,
     )
+
+    config.block.attention.sliding_window = SlidingWindowAttentionConfig(
+        force_first=False, pattern=[False, False, False, True]
+    )
+    config.block.attention.use_flash = True
+    config.block.attention.use_head_qk_norm = True
+
+    return config
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     return TransformerTrainModuleConfig(
         rank_microbatch_size=1 * CONTEXT_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
-        optim=AdamWConfig(
+        optim=SkipStepAdamWConfig(
             lr=1e-5,
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
-            fused=True,
+            compile=False,
         ),
         compile_model=True,
-        z_loss_multiplier=1e-5,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
-            shard_degree=HSDP_SHARD_DEGREE,
-            # prefetch_factor=1,
+            shard_degree=DP_SHARDS,
         ),
         tp_config=TransformerTensorParallelConfig(degree=TP_DEGREE, enable_async=True)
         if TP_DEGREE
@@ -117,16 +90,16 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             TransformerContextParallelConfig.llama3(degree=CP_DEGREE)
             if INTRA_DOCUMENT_MASKING
             else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE)
-        )
-        if CP_DEGREE
-        else None,
-        ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=[f"blocks.{i}.feed_forward" for i in range(32)],
-        )
-        if SELECTIVE_AC
-        else None,
-        float8_config=Float8Config(enabled=False),
+        ),
+        float8_config=Float8Config(
+            enabled=True,
+            ao=AOFloat8LinearConfig(
+                enable_fsdp_float8_all_gather=True,
+                force_recompute_fp8_weight_in_bwd=True,
+                round_scales_to_power_of_2=True,
+            ),
+        ),
+        z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
     )
@@ -138,7 +111,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_folder=common.save_folder,
             save_overwrite=True,
             metrics_collect_interval=10,
-            cancel_check_interval=1,
+            cancel_check_interval=10,
             max_duration=Duration.steps(22),
         )
         .with_callback(
@@ -146,7 +119,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             CometCallback(
                 name=common.run_name,
                 workspace="ai2",
-                project="OLMo-core-7B-long-context-profile",
+                project="OLMo-core-7B-long-context-profile-results",
                 enabled=False,
                 cancel_check_interval=10,
             ),
@@ -156,7 +129,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=common.run_name,
                 entity="ai2-llm",
-                project="OLMo-core-7B-long-context-profile",
+                project="OLMo-core-7B-long-context-profile-results",
                 enabled=False,
                 cancel_check_interval=10,
             ),
@@ -164,13 +137,12 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "profiler",
             ProfilerCallback(
-                enabled=True,
+                enabled=False,
                 skip_first=15,
                 wait=3,
                 warmup=1,
                 active=1,
                 repeat=1,
-                export_chrome_trace=True,
                 with_stack=True,
                 enable_cuda_sync_events=True,
                 ranks="all",
@@ -187,8 +159,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 if __name__ == "__main__":
     main(
-        sequence_length=CONTEXT_LENGTH,
         global_batch_size=GLOBAL_BATCH_SIZE,
+        sequence_length=CONTEXT_LENGTH,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
