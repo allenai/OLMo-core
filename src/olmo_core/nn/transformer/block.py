@@ -683,6 +683,18 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
         **fsdp_kwargs,
     ):
+        from torch.distributed.fsdp import MixedPrecisionPolicy
+
+        # Force router to be full-precision.
+        fsdp_router = cast(
+            FSDPModule,
+            fully_shard(
+                self.feed_forward_moe.router,
+                mesh=dp_mesh,
+                mp_policy=MixedPrecisionPolicy(param_dtype=torch.float32),
+            ),
+        )
+
         if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
             if not self.use_combined_forward:
                 fsdp_att = cast(
@@ -696,7 +708,7 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
                 )
                 fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
                 if prefetch_factor > 0:
-                    fsdp_root.set_modules_to_forward_prefetch([fsdp_moe, fsdp_att])
+                    fsdp_root.set_modules_to_forward_prefetch([fsdp_router, fsdp_moe, fsdp_att])
                     fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp])
             else:
                 fsdp_att = cast(
@@ -721,7 +733,7 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
 
                 if prefetch_factor > 0:
                     #  fsdp_root.set_modules_to_forward_prefetch([fsdp_att, fsdp_moe])
-                    fsdp_root.set_modules_to_forward_prefetch([fsdp_att])
+                    fsdp_root.set_modules_to_forward_prefetch([fsdp_att, fsdp_router])
                     if fsdp_shared_mlp is not None:
                         fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp, fsdp_shared_mlp])
                     else:
