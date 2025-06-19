@@ -1,7 +1,7 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple
 
 import torch
 import torch.distributed as dist
@@ -59,6 +59,10 @@ class SlidingWindowAttentionConfig(Config):
     window_size: int = 4096
     force_first: bool = True
     force_last: bool = True
+    use_compressed_context: bool = False
+    compression_ratio: float = 0.1  
+    compression_method: str = "avg_pool"
+    compressed_kv_size: Optional[int] = None 
 
     def should_use_swa(self, layer_idx: int, n_layers: int) -> bool:
         if self.force_first:
@@ -70,6 +74,76 @@ class SlidingWindowAttentionConfig(Config):
             if layer_idx == n_layers - 1:
                 return True
         return self.pattern[layer_idx % len(self.pattern)]
+
+
+class KVCompressor(nn.Module):
+    """Compresses KV cache from previous layers for the last layer"""
+    
+    def __init__(
+        self,
+        compression_ratio: float = 0.1,
+        method: str = "avg_pool",
+        d_model: int = None,
+        compressed_size: Optional[int] = None,
+    ):
+        super().__init__()
+        self.compression_ratio = compression_ratio
+        self.method = method
+        self.compressed_size = compressed_size
+        self.d_model = d_model
+        
+    def forward(
+        self, 
+        all_layer_kvs: List[Tuple[torch.Tensor, torch.Tensor]], 
+        seq_len: int
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            all_layer_kvs: List of (K, V) tuples from each layer
+                          Each K/V has shape (batch, seq_len, n_heads, head_dim)
+        Returns:
+            compressed_k, compressed_v with shape (batch, compressed_len, n_heads, head_dim)
+        """
+        if self.method == "avg_pool":
+            return self._avg_pool_compression(all_layer_kvs, seq_len)
+        elif self.method == "stride":
+            return self._stride_compression(all_layer_kvs, seq_len)
+        elif self.method == "attention_weighted":
+            return self._attention_weighted_compression(all_layer_kvs, seq_len)
+            
+    def _avg_pool_compression(self, all_layer_kvs, seq_len):
+        all_k = torch.stack([kv[0] for kv in all_layer_kvs], dim=0)  # (n_layers, batch, seq, n_heads, head_dim)
+        all_v = torch.stack([kv[1] for kv in all_layer_kvs], dim=0)
+        
+        k_avg = all_k.mean(dim=0)  # (batch, seq, n_heads, head_dim)
+        v_avg = all_v.mean(dim=0)
+        
+        if self.compressed_size:
+            target_len = self.compressed_size
+        else:
+            target_len = int(seq_len * self.compression_ratio)
+        
+        if target_len >= seq_len:
+            return k_avg, v_avg
+            
+        pool_size = seq_len // target_len
+        B, S, H, D = k_avg.shape
+        k_avg = k_avg[:, :pool_size * target_len].reshape(B, target_len, pool_size, H, D)
+        v_avg = v_avg[:, :pool_size * target_len].reshape(B, target_len, pool_size, H, D)
+        k_compressed = k_avg.mean(dim=2)
+        v_compressed = v_avg.mean(dim=2)
+        
+        return k_compressed, v_compressed
+        
+    def _stride_compression(self, all_layer_kvs, seq_len):
+        stride = int(1 / self.compression_ratio)
+        
+        all_k = torch.stack([kv[0][:, ::stride] for kv in all_layer_kvs], dim=0)
+        all_v = torch.stack([kv[1][:, ::stride] for kv in all_layer_kvs], dim=0)
+        k_compressed = all_k.mean(dim=0)
+        v_compressed = all_v.mean(dim=0)
+        
+        return k_compressed, v_compressed
 
 
 class AttentionType(StrEnum):
@@ -179,9 +253,11 @@ class AttentionConfig(Config):
         sliding_window_config: Optional[SlidingWindowAttentionConfig] = kwargs.pop(
             "sliding_window", None
         )
-        if sliding_window_config is not None and sliding_window_config.should_use_swa(
-            layer_idx, n_layers
-        ):
+        use_swa = False
+        if sliding_window_config is not None and sliding_window_config.should_use_swa(layer_idx, n_layers):
+            kwargs["window_size"] = sliding_window_config.window_size
+            use_swa = True
+
             kwargs["window_size"] = sliding_window_config.window_size
 
         kwargs.update(
@@ -193,7 +269,10 @@ class AttentionConfig(Config):
 
         try:
             if self.name == "default":
-                return Attention(**kwargs)
+                attention = Attention(**kwargs)
+                if use_swa and layer_idx == n_layers - 1 and sliding_window_config.use_compressed_context:
+                    attention.set_kv_compressor(sliding_window_config, d_model)
+                return attention
             elif self.name == "fused":
                 kwargs.pop("use_flash", None)
                 if "window_size" in kwargs:
@@ -337,6 +416,8 @@ class Attention(AttentionBase):
         self._cp_pg: Optional[dist.ProcessGroup] = None
         self._cp_enabled = False
         self._cp_load_balancer: Optional[RingAttentionLoadBalancerType] = None
+        self.kv_compressor: Optional[KVCompressor] = None
+        self._kv_cache: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None
 
     @property
     def cp_enabled(self) -> bool:
@@ -436,9 +517,29 @@ class Attention(AttentionBase):
 
         return att
 
+    def set_kv_compressor(self, config: SlidingWindowAttentionConfig, d_model: int):
+        if config.use_compressed_context:
+            self.kv_compressor = KVCompressor(
+                compression_ratio=config.compression_ratio,
+                method=config.compression_method,
+                d_model=d_model,
+                compressed_size=config.compressed_kv_size,
+            )
+            
+    def cache_kv(self, k: torch.Tensor, v: torch.Tensor, layer_idx: int):
+        if self._kv_cache is None:
+            self._kv_cache = []
+        if layer_idx < len(self._kv_cache):
+            self._kv_cache[layer_idx] = (k.detach(), v.detach())
+        else:
+            self._kv_cache.append((k.detach(), v.detach()))
+
     def forward(
         self,
         x: torch.Tensor,
+        layer_idx: int = None,
+        is_last_layer: bool = False,
+        all_layer_kvs: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
         cu_doc_lens_q: Optional[torch.Tensor] = None,
         cu_doc_lens_k: Optional[torch.Tensor] = None,
@@ -506,6 +607,16 @@ class Attention(AttentionBase):
             q, k = self.rope(
                 q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
             )
+        if is_last_layer and self.window_size[0] > 0 and self.kv_compressor and all_layer_kvs:
+            window_start = max(0, T - self.window_size[0])
+            k_window = k[:, window_start:]
+            v_window = v[:, window_start:]
+            k_compressed, v_compressed = self.kv_compressor(all_layer_kvs, window_start)
+            k = torch.cat([k_compressed, k_window], dim=1)
+            v = torch.cat([v_compressed, v_window], dim=1)
+
+        if not is_last_layer and self.kv_compressor is not None:
+            self.cache_kv(k, v, layer_idx)
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
