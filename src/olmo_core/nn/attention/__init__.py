@@ -58,39 +58,61 @@ class SlidingWindowAttentionConfig(Config):
     pattern: List[int]
     """
     The pattern of window sizes to use for attention, repeated to cover all layers.
-    -1 indicates full attention. Example: [4096, 4096, 4096, -1] means that for each set of 4 layers,
-    the first 3 layers will use a window size of 4096, and the last layer will use full attention.
+    A value of -1 indicates full attention. For example, a pattern of `[4096, 4096, 4096, -1]`
+    means that for each set of 4 layers, the first 3 will use a window size of 4096,
+    and the last layer will use full attention.
     """
+
     force_full_attention_on_first_layer: bool = True
     """
-    Force full attention on the first transformer layer
+    If `True`, the first transformer layer will always use full attention, regardless of the pattern.
     """
+
     force_full_attention_on_last_layer: bool = True
     """
-    Force full attention on the last transformer layer
+    If `True`, the last transformer layer will always use full attention, regardless of the pattern.
     """
 
-    def should_use_swa(self, layer_idx: int, n_layers: int) -> bool:
+    def _get_window_size(self, layer_idx: int, n_layers: int) -> int:
+        """
+        Get the window size for a given layer, returning -1 for full attention.
+        """
+        if self.force_full_attention_on_first_layer and layer_idx == 0:
+            return -1
+        if self.force_full_attention_on_last_layer and layer_idx == (n_layers - 1):
+            return -1
+
+        # Adjust the layer index if the first layer is special-cased to full attention
+        # (in which case the pattern is applied starting from the second layer)
+        effective_layer_idx = layer_idx
         if self.force_full_attention_on_first_layer:
-            if layer_idx == 0:
-                return False
-            layer_idx -= 1
-            n_layers -= 1
-        if self.force_full_attention_on_last_layer:
-            if layer_idx == (n_layers - 1):
-                return False
-        return self.pattern[layer_idx % len(self.pattern)] != -1  # -1 means full attention
+            effective_layer_idx -= 1
 
-    def window_size(self, layer_idx: int, n_layers: int) -> int:
-        if self.should_use_swa(layer_idx, n_layers):
-            window_size = self.pattern[layer_idx % len(self.pattern)]
-            if window_size <= 0:
-                raise OLMoConfigurationError(
-                    f"Sliding window size must be positive or -1 (got {window_size})"
-                )
-            return window_size
+        window_size = self.pattern[effective_layer_idx % len(self.pattern)]
+        if window_size <= 0 and window_size != -1:
+            raise OLMoConfigurationError(
+                f"Sliding window size must be positive or -1 (got {window_size})"
+            )
+        return window_size
 
-        raise ValueError(f"Layer {layer_idx} is not configured for sliding window attention")
+    def should_use_swa(self, layer_idx: int, n_layers: int) -> bool:
+        """
+        Returns `True` if the given layer uses sliding window attention.
+        """
+        return self._get_window_size(layer_idx, n_layers) != -1
+
+    def get_window_size(self, layer_idx: int, n_layers: int) -> int:
+        """
+        Get the sliding window size for a given layer.
+
+        :raises ValueError: if the layer is configured to use full attention.
+        """
+        window_size = self._get_window_size(layer_idx, n_layers)
+        if window_size == -1:
+            raise ValueError(
+                f"Layer {layer_idx} is not configured for sliding window attention (it uses full attention)."
+            )
+        return window_size
 
 
 class AttentionType(StrEnum):
@@ -203,7 +225,7 @@ class AttentionConfig(Config):
         if sliding_window_config is not None and sliding_window_config.should_use_swa(
             layer_idx, n_layers
         ):
-            kwargs["window_size"] = sliding_window_config.window_size(layer_idx, n_layers)
+            kwargs["window_size"] = sliding_window_config.get_window_size(layer_idx, n_layers)
 
         kwargs.update(
             dtype=kwargs.pop("dtype").as_pt(),
