@@ -3,12 +3,14 @@ from typing import Any, Dict, Optional
 import pytest
 import torch
 
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import (
     Attention,
     AttentionConfig,
     AttentionType,
     FusedAttention,
     RingAttentionZigZagLoadBalancer,
+    SlidingWindowAttentionConfig,
 )
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
@@ -314,3 +316,64 @@ def test_zig_zag_load_balancer_shard_by_document_with_padding():
             -1,
         ]
     ]
+
+
+@pytest.mark.parametrize(
+    "force_first, force_last, layer_idx, expected_window_size, expected_should_use_swa",
+    [
+        # Test with forcing full attention on neither first nor last layer.
+        (False, False, 0, 1024, True),  # Pattern start
+        (False, False, 1, 2048, True),  # Pattern middle
+        (False, False, 2, -1, False),  # Pattern end
+        (False, False, 11, -1, False),  # Last layer, pattern end
+        (True, False, 1, 1024, True),  # Effective layer=0
+        (True, False, 11, 2048, True),  # Effective layer=10
+        # Test with forcing full attention only on the last layer.
+        (False, True, 0, 1024, True),  # First layer, not forced
+        (False, True, 11, -1, False),  # Forced last
+        # Test with forcing full attention on both first and last layers.
+        (True, True, 0, -1, False),  # Forced first
+        (True, True, 1, 1024, True),  # Effective layer=0
+        (True, True, 11, -1, False),  # Forced last
+    ],
+)
+def test_sliding_window_attention_config_window_size(
+    force_first: bool,
+    force_last: bool,
+    layer_idx: int,
+    expected_window_size: int,
+    expected_should_use_swa: bool,
+):
+    n_layers = 12
+    pattern = [1024, 2048, -1]
+
+    config = SlidingWindowAttentionConfig(
+        pattern=pattern,
+        force_full_attention_on_first_layer=force_first,
+        force_full_attention_on_last_layer=force_last,
+    )
+
+    assert config._get_window_size(layer_idx, n_layers) == expected_window_size
+    assert config.should_use_swa(layer_idx, n_layers) == expected_should_use_swa
+
+
+def test_sliding_window_attention_config_get_window_size_error():
+    n_layers = 12
+    pattern = [1024, 2048, -1]
+    config = SlidingWindowAttentionConfig(
+        pattern=pattern,
+        force_full_attention_on_first_layer=True,
+        force_full_attention_on_last_layer=True,
+    )
+
+    assert config.get_window_size(1, n_layers) == 1024  # This layer uses SWA
+    with pytest.raises(ValueError):
+        config.get_window_size(0, n_layers)  # This layer uses full attention
+
+
+def test_sliding_window_attention_config_invalid_pattern_error():
+    with pytest.raises(OLMoConfigurationError):
+        bad_config = SlidingWindowAttentionConfig(
+            pattern=[0], force_full_attention_on_first_layer=False
+        )
+        bad_config._get_window_size(0, n_layers=12)
