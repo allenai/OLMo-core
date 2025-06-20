@@ -5,6 +5,7 @@ from typing import Optional
 import torch
 import triton  # type: ignore
 import triton.language as tl  # type: ignore
+import nvtx
 
 
 def assert_is_tensor(x, ndim):
@@ -100,7 +101,7 @@ def _padded_copy(
 
         offsets += BLOCK_X
 
-
+@nvtx.annotate("gather", color="blue")
 def gather(
     x: torch.Tensor,
     indices: torch.Tensor,
@@ -140,6 +141,7 @@ def gather(
     return out
 
 
+@nvtx.annotate("padded_scatter", color="blue")
 def padded_scatter(
     x: torch.Tensor,
     indices: torch.Tensor,
@@ -376,6 +378,7 @@ def _binned_copy(
         offsets += BLOCK_X
 
 
+@nvtx.annotate("binned_gather", color="blue")
 def binned_gather(
     x: torch.Tensor,
     indices: torch.Tensor,
@@ -411,6 +414,7 @@ def binned_gather(
     return out
 
 
+@nvtx.annotate("binned_scatter", color="blue")
 def binned_scatter(
     x: torch.Tensor,
     indices: torch.Tensor,

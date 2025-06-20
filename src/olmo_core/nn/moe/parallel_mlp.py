@@ -99,6 +99,7 @@ class ParallelMLPBase(nn.Module):
         """
         self.mlp.prepare_experts_for_ddp(**kwargs)
 
+    @nvtx.annotate("ParallelMLPBase.indices_and_bins", color='blue')
     def indices_and_bins(
         self,
         expert_indices: torch.Tensor,

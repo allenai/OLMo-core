@@ -15,6 +15,7 @@ from olmo_core.distributed.parallel import get_device_mesh_info
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import log_once
+import nvtx
 
 try:
     import grouped_gemm  # type: ignore
@@ -269,6 +270,7 @@ class DroplessMoEMLP(MoEMLPBase):
                 start += size
             return torch.cat(out)
 
+    @nvtx.annotate("DroplessMoEMLP.forward", color="blue")
     def forward(self, x: torch.Tensor, batch_size_per_expert: torch.Tensor) -> torch.Tensor:
         """
         Compute the expert outputs.
