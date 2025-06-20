@@ -262,6 +262,10 @@ class DroplessMoEMLP(MoEMLPBase):
             # grouped-gemm only accepts BF16
             return self._gmm(x.to(torch.bfloat16), w.to(torch.bfloat16), batch_sizes, trans_b=trans_b)  # type: ignore
         else:
+            raise RuntimeError(
+                "Grouped GEMM is not available, so the MoE will be substantially slower. "
+                "Please install with 'pip install git+https://github.com/fanshiqing/grouped_gemm@v1.1.4' if possible.\n"
+            )
             out = []
             start = 0
             for i, size in enumerate(batch_sizes.cpu().numpy()):
@@ -286,7 +290,7 @@ class DroplessMoEMLP(MoEMLPBase):
             get_local_tensor(self.w2.view(self.num_experts, self.hidden_size, self.d_model)),
             get_local_tensor(self.w3.view(self.num_experts, self.hidden_size, self.d_model)),
         )
-
+        # batch_size_per_expert = batch_size_per_expert.cpu()
         # Compute the MLP.
         x1 = self.gmm(x, w1, batch_size_per_expert, trans_b=True)
         x2 = self.gmm(x, w3, batch_size_per_expert, trans_b=True)

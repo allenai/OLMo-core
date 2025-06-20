@@ -606,21 +606,23 @@ class Transformer(nn.Module):
                 log.info(f"Wrapped '{name}' for activation checkpointing")
                 wrapped_modules.add(name)
         else:
-            for block_idx, block in enumerate(self.blocks.values()):
+            for local_block_idx, (block_idx, block) in enumerate(self.blocks.items()):
                 if mode == TransformerActivationCheckpointingMode.selected_blocks:
                     assert block_interval is not None
-                    if block_idx % block_interval == 0:
+                    if local_block_idx % block_interval == 0:
                         if isinstance(block, MoETransformerBlock):
                             raise OLMoConfigurationError(
                                 "Wrapping MoE blocks for activation checkpointing is not supported."
                             )
                         block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
                 elif mode == TransformerActivationCheckpointingMode.full:
-                    if isinstance(block, MoETransformerBlock):
-                        raise OLMoConfigurationError(
-                            "Wrapping MoE blocks for activation checkpointing is not supported."
-                        )
+                    # if isinstance(block, MoETransformerBlock):
+                    #     raise OLMoConfigurationError(
+                    #         "Wrapping MoE blocks for activation checkpointing is not supported."
+                    #     )
                     block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
+                    # BUG: when using full AC + fsdp, should not wrap the whole block with checkpoint_wrapper as it will cause error inside _assert_all_fsdp_modules
+                    # should use apply_activation_checkpointing ?
                 elif mode == TransformerActivationCheckpointingMode.selected_ops:
                     block = ptd_checkpoint_wrapper(
                         block,
@@ -628,7 +630,7 @@ class Transformer(nn.Module):
                         preserve_rng_state=preserve_rng_state,
                     )
 
-                self.blocks.register_module(str(block_idx), block)
+                self.blocks.register_module(block_idx, block)
 
     def apply_compile(self):
         """

@@ -13,7 +13,7 @@ from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
 from olmo_core.ops import attach_auxiliary_loss
-
+from olmo_core.utils import get_or_init_stream
 from ..attention import AttentionConfig, RingAttentionLoadBalancerType
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForward, FeedForwardConfig
@@ -22,6 +22,7 @@ from ..layer_norm import LayerNormConfig
 from ..moe import MoEConfig, MoERouter
 from ..moe.parallel_mlp import ParallelMLPBase
 from .config import TransformerDataParallelWrappingStrategy
+from torch.utils.checkpoint import checkpoint, CheckpointFunction
 
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
@@ -209,9 +210,26 @@ class ReorderedNormTransformerBlock(TransformerBlock):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        del loss_div_factor
-        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-        return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+        USE_RECOMPUTE = True
+        def custom_forward(
+            x: torch.Tensor,
+            *,
+            loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+            **kwargs,
+        ):  
+            del loss_div_factor
+            h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+            return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+        
+        if USE_RECOMPUTE:
+        
+            return checkpoint(
+                custom_forward, x, use_reentrant=False, loss_div_factor=loss_div_factor, **kwargs
+            )
+        else:
+            return custom_forward(
+                x, loss_div_factor=loss_div_factor, **kwargs
+            )
 
 
 @beta_feature
@@ -600,6 +618,17 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
     ) -> torch.Tensor:
         raise NotImplementedError
 
+    @abstractmethod
+    def overlap_forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        raise NotImplementedError
+    
+
     def forward(
         self,
         x: torch.Tensor,
@@ -608,9 +637,17 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         **kwargs,
     ) -> torch.Tensor:
         if not self.use_combined_forward:
-            return self.sparse_forward(x, loss_div_factor=loss_div_factor) + self.dense_forward(
-                x, **kwargs
-            )
+            USE_RECOMPUTE = True
+            if USE_RECOMPUTE:
+                
+                return checkpoint(self.overlap_forward, x, use_reentrant=False, loss_div_factor=loss_div_factor, **kwargs)
+            
+            else:
+                return self.overlap_forward(x, loss_div_factor=loss_div_factor, **kwargs)
+        
+            # return self.sparse_forward(x, loss_div_factor=loss_div_factor) + self.dense_forward(
+            #     x, **kwargs
+            # )
         else:
             # NOTE: alternatively could do something like this, but even with an extra stream it's
             # not as fast as the hand-crafted 'combined_forward()'.
@@ -796,8 +833,27 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
             x_moe = moe_shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
 
         return h + self.dropout(x_moe)
-
-
+    
+@torch.compiler.disable(recursive=False)         # helper runs eagerly, 
+def async_copy_to_cpu(gpu_buf):
+    # *** async copy to CPU for future GroupedGEMM ***
+    # start a new stream for the copy
+    dtoh_stream = get_or_init_stream(id=1) # TODO: check any id that's not 0?
+    
+    # Make the copy_stream start **after** everything already queued
+    #  on the current stream (default) that touches batch_size_per_expert.
+    dtoh_stream.wait_stream(torch.cuda.current_stream())
+    
+    with torch.cuda.stream(dtoh_stream):
+        cpu_buf = torch.empty_like(gpu_buf,
+                                device="cpu", pin_memory=False) # compile does not work with pin_memory
+        cpu_buf.copy_(gpu_buf, non_blocking=True)
+    
+    # cpu_buf = gpu_buf.to(torch.device("cpu"), non_blocking=True)
+    # Keep the source tensor alive until the copy_stream is done
+    # gpu_buf.record_stream(dtoh_stream) # NOTE: does not work with compile
+    return cpu_buf, dtoh_stream
+        
 @beta_feature
 class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
     def dense_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
@@ -810,7 +866,69 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         return self.dropout(
             self.feed_forward_moe_norm(self.feed_forward_moe(x, loss_div_factor=loss_div_factor))
         )
+        
+    def overlap_forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ):
 
+        # feed_forward_moe -------- start
+        expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = self.router(
+            x, loss_div_factor=loss_div_factor
+        )
+
+            
+        # Launch the async D→H copy on its own stream *into pinned host memory*
+        batch_size_per_expert_cpu, copy_stream = async_copy_to_cpu(batch_size_per_expert)
+    
+
+        # dense out -------- start
+        dense_stream = get_or_init_stream(id=2)
+        dense_stream.wait_stream(torch.cuda.current_stream())
+        with  torch.cuda.stream(dense_stream):
+            h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+            dense_out = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+        # dense  -------- end
+
+        if router_aux_loss is not None:
+            x = attach_auxiliary_loss(x, router_aux_loss)
+
+        # shared experts
+        shared_out: Optional[torch.Tensor] = None
+        if self.shared_mlp is not None:
+            shared_out = self.shared_mlp(x)
+            if self.feed_forward_moe.shared_expert_norm is not None:
+                shared_out = self.feed_forward_moe.shared_expert_norm(shared_out)
+        
+        # routed experts
+        # --------------------------------------------------------------
+        # We are about to launch kernels that read batch_size_per_expert_cpu.
+        # Make sure the copy really finished:
+        # torch.cuda.current_stream().wait_stream(copy_stream)
+        copy_stream.synchronize() # as the grouped gemm is not on the default stream, it is not waiting for the copy to finish, so still need to synchronize it
+        # --------------------------------------------------------------
+        feed_forward_moe_out = self.experts(x, expert_weights, expert_indices, batch_size_per_expert, batch_size_per_expert_cpu)
+        if self.feed_forward_moe.routed_expert_norm is not None:
+            feed_forward_moe_out = self.feed_forward_moe.routed_expert_norm(feed_forward_moe_out)
+            
+        if shared_out is not None:
+            shared_out = shared_out / (self.top_k + 1)
+            feed_forward_moe_out = shared_out.add(feed_forward_moe_out, alpha=self.top_k / (self.top_k + 1))
+            
+        # feed_forward_moe -------- end
+
+
+        sparse_out = self.dropout(
+            self.feed_forward_moe_norm(feed_forward_moe_out)
+        )
+        
+        torch.cuda.current_stream().wait_stream(dense_stream)
+        final_out = dense_out + sparse_out
+        return final_out
+        
     def combined_forward(
         self,
         x: torch.Tensor,

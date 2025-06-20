@@ -18,6 +18,21 @@ from .mlp import DroplessMoEMLP, MoEMLP, MoEMLPBase
 import nvtx
 __all__ = ["ParallelMLPBase", "ParallelMLP", "ParallelDroplessMLP"]
 
+from transformer_engine.pytorch.permutation import (
+    moe_permute,
+    moe_sort_chunks_by_index,
+    moe_unpermute,
+)
+
+
+# disable compile for permute
+@torch.compiler.disable()
+def moe_permute_no_compile(*args, **kwargs):
+    return moe_permute(*args, **kwargs)
+    
+@torch.compiler.disable()
+def moe_unpermute_no_compile(*args, **kwargs):
+    return moe_unpermute(*args, **kwargs)    
 
 class PermutedAllToAllOutput(NamedTuple):
     parallel_x: torch.Tensor
@@ -132,6 +147,7 @@ class ParallelMLPBase(nn.Module):
         expert_weights: torch.Tensor,
         expert_indices: torch.Tensor,
         batch_size_per_expert: torch.Tensor,
+        batch_size_per_expert_cpu: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         :param x: The input of shape ``(N, d_model)``.
@@ -169,9 +185,10 @@ class ParallelMLPBase(nn.Module):
                 indices=indices,
                 bin_ids=bin_ids,
                 bins=bins,
-                batch_size_per_expert=batch_size_per_expert,
+                batch_size_per_expert=batch_size_per_expert_cpu if batch_size_per_expert_cpu is not None else batch_size_per_expert, # when cpu given, use cpu
             )
         else:
+            # tp or ep
             x = self.parallel_forward_once(
                 x,
                 expert_weights=expert_weights,
@@ -630,6 +647,102 @@ class ParallelDroplessMLP(ParallelMLPBase):
     def __init__(self, *, mlp: DroplessMoEMLP, top_k: int, cache: Optional[BufferCache] = None):
         super().__init__(mlp=mlp, top_k=top_k, cache=cache)
 
+    @nvtx.annotate("ParallelDroplessMLP.forward", color='blue')
+    def forward(
+        self,
+        x: torch.Tensor,
+        expert_weights: torch.Tensor,
+        expert_indices: torch.Tensor,
+        batch_size_per_expert: torch.Tensor,
+        batch_size_per_expert_cpu: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        :param x: The input of shape ``(N, d_model)``.
+        :param expert_weights: Expert weights of shape ``(N, top_k)``.
+        :param expert_indices: The indices of the top-k experts, shape ``(N, top_k)``.
+        :param batch_size_per_expert: The number of items routed to each expert, shape ``(num_experts,)``.
+
+        :returns: The output with the same shape as ``x``.
+        """
+        x, expert_weights, expert_indices, batch_size_per_expert = (
+            get_local_tensor(x),
+            get_local_tensor(expert_weights),
+            get_local_tensor(expert_indices),
+            get_local_tensor(batch_size_per_expert),
+        )
+
+        in_shape = x.size()
+
+        # shape: (N, d_model)
+        x = x.view(-1, x.shape[-1])
+        
+        ################
+        use_te = True
+        if use_te:
+            bsz, n_token_per_batch, d_model = in_shape
+            routing_map = expert_indices.view(-1, self.top_k).int()
+            num_out_tokens = routing_map.size(0) * self.top_k # dropless
+            hidden_shape_before_permute = x.shape
+            permutated_input_tokens, reversed_input_permutation_mapping = moe_permute_no_compile(inp=x, routing_map=routing_map, num_out_tokens=num_out_tokens, map_type='index')
+            # permutated_input_tokens_sorted =  moe_sort_chunks_by_index(
+            #     permutated_input_tokens,
+            #     split_sizes= batch_size_per_expert,
+            #     sorted_index=torch.arange(batch_size_per_expert.size(0), device=batch_size_per_expert.device, dtype=torch.int32),
+            # ) # only useful for ep?
+            permutated_input_tokens_sorted = permutated_input_tokens
+            x = self.mlp(permutated_input_tokens_sorted, batch_size_per_expert_cpu)
+            # assert torch.isclose(permutated_input_tokens_sorted, x).all(), "Permuted input tokens do not match the gathered input tokens."
+                        # unpermutated_input_tokens_sorted = moe_sort_chunks_by_index(
+                #     x,
+                #     batch_size_per_expert,
+                #     torch.arange(batch_size_per_expert.size(0), device=batch_size_per_expert.device, dtype=torch.int32),
+                # ) # only useful for ep?
+            unpermutated_input_tokens_sorted = x
+            unpermutated_input_tokens = moe_unpermute_no_compile(
+                inp=unpermutated_input_tokens_sorted,
+                row_id_map=reversed_input_permutation_mapping,
+                restore_shape=hidden_shape_before_permute,
+                map_type='index',
+                merging_probs=expert_weights.view(-1, self.top_k)
+            )
+            # assert ((unpermutated_input_tokens - x).abs() < 1e-4).all(), "Unpermuted input tokens do not match the scattered output tokens."
+            return unpermutated_input_tokens.view(in_shape)
+        ################
+                    
+        # shape: (batch_size * top_k,)
+        expert_weights = expert_weights.flatten()
+        # shape: (batch_size * top_k,)
+        expert_indices = expert_indices.flatten()
+
+        with torch.no_grad():
+            indices, bin_ids, bins_bounds = self.indices_and_bins(expert_indices, batch_size_per_expert)
+
+        # Compute the experts.
+        if not self._expert_parallel_enabled:
+
+            # Route the tokens for MoE computation.
+            x = ops.gather(x, indices, bin_ids, bins_bounds, self.top_k)
+            
+            # Perform the expert computation.
+            x = self.mlp(x, batch_size_per_expert)
+            
+            # Un-route the data for the MoE output.
+            x = ops.scatter(x, indices, bin_ids, expert_weights, bins_bounds, self.top_k)
+
+        else:
+            # tp or ep
+            x = self.parallel_forward_once(
+                x,
+                expert_weights=expert_weights,
+                expert_indices=expert_indices,
+                indices=indices,
+                bin_ids=bin_ids,
+                bins=bins,
+                batch_size_per_expert=batch_size_per_expert,
+            )
+
+        return x.view(in_shape)
+    
     def forward_once(
         self,
         x: torch.Tensor,
