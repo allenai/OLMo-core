@@ -104,14 +104,10 @@ class SlidingWindowAttentionConfig(Config):
     def get_window_size(self, layer_idx: int, n_layers: int) -> int:
         """
         Get the sliding window size for a given layer.
-
-        :raises ValueError: if the layer is configured to use full attention.
         """
         window_size = self._get_window_size(layer_idx, n_layers)
         if window_size == -1:
-            raise ValueError(
-                f"Layer {layer_idx} is not configured for sliding window attention (it uses full attention)."
-            )
+            raise ValueError(f"Layer {layer_idx} is not configured for sliding window attention.")
         return window_size
 
 
