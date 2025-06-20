@@ -84,12 +84,12 @@ class SlidingWindowAttentionConfig(Config):
     def window_size(self, layer_idx: int, n_layers: int) -> int:
         if self.should_use_swa(layer_idx, n_layers):
             window_size = self.pattern[layer_idx % len(self.pattern)]
-            if window_size > 0:
-                return window_size
-            else:
+            if window_size <= 0:
                 raise OLMoConfigurationError(
                     f"Sliding window size must be positive or -1 (got {window_size})"
                 )
+            return window_size
+
         raise ValueError(f"Layer {layer_idx} is not configured for sliding window attention")
 
 
