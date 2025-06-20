@@ -90,6 +90,66 @@ def test_get_document_lengths():
         eos_token_id=eos_token_id,
     ).tolist() == [5, 3, 3]
 
+    # Should work when the instance BOS token is provided.
+    bos_token_id = 50278
+    assert get_document_lengths(
+        torch.tensor(
+            [
+                bos_token_id,
+                3,
+                4,
+                5,
+                5,
+                eos_token_id,
+                bos_token_id,
+                6,
+                5,
+                eos_token_id,
+                bos_token_id,
+                3,
+                5,
+                eos_token_id,
+            ]
+        ),
+        eos_token_id=eos_token_id,
+        bos_token_id=bos_token_id,
+    ).tolist() == [6, 4, 4]
+
+    # Should work when the instance ends with BOS token.
+    bos_token_id = 50278
+    assert get_document_lengths(
+        torch.tensor(
+            [bos_token_id, 3, 4, 5, 5, eos_token_id, bos_token_id, 6, 5, eos_token_id, bos_token_id]
+        ),
+        eos_token_id=eos_token_id,
+        bos_token_id=bos_token_id,
+    ).tolist() == [6, 4, 1]
+
+    # Should work when the instance BOS token is provided and is same as EOS token.
+    bos_token_id = eos_token_id
+    assert get_document_lengths(
+        torch.tensor(
+            [
+                bos_token_id,
+                3,
+                4,
+                5,
+                5,
+                eos_token_id,
+                bos_token_id,
+                6,
+                5,
+                eos_token_id,
+                bos_token_id,
+                3,
+                5,
+                eos_token_id,
+            ]
+        ),
+        eos_token_id=eos_token_id,
+        bos_token_id=bos_token_id,
+    ).tolist() == [6, 4, 4]
+
 
 def test_get_cumulative_document_lengths():
     assert get_cumulative_document_lengths(

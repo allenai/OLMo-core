@@ -302,22 +302,40 @@ def load_array_slice_into_tensor(
         return torch.tensor(array.astype(np.int_), dtype=torch.long)
 
 
-def get_document_lengths(input_ids: torch.Tensor, eos_token_id: int) -> torch.Tensor:
+def get_document_lengths(
+    input_ids: torch.Tensor, eos_token_id: int, bos_token_id: Optional[int] = None
+) -> torch.Tensor:
     """
     Get the length of documents.
 
     :param input_ids: An integer-type tensor of token IDs.
     :param eos_token_id: The ID of the EOS token (use to denote document boundaries).
+    :param bos_token_id: The ID of the BOS token (use to denote document boundaries). When provided,
+        every document must start with a BOS token.
     """
-    doc_boundaries = torch.cat(
-        [
-            torch.tensor([-1], dtype=torch.int32),
-            (input_ids == eos_token_id).nonzero(as_tuple=True)[0].to(dtype=torch.int32),
-            torch.tensor(
-                [] if input_ids[-1] == eos_token_id else [input_ids.shape[0] - 1], dtype=torch.int32
-            ),
-        ]
-    )
+
+    if bos_token_id is None:
+        doc_boundaries = torch.cat(
+            [
+                torch.tensor([-1], dtype=torch.int32),
+                (input_ids == eos_token_id).nonzero(as_tuple=True)[0].to(dtype=torch.int32),
+                torch.tensor(
+                    [] if input_ids[-1] == eos_token_id else [input_ids.shape[0] - 1],
+                    dtype=torch.int32,
+                ),
+            ]
+        )
+    else:
+        doc_boundaries = torch.cat(
+            [
+                torch.tensor([-1], dtype=torch.int32),
+                torch.logical_and(input_ids[:-1] == eos_token_id, input_ids[1:] == bos_token_id)
+                .nonzero(as_tuple=True)[0]
+                .to(dtype=torch.int32),
+                torch.tensor([input_ids.shape[0] - 1], dtype=torch.int32),
+            ]
+        )
+
     return doc_boundaries[1:] - doc_boundaries[:-1]
 
 
