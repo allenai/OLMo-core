@@ -55,7 +55,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
     # NOTE: TP + CP + Sliding Window not yet supported
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
-        force_first=False, pattern=[False, False, False, True]
+        force_first=True, force_last=False, pattern=[True, True, True, False]
     )
     config.block.attention.use_flash = True
     config.block.attention.use_head_qk_norm = True
