@@ -91,6 +91,11 @@ class KVCompressor(nn.Module):
         self.method = method
         self.compressed_size = compressed_size
         self.d_model = d_model
+        if self.method == "attention_weighted":
+            self.query_proj = nn.Linear(d_model, d_model)
+            self.key_proj = nn.Linear(d_model, d_model)
+            self.layer_weights = nn.Parameter(torch.ones(1))
+            self.temperature = nn.Parameter(torch.tensor(1.0))
         
     def forward(
         self, 
@@ -100,7 +105,7 @@ class KVCompressor(nn.Module):
         """
         Args:
             all_layer_kvs: List of (K, V) tuples from each layer
-                          Each K/V has shape (batch, seq_len, n_heads, head_dim)
+                          Each K V has shape (batch, seq_len, n_heads, head_dim)
         Returns:
             compressed_k, compressed_v with shape (batch, compressed_len, n_heads, head_dim)
         """
@@ -145,7 +150,53 @@ class KVCompressor(nn.Module):
         
         return k_compressed, v_compressed
 
+    def _attention_weighted_compression(self, all_layer_kvs, seq_len, query_states):
+        if query_states is None:
+            raise OLMoConfigurationError("Query sTates required for attention_weighted compression")
+            
+        batch_size = query_states.shape[0]
+        n_layers = len(all_layer_kvs)
+        
+        if self.layer_weights.shape[0] != n_layers:
+            self.layer_weights = nn.Parameter(torch.ones(n_layers, device=self.layer_weights.device))
+        
+        all_k = torch.stack([kv[0] for kv in all_layer_kvs], dim=0)  # (n_layers, batch, seq, n_heads, head_dim)
+        all_v = torch.stack([kv[1] for kv in all_layer_kvs], dim=0)
+        
+        last_query = query_states[:, -1:, :]  # (batch, 1, d_model)
+        q = self.query_proj(last_query)  # (batch, 1, d_model)
+        layer_weights_norm = F.softmax(self.layer_weights, dim=0)
+        weighted_k = (all_k * layer_weights_norm.view(-1, 1, 1, 1, 1)).sum(dim=0)  # (batch, seq, n_heads, head_dim)
+        weighted_k = weighted_k.transpose(1, 2)  # (batch, n_heads, seq, head_dim)
+        q = q.view(batch_size, 1, self.n_heads, self.head_dim).transpose(1, 2)  # (batch, n_heads, 1, head_dim)
+        attention_scores = torch.matmul(q, weighted_k.transpose(-2, -1))  # (batch, n_heads, 1, seq)
+        attention_scores = attention_scores / (self.head_dim ** 0.5 * self.temperature)
+        attention_weights = F.softmax(attention_scores, dim=-1)  # (batch, n_heads, 1, seq)
+        position_importance = attention_weights.mean(dim=1).squeeze(1)  # (batch, seq)
 
+        if self.compressed_size:
+            target_len = self.compressed_size
+        else:
+            target_len = int(seq_len * self.compression_ratio)
+            
+        if target_len >= seq_len:
+            k_compressed = (all_k * layer_weights_norm.view(-1, 1, 1, 1, 1)).sum(dim=0)
+            v_compressed = (all_v * layer_weights_norm.view(-1, 1, 1, 1, 1)).sum(dim=0)
+            return k_compressed, v_compressed
+        
+        _, top_indices = torch.topk(position_importance, target_len, dim=-1)  # (batch, target_len)
+        top_indices = torch.sort(top_indices, dim=-1)[0] 
+        
+        batch_indices = torch.arange(batch_size, device=all_k.device).unsqueeze(1)
+        k_weighted = (all_k * layer_weights_norm.view(-1, 1, 1, 1, 1)).sum(dim=0)  # (batch, seq, n_heads, head_dim)
+        v_weighted = (all_v * layer_weights_norm.view(-1, 1, 1, 1, 1)).sum(dim=0)
+        
+        k_compressed = k_weighted[batch_indices, top_indices]  # (batch, target_len, n_heads, head_dim)
+        v_compressed = v_weighted[batch_indices, top_indices]
+        
+        return k_compressed, v_compressed
+
+    
 class AttentionType(StrEnum):
     """
     An enumeration of the different attention implementations.
