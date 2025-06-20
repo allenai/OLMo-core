@@ -1,7 +1,7 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional, Union, Tuple
+from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -60,9 +60,9 @@ class SlidingWindowAttentionConfig(Config):
     force_first: bool = True
     force_last: bool = True
     use_compressed_context: bool = False
-    compression_ratio: float = 0.1  
+    compression_ratio: float = 0.1
     compression_method: str = "avg_pool"
-    compressed_kv_size: Optional[int] = None 
+    compressed_kv_size: Optional[int] = None
 
     def should_use_swa(self, layer_idx: int, n_layers: int) -> bool:
         if self.force_first:
@@ -78,7 +78,7 @@ class SlidingWindowAttentionConfig(Config):
 
 class KVCompressor(nn.Module):
     """Compresses KV cache from previous layers for the last layer"""
-    
+
     def __init__(
         self,
         compression_ratio: float = 0.1,
@@ -96,11 +96,9 @@ class KVCompressor(nn.Module):
             self.key_proj = nn.Linear(d_model, d_model)
             self.layer_weights = nn.Parameter(torch.ones(1))
             self.temperature = nn.Parameter(torch.tensor(1.0))
-        
+
     def forward(
-        self, 
-        all_layer_kvs: List[Tuple[torch.Tensor, torch.Tensor]], 
-        seq_len: int
+        self, all_layer_kvs: List[Tuple[torch.Tensor, torch.Tensor]], seq_len: int
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
@@ -115,62 +113,72 @@ class KVCompressor(nn.Module):
             return self._stride_compression(all_layer_kvs, seq_len)
         elif self.method == "attention_weighted":
             return self._attention_weighted_compression(all_layer_kvs, seq_len)
-            
+
     def _avg_pool_compression(self, all_layer_kvs, seq_len):
-        all_k = torch.stack([kv[0] for kv in all_layer_kvs], dim=0)  # (n_layers, batch, seq, n_heads, head_dim)
+        all_k = torch.stack(
+            [kv[0] for kv in all_layer_kvs], dim=0
+        )  # (n_layers, batch, seq, n_heads, head_dim)
         all_v = torch.stack([kv[1] for kv in all_layer_kvs], dim=0)
-        
+
         k_avg = all_k.mean(dim=0)  # (batch, seq, n_heads, head_dim)
         v_avg = all_v.mean(dim=0)
-        
+
         if self.compressed_size:
             target_len = self.compressed_size
         else:
             target_len = int(seq_len * self.compression_ratio)
-        
+
         if target_len >= seq_len:
             return k_avg, v_avg
-            
+
         pool_size = seq_len // target_len
         B, S, H, D = k_avg.shape
-        k_avg = k_avg[:, :pool_size * target_len].reshape(B, target_len, pool_size, H, D)
-        v_avg = v_avg[:, :pool_size * target_len].reshape(B, target_len, pool_size, H, D)
+        k_avg = k_avg[:, : pool_size * target_len].reshape(B, target_len, pool_size, H, D)
+        v_avg = v_avg[:, : pool_size * target_len].reshape(B, target_len, pool_size, H, D)
         k_compressed = k_avg.mean(dim=2)
         v_compressed = v_avg.mean(dim=2)
-        
+
         return k_compressed, v_compressed
-        
+
     def _stride_compression(self, all_layer_kvs, seq_len):
         stride = int(1 / self.compression_ratio)
-        
+
         all_k = torch.stack([kv[0][:, ::stride] for kv in all_layer_kvs], dim=0)
         all_v = torch.stack([kv[1][:, ::stride] for kv in all_layer_kvs], dim=0)
         k_compressed = all_k.mean(dim=0)
         v_compressed = all_v.mean(dim=0)
-        
+
         return k_compressed, v_compressed
 
     def _attention_weighted_compression(self, all_layer_kvs, seq_len, query_states):
         if query_states is None:
             raise OLMoConfigurationError("Query sTates required for attention_weighted compression")
-            
+
         batch_size = query_states.shape[0]
         n_layers = len(all_layer_kvs)
-        
+
         if self.layer_weights.shape[0] != n_layers:
-            self.layer_weights = nn.Parameter(torch.ones(n_layers, device=self.layer_weights.device))
-        
-        all_k = torch.stack([kv[0] for kv in all_layer_kvs], dim=0)  # (n_layers, batch, seq, n_heads, head_dim)
+            self.layer_weights = nn.Parameter(
+                torch.ones(n_layers, device=self.layer_weights.device)
+            )
+
+        all_k = torch.stack(
+            [kv[0] for kv in all_layer_kvs], dim=0
+        )  # (n_layers, batch, seq, n_heads, head_dim)
         all_v = torch.stack([kv[1] for kv in all_layer_kvs], dim=0)
-        
+
         last_query = query_states[:, -1:, :]  # (batch, 1, d_model)
         q = self.query_proj(last_query)  # (batch, 1, d_model)
         layer_weights_norm = F.softmax(self.layer_weights, dim=0)
-        weighted_k = (all_k * layer_weights_norm.view(-1, 1, 1, 1, 1)).sum(dim=0)  # (batch, seq, n_heads, head_dim)
+        weighted_k = (all_k * layer_weights_norm.view(-1, 1, 1, 1, 1)).sum(
+            dim=0
+        )  # (batch, seq, n_heads, head_dim)
         weighted_k = weighted_k.transpose(1, 2)  # (batch, n_heads, seq, head_dim)
-        q = q.view(batch_size, 1, self.n_heads, self.head_dim).transpose(1, 2)  # (batch, n_heads, 1, head_dim)
+        q = q.view(batch_size, 1, self.n_heads, self.head_dim).transpose(
+            1, 2
+        )  # (batch, n_heads, 1, head_dim)
         attention_scores = torch.matmul(q, weighted_k.transpose(-2, -1))  # (batch, n_heads, 1, seq)
-        attention_scores = attention_scores / (self.head_dim ** 0.5 * self.temperature)
+        attention_scores = attention_scores / (self.head_dim**0.5 * self.temperature)
         attention_weights = F.softmax(attention_scores, dim=-1)  # (batch, n_heads, 1, seq)
         position_importance = attention_weights.mean(dim=1).squeeze(1)  # (batch, seq)
 
@@ -178,25 +186,29 @@ class KVCompressor(nn.Module):
             target_len = self.compressed_size
         else:
             target_len = int(seq_len * self.compression_ratio)
-            
+
         if target_len >= seq_len:
             k_compressed = (all_k * layer_weights_norm.view(-1, 1, 1, 1, 1)).sum(dim=0)
             v_compressed = (all_v * layer_weights_norm.view(-1, 1, 1, 1, 1)).sum(dim=0)
             return k_compressed, v_compressed
-        
+
         _, top_indices = torch.topk(position_importance, target_len, dim=-1)  # (batch, target_len)
-        top_indices = torch.sort(top_indices, dim=-1)[0] 
-        
+        top_indices = torch.sort(top_indices, dim=-1)[0]
+
         batch_indices = torch.arange(batch_size, device=all_k.device).unsqueeze(1)
-        k_weighted = (all_k * layer_weights_norm.view(-1, 1, 1, 1, 1)).sum(dim=0)  # (batch, seq, n_heads, head_dim)
+        k_weighted = (all_k * layer_weights_norm.view(-1, 1, 1, 1, 1)).sum(
+            dim=0
+        )  # (batch, seq, n_heads, head_dim)
         v_weighted = (all_v * layer_weights_norm.view(-1, 1, 1, 1, 1)).sum(dim=0)
-        
-        k_compressed = k_weighted[batch_indices, top_indices]  # (batch, target_len, n_heads, head_dim)
+
+        k_compressed = k_weighted[
+            batch_indices, top_indices
+        ]  # (batch, target_len, n_heads, head_dim)
         v_compressed = v_weighted[batch_indices, top_indices]
-        
+
         return k_compressed, v_compressed
 
-    
+
 class AttentionType(StrEnum):
     """
     An enumeration of the different attention implementations.
@@ -305,7 +317,9 @@ class AttentionConfig(Config):
             "sliding_window", None
         )
         use_swa = False
-        if sliding_window_config is not None and sliding_window_config.should_use_swa(layer_idx, n_layers):
+        if sliding_window_config is not None and sliding_window_config.should_use_swa(
+            layer_idx, n_layers
+        ):
             kwargs["window_size"] = sliding_window_config.window_size
             use_swa = True
 
@@ -321,7 +335,11 @@ class AttentionConfig(Config):
         try:
             if self.name == "default":
                 attention = Attention(**kwargs)
-                if use_swa and layer_idx == n_layers - 1 and sliding_window_config.use_compressed_context:
+                if (
+                    use_swa
+                    and layer_idx == n_layers - 1
+                    and sliding_window_config.use_compressed_context
+                ):
                     attention.set_kv_compressor(sliding_window_config, d_model)
                 return attention
             elif self.name == "fused":
@@ -576,7 +594,7 @@ class Attention(AttentionBase):
                 d_model=d_model,
                 compressed_size=config.compressed_kv_size,
             )
-            
+
     def cache_kv(self, k: torch.Tensor, v: torch.Tensor, layer_idx: int):
         if self._kv_cache is None:
             self._kv_cache = []

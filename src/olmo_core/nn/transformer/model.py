@@ -446,7 +446,10 @@ class Transformer(nn.Module):
 
         # Run each block.
         collect_kv = any(
-            isinstance(block, TransformerBlockBase) and hasattr(block, 'attention') and hasattr(block.attention, 'kv_compressor') and getattr(block.attention, 'kv_compressor', None) is not None
+            isinstance(block, TransformerBlockBase)
+            and hasattr(block, "attention")
+            and hasattr(block.attention, "kv_compressor")
+            and getattr(block.attention, "kv_compressor", None) is not None
             for block in self.blocks.values()
         )
         all_layer_kvs = [] if collect_kv else None
@@ -454,17 +457,26 @@ class Transformer(nn.Module):
         for i, block in enumerate(self.blocks.values()):
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
-            is_last_layer = (i == num_blocks - 1)
+            is_last_layer = i == num_blocks - 1
             block_args = dict(block_kwargs)
-            block_args['layer_idx'] = i
-            block_args['is_last_layer'] = is_last_layer
+            block_args["layer_idx"] = i
+            block_args["is_last_layer"] = is_last_layer
             if is_last_layer and all_layer_kvs is not None:
-                block_args['all_layer_kvs'] = all_layer_kvs
+                block_args["all_layer_kvs"] = all_layer_kvs
             h = block(h, **block_args)
             # Collect KV caches after each block except the last
-            if collect_kv and not is_last_layer and isinstance(block, TransformerBlockBase) and hasattr(block, 'attention'):
-                kv_cache = getattr(block.attention, '_kv_cache', None)
-                if all_layer_kvs is not None and kv_cache is not None and isinstance(kv_cache, list):
+            if (
+                collect_kv
+                and not is_last_layer
+                and isinstance(block, TransformerBlockBase)
+                and hasattr(block, "attention")
+            ):
+                kv_cache = getattr(block.attention, "_kv_cache", None)
+                if (
+                    all_layer_kvs is not None
+                    and kv_cache is not None
+                    and isinstance(kv_cache, list)
+                ):
                     all_layer_kvs.extend(kv_cache)
 
         # Get final logits but again pass-through in case of pipeline parallelism.

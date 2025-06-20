@@ -48,7 +48,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     #  config.block.name = TransformerBlockType.default
     #  config.block.attention.qk_norm = None
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
-        force_first=False, pattern=[False, False, False, True],
+        force_first=False,
+        pattern=[False, False, False, True],
         use_compressed_context=True,
         compression_ratio=0.1,
         compression_method="avg_pool",
