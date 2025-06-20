@@ -516,6 +516,7 @@ def segment_documents_into_instances(
     total_og_docs = len(indices) // 2
 
     if sample is not None:
+        print(f"Sampling from {path} to {target} with sample {sample}")
         max_instances, seed = sample
         rng = get_rng(seed)
         indices = rng.choice(indices.reshape(-1, 2), size=max_instances).reshape(-1)
