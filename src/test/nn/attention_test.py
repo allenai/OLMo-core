@@ -11,7 +11,6 @@ from olmo_core.nn.attention import (
     FusedAttention,
     RingAttentionZigZagLoadBalancer,
     SlidingWindowAttentionConfig,
-    SlidingWindowConfig,
 )
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
