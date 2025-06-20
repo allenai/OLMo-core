@@ -283,8 +283,8 @@ def train(checkpoint: str, config: SFTConfig):
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
     # Try loading a checkpoint from the save folder, otherwise start from the pretraining checkpoint.
-    if not trainer.maybe_load_checkpoint(trainer.save_folder):
-        trainer.load_checkpoint(checkpoint, load_trainer_state=False)
+    # if not trainer.maybe_load_checkpoint(trainer.save_folder):
+    #     trainer.load_checkpoint(checkpoint, load_trainer_state=False)
 
     # Train.
     trainer.fit()
