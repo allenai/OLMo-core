@@ -188,7 +188,7 @@ class SFTConfig(Config):
             ),
             trainer=TrainerConfig(
                 save_folder=f"/weka/oe-training-default/ai2-llm/checkpoints/tylerr/olmo2-7B-sft/{run_name}",
-                load_strategy=LoadStrategy.always,
+                load_strategy=LoadStrategy.never,
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
                 ),
