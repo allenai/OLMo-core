@@ -124,13 +124,13 @@ def build_launch_config(
         _to_beaker_env_secret(
             name="WANDB_API_KEY",
             secret=f"{beaker_user}_WANDB_API_KEY",
-            required=False,
+            required=True,
             workspace=workspace,
         ),
         _to_beaker_env_secret(
             name="COMET_API_KEY",
             secret=f"{beaker_user}_COMET_API_KEY",
-            required=False,
+            required=True,
             workspace=workspace,
         ),
         _to_beaker_env_secret(
