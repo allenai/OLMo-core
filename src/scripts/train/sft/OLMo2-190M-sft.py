@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import List, cast
 
 import rich
+from beaker import Priority
 from rich import print
 
 from olmo_core.config import Config, DType
@@ -148,6 +149,7 @@ class SFTConfig(Config):
                 nccl_debug=False,
                 num_nodes=NUM_NODES,
                 budget="ai2/oe-training",  # TODO: change to oe-adapt
+                workspace="ai2/olmo-instruct",
             ),
             model=TransformerConfig.olmo2_190M(  # Based on https://github.com/allenai/OLMo-core/blob/dustins/anneal-repro/src/scripts/train/lc_cont_train/OLMo2-7B-lc_anneal_tp4.py
                 vocab_size=tokenizer_config.padded_vocab_size(),
@@ -261,6 +263,8 @@ class SFTConfig(Config):
                 ),
             ),
         ).merge(overrides)
+
+        config.launch.priority = Priority.high
 
         return config
 
