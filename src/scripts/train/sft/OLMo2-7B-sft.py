@@ -186,8 +186,7 @@ class SFTConfig(Config):
                 num_workers=4,
             ),
             train_module=TransformerTrainModuleConfig(
-                rank_microbatch_size=GLOBAL_BATCH_SIZE
-                // NUM_GPUS,  # specified in tokens, implies a microbatch size of 1 sequence
+                rank_microbatch_size=GLOBAL_BATCH_SIZE // NUM_GPUS,
                 max_sequence_length=SEQUENCE_LENGTH,
                 z_loss_multiplier=1e-5,
                 compile_model=True,
