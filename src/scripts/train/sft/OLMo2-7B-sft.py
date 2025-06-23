@@ -139,6 +139,7 @@ class SFTConfig(Config):
         overrides: List[str],
     ) -> "SFTConfig":
         root_dir = get_root_dir(cluster)
+        log.info(f"Root dir: {root_dir}")
 
         tokenizer_config = TokenizerConfig.dolma2()
 

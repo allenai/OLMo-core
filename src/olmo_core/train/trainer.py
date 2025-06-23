@@ -620,7 +620,7 @@ class Trainer:
 
         log.info("Callback order:")
         for i, callback_name in enumerate(self.callbacks.keys()):
-            log.info(f"  - Callback {i+1}: {callback_name}")
+            log.info(f"  - Callback {i + 1}: {callback_name}")
 
         log.info(f"Training for {self.max_steps:,d} steps")
 
@@ -743,10 +743,19 @@ class Trainer:
 
         # NOTE: to avoid making a ton of client requests (S3 or otherwise) we only make those
         # requests from rank 0 then scatter the result to the other ranks.
+        dir_to_scatter: Optional[PathOrStr] = dir
+        error: Optional[Exception] = None
         if get_rank() == 0 and not self.checkpointer.dir_is_checkpoint(dir):
-            # Try to find the latest checkpoint in the directory.
-            dir = self.checkpointer.latest_checkpoint(dir)
-        dir = scatter_object(dir)
+            try:
+                dir_to_scatter = self.checkpointer.latest_checkpoint(dir)
+            except FileNotFoundError as e:  # defer raising until after the scatter
+                dir_to_scatter, error = None, e
+        dir_to_scatter = scatter_object(dir_to_scatter)
+        if dir_to_scatter is None:
+            if error is None:
+                raise FileNotFoundError(f"No checkpoints found in '{dir}'")
+            raise error
+        dir = dir_to_scatter
 
         log.info(f"Loading checkpoint from '{dir}'...")
         trainer_state = self.checkpointer.load(
@@ -779,10 +788,7 @@ class Trainer:
             should_load = self.checkpointer.contains_checkpoint(dir)
         should_load = scatter_object(should_load)
         if should_load:
-            self.load_checkpoint(
-                dir,
-                load_trainer_state=load_trainer_state,
-            )
+            self.load_checkpoint(dir, load_trainer_state=load_trainer_state)
             assert self.checkpoint_loaded
             return True
         else:
