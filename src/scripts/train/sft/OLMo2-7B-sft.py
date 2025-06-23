@@ -1,6 +1,18 @@
 """
 This script can be used to launch an SFT run for the 7B model on Beaker.
 Run the script without any arguments to see usage info.
+
+Getting started:
+1. Ensure that the beaker workspace you are using (defaults to ai2/olmo-instruct) has the following secrets configured.
+    * {beaker_username}_BEAKER_TOKEN
+    * {beaker_username}_AWS_CREDENTIALS
+    * {beaker_username}_AWS_CONFIG
+    * {beaker_username}_WANDB_API_KEY  (optional)
+    * {beaker_username}_COMET_API_KEY  (optional)
+
+2. Ensure that the dataset and model you want to use are available on the correct storage bucket for the cluster you are using.
+    * For example, if you are using ai2/jupiter-cirrascale-2, the dataset and model should be available on the /weka/oe-training-default/ai2-llm bucket.
+    * If you are using ai2/augusta-google-1, the dataset and model should be available on the gs://ai2-llm bucket.
 """
 
 import logging
@@ -11,7 +23,6 @@ from pathlib import Path
 from typing import List, cast
 
 import rich
-from beaker import Priority
 from rich import print
 
 from olmo_core.config import Config, DType
@@ -63,25 +74,25 @@ from olmo_core.utils import prepare_cli_environment, seed_all
 
 log = logging.getLogger(__name__)
 
-INTRA_DOCUMENT_MASKING = True
+# TODO: make seq len, batch size, and datasets more configurable
 SEQUENCE_LENGTH = 4096
 GLOBAL_BATCH_SIZE = 64 * SEQUENCE_LENGTH
-MAX_DURATION = int(4e12)
 
 NUM_GPUS = 8
 NUM_NODES = math.ceil(NUM_GPUS / 8)
 
 
-def build_sft_dataset(
-    root_dir: str, tokenizer_config: TokenizerConfig = TokenizerConfig.dolma2()
-) -> NumpyDatasetConfig:
+def build_sft_dataset(root_dir: str, tokenizer_config: TokenizerConfig) -> NumpyDatasetConfig:
     if tokenizer_config.identifier == TokenizerName.dolma2:
         tokenizer_id = TokenizerName.dolma2.split("/")[-1]  # eg "dolma2-tokenizer"
     else:
-        raise ValueError(f"Unknown tokenizer: {tokenizer_config.identifier}")
+        raise ValueError(f"Unsupported tokenizer: {tokenizer_config.identifier}")
 
-    # root_dir is /weka/oe-training-default/ai2-llm or gs://ai2-llm
-    sft_datasets = ["tylerr/sft/jacobmorrison-OpenThoughts3-1.2M-no-cot"]
+    # NOTE: dataset path can be configured relative to root_dir
+    # root_dir is /weka/oe-training-default/ai2-llm or gs://ai2-llm depending on the cluster
+    sft_datasets = [
+        "tylerr/sft/jacobmorrison-OpenThoughts3-1.2M-no-cot",
+    ]
 
     paths, label_mask_paths = [], []
     root_path = Path(root_dir)
@@ -93,6 +104,7 @@ def build_sft_dataset(
         paths.extend([str(f) for f in token_files])
         label_mask_paths.extend([str(f) for f in label_files])
 
+    intra_document_masking = True
     return NumpyDatasetConfig(
         # general config
         tokenizer=tokenizer_config,
@@ -102,7 +114,7 @@ def build_sft_dataset(
         label_mask_paths=label_mask_paths,
         # how to handle long docs?
         name=NumpyDatasetType.packed_fsl,  # concatenated short docs into a single sequence...
-        generate_doc_lengths=INTRA_DOCUMENT_MASKING,  # ...and mask attention so that they don't attend to each other
+        generate_doc_lengths=intra_document_masking,  # ...and mask attention so that they don't attend to each other
         long_doc_strategy=LongDocStrategy.truncate,  # truncate docs...
         sequence_length=SEQUENCE_LENGTH,  # ...over this length
     )
@@ -119,6 +131,7 @@ class SFTConfig(Config):
     """
 
     run_name: str
+
     launch: BeakerLaunchConfig
     model: TransformerConfig
     dataset: NumpyDatasetConfig
@@ -139,12 +152,8 @@ class SFTConfig(Config):
         overrides: List[str],
     ) -> "SFTConfig":
         root_dir = get_root_dir(cluster)
-        log.info(f"Root dir: {root_dir}")
-
-        tokenizer_config = TokenizerConfig.dolma2()
-
         user_name = get_beaker_username()
-        run_name = f"{user_name}-sft-attempt-7B-{run_name}"
+        tokenizer_config = TokenizerConfig.dolma2()
 
         config = SFTConfig(
             run_name=run_name,
@@ -153,9 +162,8 @@ class SFTConfig(Config):
                 root_dir=root_dir,
                 cmd=[script, cmd, run_name, checkpoint, cluster, *overrides],
                 cluster=cluster,
-                nccl_debug=False,
                 num_nodes=NUM_NODES,
-                budget="ai2/oe-training",  # TODO: change to oe-adapt
+                budget="ai2/oe-adapt",
                 workspace="ai2/olmo-instruct",
             ),
             model=TransformerConfig.olmo2_7B(  # Based on https://github.com/allenai/OLMo-core/blob/dustins/anneal-repro/src/scripts/train/lc_cont_train/OLMo2-7B-lc_anneal_tp4.py
@@ -165,12 +173,13 @@ class SFTConfig(Config):
             ),
             dataset=build_sft_dataset(root_dir, tokenizer_config),
             data_loader=NumpyDataLoaderConfig(
-                global_batch_size=GLOBAL_BATCH_SIZE,  # NOTE: this is specified in TOKENS, not instances.
-                seed=34521,  # NOTE: can update this to change data order.
+                global_batch_size=GLOBAL_BATCH_SIZE,  # specified in tokens, not instances/sequences
+                seed=34521,
                 num_workers=4,
             ),
             train_module=TransformerTrainModuleConfig(
-                rank_microbatch_size=GLOBAL_BATCH_SIZE // NUM_GPUS,  # specified in tokens.
+                rank_microbatch_size=GLOBAL_BATCH_SIZE
+                // NUM_GPUS,  # specified in tokens, implies a microbatch size of 1 sequence
                 max_sequence_length=SEQUENCE_LENGTH,
                 z_loss_multiplier=1e-5,
                 compile_model=True,
@@ -269,8 +278,6 @@ class SFTConfig(Config):
             ),
         ).merge(overrides)
 
-        config.launch.priority = Priority.high
-
         return config
 
 
@@ -279,15 +286,10 @@ def train(checkpoint: str, config: SFTConfig):
     seed_all(config.init_seed)
 
     # Build components.
-    log.info("Building model...")
     model = config.model.build(init_device="meta")
-    log.info("Building train module...")
     train_module = config.train_module.build(model)
-    log.info("Building dataset...")
     dataset = config.dataset.build()
-    log.info("Building data loader...")
     data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
-    log.info("Building trainer...")
     trainer = config.trainer.build(train_module, data_loader)
 
     # Record the config to W&B/Comet and each checkpoint dir.
@@ -307,7 +309,6 @@ def train(checkpoint: str, config: SFTConfig):
         log.info(f"Loaded checkpoint from save folder '{trainer.save_folder}'")
 
     # Train.
-    log.info("Training...")
     trainer.fit()
 
 
@@ -324,15 +325,15 @@ SFT the 7B model.
 [b magenta]dry_run:[/]     Print the config for debugging.
 
 [b]Arguments[/]
-[b]RUN_NAME:[/]        A base name for the run. The full run name will be derived from this.
+[b]RUN_NAME:[/]            The name of the run. Used for the run name in W&B/Comet and the checkpoint dir.
 [b]PRETRAIN_CHECKPOINT:[/] Path to the pretraining checkpoint to load.
-[b]CLUSTER:[/]         The Beaker cluster to use (e.g., 'ai2/jupiter-cirrascale-2').
-[b]OVERRIDES:[/]       Optional key=value overrides for the config. Use dot notation for nested fields.
-                      E.g., `--trainer.max_duration=epochs(5)` or `--sft_dataset_names='["path/to/my/dataset"]'`
+[b]CLUSTER:[/]             The Beaker cluster to use (e.g., 'ai2/jupiter-cirrascale-2').
+[b]OVERRIDES:[/]           Optional key=value overrides for the config. Use dot notation for nested fields.
+                           E.g., `--launch.priority=high`, `--trainer.callbacks.wandb.enabled=True`, or `--train_module.optim.lr=1e-5`
 
 [b]Examples[/]
-$ [i]python {sys.argv[0]} launch run01 /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/jupiter-cirrascale-2 --launch.num_nodes=2[/]
 $ [i]python {sys.argv[0]} dry_run test /path/to/ckpt ai2/cluster
+$ [i]python {sys.argv[0]} launch run01 /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/jupiter-cirrascale-2 --launch.priority=high[/]
 """.strip()
 
     # Parse command line arguments.
