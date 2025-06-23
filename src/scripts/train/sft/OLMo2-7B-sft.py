@@ -54,10 +54,7 @@ from olmo_core.internal.common import (
 )
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import (
-    LinearWithWarmup,
-    SkipStepAdamWConfig,
-)
+from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig
 from olmo_core.train import (
     Duration,
     LoadStrategy,
