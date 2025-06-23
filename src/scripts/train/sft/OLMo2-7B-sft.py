@@ -47,6 +47,7 @@ from olmo_core.data.types import LongDocStrategy, NumpyDatasetType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank
 from olmo_core.internal.common import (
+    CLUSTER_TO_GPU_TYPE,
     build_launch_config,
     get_beaker_username,
     get_root_dir,
@@ -163,6 +164,10 @@ class SFTConfig(Config):
         user_name = get_beaker_username()
         tokenizer_config = TokenizerConfig.dolma2()
 
+        rank_microbatch_size = GLOBAL_BATCH_SIZE // NUM_GPUS // 2
+        if "B200" in CLUSTER_TO_GPU_TYPE.get(cluster, "unknown"):
+            rank_microbatch_size *= 2
+
         config = SFTConfig(
             run_name=run_name,
             launch=build_launch_config(
@@ -186,7 +191,7 @@ class SFTConfig(Config):
                 num_workers=4,
             ),
             train_module=TransformerTrainModuleConfig(
-                rank_microbatch_size=GLOBAL_BATCH_SIZE // NUM_GPUS,
+                rank_microbatch_size=rank_microbatch_size,
                 max_sequence_length=SEQUENCE_LENGTH,
                 z_loss_multiplier=1e-5,
                 compile_model=True,
