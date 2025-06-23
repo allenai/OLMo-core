@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import List, cast
 
 import rich
+from beaker import Priority
 from rich import print
 
 from olmo_core.config import Config, DType
@@ -136,9 +137,7 @@ class SFTConfig(Config):
 
         tokenizer_config = TokenizerConfig.dolma2()
 
-        last_pretrain_step: int = 11921
-        log.info(f"Will start SFT from checkpoint at step {last_pretrain_step:,d}")
-        run_name = f"tylerr-sft-attempt-from{last_pretrain_step}-{run_name}"
+        run_name = f"tylerr-sft-attempt-7B-{run_name}"
 
         config = SFTConfig(
             run_name=run_name,
@@ -150,6 +149,7 @@ class SFTConfig(Config):
                 nccl_debug=False,
                 num_nodes=NUM_NODES,
                 budget="ai2/oe-training",  # TODO: change to oe-adapt
+                workspace="ai2/olmo-instruct",
             ),
             model=TransformerConfig.olmo2_7B(  # Based on https://github.com/allenai/OLMo-core/blob/dustins/anneal-repro/src/scripts/train/lc_cont_train/OLMo2-7B-lc_anneal_tp4.py
                 vocab_size=tokenizer_config.padded_vocab_size(),
@@ -190,14 +190,14 @@ class SFTConfig(Config):
             ),
             trainer=TrainerConfig(
                 save_folder=f"/weka/oe-training-default/ai2-llm/checkpoints/tylerr/olmo2-7B-sft/{run_name}",
-                load_strategy=LoadStrategy.always,
+                load_strategy=LoadStrategy.never,  # we manually load the checkpoint below
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
                 ),
                 save_overwrite=True,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
-                max_duration=Duration.tokens(int(100e9)),
+                max_duration=Duration.epochs(3),
             )
             .with_callback(
                 "checkpointer",
@@ -263,6 +263,8 @@ class SFTConfig(Config):
                 ),
             ),
         ).merge(overrides)
+
+        config.launch.priority = Priority.high
 
         return config
 

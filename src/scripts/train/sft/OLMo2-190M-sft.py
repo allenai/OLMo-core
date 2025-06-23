@@ -197,7 +197,7 @@ class SFTConfig(Config):
                 save_overwrite=True,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
-                max_duration=Duration.tokens(int(100e9)),
+                max_duration=Duration.epochs(3),
             )
             .with_callback(
                 "checkpointer",
@@ -289,6 +289,8 @@ def train(checkpoint: str, config: SFTConfig):
     # Try loading a checkpoint from the save folder, otherwise start from the pretraining checkpoint.
     # if not trainer.maybe_load_checkpoint(trainer.save_folder):
     #     trainer.load_checkpoint(checkpoint, load_trainer_state=False)
+
+    trainer.load_path = checkpoint
 
     # Train.
     trainer.fit()
