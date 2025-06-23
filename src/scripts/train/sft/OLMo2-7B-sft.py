@@ -13,6 +13,17 @@ Getting started:
 2. Ensure that the dataset and model you want to use are available on the correct storage bucket for the cluster you are using.
     * For example, if you are using ai2/jupiter-cirrascale-2, the dataset and model should be available on the /weka/oe-training-default/ai2-llm bucket.
     * If you are using ai2/augusta-google-1, the dataset and model should be available on the gs://ai2-llm bucket.
+    * Data can be copied to/from gcs/weka using the `gsutil` command line tool. E.g., `gsutil cp -r /path/to/dataset gs://ai2-llm/path/to/dataset`
+
+Training:
+1. Launch this script as per the instructions below. Some notable differences from open-instruct:
+    * Olmo-core loads data differently. This script is configured to minimize the amount of padding
+      tokens processed by packing documents together into a single sequence, and masking attention so that
+      they don't attend to each other. This results in ~0.5% of the total tokens being padding tokens.
+    *
+
+Evaluation:
+# TODO: instructions for hf conversion and launching oe-eval
 """
 
 import logging
