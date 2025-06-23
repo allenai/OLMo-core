@@ -1,5 +1,5 @@
 """
-This script can be used to launch an SFT run for the 7B model on Beaker.
+This script can be used to launch an SFT run for the 190M model on Beaker.
 Run the script without any arguments to see usage info.
 """
 
@@ -189,7 +189,7 @@ class SFTConfig(Config):
                 max_grad_norm=1.0,
             ),
             trainer=TrainerConfig(
-                save_folder=f"/weka/oe-training-default/ai2-llm/checkpoints/tylerr/olmo2-7B-sft/{run_name}",
+                save_folder=f"/weka/oe-training-default/ai2-llm/checkpoints/tylerr/olmo2-190M-sft/{run_name}",
                 load_strategy=LoadStrategy.never,
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
@@ -199,37 +199,15 @@ class SFTConfig(Config):
                 cancel_check_interval=10,
                 max_duration=Duration.epochs(3),
             )
-            .with_callback(
-                "checkpointer",
-                CheckpointerCallback(
-                    save_interval=1000,
-                    ephemeral_save_interval=500,
-                    save_async=True,
-                ),
-            )
-            .with_callback(
-                "wandb",
-                WandBCallback(
-                    name=run_name,
-                    entity="ai2-llm",
-                    project="tylerr-7B-sft",
-                    enabled=False,
-                    cancel_check_interval=10,
-                ),
-            )
-            .with_callback(
-                "comet",
-                CometCallback(
-                    name=run_name,
-                    workspace="ai2",
-                    project="tylerr-7B-sft",
-                    enabled=False,
-                    cancel_check_interval=10,
-                ),
-            )
             .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
             .with_callback("config_saver", ConfigSaverCallback())
             .with_callback("garbage_collector", GarbageCollectorCallback())
+            .with_callback(
+                "checkpointer",
+                CheckpointerCallback(
+                    save_interval=1000, ephemeral_save_interval=500, save_async=True
+                ),
+            )
             .with_callback(
                 "downstream_evaluator",
                 DownstreamEvaluatorCallbackConfig(
@@ -259,7 +237,27 @@ class SFTConfig(Config):
                     ],
                     tokenizer=tokenizer_config,
                     eval_interval=250,
+                    enabled=True,
+                ),
+            )
+            .with_callback(
+                "wandb",
+                WandBCallback(
+                    name=run_name,
+                    entity="ai2-llm",
+                    project="tylerr-190M-sft",
                     enabled=False,
+                    cancel_check_interval=10,
+                ),
+            )
+            .with_callback(
+                "comet",
+                CometCallback(
+                    name=run_name,
+                    workspace="ai2",
+                    project="tylerr-190M-sft",
+                    enabled=False,
+                    cancel_check_interval=10,
                 ),
             ),
         ).merge(overrides)
@@ -287,8 +285,8 @@ def train(checkpoint: str, config: SFTConfig):
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
     # Try loading a checkpoint from the save folder, otherwise start from the pretraining checkpoint.
-    # if not trainer.maybe_load_checkpoint(trainer.save_folder):
-    #     trainer.load_checkpoint(checkpoint, load_trainer_state=False)
+    if not trainer.maybe_load_checkpoint(trainer.save_folder):
+        trainer.load_checkpoint(checkpoint, load_trainer_state=False)
 
     trainer.load_path = checkpoint
 
@@ -298,7 +296,7 @@ def train(checkpoint: str, config: SFTConfig):
 
 if __name__ == "__main__":
     USAGE = f"""
-sSFT the 32B model.
+sSFT the 190M model.
 
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]launch|train|dry_run[/] [i b]RUN_NAME PRETRAIN_CHECKPOINT CLUSTER[/] [i][OVERRIDES...][/]
 

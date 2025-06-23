@@ -24,7 +24,12 @@ from olmo_core.data import (
 from olmo_core.data.types import LongDocStrategy, NumpyDatasetType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank
-from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
+from olmo_core.internal.common import (
+    build_launch_config,
+    get_beaker_username,
+    get_root_dir,
+    get_work_dir,
+)
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import (
@@ -137,7 +142,8 @@ class SFTConfig(Config):
 
         tokenizer_config = TokenizerConfig.dolma2()
 
-        run_name = f"tylerr-sft-attempt-7B-{run_name}"
+        user_name = get_beaker_username()
+        run_name = f"{user_name}-sft-attempt-7B-{run_name}"
 
         config = SFTConfig(
             run_name=run_name,
@@ -171,7 +177,7 @@ class SFTConfig(Config):
                     lr=8e-05,
                     weight_decay=0.0,  # NOTE: different from pretraining
                     betas=(0.9, 0.95),
-                    compile=True,
+                    compile=False,
                 ),
                 dp_config=TransformerDataParallelConfig(
                     name=DataParallelType.fsdp,
@@ -189,7 +195,7 @@ class SFTConfig(Config):
                 max_grad_norm=1.0,
             ),
             trainer=TrainerConfig(
-                save_folder=f"/weka/oe-training-default/ai2-llm/checkpoints/tylerr/olmo2-7B-sft/{run_name}",
+                save_folder=f"/weka/oe-training-default/ai2-llm/checkpoints/{user_name}/olmo2-7B-sft/{run_name}",
                 load_strategy=LoadStrategy.never,  # we manually load the checkpoint below
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
@@ -199,42 +205,20 @@ class SFTConfig(Config):
                 cancel_check_interval=10,
                 max_duration=Duration.epochs(3),
             )
-            .with_callback(
-                "checkpointer",
-                CheckpointerCallback(
-                    save_interval=1000,
-                    ephemeral_save_interval=500,
-                    save_async=True,
-                ),
-            )
-            .with_callback(
-                "wandb",
-                WandBCallback(
-                    name=run_name,
-                    entity="ai2-llm",
-                    project="tylerr-7B-sft",
-                    enabled=False,
-                    cancel_check_interval=10,
-                ),
-            )
-            .with_callback(
-                "comet",
-                CometCallback(
-                    name=run_name,
-                    workspace="ai2",
-                    project="tylerr-7B-sft",
-                    enabled=False,
-                    cancel_check_interval=10,
-                ),
-            )
             .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
             .with_callback("config_saver", ConfigSaverCallback())
             .with_callback("garbage_collector", GarbageCollectorCallback())
             .with_callback(
+                "checkpointer",
+                CheckpointerCallback(
+                    save_interval=1000, ephemeral_save_interval=500, save_async=True
+                ),
+            )
+            .with_callback(
                 "downstream_evaluator",
                 DownstreamEvaluatorCallbackConfig(
                     # WARN: this is hacked together w/o really comparing to the evals configured in open-instruct
-                    # TODO: port all of the open-instruct evals to OLMo-core
+                    # In order to actually evaluate the SFT model, use oe-eval directly.
                     tasks=[
                         # MMLU MC
                         "mmlu_stem_mc_5shot",
@@ -259,7 +243,27 @@ class SFTConfig(Config):
                     ],
                     tokenizer=tokenizer_config,
                     eval_interval=250,
+                    enabled=True,
+                ),
+            )
+            .with_callback(
+                "wandb",
+                WandBCallback(
+                    name=run_name,
+                    entity="ai2-llm",
+                    project=f"{user_name}-7B-sft",
                     enabled=False,
+                    cancel_check_interval=10,
+                ),
+            )
+            .with_callback(
+                "comet",
+                CometCallback(
+                    name=run_name,
+                    workspace="ai2",
+                    project=f"{user_name}-7B-sft",
+                    enabled=False,
+                    cancel_check_interval=10,
                 ),
             ),
         ).merge(overrides)
@@ -274,10 +278,15 @@ def train(checkpoint: str, config: SFTConfig):
     seed_all(config.init_seed)
 
     # Build components.
+    log.info("Building model...")
     model = config.model.build(init_device="meta")
+    log.info("Building train module...")
     train_module = config.train_module.build(model)
+    log.info("Building dataset...")
     dataset = config.dataset.build()
+    log.info("Building data loader...")
     data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
+    log.info("Building trainer...")
     trainer = config.trainer.build(train_module, data_loader)
 
     # Record the config to W&B/Comet and each checkpoint dir.
@@ -287,16 +296,23 @@ def train(checkpoint: str, config: SFTConfig):
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
     # Try loading a checkpoint from the save folder, otherwise start from the pretraining checkpoint.
+    log.info("Loading checkpoint...")
     if not trainer.maybe_load_checkpoint(trainer.save_folder):
+        log.info(
+            f"No checkpoint found in save folder '{trainer.save_folder}', attempting to load from pretraining checkpoint '{checkpoint}'"
+        )
         trainer.load_checkpoint(checkpoint, load_trainer_state=False)
+    else:
+        log.info(f"Loaded checkpoint from save folder '{trainer.save_folder}'")
 
     # Train.
+    log.info("Training...")
     trainer.fit()
 
 
 if __name__ == "__main__":
     USAGE = f"""
-sSFT the 32B model.
+SFT the 7B model.
 
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]launch|train|dry_run[/] [i b]RUN_NAME PRETRAIN_CHECKPOINT CLUSTER[/] [i][OVERRIDES...][/]
 
@@ -306,8 +322,16 @@ sSFT the 32B model.
              Instead use the [b magenta]launch[/] cmd to submit it to Beaker or run it via torchrun if you know what you're doing.
 [b magenta]dry_run:[/]     Print the config for debugging.
 
+[b]Arguments[/]
+[b]RUN_NAME:[/]        A base name for the run. The full run name will be derived from this.
+[b]PRETRAIN_CHECKPOINT:[/] Path to the pretraining checkpoint to load.
+[b]CLUSTER:[/]         The Beaker cluster to use (e.g., 'ai2/jupiter-cirrascale-2').
+[b]OVERRIDES:[/]       Optional key=value overrides for the config. Use dot notation for nested fields.
+                      E.g., `--trainer.max_duration=epochs(5)` or `--sft_dataset_names='["path/to/my/dataset"]'`
+
 [b]Examples[/]
 $ [i]python {sys.argv[0]} launch run01 /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/jupiter-cirrascale-2 --launch.num_nodes=2[/]
+$ [i]python {sys.argv[0]} dry_run test /path/to/ckpt ai2/cluster
 """.strip()
 
     # Parse command line arguments.
