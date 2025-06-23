@@ -260,7 +260,7 @@ class SFTConfig(Config):
                         "codex_mbpp_gold_bpb_3shot",
                     ],
                     tokenizer=tokenizer_config,
-                    eval_interval=250,
+                    eval_interval=500,
                     enabled=True,
                 ),
             )
