@@ -92,7 +92,7 @@ def convert_checkpoint_to_hf(
             attention["use_flash"] = False
 
     model = TransformerConfig.from_dict(transformer_config_dict).build()
-    model.to_empty(device=device)
+    model.to_empty(device=device or torch.device("cpu"))
 
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
     vocab_size = tokenizer_config.vocab_size
