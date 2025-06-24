@@ -15,6 +15,7 @@ license = { file = "LICENSE" }
 dependencies = [
     "numpy<2.0",
     "torch>=2.6.0",
+    "torchao",
     "cached-path>=1.7.2",
     "requests",
     "packaging",
