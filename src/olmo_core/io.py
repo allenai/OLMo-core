@@ -580,15 +580,6 @@ def _get_gcs_retry():
     )
 
 
-def _get_gcs_conditional_retry():
-    from google.cloud.storage.retry import (
-        ConditionalRetryPolicy,
-        is_generation_specified,
-    )
-
-    return ConditionalRetryPolicy(_get_gcs_retry(), is_generation_specified, ["query_params"])
-
-
 @retriable(retry_condition=_gcs_is_retriable)
 def _gcs_file_size(bucket_name: str, key: str) -> int:
     from google.api_core.exceptions import NotFound
@@ -629,23 +620,17 @@ def _gcs_upload(source: Path, bucket_name: str, key: str, save_overwrite: bool =
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(key)
 
-    generation: int = 0
-    if blob.exists(retry=_get_gcs_retry()):
-        if not save_overwrite:
-            raise FileExistsError(
-                f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
-            )
-
-        blob.reload(retry=_get_gcs_retry())
-        assert blob.generation is not None
-        generation = blob.generation
+    if blob.exists(retry=_get_gcs_retry()) and not save_overwrite:
+        raise FileExistsError(
+            f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
+        )
 
     try:
         blob.upload_from_filename(
             source,
-            if_generation_match=generation,
-            retry=_get_gcs_conditional_retry(),
-            checksum=None,
+            # NOTE: mypy and language servers may complain about the type here, but it does
+            # not in fact need to be a ConditionalRetry, a plain old Retry is fine.
+            retry=_get_gcs_retry(),  # type: ignore
         )
     except Exception as e:
         raise OLMoUploadError(
