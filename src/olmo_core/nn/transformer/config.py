@@ -241,6 +241,58 @@ class TransformerBlockConfig(Config):
         ) - self.feed_forward_moe.num_active_params(d_model)
         return num_params - num_inactive_params
 
+    def get_mup_width_scalings(self, base_block: "TransformerBlockConfig", d_model: int, base_d_model: int) -> Dict[MuPHyperParam, float]:
+        if self.feed_forward:
+            if base_block.feed_forward is None:
+                raise ValueError("Feed forward config is missing in m")
+
+            hidden_size = self.feed_forward.hidden_size
+            base_hidden_size = base_block.feed_forward.hidden_size
+
+        if self.feed_forward_moe:
+            if base_block.feed_forward_moe is None:
+                raise ValueError("Cannot get mup width scalings between MoE and non-MoE models")
+
+            hidden_size = self.feed_forward_moe.hidden_size
+            base_hidden_size = base_block.feed_forward_moe.hidden_size
+        else:
+            raise ValueError("Model has no feed forward layer")
+
+        width_scalings = {
+            MuPHyperParam.d_model: d_model / base_d_model,
+            MuPHyperParam.hidden_size: hidden_size / base_hidden_size,
+            MuPHyperParam.n_heads: self.attention.n_heads
+            / base_block.attention.n_heads,
+            MuPHyperParam.n_kv_heads: (
+                self.attention.n_kv_heads or self.attention.n_heads
+            )
+            / (base_block.attention.n_kv_heads or base_block.attention.n_heads),
+            MuPHyperParam.head_dim: (d_model / self.attention.n_heads)
+            / (base_d_model / base_block.attention.n_heads),
+        }
+
+        if self.feed_forward_moe:
+            assert base_block.feed_forward_moe is not None
+            width_scalings[MuPHyperParam.num_experts] = (
+                self.feed_forward_moe.num_experts
+                / base_block.feed_forward_moe.num_experts
+            )
+
+            if self.feed_forward_moe.shared_mlp is not None:
+                if base_block.feed_forward_moe.shared_mlp is None:
+                    raise ValueError("Model has shared mlp but base model does not.")
+
+                width_scalings[MuPHyperParam.shared_expert_hidden_size] = (
+                    self.feed_forward_moe.shared_mlp.hidden_size
+                    / base_block.feed_forward_moe.shared_mlp.hidden_size
+                )
+
+        return {
+            hyper_param: scaling
+            for hyper_param, scaling in width_scalings.items()
+            if not math.isclose(scaling, 1)
+        }
+
 
 @dataclass
 class TransformerConfig(Config):
@@ -437,7 +489,7 @@ class TransformerConfig(Config):
     def get_mup_width_scalings(self, base_model: "TransformerConfig") -> Dict[MuPHyperParam, float]:
         if self.block.feed_forward:
             if base_model.block.feed_forward is None:
-                raise ValueError("Cannot get mup width scalings between MoE and non-MoE models")
+                raise ValueError("Feed forward config is missing in m")
 
             hidden_size = self.block.feed_forward.hidden_size
             base_hidden_size = base_model.block.feed_forward.hidden_size

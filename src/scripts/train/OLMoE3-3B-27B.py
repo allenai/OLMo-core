@@ -18,6 +18,7 @@ from olmo_core.nn.moe import (
     MoERouterGatingFunction,
     MoEType,
 )
+from olmo_core.nn.mup import MuPConfig
 from olmo_core.nn.transformer import (
     TransformerBlockType,
     TransformerConfig,
@@ -46,6 +47,54 @@ GLOBAL_BATCH_SIZE = (
 )  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
 MAX_DURATION = int(700e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
+
+
+def _build_model_config(vocab_size: int, d_model: int, moe_hidden_size: int, feed_forward_hidden_size: int, mup: MuPConfig | None = None) -> TransformerConfig:
+    config = TransformerConfig.llama_like(
+        d_model=d_model,
+        vocab_size=vocab_size,
+        n_layers=32,
+        n_heads=16,
+        n_kv_heads=4,
+        name=TransformerType.moe,
+        block_name=TransformerBlockType.moe_hybrid_reordered_norm,
+        qk_norm=True,
+        rope_theta=500_000,
+        layer_norm_eps=1e-6,
+        feed_forward_moe=MoEConfig(
+            name=MoEType.default,
+            num_experts=128,
+            hidden_size=moe_hidden_size,
+            capacity_factor=1.25,
+            router=MoERouterConfig(top_k=8, gating_function=MoERouterGatingFunction.sigmoid),
+            #  shared_mlp=FeedForwardConfig(hidden_size=4096, bias=False),
+            mup=mup,
+            lb_loss_weight=0.05,
+            z_loss_weight=None,
+            lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
+            scale_loss_by_num_layers=False,
+        ),
+        feed_forward=FeedForwardConfig(hidden_size=feed_forward_hidden_size, bias=False, mup=mup),
+        init_std=0.01,
+        mup=mup,
+    )
+    config.block.attention.sliding_window = SlidingWindowAttentionConfig(
+        force_first=False, pattern=[False, False, False, True]
+    )
+    config.block.attention.use_flash = True
+    config.block.attention.use_head_qk_norm = True
+
+    # First block will be a regular transformer block (no MoE component).
+    config.block_overrides = {
+        0: dataclasses.replace(
+            config.block,
+            name=TransformerBlockType.reordered_norm,
+            feed_forward_moe=None,
+            feed_forward=FeedForwardConfig(hidden_size=feed_forward_hidden_size + 8 * moe_hidden_size, bias=False, mup=mup),
+        ),
+    }
+
+    return config
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
