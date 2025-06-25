@@ -1036,6 +1036,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             "dtype",
             "long_doc_strategy",
             "bos_token_id",
+            "sequence_length",
         )
 
     @property
