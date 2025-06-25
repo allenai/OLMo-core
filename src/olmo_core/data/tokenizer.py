@@ -141,27 +141,30 @@ class TokenizerConfig(Config):
         pad_token_id = config.get("pad_token_id")
         bos_token_id = config.get("bos_token_id")
 
+        def find_token_id_by_content(content: str) -> int | None:
+            for token_id_str, token_info in config["added_tokens_decoder"].items():
+                if token_info.get("content") == content:
+                    return int(token_id_str)
+            return None
+
         if "added_tokens_decoder" in config:
-
-            def find_token_id_by_content(content: str) -> int | None:
-                for token_id_str, token_info in config["added_tokens_decoder"].items():
-                    if token_info.get("content") == content:
-                        return int(token_id_str)
-                return None
-
             if "eos_token" in config and eos_token_id is None:
                 eos_token_id = find_token_id_by_content(config["eos_token"])
-                if eos_token_id is None:
-                    raise ValueError(f"EOS token ID not found for token '{config['eos_token']}'")
-                log.info(f"Found EOS token ID {eos_token_id} for token '{config['eos_token']}'")
+                if eos_token_id:
+                    log.info(f"Found EOS token ID {eos_token_id} for token '{config['eos_token']}'")
             if "pad_token" in config and pad_token_id is None:
                 pad_token_id = find_token_id_by_content(config["pad_token"])
-                if pad_token_id is None:
-                    raise ValueError(f"PAD token ID not found for token '{config['pad_token']}'")
-                log.info(f"Found PAD token ID {pad_token_id} for token '{config['pad_token']}'")
+                if pad_token_id:
+                    log.info(f"Found PAD token ID {pad_token_id} for token '{config['pad_token']}'")
             if "bos_token" in config and bos_token_id is None:
                 bos_token_id = find_token_id_by_content(config["bos_token"])
-                log.info(f"Found BOS token ID {bos_token_id} for token '{config['bos_token']}'")
+                if bos_token_id:
+                    log.info(f"Found BOS token ID {bos_token_id} for token '{config['bos_token']}'")
+
+        if eos_token_id is None:
+            raise ValueError(f"EOS token ID not found for token '{config['eos_token']}'")
+        if pad_token_id is None:
+            raise ValueError(f"PAD token ID not found for token '{config['pad_token']}'")
 
         return cls(
             vocab_size=config["vocab_size"],
