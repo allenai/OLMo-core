@@ -86,7 +86,7 @@ def build_sft_dataset(
     dataset_dir = root_path / dataset_config["base_dir"]
 
     tokenizer_config = TokenizerConfig.from_hf(
-        identifier=dataset_config["tokenizer"],
+        identifier=dataset_dir / "tokenizer",
         url_scheme="",  # look for this tokenizer locally, not on the hub
     )
 
