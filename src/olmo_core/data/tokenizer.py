@@ -141,6 +141,10 @@ class TokenizerConfig(Config):
         pad_token_id = config.get("pad_token_id")
         bos_token_id = config.get("bos_token_id")
 
+        log.info(f"Found EOS token ID {eos_token_id}")
+        log.info(f"Found PAD token ID {pad_token_id}")
+        log.info(f"Found BOS token ID {bos_token_id}")
+
         def find_token_id_by_content(content: str) -> int | None:
             for token_id_str, token_info in config["added_tokens_decoder"].items():
                 if token_info.get("content") == content:
