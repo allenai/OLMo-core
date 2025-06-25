@@ -867,6 +867,18 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         self._array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
 
     @property
+    def fingerprint_fields(self) -> Tuple[str, ...]:
+        return (
+            "vocab_size",
+            "pad_token_id",
+            "eos_token_id",
+            "dtype",
+            "max_target_sequence_length",
+            "bos_token_id",
+            "sequence_length",
+        )
+
+    @property
     def offsets(self) -> Tuple[Tuple[int, int], ...]:
         if self._array_instance_offsets is None:
             item_size = self.indices_dtype(0).itemsize
@@ -2279,7 +2291,7 @@ class NumpyDatasetConfig(Config):
     """
     The number of documents to interleave per instance in
     :class:`NumpyInterleavedFSLDataset`.
-    
+
     Dataset document are truncated down to length ``sequence_length // docs_per_instance``, so
     that the overall sequence length after interleaving is up to ``sequence_length``.
     """
