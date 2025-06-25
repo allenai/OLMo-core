@@ -56,7 +56,7 @@ from olmo_core.utils import prepare_cli_environment, seed_all
 
 log = logging.getLogger(__name__)
 
-# TODO: make seq len, batch size, and datasets more configurable
+# TODO: make seq len and batch size configurable
 # Right now you can override them with a few flags in the command line.
 SEQUENCE_LENGTH = 16384
 GLOBAL_BATCH_SIZE = 16 * SEQUENCE_LENGTH
