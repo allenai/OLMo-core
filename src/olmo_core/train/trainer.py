@@ -1063,6 +1063,7 @@ class Trainer:
                     self._bookkeeping_queue[op_name].pop(op_id, None)
 
             future.add_done_callback(callback)
+            log.info(self._bookkeeping_queue)
         else:
             result = op(*args, **kwargs)
             if cb is not None:
