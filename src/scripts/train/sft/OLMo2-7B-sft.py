@@ -242,11 +242,6 @@ class SFTConfig(Config):
                     enabled=False,
                     cancel_check_interval=10,
                 ),
-            )
-            .with_recommended_evals(  # pretraining evals, may not be relevant for SFT
-                tokenizer=tokenizer_config,
-                cluster=cluster,
-                sequence_length=SEQUENCE_LENGTH,
             ),
         ).merge(overrides)
 
