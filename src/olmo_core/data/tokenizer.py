@@ -91,15 +91,12 @@ class TokenizerConfig(Config):
     @classmethod
     def olmo2instruct(cls) -> "TokenizerConfig":
         """
-        Get a :data:`~TokenizerName.dolma2` tokenizer config.
+        Get a :data:`~TokenizerName.olmo2instruct` tokenizer config.
         """
-        return cls(
-            vocab_size=100278,
-            eos_token_id=100257,
-            pad_token_id=100277,
-            bos_token_id=100257,
-            identifier=TokenizerName.olmo2instruct,
-        )
+        cfg = cls.dolma2()
+        cfg.bos_token_id = 100256
+        cfg.identifier = TokenizerName.olmo2instruct
+        return cfg
 
     @classmethod
     def gpt_neox_olmo_dolma_v1_5(cls) -> "TokenizerConfig":
