@@ -161,6 +161,7 @@ class TokenizerConfig(Config):
                 if pad_token_id:
                     log.info(f"Found PAD token ID {pad_token_id} for token '{config['pad_token']}'")
             if "bos_token" in config and bos_token_id is None:
+                log.info(f"Trying to find BOS token ID for token '{config['bos_token']}'")
                 bos_token_id = find_token_id_by_content(config["bos_token"])
                 if bos_token_id:
                     log.info(f"Found BOS token ID {bos_token_id} for token '{config['bos_token']}'")
