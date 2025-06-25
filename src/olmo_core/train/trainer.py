@@ -1,6 +1,7 @@
 import logging
 import math
 import signal
+import time
 import uuid
 from collections import OrderedDict, defaultdict
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -230,6 +231,12 @@ class Trainer:
     """
     Do collective bookkeeping operations like reducing metrics asynchronously.
     This requires a separate CPU-only backend, and will default to ``True`` if one is available.
+    """
+
+    bookkeeping_soft_timeout: int = 30
+    """
+    A soft timeout (in seconds) for bookkeeping operations. If a bookkeeping operation takes longer
+    than this then a warning is emitted.
     """
 
     # Benchmarking
@@ -1033,6 +1040,17 @@ class Trainer:
             op_name = op.__name__
         op_id = uuid.uuid4().hex
 
+        def wrapped_op(*args, **kwargs):
+            start_time = time.perf_counter()
+            try:
+                return op(*args, **kwargs)
+            finally:
+                if (runtime := (time.perf_counter() - start_time)) > self.bookkeeping_soft_timeout:
+                    log.warning(
+                        f"Bookeeping op '{op_name}' took longer than {self.bookkeeping_soft_timeout} "
+                        f"seconds ({runtime:,d} seconds)!"
+                    )
+
         if (
             self.async_bookkeeping
             and self.bookkeeping_device.type == "cpu"
@@ -1050,7 +1068,7 @@ class Trainer:
                         )
 
             # Can safely run in the thread pool.
-            future = self.thread_pool.submit(op, *args, **kwargs)
+            future = self.thread_pool.submit(wrapped_op, *args, **kwargs)
             self._bookkeeping_queue[op_name][op_id] = future
 
             def callback(fut: Future[T]):
@@ -1067,7 +1085,7 @@ class Trainer:
 
             future.add_done_callback(callback)
         else:
-            result = op(*args, **kwargs)
+            result = wrapped_op(*args, **kwargs)
             if cb is not None:
                 cb(result)
 
