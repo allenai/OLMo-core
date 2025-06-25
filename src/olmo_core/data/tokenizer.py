@@ -1,7 +1,10 @@
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
 from ..config import Config, StrEnum
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "TokenizerConfig",
@@ -148,12 +151,17 @@ class TokenizerConfig(Config):
 
             if "eos_token" in config and eos_token_id is None:
                 eos_token_id = find_token_id_by_content(config["eos_token"])
-                assert eos_token_id is not None  # for the type checker
+                if eos_token_id is None:
+                    raise ValueError(f"EOS token ID not found for token '{config['eos_token']}'")
+                log.info(f"Found EOS token ID {eos_token_id} for token '{config['eos_token']}'")
             if "pad_token" in config and pad_token_id is None:
                 pad_token_id = find_token_id_by_content(config["pad_token"])
-                assert pad_token_id is not None  # for the type checker
+                if pad_token_id is None:
+                    raise ValueError(f"PAD token ID not found for token '{config['pad_token']}'")
+                log.info(f"Found PAD token ID {pad_token_id} for token '{config['pad_token']}'")
             if "bos_token" in config and bos_token_id is None:
                 bos_token_id = find_token_id_by_content(config["bos_token"])
+                log.info(f"Found BOS token ID {bos_token_id} for token '{config['bos_token']}'")
 
         return cls(
             vocab_size=config["vocab_size"],
