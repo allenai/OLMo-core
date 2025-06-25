@@ -81,6 +81,13 @@ class TokenizerConfig(Config):
         )
 
     @classmethod
+    def tulu3(cls) -> "TokenizerConfig":
+        """
+        Get a :data:`~TokenizerName.dolma2` tokenizer config.
+        """
+        return cls.dolma2()
+
+    @classmethod
     def gpt_neox_olmo_dolma_v1_5(cls) -> "TokenizerConfig":
         """
         Get a :data:`~TokenizerName.gpt_neox_olmo_dolma_v1_5` tokenizer config.
@@ -127,10 +134,31 @@ class TokenizerConfig(Config):
         with config_path.open() as f:
             config = json.load(f)
 
+        eos_token_id = config.get("eos_token_id")
+        pad_token_id = config.get("pad_token_id")
+        bos_token_id = config.get("bos_token_id")
+
+        if "added_tokens_decoder" in config:
+
+            def find_token_id_by_content(content: str) -> int | None:
+                for token_id_str, token_info in config["added_tokens_decoder"].items():
+                    if token_info.get("content") == content:
+                        return int(token_id_str)
+                return None
+
+            if "eos_token" in config and eos_token_id is None:
+                eos_token_id = find_token_id_by_content(config["eos_token"])
+                assert eos_token_id is not None  # for the type checker
+            if "pad_token" in config and pad_token_id is None:
+                pad_token_id = find_token_id_by_content(config["pad_token"])
+                assert pad_token_id is not None  # for the type checker
+            if "bos_token" in config and bos_token_id is None:
+                bos_token_id = find_token_id_by_content(config["bos_token"])
+
         return cls(
             vocab_size=config["vocab_size"],
-            eos_token_id=config["eos_token_id"],
-            pad_token_id=config.get("pad_token_id", config["eos_token_id"]),
-            bos_token_id=config.get("bos_token_id"),
+            eos_token_id=eos_token_id,
+            pad_token_id=pad_token_id,
+            bos_token_id=bos_token_id,
             identifier=identifier,
         )

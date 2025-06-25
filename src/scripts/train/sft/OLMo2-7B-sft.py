@@ -85,19 +85,15 @@ def build_sft_dataset(
     root_path = Path(root_dir)
     dataset_dir = root_path / dataset_config["base_dir"]
 
-    tokenizer_config = TokenizerConfig.from_hf(
-        identifier=dataset_dir / "tokenizer",
-        url_scheme="",  # look for this tokenizer locally, not on the hub
-    )
-
     paths, label_mask_paths = [], []
-
     for token_file in dataset_config["token_ids"]:
         token_path = dataset_dir / token_file
         paths.append(str(token_path))
     for label_file in dataset_config["labels"]:
         label_path = dataset_dir / label_file
         label_mask_paths.append(str(label_path))
+
+    tokenizer_config = TokenizerConfig.from_hf(dataset_config["tokenizer"])
 
     intra_document_masking = True
     dataset = NumpyDatasetConfig(

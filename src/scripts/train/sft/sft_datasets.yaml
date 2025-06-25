@@ -1,6 +1,8 @@
 datasets:
   OpenThoughts3-1.2M-no-cot:
     base_dir: tylerr/data/sft/jacobmorrison-OpenThoughts3-1.2M-no-cot
+    # NOTE: be careful that this tokenizer matches the pretraining data you've prepared!
+    tokenizer: allenai/OLMo-2-1124-7B-Instruct
     token_ids:
       - token_ids_part_0001.npy
       - token_ids_part_0002.npy
@@ -9,6 +11,7 @@ datasets:
       - labels_part_0002.npy
   OpenThoughts3-1.2M:
     base_dir: tylerr/data/sft/jacobmorrison-OpenThoughts3-1.2M
+    tokenizer: allenai/OLMo-2-1124-7B-Instruct
     token_ids:
       - token_ids_part_0001.npy
       - token_ids_part_0002.npy
