@@ -1,7 +1,9 @@
 import logging
 import math
 import signal
-from collections import OrderedDict
+import time
+import uuid
+from collections import OrderedDict, defaultdict
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -231,6 +233,12 @@ class Trainer:
     This requires a separate CPU-only backend, and will default to ``True`` if one is available.
     """
 
+    bookkeeping_soft_timeout: int = 30
+    """
+    A soft timeout (in seconds) for bookkeeping operations. If a bookkeeping operation takes longer
+    than this then a warning is emitted.
+    """
+
     # Benchmarking
 
     no_checkpoints: bool = False
@@ -255,6 +263,10 @@ class Trainer:
     _error: Optional[BaseException] = None
     _rank_batch_size: Optional[int] = None
     _thread_pool: Optional[ThreadPoolExecutor] = None
+    # maps bookkeeping operation name to an ordereddict of operation ID to operation Future
+    _bookkeeping_queue: Dict[str, Dict[str, Future]] = field(
+        default_factory=lambda: defaultdict(OrderedDict)
+    )
     _bookkeeping_pg: Optional[dist.ProcessGroup] = None
     _checkpoint_loaded: bool = False
     _metrics_consistent: Optional[bool] = None
@@ -569,7 +581,7 @@ class Trainer:
         Asynchronously check if the run is canceled. Use :data:`is_canceled` to see the result.
         This needs to be called by all ranks at the same point in the training loop.
         """
-        self._run_bookkeeping_op(self._check_if_canceled)
+        self.run_bookkeeping_op(self._check_if_canceled, cancel_in_progress=True)
 
     def fit(self):
         """
@@ -1015,28 +1027,65 @@ class Trainer:
         log.warning(msg)
         self.cancel_run(msg)
 
-    def _run_bookkeeping_op(
-        self, op: Callable[..., T], *args, cb: Optional[Callable[[T], None]] = None, **kwargs
+    def run_bookkeeping_op(
+        self,
+        op: Callable[..., T],
+        *args,
+        cb: Optional[Callable[[T], None]] = None,
+        op_name: Optional[str] = None,
+        cancel_in_progress: bool = False,
+        **kwargs,
     ):
+        if op_name is None:
+            op_name = op.__name__
+        op_id = uuid.uuid4().hex
+
+        def wrapped_op(*args, **kwargs):
+            start_time = time.perf_counter()
+            try:
+                return op(*args, **kwargs)
+            finally:
+                if (runtime := (time.perf_counter() - start_time)) > self.bookkeeping_soft_timeout:
+                    log.warning(
+                        f"Bookeeping op '{op_name}' took longer than {self.bookkeeping_soft_timeout} "
+                        f"seconds ({runtime:,d} seconds)!"
+                    )
+
         if (
             self.async_bookkeeping
             and self.bookkeeping_device.type == "cpu"
             and self.bookkeeping_pg is not None
         ):
+            if cancel_in_progress:
+                for future in self._bookkeeping_queue[op_name].values():
+                    if future.cancel():
+                        self._bookkeeping_queue[op_name].clear()
+                    elif not future.done():
+                        log.warning(
+                            f"Attempted to cancel bookkeeping op '{op_name}' which was already in progress. "
+                            "If you see this message frequently, the op in question may be creating a backlog "
+                            "in the bookkeeping queue."
+                        )
+
             # Can safely run in the thread pool.
-            future = self.thread_pool.submit(op, *args, **kwargs)
-            if cb is not None:
+            future = self.thread_pool.submit(wrapped_op, *args, **kwargs)
+            self._bookkeeping_queue[op_name][op_id] = future
 
-                def callback(fut: Future[T]):
-                    try:
+            def callback(fut: Future[T]):
+                try:
+                    if cb is not None:
                         cb(fut.result())  # type: ignore[misc]
-                    except BaseException as e:
-                        log.exception(e)
-                        self._error = e
+                except BaseException as e:
+                    log.exception(e)
+                    self._error = e
+                finally:
+                    # Removed the completed op from the queue.
+                    assert op_name is not None  # for mypy
+                    self._bookkeeping_queue[op_name].pop(op_id, None)
 
-                future.add_done_callback(callback)
+            future.add_done_callback(callback)
         else:
-            result = op(*args, **kwargs)
+            result = wrapped_op(*args, **kwargs)
             if cb is not None:
                 cb(result)
 
@@ -1091,7 +1140,7 @@ class Trainer:
                     msg += " This may result in slower training speeds since you don't have async bookkeeping enabled."
                 log.warning(msg)
 
-        self._run_bookkeeping_op(
+        self.run_bookkeeping_op(
             reduce_metrics,
             metrics_to_reduce,
             self._metrics_reduce_type,
