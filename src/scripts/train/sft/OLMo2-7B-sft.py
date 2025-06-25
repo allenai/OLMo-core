@@ -348,7 +348,7 @@ $ [i]python {sys.argv[0]} launch run01 OpenThoughts3-1.2M /weka/oe-training-defa
 """.strip()
 
     # Parse command line arguments.
-    if len(sys.argv) < 5 or sys.argv[1] not in ("launch", "train", "dry_run"):
+    if len(sys.argv) < 6 or sys.argv[1] not in ("launch", "train", "dry_run"):
         rich.get_console().print(USAGE, highlight=False)
         sys.exit(1)
 
