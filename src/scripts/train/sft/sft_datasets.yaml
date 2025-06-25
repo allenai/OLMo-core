@@ -18,3 +18,18 @@ datasets:
     labels:
       - labels_part_0000.npy
       - labels_part_0001.npy
+  OpenThoughts3-456k-gpt4.1-cot:
+    base_dir: jacobm/data/sft/jacobmorrison/OpenThoughts3-456k-gpt4.1-cot
+    tokenizer: /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921-hf
+    token_ids:
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+      - token_ids_part_0003.npy
+      - token_ids_part_0004.npy
+    labels:
+      - labels_part_0000.npy
+      - labels_part_0001.npy
+      - labels_part_0002.npy
+      - labels_part_0003.npy
+      - labels_part_0004.npy
