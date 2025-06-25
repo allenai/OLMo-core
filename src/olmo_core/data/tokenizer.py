@@ -127,67 +127,28 @@ class TokenizerConfig(Config):
         )
 
     @classmethod
-    def from_hf(cls, identifier: str, url_scheme: str = "hf://") -> "TokenizerConfig":
+    def from_hf(cls, identifier: str) -> "TokenizerConfig":
         """
         Initialize a tokenizer config from a model on HuggingFace.
 
         :param identifier: The HF model identifier, e.g. "meta-llama/Llama-3.2-1B".
-        :param url_scheme: The URI scheme to use to download the tokenizer config.
-            Defaults to "hf://", which is the default for HuggingFace. Could be an
-            alternative like "gs://" for GCS or an empty string for local files.
         """
         import json
 
         from cached_path import cached_path
 
         try:
-            config_path = cached_path(f"{url_scheme}{identifier}/config.json")
+            config_path = cached_path(f"hf://{identifier}/config.json")
         except FileNotFoundError:
-            config_path = cached_path(f"{url_scheme}{identifier}/tokenizer_config.json")
+            config_path = cached_path(f"hf://{identifier}/tokenizer_config.json")
 
         with config_path.open() as f:
             config = json.load(f)
 
-        log.info(f"Found config: {config}")
-        eos_token_id = config.get("eos_token_id")
-        pad_token_id = config.get("pad_token_id")
-        bos_token_id = config.get("bos_token_id")
-
-        log.info(f"Found EOS token ID {eos_token_id}")
-        log.info(f"Found PAD token ID {pad_token_id}")
-        log.info(f"Found BOS token ID {bos_token_id}")
-
-        def find_token_id_by_content(content: str) -> int | None:
-            for token_id_str, token_info in config["added_tokens_decoder"].items():
-                if token_info["content"] == content:
-                    return int(token_id_str)
-            return None
-
-        if "added_tokens_decoder" in config:
-            log.info("Found added_tokens_decoder in config")
-            if "eos_token" in config and eos_token_id is None:
-                eos_token_id = find_token_id_by_content(config["eos_token"])
-                if eos_token_id:
-                    log.info(f"Found EOS token ID {eos_token_id} for token '{config['eos_token']}'")
-            if "pad_token" in config and pad_token_id is None:
-                pad_token_id = find_token_id_by_content(config["pad_token"])
-                if pad_token_id:
-                    log.info(f"Found PAD token ID {pad_token_id} for token '{config['pad_token']}'")
-            if "bos_token" in config and bos_token_id is None:
-                log.info(f"Trying to find BOS token ID for token '{config['bos_token']}'")
-                bos_token_id = find_token_id_by_content(config["bos_token"])
-                if bos_token_id:
-                    log.info(f"Found BOS token ID {bos_token_id} for token '{config['bos_token']}'")
-
-        if eos_token_id is None:
-            raise ValueError(f"EOS token ID not found for token '{config['eos_token']}'")
-        if pad_token_id is None:
-            raise ValueError(f"PAD token ID not found for token '{config['pad_token']}'")
-
         return cls(
             vocab_size=config["vocab_size"],
-            eos_token_id=eos_token_id,
-            pad_token_id=pad_token_id,
-            bos_token_id=bos_token_id,
+            eos_token_id=config["eos_token_id"],
+            pad_token_id=config.get("pad_token_id", config["eos_token_id"]),
+            bos_token_id=config.get("bos_token_id"),
             identifier=identifier,
         )
