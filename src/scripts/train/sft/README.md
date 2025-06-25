@@ -27,7 +27,8 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 
     > TIP: Using `uv` you can install gantry on your machine with `uv tool install beaker-gantry`.
 
-2. Add your dataset to the `sft_datasets.yaml` file in this directory.
+2. Add your dataset to the `sft_datasets.yaml` file in this directory. You will use the name of the
+    dataset you configure in the next step.
 
 ## Training
 
@@ -43,10 +44,13 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
     * If you are using ai2/augusta-google-1, the dataset and model should be available on the `gs://ai2-llm` bucket.
     * Data can be copied to/from gcs/weka using the `gsutil` command line tool. E.g., `gsutil cp -r /path/to/dataset gs://ai2-llm/path/to/dataset`
 
-3. Launch the SFT training script using the following command:
+3. Ensure that the tokenizer used when prepping your dataset matches the one you have configured for SFT in Olmo-core.
+    This may require some manual translation of the bos_token_id, eos_token_id, pad_token_id, and vocab_size.
+
+4. Launch the SFT training script using the following command:
 
     ```bash
-    python src/scripts/train/sft/OLMo2-7B-sft.py launch <run-name> <olmo-core checkpoint> <cluster> \
+    python src/scripts/train/sft/OLMo2-7B-sft.py launch <run-name> <dataset-name> <olmo-core checkpoint> <cluster> \
         --override.option="override"
     ```
 
@@ -54,7 +58,7 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 
     ```bash
     python src/scripts/train/sft/OLMo2-7B-sft.py launch \
-        olmo2-7B-sft-take2-8gpu /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/jupiter-cirrascale-2 \
+        olmo2-7B-sft-take2-8gpu OpenThoughts3-1.2M /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/jupiter-cirrascale-2 \
         --trainer.callbacks.wandb.enabled=True \
         --launch.num_gpus=8
     ```
