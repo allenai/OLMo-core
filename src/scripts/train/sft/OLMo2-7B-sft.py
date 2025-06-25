@@ -170,7 +170,7 @@ class SFTConfig(Config):
             launch=build_launch_config(
                 name=run_name,
                 root_dir=root_dir,
-                cmd=[script, cmd, run_name, checkpoint, cluster, *overrides],
+                cmd=[script, cmd, run_name, dataset_name, checkpoint, cluster, *overrides],
                 cluster=cluster,
                 num_nodes=NUM_NODES,
                 budget="ai2/oe-adapt",
