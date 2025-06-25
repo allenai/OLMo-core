@@ -93,7 +93,7 @@ def build_sft_dataset(
         label_path = dataset_dir / label_file
         label_mask_paths.append(str(label_path))
 
-    tokenizer_config = TokenizerConfig.from_hf(dataset_config["tokenizer"])
+    tokenizer_config = TokenizerConfig.olmo2instruct()
 
     intra_document_masking = True
     dataset = NumpyDatasetConfig(

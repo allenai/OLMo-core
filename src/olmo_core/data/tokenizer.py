@@ -22,6 +22,11 @@ class TokenizerName(StrEnum):
     The dolma2 tokenizer.
     """
 
+    olmo2instruct = "allenai/OLMo-2-1124-7B-Instruct"
+    """
+    The OLMo-2-1124-7B-Instruct tokenizer.
+    """
+
     gpt_neox_olmo_dolma_v1_5 = "allenai/gpt-neox-olmo-dolma-v1_5"
     """
     A modified GPT NeoX tokenizer.
@@ -84,11 +89,17 @@ class TokenizerConfig(Config):
         )
 
     @classmethod
-    def tulu3(cls) -> "TokenizerConfig":
+    def olmo2instruct(cls) -> "TokenizerConfig":
         """
         Get a :data:`~TokenizerName.dolma2` tokenizer config.
         """
-        return cls.dolma2()
+        return cls(
+            vocab_size=100278,
+            eos_token_id=100257,
+            pad_token_id=100277,
+            bos_token_id=100257,
+            identifier=TokenizerName.olmo2instruct,
+        )
 
     @classmethod
     def gpt_neox_olmo_dolma_v1_5(cls) -> "TokenizerConfig":
