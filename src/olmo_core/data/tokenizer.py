@@ -106,20 +106,23 @@ class TokenizerConfig(Config):
         )
 
     @classmethod
-    def from_hf(cls, identifier: str) -> "TokenizerConfig":
+    def from_hf(cls, identifier: str, url_scheme: str = "hf://") -> "TokenizerConfig":
         """
         Initialize a tokenizer config from a model on HuggingFace.
 
         :param identifier: The HF model identifier, e.g. "meta-llama/Llama-3.2-1B".
+        :param url_scheme: The URI scheme to use to download the tokenizer config.
+            Defaults to "hf://", which is the default for HuggingFace. Could be an
+            alternative like "gs://" for GCS or an empty string for local files.
         """
         import json
 
         from cached_path import cached_path
 
         try:
-            config_path = cached_path(f"hf://{identifier}/config.json")
+            config_path = cached_path(f"{url_scheme}{identifier}/config.json")
         except FileNotFoundError:
-            config_path = cached_path(f"hf://{identifier}/tokenizer_config.json")
+            config_path = cached_path(f"{url_scheme}{identifier}/tokenizer_config.json")
 
         with config_path.open() as f:
             config = json.load(f)

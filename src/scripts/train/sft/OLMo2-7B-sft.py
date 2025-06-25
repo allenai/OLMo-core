@@ -7,7 +7,7 @@ import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, cast
+from typing import List, Tuple, cast
 
 import rich
 import yaml
@@ -18,7 +18,6 @@ from olmo_core.data import (
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
     TokenizerConfig,
-    TokenizerName,
 )
 from olmo_core.data.types import LongDocStrategy, NumpyDatasetType
 from olmo_core.distributed.parallel import DataParallelType
@@ -45,7 +44,6 @@ from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
     ConfigSaverCallback,
-    DownstreamEvaluatorCallbackConfig,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
 )
@@ -72,13 +70,8 @@ NUM_NODES = NUM_GPUS // 8
 
 
 def build_sft_dataset(
-    dataset_name: str, root_dir: str, tokenizer_config: TokenizerConfig
-) -> NumpyDatasetConfig:
-    if tokenizer_config.identifier == TokenizerName.dolma2:
-        tokenizer_id = TokenizerName.dolma2.split("/")[-1]  # eg "dolma2-tokenizer"
-    else:
-        raise OLMoConfigurationError(f"Unsupported tokenizer: {tokenizer_config.identifier}")
-
+    dataset_name: str, root_dir: str
+) -> Tuple[NumpyDatasetConfig, TokenizerConfig]:
     # NOTE: dataset path can be configured relative to root_dir
     # root_dir is /weka/oe-training-default/ai2-llm or gs://ai2-llm depending on the cluster
     sft_datasets_file = Path(__file__).parent / "sft_datasets.yaml"
@@ -89,17 +82,17 @@ def build_sft_dataset(
         raise OLMoConfigurationError(f"Dataset '{dataset_name}' not found in sft_datasets.yaml")
 
     dataset_config = sft_datasets_config["datasets"][dataset_name]
-    expected_tokenizer = dataset_config["tokenizer"]
-    if expected_tokenizer and expected_tokenizer != tokenizer_id:
-        raise OLMoConfigurationError(
-            f"Dataset '{dataset_name}' expects tokenizer '{expected_tokenizer}' but got '{tokenizer_id}'"
-        )
-
-    dataset_config = sft_datasets_config["datasets"][dataset_name]
-
-    paths, label_mask_paths = [], []
     root_path = Path(root_dir)
     dataset_dir = root_path / dataset_config["base_dir"]
+    tokenizer_dir = dataset_dir / "tokenizer"
+
+    tokenizer_config = TokenizerConfig.from_hf(
+        dataset_config["base"],
+        url_scheme="",  # just look for this tokenizer locally
+    )
+
+    paths, label_mask_paths = [], []
+
     for token_file in dataset_config["token_ids"]:
         token_path = dataset_dir / token_file
         paths.append(str(token_path))
@@ -108,7 +101,7 @@ def build_sft_dataset(
         label_mask_paths.append(str(label_path))
 
     intra_document_masking = True
-    return NumpyDatasetConfig(
+    dataset = NumpyDatasetConfig(
         # general config
         tokenizer=tokenizer_config,
         mix_base_dir=root_dir,
@@ -122,6 +115,7 @@ def build_sft_dataset(
         long_doc_strategy=LongDocStrategy.truncate,  # truncate docs...
         sequence_length=SEQUENCE_LENGTH,  # ...over this length
     )
+    return dataset, tokenizer_config
 
 
 @dataclass
@@ -158,7 +152,8 @@ class SFTConfig(Config):
     ) -> "SFTConfig":
         root_dir = get_root_dir(cluster)
         user_name = get_beaker_username()
-        tokenizer_config = TokenizerConfig.dolma2()
+
+        dataset, tokenizer_config = build_sft_dataset(dataset_name, root_dir)
 
         # simple heuristic: double ubatch size to ~double throughput on B200s
         rank_microbatch_size = GLOBAL_BATCH_SIZE // NUM_GPUS // 2
@@ -181,7 +176,7 @@ class SFTConfig(Config):
                 use_flash=True,
                 rope_theta=8 * 10**6,
             ),
-            dataset=build_sft_dataset(dataset_name, root_dir, tokenizer_config),
+            dataset=dataset,
             data_loader=NumpyDataLoaderConfig(
                 global_batch_size=GLOBAL_BATCH_SIZE,  # specified in tokens, not instances/sequences
                 seed=34521,
@@ -234,39 +229,6 @@ class SFTConfig(Config):
                 ),
             )
             .with_callback(
-                "downstream_evaluator",
-                DownstreamEvaluatorCallbackConfig(
-                    # WARN: this is hacked together w/o really comparing to the evals configured in open-instruct
-                    # In order to actually evaluate the SFT model, use oe-eval directly.
-                    tasks=[
-                        # MMLU MC
-                        "mmlu_stem_mc_5shot",
-                        "mmlu_humanities_mc_5shot",
-                        "mmlu_social_sciences_mc_5shot",
-                        "mmlu_other_mc_5shot",
-                        "mmlu_stem_mc_5shot_test",
-                        "mmlu_humanities_mc_5shot_test",
-                        "mmlu_social_sciences_mc_5shot_test",
-                        "mmlu_other_mc_5shot_test",
-                        # Gen tasks BPB
-                        "gsm8k_gold_bpb_5shot",
-                        "minerva_math_algebra_gold_bpb_0shot",
-                        "minerva_math_counting_and_probability_gold_bpb_0shot",
-                        "minerva_math_geometry_gold_bpb_0shot",
-                        "minerva_math_intermediate_algebra_gold_bpb_0shot",
-                        "minerva_math_number_theory_gold_bpb_0shot",
-                        "minerva_math_prealgebra_gold_bpb_0shot",
-                        "minerva_math_precalculus_gold_bpb_0shot",
-                        "codex_humaneval_gold_bpb_3shot",
-                        "codex_mbpp_gold_bpb_3shot",
-                    ],
-                    tokenizer=tokenizer_config,
-                    eval_interval=1000,
-                    eval_on_startup=True,
-                    enabled=False,
-                ),
-            )
-            .with_callback(
                 "wandb",
                 WandBCallback(
                     name=run_name,
@@ -285,6 +247,11 @@ class SFTConfig(Config):
                     enabled=False,
                     cancel_check_interval=10,
                 ),
+            )
+            .with_recommended_evals(  # pretraining evals, may not be relevant for SFT
+                tokenizer=tokenizer_config,
+                cluster=cluster,
+                sequence_length=SEQUENCE_LENGTH,
             ),
         ).merge(overrides)
 
