@@ -1062,6 +1062,7 @@ class Trainer:
                     self._error = e
                 finally:
                     # Removed the completed op from the queue.
+                    assert op_name is not None  # for mypy
                     self._bookkeeping_queue[op_name].pop(op_id, None)
 
             future.add_done_callback(callback)
