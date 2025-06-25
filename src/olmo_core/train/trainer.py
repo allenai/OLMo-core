@@ -256,6 +256,7 @@ class Trainer:
     _error: Optional[BaseException] = None
     _rank_batch_size: Optional[int] = None
     _thread_pool: Optional[ThreadPoolExecutor] = None
+    # maps bookkeeping operation name to an ordereddict of operation ID to operation Future
     _bookkeeping_queue: Dict[str, Dict[str, Future]] = field(
         default_factory=lambda: defaultdict(OrderedDict)
     )
@@ -1060,10 +1061,10 @@ class Trainer:
                     log.exception(e)
                     self._error = e
                 finally:
+                    # Removed the completed op from the queue.
                     self._bookkeeping_queue[op_name].pop(op_id, None)
 
             future.add_done_callback(callback)
-            log.info(self._bookkeeping_queue)
         else:
             result = op(*args, **kwargs)
             if cb is not None:
