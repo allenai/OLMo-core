@@ -137,6 +137,7 @@ class TokenizerConfig(Config):
         with config_path.open() as f:
             config = json.load(f)
 
+        log.info(f"Found config: {config}")
         eos_token_id = config.get("eos_token_id")
         pad_token_id = config.get("pad_token_id")
         bos_token_id = config.get("bos_token_id")
