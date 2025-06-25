@@ -53,15 +53,16 @@ def beaker_secret_exists(secret: str, workspace: Optional[str] = None) -> bool:
 def _to_beaker_env_secret(
     name: str, secret: str, *, workspace: Optional[str] = None, required: bool = True
 ) -> Optional[BeakerEnvSecret]:
-    if beaker_secret_exists(secret, workspace=workspace):
-        return BeakerEnvSecret(name=name, secret=secret)
-    elif required:
-        raise OLMoConfigurationError(
-            f"Secret {secret} not configured in beaker workspace {workspace}"
-        )
-    else:
-        log.info(f"Secret {secret} not configured in beaker workspace {workspace}")
-        return None
+    # if beaker_secret_exists(secret, workspace=workspace):
+    #     return BeakerEnvSecret(name=name, secret=secret)
+    # elif required:
+    #     raise OLMoConfigurationError(
+    #         f"Secret {secret} not configured in beaker workspace {workspace}"
+    #     )
+    # else:
+    #     log.info(f"Secret {secret} not configured in beaker workspace {workspace}")
+    #     return None
+    return BeakerEnvSecret(name=name, secret=secret)
 
 
 def get_root_dir(cluster: str) -> str:
