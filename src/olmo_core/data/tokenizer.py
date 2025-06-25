@@ -147,11 +147,12 @@ class TokenizerConfig(Config):
 
         def find_token_id_by_content(content: str) -> int | None:
             for token_id_str, token_info in config["added_tokens_decoder"].items():
-                if token_info.get("content") == content:
+                if token_info["content"] == content:
                     return int(token_id_str)
             return None
 
         if "added_tokens_decoder" in config:
+            log.info("Found added_tokens_decoder in config")
             if "eos_token" in config and eos_token_id is None:
                 eos_token_id = find_token_id_by_content(config["eos_token"])
                 if eos_token_id:
