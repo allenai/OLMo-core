@@ -1,39 +1,16 @@
 """
 This script can be used to launch an SFT run for the 7B model on Beaker.
-Run the script without any arguments to see usage info.
-
-Getting started:
-1. Ensure that the beaker workspace you are using (defaults to ai2/olmo-instruct) has the following secrets configured.
-    * {beaker_username}_BEAKER_TOKEN
-    * {beaker_username}_AWS_CREDENTIALS
-    * {beaker_username}_AWS_CONFIG
-    * {beaker_username}_WANDB_API_KEY  (optional)
-    * {beaker_username}_COMET_API_KEY  (optional)
-
-2. Ensure that the dataset and model you want to use are available on the correct storage bucket for the cluster you are using.
-    * For example, if you are using ai2/jupiter-cirrascale-2, the dataset and model should be available on the /weka/oe-training-default/ai2-llm bucket.
-    * If you are using ai2/augusta-google-1, the dataset and model should be available on the gs://ai2-llm bucket.
-    * Data can be copied to/from gcs/weka using the `gsutil` command line tool. E.g., `gsutil cp -r /path/to/dataset gs://ai2-llm/path/to/dataset`
-
-Training:
-1. Launch this script as per the instructions below. Some notable differences from open-instruct:
-    * Olmo-core loads data differently. This script is configured to minimize the amount of padding
-      tokens processed by packing documents together into a single sequence, and masking attention so that
-      they don't attend to each other. This results in ~0.5% of the total tokens being padding tokens.
-    *
-
-Evaluation:
-# TODO: instructions for hf conversion and launching oe-eval
+Run the script without any arguments to see usage info. See the README for more details.
 """
 
 import logging
-import math
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, cast
 
 import rich
+import yaml
 from rich import print
 
 from olmo_core.config import Config, DType
@@ -46,6 +23,7 @@ from olmo_core.data import (
 from olmo_core.data.types import LongDocStrategy, NumpyDatasetType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.common import (
     CLUSTER_TO_GPU_TYPE,
     build_launch_config,
@@ -84,34 +62,50 @@ from olmo_core.utils import prepare_cli_environment, seed_all
 log = logging.getLogger(__name__)
 
 # TODO: make seq len, batch size, and datasets more configurable
-SEQUENCE_LENGTH = 4096
-GLOBAL_BATCH_SIZE = 64 * SEQUENCE_LENGTH
+# Right now you can override them with a few flags in the command line.
+SEQUENCE_LENGTH = 16384
+GLOBAL_BATCH_SIZE = 16 * SEQUENCE_LENGTH
 
 NUM_GPUS = 8
-NUM_NODES = math.ceil(NUM_GPUS / 8)
+assert NUM_GPUS % 8 == 0, "NUM_GPUS must be divisible by 8"
+NUM_NODES = NUM_GPUS // 8
 
 
-def build_sft_dataset(root_dir: str, tokenizer_config: TokenizerConfig) -> NumpyDatasetConfig:
+def build_sft_dataset(
+    dataset_name: str, root_dir: str, tokenizer_config: TokenizerConfig
+) -> NumpyDatasetConfig:
     if tokenizer_config.identifier == TokenizerName.dolma2:
         tokenizer_id = TokenizerName.dolma2.split("/")[-1]  # eg "dolma2-tokenizer"
     else:
-        raise ValueError(f"Unsupported tokenizer: {tokenizer_config.identifier}")
+        raise OLMoConfigurationError(f"Unsupported tokenizer: {tokenizer_config.identifier}")
 
     # NOTE: dataset path can be configured relative to root_dir
     # root_dir is /weka/oe-training-default/ai2-llm or gs://ai2-llm depending on the cluster
-    sft_datasets = [
-        "tylerr/sft/jacobmorrison-OpenThoughts3-1.2M-no-cot",
-    ]
+    sft_datasets_file = Path(__file__).parent / "sft_datasets.yaml"
+    with open(sft_datasets_file, "r") as f:
+        sft_datasets_config = yaml.safe_load(f)
+
+    if dataset_name not in sft_datasets_config["datasets"]:
+        raise OLMoConfigurationError(f"Dataset '{dataset_name}' not found in sft_datasets.yaml")
+
+    dataset_config = sft_datasets_config["datasets"][dataset_name]
+    expected_tokenizer = dataset_config["tokenizer"]
+    if expected_tokenizer and expected_tokenizer != tokenizer_id:
+        raise OLMoConfigurationError(
+            f"Dataset '{dataset_name}' expects tokenizer '{expected_tokenizer}' but got '{tokenizer_id}'"
+        )
+
+    dataset_config = sft_datasets_config["datasets"][dataset_name]
 
     paths, label_mask_paths = [], []
     root_path = Path(root_dir)
-    for sft_dataset in sft_datasets:
-        dataset_dir = root_path / sft_dataset / tokenizer_id
-        token_files = sorted(dataset_dir.glob("token_ids*.npy"))
-        label_files = sorted(dataset_dir.glob("labels*.npy"))
-
-        paths.extend([str(f) for f in token_files])
-        label_mask_paths.extend([str(f) for f in label_files])
+    dataset_dir = root_path / dataset_config["base_dir"]
+    for token_file in dataset_config["token_ids"]:
+        token_path = dataset_dir / token_file
+        paths.append(str(token_path))
+    for label_file in dataset_config["labels"]:
+        label_path = dataset_dir / label_file
+        label_mask_paths.append(str(label_path))
 
     intra_document_masking = True
     return NumpyDatasetConfig(
@@ -119,6 +113,7 @@ def build_sft_dataset(root_dir: str, tokenizer_config: TokenizerConfig) -> Numpy
         tokenizer=tokenizer_config,
         mix_base_dir=root_dir,
         work_dir=get_work_dir(root_dir),
+        expand_glob=True,
         paths=paths,
         label_mask_paths=label_mask_paths,
         # how to handle long docs?
@@ -156,6 +151,7 @@ class SFTConfig(Config):
         script: str,
         cmd: str,
         run_name: str,
+        dataset_name: str,
         checkpoint: str,
         cluster: str,
         overrides: List[str],
@@ -164,6 +160,7 @@ class SFTConfig(Config):
         user_name = get_beaker_username()
         tokenizer_config = TokenizerConfig.dolma2()
 
+        # simple heuristic: double ubatch size to ~double throughput on B200s
         rank_microbatch_size = GLOBAL_BATCH_SIZE // NUM_GPUS // 2
         if "B200" in CLUSTER_TO_GPU_TYPE.get(cluster, "unknown"):
             rank_microbatch_size *= 2
@@ -184,7 +181,7 @@ class SFTConfig(Config):
                 use_flash=True,
                 rope_theta=8 * 10**6,
             ),
-            dataset=build_sft_dataset(root_dir, tokenizer_config),
+            dataset=build_sft_dataset(dataset_name, root_dir, tokenizer_config),
             data_loader=NumpyDataLoaderConfig(
                 global_batch_size=GLOBAL_BATCH_SIZE,  # specified in tokens, not instances/sequences
                 seed=34521,
@@ -264,8 +261,9 @@ class SFTConfig(Config):
                         "codex_mbpp_gold_bpb_3shot",
                     ],
                     tokenizer=tokenizer_config,
-                    eval_interval=500,
-                    enabled=True,
+                    eval_interval=1000,
+                    eval_on_startup=True,
+                    enabled=False,
                 ),
             )
             .with_callback(
@@ -328,7 +326,7 @@ if __name__ == "__main__":
     USAGE = f"""
 SFT the 7B model.
 
-[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]launch|train|dry_run[/] [i b]RUN_NAME PRETRAIN_CHECKPOINT CLUSTER[/] [i][OVERRIDES...][/]
+[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]launch|train|dry_run[/] [i b]RUN_NAME DATASET_NAME PRETRAIN_CHECKPOINT CLUSTER[/] [i][OVERRIDES...][/]
 
 [b]Subcommands[/]
 [b magenta]launch:[/]      Launch the script on Beaker with the [b magenta]train[/] subcommand.
@@ -338,14 +336,15 @@ SFT the 7B model.
 
 [b]Arguments[/]
 [b]RUN_NAME:[/]            The name of the run. Used for the run name in W&B/Comet and the checkpoint dir.
+[b]DATASET_NAME:[/]       The name of the dataset to use. Must be defined in sft_datasets.yaml.
 [b]PRETRAIN_CHECKPOINT:[/] Path to the pretraining checkpoint to load.
 [b]CLUSTER:[/]             The Beaker cluster to use (e.g., 'ai2/jupiter-cirrascale-2').
 [b]OVERRIDES:[/]           Optional key=value overrides for the config. Use dot notation for nested fields.
                            E.g., `--launch.priority=high`, `--trainer.callbacks.wandb.enabled=True`, or `--train_module.optim.lr=1e-5`
 
 [b]Examples[/]
-$ [i]python {sys.argv[0]} dry_run test /path/to/ckpt ai2/cluster
-$ [i]python {sys.argv[0]} launch run01 /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/jupiter-cirrascale-2 --launch.priority=high[/]
+$ [i]python {sys.argv[0]} dry_run test my-dataset-name /path/to/ckpt ai2/cluster
+$ [i]python {sys.argv[0]} launch run01 OpenThoughts3-1.2M /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/jupiter-cirrascale-2 --launch.priority=high[/]
 """.strip()
 
     # Parse command line arguments.
@@ -353,7 +352,7 @@ $ [i]python {sys.argv[0]} launch run01 /weka/oe-training-default/ai2-llm/checkpo
         rich.get_console().print(USAGE, highlight=False)
         sys.exit(1)
 
-    script, cmd, run_name, checkpoint, cluster, *overrides = sys.argv
+    script, cmd, run_name, dataset_name, checkpoint, cluster, *overrides = sys.argv
 
     # Prepare the environment for the given command.
     if cmd in ("launch", "dry_run"):
@@ -368,6 +367,7 @@ $ [i]python {sys.argv[0]} launch run01 /weka/oe-training-default/ai2-llm/checkpo
         script=script,
         cmd="train",
         run_name=run_name,
+        dataset_name=dataset_name,
         checkpoint=checkpoint,
         cluster=cluster,
         overrides=overrides,
