@@ -51,6 +51,7 @@ from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
 )
+from olmo_core.train.train_module.transformer.config import TransformerContextParallelConfig
 from olmo_core.utils import prepare_cli_environment, seed_all
 
 log = logging.getLogger(__name__)
@@ -59,6 +60,9 @@ log = logging.getLogger(__name__)
 # Right now you can override them with a few flags in the command line.
 SEQUENCE_LENGTH = 16384
 GLOBAL_BATCH_SIZE = 16 * SEQUENCE_LENGTH
+
+INTRA_DOCUMENT_MASKING = True
+CP_DEGREE = 2
 
 NUM_GPUS = 8
 assert NUM_GPUS % 8 == 0, "NUM_GPUS must be divisible by 8"
@@ -91,7 +95,6 @@ def build_sft_dataset(
 
     tokenizer_config = TokenizerConfig.olmo2instruct()
 
-    intra_document_masking = True
     dataset = NumpyDatasetConfig(
         # general config
         tokenizer=tokenizer_config,
@@ -102,7 +105,7 @@ def build_sft_dataset(
         label_mask_paths=label_mask_paths,
         # how to handle long docs?
         name=NumpyDatasetType.packed_fsl,  # concatenated short docs into a single sequence... (see also "padded_fsl")
-        generate_doc_lengths=intra_document_masking,  # ...and mask attention so that they don't attend to each other
+        generate_doc_lengths=INTRA_DOCUMENT_MASKING,  # ...and mask attention so that they don't attend to each other
         long_doc_strategy=LongDocStrategy.truncate,  # truncate docs...
         sequence_length=SEQUENCE_LENGTH,  # ...that are over this length
     )
@@ -189,6 +192,13 @@ class SFTConfig(Config):
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
                 ),
+                cp_config=(
+                    TransformerContextParallelConfig.llama3(degree=CP_DEGREE)
+                    if INTRA_DOCUMENT_MASKING
+                    else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE)
+                )
+                if CP_DEGREE
+                else None,
                 ac_config=TransformerActivationCheckpointingConfig(
                     mode=TransformerActivationCheckpointingMode.selected_modules,
                     modules=["blocks.*.feed_forward"],
