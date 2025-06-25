@@ -84,11 +84,10 @@ def build_sft_dataset(
     dataset_config = sft_datasets_config["datasets"][dataset_name]
     root_path = Path(root_dir)
     dataset_dir = root_path / dataset_config["base_dir"]
-    tokenizer_dir = dataset_dir / "tokenizer"
 
     tokenizer_config = TokenizerConfig.from_hf(
-        dataset_config["base"],
-        url_scheme="",  # just look for this tokenizer locally
+        identifier=dataset_config["tokenizer"],
+        url_scheme="",  # look for this tokenizer locally, not on the hub
     )
 
     paths, label_mask_paths = [], []
