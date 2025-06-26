@@ -1,3 +1,4 @@
+import math
 from typing import Any, Dict, Optional
 
 import pytest
@@ -114,14 +115,11 @@ def test_attention(
 @pytest.mark.parametrize(
     "dtype",
     [
-        pytest.param(torch.bfloat16, id="bf16", marks=GPU_MARKS),
+        pytest.param(torch.bfloat16, id="bf16"),
         pytest.param(torch.float32, id="fp32"),
     ],
 )
 def test_flex_attention_against_sdpa(device: torch.device, dtype: torch.dtype):
-    if dtype == torch.bfloat16 and device.type == "cpu":
-        pytest.skip("bf16 requires GPU")
-
     torch.random.manual_seed(0)
 
     d_model = 128
@@ -140,6 +138,7 @@ def test_flex_attention_against_sdpa(device: torch.device, dtype: torch.dtype):
         seq_len,
         device,
         flex_att.window_size,
+        block_size=8,
     )
 
     # Make sure weights match.
@@ -155,6 +154,90 @@ def test_flex_attention_against_sdpa(device: torch.device, dtype: torch.dtype):
     with torch.no_grad(), torch.autocast(device.type, dtype=dtype, enabled=dtype != torch.float32):
         y1 = attention(x1)
         y2 = flex_att(x2, block_mask=block_mask)
+
+    torch.testing.assert_close(y1, y2)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pytest.param(torch.bfloat16, id="bf16"),
+        pytest.param(torch.float32, id="fp32"),
+    ],
+)
+@pytest.mark.parametrize(
+    "use_flash, use_flex_attn",
+    [
+        pytest.param(True, False, id="flash", marks=FLASH_MARKS),
+        pytest.param(False, True, id="torch-flex-attn"),
+        pytest.param(False, False, id="torch-SDPA"),
+    ],
+)
+def test_sdpa(
+    device: torch.device,
+    dtype: torch.dtype,
+    use_flash: bool,
+    use_flex_attn: bool,
+):
+    torch.random.manual_seed(0)
+
+    # Implementation simplified from https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html
+    def scaled_dot_product_attention(
+        q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+    ) -> torch.Tensor:
+        # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
+        # shape: (batch_size, n_heads, seq_len, head_dim),
+        #        (batch_size, n_kv_heads, seq_len, head_dim),
+        #        (batch_size, n_kv_heads, seq_len, head_dim)
+        q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+
+        L, S = q.size(-2), k.size(-2)
+        scale_factor = 1 / math.sqrt(q.size(-1))
+        attn_bias = torch.zeros(L, S, dtype=q.dtype, device=q.device)
+
+        temp_mask = torch.ones(L, S, dtype=torch.bool).tril(diagonal=0)
+        attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
+        attn_bias.to(q.dtype)
+
+        k = k.repeat_interleave(q.size(-3) // k.size(-3), -3)
+        v = v.repeat_interleave(q.size(-3) // v.size(-3), -3)
+
+        attn_weight = q @ k.transpose(-2, -1) * scale_factor
+        attn_weight += attn_bias
+        attn_weight = torch.softmax(attn_weight, dim=-1)
+        att = attn_weight @ v
+
+        # Put head dimension back after the sequence dimension.
+        return att.transpose(1, 2).contiguous()
+
+    d_model = 128
+    seq_len = 32
+    batch_size = 2
+    n_heads = 8
+    kwargs: Dict[str, Any] = dict(
+        d_model=d_model,
+        n_heads=8,
+        init_device=device.type,
+    )
+
+    attention = Attention(use_flash=use_flash, use_flex_attn=use_flex_attn, **kwargs)
+    block_mask = None
+    if use_flex_attn:
+        block_mask = get_flex_attn_causal_block_mask(
+            seq_len,
+            device,
+            attention.window_size,
+            block_size=8,
+        )
+
+    q = torch.randn(batch_size, seq_len, n_heads, d_model // n_heads, dtype=dtype, device=device)
+    k = torch.randn(batch_size, seq_len, n_heads, d_model // n_heads, dtype=dtype, device=device)
+    v = torch.randn(batch_size, seq_len, n_heads, d_model // n_heads, dtype=dtype, device=device)
+
+    with torch.no_grad(), torch.autocast(device.type, dtype=dtype, enabled=dtype != torch.float32):
+        y1 = scaled_dot_product_attention(q, k, v)
+        y2 = attention.sdpa(q, k, v, block_mask=block_mask)
 
     torch.testing.assert_close(y1, y2)
 
