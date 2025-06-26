@@ -20,9 +20,9 @@ from olmo_core.data import (
     TokenizerName,
 )
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
-from olmo_core.nn.attention import AttentionConfig
 from olmo_core.nn.rope import RoPEConfig
 from olmo_core.nn.rope import RoPEScalingConfig
+from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
@@ -401,11 +401,19 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
     model_config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_first=False, pattern=[False, False, False, True]
     )
-
+    # model_config.block.attention.rope = RoPEConfig(
+    #     theta=8 * 10 ** 6,
+    #     scaling=RoPEScalingConfig(
+    #     )
+    # )
+    # model_config.block.attention.rope = RoPEConfig(
+    #     theta=8 * 10 ** 6,
+    #     scaling=RoPEScalingConfig(
+    #     )
+    # )
     model_config.block.attention.rope = RoPEConfig(
         theta=8 * 10 ** 6,
-        scaling=RoPEScalingConfig(
-        )
+        scaling=YaRNRoPEScalingConfig()
     )
     # Print the config for debugging and then execute the command.
     if get_local_rank() == 0:

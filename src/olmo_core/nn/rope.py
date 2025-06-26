@@ -14,6 +14,7 @@ __all__ = [
     "RoPEType",
     "RoPEConfig",
     "RoPEScalingConfig",
+    "YaRNRoPEScalingConfig"
     "RotaryEmbeddingBase",
     "RotaryEmbedding",
     "FusedRotaryEmbedding",
@@ -73,19 +74,70 @@ class RoPEScalingConfig(Config):
 
 
 @dataclass
-class YARnRoPEScalingConfig(Config):
+class YaRNRoPEScalingConfig(RoPEScalingConfig):
     """
-    Defines how to scale RoPE to longer sequence lengths.
+    Defines how to scale RoPE using the YaRN method
+    [original paper](https://huggingface.co/papers/2309.00071)
     """
 
-    factor: float = 32.0
+    factor: float = 8.0
+    beta_fast: int = 32
+    beta_slow: int = 1
     attention_factor: float = 1.0
+    base: int = 500_000
+    n_heads: int = 32 
+    original_max_position_embeddings: int = 4096
+    
 
     def scale_inv_freq(
         self,
         inv_freq: torch.Tensor,
     ) -> tuple["torch.Tensor", float]:
-        return _, self.attention_factor
+
+
+        def get_mscale(scale, mscale=1):
+            if scale <= 1:
+                return 1.0
+            return 0.1 * mscale * math.log(scale) + 1.0
+
+
+        def find_correction_dim(num_rotations, dim, base, max_position_embeddings):
+            """Inverse dimension formula to find the dimension based on the number of rotations"""
+            return (dim * math.log(max_position_embeddings / (num_rotations * 2 * math.pi))) / (2 * math.log(base))
+
+        def find_correction_range(low_rot, high_rot, dim, base, max_position_embeddings):
+            """Find dimension range bounds based on rotations"""
+            low = math.floor(find_correction_dim(low_rot, dim, base, max_position_embeddings))
+            high = math.ceil(find_correction_dim(high_rot, dim, base, max_position_embeddings))
+            return max(low, 0), min(high, dim - 1)
+
+        def linear_ramp_factor(min, max, dim):
+            if min == max:
+                max += 0.001  # Prevent singularity
+
+            linear_func = (torch.arange(dim, dtype=torch.float32) - min) / (max - min)
+            ramp_func = torch.clamp(linear_func, 0, 1)
+            return ramp_func
+
+        attention_factor = get_mscale(self.factor)
+
+
+        # Note on variable naming: "interpolation" comes from the original technique, where we interpolate the position IDs
+        # to expand the possible context length. In other words, interpolation = apply scaling factor.
+        pos_freqs = self.base ** (torch.arange(0, self.n_heads, 2) / self.n_heads)
+        inv_freq_extrapolation = 1.0 / pos_freqs
+        inv_freq_interpolation = 1.0 / (self.factor * pos_freqs)
+
+        low, high = find_correction_range(self.beta_fast, self.beta_slow, self.n_heads, self.base, self.original_max_position_embeddings)
+
+        # Get n-dimensional rotational scaling corrected for extrapolation
+        inv_freq_extrapolation_factor = 1 - linear_ramp_factor(low, high, self.n_heads // 2)
+        inv_freq = (
+            inv_freq_interpolation * (1 - inv_freq_extrapolation_factor)
+            + inv_freq_extrapolation * inv_freq_extrapolation_factor
+        )
+
+        return inv_freq, attention_factor
 
 
 @dataclass
