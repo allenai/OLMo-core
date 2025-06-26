@@ -25,6 +25,8 @@ from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
+    TransformerActivationCheckpointingConfig,
+    TransformerActivationCheckpointingMode
 )
 
 SEQUENCE_LENGTH = 8192
@@ -85,6 +87,10 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
             shard_degree=32,
+        ),
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.selected_modules,
+            modules=[f"blocks.{i}.feed_forward" for i in range(0, 64, 4)],
         ),
         float8_config=Float8Config(
             enabled=True,
