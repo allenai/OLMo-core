@@ -43,18 +43,19 @@ class RoPEType(StrEnum):
 @dataclass
 class RoPEScalingConfig(Config):
     """
-    Defines how to scale RoPE to longer sequence lengths.
+    Defines how to scale RoPE to longer sequence lengths in the manner of Llama3.1.
     """
 
-    factor: float = 32.0
+    factor: float = 8.0
     low_freq_factor: float = 1.0
     high_freq_factor: float = 4.0
-    old_context_len: int = 8192
+    old_context_len: int = 4096
+    attention_factor: float = 1.0
 
     def scale_inv_freq(
         self,
         inv_freq: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> tuple["torch.Tensor", float]:
         low_freq_wavelen = self.old_context_len / self.low_freq_factor
         high_freq_wavelen = self.old_context_len / self.high_freq_factor
 
@@ -68,7 +69,23 @@ class RoPEScalingConfig(Config):
         )
         smoothed_inv_freq = (1 - smooth_factor) * inv_freq / self.factor + smooth_factor * inv_freq
         is_medium_freq = ~(wavelen < high_freq_wavelen) * ~(wavelen > low_freq_wavelen)
-        return torch.where(is_medium_freq, smoothed_inv_freq, inv_freq)
+        return torch.where(is_medium_freq, smoothed_inv_freq, inv_freq), self.attention_factor
+
+
+@dataclass
+class YARnRoPEScalingConfig(Config):
+    """
+    Defines how to scale RoPE to longer sequence lengths.
+    """
+
+    factor: float = 32.0
+    attention_factor: float = 1.0
+
+    def scale_inv_freq(
+        self,
+        inv_freq: torch.Tensor,
+    ) -> tuple["torch.Tensor", float]:
+        return _, self.attention_factor
 
 
 @dataclass
