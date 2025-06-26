@@ -20,7 +20,7 @@ from ..feed_forward import FeedForward, FeedForwardConfig
 from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
 from ..moe import MoEConfig, MoERouter
-from ..moe.parallel_mlp import ParallelMLPBase
+from ..moe.parallel_mlp import ParallelMLPBase, ParallelDroplessMLP
 from .config import TransformerDataParallelWrappingStrategy
 from torch.utils.checkpoint import checkpoint, CheckpointFunction
 
@@ -210,7 +210,7 @@ class ReorderedNormTransformerBlock(TransformerBlock):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        USE_RECOMPUTE = True
+        USE_RECOMPUTE = False
         def custom_forward(
             x: torch.Tensor,
             *,
@@ -637,7 +637,7 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         **kwargs,
     ) -> torch.Tensor:
         if not self.use_combined_forward:
-            USE_RECOMPUTE = True
+            USE_RECOMPUTE = False
             if USE_RECOMPUTE:
                 
                 return checkpoint(self.overlap_forward, x, use_reentrant=False, loss_div_factor=loss_div_factor, **kwargs)
@@ -658,7 +658,11 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
             #     h_dense = self._fwd_dense(x, **kwargs)
             # torch.cuda.default_stream().wait_stream(stream)
             # return h_sparse + h_dense
-            return self.combined_forward(x, loss_div_factor=loss_div_factor, **kwargs)
+            
+            
+            return cast(MoEHybridReorderedNormTransformerBlock, self).combined_forward(x, loss_div_factor=loss_div_factor, **kwargs)
+            
+            # return cast(MoEHybridReorderedNormTransformerBlock, self).overlap_forward(x, loss_div_factor=loss_div_factor, **kwargs)
 
     def apply_tp(
         self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
@@ -859,7 +863,7 @@ def async_copy_to_cpu(gpu_buf):
     
     with torch.cuda.stream(dtoh_stream):
         cpu_buf = torch.empty_like(gpu_buf,
-                                device="cpu", pin_memory=False) # compile does not work with pin_memory
+                                device="cpu", pin_memory=True) # compile does not work with pin_memory
         cpu_buf.copy_(gpu_buf, non_blocking=True)
     
     # cpu_buf = gpu_buf.to(torch.device("cpu"), non_blocking=True)
@@ -887,7 +891,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ):
-
+        USE_DENSE_RECOMPUTE = False
         # feed_forward_moe -------- start
         expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = self.router(
             x, loss_div_factor=loss_div_factor
@@ -901,20 +905,30 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         # dense out -------- start
         dense_stream = get_or_init_stream(id=2)
         dense_stream.wait_stream(torch.cuda.current_stream())
-        with  torch.cuda.stream(dense_stream):
-            h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-            dense_out = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+        with torch.cuda.stream(dense_stream):
+            attn_out = self.attention(x, **kwargs)
+            # @torch.compile
+            def dense_forward(x: torch.Tensor, **kwargs) -> torch.Tensor:
+                h = x + self.dropout(self.attention_norm(x))
+                return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+
+            if USE_DENSE_RECOMPUTE:
+                # recompute the dense forward pass
+                dense_out = checkpoint(
+                    dense_forward, attn_out, use_reentrant=False, **kwargs
+                )
+            else:
+                # run the dense forward pass normally
+                dense_out = dense_forward(attn_out, **kwargs)
+            
         # dense  -------- end
 
         if router_aux_loss is not None:
             x = attach_auxiliary_loss(x, router_aux_loss)
 
         # shared experts
-        shared_out: Optional[torch.Tensor] = None
-        if self.shared_mlp is not None:
-            shared_out = self.shared_mlp(x)
-            if self.feed_forward_moe.shared_expert_norm is not None:
-                shared_out = self.feed_forward_moe.shared_expert_norm(shared_out)
+        assert self.shared_mlp is None, "shared_mlp is not supported in MoEHybridReorderedNormTransformerBlock"
+
         
         # routed experts
         # --------------------------------------------------------------
@@ -923,20 +937,52 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         # torch.cuda.current_stream().wait_stream(copy_stream)
         copy_stream.synchronize() # as the grouped gemm is not on the default stream, it is not waiting for the copy to finish, so still need to synchronize it
         # --------------------------------------------------------------
-        feed_forward_moe_out = self.experts(x, expert_weights, expert_indices, batch_size_per_expert, batch_size_per_expert_cpu)
-        if self.feed_forward_moe.routed_expert_norm is not None:
-            feed_forward_moe_out = self.feed_forward_moe.routed_expert_norm(feed_forward_moe_out)
+        
             
-        if shared_out is not None:
-            shared_out = shared_out / (self.top_k + 1)
-            feed_forward_moe_out = shared_out.add(feed_forward_moe_out, alpha=self.top_k / (self.top_k + 1))
+        # @torch.compile
+        def sparse_forward(
+            x: torch.Tensor,
+            expert_weights: torch.Tensor,
+            expert_indices: torch.Tensor,
+            batch_size_per_expert: torch.Tensor,
+            batch_size_per_expert_cpu: torch.Tensor,
+            # feed_forward_moe_out: torch.Tensor,
+        ):
+
+            feed_forward_moe_out = self.experts(x, expert_weights, expert_indices, batch_size_per_expert, batch_size_per_expert_cpu)
+            if self.feed_forward_moe.routed_expert_norm is not None:
+                assert False, "routed_expert_norm is not supported in MoEHybridReorderedNormTransformerBlock"
+                # feed_forward_moe_out = self.feed_forward_moe.routed_expert_norm(feed_forward_moe_out)
+            sparse_out = self.dropout(
+                self.feed_forward_moe_norm(feed_forward_moe_out)
+            )
+            return sparse_out
+        
+        USE_SPARSE_RECOMPUTE = False
+        if USE_SPARSE_RECOMPUTE:
+            sparse_out = checkpoint(
+                sparse_forward,
+                x,
+                expert_weights,
+                expert_indices,
+                batch_size_per_expert,
+                batch_size_per_expert_cpu,
+                use_reentrant=False,
+            )
+            # sparse_out = checkpoint(
+            #     sparse_norm_forward,
+            #     feed_forward_moe_out,
+            #     use_reentrant=False,
+            # )
+        else:
+            sparse_out = sparse_forward(
+                x, expert_weights, expert_indices, batch_size_per_expert, batch_size_per_expert_cpu
+            )
+            # sparse_out = sparse_norm_forward(
+            #     feed_forward_moe_out,
+            # )
             
-        # feed_forward_moe -------- end
 
-
-        sparse_out = self.dropout(
-            self.feed_forward_moe_norm(feed_forward_moe_out)
-        )
         
         torch.cuda.current_stream().wait_stream(dense_stream)
         final_out = dense_out + sparse_out
@@ -949,9 +995,133 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
+
+        B, S, D = x.shape
+
+        ##### DENSE: submit the dense forward pass to a separate stream #####
+        dense_stream = get_or_init_stream(id=2)
+        dense_stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(dense_stream):
+            # Compute attention while all-to-all is in progress.
+            dense_out = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+            dense_out = dense_out + self.dropout(self.feed_forward_norm(self.feed_forward(dense_out)))
+            assert self.shared_mlp is None
+            # Compute feed-forward while all-to-all is in progress.
+        
+        ##### DENSE: end #####
+        
+        local_x = get_local_tensor(x)
+
+        (
+            local_x_global_expert_weights, # (B, S, top_k)
+            local_x_global_expert_indices, # (B, S, top_k)
+            local_batch_size_per_global_expert, # (num_experts, )
+            router_aux_loss # scalar
+        ) = self.router(
+            local_x, 
+            loss_div_factor=loss_div_factor # scalar
+        )
+
+        if router_aux_loss is not None:
+            local_x = attach_auxiliary_loss(local_x, router_aux_loss)
+
+        # shape: (batch_size * seq_len, d_model)
+        local_x = local_x.view(-1, D)
+        # shape: (batch_size * seq_len * top_k,)
+        local_x_global_expert_weights = get_local_tensor(local_x_global_expert_weights).flatten()
+        # shape: (batch_size * seq_len * top_k,)
+        local_x_global_expert_indices = get_local_tensor(local_x_global_expert_indices).flatten()
+
+        # with torch.no_grad():
+        #     (
+        #         indices, # indices[i] = j -> the i_th token of bin_ids comes from expert_indices[j]
+        #         bin_ids, # bin_ids[i] = e  -> i_th token should go to expert e
+        #         bins # the cumsum of bin sizes, size of bin i (where i>0)  = bins[i] - bins[i-1]
+        #      ) = cast(ParallelDroplessMLP, self.experts).indices_and_bins(
+        #         expert_indices, batch_size_per_expert
+        #     )
+
+        # (
+        #     parallel_x,
+        #     parallel_indices,
+        #     parallel_bin_ids,
+        #     parallel_bins,
+        #     parallel_batch_size_per_expert,
+        #     recv_counts,
+        #     send_counts,
+        #     expert_capacity,
+        #     handle,
+        # ) = cast(ParallelDroplessMLP, self.experts).permute_and_all_to_all(
+        #     x_moe,
+        #     indices=indices,
+        #     bin_ids=bin_ids,
+        #     bins=bins,
+        #     batch_size_per_expert=batch_size_per_expert,
+        # ) # type: ignore
+
+        (
+            parallel_x,
+            parallel_indices,
+            parallel_bin_ids,
+            parallel_bins,
+            parallel_batch_size_per_expert,
+            recv_counts,
+            send_counts,
+            expert_capacity,
+            handle,
+        ) = cast(ParallelDroplessMLP, self.experts).global_permute(
+            local_x,
+            local_x_global_expert_indices, 
+            local_batch_size_per_global_expert=local_batch_size_per_global_expert,
+        ) # type: ignore
+
+
+
+
+        handle.wait()
+        parallel_x = cast(ParallelDroplessMLP, self.experts).compute_local_experts(
+            parallel_x,
+            parallel_indices=parallel_indices,
+            parallel_bin_ids=parallel_bin_ids,
+            parallel_bins=parallel_bins,
+            parallel_batch_size_per_expert=parallel_batch_size_per_expert,
+            expert_capacity=expert_capacity,
+        )
+
+        x_moe, handle = cast(ParallelDroplessMLP, self.experts).reverse_all_to_all(
+            parallel_x, send_counts=send_counts, recv_counts=recv_counts
+        )
+
+
+
+        handle.wait()
+        x_moe = self.experts.unpermute(
+            x_moe,
+            expert_weights=expert_weights,
+            expert_indices=expert_indices,
+            indices=indices,
+            bin_ids=bin_ids,
+            bins=bins,
+        ).view(B, -1, D)
+        
+        sparse_out = self.dropout(self.feed_forward_moe_norm(x_moe))
+        
+        
+        torch.cuda.current_stream().wait_stream(dense_stream)
+        
+        return dense_out + sparse_out
+
+
+    def combined_forward_old(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
         # NOTE: this follows the same code path as the MoE's forward pass, except that we run
         # dense operations while we wait on expert parallel all-to-all comms.
-        B, _, D = x.shape
+        B, S, D = x.shape
 
         x_moe = get_local_tensor(x)
 
@@ -970,7 +1140,11 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         expert_indices = get_local_tensor(expert_indices).flatten()
 
         with torch.no_grad():
-            indices, bin_ids, bins = self.experts.indices_and_bins(
+            (
+                indices, # indices[i] = j -> the i_th token of bin_ids comes from expert_indices[j]
+                bin_ids, # bin_ids[i] = e  -> i_th token should go to expert e
+                bins # the cumsum of bin sizes, size of bin i (where i>0)  = bins[i] - bins[i-1]
+             ) = cast(ParallelDroplessMLP, self.experts).indices_and_bins(
                 expert_indices, batch_size_per_expert
             )
 
@@ -984,13 +1158,13 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
             send_counts,
             expert_capacity,
             handle,
-        ) = self.experts.permute_and_all_to_all(
+        ) = cast(ParallelDroplessMLP, self.experts).permute_and_all_to_all(
             x_moe,
             indices=indices,
             bin_ids=bin_ids,
             bins=bins,
             batch_size_per_expert=batch_size_per_expert,
-        )
+        ) # type: ignore
 
         # Compute attention while all-to-all is in progress.
         h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
@@ -1002,7 +1176,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
             moe_shared_out = self.shared_mlp(x_moe.view(B, -1, D))
 
         handle.wait()
-        parallel_x = self.experts.compute_local_experts(
+        parallel_x = cast(ParallelDroplessMLP, self.experts).compute_local_experts(
             parallel_x,
             parallel_indices=parallel_indices,
             parallel_bin_ids=parallel_bin_ids,
@@ -1011,7 +1185,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
             expert_capacity=expert_capacity,
         )
 
-        x_moe, handle = self.experts.reverse_all_to_all(
+        x_moe, handle = cast(ParallelDroplessMLP, self.experts).reverse_all_to_all(
             parallel_x, send_counts=send_counts, recv_counts=recv_counts
         )
 

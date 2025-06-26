@@ -77,8 +77,6 @@ class SubCmd(StrEnum):
     dry_run = "dry_run"
     utils = "utils"
 
-    def prepare_environment(self):
-        if self in (SubCmd.launch, SubCmd.dry_run, SubCmd.prep, SubCmd.launch_prep, SubCmd.utils):
     def prepare_environment(self, config: ExperimentConfig):
         if self in (SubCmd.launch, SubCmd.dry_run, SubCmd.prep, SubCmd.launch_prep):
             prepare_cli_environment()

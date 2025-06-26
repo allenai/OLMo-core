@@ -16,6 +16,7 @@ from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import log_once
 import nvtx
+from torch.utils.checkpoint import checkpoint, CheckpointFunction
 
 try:
     import grouped_gemm  # type: ignore
@@ -290,9 +291,30 @@ class DroplessMoEMLP(MoEMLPBase):
             get_local_tensor(self.w2.view(self.num_experts, self.hidden_size, self.d_model)),
             get_local_tensor(self.w3.view(self.num_experts, self.hidden_size, self.d_model)),
         )
-        # batch_size_per_expert = batch_size_per_expert.cpu()
+        batch_size_per_expert = batch_size_per_expert.cpu()
         # Compute the MLP.
-        x1 = self.gmm(x, w1, batch_size_per_expert, trans_b=True)
-        x2 = self.gmm(x, w3, batch_size_per_expert, trans_b=True)
-        x1 = F.silu(x1) * x2
-        return self.gmm(x1, w2, batch_size_per_expert)
+        USE_RECOMPUTE=False
+        
+        # @torch.compile
+        def custom_forward(x, w1, w2, w3, batch_size_per_expert):
+            x1 = self.gmm(x, w1, batch_size_per_expert, trans_b=True)
+            x2 = self.gmm(x, w3, batch_size_per_expert, trans_b=True)
+            x1 = F.silu(x1) * x2
+
+            return self.gmm(x1, w2, batch_size_per_expert)
+        
+        if USE_RECOMPUTE:
+            out = checkpoint(
+                custom_forward,
+                x,
+                w1,
+                w2,
+                w3,
+                batch_size_per_expert,
+                use_reentrant=False
+            )
+        else:
+            out = custom_forward(
+                x, w1, w2, w3, batch_size_per_expert
+            )
+        return out

@@ -16,6 +16,7 @@ from olmo_core.utils import ensure_multiple_of, get_default_device, move_to_devi
 from ..buffer_cache import BufferCache
 from .mlp import DroplessMoEMLP, MoEMLP, MoEMLPBase
 import nvtx
+from torch.utils.checkpoint import checkpoint, CheckpointFunction
 __all__ = ["ParallelMLPBase", "ParallelMLP", "ParallelDroplessMLP"]
 
 from transformer_engine.pytorch.permutation import (
@@ -679,24 +680,51 @@ class ParallelDroplessMLP(ParallelMLPBase):
         ################
         use_te = True
         if use_te:
+            assert False
             bsz, n_token_per_batch, d_model = in_shape
             routing_map = expert_indices.view(-1, self.top_k).int()
             num_out_tokens = routing_map.size(0) * self.top_k # dropless
             hidden_shape_before_permute = x.shape
-            permutated_input_tokens, reversed_input_permutation_mapping = moe_permute_no_compile(inp=x, routing_map=routing_map, num_out_tokens=num_out_tokens, map_type='index')
-            # permutated_input_tokens_sorted =  moe_sort_chunks_by_index(
-            #     permutated_input_tokens,
-            #     split_sizes= batch_size_per_expert,
-            #     sorted_index=torch.arange(batch_size_per_expert.size(0), device=batch_size_per_expert.device, dtype=torch.int32),
-            # ) # only useful for ep?
-            permutated_input_tokens_sorted = permutated_input_tokens
-            x = self.mlp(permutated_input_tokens_sorted, batch_size_per_expert_cpu)
-            # assert torch.isclose(permutated_input_tokens_sorted, x).all(), "Permuted input tokens do not match the gathered input tokens."
-                        # unpermutated_input_tokens_sorted = moe_sort_chunks_by_index(
-                #     x,
-                #     batch_size_per_expert,
-                #     torch.arange(batch_size_per_expert.size(0), device=batch_size_per_expert.device, dtype=torch.int32),
+            
+            
+
+            def permute_and_compute(x, batch_size_per_expert_cpu, routing_map, num_out_tokens):
+                permutated_input_tokens, reversed_input_permutation_mapping = moe_permute_no_compile(inp=x, routing_map=routing_map, num_out_tokens=num_out_tokens, map_type='index')
+                # permutated_input_tokens_sorted =  moe_sort_chunks_by_index(
+                #     permutated_input_tokens,
+                #     split_sizes= batch_size_per_expert,
+                #     sorted_index=torch.arange(batch_size_per_expert.size(0), device=batch_size_per_expert.device, dtype=torch.int32),
                 # ) # only useful for ep?
+                permutated_input_tokens_sorted = permutated_input_tokens
+                x = self.mlp(permutated_input_tokens_sorted, batch_size_per_expert_cpu)
+                # assert torch.isclose(permutated_input_tokens_sorted, x).all(), "Permuted input tokens do not match the gathered input tokens."
+                            # unpermutated_input_tokens_sorted = moe_sort_chunks_by_index(
+                    #     x,
+                    #     batch_size_per_expert,
+                    #     torch.arange(batch_size_per_expert.size(0), device=batch_size_per_expert.device, dtype=torch.int32),
+                    # ) # only useful for ep?
+                    
+                return x, reversed_input_permutation_mapping
+                    
+            USE_RECOMPUTE=False
+            if USE_RECOMPUTE:        
+                # recompute the permute and compute
+                x, reversed_input_permutation_mapping = checkpoint(
+                    permute_and_compute,
+                    x,
+                    batch_size_per_expert_cpu=batch_size_per_expert_cpu,
+                    routing_map=routing_map,
+                    num_out_tokens=num_out_tokens,
+                    use_reentrant=False,
+                )
+            else:
+                x, reversed_input_permutation_mapping = permute_and_compute(
+                    x,
+                    batch_size_per_expert_cpu=batch_size_per_expert_cpu,
+                    routing_map=routing_map,
+                    num_out_tokens=num_out_tokens,
+                )        
+                    
             unpermutated_input_tokens_sorted = x
             unpermutated_input_tokens = moe_unpermute_no_compile(
                 inp=unpermutated_input_tokens_sorted,
@@ -799,6 +827,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
 
         # Permute locally and without any padding so that tokens for each
         # parallel device are stored contiguously.
+        #### NOTE: after this point, the tokens have duplications (duplicated by TOP_K times)
         x = ops.gather(x.view(-1, x.shape[-1]), indices, bin_ids, bins, self.top_k)
 
         # Compute the number of tokens that will be received from each
@@ -970,3 +999,135 @@ class ParallelDroplessMLP(ParallelMLPBase):
 
         # Un-route the data for the MoE output.
         return ops.scatter(x, indices, bin_ids, expert_weights, bins, top_k)
+
+
+    @torch._dynamo.disable()  # TODO: might be able to relax this, or be more fine-grained
+    def global_permute(
+        self,
+        local_x: torch.Tensor,
+        local_x_global_expert_indices: torch.Tensor,
+        local_batch_size_per_global_expert: torch.Tensor,
+    ) -> PermutedAllToAllOutput:
+        assert self.hidden_sharding_degree == 1, "Global permutation is only supported when hidden sharding degree is 1."
+        
+        # Communicate the number of tokens that will be sent to each device.
+        with torch.no_grad():
+
+            # Pass token count information to the device on which the
+            # target expert resides.
+            global_batch_size_per_local_expert = torch.empty_like(
+                local_batch_size_per_global_expert,
+            )
+            tpe_handle = dist.all_to_all_single(
+                global_batch_size_per_local_expert, # Gathered concatenated output tensor.
+                local_batch_size_per_global_expert, # Input tensor to scatter.
+                group=self.ep_pg,
+                async_op=True,
+            )
+            assert tpe_handle is not None
+
+        ########### OLD: end ######################
+        with torch.no_grad():
+            indices, bin_ids, bins_bounds = self.indices_and_bins(local_x_global_expert_indices, local_batch_size_per_global_expert)
+        
+        # Permute locally and without any padding so that tokens for each
+        # parallel device are stored contiguously.
+        #### NOTE: after this point, the tokens have duplications (duplicated by TOP_K times)
+        local_x_old = ops.gather(local_x.view(-1, local_x.shape[-1]), indices, bin_ids, bins_bounds, self.top_k)
+        ########### OLD: end ######################
+        
+        
+        
+        ########### NEW: ######################
+        routing_map = local_x_global_expert_indices.view(-1, self.top_k).int()
+        num_out_tokens = routing_map.size(0) * self.top_k # dropless
+        permutated_local_x, reversed_local_x_permutation_mapping = moe_permute_no_compile(
+            inp=local_x, 
+            routing_map=routing_map, 
+            num_out_tokens=num_out_tokens, 
+            map_type='index'
+        ) # type: ignore
+                # permutated_input_tokens_sorted =  moe_sort_chunks_by_index(
+                #     permutated_input_tokens,
+                #     split_sizes= batch_size_per_expert,
+                #     sorted_index=torch.arange(batch_size_per_expert.size(0), device=batch_size_per_expert.device, dtype=torch.int32),
+                # ) # only useful for ep?
+        permutated_input_tokens_sorted = permutated_local_x
+        
+        ########## NEW: end ######################
+
+
+        # Compute the number of tokens that will be received from each
+        # device and permute the input data across the devices.
+        with torch.no_grad():
+            tpe_handle.wait()
+
+            # Reshape to (ep_world_size, num_local_experts).
+            local_batch_size_per_global_expert = local_batch_size_per_global_expert.view(
+                self.ep_world_size, self.num_local_experts
+            )
+            global_batch_size_per_local_expert = global_batch_size_per_local_expert.view(
+                self.ep_world_size, self.num_local_experts
+            )
+
+            # NOTE: host-device sync here.
+            send_counts = local_batch_size_per_global_expert.sum(dim=-1).cpu().tolist()
+            recv_counts = global_batch_size_per_local_expert.sum(dim=-1).cpu().tolist()
+            tokens_received = sum(recv_counts)
+
+
+        with torch.no_grad():
+            # After we do the cross-device permutation we have the tokens on the
+            # correct device but not yet grouped by expert because we received
+            # tokens from each device as contiguous chunks. To group the tokens
+            # for expert computation we'll do one more local permutation. The
+            # rest of this torch.no_grad() scope sets up the indices and bins
+            # for this permutation.
+
+            # Construct the expert indices for the permuted tokens.
+            parallel_top_expert = torch.remainder(
+                torch.arange(
+                    self.num_experts * self.hidden_sharding_degree,
+                    dtype=torch.int32,
+                    device=indices.device,
+                ),
+                self.num_local_experts,
+            )
+
+            parallel_top_expert = torch.repeat_interleave(
+                parallel_top_expert,
+                parallel_batch_size_per_expert.flatten(),
+                output_size=tokens_received,
+            )
+
+            parallel_bin_ids, parallel_indices = torch.sort(parallel_top_expert)
+
+            # Calculate the bins boundaries from the token counts.
+            parallel_batch_size_per_expert = parallel_batch_size_per_expert.sum(
+                dim=0,
+                dtype=torch.long,
+            )
+            parallel_bins = torch.empty_like(parallel_batch_size_per_expert, dtype=torch.int32)
+            torch.cumsum(parallel_batch_size_per_expert, 0, out=parallel_bins)
+
+        # Start the cross-device permutation asynchronously so we can
+        # overlap communication with computation.
+        parallel_x, parallel_x_handle = ops.all_to_all(
+            x,
+            recv_counts,
+            send_counts,
+            group=self.ep_pg,
+            async_op=True,
+        )
+
+        return PermutedAllToAllOutput(
+            parallel_x,
+            parallel_indices,
+            parallel_bin_ids,
+            parallel_bins,
+            parallel_batch_size_per_expert,
+            recv_counts,
+            send_counts,
+            -1,
+            parallel_x_handle,
+        )

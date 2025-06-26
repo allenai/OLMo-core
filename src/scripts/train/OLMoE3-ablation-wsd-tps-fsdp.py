@@ -49,17 +49,17 @@ log = logging.getLogger(__name__)
 
 SEQUENCE_LENGTH = 8192
 GLOBAL_BATCH_SIZE = (
-    512 * SEQUENCE_LENGTH
+    1536 * SEQUENCE_LENGTH
 )  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
 MAX_DURATION = int(500e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
-NUM_EXPERTS = 32
+NUM_EXPERTS = 128
 TOP_K = 8
-NUM_LAYERS=4
+NUM_LAYERS=32
 MOE_HIDDEN_SIZE = 1024
 USE_SHARED_MLP = False  # Use shared MLP in MoE blocks
 SHARED_MLP_HIDDEN_SIZE = 4096  # Hidden size for shared MLP in MoE blocks
-MICRO_BSZ = 2
+MICRO_BSZ = 6
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = 2048
@@ -144,17 +144,17 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             # fused=True,
             compile=True,
         ),
-        compile_model=False,
+        compile_model=True,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.bfloat16,
             #  num_replicas=1,  # to enable full-way expert parallel
-            shard_degree=8,
+            shard_degree=64,
             prefetch_factor=1,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),
-         ep_config=TransformerExpertParallelConfig(degree=-1),
+        #  ep_config=TransformerExpertParallelConfig(degree=-1),
         # pp_config=TransformerPipelineParallelConfig(
         #     degree=2,
         #     schedule=PipelineScheduleType.interleaved_1F1B,

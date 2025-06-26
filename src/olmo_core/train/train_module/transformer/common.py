@@ -153,5 +153,6 @@ def parallelize_model(
             device=device,
             pp_mesh=pp_mesh,
         )
-
+    # debug1 = model_parts[0].blocks['1'].router.weight.view(32, 2048)
+    # debug2 = model_parts[0].blocks['1'].attention.w_q.weight
     return model
