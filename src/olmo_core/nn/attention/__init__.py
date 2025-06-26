@@ -989,6 +989,7 @@ def _get_flex_attn_mask_mod(
     window_size: Optional[Tuple[int, int]] = None,
     max_doc_len: Optional[int] = None,
     cu_doc_lens: Optional[torch.Tensor] = None,
+    device: Optional[torch.device] = None,
 ):
     mask_mods = []
 
@@ -1013,6 +1014,8 @@ def _get_flex_attn_mask_mod(
     if max_doc_len is not None or cu_doc_lens is not None:
         if max_doc_len is None or cu_doc_lens is None:
             raise ValueError("max_doc_len and cu_doc_lens must be null or non-null")
+        if device is None:
+            raise ValueError("Device is required for intra-document masking mod")
 
         # Get the document id of each token
         doc_ids = []
@@ -1024,10 +1027,12 @@ def _get_flex_attn_mask_mod(
 
             doc_ids.append(cu_doc_lens_idx)
 
+        document_ids = torch.tensor(doc_ids, device=device)
+
         def _document_masking_mask_mod(
             B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
         ) -> torch.Tensor:
-            return doc_ids[q_idx] == doc_ids[kv_idx]
+            return document_ids[q_idx] == document_ids[kv_idx]
 
         mask_mods.append(_document_masking_mask_mod)
 
@@ -1036,35 +1041,15 @@ def _get_flex_attn_mask_mod(
 
 @cache
 def _get_causal_block_mask(
-    seq_len: int, device: str, window_size: Optional[Tuple[int, int]] = None
+    seq_len: int, device: torch.device, window_size: Optional[Tuple[int, int]] = None
 ) -> BlockMask:
-    mask_mods = []
-
-    def _causal_mask_mod(
-        B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
-    ) -> torch.Tensor:
-        causal_mask = q_idx >= kv_idx
-        return causal_mask
-
-    mask_mods.append(_causal_mask_mod)
-
-    if window_size is not None and window_size != (-1, -1):
-
-        def _sliding_window_mask_mod(
-            B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
-        ) -> torch.Tensor:
-            causal_mask = q_idx >= kv_idx
-            return causal_mask
-
-        mask_mods.append(_sliding_window_mask_mod)
-
     return create_block_mask(
-        and_masks(*mask_mods),
+        _get_flex_attn_mask_mod(window_size, device=device),
         B=None,
         H=None,
         Q_LEN=seq_len,
         KV_LEN=seq_len,
-        device=device,
+        device=device.type,
     )
 
 
@@ -1077,7 +1062,7 @@ def get_flex_attn_causal_block_mask(
 ) -> BlockMask:
     if max_doc_len is not None or cu_doc_lens is not None:
         return create_block_mask(
-            _get_flex_attn_mask_mod(window_size, max_doc_len, cu_doc_lens),
+            _get_flex_attn_mask_mod(window_size, max_doc_len, cu_doc_lens, device=device),
             B=None,
             H=None,
             Q_LEN=seq_len,
@@ -1087,4 +1072,4 @@ def get_flex_attn_causal_block_mask(
 
     else:
         # If not doing intra-document masking, use caching when getting causal block mask for better perf.
-        return _get_causal_block_mask(seq_len, device.type, window_size)
+        return _get_causal_block_mask(seq_len, device, window_size)
