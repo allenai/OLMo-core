@@ -110,6 +110,55 @@ def test_attention(
     torch.testing.assert_close(y[1:, :, :], y2)
 
 
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pytest.param(torch.bfloat16, id="bf16", marks=GPU_MARKS),
+        pytest.param(torch.float32, id="fp32"),
+    ],
+)
+def test_flex_attention_against_sdpa(device: torch.device, dtype: torch.dtype):
+    if dtype == torch.bfloat16 and device.type == "cpu":
+        pytest.skip("bf16 requires GPU")
+
+    torch.random.manual_seed(0)
+
+    d_model = 128
+    seq_len = 32
+    batch_size = 2
+    kwargs: Dict[str, Any] = dict(
+        d_model=d_model,
+        n_heads=8,
+        init_device=device.type,
+    )
+
+    attention = Attention(**kwargs)
+    flex_att = Attention(use_flex_attn=True, **kwargs)
+
+    block_mask = get_flex_attn_causal_block_mask(
+        seq_len,
+        device,
+        flex_att.window_size,
+    )
+
+    # Make sure weights match.
+    with torch.no_grad():
+        flex_att.w_out.load_state_dict(attention.w_out.state_dict())
+        flex_att.w_q.load_state_dict(attention.w_q.state_dict())
+        flex_att.w_k.load_state_dict(attention.w_k.state_dict())
+        flex_att.w_v.load_state_dict(attention.w_v.state_dict())
+
+    x1 = torch.randn(batch_size, seq_len, d_model, dtype=dtype, device=device)
+    x2 = x1.clone()
+
+    with torch.no_grad(), torch.autocast(device.type, dtype=dtype, enabled=dtype != torch.float32):
+        y1 = attention(x1)
+        y2 = flex_att(x2, block_mask=block_mask)
+
+    torch.testing.assert_close(y1, y2)
+
+
 @requires_gpu
 @requires_flash_attn
 @pytest.mark.parametrize("dtype", [pytest.param(torch.bfloat16, id="bf16")])
