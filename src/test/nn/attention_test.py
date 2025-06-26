@@ -180,6 +180,9 @@ def test_sdpa(
     use_flash: bool,
     use_flex_attn: bool,
 ):
+    if use_flash and (dtype == torch.float32 or device.type == "cpu"):
+        pytest.skip("flash requires a low precision dtype and a gpu")
+
     torch.random.manual_seed(0)
 
     # Implementation simplified from https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html
@@ -196,7 +199,7 @@ def test_sdpa(
         scale_factor = 1 / math.sqrt(q.size(-1))
         attn_bias = torch.zeros(L, S, dtype=q.dtype, device=q.device)
 
-        temp_mask = torch.ones(L, S, dtype=torch.bool).tril(diagonal=0)
+        temp_mask = torch.ones(L, S, dtype=torch.bool, device=attn_bias.device).tril(diagonal=0)
         attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
         attn_bias.to(q.dtype)
 
