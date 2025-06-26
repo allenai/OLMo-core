@@ -3,6 +3,7 @@ ARG TARGET_PLATFORM=x86_64
 ARG CUDA_VERSION=12.8.1
 ARG CUDA_VERSION_PATH=cu128
 ARG PYTHON_VERSION=3.11
+ARG UV_VERSION=0.7.14
 ARG BASE_IMAGE=ubuntu:${UBUNTU_VERSION}
 ARG DEVEL_BASE_IMAGE=nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
 
@@ -39,7 +40,7 @@ RUN chmod +x ~/miniconda.sh && \
     rm ~/miniconda.sh
 
 # Install uv and point to the conda python executable for uv operations.
-COPY --from=ghcr.io/astral-sh/uv:0.7.14 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:${UV_VERSION} /uv /uvx /bin/
 ENV UV_PYTHON=/opt/conda/bin/python
 
 RUN /opt/conda/bin/conda install -y python=${PYTHON_VERSION} cmake conda-build pyyaml numpy ipython && \
