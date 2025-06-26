@@ -295,7 +295,7 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         script=script,
         cmd="train",
         run_name=run_name,
-        load_path="/weka/oe-training-default/ai2-llm/checkpoints/amandab/Meta-Llama-3-8B-Base/model_and_optim/",
+        load_path="gs://ai2-llm/checkpoints/amandab/Meta-Llama-3-8B-Base/model_and_optim//",
         cluster=cluster,
         overrides=overrides,
     )

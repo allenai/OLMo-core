@@ -196,7 +196,7 @@ class LcContTrain(Config):
                 num_workers=4,
             ),
             trainer=TrainerConfig(
-                save_folder=f"/weka/oe-training-default/ai2-llm/checkpoints/amandab/{run_name}",
+                save_folder=f"gs://ai2-llm/checkpoints/amandab/{run_name}",
                 # save_folder=f"/weka/oe-training-default/ai2-llm/checkpoints/dustins/{run_name}",
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
@@ -297,7 +297,7 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         script=script,
         cmd="train",
         run_name=run_name,
-        load_path="/weka/oe-training-default/ai2-llm/checkpoints/amandab/Meta-Llama-3-8B-Base/model_and_optim/",
+        load_path="gs://ai2-llm/checkpoints/amandab/Meta-Llama-3-8B-Base/model_and_optim//",
         cluster=cluster,
         overrides=overrides,
     )
