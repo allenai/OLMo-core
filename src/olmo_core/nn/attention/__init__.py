@@ -1060,9 +1060,6 @@ def get_flex_attn_causal_block_mask(
     cu_doc_lens: Optional[torch.Tensor] = None,
     block_size: int = 128,
 ) -> BlockMask:
-    if seq_len % block_size != 0:
-        raise ValueError("Sequence length should be a multiple of block size")
-
     if max_doc_len is not None or cu_doc_lens is not None:
         return create_block_mask(
             _get_flex_attn_mask_mod(window_size, max_doc_len, cu_doc_lens, device=device),
