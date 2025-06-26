@@ -1037,7 +1037,7 @@ class Trainer:
         **kwargs,
     ):
         if op_name is None:
-            op_name = op.__name__
+            op_name = op.__qualname__
         op_id = uuid.uuid4().hex
 
         def wrapped_op(*args, **kwargs):
