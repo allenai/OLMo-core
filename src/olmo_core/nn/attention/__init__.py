@@ -996,8 +996,7 @@ def _get_flex_attn_mask_mod(
     def _causal_mask_mod(
         B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
     ) -> torch.Tensor:
-        causal_mask = q_idx >= kv_idx
-        return causal_mask
+        return q_idx >= kv_idx
 
     mask_mods.append(_causal_mask_mod)
 
@@ -1006,8 +1005,7 @@ def _get_flex_attn_mask_mod(
         def _sliding_window_mask_mod(
             B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
         ) -> torch.Tensor:
-            causal_mask = q_idx >= kv_idx
-            return causal_mask
+            return q_idx - kv_idx <= window_size[0] and kv_idx - q_idx <= window_size[1]
 
         mask_mods.append(_sliding_window_mask_mod)
 
