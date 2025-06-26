@@ -78,7 +78,7 @@ class AnnealingDataMix(DataMixBase):
     name (without the '.txt' extension) below.
     """
 
-    datamix = ""
+    datamix = "llama3_64k_niah"
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
@@ -186,7 +186,7 @@ class LcContTrain(Config):
                 name=NumpyDatasetType.padded_fsl,
                 tokenizer=tokenizer_config,
                 mix_base_dir=root_dir,
-                generate_doc_lengths=True,
+                #generate_doc_lengths=True,
                 sequence_length=CONTEXT_LENGTH,
                 work_dir=get_work_dir(root_dir),
             ),

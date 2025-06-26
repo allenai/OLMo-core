@@ -186,7 +186,7 @@ class LcContTrain(Config):
                 name=NumpyDatasetType.padded_fsl,
                 tokenizer=tokenizer_config,
                 mix_base_dir=root_dir,
-                generate_doc_lengths=True,
+                #generate_doc_lengths=True,
                 sequence_length=CONTEXT_LENGTH,
                 work_dir=get_work_dir(root_dir),
             ),
