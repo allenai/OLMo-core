@@ -36,16 +36,21 @@ RUN curl -fsSL -v -o ~/miniconda.sh -O  "https://github.com/conda-forge/miniforg
 # NOTE: Manually invoke bash on miniconda script per https://github.com/conda/conda/issues/10431
 RUN chmod +x ~/miniconda.sh && \
     bash ~/miniconda.sh -b -p /opt/conda && \
-    rm ~/miniconda.sh && \
-    /opt/conda/bin/conda install -y python=${PYTHON_VERSION} cmake conda-build pyyaml numpy ipython && \
-    /opt/conda/bin/python -m pip install --upgrade --no-cache-dir pip wheel packaging "setuptools<70.0.0" ninja && \
+    rm ~/miniconda.sh
+
+# Install uv and point to the conda python executable for uv operations.
+COPY --from=ghcr.io/astral-sh/uv:0.7.14 /uv /uvx /bin/
+ENV UV_PYTHON=/opt/conda/bin/python
+
+RUN /opt/conda/bin/conda install -y python=${PYTHON_VERSION} cmake conda-build pyyaml numpy ipython && \
+    uv pip install --upgrade --no-cache-dir pip wheel packaging "setuptools<70.0.0" ninja && \
     /opt/conda/bin/conda clean -ya
 
 # Install PyTorch core ecosystem.
 ARG CUDA_VERSION_PATH
 ARG TORCH_VERSION=2.7.1
 ARG INSTALL_CHANNEL=whl
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
+RUN uv pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
     torch==${TORCH_VERSION} torchao torchvision torchaudio
 
 ENV TORCH_CUDA_ARCH_LIST="8.0 9.0"
@@ -55,26 +60,26 @@ ENV TORCH_CUDA_ARCH_LIST="8.0 9.0"
 # See https://github.com/tgale96/grouped_gemm/pull/21
 ENV GROUPED_GEMM_CUTLASS="1"
 ARG GROUPED_GEMM_VERSION="grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
-RUN pip install --no-build-isolation --no-cache-dir "${GROUPED_GEMM_VERSION}"
+RUN uv pip install --no-build-isolation --no-cache-dir "${GROUPED_GEMM_VERSION}"
 
 # Install flash-attn.
 ARG FLASH_ATTN_VERSION=2.7.4.post1
-RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
+RUN uv pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
 
 # Install ring-flash-attn.
 ARG RING_FLASH_ATTN_VERSION=0.1.5
-RUN pip install --no-build-isolation --no-cache-dir ring-flash-attn==${RING_FLASH_ATTN_VERSION}
+RUN uv pip install --no-build-isolation --no-cache-dir ring-flash-attn==${RING_FLASH_ATTN_VERSION}
 
 # Install liger-kernel.
 ARG LIGER_KERNEL_VERSION=0.5.10
-RUN pip install --no-build-isolation --no-cache-dir liger-kernel==${LIGER_KERNEL_VERSION}
+RUN uv pip install --no-build-isolation --no-cache-dir liger-kernel==${LIGER_KERNEL_VERSION}
 
 # Install direct dependencies, but not source code.
 COPY pyproject.toml .
 COPY src/olmo_core/__init__.py src/olmo_core/__init__.py
 COPY src/olmo_core/version.py src/olmo_core/version.py
-RUN pip install --no-cache-dir '.[all]' && \
-    pip uninstall -y ai2-olmo-core && \
+RUN uv pip install --no-cache-dir '.[all]' && \
+    uv pip uninstall -y ai2-olmo-core && \
     rm -rf *
 
 #########################################################################
@@ -97,6 +102,9 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         git && \
     rm -rf /var/lib/apt/lists/*
 
+# Install uv and point to the conda python executable for uv operations.
+COPY --from=ghcr.io/astral-sh/uv:0.7.14 /uv /uvx /bin/
+
 # Install MLNX OFED user-space drivers
 # See https://docs.nvidia.com/networking/pages/releaseview.action?pageId=15049785#Howto:DeployRDMAacceleratedDockercontaineroverInfiniBandfabric.-Dockerfile
 ARG UBUNTU_VERSION
@@ -111,6 +119,7 @@ RUN wget --quiet https://content.mellanox.com/ofed/MLNX_OFED-${MOFED_VER}/MLNX_O
 # Copy conda environment.
 COPY --from=build /opt/conda /opt/conda
 
+ENV UV_PYTHON=/opt/conda/bin/python
 ENV PATH /opt/conda/bin:$PATH
 ENV NVIDIA_VISIBLE_DEVICES all
 ENV NVIDIA_DRIVER_CAPABILITIES compute,utility

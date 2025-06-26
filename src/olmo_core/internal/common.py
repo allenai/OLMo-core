@@ -97,14 +97,19 @@ def build_launch_config(
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
 ) -> BeakerLaunchConfig:
-    weka_buckets: List[BeakerWekaBucket] = []
-    if root_dir.startswith("/weka/"):
-        weka_buckets.append(BeakerWekaBucket("oe-training-default", "/weka/oe-training-default"))
-
     beaker_user = get_beaker_username()
     if beaker_user is None:
         raise RuntimeError(
             "Environment not configured correctly for Beaker, you may be missing the BEAKER_TOKEN env var."
+        )
+
+    env_vars = [BeakerEnvVar(name="NCCL_DEBUG", value="INFO" if nccl_debug else "WARN")]
+
+    weka_buckets: List[BeakerWekaBucket] = []
+    if root_dir.startswith("/weka/"):
+        weka_buckets.append(BeakerWekaBucket("oe-training-default", "/weka/oe-training-default"))
+        env_vars.append(
+            BeakerEnvVar(name="UV_CACHE_DIR", value="/weka/oe-training-default/.cache/uv/")
         )
 
     google_creds = (
@@ -170,7 +175,7 @@ def build_launch_config(
         num_gpus=8,
         shared_filesystem=not is_url(root_dir),
         allow_dirty=False,
-        env_vars=[BeakerEnvVar(name="NCCL_DEBUG", value="INFO" if nccl_debug else "WARN")],
+        env_vars=env_vars,
         env_secrets=[env_secret for env_secret in env_secrets if env_secret is not None],
         setup_steps=[
             # Clone repo.
@@ -179,12 +184,12 @@ def build_launch_config(
             "git submodule update --init --recursive",
             # Setup python environment.
             "conda shell.bash activate base",
-            #  "pip install 'ai2-olmo-eval @ git+https://git@github.com/allenai/OLMo-in-loop-evals.git@epwalsh/debug'",
-            "pip install -e '.[all]'",
-            #  "pip install --upgrade beaker-py",
+            #  "uv pip install 'ai2-olmo-eval @ git+https://git@github.com/allenai/OLMo-in-loop-evals.git@epwalsh/debug'",
+            "uv pip install -e '.[all]'",
+            #  "uv pip install --upgrade beaker-py",
             # Quickly try a new version of PyTorch like this
-            #  "pip install --upgrade --pre torch==2.6.0.dev20241112+cu121 --index-url https://download.pytorch.org/whl/nightly/cu121",
-            "pip freeze",
+            #  "uv pip install --upgrade --pre torch==2.6.0.dev20241112+cu121 --index-url https://download.pytorch.org/whl/nightly/cu121",
+            "uv pip freeze",
             # Move AWS credentials from env to relevant files
             "mkdir -p ~/.aws",
             "printenv AWS_CONFIG > ~/.aws/config",
