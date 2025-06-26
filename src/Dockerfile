@@ -41,7 +41,9 @@ RUN chmod +x ~/miniconda.sh && \
 
 # Install uv and point to the conda python executable for uv operations.
 ARG UV_VERSION
-COPY --from=ghcr.io/astral-sh/uv:${UV_VERSION} /uv /uvx /bin/
+ADD https://astral.sh/uv/${UV_VERSION}/install.sh /uv-installer.sh
+RUN sh /uv-installer.sh && rm /uv-installer.sh
+ENV PATH="/root/.local/bin/:$PATH"
 ENV UV_PYTHON=/opt/conda/bin/python
 
 RUN /opt/conda/bin/conda install -y python=${PYTHON_VERSION} cmake conda-build pyyaml numpy ipython && \
