@@ -466,11 +466,6 @@ class Attention(AttentionBase):
             if block_mask is None:
                 raise ValueError("Block mask missing during flex attention.")
 
-            # NOTE: PyTorch's flex attn doesn't support GQA yet, so we have to do this.
-            # shape: (batch_size, seq_len, n_heads, head_dim)
-            k = repeat_kv(k, self.n_rep)
-            v = repeat_kv(v, self.n_rep)
-
             # PyTorch's flex attn expects the number of heads to come before the sequence dimension.
             # shape: (batch_size, n_heads, seq_len, head_dim),
             #        (batch_size, n_kv_heads, seq_len, head_dim),
@@ -479,7 +474,7 @@ class Attention(AttentionBase):
 
             # shape: (batch_size, n_heads, seq_len, head_dim)
             # TODO: Deal with dropout, compile
-            flex_att = flex_attention(q, k, v, block_mask=block_mask, scale=scale)
+            flex_att = flex_attention(q, k, v, block_mask=block_mask, scale=scale, enable_gqa=True)
             assert isinstance(flex_att, torch.Tensor)
             att = flex_att
 
@@ -1041,7 +1036,10 @@ def _get_flex_attn_mask_mod(
 
 @cache
 def _get_causal_block_mask(
-    seq_len: int, device: torch.device, window_size: Optional[Tuple[int, int]] = None
+    seq_len: int,
+    device: torch.device,
+    window_size: Optional[Tuple[int, int]] = None,
+    block_size: int = 128,
 ) -> BlockMask:
     return create_block_mask(
         _get_flex_attn_mask_mod(window_size, device=device),
@@ -1050,6 +1048,7 @@ def _get_causal_block_mask(
         Q_LEN=seq_len,
         KV_LEN=seq_len,
         device=device.type,
+        BLOCK_SIZE=block_size,
     )
 
 
@@ -1059,7 +1058,11 @@ def get_flex_attn_causal_block_mask(
     window_size: Optional[Tuple[int, int]] = None,
     max_doc_len: Optional[int] = None,
     cu_doc_lens: Optional[torch.Tensor] = None,
+    block_size: int = 128,
 ) -> BlockMask:
+    if seq_len % block_size != 0:
+        raise ValueError("Sequence length should be a multiple of block size")
+
     if max_doc_len is not None or cu_doc_lens is not None:
         return create_block_mask(
             _get_flex_attn_mask_mod(window_size, max_doc_len, cu_doc_lens, device=device),
@@ -1068,8 +1071,9 @@ def get_flex_attn_causal_block_mask(
             Q_LEN=seq_len,
             KV_LEN=seq_len,
             device=device.type,
+            BLOCK_SIZE=block_size,
         )
 
     else:
         # If not doing intra-document masking, use caching when getting causal block mask for better perf.
-        return _get_causal_block_mask(seq_len, device, window_size)
+        return _get_causal_block_mask(seq_len, device, window_size, block_size)
