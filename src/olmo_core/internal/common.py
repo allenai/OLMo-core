@@ -56,7 +56,7 @@ def _to_beaker_env_secret(
 ) -> Optional[BeakerEnvSecret]:
     # Assume beaker secret exists if we are in a distributed setting (e.g., during a training job)
     # so that we don't DOS beaker.
-    if not is_distributed() or beaker_secret_exists(secret, workspace=workspace):
+    if is_distributed() or beaker_secret_exists(secret, workspace=workspace):
         return BeakerEnvSecret(name=name, secret=secret)
     elif required:
         raise OLMoConfigurationError(
