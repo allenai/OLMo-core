@@ -1022,7 +1022,7 @@ def _get_flex_attn_mask_mod(
             while idx > cu_doc_lens[cu_doc_lens_idx]:
                 cu_doc_lens_idx += 1
 
-            doc_ids[idx] = cu_doc_lens_idx
+            doc_ids.append(cu_doc_lens_idx)
 
         def _document_masking_mask_mod(
             B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
