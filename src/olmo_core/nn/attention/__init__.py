@@ -479,7 +479,7 @@ class Attention(AttentionBase):
 
             # shape: (batch_size, n_heads, seq_len, head_dim)
             # TODO: Deal with dropout, compile
-            flex_att = flex_attention(q, k, v, block_mask=block_mask)
+            flex_att = flex_attention(q, k, v, block_mask=block_mask, scale=scale)
             assert isinstance(flex_att, torch.Tensor)
             att = flex_att
 
