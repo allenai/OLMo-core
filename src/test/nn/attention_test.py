@@ -267,8 +267,8 @@ def test_attention_with_intra_document_masking_small_docs():
     x = torch.randn(2, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
 
     with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
-        max_doc_len = seq_len
-        cu_doc_lens = torch.tensor([0, seq_len, 2 * seq_len], dtype=torch.int32, device="cuda")
+        max_doc_len = 16
+        cu_doc_lens = torch.tensor([0, 4, 20, 32, 40, 48, 56, 64], dtype=torch.int32, device="cuda")
 
         y1 = attention(x.clone())
         y2 = attention(x.clone(), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
@@ -288,13 +288,13 @@ def test_attention_with_intra_document_masking_small_docs():
         y1_fused = fused_att(x.clone())
         y2_fused = fused_att(x.clone(), max_doc_len=seq_len, cu_doc_lens=cu_doc_lens)
 
-    torch.testing.assert_close(y1, y2)
-    torch.testing.assert_close(y1_fused, y2_fused)
-    torch.testing.assert_close(y1_flex, y2_flex)
     torch.testing.assert_close(y1, y1_fused)
     torch.testing.assert_close(y2, y2_fused)
     torch.testing.assert_close(y1, y1_flex)
     torch.testing.assert_close(y2, y2_flex)
+    torch.testing.assert_close(y1, y2)
+    torch.testing.assert_close(y1_fused, y2_fused)
+    torch.testing.assert_close(y1_flex, y2_flex)
 
 
 @pytest.mark.parametrize(
