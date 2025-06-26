@@ -78,7 +78,7 @@ class AnnealingDataMix(DataMixBase):
     name (without the '.txt' extension) below.
     """
 
-    datamix = ""
+    datamix = "llama3_64k_niah_no_q_p"
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
@@ -196,8 +196,8 @@ class LcContTrain(Config):
                 num_workers=4,
             ),
             trainer=TrainerConfig(
-                save_folder=f"/weka/oe-training-default/ai2-llm/checkpoints/amandab/{run_name}",
-                # save_folder=f"/weka/oe-training-default/ai2-llm/checkpoints/dustins/{run_name}",
+                save_folder=f"gs://ai2-llm/checkpoints/amandab/{run_name}",
+                # save_folder=f"gs:///ai2-llm/checkpoints/dustins/{run_name}",
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
                 ),
@@ -297,7 +297,7 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         script=script,
         cmd="train",
         run_name=run_name,
-        load_path="/weka/oe-training-default/ai2-llm/checkpoints/amandab/Meta-Llama-3-8B-Base/model_and_optim/",
+        load_path="gs://ai2-llm/checkpoints/amandab/Meta-Llama-3-8B-Base",
         cluster=cluster,
         overrides=overrides,
     )
