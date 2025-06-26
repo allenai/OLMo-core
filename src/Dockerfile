@@ -40,6 +40,7 @@ RUN chmod +x ~/miniconda.sh && \
     rm ~/miniconda.sh
 
 # Install uv and point to the conda python executable for uv operations.
+ARG UV_VERSION
 COPY --from=ghcr.io/astral-sh/uv:${UV_VERSION} /uv /uvx /bin/
 ENV UV_PYTHON=/opt/conda/bin/python
 
@@ -104,6 +105,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     rm -rf /var/lib/apt/lists/*
 
 # Install uv and point to the conda python executable for uv operations.
+ARG UV_VERSION
 COPY --from=ghcr.io/astral-sh/uv:${UV_VERSION} /uv /uvx /bin/
 
 # Install MLNX OFED user-space drivers
