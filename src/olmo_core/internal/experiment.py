@@ -159,7 +159,7 @@ def build_common_components(
             root_dir=root_dir,
             cmd=[script, cmd_to_launch, run_name, cluster, *overrides],
             cluster=cluster,
-            nccl_debug=False,
+            nccl_debug=True,
             beaker_image=beaker_image,
             num_nodes=num_nodes,
             workspace=beaker_workspace,
