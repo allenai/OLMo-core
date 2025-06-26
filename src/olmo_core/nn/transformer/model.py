@@ -359,7 +359,7 @@ class Transformer(nn.Module):
 
         # Prepare block mask
         block_mask = self._get_flex_attn_block_mask(
-            S, torch.device("cpu"), max_doc_len, cu_doc_lens
+            S, self.device, max_doc_len, cu_doc_lens
         )
         block_kwargs["block_mask"] = block_mask
 
