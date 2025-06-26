@@ -11,7 +11,6 @@ import rich
 from rich import print
 
 from olmo_core.config import Config, DType
-from olmo_core.float8 import Float8Config
 from olmo_core.data import (
     DataMixBase,
     NumpyDataLoaderConfig,
@@ -19,24 +18,23 @@ from olmo_core.data import (
     TokenizerConfig,
     TokenizerName,
 )
-from olmo_core.nn.attention import SlidingWindowAttentionConfig
-from olmo_core.nn.rope import RoPEConfig
-from olmo_core.nn.rope import RoPEScalingConfig
-from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank
+from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.io import resource_path
 from olmo_core.launch.beaker import BeakerLaunchConfig
+from olmo_core.nn.attention import SlidingWindowAttentionConfig
+from olmo_core.nn.rope import RoPEConfig, RoPEScalingConfig, YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import (
-    TransformerConfig,
     TransformerBlockType,
+    TransformerConfig,
 )
 from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.optim import (
+    AdamWConfig,
     LinearWithWarmup,
     OptimGroupOverride,
-    AdamWConfig,
 )
 from olmo_core.train import (
     Duration,
@@ -44,21 +42,23 @@ from olmo_core.train import (
     prepare_training_environment,
     teardown_training_environment,
 )
-from olmo_core.train.train_module import (
-    # TransformerActivationCheckpointingConfig,
+from olmo_core.train.callbacks import (
+    CheckpointerCallback,
+    ConfigSaverCallback,
+    GarbageCollectorCallback,
+    GPUMemoryMonitorCallback,
+    WandBCallback,
+)
+from olmo_core.train.checkpoint import CheckpointerConfig
+from olmo_core.train.train_module import (  # TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-from olmo_core.train.callbacks import (
-    CheckpointerCallback,
-    WandBCallback, 
-    ConfigSaverCallback,
-    GarbageCollectorCallback,
-    GPUMemoryMonitorCallback,
+from olmo_core.train.train_module.transformer.config import (
+    TransformerActivationCheckpointingConfig,
+    TransformerTensorParallelConfig,
 )
-from olmo_core.train.checkpoint import CheckpointerConfig
-from olmo_core.train.train_module.transformer.config import TransformerActivationCheckpointingConfig, TransformerTensorParallelConfig
 from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
 
 # The max number of pretraining steps configured for the purpose of setting the learning rate
