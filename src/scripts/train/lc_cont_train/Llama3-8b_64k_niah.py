@@ -16,6 +16,7 @@ from rich import print
 from olmo_core.config import Config, DType
 from olmo_core.float8 import Float8Config
 from olmo_core.data import (
+    NumpyDatasetType,
     DataMixBase,
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
@@ -182,6 +183,7 @@ class LcContTrain(Config):
             ),
             dataset=NumpyDatasetConfig.from_data_mix(
                 AnnealingDataMix.datamix,
+                name=NumpyDatasetType.padded_fsl,
                 tokenizer=tokenizer_config,
                 mix_base_dir=root_dir,
                 generate_doc_lengths=True,

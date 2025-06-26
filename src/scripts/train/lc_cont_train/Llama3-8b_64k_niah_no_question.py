@@ -20,6 +20,7 @@ from olmo_core.data import (
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
     TokenizerConfig,
+    NumpyDatasetType,
     TokenizerName,
 )
 from olmo_core.distributed.parallel import DataParallelType
@@ -182,6 +183,7 @@ class LcContTrain(Config):
             ),
             dataset=NumpyDatasetConfig.from_data_mix(
                 AnnealingDataMix.datamix,
+                name=NumpyDatasetType.padded_fsl,
                 tokenizer=tokenizer_config,
                 mix_base_dir=root_dir,
                 generate_doc_lengths=True,

@@ -19,6 +19,7 @@ from olmo_core.data import (
     DataMixBase,
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
+    NumpyDatasetType,
     TokenizerConfig,
     TokenizerName,
 )
@@ -182,6 +183,7 @@ class LcContTrain(Config):
             ),
             dataset=NumpyDatasetConfig.from_data_mix(
                 AnnealingDataMix.datamix,
+                name=NumpyDatasetType.padded_fsl,
                 tokenizer=tokenizer_config,
                 mix_base_dir=root_dir,
                 generate_doc_lengths=True,
