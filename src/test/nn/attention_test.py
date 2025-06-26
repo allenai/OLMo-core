@@ -11,6 +11,7 @@ from olmo_core.nn.attention import (
     FusedAttention,
     RingAttentionZigZagLoadBalancer,
     SlidingWindowAttentionConfig,
+    get_flex_attn_causal_block_mask,
 )
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
@@ -36,8 +37,16 @@ from olmo_core.testing import (
     [pytest.param(None, id="MHA"), pytest.param(1, id="MQA"), pytest.param(2, id="GQA")],
 )
 @pytest.mark.parametrize(
-    "use_flash",
-    [pytest.param(True, id="flash", marks=FLASH_MARKS), pytest.param(False, id="torch-SDPA")],
+    "use_flash, use_flex_attn",
+    [
+        pytest.param(True, False, id="flash", marks=FLASH_MARKS),
+        pytest.param(False, True, id="torch-flex-attn"),
+        pytest.param(False, False, id="torch-SDPA"),
+    ],
+)
+@pytest.mark.parametrize(
+    "window_size",
+    [pytest.param(None, id="full"), pytest.param(16, id="sliding")],
 )
 @pytest.mark.parametrize(
     "kwargs",
@@ -54,10 +63,15 @@ def test_attention(
     device: torch.device,
     n_kv_heads: Optional[int],
     use_flash: bool,
+    use_flex_attn: bool,
+    window_size: Optional[int],
     kwargs: Dict[str, Any],
 ):
     if use_flash and dtype == torch.float32:
         pytest.skip("flash requires a low precision dtype")
+
+    if window_size is not None and not use_flash and not use_flex_attn:
+        pytest.skip("sliding window attention requires flash or flex attention")
 
     if dtype == torch.bfloat16 and device.type == "cpu":
         pytest.skip("bf16 requires GPU")
@@ -72,9 +86,15 @@ def test_attention(
         n_heads=4,
         n_kv_heads=n_kv_heads,
         use_flash=use_flash,
+        use_flex_attn=use_flex_attn,
         init_device=device.type,
+        window_size=window_size,
         **kwargs,
     )
+
+    block_mask = None
+    if use_flex_attn:
+        block_mask = get_flex_attn_causal_block_mask(seq_len, device, attention.window_size)
 
     x1 = torch.randn(1, seq_len, d_model, dtype=dtype, device=device)
     x2 = torch.randn(1, seq_len, d_model, dtype=dtype, device=device)
@@ -82,9 +102,9 @@ def test_attention(
 
     # Make sure batch outputs match individual outputs.
     with torch.no_grad(), torch.autocast(device.type, dtype=dtype, enabled=dtype != torch.float32):
-        y1 = attention(x1)
-        y2 = attention(x2)
-        y = attention(x)
+        y1 = attention(x1, block_mask=block_mask)
+        y2 = attention(x2, block_mask=block_mask)
+        y = attention(x, block_mask=block_mask)
 
     torch.testing.assert_close(y[0:1, :, :], y1)
     torch.testing.assert_close(y[1:, :, :], y2)
@@ -166,10 +186,16 @@ def test_attention_with_intra_document_masking():
     seq_len = 32
 
     attention = Attention(d_model=d_model, n_heads=8, init_device="cuda", use_flash=True)
+    flex_att = Attention(d_model=d_model, n_heads=8, init_device="cuda", use_flex_attn=True)
     fused_att = FusedAttention(d_model=d_model, n_heads=8, init_device="cuda")
 
     # Make sure weights match.
     with torch.no_grad():
+        flex_att.w_out.load_state_dict(attention.w_out.state_dict())
+        flex_att.w_q.load_state_dict(attention.w_q.state_dict())
+        flex_att.w_k.load_state_dict(attention.w_k.state_dict())
+        flex_att.w_v.load_state_dict(attention.w_v.state_dict())
+
         fused_att.w_out.load_state_dict(attention.w_out.state_dict())
         fused_att.w_qkv.weight.copy_(
             torch.cat([attention.w_q.weight, attention.w_k.weight, attention.w_v.weight])
@@ -181,24 +207,94 @@ def test_attention_with_intra_document_masking():
     x = torch.randn(2, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
 
     with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+        max_doc_len = seq_len
+        cu_doc_lens = torch.tensor([0, seq_len, 2 * seq_len], dtype=torch.int32, device="cuda")
+
         y1 = attention(x.clone())
-        y2 = attention(
-            x.clone(),
-            max_doc_len=seq_len,
-            cu_doc_lens=torch.tensor([0, seq_len, 2 * seq_len], dtype=torch.int32, device="cuda"),
+        y2 = attention(x.clone(), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
+
+        block_mask = get_flex_attn_causal_block_mask(
+            seq_len,
+            torch.device("cuda"),
+            flex_att.window_size,
+            max_doc_len=max_doc_len,
+            cu_doc_lens=cu_doc_lens,
+        )
+        y1_flex = flex_att(x.clone(), block_mask=block_mask)
+        y2_flex = flex_att(
+            x.clone(), max_doc_len=seq_len, cu_doc_lens=cu_doc_lens, block_mask=block_mask
         )
 
         y1_fused = fused_att(x.clone())
-        y2_fused = fused_att(
-            x.clone(),
-            max_doc_len=seq_len,
-            cu_doc_lens=torch.tensor([0, seq_len, 2 * seq_len], dtype=torch.int32, device="cuda"),
-        )
+        y2_fused = fused_att(x.clone(), max_doc_len=seq_len, cu_doc_lens=cu_doc_lens)
 
     torch.testing.assert_close(y1, y2)
     torch.testing.assert_close(y1_fused, y2_fused)
+    torch.testing.assert_close(y1_flex, y2_flex)
     torch.testing.assert_close(y1, y1_fused)
     torch.testing.assert_close(y2, y2_fused)
+    torch.testing.assert_close(y1, y1_flex)
+    torch.testing.assert_close(y2, y2_flex)
+
+
+@requires_gpu
+@requires_flash_attn
+def test_attention_with_intra_document_masking_small_docs():
+    torch.random.manual_seed(0)
+
+    d_model = 128
+    seq_len = 32
+
+    attention = Attention(d_model=d_model, n_heads=8, init_device="cuda", use_flash=True)
+    flex_att = Attention(d_model=d_model, n_heads=8, init_device="cuda", use_flex_attn=True)
+    fused_att = FusedAttention(d_model=d_model, n_heads=8, init_device="cuda")
+
+    # Make sure weights match.
+    with torch.no_grad():
+        flex_att.w_out.load_state_dict(attention.w_out.state_dict())
+        flex_att.w_q.load_state_dict(attention.w_q.state_dict())
+        flex_att.w_k.load_state_dict(attention.w_k.state_dict())
+        flex_att.w_v.load_state_dict(attention.w_v.state_dict())
+
+        fused_att.w_out.load_state_dict(attention.w_out.state_dict())
+        fused_att.w_qkv.weight.copy_(
+            torch.cat([attention.w_q.weight, attention.w_k.weight, attention.w_v.weight])
+        )
+        fused_att.w_qkv.bias.copy_(
+            torch.cat([attention.w_q.bias, attention.w_k.bias, attention.w_v.bias])
+        )
+
+    x = torch.randn(2, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
+
+    with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+        max_doc_len = seq_len
+        cu_doc_lens = torch.tensor([0, seq_len, 2 * seq_len], dtype=torch.int32, device="cuda")
+
+        y1 = attention(x.clone())
+        y2 = attention(x.clone(), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
+
+        block_mask = get_flex_attn_causal_block_mask(
+            seq_len,
+            torch.device("cuda"),
+            flex_att.window_size,
+            max_doc_len=max_doc_len,
+            cu_doc_lens=cu_doc_lens,
+        )
+        y1_flex = flex_att(x.clone(), block_mask=block_mask)
+        y2_flex = flex_att(
+            x.clone(), max_doc_len=seq_len, cu_doc_lens=cu_doc_lens, block_mask=block_mask
+        )
+
+        y1_fused = fused_att(x.clone())
+        y2_fused = fused_att(x.clone(), max_doc_len=seq_len, cu_doc_lens=cu_doc_lens)
+
+    torch.testing.assert_close(y1, y2)
+    torch.testing.assert_close(y1_fused, y2_fused)
+    torch.testing.assert_close(y1_flex, y2_flex)
+    torch.testing.assert_close(y1, y1_fused)
+    torch.testing.assert_close(y2, y2_fused)
+    torch.testing.assert_close(y1, y1_flex)
+    torch.testing.assert_close(y2, y2_flex)
 
 
 @pytest.mark.parametrize(

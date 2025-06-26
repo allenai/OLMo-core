@@ -1,7 +1,7 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -10,6 +10,12 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import parallelize_module
+from torch.nn.attention.flex_attention import (
+    BlockMask,
+    and_masks,
+    create_block_mask,
+    flex_attention,
+)
 
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
@@ -38,6 +44,11 @@ from .ring import (
     RingAttentionLoadBalancerType,
     RingAttentionZigZagLoadBalancer,
 )
+
+try:
+    from functools import cache
+except ImportError:
+    from functools import lru_cache as cache
 
 __all__ = [
     "AttentionType",
@@ -150,6 +161,7 @@ class AttentionConfig(Config):
     qk_norm: Optional[LayerNormConfig] = None
     dropout: Optional[float] = None
     use_flash: Optional[bool] = None
+    use_flex_attn: Optional[bool] = None
     dtype: DType = DType.float32
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
     use_head_qk_norm: Optional[bool] = None
@@ -235,6 +247,10 @@ class AttentionConfig(Config):
                 return Attention(**kwargs)
             elif self.name == "fused":
                 kwargs.pop("use_flash", None)
+                if kwargs.get("use_flex_attn"):
+                    raise OLMoConfigurationError(
+                        "Flex attention is not supported with fused attention"
+                    )
                 if "window_size" in kwargs:
                     raise OLMoConfigurationError(
                         "'window_size' is not supported with fused attention"
@@ -313,6 +329,7 @@ class Attention(AttentionBase):
         qk_norm: Optional[LayerNormConfig] = None,
         dropout: float = 0.0,
         use_flash: bool = False,
+        use_flex_attn: bool = False,
         window_size: Optional[int] = None,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
@@ -360,12 +377,13 @@ class Attention(AttentionBase):
             self.rope = rope_class
 
         self.use_flash = use_flash
+        self.use_flex_attn = use_flex_attn
 
         # Translate window size so that we only look left, not right.
         if window_size is not None:
-            if not use_flash:
+            if not use_flash and not use_flex_attn:
                 raise OLMoConfigurationError(
-                    f"'window_size' is only supported with 'use_flash=True' (got {use_flash})"
+                    "'window_size' is only supported with 'use_flash=True' or 'use_flex_attn=True'"
                 )
             if window_size <= 0:
                 raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
@@ -394,6 +412,7 @@ class Attention(AttentionBase):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         scale: Optional[float] = None,
+        block_mask: Optional[BlockMask] = None,
     ) -> torch.Tensor:
         att: torch.Tensor
         if self.cp_enabled:
@@ -401,6 +420,10 @@ class Attention(AttentionBase):
             if not self.use_flash:
                 raise RuntimeError(
                     f"'{self.__class__.__name__}' requires flash (use_flash=True) for context parallelism"
+                )
+            if self.use_flex_attn:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' cannot use flex attention for context parallelism"
                 )
             att = dispatch_ring_flash_attn(
                 q,
@@ -437,6 +460,31 @@ class Attention(AttentionBase):
                 causal=True,
                 window_size=self.window_size,
             )
+        elif self.use_flex_attn:
+            if self.dropout_p != 0:
+                raise NotImplementedError("Our flex attention does not yet support dropout.")
+            if block_mask is None:
+                raise ValueError("Block mask missing during flex attention.")
+
+            # NOTE: PyTorch's flex attn doesn't support GQA yet, so we have to do this.
+            # shape: (batch_size, seq_len, n_heads, head_dim)
+            k = repeat_kv(k, self.n_rep)
+            v = repeat_kv(v, self.n_rep)
+
+            # PyTorch's flex attn expects the number of heads to come before the sequence dimension.
+            # shape: (batch_size, n_heads, seq_len, head_dim),
+            #        (batch_size, n_kv_heads, seq_len, head_dim),
+            #        (batch_size, n_kv_heads, seq_len, head_dim)
+            q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+
+            # shape: (batch_size, n_heads, seq_len, head_dim)
+            # TODO: Deal with dropout, compile
+            flex_att = flex_attention(q, k, v, block_mask=block_mask)
+            assert isinstance(flex_att, torch.Tensor)
+            att = flex_att
+
+            # shape: (batch_size, seq_len, n_heads, head_dim)
+            att = att.transpose(1, 2).contiguous()
         else:
             # Fall back to PyTorch's SDPA...
             if any(
@@ -488,6 +536,7 @@ class Attention(AttentionBase):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        block_mask: Optional[BlockMask] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -558,6 +607,7 @@ class Attention(AttentionBase):
             max_doc_len_q=max_doc_len_q,
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
+            block_mask=block_mask,
         )
 
         # shape: (batch_size, seq_len, d_model)
@@ -641,6 +691,7 @@ class NormalizedAttention(Attention):
         rope: Optional[RoPEConfig] = None,
         qk_norm: Optional[LayerNormConfig] = None,
         use_flash: bool = False,
+        use_flex_attn: bool = False,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
@@ -652,6 +703,7 @@ class NormalizedAttention(Attention):
             rope=rope,
             qk_norm=qk_norm,
             use_flash=use_flash,
+            use_flex_attn=use_flex_attn,
             bias=False,
             dtype=dtype,
             init_device=init_device,
@@ -693,6 +745,7 @@ class NormalizedAttention(Attention):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        block_mask: Optional[BlockMask] = None,
     ) -> torch.Tensor:
         B, T, _ = x.shape
 
@@ -741,6 +794,7 @@ class NormalizedAttention(Attention):
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
             scale=self.sqrt_head_dim,
+            block_mask=block_mask,
         )
 
         # shape: (batch_size, seq_len, d_model)
@@ -929,3 +983,108 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
         .expand(bs, slen, n_kv_heads, n_rep, head_dim)
         .reshape(bs, slen, n_kv_heads * n_rep, head_dim)
     )
+
+
+def _get_flex_attn_mask_mod(
+    window_size: Optional[Tuple[int, int]] = None,
+    max_doc_len: Optional[int] = None,
+    cu_doc_lens: Optional[torch.Tensor] = None,
+):
+    mask_mods = []
+
+    def _causal_mask_mod(
+        B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
+    ) -> torch.Tensor:
+        causal_mask = q_idx >= kv_idx
+        return causal_mask
+
+    mask_mods.append(_causal_mask_mod)
+
+    if window_size is not None and window_size != (-1, -1):
+
+        def _sliding_window_mask_mod(
+            B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
+        ) -> torch.Tensor:
+            causal_mask = q_idx >= kv_idx
+            return causal_mask
+
+        mask_mods.append(_sliding_window_mask_mod)
+
+    if max_doc_len is not None or cu_doc_lens is not None:
+        if max_doc_len is None or cu_doc_lens is None:
+            raise ValueError("max_doc_len and cu_doc_lens must be null or non-null")
+
+        # Get the document id of each token
+        doc_ids = []
+        cu_doc_lens_idx = 0
+        for idx in range(cu_doc_lens[-1]):
+            # while instead of if just in case a doc len is 0.
+            while idx > cu_doc_lens[cu_doc_lens_idx]:
+                cu_doc_lens_idx += 1
+
+            doc_ids[idx] = cu_doc_lens_idx
+
+        def _document_masking_mask_mod(
+            B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
+        ) -> torch.Tensor:
+            return doc_ids[q_idx] == doc_ids[kv_idx]
+
+        mask_mods.append(_document_masking_mask_mod)
+
+    return and_masks(*mask_mods)
+
+
+@cache
+def _get_causal_block_mask(
+    seq_len: int, device: str, window_size: Optional[Tuple[int, int]] = None
+) -> BlockMask:
+    mask_mods = []
+
+    def _causal_mask_mod(
+        B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
+    ) -> torch.Tensor:
+        causal_mask = q_idx >= kv_idx
+        return causal_mask
+
+    mask_mods.append(_causal_mask_mod)
+
+    if window_size is not None and window_size != (-1, -1):
+
+        def _sliding_window_mask_mod(
+            B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
+        ) -> torch.Tensor:
+            causal_mask = q_idx >= kv_idx
+            return causal_mask
+
+        mask_mods.append(_sliding_window_mask_mod)
+
+    return create_block_mask(
+        and_masks(*mask_mods),
+        B=None,
+        H=None,
+        Q_LEN=seq_len,
+        KV_LEN=seq_len,
+        device=device,
+    )
+
+
+def get_flex_attn_causal_block_mask(
+    seq_len: int,
+    device: torch.device,
+    window_size: Optional[Tuple[int, int]] = None,
+    max_doc_len: Optional[int] = None,
+    cu_doc_lens: Optional[torch.Tensor] = None,
+) -> BlockMask:
+    if max_doc_len is not None or cu_doc_lens is not None:
+        return create_block_mask(
+            _get_flex_attn_mask_mod(window_size, max_doc_len, cu_doc_lens),
+            B=None,
+            H=None,
+            Q_LEN=seq_len,
+            KV_LEN=seq_len,
+            device=device.type,
+        )
+
+    else:
+        # If not doing intra-document masking, use caching when getting causal block mask for better perf.
+        return _get_causal_block_mask(seq_len, device.type, window_size)

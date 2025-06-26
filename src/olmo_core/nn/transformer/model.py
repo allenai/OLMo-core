@@ -19,6 +19,7 @@ from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
+from torch.nn.attention.flex_attention import BlockMask
 
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
@@ -32,6 +33,7 @@ from ..attention import (
     FusedAttention,
     RingAttentionLoadBalancer,
     RingAttentionLoadBalancerType,
+    get_flex_attn_causal_block_mask,
 )
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
@@ -205,6 +207,28 @@ class Transformer(nn.Module):
                 return rope.get_buffers(seq_len, device)
         return None
 
+    def _get_flex_attn_block_mask(
+        self,
+        seq_len: int,
+        device: Optional[torch.device] = None,
+        max_doc_len: Optional[int] = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+    ) -> Optional[BlockMask]:
+        if device is None:
+            device = self.device
+        for block in self.blocks.values():
+            block = cast(TransformerBlock, block)
+            att = cast(Union[Attention, FusedAttention], block.attention)
+            if not att.use_flex_attn:
+                return None
+
+            window_size = getattr(att, "window_size", None)
+            return get_flex_attn_causal_block_mask(
+                seq_len, device, window_size, max_doc_len, cu_doc_lens
+            )
+
+        return None
+
     @torch.no_grad()
     def init_weights(
         self,
@@ -332,6 +356,12 @@ class Transformer(nn.Module):
         ) is not None:
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
+
+        # Prepare block mask
+        block_mask = self._get_flex_attn_block_mask(
+            S, torch.device("cpu"), max_doc_len, cu_doc_lens
+        )
+        block_kwargs["block_mask"] = block_mask
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
