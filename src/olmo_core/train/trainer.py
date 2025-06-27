@@ -1155,7 +1155,7 @@ class Trainer:
                 self.global_train_tokens_seen += global_num_tokens
 
 
-            if self.global_train_tokens_seen > self.max_tokens - (10 * self.train_module.global_batch_size):
+            if self.global_train_tokens_seen > self.max_tokens - (10 * self.global_batch_size):
                 self._log_batch_debug_info(batch)   
 
             for callback in self._iter_callbacks():
