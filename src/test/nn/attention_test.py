@@ -249,11 +249,11 @@ def test_sdpa(
 
 @requires_gpu
 @requires_flash_attn
-def test_flash_sdpa(
-    device: torch.device,
-    dtype: torch.dtype,
-):
+def test_flash_sdpa():
     torch.random.manual_seed(0)
+
+    dtype = torch.bfloat16
+    device = torch.device("cuda")
 
     d_model = 128
     seq_len = 32
