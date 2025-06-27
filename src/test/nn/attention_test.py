@@ -1,5 +1,4 @@
 import contextlib
-import math
 from typing import Any, Dict, Optional
 
 import pytest
@@ -32,7 +31,7 @@ def _allow_fp16_bf16_reduction_math_sdp(enabled: bool):
     math_sdpa_low_precision_allowed = torch.backends.cuda.fp16_bf16_reduction_math_sdp_allowed()
 
     try:
-        torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(True)
+        torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(enabled)
         yield
     finally:
         torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(math_sdpa_low_precision_allowed)
@@ -56,7 +55,7 @@ def scaled_dot_product_attention(
 
     with contextlib.ExitStack() as stack:
         if use_math_backend:
-            stack.enter_context(_allow_fp16_bf16_reduction_math_sdp(True))
+            stack.enter_context(_allow_fp16_bf16_reduction_math_sdp(not full_precision))
             stack.enter_context(torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH))
 
         att = (
