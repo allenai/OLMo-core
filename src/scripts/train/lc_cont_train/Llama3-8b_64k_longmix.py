@@ -203,7 +203,7 @@ class LcContTrain(Config):
                 load_path=load_path,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
-                hard_stop=Duration.tokens(int(10e8)), # stop at 1B tokens for this run 
+                hard_stop=Duration.tokens(int(10e9)), # stop at 10B tokens for this run 
                 max_duration=Duration.tokens(int(20e9)),
             )
             .with_callback(
