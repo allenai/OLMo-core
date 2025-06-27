@@ -20,6 +20,7 @@ from olmo_core.train.callbacks import (
     CometCallback,
     WandBCallback,
 )
+from olmo_core.train.callbacks.monkey_patcher import MonkeyPatcherCallback
 from olmo_core.train.common import LoadStrategy
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
@@ -158,6 +159,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
+        )
+        .with_callback(
+            "monkey_patcher",
+            MonkeyPatcherCallback()
         )
         .with_recommended_evals(
             common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
