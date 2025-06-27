@@ -1,8 +1,10 @@
+import contextlib
 import math
 from typing import Any, Dict, Optional
 
 import pytest
 import torch
+import torch.nn.functional as F
 
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import (
@@ -23,6 +25,82 @@ from olmo_core.testing import (
     requires_flash_attn,
     requires_gpu,
 )
+
+
+# Implementation adapted from https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html
+def scaled_dot_product_attention(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    attn_mask: Optional[torch.Tensor] = None,
+    is_causal: bool = False,
+    full_precision: bool = True,
+    use_math_backend: bool = False,
+) -> torch.Tensor:
+    # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
+    # shape: (batch_size, n_heads, seq_len, head_dim),
+    #        (batch_size, n_kv_heads, seq_len, head_dim),
+    #        (batch_size, n_kv_heads, seq_len, head_dim)
+    q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+
+    math_sdpa_low_precision_allowed = torch.backends.cuda.fp16_bf16_reduction_math_sdp_allowed()
+    if not full_precision:
+        if not use_math_backend:
+            raise ValueError("Math backend must be used when full precision is not desired")
+
+        torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(True)
+
+    with contextlib.ExitStack() as stack:
+        if use_math_backend:
+            stack.enter_context(torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH))
+
+        att = (
+            F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=is_causal)
+            .transpose(1, 2)
+            .contiguous()
+        )
+
+    if not full_precision:
+        torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(math_sdpa_low_precision_allowed)
+
+    return att
+
+    og_dtype = q.dtype
+    if full_precision:
+        q, k, v = q.float(), k.float(), v.float()
+
+    L, S = q.size(-2), k.size(-2)
+    scale_factor = 1 / math.sqrt(q.size(-1))
+    attn_bias = torch.zeros(L, S, dtype=q.dtype, device=q.device)
+
+    if is_causal:
+        assert attn_mask is None
+        temp_mask = torch.ones(L, S, dtype=torch.bool, device=attn_bias.device).tril(diagonal=0)
+        attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
+
+    if attn_mask is not None:
+        if attn_mask.dtype == torch.bool:
+            attn_bias.masked_fill_(attn_mask.logical_not(), float("-inf"))
+        else:
+            attn_bias = attn_mask + attn_bias
+
+    attn_bias = attn_bias.to(q.dtype)
+
+    k = k.repeat_interleave(q.size(-3) // k.size(-3), -3)
+    v = v.repeat_interleave(q.size(-3) // v.size(-3), -3)
+
+    attn_weight = q @ k.transpose(-2, -1) * scale_factor
+    attn_weight += attn_bias
+    attn_weight = torch.softmax(attn_weight, dim=-1)
+    att = attn_weight @ v
+
+    # Put head dimension back after the sequence dimension.
+    return att.transpose(1, 2).contiguous().to(og_dtype)
+
+
+def _flatten_batch_dim(x: torch.Tensor) -> torch.Tensor:
+    B, T, *other = x.shape
+    return x.view(B * T, *other)
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -167,69 +245,70 @@ def test_flex_attention_against_sdpa(device: torch.device, dtype: torch.dtype):
     ],
 )
 @pytest.mark.parametrize(
-    "use_flex_attn",
+    "use_flash, use_flex_attn",
     [
-        pytest.param(True, id="torch-flex-attn"),
-        pytest.param(False, id="torch-SDPA"),
+        pytest.param(True, False, id="flash", marks=FLASH_MARKS),
+        pytest.param(False, True, id="torch-flex-attn"),
+        pytest.param(False, False, id="torch-SDPA"),
     ],
+)
+@pytest.mark.parametrize(
+    "window_size",
+    [pytest.param(None, id="full"), pytest.param(16, id="sliding")],
+)
+@pytest.mark.parametrize(
+    "intra_doc_masking",
+    [pytest.param(False, id="no-doc-masking"), pytest.param(True, id="doc-masking")],
 )
 def test_sdpa(
     device: torch.device,
     dtype: torch.dtype,
+    use_flash: bool,
     use_flex_attn: bool,
+    window_size: Optional[int],
+    intra_doc_masking: bool,
 ):
+    if use_flash and dtype == torch.float32:
+        pytest.skip("flash requires a low precision dtype")
+
+    if not use_flash and not use_flex_attn and window_size is not None:
+        pytest.skip("sliding window attention is not supported by torch SDPA")
+
+    if not use_flash and not use_flex_attn and intra_doc_masking:
+        pytest.skip("intra-document masking is not supported by torch SDPA")
+
     torch.random.manual_seed(0)
-
-    # Implementation adapted from https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html
-    def scaled_dot_product_attention(
-        q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, full_precision: bool = False
-    ) -> torch.Tensor:
-        # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
-        # shape: (batch_size, n_heads, seq_len, head_dim),
-        #        (batch_size, n_kv_heads, seq_len, head_dim),
-        #        (batch_size, n_kv_heads, seq_len, head_dim)
-        og_dtype = q.dtype
-        if full_precision:
-            q, k, v = q.float(), k.float(), v.float()
-
-        q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
-
-        L, S = q.size(-2), k.size(-2)
-        scale_factor = 1 / math.sqrt(q.size(-1))
-        attn_bias = torch.zeros(L, S, device=q.device)
-
-        temp_mask = torch.ones(L, S, dtype=torch.bool, device=attn_bias.device).tril(diagonal=0)
-        attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
-        attn_bias = attn_bias.to(q.dtype)
-
-        k = k.repeat_interleave(q.size(-3) // k.size(-3), -3)
-        v = v.repeat_interleave(q.size(-3) // v.size(-3), -3)
-
-        attn_weight = q @ k.transpose(-2, -1) * scale_factor
-        attn_weight += attn_bias
-        attn_weight = torch.softmax(attn_weight, dim=-1)
-        att = attn_weight @ v
-
-        # Put head dimension back after the sequence dimension.
-        return att.transpose(1, 2).contiguous().to(og_dtype)
 
     d_model = 128
     seq_len = 32
     batch_size = 2
     n_heads = 8
+    if intra_doc_masking:
+        doc_lens = torch.tensor([[0, 4, 16, 12], [8, 8, 8, 8]], dtype=torch.int32, device=device)
+        max_doc_len = int(torch.max(doc_lens))
+        cu_doc_lens = torch.cumsum(doc_lens.flatten(), dim=0)
+        assert int(cu_doc_lens[-1]) == batch_size * seq_len
+        # cu_doc_lens = torch.arange(0, batch_size * seq_len, max_doc_len, dtype=torch.int32, device="cuda")
+    else:
+        doc_lens = None
+        max_doc_len = None
+        cu_doc_lens = None
+
     kwargs: Dict[str, Any] = dict(
         d_model=d_model,
         n_heads=8,
         init_device=device.type,
+        window_size=window_size,
     )
 
-    attention = Attention(use_flex_attn=use_flex_attn, **kwargs)
+    attention = Attention(use_flash=use_flash, use_flex_attn=use_flex_attn, **kwargs)
     block_mask = None
     if use_flex_attn:
         block_mask = get_flex_attn_causal_block_mask(
             seq_len,
             device,
             attention.window_size,
+            doc_lens=doc_lens,
             block_size=8,
         )
 
@@ -240,9 +319,41 @@ def test_sdpa(
     # SDPA backends yield slightly different results in lower precisions. Documentation says the Math
     # backend perform operations in full precision, so we use that backend and make our eager baseline
     # use full precision.
-    with torch.no_grad(), torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH):
-        y1 = scaled_dot_product_attention(q, k, v, full_precision=not use_flex_attn)
-        y2 = attention.sdpa(q, k, v, block_mask=block_mask)
+    with torch.no_grad():
+        mask_len = batch_size * seq_len if intra_doc_masking else seq_len
+        attn_mask = torch.ones(mask_len, mask_len, dtype=torch.bool, device=device).tril(diagonal=0)
+
+        if window_size is not None:
+            attn_mask = torch.logical_and(
+                attn_mask,
+                torch.ones(mask_len, mask_len, dtype=torch.bool, device=device).triu(
+                    diagonal=-window_size
+                ),
+            )
+        if intra_doc_masking:
+            assert doc_lens is not None
+            attn_mask = torch.logical_and(
+                attn_mask,
+                torch.block_diag(
+                    *[
+                        torch.ones(int(doc_len), int(doc_len)).to(dtype=torch.bool)
+                        for doc_len in doc_lens.flatten()
+                    ]
+                ),
+            )
+
+        y1 = scaled_dot_product_attention(
+            q.view(q.shape[0] * q.shape[1] // mask_len, mask_len, *q.shape[2:]),
+            k.view(k.shape[0] * k.shape[1] // mask_len, mask_len, *k.shape[2:]),
+            v.view(v.shape[0] * v.shape[1] // mask_len, mask_len, *v.shape[2:]),
+            is_causal=False,
+            attn_mask=attn_mask,
+            use_math_backend=use_flex_attn,
+            full_precision=not use_flex_attn,
+        )
+        y2 = attention.sdpa(
+            q, k, v, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens, block_mask=block_mask
+        ).view_as(y1)
 
     torch.testing.assert_close(y1, y2)
 
