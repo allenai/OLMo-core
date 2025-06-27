@@ -63,12 +63,22 @@ log = logging.getLogger(__name__)
 SEQUENCE_LENGTH = 16384
 GLOBAL_BATCH_SIZE = 16 * SEQUENCE_LENGTH
 
-INTRA_DOCUMENT_MASKING = True
 CP_DEGREE: Optional[int] = None
 
 NUM_GPUS = 8
 assert NUM_GPUS % 8 == 0, "NUM_GPUS must be divisible by 8"
 NUM_NODES = NUM_GPUS // 8
+
+
+def dataset_config_from_type(dataset_type: NumpyDatasetType) -> dict:
+    # This is where we define how to handle long docs.
+    intra_doc_masking = dataset_type != NumpyDatasetType.padded_fsl
+    return {
+        "name": NumpyDatasetType.padded_fsl,  # concatenated short docs into a single sequence... (see also "padded_fsl")
+        "generate_doc_lengths": intra_doc_masking,  # ...and mask attention so that they don't attend to each other
+        "long_doc_strategy": LongDocStrategy.truncate,  # truncate docs...
+        "sequence_length": SEQUENCE_LENGTH,  # ...that are over this length
+    }
 
 
 def build_sft_dataset(
@@ -96,6 +106,7 @@ def build_sft_dataset(
         label_mask_paths.append(str(label_path))
 
     tokenizer_config = TokenizerConfig.olmo2instruct()
+    dataset_config = dataset_config_from_type(NumpyDatasetType.padded_fsl)
 
     dataset = NumpyDatasetConfig(
         # general config
@@ -106,10 +117,7 @@ def build_sft_dataset(
         paths=paths,
         label_mask_paths=label_mask_paths,
         # how to handle long docs?
-        name=NumpyDatasetType.packed_fsl,  # concatenated short docs into a single sequence... (see also "padded_fsl")
-        generate_doc_lengths=INTRA_DOCUMENT_MASKING,  # ...and mask attention so that they don't attend to each other
-        long_doc_strategy=LongDocStrategy.truncate,  # truncate docs...
-        sequence_length=SEQUENCE_LENGTH,  # ...that are over this length
+        **dataset_config,
     )
     return dataset, tokenizer_config
 
@@ -194,11 +202,7 @@ class SFTConfig(Config):
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
                 ),
-                cp_config=(
-                    TransformerContextParallelConfig.llama3(degree=CP_DEGREE)
-                    if INTRA_DOCUMENT_MASKING
-                    else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE)
-                )
+                cp_config=(TransformerContextParallelConfig.llama3(degree=CP_DEGREE))
                 if CP_DEGREE
                 else None,
                 ac_config=TransformerActivationCheckpointingConfig(
