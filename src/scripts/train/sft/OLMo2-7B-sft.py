@@ -7,7 +7,7 @@ import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple, cast
+from typing import List, Optional, Tuple, Union, cast
 
 import rich
 import yaml
@@ -51,7 +51,9 @@ from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
 )
-from olmo_core.train.train_module.transformer.config import TransformerContextParallelConfig
+from olmo_core.train.train_module.transformer.config import (
+    TransformerContextParallelConfig,
+)
 from olmo_core.utils import prepare_cli_environment, seed_all
 
 log = logging.getLogger(__name__)
@@ -62,7 +64,7 @@ SEQUENCE_LENGTH = 16384
 GLOBAL_BATCH_SIZE = 16 * SEQUENCE_LENGTH
 
 INTRA_DOCUMENT_MASKING = True
-CP_DEGREE = None
+CP_DEGREE: Optional[int] = None
 
 NUM_GPUS = 8
 assert NUM_GPUS % 8 == 0, "NUM_GPUS must be divisible by 8"
