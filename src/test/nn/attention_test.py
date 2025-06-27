@@ -238,6 +238,9 @@ def test_sdpa(
     if use_flash and dtype == torch.float32:
         pytest.skip("flash requires a low precision dtype")
 
+    if use_flash and device.type == "cpu":
+        pytest.skip("flash requires gpu")
+
     if not use_flash and not use_flex_attn and window_size is not None:
         pytest.skip("sliding window attention is not supported by torch SDPA")
 
@@ -303,7 +306,7 @@ def test_sdpa(
                 attn_mask,
                 torch.block_diag(
                     *[
-                        torch.ones(int(doc_len), int(doc_len)).to(dtype=torch.bool)
+                        torch.ones(int(doc_len), int(doc_len), dtype=torch.bool, device=device)
                         for doc_len in doc_lens.flatten()
                     ]
                 ),
