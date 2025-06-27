@@ -167,25 +167,17 @@ def test_flex_attention_against_sdpa(device: torch.device, dtype: torch.dtype):
     ],
 )
 @pytest.mark.parametrize(
-    "use_flash, use_flex_attn",
+    "use_flex_attn",
     [
-        pytest.param(True, False, id="flash", marks=FLASH_MARKS),
-        pytest.param(False, True, id="torch-flex-attn"),
-        pytest.param(False, False, id="torch-SDPA"),
+        pytest.param(True, id="torch-flex-attn"),
+        pytest.param(False, id="torch-SDPA"),
     ],
 )
 def test_sdpa(
     device: torch.device,
     dtype: torch.dtype,
-    use_flash: bool,
     use_flex_attn: bool,
 ):
-    if use_flash and device.type == "cpu":
-        pytest.skip("flash requires a gpu")
-
-    if use_flash and dtype == torch.bfloat16:
-        pytest.skip("flash does not match naive implementation in low precision due to numerical differences")
-
     torch.random.manual_seed(0)
 
     # Implementation adapted from https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html
@@ -231,7 +223,7 @@ def test_sdpa(
         init_device=device.type,
     )
 
-    attention = Attention(use_flash=use_flash, use_flex_attn=use_flex_attn, **kwargs)
+    attention = Attention(use_flex_attn=use_flex_attn, **kwargs)
     block_mask = None
     if use_flex_attn:
         block_mask = get_flex_attn_causal_block_mask(
@@ -251,6 +243,38 @@ def test_sdpa(
     with torch.no_grad(), torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH):
         y1 = scaled_dot_product_attention(q, k, v, full_precision=not use_flex_attn)
         y2 = attention.sdpa(q, k, v, block_mask=block_mask)
+
+    torch.testing.assert_close(y1, y2)
+
+
+@requires_gpu
+@requires_flash_attn
+def test_flash_sdpa(
+    device: torch.device,
+    dtype: torch.dtype,
+):
+    torch.random.manual_seed(0)
+
+    d_model = 128
+    seq_len = 32
+    batch_size = 2
+    n_heads = 8
+    kwargs: Dict[str, Any] = dict(
+        d_model=d_model,
+        n_heads=8,
+        init_device=device.type,
+    )
+
+    attention = Attention(**kwargs)
+    flash_att = Attention(use_flash=True, **kwargs)
+
+    q = torch.randn(batch_size, seq_len, n_heads, d_model // n_heads, dtype=dtype, device=device)
+    k = torch.randn(batch_size, seq_len, n_heads, d_model // n_heads, dtype=dtype, device=device)
+    v = torch.randn(batch_size, seq_len, n_heads, d_model // n_heads, dtype=dtype, device=device)
+
+    with torch.no_grad(), torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.FLASH_ATTENTION):
+        y1 = attention.sdpa(q, k, v)
+        y2 = flash_att.sdpa(q, k, v)
 
     torch.testing.assert_close(y1, y2)
 
@@ -353,7 +377,7 @@ def test_fused_attention_with_intra_document_masking():
         y2 = attention(x.clone(), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
 
         y1_fused = fused_att(x.clone())
-        y2_fused = fused_att(x.clone(), max_doc_len=seq_len, cu_doc_lens=cu_doc_lens)
+        y2_fused = fused_att(x.clone(), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
 
     torch.testing.assert_close(y1, y2)
     torch.testing.assert_close(y1_fused, y2_fused)
@@ -379,9 +403,9 @@ def test_flex_attention_with_intra_document_masking():
         flex_att.w_k.load_state_dict(attention.w_k.state_dict())
         flex_att.w_v.load_state_dict(attention.w_v.state_dict())
 
-    x = torch.randn(2, seq_len, d_model, device="cuda")
+    x = torch.randn(2, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
 
-    with torch.no_grad():
+    with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
         max_doc_len = seq_len
         cu_doc_lens = torch.tensor([0, seq_len, 2 * seq_len], dtype=torch.int32, device="cuda")
 
@@ -397,7 +421,7 @@ def test_flex_attention_with_intra_document_masking():
         )
         y1_flex = flex_att(x.clone(), block_mask=block_mask)
         y2_flex = flex_att(
-            x.clone(), max_doc_len=seq_len, cu_doc_lens=cu_doc_lens, block_mask=block_mask
+            x.clone(), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens, block_mask=block_mask
         )
 
     torch.testing.assert_close(y1, y2)
@@ -437,12 +461,14 @@ def test_fused_attention_with_intra_document_masking_small_docs():
         y2 = attention(x.clone(), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
 
         y1_fused = fused_att(x.clone())
-        y2_fused = fused_att(x.clone(), max_doc_len=seq_len, cu_doc_lens=cu_doc_lens)
+        y2_fused = fused_att(x.clone(), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
 
     torch.testing.assert_close(y1, y1_fused)
     torch.testing.assert_close(y2, y2_fused)
-    torch.testing.assert_close(y1, y2)
-    torch.testing.assert_close(y1_fused, y2_fused)
+    assert not torch.allclose(y1, y2), "Intra document masking should yield different results"
+    assert not torch.allclose(
+        y1_fused, y2_fused
+    ), "Intra document masking should yield different results"
 
 
 @requires_gpu
@@ -463,9 +489,9 @@ def test_flex_attention_with_intra_document_masking_small_docs():
         flex_att.w_k.load_state_dict(attention.w_k.state_dict())
         flex_att.w_v.load_state_dict(attention.w_v.state_dict())
 
-    x = torch.randn(2, seq_len, d_model, device="cuda")
+    x = torch.randn(2, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
 
-    with torch.no_grad():
+    with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
         max_doc_len = 16
         cu_doc_lens = torch.tensor([0, 4, 20, 32, 40, 48, 56, 64], dtype=torch.int32, device="cuda")
 
@@ -486,8 +512,10 @@ def test_flex_attention_with_intra_document_masking_small_docs():
 
     torch.testing.assert_close(y1, y1_flex)
     torch.testing.assert_close(y2, y2_flex)
-    torch.testing.assert_close(y1, y2)
-    torch.testing.assert_close(y1_flex, y2_flex)
+    assert not torch.allclose(y1, y2), "Intra document masking should yield different results"
+    assert not torch.allclose(
+        y1_flex, y2_flex
+    ), "Intra document masking should yield different results"
 
 
 @pytest.mark.parametrize(
