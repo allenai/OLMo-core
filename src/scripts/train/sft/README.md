@@ -19,9 +19,9 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
         --weka=oe-training-default:/weka/oe-training-default \
         -- uv run python scripts/data/convert_sft_data_for_olmocore.py \
             --add_bos \
-            --dataset_mixer_list jacobmorrison/OpenThoughts3-1.2M-no-cot 1.0 \
+            --dataset_mixer_list allenai/tulu-3-sft-olmo-2-mixture 1.0 \
             --tokenizer_name_or_path /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921-hf \
-            --output_dir /weka/oe-training-default/ai2-llm/tylerr/data/sft/jacobmorrison-OpenThoughts3-1.2M-no-cot
+            --output_dir /weka/oe-training-default/ai2-llm/jacobm/data/sft/jacobmorrison/tulu-3-sft-olmo-2-mixture
     ```
 
     This command will also write tokenizer config files that will be needed later.
@@ -60,8 +60,9 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
     ```bash
     CKPT="/weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921"
     python src/scripts/train/sft/OLMo2-7B-sft.py launch \
-        olmo2-7B-sft-openthoughts-no-cot OpenThoughts3-1.2M-no-cot $CKPT ai2/jupiter-cirrascale-2 \
-        --trainer.callbacks.wandb.enabled=True
+        olmo2-7B-sft-tulu3mix allenai/tulu-3-sft-olmo-2-mixture $CKPT ai2/jupiter-cirrascale-2 \
+        --trainer.callbacks.wandb.enabled=True \
+        --launch.priority=high
     ```
 
     > TIP: The "launch" command automatically creates a Beaker experiment and runs the exact same command remotely with "train" substituted for launch.
@@ -77,20 +78,25 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
         --weka=oe-adapt-default:/weka/oe-adapt-default \
         --weka=oe-training-default:/weka/oe-training-default \
         -- uv run python src/examples/huggingface/convert_checkpoint_to_hf.py \
-            -i /weka/oe-training-default/ai2-llm/checkpoints/tylerr/olmo2-7B-sft/olmo2-7B-sft-openthoughts-no-cot/step4143 \
-            -o /weka/oe-adapt-default/tylerr/checkpoints/olmo2-7B-sft/olmo2-7B-sft-openthoughts-no-cot/step4143-hf \
-            --max-sequence-length 4096
+            -i /weka/oe-training-default/ai2-llm/checkpoints/tylerr/olmo2-7B-sft/olmo2-7B-sft-tulu3mix/step4143 \
+            -o /weka/oe-adapt-default/tylerr/checkpoints/olmo2-7B-sft/olmo2-7B-sft-tulu3mix/step4143-hf \
+            --max-sequence-length 65536
     ```
 
-2. Copy over the tokenizer files to your hf model directory. These files are generated with and located in
-    the same directory as the input dataset.
+2. Copy over the tokenizer files to your hf model directory. If you havent made any changes to tokenization, you can copy the files located at `/weka/oe-adapt-default/jacobm/rl-sft/checkpoints/olmo-2-lc-tokenizer/`:
+
+    ```bash
+    cp /weka/oe-adapt-default/jacobm/rl-sft/checkpoints/olmo-2-lc-tokenizer/* /weka/oe-adapt-default/tylerr/checkpoints/olmo2-7B-sft/olmo2-7B-sft-tulu3mix/step4143-hf
+    ```
+
+    > NOTE: be careful with this step, its probably worth double checking the tokenizer configuration. We plan to automate this in the future to help avoid bugs resulting from manual tokenizer configuration.
 
 3. Launch evaluations using the submit_eval_jobs.sh script in `open-instruct` using a command such as:
 
     ```bash
     python scripts/submit_eval_jobs.py \
-        --model_name olmo2-7b-sft-fromolmocore \
-        --location /weka/oe-adapt-default/tylerr/checkpoints/olmo2-7B-sft/olmo2-7B-sft-openthoughts-no-cot/step4143-hf/ \
+        --model_name olmo2-7b-sft-tulu3mix-fromolmocore \
+        --location /weka/oe-adapt-default/tylerr/checkpoints/olmo2-7B-sft/olmo2-7B-sft-tulu3mix/step4143-hf \
         --cluster ai2/saturn-cirrascale ai2/neptune-cirrascale \
         --is_tuned \
         --priority high \
