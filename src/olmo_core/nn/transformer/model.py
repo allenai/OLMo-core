@@ -358,9 +358,7 @@ class Transformer(nn.Module):
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
 
         # Prepare block mask
-        block_mask = self._get_flex_attn_block_mask(
-            S, self.device, max_doc_len, cu_doc_lens
-        )
+        block_mask = self._get_flex_attn_block_mask(S, self.device, max_doc_len, cu_doc_lens)
         block_kwargs["block_mask"] = block_mask
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.

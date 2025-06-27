@@ -272,7 +272,9 @@ def test_flash_sdpa(
     k = torch.randn(batch_size, seq_len, n_heads, d_model // n_heads, dtype=dtype, device=device)
     v = torch.randn(batch_size, seq_len, n_heads, d_model // n_heads, dtype=dtype, device=device)
 
-    with torch.no_grad(), torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.FLASH_ATTENTION):
+    with torch.no_grad(), torch.nn.attention.sdpa_kernel(
+        torch.nn.attention.SDPBackend.FLASH_ATTENTION
+    ):
         y1 = attention.sdpa(q, k, v)
         y2 = flash_att.sdpa(q, k, v)
 
