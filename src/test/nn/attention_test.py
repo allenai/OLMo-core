@@ -53,6 +53,9 @@ def scaled_dot_product_attention(
     #        (batch_size, n_kv_heads, seq_len, head_dim)
     q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
+    if not full_precision and not use_math_backend:
+        raise ValueError("Math backend must be used when full precision is not desired")
+
     with contextlib.ExitStack() as stack:
         if use_math_backend:
             stack.enter_context(_allow_fp16_bf16_reduction_math_sdp(not full_precision))
