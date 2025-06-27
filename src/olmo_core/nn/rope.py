@@ -273,14 +273,18 @@ class RotaryEmbedding(RotaryEmbeddingBase):
                 ** (torch.arange(0, self.dim, 2, device=device, dtype=torch.float) / self.dim)
             )
             if self.scaling is not None:
-                inv_freq = self.scaling.scale_inv_freq(inv_freq)
+                inv_freq, attention_factor = self.scaling.scale_inv_freq(inv_freq)
             seq = torch.arange(seq_len, device=device, dtype=torch.float)
             freqs = torch.einsum("i , j -> i j", seq, inv_freq)
             positions = torch.cat((freqs, freqs), dim=-1)
             pos_sin, pos_cos = positions.sin(), positions.cos()
 
-        self._cache["rope_pos_sin"] = pos_sin
-        self._cache["rope_pos_cos"] = pos_cos
+        if self.scaling is not None:
+            self._cache["rope_pos_sin"] = pos_sin * attention_factor
+            self._cache["rope_pos_cos"] = pos_cos * attention_factor
+        else:
+            self._cache["rope_pos_sin"] = pos_sin
+            self._cache["rope_pos_cos"] = pos_cos
 
         return pos_sin, pos_cos
 
