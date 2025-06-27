@@ -155,9 +155,9 @@ class CheckpointerCallback(Callback):
         log.info(f"Removing old checkpoint at '{path}'...")
         if is_url(path):
             if get_rank() == 0:
-                self.trainer.thread_pool.submit(clear_directory, path)
+                self.trainer.run_bookkeeping_op(clear_directory, path)
         elif get_fs_local_rank() == 0:
-            self.trainer.thread_pool.submit(clear_directory, path)
+            self.trainer.run_bookkeeping_op(clear_directory, path)
 
     def _schedule_for_removal(self, path: str):
         self._checkpoints_to_remove.append(path)

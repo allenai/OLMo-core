@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add support for BOS token matching EOS token for intra-document masking in FSL numpy datasets.
 - Added option to allow profiler to record on multiple ranks.
 - Added support for accessing Google on non-Google clusters via auth with service account keys.
+- Added support for revisions in `convert_checkpoint_from_hf.py` and the `load_hf_model` method of `olmo_core.nn.hf.checkpoint`.
 
 ### Changed
 
