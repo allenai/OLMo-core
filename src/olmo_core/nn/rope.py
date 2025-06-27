@@ -1,3 +1,4 @@
+import logging
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
@@ -6,9 +7,13 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 
+from olmo_core.utils import log_once
+
 from ..config import Config, StrEnum
 from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "RoPEType",
@@ -340,6 +345,37 @@ class RotaryEmbedding(RotaryEmbeddingBase):
             if pos_sin is None or pos_cos is None:
                 pos_sin, pos_cos = self._get_rotary_embedding(k_len, q_.device)
             pos_sin, pos_cos = pos_sin.type_as(q_), pos_cos.type_as(q_)
+
+            # ------------------------------------------------------------------
+            # Handle cases where the model has been tensor-parallel sharded along
+            # the hidden dimension *after* the RoPE module was instantiated. In
+            # that situation the local head dimension will be smaller than the
+            # original `head_size` used to build this module. The RoPE buffers
+            # (`pos_sin`, `pos_cos`) were created using the original dimension,
+            # so they may be larger than what we now need.  Rather than
+            # rebuilding the buffers on every rank we simply slice them to the
+            # required size.  This is safe because each rank holds a contiguous
+            # shard of the query/key vectors produced by the col/row-wise
+            # parallel linear projections.
+            # ------------------------------------------------------------------
+            head_dim_local = q_.shape[-1]
+            if pos_sin.size(-1) != head_dim_local or pos_cos.size(-1) != head_dim_local:
+                if pos_sin.size(-1) < head_dim_local or pos_cos.size(-1) < head_dim_local:
+                    raise RuntimeError(
+                        "RoPE buffer dimension smaller than tensor dimension: "
+                        f"{pos_sin.size(-1)} vs {head_dim_local}"
+                    )
+                else:
+                    # TODO: this is a hack to avoid rebuilding the buffers on every rank.
+                    log_once(
+                        log,
+                        f"Slicing RoPE buffers to match local head dimension after tensor parallel sharding: "
+                        f"pos_sin shape {pos_sin.shape} -> {pos_sin.shape[:-1] + (head_dim_local,)}, "
+                        f"pos_cos shape {pos_cos.shape} -> {pos_cos.shape[:-1] + (head_dim_local,)} "
+                        f"(seq_len, head_dim: {pos_sin.size(-1)} -> {head_dim_local})",
+                    )
+                    pos_sin = pos_sin[..., :head_dim_local]
+                    pos_cos = pos_cos[..., :head_dim_local]
 
             if head_first:
                 q_ = self._apply_rotary_pos_emb(
