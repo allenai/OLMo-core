@@ -27,6 +27,17 @@ from olmo_core.testing import (
 )
 
 
+@contextlib.contextmanager
+def _allow_fp16_bf16_reduction_math_sdp(enabled: bool):
+    math_sdpa_low_precision_allowed = torch.backends.cuda.fp16_bf16_reduction_math_sdp_allowed()
+
+    try:
+        torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(True)
+        yield
+    finally:
+        torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(math_sdpa_low_precision_allowed)
+
+
 # Implementation adapted from https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html
 def scaled_dot_product_attention(
     q: torch.Tensor,
@@ -43,15 +54,9 @@ def scaled_dot_product_attention(
     #        (batch_size, n_kv_heads, seq_len, head_dim)
     q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
-    math_sdpa_low_precision_allowed = torch.backends.cuda.fp16_bf16_reduction_math_sdp_allowed()
-    if not full_precision:
-        if not use_math_backend:
-            raise ValueError("Math backend must be used when full precision is not desired")
-
-        torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(True)
-
     with contextlib.ExitStack() as stack:
         if use_math_backend:
+            stack.enter_context(_allow_fp16_bf16_reduction_math_sdp(True))
             stack.enter_context(torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH))
 
         att = (
@@ -60,47 +65,7 @@ def scaled_dot_product_attention(
             .contiguous()
         )
 
-    if not full_precision:
-        torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(math_sdpa_low_precision_allowed)
-
     return att
-
-    og_dtype = q.dtype
-    if full_precision:
-        q, k, v = q.float(), k.float(), v.float()
-
-    L, S = q.size(-2), k.size(-2)
-    scale_factor = 1 / math.sqrt(q.size(-1))
-    attn_bias = torch.zeros(L, S, dtype=q.dtype, device=q.device)
-
-    if is_causal:
-        assert attn_mask is None
-        temp_mask = torch.ones(L, S, dtype=torch.bool, device=attn_bias.device).tril(diagonal=0)
-        attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
-
-    if attn_mask is not None:
-        if attn_mask.dtype == torch.bool:
-            attn_bias.masked_fill_(attn_mask.logical_not(), float("-inf"))
-        else:
-            attn_bias = attn_mask + attn_bias
-
-    attn_bias = attn_bias.to(q.dtype)
-
-    k = k.repeat_interleave(q.size(-3) // k.size(-3), -3)
-    v = v.repeat_interleave(q.size(-3) // v.size(-3), -3)
-
-    attn_weight = q @ k.transpose(-2, -1) * scale_factor
-    attn_weight += attn_bias
-    attn_weight = torch.softmax(attn_weight, dim=-1)
-    att = attn_weight @ v
-
-    # Put head dimension back after the sequence dimension.
-    return att.transpose(1, 2).contiguous().to(og_dtype)
-
-
-def _flatten_batch_dim(x: torch.Tensor) -> torch.Tensor:
-    B, T, *other = x.shape
-    return x.view(B * T, *other)
 
 
 @pytest.mark.parametrize("device", DEVICES)
