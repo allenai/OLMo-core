@@ -1045,7 +1045,9 @@ class Trainer:
             try:
                 return op(*args, **kwargs)
             finally:
-                if (runtime := (time.perf_counter() - start_time)) > self.bookkeeping_soft_timeout:
+                if (
+                    runtime := int(time.perf_counter() - start_time)
+                ) > self.bookkeeping_soft_timeout:
                     log.warning(
                         f"Bookeeping op '{op_name}' took longer than {self.bookkeeping_soft_timeout} "
                         f"seconds ({runtime:,d} seconds)!"
