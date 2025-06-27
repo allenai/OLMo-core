@@ -256,7 +256,7 @@ def test_sdpa(
     if intra_doc_masking:
         doc_lens = torch.tensor([[0, 4, 16, 12], [8, 8, 8, 8]], dtype=torch.int32, device=device)
         max_doc_len = int(torch.max(doc_lens))
-        cu_doc_lens = torch.cumsum(doc_lens.flatten(), dim=0)
+        cu_doc_lens = torch.cumsum(doc_lens.flatten(), dim=0, dtype=torch.int32)
         assert int(cu_doc_lens[-1]) == batch_size * seq_len
         # cu_doc_lens = torch.arange(0, batch_size * seq_len, max_doc_len, dtype=torch.int32, device="cuda")
     else:
