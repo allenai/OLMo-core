@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added option to allow profiler to record on multiple ranks.
 - Added support for accessing Google on non-Google clusters via auth with service account keys.
 - Added an example script for launching an SFT job.
+- Added support for revisions in `convert_checkpoint_from_hf.py` and the `load_hf_model` method of `olmo_core.nn.hf.checkpoint`.
 
 ### Changed
 
@@ -52,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - W&B callback uses working directory instead of save folder for local cache.
 - Reset speed monitor callback after changing batch size.
 - Fixed parallelism compatiblity between cp + tp and cp + pp and added test to catch regressions.
+- Fixed fingerprinting for FSL datasets
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 
