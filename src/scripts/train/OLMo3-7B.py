@@ -22,11 +22,11 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.train.common import LoadStrategy
 from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
+    TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
-    TransformerActivationCheckpointingConfig,
-    TransformerActivationCheckpointingMode
 )
 
 SEQUENCE_LENGTH = 8192
