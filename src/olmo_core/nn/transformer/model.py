@@ -211,8 +211,7 @@ class Transformer(nn.Module):
         self,
         seq_len: int,
         device: Optional[torch.device] = None,
-        max_doc_len: Optional[int] = None,
-        cu_doc_lens: Optional[torch.Tensor] = None,
+        doc_lens: Optional[torch.Tensor] = None,
     ) -> Optional[BlockMask]:
         if device is None:
             device = self.device
@@ -223,9 +222,7 @@ class Transformer(nn.Module):
                 return None
 
             window_size = getattr(att, "window_size", None)
-            return get_flex_attn_causal_block_mask(
-                seq_len, device, window_size, max_doc_len, cu_doc_lens
-            )
+            return get_flex_attn_causal_block_mask(seq_len, device, window_size, doc_lens)
 
         return None
 
@@ -358,7 +355,7 @@ class Transformer(nn.Module):
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
 
         # Prepare block mask
-        block_mask = self._get_flex_attn_block_mask(S, self.device, max_doc_len, cu_doc_lens)
+        block_mask = self._get_flex_attn_block_mask(S, self.device, doc_lens)
         block_kwargs["block_mask"] = block_mask
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.

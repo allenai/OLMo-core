@@ -1,7 +1,7 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -465,6 +465,28 @@ class Attention(AttentionBase):
                 raise NotImplementedError("Our flex attention does not yet support dropout.")
             if block_mask is None:
                 raise ValueError("Block mask missing during flex attention.")
+
+            # Reshape (batch_size, seq_len) so that the seq_len matches that of the block mask.
+            # This is needed for intra-document masking, in which the block make sequence length
+            # is batch_size * seq_len.
+            # shape: (batch_size, seq_len, n_heads, head_dim)
+            #        (batch_size, seq_len, n_kv_heads, head_dim),
+            #        (batch_size, seq_len, n_kv_heads, head_dim)
+            q = q.view(
+                q.shape[0] * q.shape[1] // block_mask.seq_lengths[0],
+                block_mask.seq_lengths[0],
+                *q.shape[2:],
+            )
+            k = k.view(
+                k.shape[0] * k.shape[1] // block_mask.seq_lengths[1],
+                block_mask.seq_lengths[1],
+                *k.shape[2:],
+            )
+            v = v.view(
+                v.shape[0] * v.shape[1] // block_mask.seq_lengths[1],
+                block_mask.seq_lengths[1],
+                *v.shape[2:],
+            )
 
             # PyTorch's flex attn expects the number of heads to come before the sequence dimension.
             # shape: (batch_size, n_heads, seq_len, head_dim),
@@ -981,10 +1003,9 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
 
 def _get_flex_attn_mask_mod(
     window_size: Optional[Tuple[int, int]] = None,
-    max_doc_len: Optional[int] = None,
-    cu_doc_lens: Optional[torch.Tensor] = None,
+    doc_lens: Optional[torch.Tensor] = None,
     device: Optional[torch.device] = None,
-):
+) -> Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor]:
     mask_mods = []
 
     def _causal_mask_mod(
@@ -1005,23 +1026,16 @@ def _get_flex_attn_mask_mod(
 
         mask_mods.append(_sliding_window_mask_mod)
 
-    if max_doc_len is not None or cu_doc_lens is not None:
-        if max_doc_len is None or cu_doc_lens is None:
-            raise ValueError("max_doc_len and cu_doc_lens must be null or non-null")
+    if doc_lens is not None:
         if device is None:
             raise ValueError("Device is required for intra-document masking mod")
 
-        # Get the document id of each token
-        doc_ids = []
-        cu_doc_lens_idx = 0
-        for idx in range(cu_doc_lens[-1]):
-            # while instead of if just in case a doc len is 0.
-            while idx > cu_doc_lens[cu_doc_lens_idx]:
-                cu_doc_lens_idx += 1
-
-            doc_ids.append(cu_doc_lens_idx)
-
-        document_ids = torch.tensor(doc_ids, device=device)
+        document_ids = torch.cat(
+            [
+                torch.full((int(doc_len),), i, device=device)
+                for i, doc_len in enumerate(doc_lens.flatten())
+            ]
+        )
 
         def _document_masking_mask_mod(
             B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
@@ -1055,17 +1069,20 @@ def get_flex_attn_causal_block_mask(
     seq_len: int,
     device: torch.device,
     window_size: Optional[Tuple[int, int]] = None,
-    max_doc_len: Optional[int] = None,
-    cu_doc_lens: Optional[torch.Tensor] = None,
+    doc_lens: Optional[torch.Tensor] = None,
     block_size: int = 128,
 ) -> BlockMask:
-    if max_doc_len is not None or cu_doc_lens is not None:
+    if doc_lens is not None:
+        token_count = int(doc_lens.sum())
+        if token_count % seq_len != 0:
+            raise ValueError("Sum of document lengths is not a multiple of sequence length")
+
         return create_block_mask(
-            _get_flex_attn_mask_mod(window_size, max_doc_len, cu_doc_lens, device=device),
-            B=None,
+            _get_flex_attn_mask_mod(window_size, doc_lens, device=device),
+            B=1,
             H=None,
-            Q_LEN=seq_len,
-            KV_LEN=seq_len,
+            Q_LEN=token_count,
+            KV_LEN=token_count,
             device=device.type,
             BLOCK_SIZE=block_size,
         )
