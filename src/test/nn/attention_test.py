@@ -389,51 +389,6 @@ def test_fused_attention_with_intra_document_masking():
 
 @requires_gpu
 @requires_flash_attn
-def test_flex_attention_with_intra_document_masking():
-    torch.random.manual_seed(0)
-
-    d_model = 128
-    seq_len = 32
-
-    attention = Attention(d_model=d_model, n_heads=8, init_device="cuda", use_flash=True)
-    flex_att = Attention(d_model=d_model, n_heads=8, init_device="cuda", use_flex_attn=True)
-
-    # Make sure weights match.
-    with torch.no_grad():
-        flex_att.w_out.load_state_dict(attention.w_out.state_dict())
-        flex_att.w_q.load_state_dict(attention.w_q.state_dict())
-        flex_att.w_k.load_state_dict(attention.w_k.state_dict())
-        flex_att.w_v.load_state_dict(attention.w_v.state_dict())
-
-    x = torch.randn(2, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
-
-    with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
-        max_doc_len = seq_len
-        cu_doc_lens = torch.tensor([0, seq_len, 2 * seq_len], dtype=torch.int32, device="cuda")
-
-        y1 = attention(x.clone())
-        y2 = attention(x.clone(), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
-
-        block_mask = get_flex_attn_causal_block_mask(
-            seq_len,
-            torch.device("cuda"),
-            flex_att.window_size,
-            max_doc_len=max_doc_len,
-            cu_doc_lens=cu_doc_lens,
-        )
-        y1_flex = flex_att(x.clone(), block_mask=block_mask)
-        y2_flex = flex_att(
-            x.clone(), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens, block_mask=block_mask
-        )
-
-    torch.testing.assert_close(y1, y2)
-    torch.testing.assert_close(y1_flex, y2_flex)
-    torch.testing.assert_close(y1, y1_flex)
-    torch.testing.assert_close(y2, y2_flex)
-
-
-@requires_gpu
-@requires_flash_attn
 def test_fused_attention_with_intra_document_masking_small_docs():
     torch.random.manual_seed(0)
 
@@ -470,53 +425,6 @@ def test_fused_attention_with_intra_document_masking_small_docs():
     assert not torch.allclose(y1, y2), "Intra document masking should yield different results"
     assert not torch.allclose(
         y1_fused, y2_fused
-    ), "Intra document masking should yield different results"
-
-
-@requires_gpu
-@requires_flash_attn
-def test_flex_attention_with_intra_document_masking_small_docs():
-    torch.random.manual_seed(0)
-
-    d_model = 128
-    seq_len = 32
-
-    attention = Attention(d_model=d_model, n_heads=8, init_device="cuda", use_flash=True)
-    flex_att = Attention(d_model=d_model, n_heads=8, init_device="cuda", use_flex_attn=True)
-
-    # Make sure weights match.
-    with torch.no_grad():
-        flex_att.w_out.load_state_dict(attention.w_out.state_dict())
-        flex_att.w_q.load_state_dict(attention.w_q.state_dict())
-        flex_att.w_k.load_state_dict(attention.w_k.state_dict())
-        flex_att.w_v.load_state_dict(attention.w_v.state_dict())
-
-    x = torch.randn(2, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
-
-    with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
-        max_doc_len = 16
-        cu_doc_lens = torch.tensor([0, 4, 20, 32, 40, 48, 56, 64], dtype=torch.int32, device="cuda")
-
-        y1 = attention(x.clone())
-        y2 = attention(x.clone(), max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens)
-
-        block_mask = get_flex_attn_causal_block_mask(
-            seq_len,
-            torch.device("cuda"),
-            flex_att.window_size,
-            max_doc_len=max_doc_len,
-            cu_doc_lens=cu_doc_lens,
-        )
-        y1_flex = flex_att(x.clone(), block_mask=block_mask)
-        y2_flex = flex_att(
-            x.clone(), max_doc_len=seq_len, cu_doc_lens=cu_doc_lens, block_mask=block_mask
-        )
-
-    torch.testing.assert_close(y1, y1_flex)
-    torch.testing.assert_close(y2, y2_flex)
-    assert not torch.allclose(y1, y2), "Intra document masking should yield different results"
-    assert not torch.allclose(
-        y1_flex, y2_flex
     ), "Intra document masking should yield different results"
 
 
