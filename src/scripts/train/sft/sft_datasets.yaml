@@ -10,6 +10,7 @@ datasets:
       - labels_part_0000.npy
       - labels_part_0001.npy
   OpenThoughts3-1.2M:
+    # Description: Openthoughts3-1.2M dataset with COT
     base_dir: tylerr/data/sft/jacobmorrison-OpenThoughts3-1.2M
     tokenizer: allenai/OLMo-2-1124-7B-Instruct
     token_ids:

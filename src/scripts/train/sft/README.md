@@ -13,14 +13,15 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
     ```bash
     gantry run \
         --cluster ai2/phobos-cirrascale \
-        --allow-dirty --timeout -1 -y --budget ai2/oe-adapt \
-        --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync" \
+        --timeout -1 -y --budget ai2/oe-adapt \
+        --beaker-image tylerr/uv-cuda12.8-ubuntu22.04 \
+        --install "uv sync" \
         --weka=oe-training-default:/weka/oe-training-default \
-        -- /root/.local/bin/uv run python scripts/data/convert_sft_data_for_olmocore.py \
+        -- uv run python scripts/data/convert_sft_data_for_olmocore.py \
             --add_bos \
             --dataset_mixer_list jacobmorrison/OpenThoughts3-1.2M-no-cot 1.0 \
             --tokenizer_name_or_path /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921-hf \
-            --output_dir /weka/oe-training-default/tylerr/data/sft/jacobmorrison-OpenThoughts3-1.2M
+            --output_dir /weka/oe-training-default/ai2-llm/tylerr/data/sft/jacobmorrison-OpenThoughts3-1.2M-no-cot
     ```
 
     This command will also write tokenizer config files that will be needed later.
@@ -57,13 +58,13 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
     for example:
 
     ```bash
+    CKPT="/weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921"
     python src/scripts/train/sft/OLMo2-7B-sft.py launch \
-        olmo2-7B-sft-take2-8gpu OpenThoughts3-1.2M /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/jupiter-cirrascale-2 \
-        --trainer.callbacks.wandb.enabled=True \
-        --launch.num_gpus=8
+        olmo2-7B-sft-openthoughts-no-cot OpenThoughts3-1.2M-no-cot $CKPT ai2/jupiter-cirrascale-2 \
+        --trainer.callbacks.wandb.enabled=True
     ```
 
-    > TIP: The "launch" command automatically creates a Beaker experiment and runs the exact same command with "train" substituted for launch.
+    > TIP: The "launch" command automatically creates a Beaker experiment and runs the exact same command remotely with "train" substituted for launch.
 
 ## Evaluation
 
@@ -71,12 +72,13 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 
     ```bash
     gantry run --cluster ai2/phobos-cirrascale --timeout -1 -y --budget ai2/oe-adapt \
-        --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync --all-extras" \
+        --beaker-image tylerr/uv-cuda12.8-ubuntu22.04 \
+        --install "uv sync --all-extras" \
         --weka=oe-adapt-default:/weka/oe-adapt-default \
         --weka=oe-training-default:/weka/oe-training-default \
-        -- /root/.local/bin/uv run python src/examples/huggingface/convert_checkpoint_to_hf.py \
-            -i /weka/oe-training-default/ai2-llm/checkpoints/tylerr/olmo2-7B-sft/olmo2-7B-sft-take2-8gpu/step4143 \
-            -o /weka/oe-adapt-default/tylerr/checkpoints/olmo2-7B-sft/olmo2-7B-sft-take2-8gpu/step4143-hf \
+        -- uv run python src/examples/huggingface/convert_checkpoint_to_hf.py \
+            -i /weka/oe-training-default/ai2-llm/checkpoints/tylerr/olmo2-7B-sft/olmo2-7B-sft-openthoughts-no-cot/step4143 \
+            -o /weka/oe-adapt-default/tylerr/checkpoints/olmo2-7B-sft/olmo2-7B-sft-openthoughts-no-cot/step4143-hf \
             --max-sequence-length 4096
     ```
 
@@ -88,7 +90,7 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
     ```bash
     python scripts/submit_eval_jobs.py \
         --model_name olmo2-7b-sft-fromolmocore \
-        --location /weka/oe-adapt-default/tylerr/checkpoints/olmo2-7B-sft/olmo2-7B-sft-take2-8gpu/step4143-hf/ \
+        --location /weka/oe-adapt-default/tylerr/checkpoints/olmo2-7B-sft/olmo2-7B-sft-openthoughts-no-cot/step4143-hf/ \
         --cluster ai2/saturn-cirrascale ai2/neptune-cirrascale \
         --is_tuned \
         --priority high \
