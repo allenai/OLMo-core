@@ -13,4 +13,4 @@ log = logging.getLogger(__name__)
 class MonkeyPatcherCallback(Callback):
     def pre_train(self):
         # Cache DeviceMesh.__get_item__
-        DeviceMesh.__get_item__ = functools.lru_cache(maxsize=None)(DeviceMesh.__get_item__)
+        DeviceMesh.__getitem__ = functools.lru_cache(maxsize=None)(DeviceMesh.__getitem__)
