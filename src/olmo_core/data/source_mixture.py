@@ -226,9 +226,11 @@ class SourceMixtureDatasetConfig(Config):
         tokens_details_by_source: List[SourceTokenDetails] = []
 
         # Calculate the number of tokens available and to include for each source
+        tokens_per_source = []
         for source_config in self.source_configs:
             num_for_source = available_tokens_by_source[source_config.source_name]
             needed_for_source = int(self.max_tokens * source_config.target_ratio)
+            tokens_per_source.append(needed_for_source)
             max_for_source = int(
                 (num_for_source * source_config.max_source_fraction)
                 * source_config.max_repetition_ratio
@@ -247,6 +249,11 @@ class SourceMixtureDatasetConfig(Config):
                     num_selected=needed_for_source,
                 )
             )
+
+        log.info(f"Total tokens per source: {sum(tokens_per_source)}; max tokens requested: {self.max_tokens}")
+        assert sum(tokens_per_source) == self.max_tokens, ( 
+            f"Total tokens per source {sum(tokens_per_source)} does not match max tokens requested {self.max_tokens}"
+        )
 
         completed: List[SourceMixtureOutcome] = []
         for source in tokens_details_by_source:
