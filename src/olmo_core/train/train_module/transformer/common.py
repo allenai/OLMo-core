@@ -151,7 +151,6 @@ def parallelize_model(
             max_seq_len=max_sequence_length,
             max_local_microbatch_size=rank_microbatch_size,
             device=device,
-            pp_mesh=pp_mesh,
         )
 
     return model
