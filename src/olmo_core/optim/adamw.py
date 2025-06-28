@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional, Tuple, Type, Union
+from typing import List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn as nn
@@ -170,18 +170,12 @@ class SkipStepAdamWV2(SkipStepOptimizer):
 
         step_factor = self.get_step_factor()
         self._step_skipped = 1 - step_factor
-        step_kept: torch.Tensor = step_factor.to(dtype=torch.bool)
-        step_skipped: torch.Tensor = step_kept.logical_not()
 
         for group in self.param_groups:
             params = []
-            skipped_params = []
             grads = []
-            skipped_grads = []
-            exp_avgs = []
-            skipped_exp_avgs = []
-            exp_avg_sqs = []
-            skipped_exp_avg_sqs = []
+            exp_avgs: List[torch.Tensor] = []
+            exp_avg_sqs: List[torch.Tensor] = []
             group_step = []
 
             for p in group["params"]:
@@ -199,20 +193,12 @@ class SkipStepAdamWV2(SkipStepOptimizer):
 
                 group_step.append(state["step"])
 
-                # If step is skipped, copy everything into a tensor and keep it stored
-                skipped_params.append(p.detach().clone())
-                skipped_grads.append(p.grad.detach().clone())
-                skipped_exp_avgs.append(state["exp_avg"].detach().clone())
-                skipped_exp_avg_sqs.append(state["exp_avg_sq"].detach().clone())
-
-                # If step is kept, in-place rewrite every element with itself
-                # Otherwise, empty the params and optimizer state!
-                params.append(p.masked_scatter_(step_kept, p))
-                grads.append(p.grad.masked_scatter_(step_kept, p.grad))
-                exp_avgs.append(state["exp_avg"].masked_scatter_(step_kept, state["exp_avg"]))
-                exp_avg_sqs.append(
-                    state["exp_avg_sq"].masked_scatter_(step_kept, state["exp_avg_sq"])
-                )
+                params.append(p)
+                # Set grad to 0 when step factor is 0.
+                grads.append(p.grad.mul_(step_factor))
+                step_factor: torch.Tensor
+                exp_avgs.append(state["exp_avg"])
+                exp_avg_sqs.append(state["exp_avg_sq"])
 
             adamw(
                 params,
@@ -224,7 +210,7 @@ class SkipStepAdamWV2(SkipStepOptimizer):
                 amsgrad=False,
                 beta1=group["betas"][0],
                 beta2=group["betas"][1],
-                lr=group["lr"],
+                lr=group["lr"] * step_factor,
                 weight_decay=group["weight_decay"],
                 eps=group["eps"],
                 maximize=False,
@@ -232,16 +218,13 @@ class SkipStepAdamWV2(SkipStepOptimizer):
                 fused=self.fused,
             )
 
-            # If step was skipped, fill params and optimizer state back in
-            for i, p in enumerate(group["params"]):
+            for p, exp_avg, exp_avg_sq in zip(params, exp_avgs, exp_avg_sqs):
                 if p.grad is None:
                     continue
 
-                state = self.state[p]
-
-                p.masked_scatter_(step_skipped, skipped_params[i])
-                state["exp_avg"].masked_scatter_(step_skipped, skipped_exp_avgs[i])
-                state["exp_avg_sq"].masked_scatter_(step_skipped, skipped_exp_avg_sqs[i])
+                # p.div_(1 - (1 - step_factor) * (group["lr"] * group["weight_decay"]))
+                exp_avg.div_(step_factor + (1 - step_factor) * group["betas"][0])
+                exp_avg_sq.div_(step_factor + (1 - step_factor) * group["betas"][1])
 
 
 @dataclass
