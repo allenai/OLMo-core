@@ -175,7 +175,7 @@ class SFTConfig(Config):
                 budget="ai2/oe-adapt",
                 workspace="ai2/olmo-instruct",
             ),
-            model=TransformerConfig.olmo2_7B(  # Based on https://github.com/allenai/OLMo-core/blob/dustins/anneal-repro/src/scripts/train/lc_cont_train/OLMo2-7B-lc_anneal_tp4.py
+            model=TransformerConfig.olmo2_1B(  # Based on https://github.com/allenai/OLMo-core/blob/dustins/anneal-repro/src/scripts/train/lc_cont_train/OLMo2-7B-lc_anneal_tp4.py
                 vocab_size=tokenizer_config.padded_vocab_size(),
                 use_flash=True,
                 rope_theta=8 * 10**6,
