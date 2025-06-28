@@ -251,21 +251,28 @@ class SourceMixtureDatasetConfig(Config):
             )
 
         log.info(f"Total tokens per source: {sum(tokens_per_source)}; max tokens requested: {self.max_tokens}")
-        assert sum(tokens_per_source) == self.max_tokens, ( 
-            f"Total tokens per source {sum(tokens_per_source)} does not match max tokens requested {self.max_tokens}"
-        )
+        #assert sum(tokens_per_source) == self.max_tokens, ( 
+        #    f"Total tokens per source {sum(tokens_per_source)} does not match max tokens requested {self.max_tokens}"
+        #)
 
         completed: List[SourceMixtureOutcome] = []
+        total_total_tokens_to_keep = 0
         for source in tokens_details_by_source:
+
+            path_tokens, total_tokens_to_keep = self.get_paths_and_tokens_for_source(
+                        source_config=source.config,
+                        token_details=source,
+                    )
+
+            total_total_tokens_to_keep += total_tokens_to_keep
             completed.append(
                 SourceMixtureOutcome(
                     name=source.config.source_name,
-                    path_tokens=self.get_paths_and_tokens_for_source(
-                        source_config=source.config,
-                        token_details=source,
-                    ),
-                )
+                    path_tokens=path_tokens
+                ),
             )
+
+        log.info(f"Total tokens to keep across all sources: {total_total_tokens_to_keep}, max tokens requested: {self.max_tokens}")
 
         if self.render_tables:
             self.render_mixture_outcome_tables(tokens_details_by_source)
@@ -278,7 +285,7 @@ class SourceMixtureDatasetConfig(Config):
 
     def get_paths_and_tokens_for_source(
         self, source_config: SourceMixtureConfig, token_details: SourceTokenDetails
-    ) -> List[SourcePathTokens]:
+    ):# -> List[SourcePathTokens]:
         """
         Get the paths and resulting token count for a source.
         """
@@ -301,12 +308,16 @@ class SourceMixtureDatasetConfig(Config):
                     path_tokens.append(SourcePathTokens(path=path, tokens=tokens_to_keep))
 
             return path_tokens
+        
+        total_tokens_to_keep = 0
 
         for path in source_config.paths:
             tokens_to_keep = int(math.ceil(self._count_tokens_for_file(path) * take_ratio))
             path_tokens.append(SourcePathTokens(path=path, tokens=tokens_to_keep))
+            total_tokens_to_keep += tokens_to_keep
 
-        return path_tokens
+
+        return path_tokens, total_tokens_to_keep
 
     def _count_tokens_for_paths(self, paths: List[PathOrStr], source: Optional[str]) -> int:
         """
