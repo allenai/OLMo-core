@@ -5,6 +5,8 @@ import torch
 import torch.nn as nn
 from torch.optim.adamw import adamw
 
+from olmo_core.utils import cuda_sync_debug_mode
+
 from ..config import DType
 from .config import OptimConfig
 from .skip_step_optimizer import SkipStepOptimizer
@@ -99,10 +101,12 @@ class SkipStepAdamW(SkipStepOptimizer):
                     continue
 
                 state = self.state[p]
-                if len(state) == 0:
-                    state["step"] = torch.tensor(0.0, dtype=torch.float32, device=p.device)
-                    state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
-                    state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
+                # Allow host-device sync for setting up state for the first time
+                with cuda_sync_debug_mode(0):
+                    if len(state) == 0:
+                        state["step"] = torch.tensor(0.0, dtype=torch.float32, device=p.device)
+                        state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
+                        state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
 
                 adamw_step(
                     p,
@@ -186,12 +190,12 @@ class SkipStepAdamWV2(SkipStepOptimizer):
                     continue
 
                 state = self.state[p]
-                if len(state) == 0:
-                    state["step"] = torch.tensor(0.0, dtype=torch.float32, device=p.device)
-                    state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
-                    state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
-
-                print(step_kept, p.shape, step_kept.shape)
+                # Allow host-device sync for setting up state for the first time
+                with cuda_sync_debug_mode(0):
+                    if len(state) == 0:
+                        state["step"] = torch.tensor(0.0, dtype=torch.float32, device=p.device)
+                        state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
+                        state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
 
                 group_step.append(state["step"])
 
