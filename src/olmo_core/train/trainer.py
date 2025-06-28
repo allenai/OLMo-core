@@ -450,6 +450,7 @@ class Trainer:
                 )
             max_epochs = duration.value
             complete_epochs_remaining = max(max_epochs - self.epoch, 0)
+            print(f"Complete epochs remaining: {complete_epochs_remaining}")
             # NOTE: need to cover the case where the last epoch has just ended and we've incremented
             # self.epoch.
             steps_remaining_this_epoch = (
@@ -457,10 +458,16 @@ class Trainer:
                 if self.epoch > max_epochs
                 else max(self.data_loader.total_batches - self.data_loader.batches_processed, 0)
             )
+
+            print(f"Steps remaining this epoch: {steps_remaining_this_epoch}")
             steps_remaining = (
                 complete_epochs_remaining * self.data_loader.total_batches
                 + steps_remaining_this_epoch
             )
+
+            print(f"data loader total batches: {self.data_loader.total_batches}")
+            print(f"[Step {self.global_step}] Epoch {self.epoch}, Steps remaining: {steps_remaining}, Max epochs: {max_epochs}, Total batches: {self.data_loader.total_batches}, Batches processed: {self.data_loader.batches_processed}")
+
             return self.global_step + steps_remaining
         elif duration.unit == DurationUnit.tokens:
             # Need to account for a change in batch size.
