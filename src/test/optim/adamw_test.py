@@ -161,6 +161,7 @@ def test_skipstep_adamw_equivalence(
 
     # training loop
     for step_idx in range(5):
+        huge = torch.tensor(1e9, device=device)
         inp = torch.randint(0, 128, (4, 8), device=device)
 
         with cuda_sync_debug_mode(2):
@@ -172,9 +173,8 @@ def test_skipstep_adamw_equivalence(
 
             # Inject an outlier loss on the 3rd step to trigger skip logic.
             if trigger_skip and step_idx == 2:
-                huge = torch.tensor(1e9, device=device)
-                optim1.latest_loss = huge
-                optim2.latest_loss = huge
+                optim1.latest_loss = huge.detach()
+                optim2.latest_loss = huge.detach()
             else:
                 optim1.latest_loss = loss1.detach()
                 optim2.latest_loss = loss2.detach()
