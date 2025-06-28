@@ -1156,7 +1156,7 @@ class Trainer:
 
 
             if self.global_train_tokens_seen > self.max_tokens - (10 * self.global_batch_size):
-                print(f"[Step {self.global_step}] Epoch {self.epoch}, Tokens seen: {self.global_train_tokens_seen}, Max: {self.max_tokens}")
+                print(f"[Step {self.global_step}] Epoch {self.epoch}, Tokens seen: {self.global_train_tokens_seen}, Max: {self.max_tokens}. global_num_tokens: {global_num_tokens}")
 
 
             for callback in self._iter_callbacks():
