@@ -45,6 +45,8 @@ def adamw_step(
     update.mul_(step_factor)
     p.add_(update)
 
+    step.add_(step_factor)
+
 
 class SkipStepAdamW(SkipStepOptimizer):
     """
