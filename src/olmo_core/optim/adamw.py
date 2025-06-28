@@ -199,11 +199,11 @@ class SkipStepAdamWV2(SkipStepOptimizer):
 
                 group_step.append(state["step"])
 
-                # If step is skipped, copy everything into a tensor and keep it stored
-                skipped_params.append(p.masked_select(step_skipped))
-                skipped_grads.append(p.grad.masked_select(step_skipped))
-                skipped_exp_avgs.append(state["exp_avg"].masked_select(step_skipped))
-                skipped_exp_avg_sqs.append(state["exp_avg_sq"].masked_select(step_skipped))
+                # # If step is skipped, copy everything into a tensor and keep it stored
+                # skipped_params.append(p.masked_select(step_skipped))
+                # skipped_grads.append(p.grad.masked_select(step_skipped))
+                # skipped_exp_avgs.append(state["exp_avg"].masked_select(step_skipped))
+                # skipped_exp_avg_sqs.append(state["exp_avg_sq"].masked_select(step_skipped))
 
                 # If step is kept, in-place rewrite every element with itself
                 # Otherwise, empty the params and optimizer state!
