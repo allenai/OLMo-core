@@ -3,6 +3,7 @@ from typing import Optional, Tuple, Type, Union
 
 import torch
 import torch.nn as nn
+from torch.optim.adamw import adamw
 
 from ..config import DType
 from .config import OptimConfig
@@ -44,6 +45,7 @@ def adamw_step(
     update = -step_size * torch.div(exp_avg, denom)
     update.mul_(step_factor)
     p.add_(update)
+    step.add_(1)
 
 
 class SkipStepAdamW(SkipStepOptimizer):
@@ -62,7 +64,7 @@ class SkipStepAdamW(SkipStepOptimizer):
         sigma_factor: int = 6,
         dtype: Optional[Union[torch.dtype, DType]] = None,
     ) -> None:
-        assert lr > 0.0
+        # assert lr > 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
         super().__init__(
@@ -115,6 +117,129 @@ class SkipStepAdamW(SkipStepOptimizer):
                 )
 
 
+class SkipStepAdamWV2(SkipStepOptimizer):
+    """
+    A "skip step" version of :class:`AdamW`.
+    """
+
+    def __init__(
+        self,
+        params,
+        lr: float = 1e-3,
+        betas: Tuple[float, float] = (0.9, 0.999),
+        eps: float = 1e-8,
+        weight_decay: float = 1e-2,
+        rolling_interval_length: int = 128,
+        sigma_factor: int = 6,
+        dtype: Optional[Union[torch.dtype, DType]] = None,
+        foreach: Optional[bool] = None,
+        fused: Optional[bool] = None,
+    ) -> None:
+        # assert lr > 0.0
+        assert all([0.0 <= beta <= 1.0 for beta in betas])
+        defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
+        super().__init__(
+            params,
+            defaults,
+            rolling_interval_length=rolling_interval_length,
+            sigma_factor=sigma_factor,
+        )
+        if isinstance(dtype, DType):
+            dtype = dtype.as_pt()
+        self.dtype = dtype
+        self._step_skipped: Optional[torch.Tensor] = None
+        self.foreach = foreach
+        self.fused = fused
+
+    @property
+    def step_skipped(self) -> torch.Tensor:
+        if self._step_skipped is not None:
+            return self._step_skipped
+        else:
+            return torch.tensor(0.0)
+
+    @torch.no_grad()
+    def step(self, closure=None) -> None:
+        if closure is not None:
+            with torch.enable_grad():
+                closure()
+
+        step_factor = self.get_step_factor()
+        self._step_skipped = 1 - step_factor
+        step_kept: torch.Tensor = step_factor.to(dtype=torch.bool)
+        step_skipped: torch.Tensor = step_kept.logical_not()
+
+        for group in self.param_groups:
+            params = []
+            skipped_params = []
+            grads = []
+            skipped_grads = []
+            exp_avgs = []
+            skipped_exp_avgs = []
+            exp_avg_sqs = []
+            skipped_exp_avg_sqs = []
+            group_step = []
+
+            for p in group["params"]:
+                p: torch.Tensor
+                if p.grad is None:
+                    continue
+
+                state = self.state[p]
+                if len(state) == 0:
+                    state["step"] = torch.tensor(0.0, dtype=torch.float32, device=p.device)
+                    state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
+                    state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
+
+                print(step_kept, p.shape, step_kept.shape)
+
+                group_step.append(state["step"])
+
+                # If step is skipped, copy everything into a tensor and keep it stored
+                skipped_params.append(p.masked_select(step_skipped))
+                skipped_grads.append(p.grad.masked_select(step_skipped))
+                skipped_exp_avgs.append(state["exp_avg"].masked_select(step_skipped))
+                skipped_exp_avg_sqs.append(state["exp_avg_sq"].masked_select(step_skipped))
+
+                # If step is kept, in-place rewrite every element with itself
+                # Otherwise, empty the params and optimizer state!
+                params.append(p.masked_scatter_(step_kept, p))
+                grads.append(p.grad.masked_scatter_(step_kept, p.grad))
+                exp_avgs.append(state["exp_avg"].masked_scatter_(step_kept, state["exp_avg"]))
+                exp_avg_sqs.append(
+                    state["exp_avg_sq"].masked_scatter_(step_kept, state["exp_avg_sq"])
+                )
+
+            adamw(
+                params,
+                grads,
+                exp_avgs=exp_avgs,
+                exp_avg_sqs=exp_avg_sqs,
+                max_exp_avg_sqs=[],
+                state_steps=group_step,
+                amsgrad=False,
+                beta1=group["betas"][0],
+                beta2=group["betas"][1],
+                lr=group["lr"],
+                weight_decay=group["weight_decay"],
+                eps=group["eps"],
+                maximize=False,
+                foreach=self.foreach,
+                fused=self.fused,
+            )
+
+            # If step was skipped, fill params and optimizer state back in
+            for i, p in enumerate(group["params"]):
+                if p.grad is None:
+                    continue
+
+                state = self.state[p]
+
+                p.masked_scatter_(step_skipped, skipped_params[i])
+                state["exp_avg"].masked_scatter_(step_skipped, skipped_exp_avgs[i])
+                state["exp_avg_sq"].masked_scatter_(step_skipped, skipped_exp_avg_sqs[i])
+
+
 @dataclass
 class AdamWConfig(OptimConfig):  # NOTE: omagaconf doesn't like "OptimConfig[torch.optim.AdamW]"
     """
@@ -150,3 +275,24 @@ class SkipStepAdamWConfig(OptimConfig):
     @classmethod
     def optimizer(cls) -> Type[SkipStepAdamW]:
         return SkipStepAdamW
+
+
+@dataclass
+class SkipStepAdamWV2Config(OptimConfig):
+    """
+    Configuration class for building a :class:`SkipStepAdamW` optimizer.
+    """
+
+    lr: float = 1e-3
+    betas: Tuple[float, float] = (0.9, 0.999)
+    eps: float = 1e-8
+    weight_decay: float = 1e-2
+    rolling_interval_length: int = 128
+    sigma_factor: int = 6
+    dtype: Optional[DType] = None
+    foreach: Optional[bool] = None
+    fused: Optional[bool] = None
+
+    @classmethod
+    def optimizer(cls) -> Type[SkipStepAdamWV2]:
+        return SkipStepAdamWV2
