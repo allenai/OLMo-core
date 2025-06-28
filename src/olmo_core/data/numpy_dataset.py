@@ -766,12 +766,17 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                 concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
 
                 # Log results.
+                total_instances_sum = 0
                 for path, future in zip([item[0] for item in paths_needed], futures):
                     _, total_instances = future.result()
+                    total_instances_sum += total_instances
                     log.info(
                         f"Created {total_instances:,d} instances of sequence length up to "
                         f"{self.sequence_length} from '{path}'"
                     )
+
+            log.info(
+                f"Total number of instances in dataset: {total_instances_sum:,d} ")
 
     # def _read_chunk_from_array(self, path: PathOrStr, index: int) -> torch.Tensor:
     #     indices_path = self._get_instance_indices_path(path)
