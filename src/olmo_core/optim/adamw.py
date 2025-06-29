@@ -44,7 +44,7 @@ def adamw_step(
     update = -step_size * torch.div(exp_avg, denom)
     update.mul_(step_factor)
     p.add_(update)
-    step.add_(step_factor)
+    # step.add_(step_factor)
 
 
 def foreach_adamw_step(
@@ -89,7 +89,7 @@ def foreach_adamw_step(
     updates = torch._foreach_div(exp_avgs, denoms)
     torch._foreach_mul_(updates, (-step_factor * step_sizes).unbind())
     torch._foreach_add_(params, updates)
-    torch._foreach_add_(steps, step_factor)
+    # torch._foreach_add_(steps, step_factor)
 
 
 class SkipStepAdamW(SkipStepOptimizer):
