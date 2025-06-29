@@ -194,7 +194,7 @@ class SkipStepAdamWV2(SkipStepOptimizer):
 
                 group_step.append(state["step"])
 
-                params.append(p)
+                params.append(p.to(dtype=self.dtype))
                 # Set grad to 0 when step factor is 0.
                 grads.append(p.grad.to(dtype=self.dtype).mul_(step_factor))
                 step_factor: torch.Tensor
