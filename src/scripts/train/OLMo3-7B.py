@@ -1,8 +1,9 @@
 """
 Train a 7B OLMo model. Run this script without any arguments to see usage info.
 """
-from datetime import datetime
+
 import math
+from datetime import datetime
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
@@ -23,11 +24,11 @@ from olmo_core.train.callbacks import (
 from olmo_core.train.callbacks.monkey_patcher import MonkeyPatcherCallback
 from olmo_core.train.common import LoadStrategy
 from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
+    TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
-    TransformerActivationCheckpointingConfig,
-    TransformerActivationCheckpointingMode
 )
 
 SEQUENCE_LENGTH = 8192
@@ -38,7 +39,9 @@ MAX_DURATION = int(
     10e12
 )  # Setting this higher than 6T (expected run time), in case we get to run longer since 1) we're using WSD and 2) our anneal will use different data
 ANNEAL_TOKENS = int(100e9)
-LR = 4.4e-5  * math.sqrt(4) # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes.
+LR = (
+    4.4e-5 * math.sqrt(4)
+)  # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes.
 EVAL_INTERVAL = 1000
 
 
@@ -54,7 +57,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_full_attention_on_first_layer=False,
         force_full_attention_on_last_layer=True,
-        pattern=[4096, 4096, 4096, -1]
+        pattern=[4096, 4096, 4096, -1],
     )
     config.block.attention.use_flash = True
     config.block.attention.use_head_qk_norm = True
@@ -80,6 +83,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
             compile=False,
+            foreach=True,
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
@@ -106,7 +110,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         scheduler=WSD(
             units=SchedulerUnits.steps,
             warmup=2000,
-            decay=(int(ANNEAL_TOKENS / (4 * GLOBAL_BATCH_SIZE))), # * 4 because we're doubling the batch size twice with batch size warmup
+            decay=(
+                int(ANNEAL_TOKENS / (4 * GLOBAL_BATCH_SIZE))
+            ),  # * 4 because we're doubling the batch size twice with batch size warmup
             decay_fraction=None,
         ),
     )
@@ -160,10 +166,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 cancel_check_interval=cancel_check_interval,
             ),
         )
-        .with_callback(
-            "monkey_patcher",
-            MonkeyPatcherCallback()
-        )
+        .with_callback("monkey_patcher", MonkeyPatcherCallback())
         .with_recommended_evals(
             common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
         )
