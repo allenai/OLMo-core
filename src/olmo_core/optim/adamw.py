@@ -192,7 +192,7 @@ class SkipStepAdamWV2(SkipStepOptimizer):
                         state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
                         state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
 
-                group_step.append(state["step"])
+                group_step.append(state["step"].to(dtype=self.dtype))
 
                 params.append(p.to(dtype=self.dtype))
                 # Set grad to 0 when step factor is 0.
