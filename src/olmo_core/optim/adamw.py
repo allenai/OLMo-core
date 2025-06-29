@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torch.optim.adamw import adamw
 
-from olmo_core.utils import cuda_sync_debug_mode
+from olmo_core.utils import cuda_sync_debug_mode, move_to_device
 
 from ..config import DType
 from .config import OptimConfig
@@ -224,8 +224,14 @@ class SkipStepAdamWV2(SkipStepOptimizer):
                     continue
 
                 # p.div_(1 - (1 - step_factor) * (group["lr"] * group["weight_decay"]))
-                exp_avg.div_(step_factor + (1 - step_factor) * group["betas"][0])
-                exp_avg_sq.div_(step_factor + (1 - step_factor) * group["betas"][1])
+                exp_avg.div_(
+                    step_factor
+                    + (1 - step_factor) * move_to_device(group["betas"][0], exp_avg.device)
+                )
+                exp_avg_sq.div_(
+                    step_factor
+                    + (1 - step_factor) * move_to_device(group["betas"][1], exp_avg_sq.device)
+                )
 
 
 @dataclass
