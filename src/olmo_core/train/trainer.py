@@ -1161,11 +1161,6 @@ class Trainer:
             ) is not None:
                 self.global_train_tokens_seen += global_num_tokens
 
-
-            if self.global_train_tokens_seen > self.max_tokens - (10 * self.global_batch_size):
-                print(f"[Step {self.global_step}] Epoch {self.epoch}, Tokens seen: {self.global_train_tokens_seen}, Max: {self.max_tokens}. global_num_tokens: {global_num_tokens}")
-
-
             for callback in self._iter_callbacks():
                 callback.pre_step(batch)
 
@@ -1207,9 +1202,3 @@ class Trainer:
         # Bookkeeping
         self.epoch += 1
         self.data_loader.reset()
-
-
-
-    def _log_batch_debug_info(self, batch):
-        print(f"\n[DEBUG Final Batch at step {self.global_step}]")
-        print(f"Batch: {batch}")
