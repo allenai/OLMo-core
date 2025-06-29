@@ -44,7 +44,7 @@ def adamw_step(
     update = -step_size * torch.div(exp_avg, denom)
     update.mul_(step_factor)
     p.add_(update)
-    # step.add_(step_factor)
+    step.add_(step_factor)
 
 
 def foreach_adamw_step(
@@ -72,10 +72,20 @@ def foreach_adamw_step(
     grads = [g.type_as(ea) for g, ea in zip(grads, exp_avgs)]
 
     # Decay the first and second moment running average coefficient.
-    torch._foreach_lerp_(exp_avgs, grads, [step_factor * (1 - beta1)] * len(exp_avgs))
+    # foreach_lerp_ has issues when DTensor is enabled (see https://github.com/pytorch/pytorch/issues/132017).
+    # Implement the lerp(a, b, w) = a + w * (b - a) with basic _foreach_mul_/add_ ops instead:
+    w1 = step_factor * (1 - beta1)
+    torch._foreach_mul_(exp_avgs, 1.0 - w1)  # exp_avg *= (1 - w1)
+    torch._foreach_add_(exp_avgs, torch._foreach_mul(grads, w1))  # exp_avg += w1 * grad
 
     grad_squares = torch._foreach_mul(grads, grads)
-    torch._foreach_lerp_(exp_avg_sqs, grad_squares, [step_factor * (1 - beta2)] * len(exp_avg_sqs))
+
+    w2 = step_factor * (1 - beta2)
+    torch._foreach_mul_(exp_avg_sqs, 1.0 - w2)  # exp_avg_sq *= (1 - w2)
+    torch._foreach_add_(
+        exp_avg_sqs, torch._foreach_mul(grad_squares, w2)
+    )  # exp_avg_sq += w2 * grad^2
+
     steps_t = torch.stack(steps)
     bias_corrections1 = 1 - torch.pow(beta1, steps_t + 1)
     bias_corrections2 = 1 - torch.pow(beta2, steps_t + 1)
@@ -89,7 +99,7 @@ def foreach_adamw_step(
     updates = torch._foreach_div(exp_avgs, denoms)
     torch._foreach_mul_(updates, (-step_factor * step_sizes).unbind())
     torch._foreach_add_(params, updates)
-    # torch._foreach_add_(steps, [step_factor] * len(steps))
+    torch._foreach_add_(steps, [step_factor] * len(steps))
 
 
 class SkipStepAdamW(SkipStepOptimizer):
