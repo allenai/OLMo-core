@@ -170,6 +170,7 @@ class SkipStepAdamWV2(SkipStepOptimizer):
 
         step_factor = self.get_step_factor()
         self._step_skipped = 1 - step_factor
+        step_factor = step_factor.to(dtype=self.dtype)
 
         for group in self.param_groups:
             params = []
