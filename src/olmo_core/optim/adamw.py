@@ -44,7 +44,7 @@ def adamw_step(
     update = -step_size * torch.div(exp_avg, denom)
     update.mul_(step_factor)
     p.add_(update)
-    # step.add_(step_factor)
+    step.add_(step_factor)
 
 
 def foreach_adamw_step(
@@ -76,13 +76,9 @@ def foreach_adamw_step(
 
     grad_squares = torch._foreach_mul(grads, grads)
     torch._foreach_lerp_(exp_avg_sqs, grad_squares, step_factor * (1 - beta2))  # type: ignore[arg-type]
-
     steps_t = torch.stack(steps)
-    beta1_t = torch.tensor(beta1, device=steps_t.device, dtype=steps_t.dtype)
-    beta2_t = torch.tensor(beta2, device=steps_t.device, dtype=steps_t.dtype)
-
-    bias_corrections1 = 1 - torch.pow(beta1_t, steps_t + 1)
-    bias_corrections2 = 1 - torch.pow(beta2_t, steps_t + 1)
+    bias_corrections1 = 1 - torch.pow(beta1, steps_t + 1)
+    bias_corrections2 = 1 - torch.pow(beta2, steps_t + 1)
 
     step_sizes = lr / bias_corrections1
 
@@ -93,7 +89,7 @@ def foreach_adamw_step(
     updates = torch._foreach_div(exp_avgs, denoms)
     torch._foreach_mul_(updates, (-step_factor * step_sizes).unbind())
     torch._foreach_add_(params, updates)
-    # torch._foreach_add_(steps, step_factor)
+    torch._foreach_add_(steps, step_factor)
 
 
 class SkipStepAdamW(SkipStepOptimizer):
