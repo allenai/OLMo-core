@@ -170,7 +170,8 @@ class SkipStepAdamWV2(SkipStepOptimizer):
 
         step_factor = self.get_step_factor()
         self._step_skipped = 1 - step_factor
-        step_factor = step_factor.to(dtype=self.dtype)
+        dtype = self.dtype if self.device.type != "cuda" else torch.float32
+        step_factor = step_factor.to(dtype=dtype)
 
         for group in self.param_groups:
             params = []
@@ -189,20 +190,20 @@ class SkipStepAdamWV2(SkipStepOptimizer):
                 with cuda_sync_debug_mode(0):
                     if len(state) == 0:
                         state["step"] = torch.tensor(0.0, dtype=torch.float32, device=p.device)
-                        state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
-                        state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
+                        state["exp_avg"] = torch.zeros_like(p, dtype=dtype)
+                        state["exp_avg_sq"] = torch.zeros_like(p, dtype=dtype)
 
-                steps.append(state["step"].to(dtype=self.dtype))
+                steps.append(state["step"].to(dtype=dtype))
 
-                params.append(p.to(dtype=self.dtype))
+                params.append(p.to(dtype=dtype))
                 # Set grad to 0 when step factor is 0.
-                grads.append(p.grad.to(dtype=self.dtype).mul_(step_factor))
+                grads.append(p.grad.to(dtype=dtype).mul_(step_factor))
                 step_factor: torch.Tensor
                 exp_avgs.append(state["exp_avg"])
                 exp_avg_sqs.append(state["exp_avg_sq"])
 
             lr = (
-                group["lr"].to(dtype=self.dtype)
+                group["lr"].to(dtype=dtype)
                 if isinstance(group["lr"], torch.Tensor)
                 else group["lr"]
             )
