@@ -156,8 +156,8 @@ def test_skipstep_adamw_equivalence(
         optim1 = SkipStepAdamWConfig(**cfg_common, dtype=dtype, rolling_interval_length=rolling_interval_length, sigma_factor=1).build(model1)  # type: ignore[arg-type]
     else:
         rolling_interval_length = 16
-        optim1 = AdamWConfig(**cfg_common, foreach=False, fused=False).build(model1)  # type: ignore[arg-type]
-    optim2 = SkipStepAdamWV2Config(**cfg_common, foreach=False, fused=False, dtype=dtype, rolling_interval_length=rolling_interval_length, sigma_factor=1).build(model2)  # type: ignore[arg-type]
+        optim1 = AdamWConfig(**cfg_common, foreach=False, fused=True).build(model1)  # type: ignore[arg-type]
+    optim2 = SkipStepAdamWV2Config(**cfg_common, foreach=False, fused=True, dtype=dtype, rolling_interval_length=rolling_interval_length, sigma_factor=1).build(model2)  # type: ignore[arg-type]
 
     # training loop
     for step_idx in range(5):
