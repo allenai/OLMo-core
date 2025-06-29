@@ -224,8 +224,8 @@ class SkipStepAdamWV2(SkipStepOptimizer):
                 fused=self.fused,
             )
 
-            for p, step, exp_avg, exp_avg_sq in zip(params, steps, exp_avgs, exp_avg_sqs):
-                assert p.grad is not None, (p, step, exp_avg, exp_avg_sq)
+            for p, grad, step, exp_avg, exp_avg_sq in zip(params, grads, steps, exp_avgs, exp_avg_sqs):
+                assert p.grad is not None, (step_factor, p, grad, step, exp_avg, exp_avg_sq)
 
                 step.sub_(1 - step_factor)
                 # p.div_(1 - (1 - step_factor) * (group["lr"] * group["weight_decay"]))
