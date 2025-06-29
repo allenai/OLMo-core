@@ -47,7 +47,7 @@ def adamw_step(
     update = -step_size * torch.div(exp_avg, denom)
     update.mul_(step_factor)
     p.add_(update)
-    step.add_(1)
+    step.add_(step_factor)
 
 
 class SkipStepAdamW(SkipStepOptimizer):
@@ -177,7 +177,7 @@ class SkipStepAdamWV2(SkipStepOptimizer):
             grads = []
             exp_avgs: List[torch.Tensor] = []
             exp_avg_sqs: List[torch.Tensor] = []
-            group_step = []
+            steps: List[torch.Tensor] = []
 
             for p in group["params"]:
                 p: torch.Tensor
@@ -192,7 +192,7 @@ class SkipStepAdamWV2(SkipStepOptimizer):
                         state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
                         state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
 
-                group_step.append(state["step"].to(dtype=self.dtype))
+                steps.append(state["step"].to(dtype=self.dtype))
 
                 params.append(p.to(dtype=self.dtype))
                 # Set grad to 0 when step factor is 0.
@@ -201,14 +201,18 @@ class SkipStepAdamWV2(SkipStepOptimizer):
                 exp_avgs.append(state["exp_avg"])
                 exp_avg_sqs.append(state["exp_avg_sq"])
 
-            lr = group["lr"].to(dtype=self.dtype) if isinstance(group["lr"], torch.Tensor) else group["lr"]
+            lr = (
+                group["lr"].to(dtype=self.dtype)
+                if isinstance(group["lr"], torch.Tensor)
+                else group["lr"]
+            )
             adamw(
                 params,
                 grads,
                 exp_avgs=exp_avgs,
                 exp_avg_sqs=exp_avg_sqs,
                 max_exp_avg_sqs=[],
-                state_steps=group_step,
+                state_steps=steps,
                 amsgrad=False,
                 beta1=group["betas"][0],
                 beta2=group["betas"][1],
@@ -220,10 +224,10 @@ class SkipStepAdamWV2(SkipStepOptimizer):
                 fused=self.fused,
             )
 
-            for p, exp_avg, exp_avg_sq in zip(params, exp_avgs, exp_avg_sqs):
-                if p.grad is None:
-                    continue
+            for p, step, exp_avg, exp_avg_sq in zip(params, steps, exp_avgs, exp_avg_sqs):
+                assert p.grad is not None
 
+                step.sub_(1 - step_factor)
                 # p.div_(1 - (1 - step_factor) * (group["lr"] * group["weight_decay"]))
                 exp_avg.div_(step_factor + (1 - step_factor) * group["betas"][0])
                 exp_avg_sq.div_(step_factor + (1 - step_factor) * group["betas"][1])

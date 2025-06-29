@@ -189,7 +189,9 @@ def test_skipstep_adamw_equivalence(
             # If we requested a skip, ensure both optimisers agree on whether it happened.
             assert torch.equal(optim1.step_skipped, optim2.step_skipped)
             if trigger_skip and step_idx == 2:
-                assert torch.equal(optim1.step_skipped, torch.tensor(True).to(device=optim1.step_skipped.device))
+                assert torch.equal(
+                    optim1.step_skipped, torch.tensor(True).to(device=optim1.step_skipped.device)
+                )
 
         # compare parameters
         for p1, p2 in zip(model1.parameters(), model2.parameters()):
