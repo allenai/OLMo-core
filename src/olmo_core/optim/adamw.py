@@ -201,6 +201,7 @@ class SkipStepAdamWV2(SkipStepOptimizer):
                 exp_avgs.append(state["exp_avg"])
                 exp_avg_sqs.append(state["exp_avg_sq"])
 
+            lr = group["lr"].to(dtype=self.dtype) if isinstance(group["lr"], torch.Tensor) else group["lr"]
             adamw(
                 params,
                 grads,
@@ -211,7 +212,7 @@ class SkipStepAdamWV2(SkipStepOptimizer):
                 amsgrad=False,
                 beta1=group["betas"][0],
                 beta2=group["betas"][1],
-                lr=group["lr"] * step_factor,
+                lr=lr * step_factor,
                 weight_decay=group["weight_decay"],
                 eps=group["eps"],
                 maximize=False,
