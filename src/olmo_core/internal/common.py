@@ -53,15 +53,16 @@ def beaker_secret_exists(secret: str, workspace: Optional[str] = None) -> bool:
 def _to_beaker_env_secret(
     name: str, secret: str, *, workspace: Optional[str] = None, required: bool = True
 ) -> Optional[BeakerEnvSecret]:
-    if beaker_secret_exists(secret, workspace=workspace):
-        return BeakerEnvSecret(name=name, secret=secret)
-    elif required:
-        raise OLMoConfigurationError(
-            f"Secret {secret} not configured in beaker workspace {workspace}"
-        )
-    else:
-        log.info(f"Secret {secret} not configured in beaker workspace {workspace}")
-        return None
+    # if beaker_secret_exists(secret, workspace=workspace):
+    #     return BeakerEnvSecret(name=name, secret=secret)
+    # elif required:
+    #     raise OLMoConfigurationError(
+    #         f"Secret {secret} not configured in beaker workspace {workspace}"
+    #     )
+    # else:
+    #     log.info(f"Secret {secret} not configured in beaker workspace {workspace}")
+    #     return None
+    return BeakerEnvSecret(name=name, secret=secret)
 
 
 def get_root_dir(cluster: str) -> str:
@@ -124,13 +125,13 @@ def build_launch_config(
         _to_beaker_env_secret(
             name="WANDB_API_KEY",
             secret=f"{beaker_user}_WANDB_API_KEY",
-            required=False,
+            required=True,
             workspace=workspace,
         ),
         _to_beaker_env_secret(
             name="COMET_API_KEY",
             secret=f"{beaker_user}_COMET_API_KEY",
-            required=False,
+            required=True,
             workspace=workspace,
         ),
         _to_beaker_env_secret(
@@ -183,7 +184,7 @@ def build_launch_config(
             "pip install -e '.[all]'",
             #  "pip install --upgrade beaker-py",
             # Quickly try a new version of PyTorch like this
-            #  "pip install --upgrade --pre torch==2.6.0.dev20241112+cu121 --index-url https://download.pytorch.org/whl/nightly/cu121",
+            #  "pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cu128",
             "pip freeze",
             # Move AWS credentials from env to relevant files
             "mkdir -p ~/.aws",
