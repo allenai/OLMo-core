@@ -193,10 +193,6 @@ def test_skipstep_adamw_equivalence(
                     optim1.step_skipped, torch.tensor(True).to(device=optim1.step_skipped.device)
                 )
 
-        # compare parameters
-        for p1, p2 in zip(model1.parameters(), model2.parameters()):
-            torch.testing.assert_close(p1, p2, atol=1e-6, rtol=1e-5)
-
         # compare optimizer state
         for t1, t2 in zip(model1.parameters(), model2.parameters()):
             st1, st2 = optim1.state[t1], optim2.state[t2]
@@ -210,3 +206,7 @@ def test_skipstep_adamw_equivalence(
                         rtol=1e-5,
                         msg=lambda msg: f"Step {step_idx}, Key {key}, msg: {msg}",
                     )
+
+        # compare parameters
+        for p1, p2 in zip(model1.parameters(), model2.parameters()):
+            torch.testing.assert_close(p1, p2, atol=1e-6, rtol=1e-5)
