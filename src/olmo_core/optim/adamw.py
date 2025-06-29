@@ -196,7 +196,7 @@ class SkipStepAdamWV2(SkipStepOptimizer):
 
                 params.append(p)
                 # Set grad to 0 when step factor is 0.
-                grads.append(p.grad.mul_(step_factor))
+                grads.append(p.grad.to(dtype=self.dtype).mul_(step_factor))
                 step_factor: torch.Tensor
                 exp_avgs.append(state["exp_avg"])
                 exp_avg_sqs.append(state["exp_avg_sq"])
@@ -224,14 +224,8 @@ class SkipStepAdamWV2(SkipStepOptimizer):
                     continue
 
                 # p.div_(1 - (1 - step_factor) * (group["lr"] * group["weight_decay"]))
-                exp_avg.div_(
-                    step_factor
-                    + (1 - step_factor) * move_to_device(group["betas"][0], exp_avg.device)
-                )
-                exp_avg_sq.div_(
-                    step_factor
-                    + (1 - step_factor) * move_to_device(group["betas"][1], exp_avg_sq.device)
-                )
+                exp_avg.div_(step_factor + (1 - step_factor) * group["betas"][0])
+                exp_avg_sq.div_(step_factor + (1 - step_factor) * group["betas"][1])
 
 
 @dataclass
