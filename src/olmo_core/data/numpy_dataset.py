@@ -737,6 +737,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                 paths_needed.append((path, idx))
 
         if paths_needed:
+            total_max_instances = 0
             with concurrent.futures.ProcessPoolExecutor() as executor:
                 futures = []
                 for path, idx in paths_needed:
@@ -750,6 +751,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                     # Sampling from small npy files can result in 0 instance indices.
                     # We skip processing these to avoid writing empty mmapped files.
                     if max_instances > 0:
+                        total_max_instances += max_instances  # safe
                         future = executor.submit(
                             run_worker_func,
                             segment_documents_into_instances,
@@ -777,6 +779,9 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
 
             log.info(
                 f"Total number of instances in dataset: {total_instances_sum:,d} ")
+            log.info(
+                f"Total max instances across all files: {total_max_instances:,d} "
+            )
 
     # def _read_chunk_from_array(self, path: PathOrStr, index: int) -> torch.Tensor:
     #     indices_path = self._get_instance_indices_path(path)
