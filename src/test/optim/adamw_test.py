@@ -164,7 +164,7 @@ def test_skipstep_adamw_equivalence(
         huge = torch.tensor(1e9, device=device)
         inp = torch.randint(0, 128, (4, 8), device=device)
 
-        with cuda_sync_debug_mode(1):
+        with cuda_sync_debug_mode(2):
             optim1.zero_grad(set_to_none=True)
             optim2.zero_grad(set_to_none=True)
 
