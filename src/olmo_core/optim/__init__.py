@@ -1,8 +1,15 @@
 from .adam import AdamConfig
-from .adamw import AdamWConfig, SkipStepAdamW, SkipStepAdamWConfig
+from .adamw import (
+    AdamWConfig,
+    SkipStepAdamW,
+    SkipStepAdamWConfig,
+    SkipStepAdamWForeach,
+    SkipStepAdamWForeachConfig,
+)
 from .config import INITIAL_LR_FIELD, LR_FIELD, OptimConfig, OptimGroupOverride
 from .lion import Lion, LionConfig, SkipStepLion, SkipStepLionConfig
 from .scheduler import (
+    WSD,
     ConstantScheduler,
     ConstantWithWarmup,
     CosWithWarmup,
@@ -21,6 +28,8 @@ __all__ = [
     "AdamWConfig",
     "SkipStepAdamWConfig",
     "SkipStepAdamW",
+    "SkipStepAdamWForeachConfig",
+    "SkipStepAdamWForeach",
     "AdamConfig",
     "LionConfig",
     "Lion",
@@ -34,6 +43,7 @@ __all__ = [
     "InvSqrtWithWarmup",
     "LinearWithWarmup",
     "SequentialScheduler",
+    "WSD",
     "LR_FIELD",
     "INITIAL_LR_FIELD",
 ]

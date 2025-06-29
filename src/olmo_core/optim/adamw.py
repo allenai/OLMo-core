@@ -46,6 +46,52 @@ def adamw_step(
     p.add_(update)
 
 
+def foreach_adamw_step(
+    params: list[torch.Tensor],
+    grads: list[torch.Tensor],
+    exp_avgs: list[torch.Tensor],
+    exp_avg_sqs: list[torch.Tensor],
+    steps: list[torch.Tensor],
+    *,
+    lr: float,
+    betas: Tuple[float, float],
+    eps: float,
+    weight_decay: float,
+    step_factor: torch.Tensor,
+):
+    """Perform a single AdamW update with multi-tensor (*foreach*) kernels."""
+    if not params:
+        return  # nothing to do
+
+    beta1, beta2 = betas
+
+    # Perform step weight decay.
+    torch._foreach_mul_(params, 1 - step_factor * (lr * weight_decay))
+
+    # Decay the first and second moment running average coefficient.
+    torch._foreach_lerp_(exp_avgs, grads, step_factor * (1 - beta1))  # type: ignore[arg-type]
+
+    grad_squares = torch._foreach_mul(grads, grads)
+    torch._foreach_lerp_(exp_avg_sqs, grad_squares, step_factor * (1 - beta2))  # type: ignore[arg-type]
+
+    steps_t = torch.stack(steps)
+    beta1_t = torch.tensor(beta1, device=steps_t.device, dtype=steps_t.dtype)
+    beta2_t = torch.tensor(beta2, device=steps_t.device, dtype=steps_t.dtype)
+
+    bias_corrections1 = 1 - torch.pow(beta1_t, steps_t + 1)
+    bias_corrections2 = 1 - torch.pow(beta2_t, steps_t + 1)
+
+    step_sizes = lr / bias_corrections1
+
+    denoms = torch._foreach_sqrt(exp_avg_sqs)
+    torch._foreach_div_(denoms, bias_corrections2.sqrt().unbind())
+    torch._foreach_add_(denoms, eps)
+
+    updates = torch._foreach_div(exp_avgs, denoms)
+    torch._foreach_mul_(updates, (-step_factor * step_sizes).unbind())
+    torch._foreach_add_(params, updates)
+
+
 class SkipStepAdamW(SkipStepOptimizer):
     """
     A "skip step" version of :class:`AdamW`.
@@ -115,6 +161,61 @@ class SkipStepAdamW(SkipStepOptimizer):
                 )
 
 
+class SkipStepAdamWForeach(SkipStepAdamW):
+    """
+    A "skip step" version of AdamW that updates parameters using PyTorch
+    multi‐tensor (*foreach*) kernels.  This executes the heavy math in a handful
+    of fused CUDA kernels instead of one kernel per parameter making it much faster.
+    """
+
+    @torch.no_grad()
+    def step(self, closure=None) -> None:
+        if closure is not None:
+            with torch.enable_grad():
+                closure()
+
+        step_factor = self.get_step_factor()
+        self._step_skipped = 1 - step_factor
+        for group in self.param_groups:
+            params_with_grad: list[torch.Tensor] = []
+            grads: list[torch.Tensor] = []
+            exp_avgs: list[torch.Tensor] = []
+            exp_avg_sqs: list[torch.Tensor] = []
+            steps_list = []  # create list outside loops
+
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+
+                state = self.state[p]
+                if len(state) == 0:
+                    state["step"] = torch.tensor(0.0, dtype=torch.float32, device=p.device)
+                    state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
+                    state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
+
+                params_with_grad.append(p)
+                grads.append(p.grad)
+                exp_avgs.append(state["exp_avg"])
+                exp_avg_sqs.append(state["exp_avg_sq"])
+                steps_list.append(state["step"])
+
+            if not params_with_grad:
+                continue  # nothing to update in this group
+
+            foreach_adamw_step(
+                params_with_grad,
+                grads,
+                exp_avgs,
+                exp_avg_sqs,
+                steps_list,
+                lr=group["lr"],
+                betas=group["betas"],
+                eps=group["eps"],
+                weight_decay=group["weight_decay"],
+                step_factor=step_factor,
+            )
+
+
 @dataclass
 class AdamWConfig(OptimConfig):  # NOTE: omagaconf doesn't like "OptimConfig[torch.optim.AdamW]"
     """
@@ -150,3 +251,14 @@ class SkipStepAdamWConfig(OptimConfig):
     @classmethod
     def optimizer(cls) -> Type[SkipStepAdamW]:
         return SkipStepAdamW
+
+
+@dataclass
+class SkipStepAdamWForeachConfig(SkipStepAdamWConfig):
+    """
+    Configuration class for building a :class:`SkipStepAdamWForeach` optimizer.
+    """
+
+    @classmethod
+    def optimizer(cls) -> Type[SkipStepAdamWForeach]:
+        return SkipStepAdamWForeach
