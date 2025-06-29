@@ -47,7 +47,8 @@ def adamw_step(
     update = -step_size * torch.div(exp_avg, denom)
     update.mul_(step_factor)
     p.add_(update)
-    step.add_(step_factor)
+
+    # step.add_(step_factor)
 
 
 class SkipStepAdamW(SkipStepOptimizer):
@@ -228,7 +229,11 @@ class SkipStepAdamWV2(SkipStepOptimizer):
             for p, grad, step, exp_avg, exp_avg_sq in zip(params, grads, steps, exp_avgs, exp_avg_sqs):
                 # assert p.grad is not None, (step_factor, p, grad, step, exp_avg, exp_avg_sq)
 
-                step.sub_(1 - step_factor)
+                # step.sub_(1 - step_factor)
+
+                # Don't let the step increment to imitate our SkipStepOptimizer bug!
+                step.sub_(1)
+
                 # p.div_(1 - (1 - step_factor) * (group["lr"] * group["weight_decay"]))
                 exp_avg.div_(step_factor + (1 - step_factor) * group["betas"][0])
                 exp_avg_sq.div_(step_factor + (1 - step_factor) * group["betas"][1])
