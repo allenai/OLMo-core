@@ -72,10 +72,10 @@ def foreach_adamw_step(
     grads = [g.type_as(ea) for g, ea in zip(grads, exp_avgs)]
 
     # Decay the first and second moment running average coefficient.
-    torch._foreach_lerp_(exp_avgs, grads, step_factor * (1 - beta1))  # type: ignore[arg-type]
+    torch._foreach_lerp_(exp_avgs, grads, [step_factor * (1 - beta1)] * len(exp_avgs))
 
     grad_squares = torch._foreach_mul(grads, grads)
-    torch._foreach_lerp_(exp_avg_sqs, grad_squares, step_factor * (1 - beta2))  # type: ignore[arg-type]
+    torch._foreach_lerp_(exp_avg_sqs, grad_squares, [step_factor * (1 - beta2)] * len(exp_avg_sqs))
     steps_t = torch.stack(steps)
     bias_corrections1 = 1 - torch.pow(beta1, steps_t + 1)
     bias_corrections2 = 1 - torch.pow(beta2, steps_t + 1)
@@ -89,7 +89,7 @@ def foreach_adamw_step(
     updates = torch._foreach_div(exp_avgs, denoms)
     torch._foreach_mul_(updates, (-step_factor * step_sizes).unbind())
     torch._foreach_add_(params, updates)
-    # torch._foreach_add_(steps, step_factor)
+    # torch._foreach_add_(steps, [step_factor] * len(steps))
 
 
 class SkipStepAdamW(SkipStepOptimizer):
