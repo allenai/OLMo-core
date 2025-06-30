@@ -44,6 +44,7 @@ class TrainerConfig(Config):
     metrics_collect_interval: int = 5
     callbacks: Dict[str, Callback] = field(default_factory=dict)
     async_bookkeeping: Optional[bool] = None
+    bookkeeping_soft_timeout: int = 30
     no_checkpoints: bool = False
     no_evals: bool = False
 

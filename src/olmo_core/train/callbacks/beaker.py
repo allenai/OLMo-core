@@ -128,9 +128,11 @@ class BeakerCallback(Callback):
             self._update()
 
     def _update(self):
-        self.trainer.thread_pool.submit(
+        self.trainer.run_bookkeeping_op(
             self._set_description,
             self.trainer.training_progress,
+            op_name="beaker_set_description",
+            cancel_in_progress=True,
         )
         self._last_update = time.monotonic()
 

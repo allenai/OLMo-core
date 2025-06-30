@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for headwise QK norm.
 - Add BOS token in in-loop evals, when specified by the tokenizer (`ai2-olmo-eval==0.8.4`)
 - Add support for BOS token matching EOS token for intra-document masking in FSL numpy datasets.
+- Added option to allow profiler to record on multiple ranks.
+- Added support for accessing Google on non-Google clusters via auth with service account keys.
+- Added support for revisions in `convert_checkpoint_from_hf.py` and the `load_hf_model` method of `olmo_core.nn.hf.checkpoint`.
 
 ### Changed
 
@@ -33,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed bug causing slow evals in BPB/RC in-loop evals due to fast MC
 - Changed default precision of converted HF models in `src/examples/huggingface/convert_checkpoint_to_hf.py` to bfloat16.
 - Changed default cluster to `saturn` in `src/examples/llama/train_launch.py`.
+- Made some beaker secrets optional for internal experiments.
 
 ### Fixed
 
@@ -47,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ensured eval tasks are sorted to maintain the same order across ranks (the cookbook was configuring these in an unsorted way).
 - W&B callback uses working directory instead of save folder for local cache.
 - Reset speed monitor callback after changing batch size.
+- Fixed parallelism compatiblity between cp + tp and cp + pp and added test to catch regressions.
+- Ensure sharded parameters are initialized differently on separate ranks.
+- Fixed fingerprinting for FSL datasets
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 
