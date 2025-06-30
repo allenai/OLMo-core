@@ -4,10 +4,10 @@ from datetime import datetime
 
 from olmo_core.config import DType
 from olmo_core.data import NumpyDatasetConfig
+from olmo_core.data.numpy_dataset import InstanceFilterConfig, VSLCurriculumConfig, VSLCurriculumType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.common import get_beaker_username, get_work_dir
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
-from olmo_core.internal.experiment import CommonComponents
 from olmo_core.internal.model_ladder import RunDuration, main
 from olmo_core.io import join_path
 from olmo_core.model_ladder import ModelLadder, ModelSize
@@ -62,6 +62,9 @@ class BaselineWSDModelLadder(ModelLadder):
 
         # TODO: Do we need to customize hidden_size_multiple_of for other sizes?
     }
+
+    INTRA_DOCUMENT_MASKING = False # We use SkipStepOptimizer for this problem.
+    INCLUDE_INSTANCE_FILTER = True
 
     def _get_model_config(self, *, size: ModelSize) -> TransformerConfig:
         config: TransformerConfig = getattr(TransformerConfig, f"olmo2_{size}")(
@@ -218,6 +221,30 @@ class BaselineWSDModelLadder(ModelLadder):
         # )
 
         return config
+
+    def get_dataset_config(self) -> NumpyDatasetConfig:
+        # Taken from OLMo 3 config
+        return NumpyDatasetConfig.from_data_mix(
+            mix=self.data_mix, # DataMix.OLMoE_mix_0824
+            tokenizer=self.tokenizer, # tokenizer_config
+            mix_base_dir=self.mix_base_dir,
+            sequence_length=self.sequence_length,
+            max_target_sequence_length=max(8192, self.sequence_length),
+            min_sequence_length=min(256, self.sequence_length),
+            max_sequence_length=max(8192, self.sequence_length),
+            vsl_curriculum=VSLCurriculumConfig(
+                name=VSLCurriculumType.grow_p2, num_cycles=8, balanced=False
+            ),
+            work_dir=get_work_dir(self.mix_base_dir),
+            generate_doc_lengths=self.INTRA_DOCUMENT_MASKING,
+            instance_filter_config=None
+            if not self.INCLUDE_INSTANCE_FILTER
+            else InstanceFilterConfig(
+                repetition_max_period=13,
+                repetition_min_period=1,
+                repetition_max_count=32,
+            ),
+        )
 
 
 def build_ladder(root_dir: str) -> BaselineWSDModelLadder:
