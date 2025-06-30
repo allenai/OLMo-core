@@ -152,6 +152,7 @@ def parallelize_model(
             max_local_microbatch_size=rank_microbatch_size,
             device=device,
             pp_mesh=pp_mesh,
+            world_mesh=world_mesh
         )
     # debug1 = model_parts[0].blocks['1'].router.weight.view(32, 2048)
     # debug2 = model_parts[0].blocks['1'].attention.w_q.weight
