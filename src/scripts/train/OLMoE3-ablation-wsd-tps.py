@@ -49,17 +49,23 @@ log = logging.getLogger(__name__)
 
 SEQUENCE_LENGTH = 8192
 GLOBAL_BATCH_SIZE = (
-    512 * SEQUENCE_LENGTH
+    (1024) * SEQUENCE_LENGTH
 )  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
 MAX_DURATION = int(500e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
-NUM_EXPERTS = 32
-TOP_K = 8
-NUM_LAYERS=4
-MOE_HIDDEN_SIZE = 1024
+NUM_EXPERTS = 64
+TOP_K = 4
+NUM_LAYERS=8
+MOE_HIDDEN_SIZE = 1024 * 2
 USE_SHARED_MLP = False  # Use shared MLP in MoE blocks
 SHARED_MLP_HIDDEN_SIZE = 4096  # Hidden size for shared MLP in MoE blocks
-MICRO_BSZ = 2
+MICRO_BSZ = 8
+PP_DIM=1
+DP_DIM=8
+EP_DIM=1
+
+# TAG='rc2,4-9_reorder2,3'
+TAG='rc-prf'
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = 2048
@@ -150,15 +156,16 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.bfloat16,
             #  num_replicas=1,  # to enable full-way expert parallel
-            shard_degree=8,
+            shard_degree=DP_DIM,
             prefetch_factor=1,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),
-         ep_config=TransformerExpertParallelConfig(degree=-1),
-        # pp_config=TransformerPipelineParallelConfig(
-        #     degree=2,
-        #     schedule=PipelineScheduleType.interleaved_1F1B,
-        # ),
+         ep_config=TransformerExpertParallelConfig(degree=EP_DIM) if EP_DIM != 1 else None, # EP=1 means no expert parallel
+        pp_config=TransformerPipelineParallelConfig(
+            degree=PP_DIM,
+            schedule=PipelineScheduleType.interleaved_1F1B,
+            # schedule=PipelineScheduleType.zbv_zero_bubble,
+        ) if PP_DIM > 1 else None,
         # ac_config=TransformerActivationCheckpointingConfig(
         #     mode=TransformerActivationCheckpointingMode.full,
         #     # mode=TransformerActivationCheckpointingMode.selected_modules,
@@ -193,7 +200,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cluster = 'ai2/jupiter-cirrascale-2'
     return (
         TrainerConfig(
-            save_folder=f'/workspace/tmp/{common.run_name}',
+            save_folder=f'/workspace/tmp/{common.run_name}_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{DP_DIM}DP{EP_DIM}EP{PP_DIM}PP_{MICRO_BSZ}MB_{TAG}',
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
@@ -203,7 +210,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
-                ephemeral_save_interval=250,
+                ephemeral_save_interval=200,
                 save_async=True,
                 pre_train_checkpoint=False,
             ),
@@ -242,10 +249,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=False,
-                                   profile_ranks=[0],
-                                   start=10,
-                                   end=13
+            NvidiaProfilerCallback(enabled=True, # NOTE: change this
+                                   profile_ranks=[0, 8, 16, 24],
+                                   start=30,
+                                   end=33
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies

@@ -23,6 +23,35 @@ from ..moe import MoEConfig, MoERouter
 from ..moe.parallel_mlp import ParallelMLPBase, ParallelDroplessMLP
 from .config import TransformerDataParallelWrappingStrategy
 from torch.utils.checkpoint import checkpoint, CheckpointFunction
+from ..moe.utils import async_copy_to_cpu
+
+import nvtx
+import torch.distributed as dist
+from olmo_core.distributed.utils import get_local_rank, get_rank
+
+
+from transformer_engine.pytorch.permutation import (
+    moe_permute,
+    moe_sort_chunks_by_index,
+    moe_unpermute,
+)
+
+from olmo_core.ops import moe as ops
+
+
+# disable compile for permute
+@torch.compiler.disable()
+def moe_permute_no_compile(*args, **kwargs):
+    return moe_permute(*args, **kwargs)
+    
+@torch.compiler.disable()
+def moe_unpermute_no_compile(*args, **kwargs):
+    return moe_unpermute(*args, **kwargs)    
+
+@torch.compiler.disable()
+def moe_sort_chunks_by_index_no_compile(*args, **kwargs):
+    return moe_sort_chunks_by_index(*args, **kwargs)
+
 
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
@@ -210,7 +239,9 @@ class ReorderedNormTransformerBlock(TransformerBlock):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        USE_RECOMPUTE = False
+        USE_RECOMPUTE = True # BUG;HACK;NOTE: change this later
+        
+        @torch.compile
         def custom_forward(
             x: torch.Tensor,
             *,
@@ -522,7 +553,7 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
     of attention instead of the input, and likewise the feed-forward norm is applied on the
     output of the feed-forward MoE instead of the input.
     """
-
+    @torch.compile
     def forward(
         self,
         x: torch.Tensor,
@@ -636,18 +667,12 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
+        # HACK: note tested
         if not self.use_combined_forward:
-            USE_RECOMPUTE = False
-            if USE_RECOMPUTE:
-                
-                return checkpoint(self.overlap_forward, x, use_reentrant=False, loss_div_factor=loss_div_factor, **kwargs)
-            
-            else:
-                return self.overlap_forward(x, loss_div_factor=loss_div_factor, **kwargs)
         
-            # return self.sparse_forward(x, loss_div_factor=loss_div_factor) + self.dense_forward(
-            #     x, **kwargs
-            # )
+            return self.sparse_forward(x, loss_div_factor=loss_div_factor) + self.dense_forward(
+                x, **kwargs
+            )
         else:
             # NOTE: alternatively could do something like this, but even with an extra stream it's
             # not as fast as the hand-crafted 'combined_forward()'.
@@ -661,8 +686,7 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
             
             
             return cast(MoEHybridReorderedNormTransformerBlock, self).combined_forward(x, loss_div_factor=loss_div_factor, **kwargs)
-            
-            # return cast(MoEHybridReorderedNormTransformerBlock, self).overlap_forward(x, loss_div_factor=loss_div_factor, **kwargs)
+
 
     def apply_tp(
         self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
@@ -850,144 +874,22 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
             x_moe = moe_shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
 
         return h + self.dropout(x_moe)
-    
-@torch.compiler.disable(recursive=False)         # helper runs eagerly, 
-def async_copy_to_cpu(gpu_buf):
-    # *** async copy to CPU for future GroupedGEMM ***
-    # start a new stream for the copy
-    dtoh_stream = get_or_init_stream(id=1) # TODO: check any id that's not 0?
-    
-    # Make the copy_stream start **after** everything already queued
-    #  on the current stream (default) that touches batch_size_per_expert.
-    dtoh_stream.wait_stream(torch.cuda.current_stream())
-    
-    with torch.cuda.stream(dtoh_stream):
-        cpu_buf = torch.empty_like(gpu_buf,
-                                device="cpu", pin_memory=True) # compile does not work with pin_memory
-        cpu_buf.copy_(gpu_buf, non_blocking=True)
-    
-    # cpu_buf = gpu_buf.to(torch.device("cpu"), non_blocking=True)
-    # Keep the source tensor alive until the copy_stream is done
-    # gpu_buf.record_stream(dtoh_stream) # NOTE: does not work with compile
-    return cpu_buf, dtoh_stream
-        
+
 @beta_feature
 class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
-    def dense_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-        return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
-    def sparse_forward(
-        self, x: torch.Tensor, *, loss_div_factor: Optional[Union[torch.Tensor, float]] = None
-    ) -> torch.Tensor:
-        return self.dropout(
-            self.feed_forward_moe_norm(self.feed_forward_moe(x, loss_div_factor=loss_div_factor))
-        )
-        
-    def overlap_forward(
+    def forward(
         self,
         x: torch.Tensor,
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
-    ):
-        USE_DENSE_RECOMPUTE = False
-        # feed_forward_moe -------- start
-        expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = self.router(
-            x, loss_div_factor=loss_div_factor
-        )
+    ) -> torch.Tensor:
+
+        # always use combined forward    
+        return cast(MoEHybridReorderedNormTransformerBlock, self).combined_forward(x, loss_div_factor=loss_div_factor, **kwargs)
 
             
-        # Launch the async D→H copy on its own stream *into pinned host memory*
-        batch_size_per_expert_cpu, copy_stream = async_copy_to_cpu(batch_size_per_expert)
-    
-
-        # dense out -------- start
-        dense_stream = get_or_init_stream(id=2)
-        dense_stream.wait_stream(torch.cuda.current_stream())
-        with torch.cuda.stream(dense_stream):
-            attn_out = self.attention(x, **kwargs)
-            # @torch.compile
-            def dense_forward(x: torch.Tensor, **kwargs) -> torch.Tensor:
-                h = x + self.dropout(self.attention_norm(x))
-                return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
-
-            if USE_DENSE_RECOMPUTE:
-                # recompute the dense forward pass
-                dense_out = checkpoint(
-                    dense_forward, attn_out, use_reentrant=False, **kwargs
-                )
-            else:
-                # run the dense forward pass normally
-                dense_out = dense_forward(attn_out, **kwargs)
-            
-        # dense  -------- end
-
-        if router_aux_loss is not None:
-            x = attach_auxiliary_loss(x, router_aux_loss)
-
-        # shared experts
-        assert self.shared_mlp is None, "shared_mlp is not supported in MoEHybridReorderedNormTransformerBlock"
-
-        
-        # routed experts
-        # --------------------------------------------------------------
-        # We are about to launch kernels that read batch_size_per_expert_cpu.
-        # Make sure the copy really finished:
-        # torch.cuda.current_stream().wait_stream(copy_stream)
-        copy_stream.synchronize() # as the grouped gemm is not on the default stream, it is not waiting for the copy to finish, so still need to synchronize it
-        # --------------------------------------------------------------
-        
-            
-        # @torch.compile
-        def sparse_forward(
-            x: torch.Tensor,
-            expert_weights: torch.Tensor,
-            expert_indices: torch.Tensor,
-            batch_size_per_expert: torch.Tensor,
-            batch_size_per_expert_cpu: torch.Tensor,
-            # feed_forward_moe_out: torch.Tensor,
-        ):
-
-            feed_forward_moe_out = self.experts(x, expert_weights, expert_indices, batch_size_per_expert, batch_size_per_expert_cpu)
-            if self.feed_forward_moe.routed_expert_norm is not None:
-                assert False, "routed_expert_norm is not supported in MoEHybridReorderedNormTransformerBlock"
-                # feed_forward_moe_out = self.feed_forward_moe.routed_expert_norm(feed_forward_moe_out)
-            sparse_out = self.dropout(
-                self.feed_forward_moe_norm(feed_forward_moe_out)
-            )
-            return sparse_out
-        
-        USE_SPARSE_RECOMPUTE = False
-        if USE_SPARSE_RECOMPUTE:
-            sparse_out = checkpoint(
-                sparse_forward,
-                x,
-                expert_weights,
-                expert_indices,
-                batch_size_per_expert,
-                batch_size_per_expert_cpu,
-                use_reentrant=False,
-            )
-            # sparse_out = checkpoint(
-            #     sparse_norm_forward,
-            #     feed_forward_moe_out,
-            #     use_reentrant=False,
-            # )
-        else:
-            sparse_out = sparse_forward(
-                x, expert_weights, expert_indices, batch_size_per_expert, batch_size_per_expert_cpu
-            )
-            # sparse_out = sparse_norm_forward(
-            #     feed_forward_moe_out,
-            # )
-            
-
-        
-        torch.cuda.current_stream().wait_stream(dense_stream)
-        final_out = dense_out + sparse_out
-        return final_out
-        
     def combined_forward(
         self,
         x: torch.Tensor,
@@ -997,31 +899,29 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
     ) -> torch.Tensor:
 
         B, S, D = x.shape
-
-        ##### DENSE: submit the dense forward pass to a separate stream #####
-        dense_stream = get_or_init_stream(id=2)
-        dense_stream.wait_stream(torch.cuda.current_stream())
-        with torch.cuda.stream(dense_stream):
-            # Compute attention while all-to-all is in progress.
-            dense_out = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-            dense_out = dense_out + self.dropout(self.feed_forward_norm(self.feed_forward(dense_out)))
-            assert self.shared_mlp is None
-            # Compute feed-forward while all-to-all is in progress.
-        
-        ##### DENSE: end #####
         
         local_x = get_local_tensor(x)
-
+        
+        @torch.compile
+        def router_forward(
+            local_x: torch.Tensor,
+            loss_div_factor: torch.Tensor,
+        ):
+            return self.router(
+                local_x, 
+                loss_div_factor=loss_div_factor # scalar
+            )
+            
         (
             local_x_global_expert_weights, # (B, S, top_k)
             local_x_global_expert_indices, # (B, S, top_k)
             local_batch_size_per_global_expert, # (num_experts, )
             router_aux_loss # scalar
-        ) = self.router(
+        ) = router_forward(
             local_x, 
             loss_div_factor=loss_div_factor # scalar
         )
-
+        
         if router_aux_loss is not None:
             local_x = attach_auxiliary_loss(local_x, router_aux_loss)
 
@@ -1032,178 +932,86 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         # shape: (batch_size * seq_len * top_k,)
         local_x_global_expert_indices = get_local_tensor(local_x_global_expert_indices).flatten()
 
-        # with torch.no_grad():
-        #     (
-        #         indices, # indices[i] = j -> the i_th token of bin_ids comes from expert_indices[j]
-        #         bin_ids, # bin_ids[i] = e  -> i_th token should go to expert e
-        #         bins # the cumsum of bin sizes, size of bin i (where i>0)  = bins[i] - bins[i-1]
-        #      ) = cast(ParallelDroplessMLP, self.experts).indices_and_bins(
-        #         expert_indices, batch_size_per_expert
-        #     )
-
-        # (
-        #     parallel_x,
-        #     parallel_indices,
-        #     parallel_bin_ids,
-        #     parallel_bins,
-        #     parallel_batch_size_per_expert,
-        #     recv_counts,
-        #     send_counts,
-        #     expert_capacity,
-        #     handle,
-        # ) = cast(ParallelDroplessMLP, self.experts).permute_and_all_to_all(
-        #     x_moe,
-        #     indices=indices,
-        #     bin_ids=bin_ids,
-        #     bins=bins,
-        #     batch_size_per_expert=batch_size_per_expert,
-        # ) # type: ignore
-
-        (
-            parallel_x,
-            parallel_indices,
-            parallel_bin_ids,
-            parallel_bins,
-            parallel_batch_size_per_expert,
-            recv_counts,
-            send_counts,
-            expert_capacity,
-            handle,
-        ) = cast(ParallelDroplessMLP, self.experts).global_permute(
-            local_x,
-            local_x_global_expert_indices, 
-            local_batch_size_per_global_expert=local_batch_size_per_global_expert,
-        ) # type: ignore
-
-
-
-
-        handle.wait()
-        parallel_x = cast(ParallelDroplessMLP, self.experts).compute_local_experts(
-            parallel_x,
-            parallel_indices=parallel_indices,
-            parallel_bin_ids=parallel_bin_ids,
-            parallel_bins=parallel_bins,
-            parallel_batch_size_per_expert=parallel_batch_size_per_expert,
-            expert_capacity=expert_capacity,
-        )
-
-        x_moe, handle = cast(ParallelDroplessMLP, self.experts).reverse_all_to_all(
-            parallel_x, send_counts=send_counts, recv_counts=recv_counts
-        )
-
-
-
-        handle.wait()
-        x_moe = self.experts.unpermute(
-            x_moe,
-            expert_weights=expert_weights,
-            expert_indices=expert_indices,
-            indices=indices,
-            bin_ids=bin_ids,
-            bins=bins,
-        ).view(B, -1, D)
+        ##### DENSE: submit the dense forward pass to a separate stream #####
+        # NOTE: launch dense after the router, so it's more likely to overlap permute and all-to-all
+        # priority sparse forward > dense forward, because the sparse one is going to take longer
+        dense_stream = get_or_init_stream(id=2, priority=20) # positive number -> low priority
+        dense_stream.wait_stream(torch.cuda.current_stream())
         
-        sparse_out = self.dropout(self.feed_forward_moe_norm(x_moe))
+
+        @torch.compile
+        def dense_forward_rc(
+            x: torch.Tensor,
+            **kwargs,
+        ) -> torch.Tensor:
+            h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+            return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
         
+        
+        assert self.shared_mlp is None
+        
+        
+        ######################################################################
+        ################# Call global_permute_mlp_unpermute() ##############
+        ############################### START ################################
+        
+        def overlap_callback():
+            # NOTE: this is called in the middle of the global_permute_mlp_unpermute() function
+            # to overlap the dense forward pass with the all-to-all communication.
+            # It is called after the local_x_global_expert_weights and local_x_global_expert_indices
+            # are ready, but before the all-to-all communication starts.
+            with torch.cuda.stream(dense_stream):
+                # if self.block_idx % 2 == 0:
+                if True:
+                    xx = checkpoint(
+                        dense_forward_rc, x, use_reentrant=False, **kwargs
+                    )
+                else:
+                    xx = dense_forward_rc(
+                        x, **kwargs
+                    )
+                return xx
+
+        if self.ep_enabled:
+            x_moe, dense_out = cast(ParallelDroplessMLP, self.experts).global_permute_mlp_unpermute(
+                local_x,
+                local_x_global_expert_weights,
+                local_x_global_expert_indices, 
+                local_batch_size_per_global_expert=local_batch_size_per_global_expert,
+                overlap_callback=overlap_callback,
+            ) # type: ignore
+        else:
+            x_moe, dense_out = cast(ParallelDroplessMLP, self.experts).global_permute_mlp_unpermute_no_ep(
+                local_x,
+                local_x_global_expert_weights,
+                local_x_global_expert_indices, 
+                local_batch_size_per_global_expert=local_batch_size_per_global_expert,
+                overlap_callback=overlap_callback,
+            ) # type: ignore
+        ######################################################################
+        ################# Call global_permute_mlp_unpermute() ##############
+        ############################### END ##################################
+
+        
+        x_moe = x_moe.view(B, -1, D) # (B, S * top_k, d_model)
+        
+        @torch.compile
+        def sparse_drop_norm_forward(
+            x_moe: torch.Tensor,
+        ) -> torch.Tensor:
+            return self.dropout(self.feed_forward_moe_norm(x_moe))
+        
+        # sparse_out = sparse_drop_norm_forward(
+        #     x_moe
+        # )
+        # NOTE: SPARSE_DROP_NORM_RECOMPUTE = True
+        sparse_out = checkpoint(
+            sparse_drop_norm_forward, x_moe, use_reentrant=False
+        )
         
         torch.cuda.current_stream().wait_stream(dense_stream)
         
-        return dense_out + sparse_out
+        final_out = dense_out + sparse_out
+        
+        return final_out
 
-
-    def combined_forward_old(
-        self,
-        x: torch.Tensor,
-        *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        **kwargs,
-    ) -> torch.Tensor:
-        # NOTE: this follows the same code path as the MoE's forward pass, except that we run
-        # dense operations while we wait on expert parallel all-to-all comms.
-        B, S, D = x.shape
-
-        x_moe = get_local_tensor(x)
-
-        expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = self.router(
-            x_moe, loss_div_factor=loss_div_factor
-        )
-
-        if router_aux_loss is not None:
-            x_moe = attach_auxiliary_loss(x_moe, router_aux_loss)
-
-        # shape: (batch_size * seq_len, d_model)
-        x_moe = x_moe.view(-1, D)
-        # shape: (batch_size * seq_len * top_k,)
-        expert_weights = get_local_tensor(expert_weights).flatten()
-        # shape: (batch_size * seq_len * top_k,)
-        expert_indices = get_local_tensor(expert_indices).flatten()
-
-        with torch.no_grad():
-            (
-                indices, # indices[i] = j -> the i_th token of bin_ids comes from expert_indices[j]
-                bin_ids, # bin_ids[i] = e  -> i_th token should go to expert e
-                bins # the cumsum of bin sizes, size of bin i (where i>0)  = bins[i] - bins[i-1]
-             ) = cast(ParallelDroplessMLP, self.experts).indices_and_bins(
-                expert_indices, batch_size_per_expert
-            )
-
-        (
-            parallel_x,
-            parallel_indices,
-            parallel_bin_ids,
-            parallel_bins,
-            parallel_batch_size_per_expert,
-            recv_counts,
-            send_counts,
-            expert_capacity,
-            handle,
-        ) = cast(ParallelDroplessMLP, self.experts).permute_and_all_to_all(
-            x_moe,
-            indices=indices,
-            bin_ids=bin_ids,
-            bins=bins,
-            batch_size_per_expert=batch_size_per_expert,
-        ) # type: ignore
-
-        # Compute attention while all-to-all is in progress.
-        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-
-        # Maybe compute MoE shared out while all-to-all is in progress.
-        moe_shared_out: Optional[torch.Tensor] = None
-        if self.shared_mlp is not None:
-            # NOTE: -1 on seq dim in case of TP
-            moe_shared_out = self.shared_mlp(x_moe.view(B, -1, D))
-
-        handle.wait()
-        parallel_x = cast(ParallelDroplessMLP, self.experts).compute_local_experts(
-            parallel_x,
-            parallel_indices=parallel_indices,
-            parallel_bin_ids=parallel_bin_ids,
-            parallel_bins=parallel_bins,
-            parallel_batch_size_per_expert=parallel_batch_size_per_expert,
-            expert_capacity=expert_capacity,
-        )
-
-        x_moe, handle = cast(ParallelDroplessMLP, self.experts).reverse_all_to_all(
-            parallel_x, send_counts=send_counts, recv_counts=recv_counts
-        )
-
-        # Compute feed-forward while all-to-all is in progress.
-        h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
-
-        handle.wait()
-        x_moe = self.experts.unpermute(
-            x_moe,
-            expert_weights=expert_weights,
-            expert_indices=expert_indices,
-            indices=indices,
-            bin_ids=bin_ids,
-            bins=bins,
-        ).view(B, -1, D)
-
-        if moe_shared_out is not None:
-            moe_shared_out = moe_shared_out / (self.top_k + 1)
-            x_moe = moe_shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
-
-        return h + self.dropout(self.feed_forward_moe_norm(x_moe))
