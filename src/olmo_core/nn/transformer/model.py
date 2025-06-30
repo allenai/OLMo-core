@@ -217,6 +217,7 @@ class Transformer(nn.Module):
         max_local_microbatch_size: Optional[int] = None,
         device: Optional[torch.device] = None,
         pp_mesh: Optional[DeviceMesh] = None,
+        world_mesh: Optional[DeviceMesh] = None,
     ) -> torch.Generator:
         """
         Initialize the model weights.
@@ -237,8 +238,11 @@ class Transformer(nn.Module):
                 module.reset_parameters()  # type: ignore
 
         seed = self.init_seed
-        if pp_mesh is not None:
-            seed += pp_mesh.get_local_rank()
+        if world_mesh is not None: # ensure different seed for each rank
+            seed += world_mesh.get_rank()
+        # if pp_mesh is not None:
+        #     seed += pp_mesh.get_local_rank()
+
         generator = torch.Generator(device).manual_seed(seed)
 
         if self.embeddings is not None:
