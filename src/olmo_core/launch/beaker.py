@@ -13,7 +13,6 @@ from typing import List, Optional, Set, Tuple
 
 from beaker import (
     Beaker,
-    Constraints,
     Dataset,
     DatasetConflict,
     DatasetNotFound,
@@ -407,7 +406,7 @@ class BeakerLaunchConfig(Config):
 
         host_name_constraints = get_host_name_constraints(self.num_nodes * self.num_gpus, 4, 1)
         assert len(host_name_constraints) == 1 and len(host_name_constraints[0]) >= self.num_nodes
-        constraints = Constraints(hostname=host_name_constraints[0])
+        task_host_name_constraints = host_name_constraints[0]
 
         task_spec = (
             TaskSpec.new(
@@ -432,10 +431,9 @@ class BeakerLaunchConfig(Config):
                 synchronized_start_timeout="90m" if self.num_nodes > 1 else None,
                 resources=TaskResources(gpu_count=self.num_gpus, shared_memory=self.shared_memory),
                 result_path=self.result_dir,
-                constraints=constraints,
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
-            .with_constraint(cluster=self.clusters)
+            .with_constraint(hostname=task_host_name_constraints)
             .with_env_var(GIT_REPO_URL_ENV_VAR, self.git.repo_url)
             .with_env_var(GIT_REF_ENV_VAR, self.git.ref)
         )
