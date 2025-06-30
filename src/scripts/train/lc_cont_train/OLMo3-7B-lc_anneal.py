@@ -20,7 +20,7 @@ from olmo_core.data import (
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank
-from olmo_core.float8 import Float8Config
+from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.io import resource_path
 from olmo_core.launch.beaker import BeakerLaunchConfig
@@ -61,23 +61,21 @@ from olmo_core.train.train_module.transformer.config import (
 )
 from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
 
-# The max number of pretraining steps configured for the purpose of setting the learning rate
-# schedule. I'm hard-coding this here based on the number found in the logs. It only changes
-# if batch size changes, which we're not planning on changing that over the course of the run.
-# TODO: pull this from the checkpoint when https://github.com/allenai/OLMo-core/pull/143 merges.
-
 
 CONTEXT_LENGTH = 4 * 16384
 CP_DEGREE = 4
 AC_ATTENTION_INTERVAL = 4
 INTRA_DOCUMENT_MASKING = True
 
+# Node(TP = 4, CP = 2) x 2 DP shards x 2 DP replics
+TP_DEGREE = None
+CP_DEGREE = 4
+DP_SHARDS = 2
+# DP_REPLICAS = NUM_GPUS // (TP_DEGREE * CP_DEGREE * DP_SHARDS)
 
-class AnnealingDataMix(DataMixBase):
-    """
-    Defines the annealing mixes. To create a new mix, make a new file in this folder and add its
-    name (without the '.txt' extension) below.
-    """
+
+
+class LCDataMix(DataMixBase):
 
     data_mix = "lc_full_dist_50_dolmino50_v1"
 
@@ -114,7 +112,6 @@ class LcContTrain(Config):
     launch: BeakerLaunchConfig
     model: TransformerConfig
     train_module: TransformerTrainModuleConfig
-    # optim: OptimConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
     trainer: TrainerConfig
@@ -168,25 +165,14 @@ class LcContTrain(Config):
                     reduce_dtype=DType.float32,
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
                 ),
-                tp_config=TransformerTensorParallelConfig(
-                    degree=4,
-                    # enable_async=True,
-                    # loss_parallel=True,
+                float8_config=Float8Config(
+                    enabled=True,
+                    ao=AOFloat8LinearConfig(
+                        enable_fsdp_float8_all_gather=True,
+                        force_recompute_fp8_weight_in_bwd=True,
+                        round_scales_to_power_of_2=True,
                 ),
-                # cp_config=TransformerContextParallelConfig.llama3(degree=CP_DEGREE)
-                # if INTRA_DOCUMENT_MASKING
-                # else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE),
-                # ac_config=TransformerActivationCheckpointingConfig(),
-                ac_config=TransformerActivationCheckpointingConfig(
-                    mode=TransformerActivationCheckpointingMode.selected_modules,
-                    modules=[f"blocks.{i}.feed_forward" for i in range(32)] + [
-                        f"blocks.{i}.attention" for i in range(0, 32, AC_ATTENTION_INTERVAL)
-                    ]
-                ),
-                # ac_config=TransformerActivationCheckpointingConfig(
-                #     mode=TransformerActivationCheckpointingMode.selected_ops,
-                # ),
-                float8_config=Float8Config(enabled=False),  # TODO (epwalsh): broken with TP
+            ),
                 max_grad_norm=1.0,
                 scheduler=LinearWithWarmup(warmup_steps=0, alpha_f=0.0),
             ),
@@ -196,7 +182,7 @@ class LcContTrain(Config):
                 # rope_theta = 8 * 10 ** 6,
             ),
             dataset=NumpyDatasetConfig.from_data_mix(
-                AnnealingDataMix.data_mix,
+                LCDataMix.data_mix,
                 tokenizer=tokenizer_config,
                 mix_base_dir=root_dir,
                 generate_doc_lengths=INTRA_DOCUMENT_MASKING,
@@ -241,100 +227,13 @@ class LcContTrain(Config):
                 "gpu_monitor",
                 GPUMemoryMonitorCallback(),
             )
-            # .with_callback("grad_clipper", GradClipperCallback(max_grad_norm=1.0)
             .with_callback("config_saver", ConfigSaverCallback())
-            .with_callback("garbage_collector", GarbageCollectorCallback())
-            # .with_callback(
-            #     "downstream_evaluator",
-            #     DownstreamEvaluatorCallbackConfig(
-            #         tasks=[
-            #             # MMLU for backwards compatibility
-            #             "mmlu_stem_mc_5shot",
-            #             "mmlu_humanities_mc_5shot",
-            #             "mmlu_social_sciences_mc_5shot",
-            #             "mmlu_other_mc_5shot",
-            #             # MMLU test
-            #             "mmlu_stem_mc_5shot_test",
-            #             "mmlu_humanities_mc_5shot_test",
-            #             "mmlu_social_sciences_mc_5shot_test",
-            #             "mmlu_other_mc_5shot_test",
-            #             ## Core 12 tasks for backwards compatibility
-            #             # "arc_challenge",
-            #             # "arc_easy",
-            #             # "basic_arithmetic",
-            #             # "boolq",
-            #             # "commonsense_qa",
-            #             # "copa",
-            #             # "hellaswag",
-            #             # "openbook_qa",
-            #             # "piqa",
-            #             # "sciq",
-            #             # "social_iqa",
-            #             # "winogrande",
-            #             ## Core 12 tasks 5-shot
-            #             # "arc_challenge_rc_5shot",
-            #             # "arc_easy_rc_5shot",
-            #             ## "basic_arithmetic_rc_5shot",  # doesn't exist
-            #             ## "boolq_rc_5shot",  # we don't like it
-            #             # "csqa_rc_5shot",
-            #             ## "copa_rc_5shot",  # doesn't exist
-            #             # "hellaswag_rc_5shot",
-            #             # "openbookqa_rc_5shot",
-            #             # "piqa_rc_5shot",
-            #             ## "sciq_rc_5shot",  # doesn't exist
-            #             # "socialiqa_rc_5shot",
-            #             # "winogrande_rc_5shot",
-            #             ## New in-loop evals
-            #             # "arc_challenge_val_rc_5shot",
-            #             # "arc_challenge_val_mc_5shot",
-            #             "arc_challenge_test_rc_5shot",
-            #             # "arc_challenge_test_mc_5shot",
-            #             # "arc_easy_val_rc_5shot",
-            #             # "arc_easy_val_mc_5shot",
-            #             "arc_easy_test_rc_5shot",
-            #             # "arc_easy_test_mc_5shot",
-            #             # "boolq_val_rc_5shot",
-            #             # "boolq_val_mc_5shot",
-            #             "csqa_val_rc_5shot",
-            #             # "csqa_val_mc_5shot",
-            #             "hellaswag_val_rc_5shot",
-            #             # "hellaswag_val_mc_5shot",
-            #             # "openbookqa_val_rc_5shot",
-            #             # "openbookqa_val_mc_5shot",
-            #             "openbookqa_test_rc_5shot",
-            #             # "openbookqa_test_mc_5shot",
-            #             "piqa_val_rc_5shot",
-            #             # "piqa_val_mc_5shot",
-            #             "socialiqa_val_rc_5shot",
-            #             # "socialiqa_val_mc_5shot",
-            #             # "winogrande_val_rc_5shot",
-            #             # "winogrande_val_mc_5shot",
-            #             # "mmlu_stem_val_rc_5shot",
-            #             # "mmlu_stem_val_mc_5shot",
-            #             # "mmlu_humanities_val_rc_5shot",
-            #             # "mmlu_humanities_val_mc_5shot",
-            #             # "mmlu_social_sciences_val_rc_5shot",
-            #             # "mmlu_social_sciences_val_mc_5shot",
-            #             # "mmlu_other_val_rc_5shot",
-            #             # "mmlu_other_val_mc_5shot",
-            #         ],
-            #         tokenizer=tokenizer_config,
-            #         eval_interval=1000,
-            #     ),
-            # ),
         ).merge(overrides)
 
 
 def train(config: LcContTrain):
-    # Set RNG states on all devices.
-    # seed_all(config.init_seed)
 
     device = get_default_device()
-
-    # Build mesh, if needed.
-    # world_mesh = config.model.build_mesh(device=device)
-
-    # Build components.
 
     model = config.model.build(
         init_device="meta",
@@ -399,8 +298,12 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
     model_config.block.name = TransformerBlockType.default
     model_config.block.attention.qk_norm = None
     model_config.block.attention.sliding_window = SlidingWindowAttentionConfig(
-        force_first=False, pattern=[False, False, False, True]
+        force_full_attention_on_first_layer=False,
+        force_full_attention_on_last_layer=True,
+        pattern=[4096, 4096, 4096, -1]
     )
+    
+    
     # model_config.block.attention.rope = RoPEConfig(
     #     theta=8 * 10 ** 6,
     #     scaling=RoPEScalingConfig(
@@ -415,6 +318,7 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         theta=8 * 10 ** 6,
         scaling=YaRNRoPEScalingConfig()
     )
+
     # Print the config for debugging and then execute the command.
     if get_local_rank() == 0:
         print(config)
