@@ -13,6 +13,7 @@ from typing import List, Optional, Set, Tuple
 
 from beaker import (
     Beaker,
+    Constraints,
     Dataset,
     DatasetConflict,
     DatasetNotFound,
@@ -33,6 +34,7 @@ from ..exceptions import BeakerExperimentFailedError, OLMoConfigurationError
 from ..train.callbacks.beaker import BEAKER_RESULT_DIR
 from ..utils import LOG_FILTER_TYPE_ENV_VAR, LogFilterType
 from ..version import VERSION
+from .select_beaker_hosts import get_host_name_constraints
 from .utils import GIT_BRANCH_ENV_VAR, GIT_REF_ENV_VAR, GIT_REPO_URL_ENV_VAR, GitConfig
 
 log = logging.getLogger(__name__)
@@ -403,6 +405,10 @@ class BeakerLaunchConfig(Config):
 
         entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
 
+        host_name_constraints = get_host_name_constraints(self.num_nodes * self.num_gpus, 4, 1)
+        assert len(host_name_constraints) == 1 and len(host_name_constraints[0]) >= self.num_nodes
+        constraints = Constraints(hostname=host_name_constraints[0])
+
         task_spec = (
             TaskSpec.new(
                 self.task_name,
@@ -426,6 +432,7 @@ class BeakerLaunchConfig(Config):
                 synchronized_start_timeout="90m" if self.num_nodes > 1 else None,
                 resources=TaskResources(gpu_count=self.num_gpus, shared_memory=self.shared_memory),
                 result_path=self.result_dir,
+                constraints=constraints,
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
             .with_constraint(cluster=self.clusters)

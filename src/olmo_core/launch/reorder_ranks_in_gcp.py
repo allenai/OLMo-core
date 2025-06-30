@@ -13,7 +13,11 @@ def main():
     parser.add_argument("master_addr", help="Hostname of worker 0")
     parser.add_argument("--master_port", type=int, default=29501, help="Port for TCPStore")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode (outside of GCP)")
-    parser.add_argument("--verbose", action="store_true", help="Print the whole list of node ids in order on rank 0 to stderr")
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print the whole list of node ids in order on rank 0 to stderr",
+    )
     args = parser.parse_args()
 
     # Create or connect to the store
@@ -24,19 +28,16 @@ def main():
         is_master=(args.rank == 0),
     )
 
-    # Get our own host id
     if args.debug:
-        import socket
-
-        host_id = f"{socket.gethostname()}_{args.rank}"
+        block = f"{args.rank // 4}"
     else:
         try:
             response = requests.get(
-                "http://metadata.google.internal/computeMetadata/v1/instance/attributes/physical_host",
+                "http://metadata.google.internal/computeMetadata/v1/instance/attributes/physical_host_topology/block",
                 headers={"Metadata-Flavor": "Google"},
             )
             assert response.status_code == 200
-            host_id = response.text.strip()
+            block = response.text.strip()
         except requests.exceptions.ConnectionError as e:
             # Unwrap the exception
             e = e.args[0]
@@ -50,23 +51,27 @@ def main():
             sys.exit(0)
 
     # Find the index of our host id
-    store.set(f"node_{args.rank}_hostid", host_id)
-    store.wait([f"node_{i}_hostid" for i in range(args.world_size)])
-    all_host_ids = [store.get(f"node_{i}_hostid").decode("UTF-8") for i in range(args.world_size)]
-    assert len(set(all_host_ids)) == len(all_host_ids)
-    assert host_id in all_host_ids
-    rank0_host_id = all_host_ids[0]
-    all_host_ids.sort()
-    # Rank 0 needs to remain rank 0, so we reshuffle around it
-    rank0_index = all_host_ids.index(rank0_host_id)
-    all_host_ids = all_host_ids[rank0_index:] + all_host_ids[:rank0_index]
-    if args.verbose and host_id == rank0_host_id:
-        for i in all_host_ids:
-            print(i, file=sys.stderr)
-    print(all_host_ids.index(host_id))
+    store.set(f"node_{args.rank}_block", block)
+    store.wait([f"node_{i}_block" for i in range(args.world_size)])
+    all_blocks = {i: store.get(f"node_{i}_block").decode("UTF-8") for i in range(args.world_size)}
+    assert block in all_blocks.values()
+    rank0_block = all_blocks[0]
+    # Rank 0 needs to remain rank 0.
+    ranks = list(range(args.world_size))
+    # Sort so that rank 0 blocks come first, then so that blocks are together, lastly so that shorter ranks are first
+    ranks.sort(key=lambda rank: (all_blocks[rank] != rank0_block, all_blocks[rank], rank))
+    assert ranks[0] == 0
+
+    if args.verbose and args.rank == 0:
+        for rank in ranks:
+            print(
+                f"Initial rank: {rank}, Final rank: {ranks.index(rank)}, Block: {all_blocks[rank]}",
+                file=sys.stderr,
+            )
+    print(ranks.index(args.rank))
 
     # Make sure we're all done before exiting
-    store.set(f"node_{args.rank}_done", host_id)
+    store.set(f"node_{args.rank}_done", block)
     store.wait([f"node_{i}_done" for i in range(args.world_size)])
 
 
