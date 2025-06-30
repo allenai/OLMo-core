@@ -33,11 +33,12 @@ def main():
     else:
         try:
             response = requests.get(
-                "http://metadata.google.internal/computeMetadata/v1/instance/attributes/physical_host_topology/block",
+                "http://metadata.google.internal/computeMetadata/v1/instance/attributes/physical_host",
                 headers={"Metadata-Flavor": "Google"},
             )
             assert response.status_code == 200
-            block = response.text.strip()
+            host_id = response.text.strip()
+            block = host_id.split()[0]
         except requests.exceptions.ConnectionError as e:
             # Unwrap the exception
             e = e.args[0]
