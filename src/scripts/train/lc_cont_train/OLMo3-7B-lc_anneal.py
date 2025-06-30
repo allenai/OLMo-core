@@ -22,7 +22,6 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
-from olmo_core.io import resource_path
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEScalingConfig, YaRNRoPEScalingConfig
@@ -30,7 +29,6 @@ from olmo_core.nn.transformer import (
     TransformerBlockType,
     TransformerConfig,
 )
-from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.optim import (
     AdamWConfig,
     LinearWithWarmup,
@@ -45,21 +43,18 @@ from olmo_core.train import (
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
     ConfigSaverCallback,
-    GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
     WandBCallback,
 )
 from olmo_core.train.checkpoint import CheckpointerConfig
-from olmo_core.train.train_module import (  # TransformerActivationCheckpointingConfig,
+from olmo_core.train.train_module import (  
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
 from olmo_core.train.train_module.transformer.config import (
-    TransformerActivationCheckpointingConfig,
-    TransformerTensorParallelConfig,
 )
-from olmo_core.utils import get_default_device, prepare_cli_environment, seed_all
+from olmo_core.utils import get_default_device, prepare_cli_environment
 
 
 CONTEXT_LENGTH = 4 * 16384
@@ -143,11 +138,11 @@ class LcContTrain(Config):
                 cmd=[script, cmd, run_name, cluster, *overrides],
                 cluster=cluster,
                 nccl_debug=False,
+                workspace='ai2/long-contexts'
             ),
             train_module = TransformerTrainModuleConfig(
                 rank_microbatch_size=1 * CONTEXT_LENGTH,
                  optim=AdamWConfig(
-                    # lr= 0.000061499,
                     lr= 0.000069932,
                     weight_decay=0.1,
                     betas=(0.9, 0.95),
@@ -179,7 +174,6 @@ class LcContTrain(Config):
             model=TransformerConfig.olmo2_7B(
                 vocab_size=tokenizer_config.padded_vocab_size(),
                 use_flash=True,
-                # rope_theta = 8 * 10 ** 6,
             ),
             dataset=NumpyDatasetConfig.from_data_mix(
                 LCDataMix.data_mix,
@@ -304,19 +298,11 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
     )
     
     
-    # model_config.block.attention.rope = RoPEConfig(
-    #     theta=8 * 10 ** 6,
-    #     scaling=RoPEScalingConfig(
-    #     )
-    # )
-    # model_config.block.attention.rope = RoPEConfig(
-    #     theta=8 * 10 ** 6,
-    #     scaling=RoPEScalingConfig(
-    #     )
-    # )
     model_config.block.attention.rope = RoPEConfig(
         theta=8 * 10 ** 6,
-        scaling=YaRNRoPEScalingConfig()
+        scaling=RoPEScalingConfig(
+        # scaling=YaRNRoPEScalingConfig()
+        )
     )
 
     # Print the config for debugging and then execute the command.
