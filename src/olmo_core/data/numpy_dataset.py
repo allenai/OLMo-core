@@ -738,18 +738,27 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
 
         if paths_needed:
             total_max_instances = 0
-            total_requested_tokens = 0
             with concurrent.futures.ProcessPoolExecutor() as executor:
                 futures = []
-                for path, idx in paths_needed:
+
+                # compute how many instances we request
+                total_requested_tokens = sum([self._path_offset_index[(str(path), idx)] for path, idx in paths_needed])
+                total_requested_instances = total_requested_tokens // self.sequence_length
+
+                instances = 0
+                for i, (path, idx) in enumerate(paths_needed):
                     indices_path = self._get_instance_indices_path(path)
                     log.info(f"Gathering instance indices for '{path}'...")
                     # NOTE: We limit the number of instances by total target token count // sequence length
-                    max_instances = (
-                        self._path_offset_index[(str(path), idx)] // self.sequence_length
-                    )
+                    #max_instances = (
+                    #    self._path_offset_index[(str(path), idx)] // self.sequence_length
+                    #)
 
-                    total_requested_tokens += self._path_offset_index[(str(path), idx)]
+                    if i < len(paths_needed) - 1:
+                        max_instances = int(np.round(self._path_offset_index[(str(path), idx)] / self.sequence_length))
+                        instances += max_instances
+                    else:
+                        max_instances = total_requested_instances - instances
 
                     # Sampling from small npy files can result in 0 instance indices.
                     # We skip processing these to avoid writing empty mmapped files.
