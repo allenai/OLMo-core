@@ -300,21 +300,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
         """
         return Duration.tokens(int(run_duration.multiplier * 20) * self.model_size)
 
-    def get_train_module_config(
-        self,
-        *,
-        size: ModelSize,
-        run_duration: RunDuration,
-        gpu_type: str,
-        dp_world_size: int,
-    ) -> TransformerTrainModuleConfig:
-        """
-        Build the train module config.
-
-        :param size: The target model size.
-        :param gpu_type: The type of GPU as given by ``torch.cuda.get_device_name()``.
-        :param dp_world_size: The data parallel world size.
-        """
+    def get_rank_mbz(self, size: ModelSize, gpu_type: str, dp_world_size: int) -> int:
         if dp_world_size > self.max_dp_world_size:
             raise OLMoConfigurationError(
                 f"max_dp_world_size ({self.max_dp_world_size}) must be at least as big as current dp "
@@ -362,6 +348,27 @@ class ModelLadder(Config, metaclass=ABCMeta):
                 "with data parallel world size"
             )
             rank_mbz = new_rank_mbz
+
+        return rank_mbz
+
+    def get_train_module_config(
+        self,
+        *,
+        size: ModelSize,
+        run_duration: RunDuration,
+        gpu_type: str,
+        dp_world_size: int,
+    ) -> TransformerTrainModuleConfig:
+        """
+        Build the train module config.
+
+        :param size: The target model size.
+        :param gpu_type: The type of GPU as given by ``torch.cuda.get_device_name()``.
+        :param dp_world_size: The data parallel world size.
+        """
+        rank_mbz = self.get_rank_mbz(size, gpu_type, dp_world_size)
+        global_bz = self.get_global_batch_size()
+
         return TransformerTrainModuleConfig(
             rank_microbatch_size=rank_mbz,
             max_sequence_length=self.sequence_length,
@@ -377,6 +384,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
         run_duration: RunDuration,
         gpu_type: str,
         dp_world_size: int,
+        cluster: str,
     ) -> TrainerConfig:
         """
         Build the trainer config.

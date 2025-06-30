@@ -126,10 +126,10 @@ def build_config(
     dataset = ladder.get_dataset_config()
     data_loader = ladder.get_data_loader_config()
     train_module = ladder.get_train_module_config(
-        size=size, run_duration=run_duration, gpu_type=gpu_type, dp_world_size=dp_world_size
+        size=size, run_duration=run_duration, gpu_type=gpu_type, dp_world_size=dp_world_size, cluster=cluster, dataset=dataset
     )
     trainer = ladder.get_trainer_config(
-        size=size, run_duration=run_duration, gpu_type=gpu_type, dp_world_size=dp_world_size
+        size=size, run_duration=run_duration, gpu_type=gpu_type, dp_world_size=dp_world_size, cluster=cluster
     )
 
     return LadderRunConfig(

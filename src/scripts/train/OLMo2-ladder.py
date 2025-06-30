@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Dict
 
 from olmo_core.config import DType
+from olmo_core.data import NumpyDatasetConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.common import get_beaker_username, get_work_dir
 from olmo_core.internal.model_ladder import RunDuration, main
@@ -69,7 +70,7 @@ class BaselineModelLadder(ModelLadder):
         )
 
     def get_train_module_config(
-        self, *, size: ModelSize, run_duration: RunDuration, gpu_type: str, dp_world_size: int
+        self, *, size: ModelSize, run_duration: RunDuration, gpu_type: str, dp_world_size: int, cluster: str, dataset: NumpyDatasetConfig
     ) -> TransformerTrainModuleConfig:
         config = super().get_train_module_config(
             size=size, run_duration=run_duration, gpu_type=gpu_type, dp_world_size=dp_world_size
