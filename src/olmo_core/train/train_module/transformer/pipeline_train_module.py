@@ -583,7 +583,7 @@ class TransformerPipelineTrainModule(TrainModule):
         return ce_batch_loss, z_batch_loss
 
     def num_flops_per_token(self, seq_len: int) -> int:
-        return self.model_parts[0].num_flops_per_token(seq_len)
+        return self.model_parts[0].num_flops_per_token(seq_len) # each model part will use the config to calculate flops for the whole model before PP split, so any model part will do
 
     @contextlib.contextmanager
     def _model_forward_context(self) -> Generator[None, None, None]:

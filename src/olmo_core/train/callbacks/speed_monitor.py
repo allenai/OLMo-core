@@ -8,6 +8,7 @@ from olmo_core.distributed.utils import get_world_size
 
 from ..common import ReduceType
 from ..train_module import TransformerTrainModule
+from ..train_module import TransformerPipelineTrainModule
 from .callback import Callback
 
 
@@ -51,8 +52,8 @@ class SpeedMonitorCallback(Callback):
             return self.num_flops_per_token
         elif isinstance(self.trainer.train_module, TransformerTrainModule):
             return self.trainer.train_module.num_flops_per_token(seq_len)
-        else:
-            return None
+        else: # pipeline module
+            return self.trainer.train_module.num_flops_per_token(seq_len)
 
     def pre_train(self):
         self._first_step = True
@@ -65,7 +66,10 @@ class SpeedMonitorCallback(Callback):
         if (
             self.device_peak_flops is None
             and self.trainer.device.type == "cuda"
-            and isinstance(self.trainer.train_module, TransformerTrainModule)
+            and (
+                isinstance(self.trainer.train_module, TransformerTrainModule)
+                or isinstance(self.trainer.train_module, TransformerPipelineTrainModule)
+            )
         ):
             device_name = torch.cuda.get_device_name(self.trainer.device)
             # if self.trainer.train_module.autocast_precision == torch.bfloat16:
