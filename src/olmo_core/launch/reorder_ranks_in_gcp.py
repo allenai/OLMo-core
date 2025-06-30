@@ -13,6 +13,7 @@ def main():
     parser.add_argument("master_addr", help="Hostname of worker 0")
     parser.add_argument("--master_port", type=int, default=29501, help="Port for TCPStore")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode (outside of GCP)")
+    parser.add_argument("--verbose", action="store_true", help="Print the whole list of node ids in order on rank 0 to stderr")
     args = parser.parse_args()
 
     # Create or connect to the store
@@ -59,6 +60,9 @@ def main():
     # Rank 0 needs to remain rank 0, so we reshuffle around it
     rank0_index = all_host_ids.index(rank0_host_id)
     all_host_ids = all_host_ids[rank0_index:] + all_host_ids[:rank0_index]
+    if args.verbose and host_id == rank0_host_id:
+        for i in all_host_ids:
+            print(i, file=sys.stderr)
     print(all_host_ids.index(host_id))
 
     # Make sure we're all done before exiting
