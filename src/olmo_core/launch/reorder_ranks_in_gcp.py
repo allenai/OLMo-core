@@ -86,7 +86,7 @@ def main():
     if args.verbose and args.rank == 0:
         for rank in ranks:
             print(
-                f"Initial rank: {rank}, Final rank: {ranks.index(rank)}, Block: {all_blocks[rank]}",
+                f"Initial rank: {rank}, Final rank: {ranks.index(rank)}, Hostids: {all_hostids[rank]}",
                 file=sys.stderr,
             )
     print(ranks.index(args.rank))
