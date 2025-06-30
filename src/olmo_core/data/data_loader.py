@@ -1093,6 +1093,8 @@ class NumpyDataLoaderConfig(Config):
 
         dataset.prepare()
 
+        log.info(f"Num tokens: {dataset.num_tokens:,d} ")
+
         data_loader = NumpyDataLoaderBase.wrap_numpy_dataset(
             dataset,
             global_batch_size=self.global_batch_size,
