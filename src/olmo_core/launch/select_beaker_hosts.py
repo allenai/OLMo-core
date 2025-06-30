@@ -15,7 +15,12 @@ def get_machines_metadata() -> dict[str, ResourceStatusPhysicalHostTopology]:
     }
 
 
-def get_host_name_constraints(num_nodes: int, num_model_replica_nodes: int, beaker_task_count: int):
+def get_host_name_constraints(
+    num_nodes: int,
+    num_model_replica_nodes: int,
+    beaker_task_count: int,
+    skip_urgent_nodes: bool = True,
+):
     assert num_nodes % num_model_replica_nodes == 0
     assert num_nodes % beaker_task_count == 0
 
@@ -24,15 +29,37 @@ def get_host_name_constraints(num_nodes: int, num_model_replica_nodes: int, beak
 
     # assert beaker_task_count == 1, "Other task counts not supported"
 
+    machines_metadata = get_machines_metadata()
     machines_metadata = {
-        f"{host}.reviz.ai2.in": metadata for host, metadata in get_machines_metadata().items()
+        f"{host}.reviz.ai2.in": metadata for host, metadata in machines_metadata.items()
     }
+
+    # Remove hosts with jobs running on urgent priority
+    if skip_urgent_nodes:
+        from olmo_core.internal.common import get_beaker_client
+
+        beaker = get_beaker_client()
+        assert beaker is not None
+
+        cluster = beaker.cluster.get("augusta-google-1")
+        jobs = beaker.job.list(cluster=cluster)
+
+        for job in jobs:
+            if job.node is None:
+                continue
+
+            host = beaker.node.get(job.node).hostname
+            if host not in machines_metadata:
+                continue
+
+            if (
+                job.is_running and job.execution and job.execution.spec.resources.gpu_count > 0
+            ) and (not job.is_preemptible or job.priority == "urgent"):
+                del machines_metadata[host]
 
     hosts_by_block: defaultdict[str, list[str]] = defaultdict(list)
     for host, metadata in machines_metadata.items():
         hosts_by_block[metadata.block].append(host)
-
-    # TODO: remove hosts with jobs that can't be preempted
 
     hosts_per_task: list[list[str]] = []
     for block, hosts in sorted(hosts_by_block.items(), key=lambda item: len(item[1]), reverse=True):
@@ -96,11 +123,20 @@ def main():
         type=int,
         help="Number of beaker (pre-replication) tasks this job is being spread across",
     )
+    parser.add_argument(
+        "--ignore-urgent",
+        action="store_false",
+        dest="skip_urgent_nodes",
+        help="Number of beaker (pre-replication) tasks this job is being spread across",
+    )
     args = parser.parse_args()
 
     print(
         get_host_name_constraints(
-            args.num_nodes, args.num_model_replica_nodes, args.beaker_task_count
+            args.num_nodes,
+            args.num_model_replica_nodes,
+            args.beaker_task_count,
+            skip_urgent_nodes=args.skip_urgent_nodes,
         )
     )
 
