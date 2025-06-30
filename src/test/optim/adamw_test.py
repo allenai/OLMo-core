@@ -13,6 +13,7 @@ from olmo_core.distributed.checkpoint import (
 )
 from olmo_core.optim import AdamWConfig, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.testing import DEVICES
+from olmo_core.utils import cuda_sync_debug_mode
 
 
 class MyModel(nn.Module):
@@ -158,11 +159,13 @@ def test_adamw_equivalence(
     # Training loop
     for step_idx in range(5):
         inp = torch.randint(0, 128, (4, 8), device=device)
-        for optim, model in [(optim1, model1), (optim2, model2), (optim3, model3)]:
-            optim.zero_grad(set_to_none=True)
-            loss = model(inp).sum()
-            loss.backward()
-            optim.step()
+
+        with cuda_sync_debug_mode(debug_mode="error"):
+            for optim, model in [(optim1, model1), (optim2, model2), (optim3, model3)]:
+                optim.zero_grad(set_to_none=True)
+                loss = model(inp).sum()
+                loss.backward()
+                optim.step()
 
         # Compare parameters
         atol = 1e-5

@@ -72,17 +72,21 @@ def foreach_adamw_step(
     grads = [g.type_as(ea) for g, ea in zip(grads, exp_avgs)]
 
     # Decay the first and second moment running average coefficient.
-    torch._foreach_lerp_(exp_avgs, grads, step_factor * (1 - beta1))  # type: ignore[arg-type]
+    # foreach_lerp_ has issues when DTensor is enabled (see https://github.com/pytorch/pytorch/issues/132017).
+    # Implement the lerp(a, b, w) = a + w * (b - a) with basic _foreach_mul_/add_ ops instead:
+    w1 = step_factor * (1 - beta1)
+    torch._foreach_mul_(exp_avgs, 1.0 - w1)
+    torch._foreach_add_(exp_avgs, torch._foreach_mul(grads, w1))
 
     grad_squares = torch._foreach_mul(grads, grads)
-    torch._foreach_lerp_(exp_avg_sqs, grad_squares, step_factor * (1 - beta2))  # type: ignore[arg-type]
+
+    w2 = step_factor * (1 - beta2)
+    torch._foreach_mul_(exp_avg_sqs, 1.0 - w2)
+    torch._foreach_add_(exp_avg_sqs, torch._foreach_mul(grad_squares, w2))
 
     steps_t = torch.stack(steps)
-    beta1_t = torch.tensor(beta1, device=steps_t.device, dtype=steps_t.dtype)
-    beta2_t = torch.tensor(beta2, device=steps_t.device, dtype=steps_t.dtype)
-
-    bias_corrections1 = 1 - torch.pow(beta1_t, steps_t + 1)
-    bias_corrections2 = 1 - torch.pow(beta2_t, steps_t + 1)
+    bias_corrections1 = 1 - torch.pow(beta1, steps_t + 1)
+    bias_corrections2 = 1 - torch.pow(beta2, steps_t + 1)
 
     step_sizes = lr / bias_corrections1
 
@@ -93,7 +97,7 @@ def foreach_adamw_step(
     updates = torch._foreach_div(exp_avgs, denoms)
     torch._foreach_mul_(updates, (-step_factor * step_sizes).unbind())
     torch._foreach_add_(params, updates)
-    torch._foreach_add_(steps, step_factor)
+    torch._foreach_add_(steps, [step_factor] * len(steps))
 
 
 class SkipStepAdamW(SkipStepOptimizer):
@@ -156,7 +160,7 @@ class SkipStepAdamW(SkipStepOptimizer):
 
                 state = self.state[p]
                 if len(state) == 0:
-                    state["step"] = torch.tensor(0.0, dtype=torch.float32, device=p.device)
+                    state["step"] = torch.zeros((), dtype=torch.float32, device=p.device)
                     state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
                     state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
 
@@ -192,7 +196,7 @@ class SkipStepAdamW(SkipStepOptimizer):
 
                 state = self.state[p]
                 if len(state) == 0:
-                    state["step"] = torch.tensor(0.0, dtype=torch.float32, device=p.device)
+                    state["step"] = torch.zeros((), dtype=torch.float32, device=p.device)
                     state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
                     state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
 
@@ -247,10 +251,23 @@ class SkipStepAdamWConfig(OptimConfig):
     betas: Tuple[float, float] = (0.9, 0.999)
     eps: float = 1e-8
     weight_decay: float = 1e-2
-    rolling_interval_length: int = 128
-    sigma_factor: int = 6
     dtype: Optional[DType] = None
-    foreach: bool = False
+
+    foreach: bool = True
+    """
+    Whether to use multi-tensor (*foreach*) kernels for the AdamW update.
+    Faster than the non-foreach version.
+    """
+
+    rolling_interval_length: int = 128
+    """
+    The length of the rolling interval to use for computing the mean and standard deviation of the loss.
+    """
+
+    sigma_factor: int = 6
+    """
+    The number of standard deviations above the mean loss to skip a step.
+    """
 
     @classmethod
     def optimizer(cls) -> Type[SkipStepAdamW]:
