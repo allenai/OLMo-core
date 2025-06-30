@@ -38,7 +38,7 @@ def main():
             )
             assert response.status_code == 200
             host_id = response.text.strip()
-            block = host_id.split()[0]
+            block = host_id.split("/")[0]
         except requests.exceptions.ConnectionError as e:
             # Unwrap the exception
             e = e.args[0]
