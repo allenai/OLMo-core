@@ -52,8 +52,6 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-from olmo_core.train.train_module.transformer.config import (
-)
 from olmo_core.utils import get_default_device, prepare_cli_environment
 
 
@@ -155,10 +153,10 @@ class LcContTrain(Config):
                 compile_model=True,
                 z_loss_multiplier=1e-5,
                 dp_config=TransformerDataParallelConfig(
-                    name=DataParallelType.fsdp,
+                    name=DataParallelType.hsdp,
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
-                    wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
+                    wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
                 ),
                 float8_config=Float8Config(
                     enabled=True,
@@ -173,6 +171,9 @@ class LcContTrain(Config):
             ),
             model=TransformerConfig.olmo2_7B(
                 vocab_size=tokenizer_config.padded_vocab_size(),
+                n_kv_heads=8,
+                hidden_size_multiplier=1.2,
+                hidden_size_multiple_of=1024,
                 use_flash=True,
             ),
             dataset=NumpyDatasetConfig.from_data_mix(
@@ -198,7 +199,7 @@ class LcContTrain(Config):
                 load_path=load_path,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
-                max_duration=Duration.tokens(int(50e9)),
+                max_duration=Duration.tokens(int(1e9)),
             )
             .with_callback(
                 "checkpointer",
@@ -289,8 +290,8 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
     )
 
     model_config = config.model
-    model_config.block.name = TransformerBlockType.default
-    model_config.block.attention.qk_norm = None
+    model_config.block.attention.use_head_qk_norm = True
+
     model_config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_full_attention_on_first_layer=False,
         force_full_attention_on_last_layer=True,
