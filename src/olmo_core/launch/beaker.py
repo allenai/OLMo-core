@@ -389,6 +389,7 @@ class BeakerLaunchConfig(Config):
                 entrypoint_script.append(
                     "BEAKER_REPLICA_RANK=$("
                     "python -m olmo_core.launch.reorder_ranks_in_gcp "
+                    "--verbose "
                     "${BEAKER_REPLICA_RANK} "
                     "${BEAKER_REPLICA_COUNT} "
                     "${BEAKER_LEADER_REPLICA_HOSTNAME}"
