@@ -75,10 +75,16 @@ def get_host_name_constraints(num_nodes: int, num_model_replica_nodes: int, beak
             assert (host_count_from_block - used_hosts_count) % num_model_replica_nodes == 0
             hosts_per_task.append(list(hosts[used_hosts_count:host_count_from_block]))
 
+    hosts_per_task = hosts_per_task[:beaker_task_count]
+
     if len(hosts_per_task) < beaker_task_count:
         raise RuntimeError(f"Could only satisfy {len(hosts_per_task)} tasks")
+    if len(hosts_per_task[-1]) < beaker_task_size:
+        raise RuntimeError(
+            f"Could not satisfy task number {len(hosts_per_task) - 1}, only got {len(hosts_per_task[-1])} hosts"
+        )
 
-    return hosts_per_task[:beaker_task_count]
+    return hosts_per_task
 
 
 def main():
