@@ -7,7 +7,9 @@ import torch.nn as nn
 from ..config import DType
 from .config import OptimConfig
 from .skip_step_optimizer import SkipStepOptimizer
+import logging
 
+log = logging.getLogger(__name__)
 
 def adamw_step(
     p: nn.Parameter,
@@ -94,7 +96,10 @@ class SkipStepAdamW(SkipStepOptimizer):
         for group in self.param_groups:
             for p in group["params"]:
                 if p.grad is None:
-                    continue
+                    raise RuntimeError(
+                        f"DEBUG: Parameter {p} has no gradient, skipping optimization step for this parameter."
+                    )
+                    # continue
 
                 state = self.state[p]
                 if len(state) == 0:
