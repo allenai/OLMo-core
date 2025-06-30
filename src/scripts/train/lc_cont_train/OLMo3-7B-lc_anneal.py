@@ -284,7 +284,7 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         script=script,
         cmd="train",
         run_name=run_name,
-        load_path="gs://ai2-llm/checkpoints/petew/OLMo3-integrationtest-3/step77000/model_and_optim/",
+        load_path="gs://ai2-llm/checkpoints/OLMo3-7B-swafix/step261702/model_and_optim/",
         cluster=cluster,
         overrides=overrides,
     )
