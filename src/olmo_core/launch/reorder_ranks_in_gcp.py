@@ -29,7 +29,7 @@ def main():
     )
 
     if args.debug:
-        block = f"{args.rank // 4}"
+        host_id = "Hello"
     else:
         try:
             response = requests.get(
@@ -38,7 +38,9 @@ def main():
             )
             assert response.status_code == 200
             host_id = response.text.strip()
-            block = host_id.strip("/").split("/")[0]
+            # block = host_id.strip("/").split("/")[0]
+            # sub_block = host_id.strip("/").split("/")[1]
+            # machine = host_id.strip("/").split("/")[2]
         except requests.exceptions.ConnectionError as e:
             # Unwrap the exception
             e = e.args[0]
@@ -52,15 +54,33 @@ def main():
             sys.exit(0)
 
     # Find the index of our host id
-    store.set(f"node_{args.rank}_block", block)
-    store.wait([f"node_{i}_block" for i in range(args.world_size)])
-    all_blocks = {i: store.get(f"node_{i}_block").decode("UTF-8") for i in range(args.world_size)}
-    assert block in all_blocks.values()
+    store.set(f"node_{args.rank}_hostid", host_id)
+    store.wait([f"node_{i}_hostid" for i in range(args.world_size)])
+    all_hostids = [store.get(f"node_{i}_hostid").decode("UTF-8") for i in range(args.world_size)]
+    assert host_id in all_hostids
+
+    all_blocks = [hostid.strip("/").split("/")[0] for hostid in all_hostids]
+    all_subblocks = [hostid.strip("/").split("/")[1] for hostid in all_hostids]
+    all_machines = [hostid.strip("/").split("/")[2] for hostid in all_hostids]
+
     rank0_block = all_blocks[0]
+    rank0_subblock = all_subblocks[0]
+    rank0_machine = all_machines[0]
+
     # Rank 0 needs to remain rank 0.
     ranks = list(range(args.world_size))
     # Sort so that rank 0 blocks come first, then so that blocks are together, lastly so that shorter ranks are first
-    ranks.sort(key=lambda rank: (all_blocks[rank] != rank0_block, all_blocks[rank], rank))
+    ranks.sort(
+        key=lambda rank: (
+            all_blocks[rank] != rank0_block,
+            all_subblocks[rank] != rank0_subblock,
+            all_machines[rank] != rank0_machine,
+            all_blocks[rank],
+            all_subblocks[rank],
+            all_machines[rank],
+            rank
+        )
+    )
     assert ranks[0] == 0
 
     if args.verbose and args.rank == 0:
@@ -72,7 +92,7 @@ def main():
     print(ranks.index(args.rank))
 
     # Make sure we're all done before exiting
-    store.set(f"node_{args.rank}_done", block)
+    store.set(f"node_{args.rank}_done", host_id)
     store.wait([f"node_{i}_done" for i in range(args.world_size)])
 
 
