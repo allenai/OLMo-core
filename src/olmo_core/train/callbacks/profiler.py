@@ -129,6 +129,7 @@ class NvidiaProfilerCallback(Callback):
     def pre_load_batch(self):
         if self.enabled and get_rank() in self.profile_ranks:
             if self.step == self.start:
+                print(f'Starting NVIDIA profiler at rank={get_rank()} step={self.step}...')
                 torch.cuda.cudart().cudaProfilerStart()
                 torch.autograd.profiler.emit_nvtx(record_shapes=True).__enter__()
 
@@ -136,4 +137,5 @@ class NvidiaProfilerCallback(Callback):
         if self.enabled and get_rank() in self.profile_ranks:
             if self.step == self.end:
                 torch.cuda.cudart().cudaProfilerStop()
+                print(f'Stopping NVIDIA profiler at rank={get_rank()} step={self.step}...')
                 
