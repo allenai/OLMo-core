@@ -94,7 +94,7 @@ class TokenizerConfig(Config):
         Get a :data:`~TokenizerName.olmo2instruct` tokenizer config.
         """
         cfg = cls.dolma2()
-        # cfg.bos_token_id = 100257
+        cfg.bos_token_id = 100257
         cfg.identifier = TokenizerName.olmo2instruct
         return cfg
 
