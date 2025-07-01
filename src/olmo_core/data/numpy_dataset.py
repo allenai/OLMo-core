@@ -589,12 +589,31 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
             item_size = self.dtype(0).itemsize
 
             start_offset = 0
+
+            total_requested_tokens = sum([self._path_offset_index[(str(path), idx)] for idx, path in enumerate(self.paths)])
+            total_requested_instances = total_requested_tokens // self.sequence_length
+
+            all_lengths = []
             for size, length in self.map(self._get_file_size_and_length):
+                array_sizes.append(size // item_size)
+                array_file_sizes.append(size)
+                all_lengths.append(length)
+
+            all_lengths[-1] += total_requested_instances - sum(all_lengths)
+
+
+            for length in all_lengths:
+                end_offset = start_offset + length
+                array_offsets.append((start_offset, end_offset))
+                start_offset += length
+
+
+            """for size, length in self.map(self._get_file_size_and_length):
                 array_sizes.append(size // item_size)
                 end_offset = start_offset + length
                 array_offsets.append((start_offset, end_offset))
                 array_file_sizes.append(size)
-                start_offset += length
+                start_offset += length"""
 
             self._array_offsets = tuple(array_offsets)
             self._array_file_sizes = tuple(array_file_sizes)
@@ -815,7 +834,8 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
             self.max_target_sequence_length is None
             or self.max_target_sequence_length == self.sequence_length
         ):
-            return file_size, file_size // (item_size * self.sequence_length)
+            return file_size, int(np.round(file_size / (item_size * self.sequence_length)))
+            # return file_size, file_size // (item_size * self.sequence_length)
         elif self.max_target_sequence_length > self.sequence_length:
             num_max_seq_len_instances = file_size // (item_size * self.max_target_sequence_length)
             return (
