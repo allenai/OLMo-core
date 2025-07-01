@@ -1091,6 +1091,8 @@ class NumpyDataLoaderConfig(Config):
         if dp_process_group is None and mesh is not None:
             dp_process_group = get_dp_process_group(mesh)
 
+        log.info(f"Num tokens: {dataset.num_tokens:,d} ")
+
         dataset.prepare()
 
         log.info(f"Num tokens: {dataset.num_tokens:,d} ")
