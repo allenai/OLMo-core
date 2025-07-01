@@ -241,7 +241,9 @@ class TransformerBlockConfig(Config):
         ) - self.feed_forward_moe.num_active_params(d_model)
         return num_params - num_inactive_params
 
-    def get_mup_width_scalings(self, base_block: "TransformerBlockConfig", d_model: int, base_d_model: int) -> Dict[MuPHyperParam, float]:
+    def get_mup_width_scalings(
+        self, base_block: "TransformerBlockConfig", d_model: int, base_d_model: int
+    ) -> Dict[MuPHyperParam, float]:
         if self.feed_forward:
             if base_block.feed_forward is None:
                 raise ValueError("Feed forward config is missing in m")
@@ -261,11 +263,8 @@ class TransformerBlockConfig(Config):
         width_scalings = {
             MuPHyperParam.d_model: d_model / base_d_model,
             MuPHyperParam.hidden_size: hidden_size / base_hidden_size,
-            MuPHyperParam.n_heads: self.attention.n_heads
-            / base_block.attention.n_heads,
-            MuPHyperParam.n_kv_heads: (
-                self.attention.n_kv_heads or self.attention.n_heads
-            )
+            MuPHyperParam.n_heads: self.attention.n_heads / base_block.attention.n_heads,
+            MuPHyperParam.n_kv_heads: (self.attention.n_kv_heads or self.attention.n_heads)
             / (base_block.attention.n_kv_heads or base_block.attention.n_heads),
             MuPHyperParam.head_dim: (d_model / self.attention.n_heads)
             / (base_d_model / base_block.attention.n_heads),
@@ -274,8 +273,7 @@ class TransformerBlockConfig(Config):
         if self.feed_forward_moe:
             assert base_block.feed_forward_moe is not None
             width_scalings[MuPHyperParam.num_experts] = (
-                self.feed_forward_moe.num_experts
-                / base_block.feed_forward_moe.num_experts
+                self.feed_forward_moe.num_experts / base_block.feed_forward_moe.num_experts
             )
 
             if self.feed_forward_moe.shared_mlp is not None:

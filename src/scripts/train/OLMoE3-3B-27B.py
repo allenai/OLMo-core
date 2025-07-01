@@ -49,7 +49,13 @@ MAX_DURATION = int(700e9)  # int(6e12), don't forget to adjust the LR when you i
 EVAL_INTERVAL = 1000
 
 
-def _build_model_config(vocab_size: int, d_model: int, moe_hidden_size: int, feed_forward_hidden_size: int, mup: MuPConfig | None = None) -> TransformerConfig:
+def _build_model_config(
+    vocab_size: int,
+    d_model: int,
+    moe_hidden_size: int,
+    feed_forward_hidden_size: int,
+    mup: MuPConfig | None = None,
+) -> TransformerConfig:
     config = TransformerConfig.llama_like(
         d_model=d_model,
         vocab_size=vocab_size,
@@ -90,7 +96,9 @@ def _build_model_config(vocab_size: int, d_model: int, moe_hidden_size: int, fee
             config.block,
             name=TransformerBlockType.reordered_norm,
             feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=feed_forward_hidden_size + 8 * moe_hidden_size, bias=False, mup=mup),
+            feed_forward=FeedForwardConfig(
+                hidden_size=feed_forward_hidden_size + 8 * moe_hidden_size, bias=False, mup=mup
+            ),
         ),
     }
 
