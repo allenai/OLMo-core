@@ -308,8 +308,8 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
     
     
     model_config.block.attention.rope = RoPEConfig(
-        theta=8 * 10 ** 6,
-        # scaling=RoPEScalingConfig()
+        theta= 0.5 * 10 ** 6,
+        scaling=RoPEScalingConfig()
         # scaling=YaRNRoPEScalingConfig()
     )
 
