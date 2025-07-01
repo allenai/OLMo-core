@@ -101,7 +101,6 @@ def build_sft_dataset(
         tokenizer=tokenizer_config,
         mix_base_dir=root_dir,
         work_dir=get_work_dir(root_dir),
-        expand_glob=True,
         paths=paths,
         label_mask_paths=label_mask_paths,
         # how to handle long docs?
