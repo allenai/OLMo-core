@@ -28,7 +28,7 @@ class TokenizerName(StrEnum):
     """
     The base GPT2 tokenizer.
     """
-
+    llama3 = "llama3"
 
 @dataclass
 class TokenizerConfig(Config):
@@ -67,6 +67,19 @@ class TokenizerConfig(Config):
         This is useful to set model embeddings to this number to increase throughput.
         """
         return pad_multiple * ((self.vocab_size + pad_multiple - 1) // pad_multiple)
+
+    @classmethod
+    def llama3(cls) -> "TokenizerConfig":
+        """
+        Get a :data:`~TokenizerName.llama3` tokenizer config.
+        """
+        return cls(
+            vocab_size=128256,
+            eos_token_id=128001,
+            bos_token_id=128000,
+            pad_token_id=128001,
+            identifier=TokenizerName.llama3,
+        )
 
     @classmethod
     def dolma2(cls) -> "TokenizerConfig":
