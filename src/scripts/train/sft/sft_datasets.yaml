@@ -53,7 +53,7 @@ datasets:
       - token_ids_part_0000.npy
       - token_ids_part_0001.npy
       - token_ids_part_0002.npy
-    labels:
+    label_mask:
       - labels_mask_part_0000.npy
       - labels_mask_part_0001.npy
       - labels_mask_part_0002.npy    
