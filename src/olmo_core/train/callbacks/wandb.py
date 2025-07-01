@@ -130,7 +130,7 @@ class WandBCallback(Callback):
     def post_step(self):
         cancel_check_interval = self.cancel_check_interval or self.trainer.cancel_check_interval
         if self.enabled and get_rank() == 0 and self.step % cancel_check_interval == 0:
-            self.trainer.thread_pool.submit(self.check_if_canceled)
+            self.trainer.run_bookkeeping_op(self.check_if_canceled, cancel_in_progress=True)
 
     def post_train(self):
         if self.enabled and get_rank() == 0 and self.run is not None:
@@ -151,11 +151,11 @@ class WandBCallback(Callback):
             try:
                 # NOTE: need to re-initialize the API client every time, otherwise
                 # I guess it return cached run data.
-                api = self.wandb.Api(api_key=os.environ[WANDB_API_KEY_ENV_VAR])
+                api = self.wandb.Api(api_key=os.environ[WANDB_API_KEY_ENV_VAR], timeout=5)
                 run = api.run(self.run_path)  # type: ignore
                 for tag in run.tags or []:
                     if tag.lower() in self.cancel_tags:
                         self.trainer.cancel_run("canceled from W&B tag")
                         return
-            except (RequestException, CommError):
+            except (RequestException, CommError, TimeoutError):
                 log.warning("Failed to communicate with W&B API")
