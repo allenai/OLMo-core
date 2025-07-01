@@ -86,7 +86,7 @@ def main():
             all_blocks[rank],
             all_subblocks[rank],
             all_machines[rank],
-            rank
+            rank,
         )
     )
     assert ranks[0] == 0
