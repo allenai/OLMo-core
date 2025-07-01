@@ -589,31 +589,12 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
             item_size = self.dtype(0).itemsize
 
             start_offset = 0
-
-            total_requested_tokens = sum([self._path_offset_index[(str(path), idx)] for idx, path in enumerate(self.paths)])
-            total_requested_instances = total_requested_tokens // self.sequence_length
-
-            all_lengths = []
             for size, length in self.map(self._get_file_size_and_length):
                 array_sizes.append(size // item_size)
-                array_file_sizes.append(size)
-                all_lengths.append(length)
-
-            all_lengths[-1] += total_requested_instances - sum(all_lengths)
-
-
-            for length in all_lengths:
                 end_offset = start_offset + length
                 array_offsets.append((start_offset, end_offset))
+                array_file_sizes.append(size)
                 start_offset += length
-
-
-            """for size, length in self.map(self._get_file_size_and_length):
-                array_sizes.append(size // item_size)
-                end_offset = start_offset + length
-                array_offsets.append((start_offset, end_offset))
-                array_file_sizes.append(size)
-                start_offset += length"""
 
             self._array_offsets = tuple(array_offsets)
             self._array_file_sizes = tuple(array_file_sizes)
@@ -853,6 +834,54 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
             return self._path_offset_index[(str(path), idx)] * self.dtype(0).itemsize
         except KeyError:
             raise OLMoEnvironmentError(f"Item not found in path index @ {path_index}")
+
+    @property
+    def _sizes_and_offsets(self) -> Tuple[Tuple[int, ...], Tuple[Tuple[int, int], ...]]:
+        if self._array_offsets is None or self._array_file_sizes is None:
+            array_sizes: List[int] = []
+            array_offsets: List[Tuple[int, int]] = []
+            array_file_sizes: List[int] = []
+            item_size = self.dtype(0).itemsize
+
+            start_offset = 0
+
+            total_requested_tokens = sum([self._path_offset_index[(str(path), idx)] for idx, path in enumerate(self.paths)])
+            total_requested_instances = total_requested_tokens // self.sequence_length
+
+            all_lengths = []
+            for size, length in self.map(self._get_file_size_and_length):
+                array_sizes.append(size // item_size)
+                array_file_sizes.append(size)
+                all_lengths.append(length)
+
+            all_lengths[-1] += total_requested_instances - sum(all_lengths)
+
+
+            for length in all_lengths:
+                end_offset = start_offset + length
+                array_offsets.append((start_offset, end_offset))
+                start_offset += length
+
+            self._array_offsets = tuple(array_offsets)
+            self._array_file_sizes = tuple(array_file_sizes)
+
+            mask_item_size = np.bool_(True).itemsize
+            if self._label_mask_paths is not None:
+                for i, (size, _) in enumerate(
+                    self.map(
+                        partial(self._get_file_size_and_length, dtype=np.bool_),
+                        _paths=self._label_mask_paths,
+                    )
+                ):
+                    size = size // mask_item_size
+                    if array_sizes[i] != size:
+                        raise RuntimeError(
+                            f"mismatch between size of source file ('{self._array_paths[i]}', {array_sizes[i]:,d}) and "
+                            f"size of corresponding label mask file ('{self._label_mask_paths[i]}', {size:,d})"
+                        )
+
+        return self._array_file_sizes, self._array_offsets
+
 
 
 class NumpyPaddedFSLDataset(NumpyFSLDataset):
