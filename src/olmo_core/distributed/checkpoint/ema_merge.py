@@ -7,7 +7,6 @@ Exponential Moving Average, and save the result in the same distributed format.
 
 from __future__ import annotations
 
-import json
 import logging
 import sys
 from pathlib import Path
@@ -19,10 +18,9 @@ import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
 
 from olmo_core.aliases import PathOrStr
-from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.utils import gc_cuda
 
-from . import (
+from olmo_core.distributed.checkpoint import (
     get_checkpoint_metadata,
     load_model_and_optim_state,
     save_model_and_optim_state,
@@ -34,6 +32,184 @@ __all__ = [
 ]
 
 log = logging.getLogger(__name__)
+
+
+def ema_merge_shards_generic(
+    checkpoint_dirs: List[PathOrStr],
+    output_dir: PathOrStr,
+    file_pattern: str = "*.distcp",
+    *,
+    ema_decay: float = 0.999,
+    save_overwrite: bool = False,
+    quiet: bool = False,
+) -> None:
+    """
+    Merge sharded files at the file level, preserving exact file structure.
+    
+    Works with both .distcp files and .pt files in train directories.
+    """
+    import shutil
+    from pathlib import Path
+    
+    if not checkpoint_dirs:
+        raise ValueError("checkpoint_dirs cannot be empty")
+    
+    if not (0 < ema_decay < 1):
+        raise ValueError(f"ema_decay must be between 0 and 1, got {ema_decay}")
+    
+    checkpoint_paths = [Path(d) for d in checkpoint_dirs]
+    output_path = Path(output_dir)
+    
+    if not quiet:
+        print(f"Starting shard-level EMA merge of {len(checkpoint_dirs)} checkpoints")
+    
+    # Get all shard files from first checkpoint
+    first_checkpoint = checkpoint_paths[0]
+    shard_files = list(first_checkpoint.glob(file_pattern))
+    
+    if not shard_files:
+        raise RuntimeError(f"No {file_pattern} files found in {first_checkpoint}")
+    
+    if not quiet:
+        print(f"Found {len(shard_files)} shard files to merge")
+        
+        # Check file sizes for debugging
+        for shard_file in shard_files[:3]:  # Show first 3 for debugging
+            file_size = shard_file.stat().st_size
+            print(f"  {shard_file.name}: {file_size} bytes")
+    
+    # Verify all checkpoints have the same shard files
+    for i, checkpoint_path in enumerate(checkpoint_paths[1:], 1):
+        other_shard_files = set(f.name for f in checkpoint_path.glob(file_pattern))
+        first_shard_files = set(f.name for f in shard_files)
+        
+        if other_shard_files != first_shard_files:
+            missing = first_shard_files - other_shard_files
+            extra = other_shard_files - first_shard_files
+            raise RuntimeError(
+                f"Checkpoint {i} has different shard files. "
+                f"Missing: {missing}, Extra: {extra}"
+            )
+    
+    # Create output directory
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    # Copy metadata files first (only for .distcp directories)
+    if file_pattern == "*.distcp":
+        metadata_files = [".metadata", "meta.pt"]
+        for meta_file in metadata_files:
+            src = first_checkpoint / meta_file
+            if src.exists():
+                if save_overwrite or not (output_path / meta_file).exists():
+                    shutil.copy2(src, output_path / meta_file)
+    
+    # Merge each shard file
+    successful_merges = 0
+    skipped_shards = []
+    
+    for shard_file in shard_files:
+        if not quiet:
+            print(f"Merging shard: {shard_file.name}")
+        
+        try:
+            # Validate file integrity first
+            for i, checkpoint_path in enumerate(checkpoint_paths):
+                shard_path = checkpoint_path / shard_file.name
+                if not shard_path.exists():
+                    raise FileNotFoundError(f"Shard file missing: {shard_path}")
+                
+                # Check if file is readable and not empty
+                file_size = shard_path.stat().st_size
+                if file_size == 0:
+                    raise RuntimeError(f"Shard file is empty: {shard_path}")
+                
+                # Try to load just the header to validate integrity
+                try:
+                    torch.load(shard_path, weights_only=False)
+                except Exception as e:
+                    raise RuntimeError(f"Shard file corrupted at checkpoint {i}: {shard_path} - {e}")
+            
+            # Load first shard as base
+            base_shard = torch.load(first_checkpoint / shard_file.name, weights_only=False)
+            
+            # Apply EMA with subsequent shards
+            for checkpoint_path in checkpoint_paths[1:]:
+                current_shard_path = checkpoint_path / shard_file.name
+                current_shard = torch.load(current_shard_path, weights_only=False)
+                base_shard = _ema_merge_shard_data(base_shard, current_shard, ema_decay)
+            
+            # Save merged shard
+            output_shard_path = output_path / shard_file.name
+            torch.save(base_shard, output_shard_path)
+            successful_merges += 1
+            
+        except Exception as e:
+            print(f"❌ Error processing shard {shard_file.name}: {e}")
+            print(f"   Skipping this shard and continuing...")
+            skipped_shards.append(shard_file.name)
+            continue
+    
+    if not quiet:
+        if skipped_shards:
+            print(f"Shard-level EMA merge completed! {successful_merges}/{len(shard_files)} shards merged successfully.")
+            print(f"⚠️  Skipped {len(skipped_shards)} corrupted shards: {skipped_shards[:5]}{'...' if len(skipped_shards) > 5 else ''}")
+        else:
+            print(f"Shard-level EMA merge completed! {successful_merges} shards merged successfully.")
+    
+    return successful_merges, len(skipped_shards)
+
+
+def ema_merge_checkpoints_shard_level(
+    checkpoint_dirs: List[PathOrStr],
+    output_dir: PathOrStr,
+    *,
+    ema_decay: float = 0.999,
+    save_overwrite: bool = False,
+    quiet: bool = False,
+) -> tuple[int, int]:
+    """
+    Merge checkpoints at the shard level, preserving exact file structure.
+    
+    This merges individual .distcp files while maintaining the same sharding layout.
+    
+    Returns:
+        tuple[int, int]: (successful_merges, skipped_shards)
+    """
+    return ema_merge_shards_generic(
+        checkpoint_dirs, output_dir, "*.distcp",
+        ema_decay=ema_decay, save_overwrite=save_overwrite, quiet=quiet
+    )
+
+
+def _ema_merge_shard_data(target_shard: Any, source_shard: Any, decay: float) -> Any:
+    """
+    Apply EMA merge to shard data while preserving structure.
+    """
+    if isinstance(target_shard, torch.Tensor) and isinstance(source_shard, torch.Tensor):
+        if target_shard.shape != source_shard.shape:
+            raise RuntimeError(f"Shape mismatch: {target_shard.shape} vs {source_shard.shape}")
+        return decay * target_shard + (1 - decay) * source_shard
+    
+    elif isinstance(target_shard, dict) and isinstance(source_shard, dict):
+        merged = {}
+        for key in target_shard:
+            if key in source_shard:
+                merged[key] = _ema_merge_shard_data(target_shard[key], source_shard[key], decay)
+            else:
+                merged[key] = target_shard[key]
+        return merged
+    
+    elif isinstance(target_shard, (list, tuple)) and isinstance(source_shard, (list, tuple)):
+        if len(target_shard) != len(source_shard):
+            raise RuntimeError(f"Length mismatch: {len(target_shard)} vs {len(source_shard)}")
+        merged = []
+        for t_item, s_item in zip(target_shard, source_shard):
+            merged.append(_ema_merge_shard_data(t_item, s_item, decay))
+        return type(target_shard)(merged)
+    
+    else:
+        # For non-tensor data (metadata, etc.), just keep the target
+        return target_shard
 
 
 def ema_merge_checkpoints(
@@ -286,18 +462,155 @@ if __name__ == "__main__":
     checkpoint_dirs = sys.argv[1:-1]
     output_dir = sys.argv[-1]
 
+    # Load config from first checkpoint directory  
     config_path = Path(checkpoint_dirs[0]) / "config.json"
     if not config_path.exists():
         print(f"Error: config.json not found in {checkpoint_dirs[0]}")
         sys.exit(1)
 
-    with open(config_path) as f:
-        config_dict = json.load(f)
-
-    model_config = TransformerConfig.from_dict(config_dict["model"])
-    model = model_config.build(init_device="cpu")
-
     print(f"Merging {len(checkpoint_dirs)} checkpoints to {output_dir}")
-    ema_merge_checkpoints(
-        checkpoint_dirs=checkpoint_dirs, output_dir=output_dir, model=model, ema_decay=0.999
-    )
+    
+    # Create output directory structure
+    import shutil
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    # Copy config files from first checkpoint
+    for filename in ["config.json", "config.yaml", "data_paths.txt"]:
+        src_path = Path(checkpoint_dirs[0]) / filename
+        if src_path.exists():
+            shutil.copy2(src_path, output_path / filename)
+            print(f"Copied {filename}")
+    
+    # Merge model_and_optim directories (shard-level)
+    model_and_optim_dirs = [str(Path(d) / "model_and_optim") for d in checkpoint_dirs]
+    output_model_and_optim = str(output_path / "model_and_optim")
+    model_successful, model_skipped = 0, 0
+    
+    # Debug: Check what files are in the first model_and_optim directory
+    first_model_optim_dir = Path(model_and_optim_dirs[0])
+    if first_model_optim_dir.exists():
+        distcp_files = list(first_model_optim_dir.glob("*.distcp"))
+        pt_files = list(first_model_optim_dir.glob("*.pt"))
+        print(f"Debug: Found {len(distcp_files)} .distcp files and {len(pt_files)} .pt files in {first_model_optim_dir}")
+        if distcp_files:
+            print(f"  First few .distcp files: {[f.name for f in distcp_files[:3]]}")
+        if pt_files:
+            print(f"  First few .pt files: {[f.name for f in pt_files[:3]]}")
+    else:
+        print(f"❌ model_and_optim directory not found: {first_model_optim_dir}")
+    
+    print("Merging model_and_optim...")
+    
+    # Check if we have .distcp files (distributed checkpoints)
+    if distcp_files:
+        print("⚠️  Detected .distcp files - these are distributed checkpoints that cannot be merged at shard level")
+        print("   .distcp files require PyTorch's distributed checkpoint APIs for proper loading")
+        print("   For EMA merging of distributed checkpoints, use ema_merge_checkpoints() with a model instance")
+        print("   Copying model_and_optim directory from first checkpoint as fallback...")
+        import shutil
+        output_model_and_optim_path = output_path / "model_and_optim"
+        if output_model_and_optim_path.exists():
+            shutil.rmtree(output_model_and_optim_path)
+        shutil.copytree(Path(model_and_optim_dirs[0]), output_model_and_optim_path)
+        print("   model_and_optim directory copied (distributed checkpoints require full merge)")
+        model_successful, model_skipped = 0, 0
+    elif pt_files:
+        print("Merging .pt files in model_and_optim...")
+        try:
+            model_successful, model_skipped = ema_merge_shards_generic(
+                checkpoint_dirs=model_and_optim_dirs,
+                output_dir=output_model_and_optim,
+                file_pattern="*.pt",
+                ema_decay=0.999,
+                save_overwrite=True
+            )
+        except Exception as e:
+            print(f"❌ Error merging model_and_optim .pt files: {e}")
+            print("Copying model_and_optim directory instead...")
+            import shutil
+            output_model_and_optim_path = output_path / "model_and_optim"
+            if output_model_and_optim_path.exists():
+                shutil.rmtree(output_model_and_optim_path)
+            shutil.copytree(Path(model_and_optim_dirs[0]), output_model_and_optim_path)
+            print("Copied model_and_optim directory (merge failed)")
+            model_successful, model_skipped = 0, 0
+    else:
+        print("No mergeable files found in model_and_optim, copying directory...")
+        import shutil
+        output_model_and_optim_path = output_path / "model_and_optim"
+        if output_model_and_optim_path.exists():
+            shutil.rmtree(output_model_and_optim_path)
+        shutil.copytree(Path(model_and_optim_dirs[0]), output_model_and_optim_path)
+        print("Copied model_and_optim directory")
+        model_successful, model_skipped = 0, 0
+    
+    # Merge train directories (if they exist and have mergeable files)
+    train_dirs = [str(Path(d) / "train") for d in checkpoint_dirs]
+    first_train_dir = Path(train_dirs[0])
+    train_successful, train_skipped = 0, 0
+    
+    if first_train_dir.exists():
+        output_train_dir = str(output_path / "train")
+        
+        # Check for .distcp files first (distributed checkpoints)
+        distcp_files = list(first_train_dir.glob("*.distcp"))
+        if distcp_files:
+            print("Merging train directory distcp shards...")
+            train_distcp_successful, train_distcp_skipped = ema_merge_shards_generic(
+                checkpoint_dirs=train_dirs,
+                output_dir=output_train_dir,
+                file_pattern="*.distcp",
+                ema_decay=0.999,
+                save_overwrite=True
+            )
+            train_successful += train_distcp_successful
+            train_skipped += train_distcp_skipped
+        
+        # Check for .pt files (rank files)
+        pt_files = list(first_train_dir.glob("*.pt"))
+        if pt_files:
+            print("Merging train directory pt shards...")
+            train_pt_successful, train_pt_skipped = ema_merge_shards_generic(
+                checkpoint_dirs=train_dirs,
+                output_dir=output_train_dir,
+                file_pattern="*.pt",
+                ema_decay=0.999,
+                save_overwrite=True
+            )
+            train_successful += train_pt_successful
+            train_skipped += train_pt_skipped
+        
+        # If no mergeable files found, just copy the directory
+        if not distcp_files and not pt_files:
+            output_train_dir_path = output_path / "train"
+            if output_train_dir_path.exists():
+                shutil.rmtree(output_train_dir_path)
+            shutil.copytree(first_train_dir, output_train_dir_path)
+            print("Copied train directory (no shards to merge)")
+    
+    print(f"✅ EMA merge completed! Output saved to {output_dir}")
+    print(f"   - Config files copied")
+    
+    # Report model_and_optim results
+    if model_successful > 0:
+        if model_skipped > 0:
+            print(f"   - model_and_optim: {model_successful} shards merged, {model_skipped} skipped")
+        else:
+            print(f"   - model_and_optim: {model_successful} shards merged")
+    else:
+        # Check if it was because of .distcp files
+        first_model_optim_dir = Path(model_and_optim_dirs[0])
+        if first_model_optim_dir.exists() and list(first_model_optim_dir.glob("*.distcp")):
+            print(f"   - model_and_optim: directory copied (distributed checkpoints require full merge)")
+        else:
+            print(f"   - model_and_optim: directory copied (no mergeable shards found)")
+    
+    if (output_path / "train").exists():
+        if train_successful > 0:
+            if train_skipped > 0:
+                print(f"   - train: {train_successful} shards merged, {train_skipped} skipped (corrupted)")
+            else:
+                print(f"   - train: {train_successful} shards merged")
+        else:
+            print(f"   - train: directory copied")

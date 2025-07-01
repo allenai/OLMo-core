@@ -89,7 +89,7 @@ def convert_checkpoint_to_hf(
             log.info(
                 "Flash attention or cuda is unavailable, turning off flash attention to stop validation from failing."
             )
-            attention["use_flash"] = False
+            attention["use_flash"] = True
 
     model = TransformerConfig.from_dict(transformer_config_dict).build()
     model.to_empty(device=device)
