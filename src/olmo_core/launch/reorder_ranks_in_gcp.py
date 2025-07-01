@@ -13,6 +13,11 @@ def main():
     parser.add_argument("master_addr", help="Hostname of worker 0")
     parser.add_argument("--master_port", type=int, default=29501, help="Port for TCPStore")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode (outside of GCP)")
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print the whole list of node ids in order on rank 0 to stderr",
+    )
     args = parser.parse_args()
 
     # Create or connect to the store
