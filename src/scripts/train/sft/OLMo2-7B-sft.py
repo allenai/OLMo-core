@@ -106,9 +106,9 @@ def build_sft_dataset(
         paths=paths,
         label_mask_paths=label_mask_paths,
         # how to handle long docs?
-        name=NumpyDatasetType.padded_fsl,  # concatenated short docs into a single sequence... (see also "padded_fsl")
-        generate_doc_lengths=False,  # ...and mask attention so that they don't attend to each other
-        # long_doc_strategy=LongDocStrategy.truncate,  # truncate docs...
+        name=NumpyDatasetType.packed_fsl,  # concatenated short docs into a single sequence... (see also "padded_fsl")
+        generate_doc_lengths=True,  # ...and mask attention so that they don't attend to each other
+        long_doc_strategy=LongDocStrategy.truncate,  # truncate docs...
         sequence_length=SEQUENCE_LENGTH,  # ...that are over this length
     )
     return dataset, tokenizer_config
