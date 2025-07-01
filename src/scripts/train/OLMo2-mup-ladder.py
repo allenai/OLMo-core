@@ -164,6 +164,7 @@ def build_ladder(root_dir: str) -> BaselineModelLadder:
         work_dir=get_work_dir(root_dir),
         save_folder=save_folder,
         sequence_length=4096,
+        beaker_workspace="ai2/OLMo-mup",
     )
 
 

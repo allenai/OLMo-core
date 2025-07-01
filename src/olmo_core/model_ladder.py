@@ -202,6 +202,11 @@ class ModelLadder(Config, metaclass=ABCMeta):
     The maximum data parallel world size that you intent to run with. This is used to set the batch size.
     """
 
+    beaker_workspace: str = "ai2/OLMo-core"
+    """
+    Beaker workspace.
+    """
+
     SUPPORTED_MODEL_SIZES: ClassVar[List[ModelSize]] = list(ModelSize)
 
     @property
