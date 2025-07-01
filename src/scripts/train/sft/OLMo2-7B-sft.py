@@ -91,9 +91,9 @@ def build_sft_dataset(
     for token_file in dataset_config["token_ids"]:
         token_path = dataset_dir / token_file
         paths.append(str(token_path))
-    for label_file in dataset_config["labels"]:
-        label_path = dataset_dir / label_file
-        label_mask_paths.append(str(label_path))
+    for label_mask_file in dataset_config["label_mask"]:
+        label_mask_path = dataset_dir / label_mask_file
+        label_mask_paths.append(str(label_mask_path))
 
     tokenizer_config = TokenizerConfig.olmo2instruct()
 
