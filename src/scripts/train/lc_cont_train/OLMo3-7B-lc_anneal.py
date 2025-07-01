@@ -52,12 +52,14 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
+from olmo_core.train.train_module.transformer.config import (
+    TransformerContextParallelConfig,
+)
 from olmo_core.utils import get_default_device, prepare_cli_environment
 
 
 CONTEXT_LENGTH = 4 * 16384
-CP_DEGREE = 4
-AC_ATTENTION_INTERVAL = 4
+GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH
 INTRA_DOCUMENT_MASKING = True
 
 # Node(TP = 4, CP = 2) x 2 DP shards x 2 DP replics
@@ -157,6 +159,12 @@ class LcContTrain(Config):
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+                    shard_degree=DP_SHARDS,
+                ),
+                cp_config=(
+                    TransformerContextParallelConfig.llama3(degree=CP_DEGREE)
+                    if INTRA_DOCUMENT_MASKING
+                    else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE)
                 ),
                 float8_config=Float8Config(
                     enabled=True,
@@ -185,7 +193,7 @@ class LcContTrain(Config):
                 work_dir=get_work_dir(root_dir),
             ),
             data_loader=NumpyDataLoaderConfig(
-                global_batch_size= 64 * CONTEXT_LENGTH,  # NOTE: this is specified in TOKENS, not instances.
+                global_batch_size= GLOBAL_BATCH_SIZE,  # NOTE: this is specified in TOKENS, not instances.
                 seed=34521,  # NOTE: can update this to change data order.
                 num_workers=4,
             ),
