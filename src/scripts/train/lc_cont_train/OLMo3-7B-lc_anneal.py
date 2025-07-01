@@ -30,7 +30,7 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
 )
 from olmo_core.optim import (
-    AdamWConfig,
+    SkipStepAdamWConfig,
     LinearWithWarmup,
     OptimGroupOverride,
 )
@@ -142,14 +142,13 @@ class LcContTrain(Config):
             ),
             train_module = TransformerTrainModuleConfig(
                 rank_microbatch_size=1 * CONTEXT_LENGTH,
-                 optim=AdamWConfig(
-                    lr= 0.000069932,
+                 optim=SkipStepAdamWConfig(
+                    lr= 0.000088,
                     weight_decay=0.1,
                     betas=(0.9, 0.95),
                     group_overrides=[
                         OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
                     ],
-                    # fused=True,
                 ),
                 max_sequence_length=CONTEXT_LENGTH,
                 compile_model=True,
@@ -207,7 +206,7 @@ class LcContTrain(Config):
                 load_path=load_path,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
-                # max_duration=Duration.tokens(int(1e7)),
+                # max_duration=Duration.tokens(int(50e9)),
                 max_duration=Duration.steps(22),
             )
             .with_callback(
@@ -293,7 +292,7 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         script=script,
         cmd="train",
         run_name=run_name,
-        load_path="gs://ai2-llm/checkpoints/OLMo3-7B-swafix/step261702/model_and_optim/",
+        load_path="gs://ai2-llm/checkpoints/OLMo3-7B-swafix/step28900/model_and_optim/",
         cluster=cluster,
         overrides=overrides,
     )
