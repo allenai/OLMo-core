@@ -64,7 +64,7 @@ INTRA_DOCUMENT_MASKING = True
 
 # Node(TP = 4, CP = 2) x 2 DP shards x 2 DP replics
 TP_DEGREE = None
-CP_DEGREE = 4
+CP_DEGREE = 8
 DP_SHARDS = 2
 # DP_REPLICAS = NUM_GPUS // (TP_DEGREE * CP_DEGREE * DP_SHARDS)
 
@@ -207,7 +207,8 @@ class LcContTrain(Config):
                 load_path=load_path,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
-                max_duration=Duration.tokens(int(1e7)),
+                # max_duration=Duration.tokens(int(1e7)),
+                max_duration=Duration.steps(22),
             )
             .with_callback(
                 "checkpointer",
