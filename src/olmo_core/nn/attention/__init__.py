@@ -58,7 +58,7 @@ class SlidingWindowAttentionConfig(Config):
     pattern: List[int]
     """
     The pattern of window sizes to use for attention, repeated to cover all layers.
-    A value of -1 indicates full attention. For example, a pattern of `[4096, 4096, 4096, -1]`
+    A value of -1 indicates full attention. For example, a pattern of ``[4096, 4096, 4096, -1]``
     means that for each set of 4 layers, the first 3 will use a window size of 4096,
     and the last layer will use full attention.
     """
