@@ -1194,6 +1194,45 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             indices_dtype=self.indices_dtype,
             long_doc_strategy=self._long_doc_strategy,
         )
+
+        # Calculate document length statistics
+        document_lengths = document_indices[:, 1] - document_indices[:, 0]
+
+        # Log detailed document length information
+        log.info(f"Document length statistics for '{source_path}':")
+        log.info(f"  Total documents: {len(document_lengths):,d}")
+        log.info(f"  Min length: {int(document_lengths.min()):,d} tokens")
+        log.info(f"  Max length: {int(document_lengths.max()):,d} tokens")
+        log.info(f"  Mean length: {float(document_lengths.mean()):.1f} tokens")
+        log.info(f"  Median length: {float(np.median(document_lengths)):.1f} tokens")
+        log.info(f"  Std deviation: {float(document_lengths.std()):.1f} tokens")
+
+        # Log percentiles
+        percentiles = [10, 25, 75, 90, 95, 99]
+        percentile_values = np.percentile(document_lengths, percentiles)
+        for p, v in zip(percentiles, percentile_values):
+            log.info(f"  {p}th percentile: {int(v):,d} tokens")
+
+        # Log distribution by length ranges
+        length_ranges = [
+            (0, 100, "0-100"),
+            (101, 500, "101-500"),
+            (501, 1000, "501-1K"),
+            (1001, 2000, "1K-2K"),
+            (2001, 4000, "2K-4K"),
+            (4001, 8000, "4K-8K"),
+            (8001, float("inf"), "8K+"),
+        ]
+
+        log.info("  Document length distribution:")
+        for min_len, max_len, range_name in length_ranges:
+            if max_len == float("inf"):
+                count = np.sum(document_lengths > min_len)
+            else:
+                count = np.sum((document_lengths >= min_len) & (document_lengths <= max_len))
+            percentage = (count / len(document_lengths)) * 100
+            log.info(f"    {range_name}: {count:,d} documents ({percentage:.1f}%)")
+
         document_indices = document_indices.reshape(-1)
 
         instance_start_offset = 0
@@ -1250,11 +1289,58 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
                     total_instances, total_tokens = future.result()
                     total_padding = self.sequence_length * total_instances - total_tokens
                     avg_padding = total_padding / total_instances
+                    packing_efficiency = (
+                        100 * total_tokens / (self.sequence_length * total_instances)
+                    )
+
                     log.info(
                         f"Packed {total_tokens:,} tokens from '{source_path}' into {total_instances:,d} instances "
                         f"of sequence length {self.sequence_length:,d} using an average of "
                         f"{avg_padding:.1f} padding tokens per instance."
                     )
+                    log.info(f"  Packing efficiency: {packing_efficiency:.1f}% (higher is better)")
+                    log.info(f"  Total padding tokens: {total_padding:,d}")
+                    log.info(
+                        f"  Padding ratio: {(total_padding / total_tokens) * 100:.1f}% of content tokens"
+                    )
+
+                    # Calculate and log documents per instance statistics
+                    docs_by_instance_path = self._get_docs_by_instance_path(source_path)
+                    instance_offsets_path = self._get_instance_offsets_path(source_path)
+
+                    # Load instance offsets to calculate documents per instance
+                    instance_offsets = np.memmap(
+                        instance_offsets_path, dtype=self.indices_dtype, mode="r"
+                    )
+                    instance_offsets = instance_offsets.reshape(-1, 2)
+                    docs_per_instance = instance_offsets[:, 1] - instance_offsets[:, 0]
+
+                    log.info(f"  Documents per instance statistics:")
+                    log.info(f"    Min docs per instance: {int(docs_per_instance.min())}")
+                    log.info(f"    Max docs per instance: {int(docs_per_instance.max())}")
+                    log.info(f"    Mean docs per instance: {float(docs_per_instance.mean()):.1f}")
+                    log.info(
+                        f"    Median docs per instance: {float(np.median(docs_per_instance)):.1f}"
+                    )
+
+                    # Log distribution of documents per instance
+                    single_doc_instances = np.sum(docs_per_instance == 1)
+                    multi_doc_instances = np.sum(docs_per_instance > 1)
+                    log.info(
+                        f"    Single-document instances: {single_doc_instances:,d} ({(single_doc_instances / total_instances) * 100:.1f}%)"
+                    )
+                    log.info(
+                        f"    Multi-document instances: {multi_doc_instances:,d} ({(multi_doc_instances / total_instances) * 100:.1f}%)"
+                    )
+
+                    # Log instances with many documents (potential over-packing indicators)
+                    high_doc_instances = np.sum(docs_per_instance >= 10)
+                    if high_doc_instances > 0:
+                        log.info(
+                            f"    Instances with 10+ documents: {high_doc_instances:,d} ({(high_doc_instances / total_instances) * 100:.1f}%)"
+                        )
+
+                    del instance_offsets, docs_per_instance
 
 
 class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
