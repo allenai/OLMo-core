@@ -34,7 +34,7 @@ datasets:
       - labels_part_0003.npy
       - labels_part_0004.npy
   tulu-3-sft-olmo-2:
-    base_dir: jacobm/data/sft/jacobmorrison/tulu-3-sft-olmo-2-mixture
+    base_dir: tylerr/data/sft/jacobmorrison/tulu-3-sft-olmo-2-mixture
     tokenizer: /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921-hf
     token_ids:
       - token_ids_part_0000.npy
