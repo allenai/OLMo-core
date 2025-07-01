@@ -164,6 +164,7 @@ class SFTConfig(Config):
                 cmd=[script, cmd, run_name, dataset_name, checkpoint, cluster, *overrides],
                 cluster=cluster,
                 num_nodes=NUM_NODES,
+                cuda_launch_blocking=True,  # TODO: remove this
                 budget="ai2/oe-adapt",
                 workspace="ai2/olmo-instruct",
             ),
