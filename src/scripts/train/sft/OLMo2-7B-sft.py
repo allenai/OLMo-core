@@ -84,16 +84,15 @@ def build_sft_dataset(
         raise OLMoConfigurationError(f"Dataset '{dataset_name}' not found in sft_datasets.yaml")
 
     dataset_config = sft_datasets_config["datasets"][dataset_name]
-    root_path = Path(root_dir)
-    dataset_dir = root_path / dataset_config["base_dir"]
+    dataset_dir = Path(dataset_config["base_dir"])
 
     paths, label_mask_paths = [], []
     for token_file in dataset_config["token_ids"]:
         token_path = dataset_dir / token_file
-        paths.append(str(token_path))
+        paths.append(root_dir + str(token_path))
     for label_mask_file in dataset_config["label_mask"]:
         label_mask_path = dataset_dir / label_mask_file
-        label_mask_paths.append(str(label_mask_path))
+        label_mask_paths.append(root_dir + str(label_mask_path))
 
     tokenizer_config = TokenizerConfig.olmo2instruct()
 
