@@ -39,8 +39,8 @@ MAX_DURATION = int(
     10e12
 )  # Setting this higher than 6T (expected run time), in case we get to run longer since 1) we're using WSD and 2) our anneal will use different data
 ANNEAL_TOKENS = int(100e9)
-LR = (
-    4.4e-5 * math.sqrt(4)
+LR = 4.4e-5 * math.sqrt(
+    4
 )  # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes.
 EVAL_INTERVAL = 1000
 
@@ -177,7 +177,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         batch_sizes=[
             # GLOBAL_BATCH_SIZE,
             # GLOBAL_BATCH_SIZE * 2,
-            GLOBAL_BATCH_SIZE * 4,
+            GLOBAL_BATCH_SIZE
+            * 4,
         ],
         schedule=[
             Duration.tokens(0),
