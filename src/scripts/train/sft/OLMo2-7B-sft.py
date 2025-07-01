@@ -152,7 +152,7 @@ class SFTConfig(Config):
         dataset, tokenizer_config = build_sft_dataset(dataset_name, root_dir)
 
         # simple heuristic: double ubatch size to ~double throughput on B200s
-        rank_microbatch_size = GLOBAL_BATCH_SIZE // NUM_GPUS // 2
+        rank_microbatch_size = GLOBAL_BATCH_SIZE // NUM_GPUS // 2 // 2
         if "B200" in CLUSTER_TO_GPU_TYPE.get(cluster, "unknown"):
             rank_microbatch_size *= 2
 
