@@ -183,7 +183,7 @@ class SFTConfig(Config):
                 rank_microbatch_size=rank_microbatch_size,
                 max_sequence_length=SEQUENCE_LENGTH,
                 z_loss_multiplier=1e-5,
-                compile_model=True,
+                compile_model=False,
                 optim=SkipStepAdamWConfig(
                     lr=8e-05,
                     weight_decay=0.0,  # NOTE: different from pretraining
