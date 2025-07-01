@@ -149,7 +149,7 @@ class LcContTrain(Config):
                     group_overrides=[
                         OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
                     ],
-                    fused=True,
+                    # fused=True,
                 ),
                 max_sequence_length=CONTEXT_LENGTH,
                 compile_model=True,
@@ -207,7 +207,7 @@ class LcContTrain(Config):
                 load_path=load_path,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
-                max_duration=Duration.tokens(int(1e9)),
+                max_duration=Duration.tokens(int(1e7)),
             )
             .with_callback(
                 "checkpointer",
@@ -309,9 +309,8 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
     
     model_config.block.attention.rope = RoPEConfig(
         theta=8 * 10 ** 6,
-        scaling=RoPEScalingConfig(
+        # scaling=RoPEScalingConfig()
         # scaling=YaRNRoPEScalingConfig()
-        )
     )
 
     # Print the config for debugging and then execute the command.
