@@ -7,15 +7,15 @@ concurrency:
 on:
   workflow_dispatch:
   # TODO: disabled for now because it takes too long in CI
-  # pull_request:
-  #   branches:
-  #     - main
-  #   paths:
-  #     - 'Makefile'
-  #     - 'pyproject.toml'
-  #     - 'src/olmo_core/version.py'
-  #     - 'src/Dockerfile'
-  #     - '.github/workflows/docker.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'Makefile'
+      - 'pyproject.toml'
+      - 'src/olmo_core/version.py'
+      - 'src/Dockerfile'
+      - '.github/workflows/docker.yml'
   push:
     # branches:
     #   - main
