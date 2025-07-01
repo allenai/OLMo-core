@@ -354,7 +354,8 @@ class TransformerTrainModule(TrainModule):
                     ignore_index=self.label_ignore_index,
                     loss_reduction="sum",
                     z_loss_multiplier=self.z_loss_multiplier,
-                    loss_div_factor=batch_num_tokens_for_loss,
+                    # loss_div_factor=batch_num_tokens_for_loss,
+                    loss_div_factor=1,  # TODO: remove this, used for testing
                     return_logits=False,
                     **model_kwargs,
                 )
