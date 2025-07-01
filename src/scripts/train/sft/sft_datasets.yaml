@@ -1,5 +1,5 @@
 datasets:
-  allenai/tulu-3-sft-olmo-2-mixture:
+  tulu-3-sft-olmo-2:
     # https://huggingface.co/datasets/allenai/tulu-3-sft-olmo-2-mixture
     base_dir: jacobm/data/sft/jacobmorrison/tulu-3-sft-olmo-2-mixture
     # NOTE: be careful that this tokenizer matches the pretraining data you've prepared!
