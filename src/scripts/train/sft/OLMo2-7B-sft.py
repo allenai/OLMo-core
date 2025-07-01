@@ -97,7 +97,7 @@ def build_sft_dataset(
 
     dataset = NumpyDatasetConfig(
         # general config
-        tokenizer=TokenizerConfig(vocab_size=100278, eos_token_id=100257, pad_token_id=100277, bos_token_id=100257), # tokenizer_config,
+        tokenizer=tokenizer_config,
         mix_base_dir=root_dir,
         work_dir=get_work_dir(root_dir),
         expand_glob=True,
