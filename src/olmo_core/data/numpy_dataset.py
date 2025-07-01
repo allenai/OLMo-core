@@ -2327,9 +2327,11 @@ class NumpyDatasetConfig(Config):
         all of you runs.
     """
     instance_filter_config: Optional[InstanceFilterConfig] = None
+
     label_mask_paths: Optional[List[str]] = None
     """
-    The paths/URLs to numpy bool files indicating which tokens should be masked.
+    The paths/URLs to numpy bool files indicating which tokens should be masked. Expects these paths
+    to be matched 1:1 with the paths in :data:`paths`.
     """
     long_doc_strategy: Optional[LongDocStrategy] = None
     """
