@@ -13,14 +13,15 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
     ```bash
     gantry run \
         --cluster ai2/phobos-cirrascale \
-        --allow-dirty --timeout -1 -y --budget ai2/oe-adapt \
-        --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync" \
+        --timeout -1 -y --budget ai2/oe-adapt \
+        --beaker-image tylerr/uv-cuda12.8-ubuntu22.04 \
+        --install "uv sync" \
         --weka=oe-training-default:/weka/oe-training-default \
-        -- /root/.local/bin/uv run python scripts/data/convert_sft_data_for_olmocore.py \
+        -- uv run python scripts/data/convert_sft_data_for_olmocore.py \
             --add_bos \
-            --dataset_mixer_list jacobmorrison/OpenThoughts3-1.2M-no-cot 1.0 \
+            --dataset_mixer_list allenai/tulu-3-sft-olmo-2-mixture 1.0 \
             --tokenizer_name_or_path /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921-hf \
-            --output_dir /weka/oe-training-default/tylerr/data/sft/jacobmorrison-OpenThoughts3-1.2M
+            --output_dir /weka/oe-training-default/ai2-llm/jacobm/data/sft/jacobmorrison/tulu-3-sft-olmo-2-mixture
     ```
 
     This command will also write tokenizer config files that will be needed later.
@@ -42,7 +43,8 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 2. Ensure that the dataset and model you want to use are available on the correct storage bucket for the cluster you are using.
     * For example, if you are using `ai2/jupiter-cirrascale-2`, the dataset and model should be available on the `/weka/oe-training-default/ai2-llm` bucket.
     * If you are using ai2/augusta-google-1, the dataset and model should be available on the `gs://ai2-llm` bucket.
-    * Data can be copied to/from gcs/weka using the `gsutil` command line tool. E.g., `gsutil cp -r /path/to/dataset gs://ai2-llm/path/to/dataset`
+    * Data can be copied to/from gcs/weka using the `gsutil` command line tool.
+        * From a machine with weka mounted: `gsutil cp -r /weka/<bucket-name>/path/to/dataset gs://ai2-llm/path/to/dataset`
 
 3. Ensure that the tokenizer used when prepping your dataset matches the one you have configured for SFT in Olmo-core.
     This may require some manual translation of the bos_token_id, eos_token_id, pad_token_id, and vocab_size.
@@ -57,13 +59,14 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
     for example:
 
     ```bash
+    CKPT="/weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921"
     python src/scripts/train/sft/OLMo2-7B-sft.py launch \
-        olmo2-7B-sft-take2-8gpu OpenThoughts3-1.2M /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/jupiter-cirrascale-2 \
+        olmo2-7B-sft-tulu3mix allenai/tulu-3-sft-olmo-2-mixture $CKPT ai2/jupiter-cirrascale-2 \
         --trainer.callbacks.wandb.enabled=True \
-        --launch.num_gpus=8
+        --launch.priority=high
     ```
 
-    > TIP: The "launch" command automatically creates a Beaker experiment and runs the exact same command with "train" substituted for launch.
+    > TIP: The "launch" command automatically creates a Beaker experiment and runs the exact same command remotely with "train" substituted for launch.
 
 ## Evaluation
 
@@ -71,24 +74,30 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 
     ```bash
     gantry run --cluster ai2/phobos-cirrascale --timeout -1 -y --budget ai2/oe-adapt \
-        --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync --all-extras" \
+        --beaker-image tylerr/uv-cuda12.8-ubuntu22.04 \
+        --install "uv sync --all-extras" \
         --weka=oe-adapt-default:/weka/oe-adapt-default \
         --weka=oe-training-default:/weka/oe-training-default \
-        -- /root/.local/bin/uv run python src/examples/huggingface/convert_checkpoint_to_hf.py \
-            -i /weka/oe-training-default/ai2-llm/checkpoints/tylerr/olmo2-7B-sft/olmo2-7B-sft-take2-8gpu/step4143 \
-            -o /weka/oe-adapt-default/tylerr/checkpoints/olmo2-7B-sft/olmo2-7B-sft-take2-8gpu/step4143-hf \
-            --max-sequence-length 4096
+        -- uv run python src/examples/huggingface/convert_checkpoint_to_hf.py \
+            -i /weka/oe-training-default/ai2-llm/checkpoints/tylerr/olmo2-7B-sft/olmo2-7B-sft-tulu3mix/step4143 \
+            -o /weka/oe-adapt-default/tylerr/checkpoints/olmo2-7B-sft/olmo2-7B-sft-tulu3mix/step4143-hf \
+            --max-sequence-length 65536
     ```
 
-2. Copy over the tokenizer files to your hf model directory. These files are generated with and located in
-    the same directory as the input dataset.
+2. Copy over the tokenizer files to your hf model directory. If you havent made any changes to tokenization, you can copy the files located at `/weka/oe-adapt-default/jacobm/rl-sft/checkpoints/olmo-2-lc-tokenizer/`:
+
+    ```bash
+    cp /weka/oe-adapt-default/jacobm/rl-sft/checkpoints/olmo-2-lc-tokenizer/* /weka/oe-adapt-default/tylerr/checkpoints/olmo2-7B-sft/olmo2-7B-sft-tulu3mix/step4143-hf
+    ```
+
+    > NOTE: be careful with this step, its probably worth double checking the tokenizer configuration. We plan to automate this in the future to help avoid bugs resulting from manual tokenizer configuration.
 
 3. Launch evaluations using the submit_eval_jobs.sh script in `open-instruct` using a command such as:
 
     ```bash
     python scripts/submit_eval_jobs.py \
-        --model_name olmo2-7b-sft-fromolmocore \
-        --location /weka/oe-adapt-default/tylerr/checkpoints/olmo2-7B-sft/olmo2-7B-sft-take2-8gpu/step4143-hf/ \
+        --model_name olmo2-7b-sft-tulu3mix-fromolmocore \
+        --location /weka/oe-adapt-default/tylerr/checkpoints/olmo2-7B-sft/olmo2-7B-sft-tulu3mix/step4143-hf \
         --cluster ai2/saturn-cirrascale ai2/neptune-cirrascale \
         --is_tuned \
         --priority high \

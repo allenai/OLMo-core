@@ -7,7 +7,7 @@ import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple, cast
+from typing import List, Optional, Tuple, cast
 
 import rich
 import yaml
@@ -51,7 +51,9 @@ from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
 )
-from olmo_core.train.train_module.transformer.config import TransformerContextParallelConfig
+from olmo_core.train.train_module.transformer.config import (
+    TransformerContextParallelConfig,
+)
 from olmo_core.utils import prepare_cli_environment, seed_all
 
 log = logging.getLogger(__name__)
@@ -62,7 +64,7 @@ SEQUENCE_LENGTH = 16384
 GLOBAL_BATCH_SIZE = 16 * SEQUENCE_LENGTH
 
 INTRA_DOCUMENT_MASKING = True
-CP_DEGREE = None
+CP_DEGREE: Optional[int] = None
 
 NUM_GPUS = 8
 assert NUM_GPUS % 8 == 0, "NUM_GPUS must be divisible by 8"
@@ -82,16 +84,15 @@ def build_sft_dataset(
         raise OLMoConfigurationError(f"Dataset '{dataset_name}' not found in sft_datasets.yaml")
 
     dataset_config = sft_datasets_config["datasets"][dataset_name]
-    root_path = Path(root_dir)
-    dataset_dir = root_path / dataset_config["base_dir"]
+    dataset_dir = Path(dataset_config["base_dir"])
 
     paths, label_mask_paths = [], []
     for token_file in dataset_config["token_ids"]:
         token_path = dataset_dir / token_file
-        paths.append(str(token_path))
-    for label_file in dataset_config["labels"]:
-        label_path = dataset_dir / label_file
-        label_mask_paths.append(str(label_path))
+        paths.append(root_dir + "/" + str(token_path))
+    for label_mask_file in dataset_config["label_mask"]:
+        label_mask_path = dataset_dir / label_mask_file
+        label_mask_paths.append(root_dir + "/" + str(label_mask_path))
 
     tokenizer_config = TokenizerConfig.olmo2instruct()
 
@@ -100,7 +101,6 @@ def build_sft_dataset(
         tokenizer=tokenizer_config,
         mix_base_dir=root_dir,
         work_dir=get_work_dir(root_dir),
-        expand_glob=True,
         paths=paths,
         label_mask_paths=label_mask_paths,
         # how to handle long docs?
@@ -150,7 +150,7 @@ class SFTConfig(Config):
         dataset, tokenizer_config = build_sft_dataset(dataset_name, root_dir)
 
         # simple heuristic: double ubatch size to ~double throughput on B200s
-        rank_microbatch_size = GLOBAL_BATCH_SIZE // NUM_GPUS // 2
+        rank_microbatch_size = GLOBAL_BATCH_SIZE // NUM_GPUS // 2 // 2
         if "B200" in CLUSTER_TO_GPU_TYPE.get(cluster, "unknown"):
             rank_microbatch_size *= 2
 
@@ -162,6 +162,7 @@ class SFTConfig(Config):
                 cmd=[script, cmd, run_name, dataset_name, checkpoint, cluster, *overrides],
                 cluster=cluster,
                 num_nodes=NUM_NODES,
+                cuda_launch_blocking=True,  # TODO: remove this
                 budget="ai2/oe-adapt",
                 workspace="ai2/olmo-instruct",
             ),
@@ -180,7 +181,7 @@ class SFTConfig(Config):
                 rank_microbatch_size=rank_microbatch_size,
                 max_sequence_length=SEQUENCE_LENGTH,
                 z_loss_multiplier=1e-5,
-                compile_model=True,
+                compile_model=False,
                 optim=SkipStepAdamWConfig(
                     lr=8e-05,
                     weight_decay=0.0,  # NOTE: different from pretraining
@@ -210,7 +211,7 @@ class SFTConfig(Config):
                 max_grad_norm=1.0,
             ),
             trainer=TrainerConfig(
-                save_folder=f"/weka/oe-training-default/ai2-llm/checkpoints/{user_name}/olmo2-7B-sft/{run_name}",
+                save_folder=f"{root_dir}/checkpoints/{user_name}/olmo2-7B-sft/{run_name}",
                 load_strategy=LoadStrategy.never,  # we manually load the checkpoint below
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True

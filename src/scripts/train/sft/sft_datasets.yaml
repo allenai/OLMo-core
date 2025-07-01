@@ -1,7 +1,9 @@
 datasets:
-  OpenThoughts3-1.2M-no-cot:
-    base_dir: tylerr/data/sft/jacobmorrison-OpenThoughts3-1.2M-no-cot
+  tulu-3-sft-olmo-2:
+    # https://huggingface.co/datasets/allenai/tulu-3-sft-olmo-2-mixture
+    base_dir: tylerr/data/sft/jacobmorrison/tulu-3-sft-olmo-2-mixture
     # NOTE: be careful that this tokenizer matches the pretraining data you've prepared!
+    # https://huggingface.co/allenai/OLMo-2-1124-7B-Instruct
     tokenizer: allenai/OLMo-2-1124-7B-Instruct
     token_ids:
       - token_ids_part_0000.npy
