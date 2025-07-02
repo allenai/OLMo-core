@@ -1,7 +1,10 @@
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
 from ..config import Config, StrEnum
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "TokenizerConfig",
@@ -17,6 +20,11 @@ class TokenizerName(StrEnum):
     dolma2 = "allenai/dolma2-tokenizer"
     """
     The dolma2 tokenizer.
+    """
+
+    olmo2instruct = "allenai/OLMo-2-1124-7B-Instruct"
+    """
+    The OLMo-2-1124-7B-Instruct tokenizer.
     """
 
     gpt_neox_olmo_dolma_v1_5 = "allenai/gpt-neox-olmo-dolma-v1_5"
@@ -79,6 +87,16 @@ class TokenizerConfig(Config):
             pad_token_id=100277,
             identifier=TokenizerName.dolma2,
         )
+
+    @classmethod
+    def olmo2instruct(cls) -> "TokenizerConfig":
+        """
+        Get a :data:`~TokenizerName.olmo2instruct` tokenizer config.
+        """
+        cfg = cls.dolma2()
+        cfg.bos_token_id = 100257
+        cfg.identifier = TokenizerName.olmo2instruct
+        return cfg
 
     @classmethod
     def gpt_neox_olmo_dolma_v1_5(cls) -> "TokenizerConfig":

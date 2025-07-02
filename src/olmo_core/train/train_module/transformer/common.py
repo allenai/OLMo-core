@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import List, Optional, TypeVar, cast
 
 import torch
@@ -146,11 +147,14 @@ def parallelize_model(
 
     # Materialize and init parameters.
     log.info("Initializing model weights...")
+    start_time = time.monotonic()
     for m in model_parts:
         m.init_weights(
             max_seq_len=max_sequence_length,
             max_local_microbatch_size=rank_microbatch_size,
             device=device,
         )
+    elapsed_time = time.monotonic() - start_time
+    log.info(f"Model weight initialization completed in {elapsed_time:.2f} seconds")
 
     return model
