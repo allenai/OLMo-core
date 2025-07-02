@@ -68,3 +68,14 @@ datasets:
       - labels_mask_part_0000.npy
       - labels_mask_part_0001.npy
       - labels_mask_part_0002.npy
+  tulu-3-sft-olmo-2-mixture-chattemplatefix:
+    base_dir: tylerr/data/sft/jacobmorrison/tulu-3-sft-olmo-2-mixture-chattemplatefix
+    tokenizer: /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921-hf
+    token_ids:
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
