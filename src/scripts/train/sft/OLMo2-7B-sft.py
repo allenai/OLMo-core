@@ -94,7 +94,8 @@ def build_sft_dataset(
         label_mask_path = dataset_dir / label_mask_file
         label_mask_paths.append(root_dir + "/" + str(label_mask_path))
 
-    tokenizer_config = TokenizerConfig.olmo2instruct()
+    # tokenizer_config = TokenizerConfig.olmo2instruct()
+    tokenizer_config = TokenizerConfig.dolma2()
 
     dataset = NumpyDatasetConfig(
         # general config
