@@ -750,15 +750,9 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                     indices_path = self._get_instance_indices_path(path)
                     log.info(f"Gathering instance indices for '{path}'...")
                     # NOTE: We limit the number of instances by total target token count // sequence length
-                    #max_instances = (
-                    #    self._path_offset_index[(str(path), idx)] // self.sequence_length
-                    #)
-
-                    if i < len(paths_needed) - 1:
-                        max_instances = int(np.round(self._path_offset_index[(str(path), idx)] / self.sequence_length))
-                        instances += max_instances
-                    else:
-                        max_instances = total_requested_instances - instances
+                    max_instances = (
+                        self._path_offset_index[(str(path), idx)] // self.sequence_length
+                    )
 
                     # Sampling from small npy files can result in 0 instance indices.
                     # We skip processing these to avoid writing empty mmapped files.
@@ -815,8 +809,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
             self.max_target_sequence_length is None
             or self.max_target_sequence_length == self.sequence_length
         ):
-            return file_size, int(np.round(file_size / (item_size * self.sequence_length)))
-            # return file_size, file_size // (item_size * self.sequence_length)
+            return file_size, file_size // (item_size * self.sequence_length)
         elif self.max_target_sequence_length > self.sequence_length:
             num_max_seq_len_instances = file_size // (item_size * self.max_target_sequence_length)
             return (
@@ -844,20 +837,9 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
             item_size = self.dtype(0).itemsize
 
             start_offset = 0
-
-            total_requested_tokens = sum([self._path_offset_index[(str(path), idx)] for idx, path in enumerate(self.paths)])
-            total_requested_instances = total_requested_tokens // self.sequence_length
-
-            all_lengths = []
             for size, length in self.map(self._get_file_size_and_length):
                 array_sizes.append(size // item_size)
                 array_file_sizes.append(size)
-                all_lengths.append(length)
-
-            all_lengths[-1] += total_requested_instances - sum(all_lengths)
-
-
-            for length in all_lengths:
                 end_offset = start_offset + length
                 array_offsets.append((start_offset, end_offset))
                 start_offset += length
