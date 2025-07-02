@@ -39,12 +39,13 @@ def test_source_mixture_config(tmp_path: Path, caplog, capsys):
     ]
 
     max_tokens = 5_000_000
+    sequence_length = 1024
 
     config = SourceMixtureDatasetConfig(
         max_tokens=max_tokens,
         source_configs=source_configs,
         dtype=NumpyDatasetDType.uint32,
-        sequence_length=1024,
+        sequence_length=sequence_length,
         quiet=True,
         render_tables=True,
     )
@@ -55,6 +56,7 @@ def test_source_mixture_config(tmp_path: Path, caplog, capsys):
         config.validate()
         mixture = config.build()
         assert isinstance(mixture, SourceMixtureDataset)
+        assert sum([tokens // sequence_length for _, tokens in mixture.to_index().items()]) == max_tokens // sequence_length
         #  print(caplog.text)  # uncomment if you want to see the table
 
 

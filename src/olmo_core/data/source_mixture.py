@@ -249,14 +249,35 @@ class SourceMixtureDatasetConfig(Config):
             )
 
         completed: List[SourceMixtureOutcome] = []
+        tokens_per_path_per_source: Dict[str, List[SourcePathTokens]] = {}
         for source in tokens_details_by_source:
+            source_path_tokens = self.get_paths_and_tokens_for_source(
+                        source_config=source.config,
+                        token_details=source,
+            )
+            tokens_per_path_per_source[source.config.source_name] = source_path_tokens
+
+        # Increase the number of tokens per path until we have enough instances, handling rounding issues 
+        all_tokens_per_path = [path.tokens for source_path_tokens in tokens_per_path_per_source.values() for path in source_path_tokens]
+        requested_instances = self.max_tokens // self.sequence_length
+        padding = 0
+        while True:
+            if sum([(tokens_per_path + padding) // self.sequence_length for tokens_per_path in all_tokens_per_path]) >= requested_instances:
+                break
+            padding += 1
+
+        for source in tokens_details_by_source:
+            tokens_per_path_per_source[source.config.source_name] = [
+                SourcePathTokens(
+                    path=path_tokens.path,
+                    tokens=path_tokens.tokens + padding,
+                )
+                for path_tokens in tokens_per_path_per_source[source.config.source_name]
+            ]
             completed.append(
                 SourceMixtureOutcome(
                     name=source.config.source_name,
-                    path_tokens=self.get_paths_and_tokens_for_source(
-                        source_config=source.config,
-                        token_details=source,
-                    ),
+                    path_tokens=tokens_per_path_per_source[source.config.source_name],
                 )
             )
 
