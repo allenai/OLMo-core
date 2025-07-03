@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed default precision of converted HF models in `src/examples/huggingface/convert_checkpoint_to_hf.py` to bfloat16.
 - Changed default cluster to `saturn` in `src/examples/llama/train_launch.py`.
 - Made some beaker secrets optional for internal experiments.
+- Changed `SlidingWindowAttentionConfig` to improve clarity.
 
 ### Fixed
 
