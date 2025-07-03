@@ -262,8 +262,6 @@ class SourceMixtureDatasetConfig(Config):
             tokens_per_path_per_source[source.config.source_name] = source_path_tokens
 
 
-        breakpoint()
-
         # Increase the number of tokens per path until we have enough instances, handling rounding issues
         all_tokens_per_path = [
             path.tokens
@@ -286,6 +284,7 @@ class SourceMixtureDatasetConfig(Config):
         final_tokens_per_path = [inst * self.sequence_length for inst in int_instances]
 
         i = 0
+        final_token_distribution = {}
         for source_name, source_path_tokens in tokens_per_path_per_source.items():
             for j in range(len(source_path_tokens)):
                 source_path_tokens[j] = SourcePathTokens(
@@ -301,6 +300,10 @@ class SourceMixtureDatasetConfig(Config):
                     path_tokens=source_path_tokens,
                 )
             )
+            final_token_distribution[source_name] = sum([path.tokens for path in source_path_tokens])
+
+        total_tokens = sum(final_token_distribution.values())
+        final_token_distribution = {k: v / total_tokens for k, v in final_token_distribution.items()}
 
         if self.render_tables:
             self.render_mixture_outcome_tables(tokens_details_by_source)
@@ -308,6 +311,11 @@ class SourceMixtureDatasetConfig(Config):
         for outcome in completed:
             for item in outcome.path_tokens:
                 log.info(f"Selected {item.tokens} tokens from {outcome.name} at {item.path}")
+
+        log.info(f"Total tokens in mixture: {total_tokens}")
+        log.info(f"Final token distribution by source: {final_token_distribution}")
+        original_token_distribution = {source_config.source_name: source_config.target_ratio for source_config in self.source_configs}
+        log.info(f"Original token distribution by source: {original_token_distribution}")
 
         return SourceMixtureDataset(seed=self.seed, sources=completed)
 
