@@ -256,17 +256,31 @@ class SourceMixtureDatasetConfig(Config):
         tokens_per_path_per_source: Dict[str, List[SourcePathTokens]] = {}
         for source in tokens_details_by_source:
             source_path_tokens = self.get_paths_and_tokens_for_source(
-                        source_config=source.config,
-                        token_details=source,
+                source_config=source.config,
+                token_details=source,
             )
             tokens_per_path_per_source[source.config.source_name] = source_path_tokens
 
-        # Increase the number of tokens per path until we have enough instances, handling rounding issues 
-        all_tokens_per_path = [path.tokens for source_path_tokens in tokens_per_path_per_source.values() for path in source_path_tokens]
-        requested_instances = math.ceil(self.max_tokens / self.global_batch_size) * int(self.global_batch_size / self.sequence_length)
+        # Increase the number of tokens per path until we have enough instances, handling rounding issues
+        all_tokens_per_path = [
+            path.tokens
+            for source_path_tokens in tokens_per_path_per_source.values()
+            for path in source_path_tokens
+        ]
+        requested_instances = math.ceil(self.max_tokens / self.global_batch_size) * int(
+            self.global_batch_size / self.sequence_length
+        )
         padding = 0
         while True:
-            if sum([(tokens_per_path + padding) // self.sequence_length for tokens_per_path in all_tokens_per_path]) >= requested_instances:
+            if (
+                sum(
+                    [
+                        (tokens_per_path + padding) // self.sequence_length
+                        for tokens_per_path in all_tokens_per_path
+                    ]
+                )
+                >= requested_instances
+            ):
                 break
             padding += 1
 

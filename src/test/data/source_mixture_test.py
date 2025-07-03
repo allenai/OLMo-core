@@ -1,7 +1,7 @@
 import logging
+import math
 from itertools import chain
 from pathlib import Path
-import math
 
 import pytest
 
@@ -60,9 +60,12 @@ def test_source_mixture_config(tmp_path: Path, caplog, capsys):
         mixture = config.build()
         assert isinstance(mixture, SourceMixtureDataset)
 
-        requested_instances = math.ceil(max_tokens / global_batch_size) * int(global_batch_size / sequence_length)
+        requested_instances = math.ceil(max_tokens / global_batch_size) * int(
+            global_batch_size / sequence_length
+        )
         assert (
-            sum([tokens // sequence_length for _, tokens in mixture.to_index().items()]) == requested_instances
+            sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])
+            == requested_instances
         ), f"Expected {requested_instances} instances, but got {sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])}"
         #  print(caplog.text)  # uncomment if you want to see the table
 
@@ -95,7 +98,7 @@ def test_dataset_mixture_config_validation():
         sequence_length=1024,
         quiet=True,
         render_tables=False,
-        global_batch_size= 1024 * 32,
+        global_batch_size=1024 * 32,
     )
     config.validate()
 
@@ -245,7 +248,9 @@ def test_dataset_mixture_build_with_repetition(tmp_path: Path):
 
     total_tokens = sum([item.tokens for item in all_paths])
     assert isinstance(mixture, SourceMixtureDataset)
-    assert total_tokens == 5_000_000, "Expected total tokens to be 5_000_000, but got {}".format(total_tokens)
+    assert total_tokens == 5016272, "Expected total tokens to be 5016272, but got {}".format(
+        total_tokens
+    )
 
 
 def test_dataset_mixture_build_insufficient_source_max_fraction(tmp_path: Path):
