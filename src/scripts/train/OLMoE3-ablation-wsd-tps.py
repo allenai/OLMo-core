@@ -53,22 +53,24 @@ GLOBAL_BATCH_SIZE = (
 )  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
 MAX_DURATION = int(500e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
+
 NUM_EXPERTS = 64
 TOP_K = 4
-NUM_LAYERS=8
+D_MODEL=2048
 MOE_HIDDEN_SIZE = 1024 * 2
 USE_SHARED_MLP = False  # Use shared MLP in MoE blocks
-SHARED_MLP_HIDDEN_SIZE = 4096  # Hidden size for shared MLP in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP in MoE blocks
 MICRO_BSZ = 8
-PP_DIM=1
-DP_DIM=8
+NUM_LAYERS=48
+DP_DIM=64
 EP_DIM=1
+PP_DIM=1
 
 # TAG='rc2,4-9_reorder2,3'
-TAG='rc-prf'
+TAG=f'{D_MODEL}-d8-rc-prf'
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    d_model = 2048
+    d_model = D_MODEL
 
     config = TransformerConfig.llama_like(
         d_model=d_model,
@@ -99,7 +101,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             num_experts=NUM_EXPERTS,
             hidden_size=MOE_HIDDEN_SIZE,
             # capacity_factor=1.0,
-            router=MoERouterConfig(top_k=TOP_K, gating_function=MoERouterGatingFunction.sigmoid),
+            router=MoERouterConfig(top_k=TOP_K, gating_function=MoERouterGatingFunction.sigmoid, uniform_expert_assignment=False),
             # shared_mlp=FeedForwardConfig(hidden_size=SHARED_MLP_HIDDEN_SIZE, bias=False) if USE_SHARED_MLP else None,
             lb_loss_weight=0.05,
             z_loss_weight=None,
@@ -119,13 +121,43 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     config.block.attention.use_head_qk_norm = True
     
     # First block will be a regular transformer block (no MoE component).
+    # every 8 layer
     config.block_overrides = {
         0: replace(
             config.block, 
             name=TransformerBlockType.reordered_norm, 
             feed_forward_moe=None,
             feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
-
+        ),
+        8: replace(
+            config.block, 
+            name=TransformerBlockType.reordered_norm, 
+            feed_forward_moe=None,
+            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
+        ),
+        16: replace(
+            config.block, 
+            name=TransformerBlockType.reordered_norm, 
+            feed_forward_moe=None,
+            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
+        ),
+        24: replace(
+            config.block, 
+            name=TransformerBlockType.reordered_norm, 
+            feed_forward_moe=None,
+            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
+        ),
+        32: replace(
+            config.block, 
+            name=TransformerBlockType.reordered_norm, 
+            feed_forward_moe=None,
+            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
+        ),
+        40: replace(
+            config.block, 
+            name=TransformerBlockType.reordered_norm, 
+            feed_forward_moe=None,
+            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
         ),
     }
 
@@ -136,8 +168,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
     return TransformerTrainModuleConfig(
         rank_microbatch_size=MICRO_BSZ * SEQUENCE_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
-         optim=SkipStepAdamWConfig(
-        # optim=AdamWConfig(
+        #  optim=SkipStepAdamWConfig(
+        optim=AdamWConfig(
             lr=1.6e-4
             * math.sqrt(
                 GLOBAL_BATCH_SIZE / (4096 * 512)
@@ -148,7 +180,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
             # fused=True,
-            compile=True,
+            compile=False,
+            foreach=True
         ),
         compile_model=False,
         dp_config=TransformerDataParallelConfig(
@@ -249,7 +282,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=True, # NOTE: change this
+            NvidiaProfilerCallback(enabled=False, # NOTE: change this
                                    profile_ranks=[0, 8, 16, 24],
                                    start=30,
                                    end=33
