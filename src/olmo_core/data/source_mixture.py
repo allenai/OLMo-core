@@ -261,6 +261,9 @@ class SourceMixtureDatasetConfig(Config):
             )
             tokens_per_path_per_source[source.config.source_name] = source_path_tokens
 
+
+        breakpoint()
+
         # Increase the number of tokens per path until we have enough instances, handling rounding issues
         all_tokens_per_path = [
             path.tokens
@@ -270,32 +273,32 @@ class SourceMixtureDatasetConfig(Config):
         requested_instances = math.ceil(self.max_tokens / self.global_batch_size) * int(
             self.global_batch_size / self.sequence_length
         )
-        padding = 0
-        while True:
-            if (
-                sum(
-                    [
-                        (tokens_per_path + padding) // self.sequence_length
-                        for tokens_per_path in all_tokens_per_path
-                    ]
-                )
-                >= requested_instances
-            ):
-                break
-            padding += 1
 
-        for source in tokens_details_by_source:
-            tokens_per_path_per_source[source.config.source_name] = [
-                SourcePathTokens(
-                    path=path_tokens.path,
-                    tokens=path_tokens.tokens + padding,
+        int_instances = [tokens_per_path // self.sequence_length for tokens_per_path in all_tokens_per_path]
+        remainders = [(tokens_per_path / self.sequence_length) - int_instances[i] for i, tokens_per_path in enumerate(all_tokens_per_path)]
+
+        additional_instances_needed = requested_instances - sum(int_instances)
+
+        if additional_instances_needed > 0:
+            for idx in sorted(range(len(remainders)), key=remainders.__getitem__, reverse=True)[:additional_instances_needed]:
+                int_instances[idx] += 1
+
+        final_tokens_per_path = [inst * self.sequence_length for inst in int_instances]
+
+        i = 0
+        for source_name, source_path_tokens in tokens_per_path_per_source.items():
+            for j in range(len(source_path_tokens)):
+                source_path_tokens[j] = SourcePathTokens(
+                    path=source_path_tokens[j].path,
+                    tokens=final_tokens_per_path[i]
                 )
-                for path_tokens in tokens_per_path_per_source[source.config.source_name]
-            ]
+
+                i += 1
+
             completed.append(
                 SourceMixtureOutcome(
-                    name=source.config.source_name,
-                    path_tokens=tokens_per_path_per_source[source.config.source_name],
+                    name=source_name,
+                    path_tokens=source_path_tokens,
                 )
             )
 
