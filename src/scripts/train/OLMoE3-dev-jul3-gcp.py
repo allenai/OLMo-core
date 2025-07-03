@@ -58,9 +58,9 @@ LR= 1.6e-4
 NUM_EXPERTS = 64
 TOP_K = 4
 D_MODEL=2048
-MOE_HIDDEN_SIZE = 1024 * 2
+MOE_HIDDEN_SIZE = 1024 + 1024
 
-SHARED_MLP_HIDDEN_SIZE = 1536  # Hidden size for shared MLP in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 1024  # Hidden size for shared MLP in MoE blocks
 MICRO_BSZ = 8
 NUM_LAYERS=48
 DP_DIM=64
@@ -128,37 +128,37 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             config.block, 
             name=TransformerBlockType.reordered_norm, 
             feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE), bias=False),
         ),
         8: replace(
             config.block, 
             name=TransformerBlockType.reordered_norm, 
             feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=(  TOP_K * MOE_HIDDEN_SIZE), bias=False),
         ),
         16: replace(
             config.block, 
             name=TransformerBlockType.reordered_norm, 
             feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE), bias=False),
         ),
         24: replace(
             config.block, 
             name=TransformerBlockType.reordered_norm, 
             feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=(  TOP_K * MOE_HIDDEN_SIZE), bias=False),
         ),
         32: replace(
             config.block, 
             name=TransformerBlockType.reordered_norm, 
             feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE), bias=False),
         ),
         40: replace(
             config.block, 
             name=TransformerBlockType.reordered_norm, 
             feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=(  TOP_K * MOE_HIDDEN_SIZE), bias=False),
         ),
     }
 
@@ -185,6 +185,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
+            # reduce_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             #  num_replicas=1,  # to enable full-way expert parallel
             shard_degree=DP_DIM,
@@ -308,6 +309,6 @@ if __name__ == "__main__":
         trainer_config_builder=build_trainer_config,
         include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
-        intra_document_masking=True,
+        # intra_document_masking=True,
         finalize_config=finalize_config,
     )
