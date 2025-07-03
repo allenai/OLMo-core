@@ -180,6 +180,10 @@ class SourceMixtureDatasetConfig(Config):
     """
     The data type of the dataset.
     """
+    global_batch_size: int
+    """
+    The global batch size for training, in tokens.
+    """
     processes: int = 1
     """
     The number of processes to use for counting tokens in parallel.
@@ -259,7 +263,7 @@ class SourceMixtureDatasetConfig(Config):
 
         # Increase the number of tokens per path until we have enough instances, handling rounding issues 
         all_tokens_per_path = [path.tokens for source_path_tokens in tokens_per_path_per_source.values() for path in source_path_tokens]
-        requested_instances = self.max_tokens // self.sequence_length
+        requested_instances = math.ceil(self.max_tokens / self.global_batch_size) * int(self.global_batch_size / self.sequence_length)
         padding = 0
         while True:
             if sum([(tokens_per_path + padding) // self.sequence_length for tokens_per_path in all_tokens_per_path]) >= requested_instances:

@@ -309,6 +309,7 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
         dtype=NumpyDatasetDType.uint16,
         processes=1,
         seed=seed,
+        global_batch_size=sequence_length * 32
     )
 
     ds = NumpyDatasetConfig(
@@ -384,6 +385,7 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
         dtype=NumpyDatasetDType.uint16,
         processes=1,
         seed=seed,
+        global_batch_size=sequence_length * 32,  # 10k sequences of length 4
     )
 
     ds = NumpyDatasetConfig(

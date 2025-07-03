@@ -1,6 +1,7 @@
 import logging
 from itertools import chain
 from pathlib import Path
+import math
 
 import pytest
 
@@ -40,6 +41,7 @@ def test_source_mixture_config(tmp_path: Path, caplog, capsys):
 
     max_tokens = 5_000_000
     sequence_length = 1024
+    global_batch_size = 1024 * 32
 
     config = SourceMixtureDatasetConfig(
         max_tokens=max_tokens,
@@ -48,6 +50,7 @@ def test_source_mixture_config(tmp_path: Path, caplog, capsys):
         sequence_length=sequence_length,
         quiet=True,
         render_tables=True,
+        global_batch_size=global_batch_size,
     )
 
     # NOTE: We need to disable capsys so we can override log capture as
@@ -56,7 +59,11 @@ def test_source_mixture_config(tmp_path: Path, caplog, capsys):
         config.validate()
         mixture = config.build()
         assert isinstance(mixture, SourceMixtureDataset)
-        assert sum([tokens // sequence_length for _, tokens in mixture.to_index().items()]) == max_tokens // sequence_length
+
+        requested_instances = math.ceil(max_tokens / global_batch_size) * int(global_batch_size / sequence_length)
+        assert (
+            sum([tokens // sequence_length for _, tokens in mixture.to_index().items()]) == requested_instances
+        ), f"Expected {requested_instances} instances, but got {sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])}"
         #  print(caplog.text)  # uncomment if you want to see the table
 
 
@@ -88,6 +95,7 @@ def test_dataset_mixture_config_validation():
         sequence_length=1024,
         quiet=True,
         render_tables=False,
+        global_batch_size= 1024 * 32,
     )
     config.validate()
 
@@ -103,6 +111,7 @@ def test_dataset_mixture_config_validation():
         sequence_length=1024,
         quiet=True,
         render_tables=False,
+        global_batch_size=1024 * 32,
     )
 
     with pytest.raises(OLMoConfigurationError):
@@ -141,6 +150,7 @@ def test_dataset_mixture_build(tmp_path: Path):
         sequence_length=1024,
         quiet=True,
         render_tables=False,
+        global_batch_size=1024 * 32,
     )
 
     mixture = config.build()
@@ -178,6 +188,7 @@ def test_dataset_mixture_build_insufficient_source_data(tmp_path: Path):
         sequence_length=1024,
         quiet=True,
         render_tables=False,
+        global_batch_size=1024 * 32,
     )
 
     # Should raise exception because the target ratio for source 1 @50% (2.5M) is infeasible without repetition (default max_repetition_ratio=1)
@@ -223,6 +234,7 @@ def test_dataset_mixture_build_with_repetition(tmp_path: Path):
         sequence_length=1024,
         quiet=True,
         render_tables=False,
+        global_batch_size=1024 * 32,
     )
 
     mixture = config.build()
@@ -233,7 +245,7 @@ def test_dataset_mixture_build_with_repetition(tmp_path: Path):
 
     total_tokens = sum([item.tokens for item in all_paths])
     assert isinstance(mixture, SourceMixtureDataset)
-    assert total_tokens == 5_000_000
+    assert total_tokens == 5_000_000, "Expected total tokens to be 5_000_000, but got {}".format(total_tokens)
 
 
 def test_dataset_mixture_build_insufficient_source_max_fraction(tmp_path: Path):
@@ -271,6 +283,7 @@ def test_dataset_mixture_build_insufficient_source_max_fraction(tmp_path: Path):
         sequence_length=1024,
         quiet=True,
         render_tables=False,
+        global_batch_size=1024 * 32,
     )
 
     # Should raise exception because the target ratio for source 1 is infeasible because
@@ -315,6 +328,7 @@ def test_dataset_mixture_build_duplicate_paths(tmp_path: Path):
         sequence_length=1024,
         quiet=True,
         render_tables=False,
+        global_batch_size=1024 * 32,
     )
 
     expected = [str(sources["1"][0][0])] + [str(item[0]) for item in list(chain(*sources.values()))]
@@ -322,6 +336,6 @@ def test_dataset_mixture_build_duplicate_paths(tmp_path: Path):
     index = mixture.to_index()
     paths = mixture.to_paths()
     assert paths == expected
-    assert len(index) == 6
+    assert len(index) == 6, "Expected 6 unique paths in the index, but got {}".format(len(index))
     assert isinstance(mixture, SourceMixtureDataset)
-    assert len(mixture.sources) == 3
+    assert len(mixture.sources) == 3, "Expected 3 sources, but got {}".format(len(mixture.sources))
