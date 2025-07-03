@@ -21,7 +21,7 @@ from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
 from olmo_core.data.utils import get_cumulative_document_lengths
-from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
+from olmo_core.distributed.utils import get_rank, hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
@@ -45,13 +45,13 @@ from .block import (
     TransformerBlock,
     TransformerBlockBase,
 )
-from .flops import num_floating_point_operations_for_logits
 from .config import (
     TransformerActivationCheckpointingMode,
     TransformerBlockConfig,
-    TransformerDataParallelWrappingStrategy,
     TransformerConfig,
+    TransformerDataParallelWrappingStrategy,
 )
+from .flops import num_floating_point_operations_for_logits
 from .init import InitMethod
 
 if TYPE_CHECKING:
@@ -148,7 +148,7 @@ class Transformer(nn.Module):
         # later, like for pipeline parallelism.
         self.num_params
         self.num_non_embedding_params
-        
+
         self.config: Optional[TransformerConfig] = None
 
     def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
@@ -216,8 +216,6 @@ class Transformer(nn.Module):
         max_seq_len: Optional[int] = None,
         max_local_microbatch_size: Optional[int] = None,
         device: Optional[torch.device] = None,
-        pp_mesh: Optional[DeviceMesh] = None,
-        world_mesh: Optional[DeviceMesh] = None,
     ) -> torch.Generator:
         """
         Initialize the model weights.
@@ -227,8 +225,6 @@ class Transformer(nn.Module):
         :param max_local_microbatch_size: The maximum local (rank) micro-batch size (in tokens)
             expected. This is used to warm-up some MoE cache.
         :param device: The device the local copy of the model will be trained on.
-        :param pp_mesh: Pipeline parallel mesh. Pass this when using pipeline parallelism
-            to ensure the weights are initialized differently for different stages.
         """
         device = device or self.device
         self.to_empty(device=device)
@@ -237,12 +233,7 @@ class Transformer(nn.Module):
             if hasattr(module, "reset_parameters"):
                 module.reset_parameters()  # type: ignore
 
-        seed = self.init_seed
-        if world_mesh is not None: # ensure different seed for each rank
-            seed += world_mesh.get_rank()
-        # if pp_mesh is not None:
-        #     seed += pp_mesh.get_local_rank()
-
+        seed = self.init_seed + get_rank()
         generator = torch.Generator(device).manual_seed(seed)
 
         if self.embeddings is not None:
@@ -767,19 +758,18 @@ class Transformer(nn.Module):
 
     def num_flops_per_token(self, seq_len: int) -> int:
         flops = []
-        
+
         # calculate flops for each block (each block might have different config)
         for block_idx in range(self.n_layers):
             block_config = self.config.block
             if self.config.block_overrides is not None and block_idx in self.config.block_overrides:
                 block_config = self.config.block_overrides[block_idx]
-            
-            flops.append(block_config.flops_per_token(self.d_model, seq_len)) 
-            
+
+            flops.append(block_config.flops_per_token(self.d_model, seq_len))
+
         flops.append(num_floating_point_operations_for_logits(self.config, seq_len) / seq_len)
 
         return sum(flops)
-    
 
     def post_batch(self, dry_run: bool = False):
         """

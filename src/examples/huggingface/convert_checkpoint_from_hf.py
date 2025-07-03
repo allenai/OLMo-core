@@ -41,6 +41,7 @@ def _get_transformer_config(model_arch: str, vocab_size: int) -> TransformerConf
         "olmo2_600m": TransformerConfig.olmo2_600M,
         "olmo2_760m": TransformerConfig.olmo2_760M,
         "olmo2_1b": TransformerConfig.olmo2_1B,
+        "olmo2_1b_v2": TransformerConfig.olmo2_1B_v2,
         "olmo2_3b": TransformerConfig.olmo2_3B,
         "olmo2_7b": TransformerConfig.olmo2_7B,
         "olmo2_13b": TransformerConfig.olmo2_13B,
@@ -80,6 +81,7 @@ def convert_checkpoint_from_hf(
     transformer_config_dict: Dict[str, Any],
     tokenizer_config_dict: Dict[str, Any],
     *,
+    hf_revision: str = "main",
     model_id: str | None = None,
     max_sequence_length: int = -1,
     validate: bool = True,
@@ -120,10 +122,11 @@ def convert_checkpoint_from_hf(
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
 
     with TemporaryDirectory() as work_dir:
-        log.info(f"Loading HF checkpoint from '{hf_checkpoint_path}'")
+        log.info(f"Loading HF checkpoint from '{hf_checkpoint_path}' (revision '{hf_revision}')")
         load_hf_model(
             hf_checkpoint_path,
             model_state_dict,
+            revision=hf_revision,
             model_id=model_id,
             work_dir=work_dir,
             num_embeddings=model.vocab_size,
@@ -155,6 +158,7 @@ def convert_checkpoint_from_hf(
             hf_checkpoint_path,
             model,
             tokenizer_config.vocab_size,
+            hf_revision=hf_revision,
             model_id=model_id,
             debug=debug,
             device=device,
@@ -200,6 +204,7 @@ def validate_conversion(
     hf_path: str | Path,
     model: Transformer,
     vocab_size: int,
+    hf_revision: str = "main",
     model_id: str | None = None,
     debug: bool = False,
     device: torch.device | None = None,
@@ -213,7 +218,7 @@ def validate_conversion(
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
 
     log.info("Loading converted checkpoint for validation...")
-    hf_model = AutoModelForCausalLM.from_pretrained(hf_path).to(device).eval()
+    hf_model = AutoModelForCausalLM.from_pretrained(hf_path, revision=hf_revision).to(device).eval()
 
     olmo_core_state, hf_state = {}, {}
     state_mapping = None
@@ -319,6 +324,13 @@ def parse_args():
         required=True,
         help="Local or remote directory containing the HF checkpoint, or the model id of a HF Hub repo.",
     )
+    parser.add_argument(
+        "-r",
+        "--revision",
+        type=str,
+        default="main",
+        help="The revision of the HF model, if the input path is the model id of a HF Hub repo.",
+    )
 
     parser.add_argument(
         "-c",
@@ -400,6 +412,7 @@ def main():
 
     convert_checkpoint_from_hf(
         hf_checkpoint_path=args.checkpoint_input_path,
+        hf_revision=args.revision,
         output_path=args.output_dir,
         transformer_config_dict=transformer_config_dict,
         tokenizer_config_dict=tokenizer_config_dict,
