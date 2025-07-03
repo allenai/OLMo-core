@@ -20,7 +20,7 @@ def adamw_step(
     exp_avg_sq: torch.Tensor,
     step: torch.Tensor,
     step_factor: torch.Tensor,
-    stepfix: bool = False,
+    stepfix: bool = True,
 ):
     if p.grad is None:
         return
@@ -61,7 +61,7 @@ def foreach_adamw_step(
     eps: float,
     weight_decay: float,
     step_factor: torch.Tensor,
-    stepfix: bool = False,
+    stepfix: bool = True,
 ):
     """Perform a single AdamW update with multi-tensor (*foreach*) kernels."""
     if not params:
@@ -120,7 +120,7 @@ class SkipStepAdamW(SkipStepOptimizer):
         sigma_factor: int = 6,
         dtype: Optional[Union[torch.dtype, DType]] = None,
         foreach: bool = False,
-        stepfix: bool = False,
+        stepfix: bool = True,
     ) -> None:
         assert lr > 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
@@ -267,7 +267,7 @@ class SkipStepAdamWConfig(OptimConfig):
     Faster than the non-foreach version.
     """
 
-    stepfix: bool = False
+    stepfix: bool = True
     """
     Whether or not to fix the step-incrementing bug discovered in SkipStepAdamW.
     TODO: remove this when the bug is no longer being depended on.
