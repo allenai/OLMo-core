@@ -960,7 +960,11 @@ class MoETransformer(Transformer):
             if not block.is_moe:
                 continue
             block = cast(MoETransformerBlock, block)
-            reshard_after_forward = False
+            if block.block_idx < 3:
+                reshard_after_forward = True # for the first x blocks, reshard to reduce memory pressure
+            else:
+                reshard_after_forward = False
+            # reshard_after_forward = False
             # if pp_enabled or block.ep_enabled or block.tp_enabled:
             #     reshard_after_forward = False
             block.feed_forward_moe.prepare_experts_for_fsdp(
