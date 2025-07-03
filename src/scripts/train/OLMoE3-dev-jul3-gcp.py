@@ -51,14 +51,15 @@ SEQUENCE_LENGTH = 8192
 GLOBAL_BATCH_SIZE = (
     (1024) * SEQUENCE_LENGTH
 )  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
-MAX_DURATION = int(500e9)  # int(6e12), don't forget to adjust the LR when you increase this
+MAX_DURATION = int(700e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
+LR= 1.6e-4
 
 NUM_EXPERTS = 64
 TOP_K = 4
 D_MODEL=2048
 MOE_HIDDEN_SIZE = 1024 * 2
-USE_SHARED_MLP = False  # Use shared MLP in MoE blocks
+
 SHARED_MLP_HIDDEN_SIZE = 1536  # Hidden size for shared MLP in MoE blocks
 MICRO_BSZ = 8
 NUM_LAYERS=48
@@ -66,8 +67,8 @@ DP_DIM=64
 EP_DIM=1
 PP_DIM=1
 
-# TAG='rc2,4-9_reorder2,3'
-TAG=f'{D_MODEL}-d8-rc-prf'
+
+TAG=f'dev'
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = D_MODEL
@@ -115,7 +116,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
-        force_first=False, pattern=[True, True, True, False]
+        force_first=False, pattern=[True, True, True, False] # swa swa swa full
     )
     config.block.attention.use_flash = True
     config.block.attention.use_head_qk_norm = True
@@ -168,12 +169,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
     return TransformerTrainModuleConfig(
         rank_microbatch_size=MICRO_BSZ * SEQUENCE_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
-        #  optim=SkipStepAdamWConfig(
-        optim=AdamWConfig(
-            lr=1.6e-4
-            * math.sqrt(
-                GLOBAL_BATCH_SIZE / (4096 * 512)
-            ),  # 1.6e-4 was used for 2M batch size, adjusting it accordingly
+        optim=SkipStepAdamWConfig(
+        # optim=AdamWConfig(
+            lr=LR,
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
@@ -187,7 +185,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
-            reduce_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
             #  num_replicas=1,  # to enable full-way expert parallel
             shard_degree=DP_DIM,
             prefetch_factor=1,
@@ -226,14 +224,13 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 10
+    
+    # cluster = 'ai2/jupiter-cirrascale-2'
+    # cluster = 'ai2/augusta-google-1'
 
-    # assert common.launch is not None
-    # assert len(common.launch.clusters) == 1
-    # cluster = common.launch.clusters[0]
-    cluster = 'ai2/jupiter-cirrascale-2'
     return (
         TrainerConfig(
-            save_folder=f'{common.save_folder}/{common.run_name}_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{DP_DIM}DP{EP_DIM}EP{PP_DIM}PP_{MICRO_BSZ}MB_{TAG}',
+            save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{DP_DIM}DP{EP_DIM}EP{PP_DIM}PP_{MICRO_BSZ}MB_{TAG}',
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
@@ -311,5 +308,6 @@ if __name__ == "__main__":
         trainer_config_builder=build_trainer_config,
         include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
+        intra_document_masking=True,
         finalize_config=finalize_config,
     )
