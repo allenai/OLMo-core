@@ -119,17 +119,16 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
         def linear_ramp_factor(min, max, dim):
             if min == max:
                 max += 0.001  # Prevent singularity
-
-            linear_func = (torch.arange(dim, dtype=torch.float32) - min) / (max - min)
+            linear_func = (torch.arange(dim, dtype=torch.float32, device=device) - min) / (max - min)
             ramp_func = torch.clamp(linear_func, 0, 1)
             return ramp_func
 
         attention_factor = get_mscale(self.factor)
 
-
+        device = inv_freq.device
         # Note on variable naming: "interpolation" comes from the original technique, where we interpolate the position IDs
         # to expand the possible context length. In other words, interpolation = apply scaling factor.
-        pos_freqs = self.base ** (torch.arange(0, self.n_heads, 2) / self.n_heads)
+        pos_freqs = self.base ** (torch.arange(0, self.n_heads, 2, device=device) / self.n_heads)
         inv_freq_extrapolation = 1.0 / pos_freqs
         inv_freq_interpolation = 1.0 / (self.factor * pos_freqs)
 
