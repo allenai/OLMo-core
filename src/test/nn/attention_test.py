@@ -26,17 +26,6 @@ from olmo_core.testing import (
 )
 
 
-@contextlib.contextmanager
-def _allow_fp16_bf16_reduction_math_sdp(enabled: bool):
-    math_sdpa_low_precision_allowed = torch.backends.cuda.fp16_bf16_reduction_math_sdp_allowed()
-
-    try:
-        torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(enabled)
-        yield
-    finally:
-        torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(math_sdpa_low_precision_allowed)
-
-
 # Implementation adapted from https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html
 def scaled_dot_product_attention(
     q: torch.Tensor,
@@ -44,8 +33,9 @@ def scaled_dot_product_attention(
     v: torch.Tensor,
     attn_mask: Optional[torch.Tensor] = None,
     is_causal: bool = False,
-    full_precision: bool = True,
     use_math_backend: bool = False,
+    use_flash_backend: bool = False,
+    use_efficient_backend: bool = False,
 ) -> torch.Tensor:
     # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
     # shape: (batch_size, n_heads, seq_len, head_dim),
@@ -53,13 +43,19 @@ def scaled_dot_product_attention(
     #        (batch_size, n_kv_heads, seq_len, head_dim)
     q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
-    if not full_precision and not use_math_backend:
-        raise ValueError("Math backend must be used when full precision is not desired")
-
     with contextlib.ExitStack() as stack:
         if use_math_backend:
-            stack.enter_context(_allow_fp16_bf16_reduction_math_sdp(not full_precision))
             stack.enter_context(torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH))
+        elif use_flash_backend:
+            stack.enter_context(
+                torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.FLASH_ATTENTION)
+            )
+        elif use_efficient_backend:
+            stack.enter_context(
+                torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.EFFICIENT_ATTENTION)
+            )
+        else:
+            raise ValueError("Either math or flash backend is expected (to make testing clearer).")
 
         att = (
             F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=is_causal)
@@ -235,8 +231,8 @@ def test_sdpa(
     window_size: Optional[int],
     intra_doc_masking: bool,
 ):
-    if use_flash and dtype == torch.float32:
-        pytest.skip("flash requires a low precision dtype")
+    if not use_flex_attn and dtype == torch.float32:
+        pytest.skip("low precision dtype is required unless flex attention is used")
 
     if use_flash and device.type == "cpu":
         pytest.skip("flash requires gpu")
@@ -292,6 +288,7 @@ def test_sdpa(
     with torch.no_grad():
         mask_len = batch_size * seq_len if intra_doc_masking else seq_len
         attn_mask = torch.ones(mask_len, mask_len, dtype=torch.bool, device=device).tril(diagonal=0)
+        is_causal = False
 
         if window_size is not None:
             attn_mask = torch.logical_and(
@@ -312,14 +309,25 @@ def test_sdpa(
                 ),
             )
 
+        if window_size is None and not intra_doc_masking:
+            attn_mask = None
+            is_causal = True
+
+        # Flex attention matches torch SDPA with the math backend
+        use_math_backend = use_flex_attn
+        # Flash attention matches torch SDPA with non-math backends, but flash backend cannot be used
+        # with attention masks
+        use_flash_backend = not use_math_backend and attn_mask is None
+        use_efficient_backend = not use_math_backend and not use_flash_backend
         y1 = scaled_dot_product_attention(
             q.view(q.shape[0] * q.shape[1] // mask_len, mask_len, *q.shape[2:]),
             k.view(k.shape[0] * k.shape[1] // mask_len, mask_len, *k.shape[2:]),
             v.view(v.shape[0] * v.shape[1] // mask_len, mask_len, *v.shape[2:]),
-            is_causal=False,
+            is_causal=is_causal,
             attn_mask=attn_mask,
-            use_math_backend=use_flex_attn,
-            full_precision=not use_flex_attn,
+            use_math_backend=use_math_backend,
+            use_flash_backend=use_flash_backend,
+            use_efficient_backend=use_efficient_backend,
         )
         y2 = attention.sdpa(
             q, k, v, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens, block_mask=block_mask
