@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed training on single GPU when using a `SkipStepOptimizer`.
 - Fixed the initialization of the `CosWithWarmupAndLinearDecay` learning rate scheduler
 - Ensured eval tasks are sorted to maintain the same order across ranks (the cookbook was configuring these in an unsorted way).
+- Fixed mixture rounding error with `SourceMixtureDataset`, which was previously causing samples to be repeated at the end of training.
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 
