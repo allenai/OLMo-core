@@ -241,9 +241,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
-                ephemeral_save_interval=200,
+                ephemeral_save_interval=250,
                 save_async=True,
-                pre_train_checkpoint=False,
+                pre_train_checkpoint=True,
             ),
         )
         .with_callback(
@@ -261,8 +261,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=common.run_name,
                 entity="ai2-llm",
-                project="tianhua-moe",
-                # project="olmo3",
+                # project="tianhua-moe",
+                project="olmo3",
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
