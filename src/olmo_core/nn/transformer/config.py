@@ -154,6 +154,12 @@ class TransformerBlockConfig(Config):
     Dropout probability.
     """
 
+    # LayerNorm Scaling (LNS)
+    use_lns: bool = True
+    """
+    Whether to apply LayerNorm Scaling (LNS). Only applies when ``name`` is ``default``.
+    """
+
     def build(
         self,
         *,
