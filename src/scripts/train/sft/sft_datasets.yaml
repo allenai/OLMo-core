@@ -101,3 +101,16 @@ datasets:
       - labels_mask_part_0000.npy
       - labels_mask_part_0001.npy
       - labels_mask_part_0002.npy
+  tulu-3-sft-olmo-2-4k:
+    # https://huggingface.co/datasets/allenai/tulu-3-sft-olmo-2-mixture
+    base_dir: jacobm/data/sft/4k/jacobmorrison/tulu-3-sft-olmo-2-mixture
+    # NOTE: be careful that this tokenizer matches the pretraining data you've prepared!
+    # https://huggingface.co/allenai/OLMo-2-1124-7B-Instruct
+    token_ids:
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
