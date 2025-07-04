@@ -114,3 +114,52 @@ def fused_linear_cross_entropy_loss(
         return ce_loss, z_loss
     else:
         return ce_loss, None
+
+
+def cross_entropy_with_z_loss(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    *,
+    ignore_index: int = -100,
+    reduction: Literal["mean", "sum", "none"] = "mean",
+    compute_z_loss: bool = False,
+    z_loss_multiplier: float = 1e-4,
+):
+    """
+    Returns (cross_entropy, z_loss) with just one logsumexp pass.
+    If `compute_z_loss=False`, the second item is None.
+
+    Note that there could be numerical instability issues when torch.compile is not enabled.
+    (TODO: test)
+    """
+    logits = logits.float()
+
+    if not compute_z_loss:  # use native PyTorch's operations to compute cross-entropy loss
+        loss = F.cross_entropy(logits, labels, ignore_index=ignore_index, reduction=reduction)
+        return loss, None
+
+    # shared work
+    log_z = torch.logsumexp(logits, dim=-1)
+    log_probs = logits - log_z.unsqueeze(-1)  # == F.log_softmax(logits, dim=-1)
+
+    # cross-entropy
+    nll = -log_probs.gather(-1, labels.unsqueeze(-1)).squeeze(-1)
+    mask = labels.ne(ignore_index)
+
+    if reduction == "mean":
+        ce = (nll * mask).sum() / mask.sum()
+    elif reduction == "sum":
+        ce = (nll * mask).sum()
+    else:  # 'none'
+        ce = nll * mask  # keep zeros where ignored
+
+    # z-loss  ( ||log Z||² )
+    z2 = log_z.pow(2) * mask
+    if reduction == "mean":
+        z2 = z2.sum() / mask.sum()
+    elif reduction == "sum":
+        z2 = z2.sum()
+    # 'none' would leave z2 per-token
+    z_loss = z_loss_multiplier * z2
+
+    return ce, z_loss
