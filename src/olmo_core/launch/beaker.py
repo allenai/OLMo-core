@@ -404,7 +404,10 @@ class BeakerLaunchConfig(Config):
 
         entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
 
-        host_name_constraints = get_host_name_constraints(self.num_nodes, 32, 1)
+        host_name_constraints = get_host_name_constraints(
+            self.num_nodes,
+            min(32, self.num_nodes),
+            1)
         assert len(host_name_constraints) == 1 and len(host_name_constraints[0]) >= self.num_nodes
         task_host_name_constraints = host_name_constraints[0]
 
