@@ -207,24 +207,29 @@ class Transformer(nn.Module):
                 return rope.get_buffers(seq_len, device)
         return None
 
-    def _get_flex_attn_block_mask(
+    def _get_flex_attn_block_masks(
         self,
         seq_len: int,
         device: Optional[torch.device] = None,
         doc_lens: Optional[torch.Tensor] = None,
-    ) -> Optional[BlockMask]:
+    ) -> List[Optional[BlockMask]]:
         if device is None:
             device = self.device
+
+        block_masks = []
         for block in self.blocks.values():
             block = cast(TransformerBlock, block)
             att = cast(Union[Attention, FusedAttention], block.attention)
-            if not att.use_flex_attn:
-                return None
 
-            window_size = getattr(att, "window_size", None)
-            return get_flex_attn_causal_block_mask(seq_len, device, window_size, doc_lens)
+            if att.use_flex_attn:
+                window_size = getattr(att, "window_size", None)
+                block_masks.append(
+                    get_flex_attn_causal_block_mask(seq_len, device, window_size, doc_lens)
+                )
+            else:
+                block_masks.append(None)
 
-        return None
+        return block_masks
 
     @torch.no_grad()
     def init_weights(
@@ -355,8 +360,8 @@ class Transformer(nn.Module):
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
 
         # Prepare block mask
-        block_mask = self._get_flex_attn_block_mask(S, self.device, doc_lens)
-        block_kwargs["block_mask"] = block_mask
+        block_masks = self._get_flex_attn_block_masks(S, self.device, doc_lens)
+        block_kwargs["block_masks"] = block_masks
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:

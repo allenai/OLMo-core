@@ -131,12 +131,13 @@ def test_attention(
         use_flex_attn=use_flex_attn,
         init_device=device.type,
         window_size=window_size,
+        layer_idx=0,
         **kwargs,
     )
 
-    block_mask = None
+    block_masks = None
     if use_flex_attn:
-        block_mask = get_flex_attn_causal_block_mask(seq_len, device, attention.window_size)
+        block_masks = [get_flex_attn_causal_block_mask(seq_len, device, attention.window_size)]
 
     x1 = torch.randn(1, seq_len, d_model, dtype=dtype, device=device)
     x2 = torch.randn(1, seq_len, d_model, dtype=dtype, device=device)
@@ -144,9 +145,9 @@ def test_attention(
 
     # Make sure batch outputs match individual outputs.
     with torch.no_grad(), torch.autocast(device.type, dtype=dtype, enabled=dtype != torch.float32):
-        y1 = attention(x1, block_mask=block_mask)
-        y2 = attention(x2, block_mask=block_mask)
-        y = attention(x, block_mask=block_mask)
+        y1 = attention(x1, block_masks=block_masks)
+        y2 = attention(x2, block_masks=block_masks)
+        y = attention(x, block_masks=block_masks)
 
     torch.testing.assert_close(y[0:1, :, :], y1)
     torch.testing.assert_close(y[1:, :, :], y2)
@@ -170,6 +171,7 @@ def test_flex_attention_against_sdpa(device: torch.device, dtype: torch.dtype):
         d_model=d_model,
         n_heads=8,
         init_device=device.type,
+        layer_idx=0,
     )
 
     attention = Attention(**kwargs)
@@ -194,7 +196,7 @@ def test_flex_attention_against_sdpa(device: torch.device, dtype: torch.dtype):
 
     with torch.no_grad(), torch.autocast(device.type, dtype=dtype, enabled=dtype != torch.float32):
         y1 = attention(x1)
-        y2 = flex_att(x2, block_mask=block_mask)
+        y2 = flex_att(x2, block_masks=[block_mask])
 
     torch.testing.assert_close(y1, y2)
 

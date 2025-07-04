@@ -51,7 +51,8 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
         eos_token_id=None,  # type: ignore
         rms_norm_eps=blocks[0].feed_forward_norm.eps,
         tie_word_embeddings=False,
-        sliding_window=max(block.attention.window_size[0] for block in blocks),  # type: ignore
+        # Our sliding window is a pair of offsets (left/right), HF's is the window size
+        sliding_window=max(block.attention.window_size[0] + 1 for block in blocks),  # type: ignore
         layer_types=[
             "sliding_attention" if block.attention.window_size[0] != -1 else "full_attention"  # type: ignore
             for block in blocks
