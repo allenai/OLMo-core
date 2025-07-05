@@ -177,8 +177,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         batch_sizes=[
             # GLOBAL_BATCH_SIZE,
             # GLOBAL_BATCH_SIZE * 2,
-            GLOBAL_BATCH_SIZE
-            * 4,
+            GLOBAL_BATCH_SIZE * 4,
         ],
         schedule=[
             Duration.tokens(0),
