@@ -367,7 +367,6 @@ class TransformerTrainModule(TrainModule):
                     if labels is not None:
                         log.error(f"labels shape: {labels.shape}")
                         log.error(f"labels: {labels}")
-                    log.error("Continuing...")
 
                 # Update total batch CE and Z loss.
                 ce_batch_loss += get_local_tensor(ce_loss.detach())

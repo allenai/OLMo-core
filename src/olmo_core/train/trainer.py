@@ -1163,9 +1163,9 @@ class Trainer:
             # Check for nan/inf loss and add perplexity.
             if (ce_loss := metrics[step].get(TRAIN_CE_LOSS_METRIC)) is not None:
                 if not math.isfinite(ce_loss):
-                    # raise RuntimeError(f"{ce_loss} loss encountered at step {step}")
-                    log.warning(f"{ce_loss} loss encountered at step {step}")
-                    continue
+                    raise RuntimeError(f"{ce_loss} loss encountered at step {step}")
+                    # log.warning(f"{ce_loss} loss encountered at step {step}")
+                    # continue
                 if ce_loss < 10:
                     metrics[step][TRAIN_PPL_METRIC] = math.exp(ce_loss)
             for callback in self._iter_callbacks():
