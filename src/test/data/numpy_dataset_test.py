@@ -48,6 +48,95 @@ def test_numpy_fsl_dataset(tmp_path: Path):
     assert len(ds) == 8
 
 
+def test_numpy_fsl_dataset_doc_lengths(tmp_path: Path):
+    data1 = [1, 0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0]
+    mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
+    mmap1[:] = data1
+    mmap1.flush()
+
+    data2 = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 21, 22, 0]
+    mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(len(data2),))
+    mmap2[:] = data2
+    mmap2.flush()
+
+    ds = NumpyFSLDataset(
+        tmp_path / "mmap1.npy",
+        tmp_path / "mmap2.npy",
+        sequence_length=4,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=32_000,
+        generate_doc_lengths=True,
+    )
+    assert ds[0]["input_ids"].tolist() == [1, 0, 2, 3]
+    assert ds[0]["doc_lens"].tolist() == [2, 2]
+    assert ds[1]["input_ids"].tolist() == [4, 5, 6, 7]
+    assert ds[1]["doc_lens"].tolist() == [4]
+    assert ds[5]["input_ids"].tolist() == [19, 20, 0, 21]
+    assert ds[5]["doc_lens"].tolist() == [3, 1]
+    assert len(ds) == 6
+
+
+def test_numpy_fsl_dataset_doc_lengths_with_bos(tmp_path: Path):
+    data1 = [0, 1, 100, 0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 100]
+    mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
+    mmap1[:] = data1
+    mmap1.flush()
+
+    data2 = [0, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 100, 0, 21, 22, 100]
+    mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(len(data2),))
+    mmap2[:] = data2
+    mmap2.flush()
+
+    ds = NumpyFSLDataset(
+        tmp_path / "mmap1.npy",
+        tmp_path / "mmap2.npy",
+        sequence_length=4,
+        pad_token_id=-1,
+        eos_token_id=100,
+        vocab_size=32_000,
+        generate_doc_lengths=True,
+        bos_token_id=0,
+    )
+    assert ds[0]["input_ids"].tolist() == [0, 1, 100, 0]
+    assert ds[0]["doc_lens"].tolist() == [3, 1]
+    assert ds[1]["input_ids"].tolist() == [2, 3, 4, 5]
+    assert ds[1]["doc_lens"].tolist() == [4]
+    assert ds[6]["input_ids"].tolist() == [0, 21, 22, 100]
+    assert ds[6]["doc_lens"].tolist() == [4]
+    assert len(ds) == 7
+
+
+def test_numpy_fsl_dataset_doc_lengths_same_bos_and_eos(tmp_path: Path):
+    data1 = [0, 1, 0, 0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0]
+    mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
+    mmap1[:] = data1
+    mmap1.flush()
+
+    data2 = [0, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 0, 21, 22, 0]
+    mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(len(data2),))
+    mmap2[:] = data2
+    mmap2.flush()
+
+    ds = NumpyFSLDataset(
+        tmp_path / "mmap1.npy",
+        tmp_path / "mmap2.npy",
+        sequence_length=4,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=32_000,
+        generate_doc_lengths=True,
+        bos_token_id=0,
+    )
+    assert ds[0]["input_ids"].tolist() == [0, 1, 0, 0]
+    assert ds[0]["doc_lens"].tolist() == [3, 1]
+    assert ds[1]["input_ids"].tolist() == [2, 3, 4, 5]
+    assert ds[1]["doc_lens"].tolist() == [4]
+    assert ds[6]["input_ids"].tolist() == [0, 21, 22, 0]
+    assert ds[6]["doc_lens"].tolist() == [4]
+    assert len(ds) == 7
+
+
 def test_numpy_fsl_dataset_with_label_mask(tmp_path: Path):
     mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(16,))
     mmap1[:] = list(range(16))

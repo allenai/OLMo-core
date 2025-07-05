@@ -55,21 +55,60 @@ __all__ = [
 
 @dataclass
 class SlidingWindowAttentionConfig(Config):
-    pattern: List[bool]
-    window_size: int = 4096
-    force_first: bool = True
-    force_last: bool = True
+    pattern: List[int]
+    """
+    The pattern of window sizes to use for attention, repeated to cover all layers.
+    A value of -1 indicates full attention. For example, a pattern of ``[4096, 4096, 4096, -1]``
+    means that for each set of 4 layers, the first 3 will use a window size of 4096,
+    and the last layer will use full attention.
+    """
+
+    force_full_attention_on_first_layer: bool = True
+    """
+    If `True`, the first transformer layer will always use full attention, regardless of the pattern.
+    """
+
+    force_full_attention_on_last_layer: bool = True
+    """
+    If `True`, the last transformer layer will always use full attention, regardless of the pattern.
+    """
+
+    def _get_window_size(self, layer_idx: int, n_layers: int) -> int:
+        """
+        Get the window size for a given layer, returning -1 for full attention.
+        """
+        if self.force_full_attention_on_first_layer and layer_idx == 0:
+            return -1
+        if self.force_full_attention_on_last_layer and layer_idx == (n_layers - 1):
+            return -1
+
+        # Adjust the layer index if the first layer is special-cased to full attention
+        # (in which case the pattern is applied starting from the second layer)
+        effective_layer_idx = layer_idx
+        if self.force_full_attention_on_first_layer:
+            effective_layer_idx -= 1
+
+        window_size = self.pattern[effective_layer_idx % len(self.pattern)]
+        if window_size <= 0 and window_size != -1:
+            raise OLMoConfigurationError(
+                f"Sliding window size must be positive or -1 (got {window_size})"
+            )
+        return window_size
 
     def should_use_swa(self, layer_idx: int, n_layers: int) -> bool:
-        if self.force_first:
-            if layer_idx == 0:
-                return True
-            layer_idx -= 1
-            n_layers -= 1
-        if self.force_last:
-            if layer_idx == n_layers - 1:
-                return True
-        return self.pattern[layer_idx % len(self.pattern)]
+        """
+        Returns `True` if the given layer uses sliding window attention.
+        """
+        return self._get_window_size(layer_idx, n_layers) != -1
+
+    def get_window_size(self, layer_idx: int, n_layers: int) -> int:
+        """
+        Get the sliding window size for a given layer.
+        """
+        window_size = self._get_window_size(layer_idx, n_layers)
+        if window_size == -1:
+            raise ValueError(f"Layer {layer_idx} is not configured for sliding window attention.")
+        return window_size
 
 
 class AttentionType(StrEnum):
@@ -113,6 +152,7 @@ class AttentionConfig(Config):
     use_flash: Optional[bool] = None
     dtype: DType = DType.float32
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
+    use_head_qk_norm: Optional[bool] = None
 
     def num_params(self, d_model: int) -> int:
         """
@@ -139,7 +179,10 @@ class AttentionConfig(Config):
 
         # Block attention QK norm.
         if self.qk_norm is not None:
-            params += 2 * self.qk_norm.num_params(d_model)
+            if self.use_head_qk_norm:
+                params += 2 * self.qk_norm.num_params(head_dim)
+            else:
+                params += 2 * self.qk_norm.num_params(d_model)
 
         # Block attention out.
         params += d_model * d_model
@@ -178,7 +221,7 @@ class AttentionConfig(Config):
         if sliding_window_config is not None and sliding_window_config.should_use_swa(
             layer_idx, n_layers
         ):
-            kwargs["window_size"] = sliding_window_config.window_size
+            kwargs["window_size"] = sliding_window_config.get_window_size(layer_idx, n_layers)
 
         kwargs.update(
             dtype=kwargs.pop("dtype").as_pt(),
@@ -274,6 +317,7 @@ class Attention(AttentionBase):
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
+        use_head_qk_norm: bool = False,
     ):
         super().__init__()
 
@@ -291,14 +335,19 @@ class Attention(AttentionBase):
         self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
         self.clip_qkv = clip_qkv
         self.dropout_p = dropout
+        self.use_head_qk_norm = use_head_qk_norm
 
         self.q_norm: Optional[LayerNorm] = None
         self.k_norm: Optional[LayerNorm] = None
         if qk_norm is not None:
-            self.q_norm = qk_norm.build(size=d_model, init_device=init_device)
-            self.k_norm = qk_norm.build(
-                size=self.n_kv_heads * self.head_dim, init_device=init_device
-            )
+            if use_head_qk_norm:
+                self.q_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
+                self.k_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
+            else:
+                self.q_norm = qk_norm.build(size=d_model, init_device=init_device)
+                self.k_norm = qk_norm.build(
+                    size=self.n_kv_heads * self.head_dim, init_device=init_device
+                )
 
         self.rope: Optional[Union[RotaryEmbedding, ComplexRotaryEmbedding]] = None
         if rope is not None:
@@ -465,10 +514,11 @@ class Attention(AttentionBase):
             k.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
             v.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
 
-        if self.q_norm is not None:
-            q = self.q_norm(q)
-        if self.k_norm is not None:
-            k = self.k_norm(k)
+        if not self.use_head_qk_norm:
+            if self.q_norm is not None:
+                q = self.q_norm(q)
+            if self.k_norm is not None:
+                k = self.k_norm(k)
 
         # NOTE: use -1 instead of `n_heads` / `n_kv_heads` to infer actual local size when
         # using tensor parallelism.
@@ -478,6 +528,12 @@ class Attention(AttentionBase):
         k = k.view(B, T, -1, self.head_dim)
         # shape: (batch_size, seq_len, n_kv_heads, head_dim)
         v = v.view(B, T, -1, self.head_dim)
+
+        if self.use_head_qk_norm:
+            if self.q_norm is not None:
+                q = self.q_norm(q)
+            if self.k_norm is not None:
+                k = self.k_norm(k)
 
         if self.rope is not None:
             if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:

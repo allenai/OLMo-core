@@ -8,7 +8,7 @@ dynamic = ["version"]
 readme = "README.md"
 description = "Core training module for the Open Language Model (OLMo)"
 authors = [
-    { name = "Allen Institute for Artificial Intelligence", email = "olmo@allenai.org" }
+    { name = "Allen Institute for Artificial Intelligence", email = "olmo@allenai.org" },
 ]
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
@@ -22,7 +22,7 @@ dependencies = [
     "omegaconf",
     "safetensors",
     "importlib_resources",
-    "ai2-olmo-eval==0.7.2",
+    "ai2-olmo-eval==0.8.4",
 ]
 
 [project.urls]
@@ -54,22 +54,11 @@ dev = [
     "sphinx-autodoc-typehints==1.23.3",
     "sphinx-inline-tabs",
 ]
-beaker = [
-    "beaker-py>=1.36.0,<2.0",
-    "GitPython>=3.0,<4.0",
-]
-wandb = [
-    "wandb",
-]
-comet = [
-    "comet_ml",
-]
-transformers = [
-    "transformers",
-]
-all = [
-    "ai2-olmo-core[dev,beaker,wandb,comet,transformers]",
-]
+beaker = ["beaker-py>=1.36.0,<2.0", "GitPython>=3.0,<4.0"]
+wandb = ["wandb"]
+comet = ["comet_ml"]
+transformers = ["transformers"]
+all = ["ai2-olmo-core[dev,beaker,wandb,comet,transformers]"]
 
 [tool.setuptools]
 include-package-data = true
@@ -107,7 +96,7 @@ profile = "black"
 multi_line_output = 3
 
 [tool.ruff]
-line-length = 115
+line-length = 100
 
 [tool.ruff.lint]
 ignore = ["F403", "F405", "E501"]
@@ -156,17 +145,12 @@ strict_optional = false
 
 [tool.pytest.ini_options]
 testpaths = "src/test/"
-python_classes = [
-  "Test*",
-  "*Test",
-]
+python_classes = ["Test*", "*Test"]
 log_format = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
 log_level = "DEBUG"
 log_cli = false
 log_cli_level = "DEBUG"
-markers = [
-    "gpu",
-]
+markers = ["gpu"]
 filterwarnings = [
     'ignore::FutureWarning:huggingface_hub\.file_download',
     'ignore::DeprecationWarning:pkg_resources',

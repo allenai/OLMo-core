@@ -12,6 +12,7 @@ from olmo_core.optim import INITIAL_LR_FIELD, LR_FIELD, Scheduler, SkipStepAdamW
 from ..common import Duration
 from ..train_module import TransformerPipelineTrainModule, TransformerTrainModule
 from .callback import Callback
+from .speed_monitor import SpeedMonitorCallback
 
 log = logging.getLogger(__name__)
 
@@ -167,3 +168,8 @@ class BatchSizeSchedulerCallback(Callback):
                 log.info(
                     f"Set base LR for optimizer {optim_idx+1}, group {group_idx+1} to {float(group[initial_lr_field]):.8f}"
                 )
+
+        for callback in self.trainer.callbacks.values():
+            if isinstance(callback, SpeedMonitorCallback):
+                log.info("Resetting speed monitor...")
+                callback.reset()
