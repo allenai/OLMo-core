@@ -182,7 +182,7 @@ class SFTConfig(Config):
             train_module=TransformerTrainModuleConfig(
                 rank_microbatch_size=rank_microbatch_size,
                 max_sequence_length=SEQUENCE_LENGTH,
-                z_loss_multiplier=1e-5,
+                z_loss_multiplier=None,
                 compile_model=False,
                 optim=SkipStepAdamWConfig(
                     lr=8e-05,
