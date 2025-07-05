@@ -261,25 +261,45 @@ class SourceMixtureDatasetConfig(Config):
             )
             tokens_per_path_per_source[source.config.source_name] = source_path_tokens
 
-
-        # Increase the number of tokens per path until we have enough instances, handling rounding issues
+        # We adjust the number of tokens per path so that we can complete the desired number of training steps while still retaining the target ratios.
         all_tokens_per_path = [
             path.tokens
             for source_path_tokens in tokens_per_path_per_source.values()
             for path in source_path_tokens
         ]
+
         requested_instances = math.ceil(self.max_tokens / self.global_batch_size) * int(
-            self.global_batch_size / self.sequence_length
+            self.global_batch_size
+            / self.sequence_length  # instances = training_steps x num_instances_per_batch
         )
 
-        int_instances = [tokens_per_path // self.sequence_length for tokens_per_path in all_tokens_per_path]
-        remainders = [(tokens_per_path / self.sequence_length) - int_instances[i] for i, tokens_per_path in enumerate(all_tokens_per_path)]
+        # determine how many instances we still need to allocate
+        int_instances, remainders = zip(
+            *[
+                (
+                    tokens_per_path // self.sequence_length,
+                    (tokens_per_path % self.sequence_length) / self.sequence_length,
+                )  # floor , fractional part
+                for tokens_per_path in all_tokens_per_path
+            ]
+        )
+        int_instances = list(int_instances)
+        remainders = list(remainders)
 
+        # we apply Hamilton's method for rounding (see https://mathematics-democracy-institute.org/apportionment/)
+        # that is, we only round up the requested instances for the paths that have the largest remainders
+        # there is a lot of literature on how any other allocation of increments is suboptimal
+        # basically, the requested tokens that are closest to a full instance are rounded up first
         additional_instances_needed = requested_instances - sum(int_instances)
-
         if additional_instances_needed > 0:
-            for idx in sorted(range(len(remainders)), key=remainders.__getitem__, reverse=True)[:additional_instances_needed]:
-                int_instances[idx] += 1
+            base, leftover = divmod(additional_instances_needed, len(remainders))
+            if base:
+                int_instances = [n + base for n in int_instances]
+            if leftover:
+                for idx in sorted(range(len(remainders)), key=remainders.__getitem__, reverse=True)[
+                    :leftover
+                ]:
+                    int_instances[idx] += 1
 
         final_tokens_per_path = [inst * self.sequence_length for inst in int_instances]
 
@@ -288,10 +308,8 @@ class SourceMixtureDatasetConfig(Config):
         for source_name, source_path_tokens in tokens_per_path_per_source.items():
             for j in range(len(source_path_tokens)):
                 source_path_tokens[j] = SourcePathTokens(
-                    path=source_path_tokens[j].path,
-                    tokens=final_tokens_per_path[i]
+                    path=source_path_tokens[j].path, tokens=final_tokens_per_path[i]
                 )
-
                 i += 1
 
             completed.append(
@@ -300,10 +318,14 @@ class SourceMixtureDatasetConfig(Config):
                     path_tokens=source_path_tokens,
                 )
             )
-            final_token_distribution[source_name] = sum([path.tokens for path in source_path_tokens])
+            final_token_distribution[source_name] = sum(
+                [path.tokens for path in source_path_tokens]
+            )
 
         total_tokens = sum(final_token_distribution.values())
-        final_token_distribution = {k: v / total_tokens for k, v in final_token_distribution.items()}
+        final_token_distribution = {
+            k: v / total_tokens for k, v in final_token_distribution.items()
+        }
 
         if self.render_tables:
             self.render_mixture_outcome_tables(tokens_details_by_source)
@@ -312,10 +334,16 @@ class SourceMixtureDatasetConfig(Config):
             for item in outcome.path_tokens:
                 log.info(f"Selected {item.tokens} tokens from {outcome.name} at {item.path}")
 
-        log.info(f"Total tokens in mixture: {total_tokens}")
-        log.info(f"Final token distribution by source: {final_token_distribution}")
-        original_token_distribution = {source_config.source_name: source_config.target_ratio for source_config in self.source_configs}
-        log.info(f"Original token distribution by source: {original_token_distribution}")
+        log.info(
+            f"Total tokens in mixture: {total_tokens}"
+        )  # this will differ from self.max_tokens due to rounding
+        original_token_distribution = {
+            source_config.source_name: source_config.target_ratio
+            for source_config in self.source_configs
+        }
+        for source_name, ratio in original_token_distribution.items():
+            diff = np.abs(final_token_distribution.get(source_name, 0) - ratio)
+            log.info(f"{source_name}: {diff:.4f} difference from target ratio {ratio:.4f}")
 
         return SourceMixtureDataset(seed=self.seed, sources=completed)
 

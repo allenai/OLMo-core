@@ -404,7 +404,7 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
     ).build()
     ds.prepare()
 
-    expected_fingerprint = "5cf3b3"
+    expected_fingerprint = "60cd21"
     first_ds_item = ds[0]["input_ids"].tolist()
 
     # NOTE: This is commented out until we fix behavior of the source mixture dataset
@@ -421,9 +421,8 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
         63252,
         65373,
     ]  # stable because we pass a seed
-    assert ds.num_tokens == 40_068  # oversamples to handle rounding error
-    assert len(ds) == 10017
-    assert len(ds) / bsz >= math.ceil(max_tokens / (sequence_length * bsz))
+    assert ds.num_tokens == 40_064  # oversamples to handle rounding error
+    assert len(ds) / bsz == math.ceil(max_tokens / (sequence_length * bsz))
 
 
 def write_data_file(data: List[int], path: Path, dtype, eos_token_id: int):
