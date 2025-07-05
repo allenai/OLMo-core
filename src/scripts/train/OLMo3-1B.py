@@ -18,6 +18,8 @@ from olmo_core.train.callbacks import (
     CometCallback,
     WandBCallback,
 )
+from olmo_core.train.callbacks.monkey_patcher import MonkeyPatcherCallback
+from olmo_core.train.common import LoadStrategy
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -48,7 +50,9 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     #  config.block.name = TransformerBlockType.default
     #  config.block.attention.qk_norm = None
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
-        force_first=False, pattern=[False, False, False, True]
+        force_full_attention_on_first_layer=False,
+        force_full_attention_on_last_layer=True,
+        pattern=[4096, 4096, 4096, -1],
     )
     config.block.attention.use_flash = True
     config.block.attention.use_head_qk_norm = True
@@ -74,6 +78,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
             compile=False,
+            foreach=True,
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
@@ -88,8 +93,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             units=SchedulerUnits.steps,
             warmup=2000,
             decay=(
-                int(ANNEAL_TOKENS / GLOBAL_BATCH_SIZE)
-            ),  # TODO: This isn't right because it doesn't take batchwup into account.
+                int(ANNEAL_TOKENS / (4 * GLOBAL_BATCH_SIZE))
+            ),  # * 4 because we're doubling the batch size twice with batch size warmup
             decay_fraction=None,
         ),
     )
@@ -141,6 +146,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 cancel_check_interval=cancel_check_interval,
             ),
         )
+        .with_callback("monkey_patcher", MonkeyPatcherCallback())
         .with_recommended_evals(
             common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
         )
@@ -148,12 +154,17 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     # batch size warmup
     config.callbacks["batchwup"] = BatchSizeSchedulerCallback(
-        batch_sizes=[GLOBAL_BATCH_SIZE, GLOBAL_BATCH_SIZE * 2, GLOBAL_BATCH_SIZE * 4],
+        batch_sizes=[
+            GLOBAL_BATCH_SIZE,
+            GLOBAL_BATCH_SIZE * 2,
+            GLOBAL_BATCH_SIZE * 4,
+        ],
         schedule=[
             Duration.tokens(0),
             Duration.tokens(167_772_160_000),
             Duration.tokens(503_316_480_000),
         ],
+        enabled=True,
     )
 
     return config
