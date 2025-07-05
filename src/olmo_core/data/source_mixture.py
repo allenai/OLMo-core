@@ -274,17 +274,13 @@ class SourceMixtureDatasetConfig(Config):
         )
 
         # determine how many instances we still need to allocate
-        int_instances, remainders = zip(
-            *[
-                (
-                    tokens_per_path // self.sequence_length,
-                    (tokens_per_path % self.sequence_length) / self.sequence_length,
-                )  # floor , fractional part
-                for tokens_per_path in all_tokens_per_path
-            ]
-        )
-        int_instances = list(int_instances)
-        remainders = list(remainders)
+        int_instances = []
+        remainders = []
+        for tokens_per_path in all_tokens_per_path:
+            int_part = tokens_per_path // self.sequence_length
+            remainder = (tokens_per_path % self.sequence_length) / self.sequence_length
+            int_instances.append(int_part)
+            remainders.append(remainder)
 
         # we apply Hamilton's method for rounding (see https://mathematics-democracy-institute.org/apportionment/)
         # that is, we only round up the requested instances for the paths that have the largest remainders
@@ -304,7 +300,7 @@ class SourceMixtureDatasetConfig(Config):
         final_tokens_per_path = [inst * self.sequence_length for inst in int_instances]
 
         i = 0
-        final_token_distribution = {}
+        final_token_distribution: Dict[str, float] = {}
         for source_name, source_path_tokens in tokens_per_path_per_source.items():
             for j in range(len(source_path_tokens)):
                 source_path_tokens[j] = SourcePathTokens(

@@ -15,6 +15,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from .utils import mk_mmaps
 
+
 def test_source_mixture_config(tmp_path: Path, caplog, capsys):
     source_paths = {
         "1": mk_mmaps(tmp_path=tmp_path, prefix="source1", num_files=2, size=1_000_000),
@@ -169,7 +170,6 @@ def test_dataset_mixture_build(tmp_path: Path):
     ), f"Expected {requested_instances} instances, but got {sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])}"
 
 
-
 def test_dataset_mixture_build_insufficient_source_data(tmp_path: Path):
     source_paths = {
         "1": mk_mmaps(tmp_path=tmp_path, prefix="source1", num_files=1, size=1_000_000),
@@ -268,7 +268,6 @@ def test_dataset_mixture_build_with_repetition(tmp_path: Path):
         sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])
         == requested_instances
     ), f"Expected {requested_instances} instances, but got {sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])}"
-
 
     assert total_tokens == 5013504
 
