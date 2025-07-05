@@ -57,6 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ensure sharded parameters are initialized differently on separate ranks.
 - Fixed fingerprinting for FSL datasets
 - Fixed bug where `step` state in `SkipStepAdamW` was not incremented, biasing the optimizer steps. Added option to restore the bug for backwards compatibility.
+- Fixed mixture rounding error with `SourceMixtureDataset`, which was previously causing samples to be repeated at the end of training.
+
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 

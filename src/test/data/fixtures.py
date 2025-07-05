@@ -53,6 +53,7 @@ def get_fsl_mixture(
         dtype=NumpyDatasetDType.uint16,
         processes=1,
         seed=seed,
+        global_batch_size=sequence_length * 32,
     )
 
     ds = NumpyDatasetConfig(
