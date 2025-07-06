@@ -35,13 +35,8 @@ SEQUENCE_LENGTH = 8192
 GLOBAL_BATCH_SIZE = (
     1024 * 4096
 )  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
-MAX_DURATION = int(
-    10e12
-)  # Setting this higher than 6T (expected run time), in case we get to run longer since 1) we're using WSD and 2) our anneal will use different data
 ANNEAL_TOKENS = int(100e9)
-LR = 4.4e-5 * math.sqrt(
-    4
-)  # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes.
+LR = 4e-4
 EVAL_INTERVAL = 1000
 
 
@@ -135,7 +130,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             load_strategy=LoadStrategy.always,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
-            max_duration=Duration.tokens(MAX_DURATION),
+            max_duration=Duration.epochs(3),
         )
         .with_callback(
             "checkpointer",
@@ -175,14 +170,14 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     # batch size warmup
     config.callbacks["batchwup"] = BatchSizeSchedulerCallback(
         batch_sizes=[
-            # GLOBAL_BATCH_SIZE,
-            # GLOBAL_BATCH_SIZE * 2,
+            GLOBAL_BATCH_SIZE,
+            GLOBAL_BATCH_SIZE * 2,
             GLOBAL_BATCH_SIZE * 4,
         ],
         schedule=[
             Duration.tokens(0),
-            # Duration.tokens(167_772_160_000),
-            # Duration.tokens(503_316_480_000),
+            Duration.tokens(167_772_160_000),
+            Duration.tokens(503_316_480_000),
         ],
         enabled=True,
     )
