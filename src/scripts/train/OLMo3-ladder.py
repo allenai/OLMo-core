@@ -41,6 +41,11 @@ def optimal_wsd_lr(D: float, G: float, T_0: int, T: int):
         return (D * D) / (T + T_0)
 
     def _curlT_2_wsd(G: float, T_0: int, T: int) -> float:
+        assert T > 0, f'Number of tokens must be > 0! Seeing: T={T}, T_0={T_0}'
+
+        T = int(T) # cast to int
+        T_0 = int(T_0)
+
         # Eq. 21
         term_1 = (G * G) / (6 * (T + T_0)) * (2 * T + 4 * T_0 - 1 + 1 / (T + 1 - T_0))
         omega_2 = (2 * T - 2 * T_0 + 3 / (T - T_0) + 3 * sum(1 / i for i in range(1, T - T_0))) / (T - T_0 + 1)
@@ -110,7 +115,7 @@ class BaselineWSDModelLadder(ModelLadder):
         )
 
         # Need to reconstruct config to pass in muP config
-        config = getattr(TransformerConfig, f"olmo2_mup_{size}")(
+        config = getattr(TransformerConfig, f"olmo2_{size}")(
             vocab_size=self.tokenizer.padded_vocab_size(),
             init_seed=self.init_seed,
             mup=mup_config,
@@ -128,23 +133,23 @@ class BaselineWSDModelLadder(ModelLadder):
 
         return config
     
-    def get_lr(self, total_toks: int) -> float:
+    def get_lr(self, total_tokens: int) -> float:
         # TODO: What are these magic numbers?
         D = 0.099
         G = 0.1
 
         gbz_toks = self.get_global_batch_size()
-        steps = total_toks / gbz_toks
+        steps = total_tokens / gbz_toks
 
         optimal_lr = optimal_wsd_lr(D, G, int(steps - 25_000), steps)
 
         return optimal_lr
 
     def get_optim_config(self, run_duration: RunDuration) -> OptimConfig:
-        total_toks = self.get_duration(run_duration)
+        total_tokens = self.get_duration(run_duration).value
 
         return SkipStepAdamWConfig(
-            lr=self.get_lr(total_toks),
+            lr=self.get_lr(total_tokens),
             weight_decay=0.1, # Follows hero run and mUP ladder
             betas=(0.9, 0.95),
             group_overrides=[
@@ -171,7 +176,7 @@ class BaselineWSDModelLadder(ModelLadder):
 
         # In the hero run, we're have a 100B decay stage for 6T toks, or 1.67% of the full run is decay
         total_tokens = self.get_duration(run_duration)
-        ANNEAL_TOKENS = total_tokens * 0.0167 # decay for final 1.67% of training
+        ANNEAL_TOKENS = total_tokens.value * 0.0167 # decay for final 1.67% of training
 
         return TransformerTrainModuleConfig(
             rank_microbatch_size=rank_mbz,

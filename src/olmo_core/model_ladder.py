@@ -489,8 +489,8 @@ class ModelLadder(Config, metaclass=ABCMeta):
                     f"Model size of {num_params:,d} for sequence length {self.sequence_length} is "
                     f"too far from target size of {size}: {model_config}"
                 )
-
-            self.get_optim_config()
+            # @davidh: need duration for olmo 3 wsd ladder
+            # self.get_optim_config()
             self.get_rank_microbatch_size(size=size, gpu_type="H100")
             bz_tokens = self.get_global_batch_size()
             if bz_tokens % self.sequence_length != 0:

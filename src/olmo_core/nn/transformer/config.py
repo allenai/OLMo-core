@@ -1025,6 +1025,7 @@ class TransformerConfig(Config):
         rope_scaling: Optional[RoPEScalingConfig] = None,
         feed_forward: Optional[FeedForwardConfig] = None,
         feed_forward_moe: Optional[MoEConfig] = None,
+        mup: Optional[MuPConfig] = None,
         **kwargs,
     ) -> "TransformerConfig":
         """
@@ -1060,7 +1061,7 @@ class TransformerConfig(Config):
 
         # Feed-forward.
         if feed_forward is None and feed_forward_moe is None:
-            feed_forward = FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype)
+            feed_forward = FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype, mup=mup)
 
         # Configure blocks.
         block = TransformerBlockConfig(
@@ -1074,6 +1075,7 @@ class TransformerConfig(Config):
                 qk_norm=layer_norm if qk_norm else None,
                 use_flash=use_flash,
                 dtype=dtype,
+                mup=mup,
             ),
             feed_forward=feed_forward,
             feed_forward_moe=feed_forward_moe,
@@ -1085,7 +1087,7 @@ class TransformerConfig(Config):
             vocab_size=vocab_size,
             n_layers=n_layers,
             block=block,
-            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype, mup=mup),
             dtype=dtype,
             **kwargs,
         )
@@ -1108,6 +1110,7 @@ class TransformerConfig(Config):
         z_loss_weight: Optional[float] = 0.001,
         reordered_norm: bool = False,
         hybrid: bool = False,
+        mup: Optional[MuPConfig] = None,
         **kwargs,
     ) -> "TransformerConfig":
         block_name: TransformerBlockType
@@ -1133,12 +1136,19 @@ class TransformerConfig(Config):
                 hidden_size=expert_hidden_size,
                 capacity_factor=capacity_factor,
                 router=MoERouterConfig(top_k=top_k),
+                mup=mup,
                 shared_mlp=None
                 if shared_expert_hidden_size is None
-                else FeedForwardConfig(hidden_size=shared_expert_hidden_size, bias=False),
+                else FeedForwardConfig(
+                    hidden_size=shared_expert_hidden_size,
+                    bias=False,
+                    mup=mup,
+                    hidden_size_mup_hyper_param=MuPHyperParam.shared_expert_hidden_size,
+                ),
                 lb_loss_weight=lb_loss_weight,
                 z_loss_weight=z_loss_weight,
             ),
+            mup=mup,
             **kwargs,
         )
 
