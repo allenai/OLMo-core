@@ -6,17 +6,15 @@ from olmo_core.config import DType
 from olmo_core.data import NumpyDatasetConfig
 from olmo_core.data.numpy_dataset import InstanceFilterConfig, VSLCurriculumConfig, VSLCurriculumType
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.internal.common import get_beaker_username, get_work_dir
-from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
+from olmo_core.internal.common import get_beaker_username, get_work_dir, CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.model_ladder import RunDuration, main
 from olmo_core.io import join_path
 from olmo_core.model_ladder import ModelLadder, ModelSize
 from olmo_core.optim.scheduler import WSD
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
-from olmo_core.optim import OptimConfig, OptimGroupOverride
-from olmo_core.optim import OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
-from olmo_core.train import Duration, TrainerConfig
+from olmo_core.optim import OptimConfig, OptimGroupOverride, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
+from olmo_core.train import TrainerConfig
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -133,7 +131,7 @@ class BaselineWSDModelLadder(ModelLadder):
             scheduler=WSD(
                 units=SchedulerUnits.steps,
                 warmup=2000, # TODO: is this right?
-                decay=0, # disable decay (we will launch separately)
+                decay=0, # disable decay (we will launch separately) TODO: I think? OR does peak LR depend on schedule
                 # decay=(
                 #     int(ANNEAL_TOKENS / self.get_global_batch_size())
                 # ),  # TODO (from OLMo 3 1B config): This isn't right because it doesn't take batchwup into account.
