@@ -57,7 +57,7 @@ class SubCmd(StrEnum):
             print(config)
 
         if self == SubCmd.launch:
-            config.launch.launch(follow=True)
+            config.launch.launch(follow=False)
         elif self == SubCmd.dry_run:
             pass
         elif self in (SubCmd.train, SubCmd.train_single):
@@ -117,6 +117,7 @@ def build_config(
         root_dir=root_dir,
         cmd=[script, SubCmd.train, size, run_duration, cluster, *overrides],
         cluster=cluster,
+        workspace=ladder.beaker_workspace,
     ).merge(overrides, strict=False)
 
     dp_world_size = launch.num_nodes * launch.num_gpus

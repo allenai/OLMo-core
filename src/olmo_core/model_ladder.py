@@ -5,6 +5,7 @@ Configuration classes for defining model ladder scaling ablations.
 import logging
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, field
+from typing import ClassVar, List
 
 from olmo_core.data.numpy_dataset import InstanceFilterConfig
 
@@ -46,6 +47,10 @@ class ModelSize(StrEnum):
     as close as possible, ignoring embeddings.
     """
 
+    size_60M = "60M"
+    """
+    60M parameters.
+    """
     size_190M = "190M"
     """
     190M parameters.
@@ -61,6 +66,10 @@ class ModelSize(StrEnum):
     size_760M = "760M"
     """
     760M parameters.
+    """
+    size_970M = "970M"
+    """
+    970M parameters.
     """
     size_1B = "1B"
     """
@@ -192,6 +201,13 @@ class ModelLadder(Config, metaclass=ABCMeta):
     """
     The maximum data parallel world size that you intent to run with. This is used to set the batch size.
     """
+
+    beaker_workspace: str = "ai2/OLMo-core"
+    """
+    Beaker workspace.
+    """
+
+    SUPPORTED_MODEL_SIZES: ClassVar[List[ModelSize]] = list(ModelSize)
 
     @property
     def model_size(self) -> int:
@@ -389,6 +405,48 @@ class ModelLadder(Config, metaclass=ABCMeta):
 
         from olmo_eval import list_tasks
 
+        if size not in self.SUPPORTED_MODEL_SIZES:
+            raise OLMoConfigurationError(
+                f"Size {size} not supported by this ladder (supported sizes: {self.SUPPORTED_MODEL_SIZES})."
+            )
+
+        # For training runs where we don't expect the model to acquire MC (e.g., 1B-5xC, short 7B training runs)
+        tasks = [
+            # OLMES Core 9(-ish) RC
+            "arc_challenge_test_rc_5shot",
+            "arc_easy_test_rc_5shot",
+            "hellaswag_rc_5shot",  # 1K subset of HellaSwag
+            "winogrande_val_rc_5shot",  # Helpful after 750M-5xC scale
+            "csqa_val_rc_5shot",
+            "piqa_val_rc_5shot",
+            "socialiqa_val_rc_5shot",
+            # Too noisy to be worth tracking
+            # "boolq_val_rc_5shot",
+            # "openbookqa_test_rc_5shot",
+            # MMLU RC
+            "mmlu_stem_val_rc_5shot",
+            "mmlu_humanities_val_rc_5shot",
+            "mmlu_social_sciences_val_rc_5shot",
+            "mmlu_other_val_rc_5shot",
+            "mmlu_stem_test_rc_5shot",
+            "mmlu_humanities_test_rc_5shot",
+            "mmlu_social_sciences_test_rc_5shot",
+            "mmlu_other_test_rc_5shot",
+            # Gen tasks BPB
+            "gsm8k_gold_bpb_5shot",
+            "minerva_math_algebra_gold_bpb_0shot",
+            "minerva_math_counting_and_probability_gold_bpb_0shot",
+            "minerva_math_geometry_gold_bpb_0shot",
+            "minerva_math_intermediate_algebra_gold_bpb_0shot",
+            "minerva_math_number_theory_gold_bpb_0shot",
+            "minerva_math_prealgebra_gold_bpb_0shot",
+            "minerva_math_precalculus_gold_bpb_0shot",
+            "codex_humaneval_gold_bpb_0shot",
+            "codex_mbpp_gold_bpb_0shot",
+            # Sanity check for MCQA ability
+            "copycolors_10way",
+        ]
+
         config = TrainerConfig(
             save_folder=self.get_save_folder(size, run_duration),
             metrics_collect_interval=10,
@@ -410,15 +468,15 @@ class ModelLadder(Config, metaclass=ABCMeta):
                     tokenizer=self.tokenizer,
                     work_dir=self.work_dir,
                 ),
-                eval_interval=500,
+                eval_interval=1_000_000,
             ),
         )
         config = config.with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
-                tasks=[task for task in list_tasks() if "_mc" not in task and "_var" not in task],
+                tasks=tasks,
                 tokenizer=self.tokenizer,
-                eval_interval=500,
+                eval_interval=1_000_000,
             ),
         )
         config = config.with_callback(
@@ -457,7 +515,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
 
         :raises OLMoConfigurationError: If the ladder has any issues.
         """
-        for size in ModelSize:
+        for size in self.SUPPORTED_MODEL_SIZES:
             # validating to match old ladder sizes.
             if size == ModelSize.size_1B:
                 target_size = 1.3

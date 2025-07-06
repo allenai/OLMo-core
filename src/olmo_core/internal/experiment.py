@@ -65,7 +65,6 @@ class ExperimentConfig(Config):
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
     init_seed: int = 12536
-    backend: Optional[str] = "cpu:gloo,cuda:nccl"
 
 
 class SubCmd(StrEnum):
@@ -76,11 +75,11 @@ class SubCmd(StrEnum):
     launch_prep = "launch_prep"
     dry_run = "dry_run"
 
-    def prepare_environment(self, config: ExperimentConfig):
+    def prepare_environment(self):
         if self in (SubCmd.launch, SubCmd.dry_run, SubCmd.prep, SubCmd.launch_prep):
             prepare_cli_environment()
         elif self == SubCmd.train:
-            prepare_training_environment(backend=config.backend)
+            prepare_training_environment()
         elif self == SubCmd.train_single:
             prepare_training_environment(backend=None)
         else:
@@ -143,6 +142,7 @@ def build_common_components(
     include_instance_filter: bool = False,
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
+    beaker_workspace: str = "ai2/OLMo-core",
 ) -> CommonComponents:
     root_dir = get_root_dir(cluster)
 
@@ -161,6 +161,7 @@ def build_common_components(
             nccl_debug=False,
             beaker_image=beaker_image,
             num_nodes=num_nodes,
+            workspace=beaker_workspace,
         )
 
     tokenizer_config = TokenizerConfig.dolma2()
@@ -330,6 +331,7 @@ def main(
     include_instance_filter: bool = False,
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
+    beaker_workspace: str = "ai2/OLMo-core",
 ):
     usage = f"""
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
@@ -356,6 +358,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
     script, cmd, run_name, cluster, *overrides = sys.argv
 
     cmd = SubCmd(cmd)
+    cmd.prepare_environment()
 
     config = build_config(
         script,
@@ -374,7 +377,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         include_instance_filter=include_instance_filter,
         beaker_image=beaker_image,
         num_nodes=num_nodes,
+        beaker_workspace=beaker_workspace,
     )
 
-    cmd.prepare_environment(config)
     cmd.run(config)

@@ -1,4 +1,5 @@
 import logging
+import math
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Dict, List, Optional
@@ -14,6 +15,7 @@ from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
+from ..mup import MuPConfig, MuPHyperParam
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from .init import InitMethod
 
@@ -239,6 +241,56 @@ class TransformerBlockConfig(Config):
         ) - self.feed_forward_moe.num_active_params(d_model)
         return num_params - num_inactive_params
 
+    def get_mup_width_scalings(
+        self, base_block: "TransformerBlockConfig", d_model: int, base_d_model: int
+    ) -> Dict[MuPHyperParam, float]:
+        if self.feed_forward:
+            if base_block.feed_forward is None:
+                raise ValueError("Feed forward config is missing in m")
+
+            hidden_size = self.feed_forward.hidden_size
+            base_hidden_size = base_block.feed_forward.hidden_size
+
+        if self.feed_forward_moe:
+            if base_block.feed_forward_moe is None:
+                raise ValueError("Cannot get mup width scalings between MoE and non-MoE models")
+
+            hidden_size = self.feed_forward_moe.hidden_size
+            base_hidden_size = base_block.feed_forward_moe.hidden_size
+        else:
+            raise ValueError("Model has no feed forward layer")
+
+        width_scalings = {
+            MuPHyperParam.d_model: d_model / base_d_model,
+            MuPHyperParam.hidden_size: hidden_size / base_hidden_size,
+            MuPHyperParam.n_heads: self.attention.n_heads / base_block.attention.n_heads,
+            MuPHyperParam.n_kv_heads: (self.attention.n_kv_heads or self.attention.n_heads)
+            / (base_block.attention.n_kv_heads or base_block.attention.n_heads),
+            MuPHyperParam.head_dim: (d_model / self.attention.n_heads)
+            / (base_d_model / base_block.attention.n_heads),
+        }
+
+        if self.feed_forward_moe:
+            assert base_block.feed_forward_moe is not None
+            width_scalings[MuPHyperParam.num_experts] = (
+                self.feed_forward_moe.num_experts / base_block.feed_forward_moe.num_experts
+            )
+
+            if self.feed_forward_moe.shared_mlp is not None:
+                if base_block.feed_forward_moe.shared_mlp is None:
+                    raise ValueError("Model has shared mlp but base model does not.")
+
+                width_scalings[MuPHyperParam.shared_expert_hidden_size] = (
+                    self.feed_forward_moe.shared_mlp.hidden_size
+                    / base_block.feed_forward_moe.shared_mlp.hidden_size
+                )
+
+        return {
+            hyper_param: scaling
+            for hyper_param, scaling in width_scalings.items()
+            if not math.isclose(scaling, 1)
+        }
+
 
 @dataclass
 class TransformerConfig(Config):
@@ -432,6 +484,57 @@ class TransformerConfig(Config):
 
         return flop_per_token
 
+    def get_mup_width_scalings(self, base_model: "TransformerConfig") -> Dict[MuPHyperParam, float]:
+        if self.block.feed_forward:
+            if base_model.block.feed_forward is None:
+                raise ValueError("Feed forward config is missing in m")
+
+            hidden_size = self.block.feed_forward.hidden_size
+            base_hidden_size = base_model.block.feed_forward.hidden_size
+        elif self.block.feed_forward_moe:
+            if base_model.block.feed_forward_moe is None:
+                raise ValueError("Cannot get mup width scalings between MoE and non-MoE models")
+
+            hidden_size = self.block.feed_forward_moe.hidden_size
+            base_hidden_size = base_model.block.feed_forward_moe.hidden_size
+        else:
+            raise ValueError("Model has no feed forward layer")
+
+        width_scalings = {
+            MuPHyperParam.d_model: self.d_model / base_model.d_model,
+            MuPHyperParam.hidden_size: hidden_size / base_hidden_size,
+            MuPHyperParam.n_heads: self.block.attention.n_heads
+            / base_model.block.attention.n_heads,
+            MuPHyperParam.n_kv_heads: (
+                self.block.attention.n_kv_heads or self.block.attention.n_heads
+            )
+            / (base_model.block.attention.n_kv_heads or base_model.block.attention.n_heads),
+            MuPHyperParam.head_dim: (self.d_model / self.block.attention.n_heads)
+            / (base_model.d_model / base_model.block.attention.n_heads),
+        }
+
+        if self.block.feed_forward_moe:
+            assert base_model.block.feed_forward_moe is not None
+            width_scalings[MuPHyperParam.num_experts] = (
+                self.block.feed_forward_moe.num_experts
+                / base_model.block.feed_forward_moe.num_experts
+            )
+
+            if self.block.feed_forward_moe.shared_mlp is not None:
+                if base_model.block.feed_forward_moe.shared_mlp is None:
+                    raise ValueError("Model has shared mlp but base model does not.")
+
+                width_scalings[MuPHyperParam.shared_expert_hidden_size] = (
+                    self.block.feed_forward_moe.shared_mlp.hidden_size
+                    / base_model.block.feed_forward_moe.shared_mlp.hidden_size
+                )
+
+        return {
+            hyper_param: scaling
+            for hyper_param, scaling in width_scalings.items()
+            if not math.isclose(scaling, 1)
+        }
+
     @classmethod
     def olmo2_190M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
@@ -588,6 +691,58 @@ class TransformerConfig(Config):
             hidden_size_multiple_of=kwargs.pop("hidden_size_multiple_of", 512),
             hidden_size_multiplier=kwargs.pop("hidden_size_multiplier", 27648 / (8 * d_model / 3)),
             layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
+    def olmo2_mup_60M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=256,
+            hidden_size_multiplier=1.5,
+            n_layers=kwargs.pop("n_layers", 32),
+            n_heads=kwargs.pop("n_heads", 2),
+            vocab_size=vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
+    def olmo2_mup_370M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=768,
+            hidden_size_multiplier=1.5,
+            n_layers=kwargs.pop("n_layers", 32),
+            n_heads=kwargs.pop("n_heads", 6),
+            vocab_size=vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
+    def olmo2_mup_970M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=1280,
+            hidden_size_multiplier=1.5,
+            n_layers=kwargs.pop("n_layers", 32),
+            n_heads=kwargs.pop("n_heads", 10),
+            vocab_size=vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
+    def olmo2_mup_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.olmo2_7B(
+            vocab_size,
             **kwargs,
         )
 
@@ -870,6 +1025,7 @@ class TransformerConfig(Config):
         rope_scaling: Optional[RoPEScalingConfig] = None,
         feed_forward: Optional[FeedForwardConfig] = None,
         feed_forward_moe: Optional[MoEConfig] = None,
+        mup: Optional[MuPConfig] = None,
         **kwargs,
     ) -> "TransformerConfig":
         """
@@ -905,7 +1061,9 @@ class TransformerConfig(Config):
 
         # Feed-forward.
         if feed_forward is None and feed_forward_moe is None:
-            feed_forward = FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype)
+            feed_forward = FeedForwardConfig(
+                hidden_size=hidden_size, bias=False, dtype=dtype, mup=mup
+            )
 
         # Configure blocks.
         block = TransformerBlockConfig(
@@ -919,6 +1077,7 @@ class TransformerConfig(Config):
                 qk_norm=layer_norm if qk_norm else None,
                 use_flash=use_flash,
                 dtype=dtype,
+                mup=mup,
             ),
             feed_forward=feed_forward,
             feed_forward_moe=feed_forward_moe,
@@ -930,7 +1089,7 @@ class TransformerConfig(Config):
             vocab_size=vocab_size,
             n_layers=n_layers,
             block=block,
-            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype, mup=mup),
             dtype=dtype,
             **kwargs,
         )
@@ -953,6 +1112,7 @@ class TransformerConfig(Config):
         z_loss_weight: Optional[float] = 0.001,
         reordered_norm: bool = False,
         hybrid: bool = False,
+        mup: Optional[MuPConfig] = None,
         **kwargs,
     ) -> "TransformerConfig":
         block_name: TransformerBlockType
@@ -978,12 +1138,19 @@ class TransformerConfig(Config):
                 hidden_size=expert_hidden_size,
                 capacity_factor=capacity_factor,
                 router=MoERouterConfig(top_k=top_k),
+                mup=mup,
                 shared_mlp=None
                 if shared_expert_hidden_size is None
-                else FeedForwardConfig(hidden_size=shared_expert_hidden_size, bias=False),
+                else FeedForwardConfig(
+                    hidden_size=shared_expert_hidden_size,
+                    bias=False,
+                    mup=mup,
+                    hidden_size_mup_hyper_param=MuPHyperParam.shared_expert_hidden_size,
+                ),
                 lb_loss_weight=lb_loss_weight,
                 z_loss_weight=z_loss_weight,
             ),
+            mup=mup,
             **kwargs,
         )
 

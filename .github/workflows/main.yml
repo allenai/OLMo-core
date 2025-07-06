@@ -21,12 +21,13 @@ env:
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   BEAKER_TOKEN: ${{ secrets.BEAKER_TOKEN }}
+  GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
 
 jobs:
   checks:
     name: ${{ matrix.task.name }}
     runs-on: [ubuntu-latest]
-    timeout-minutes: 8
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -37,8 +38,9 @@ jobs:
 
           - name: Test
             run: |
-              pytest -v --color=yes --durations=3 src/test/ \
-                --ignore-glob='src/test/distributed/checkpoint*'
+              pytest -v --color=yes --durations=3 -n auto --dist=loadfile \
+                --ignore-glob='src/test/distributed/checkpoint*' \
+                src/test/
 
           - name: Test checkpoint
             run: |
@@ -71,6 +73,12 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache-prefix: ${{ env.CACHE_PREFIX }}
+
+      - name: Setup Google credentials
+        run: |
+          mkdir -p $HOME/.google
+          printenv GOOGLE_CREDENTIALS > $HOME/.google/credentials.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$HOME/.google/credentials.json" >> $GITHUB_ENV
 
       - name: Restore mypy cache
         if: matrix.task.name == 'Type check'
@@ -203,6 +211,12 @@ jobs:
                     secret: AWS_ACCESS_KEY_ID
                   - name: AWS_SECRET_ACCESS_KEY
                     secret: AWS_SECRET_ACCESS_KEY
+                  - name: GOOGLE_APPLICATION_CREDENTIALS
+                    value: "/.google/credentials.json"
+                datasets:
+                  - mountPath:  "/.google/credentials.json"
+                    source:
+                      secret: GOOGLE_CREDENTIALS
                 command:
                   - "bash"
                   - "-c"

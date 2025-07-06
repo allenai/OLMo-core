@@ -21,7 +21,7 @@ from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
 from olmo_core.data.utils import get_cumulative_document_lengths
-from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
+from olmo_core.distributed.utils import get_rank, hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
@@ -212,7 +212,6 @@ class Transformer(nn.Module):
         max_seq_len: Optional[int] = None,
         max_local_microbatch_size: Optional[int] = None,
         device: Optional[torch.device] = None,
-        pp_mesh: Optional[DeviceMesh] = None,
     ) -> torch.Generator:
         """
         Initialize the model weights.
@@ -222,8 +221,6 @@ class Transformer(nn.Module):
         :param max_local_microbatch_size: The maximum local (rank) micro-batch size (in tokens)
             expected. This is used to warm-up some MoE cache.
         :param device: The device the local copy of the model will be trained on.
-        :param pp_mesh: Pipeline parallel mesh. Pass this when using pipeline parallelism
-            to ensure the weights are initialized differently for different stages.
         """
         device = device or self.device
         self.to_empty(device=device)
@@ -232,9 +229,7 @@ class Transformer(nn.Module):
             if hasattr(module, "reset_parameters"):
                 module.reset_parameters()  # type: ignore
 
-        seed = self.init_seed
-        if pp_mesh is not None:
-            seed += pp_mesh.get_local_rank()
+        seed = self.init_seed + get_rank()
         generator = torch.Generator(device).manual_seed(seed)
 
         if self.embeddings is not None:
@@ -289,7 +284,11 @@ class Transformer(nn.Module):
 
         if self.lm_head is not None:
             self.init_method.init_final_w_out(
-                self.lm_head.w_out, d_model=self.d_model, std=self.init_std, generator=generator
+                self.lm_head.w_out,
+                d_model=self.d_model,
+                std=self.init_std,
+                generator=generator,
+                mup=self.lm_head.mups.get("w_out.weight"),
             )
 
         return generator
@@ -954,16 +953,12 @@ class MoETransformer(Transformer):
         for block in self.blocks.values():
             if not block.is_moe:
                 continue
-            block = cast(MoETransformerBlock, block)
-            reshard_after_forward = True
-            if pp_enabled or block.ep_enabled or block.tp_enabled:
-                reshard_after_forward = False
-            block.feed_forward_moe.prepare_experts_for_fsdp(
+            cast(MoETransformerBlock, block).feed_forward_moe.prepare_experts_for_fsdp(
                 world_mesh=world_mesh,
                 mp_policy=MixedPrecisionPolicy(
                     param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
                 ),
-                reshard_after_forward=reshard_after_forward,
+                reshard_after_forward=not pp_enabled,
             )
 
     def prepare_experts_for_ddp(self, world_mesh: DeviceMesh):

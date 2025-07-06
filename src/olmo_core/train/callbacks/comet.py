@@ -200,7 +200,7 @@ class CometCallback(Callback):
     def post_step(self):
         cancel_check_interval = self.cancel_check_interval or self.trainer.cancel_check_interval
         if self.enabled and get_rank() == 0 and self.step % cancel_check_interval == 0:
-            self.trainer.thread_pool.submit(self.check_if_canceled)
+            self.trainer.run_bookkeeping_op(self.check_if_canceled, cancel_in_progress=True)
 
     def post_train(self):
         if self.enabled and get_rank() == 0:

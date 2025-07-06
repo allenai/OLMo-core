@@ -11,7 +11,6 @@ from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
-from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.moe import (
     MoEConfig,
     MoELoadBalancingLossGranularity,
@@ -19,18 +18,13 @@ from olmo_core.nn.moe import (
     MoERouterGatingFunction,
     MoEType,
 )
+from olmo_core.nn.mup import MuPConfig
 from olmo_core.nn.transformer import (
     TransformerBlockType,
     TransformerConfig,
     TransformerType,
 )
-from olmo_core.optim import (
-    WSD,
-    AdamWConfig,
-    OptimGroupOverride,
-    SchedulerUnits,
-    SkipStepAdamWConfig,
-)
+from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
@@ -39,11 +33,8 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.train_module import (
-    TransformerActivationCheckpointingConfig,
-    TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
-    TransformerExpertParallelConfig,
     TransformerTrainModuleConfig,
 )
 
@@ -56,6 +47,62 @@ GLOBAL_BATCH_SIZE = (
 )  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
 MAX_DURATION = int(700e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
+
+
+def _build_model_config(
+    vocab_size: int,
+    d_model: int,
+    moe_hidden_size: int,
+    feed_forward_hidden_size: int,
+    mup: MuPConfig | None = None,
+) -> TransformerConfig:
+    config = TransformerConfig.llama_like(
+        d_model=d_model,
+        vocab_size=vocab_size,
+        n_layers=32,
+        n_heads=16,
+        n_kv_heads=4,
+        name=TransformerType.moe,
+        block_name=TransformerBlockType.moe_hybrid_reordered_norm,
+        qk_norm=True,
+        rope_theta=500_000,
+        layer_norm_eps=1e-6,
+        feed_forward_moe=MoEConfig(
+            name=MoEType.default,
+            num_experts=128,
+            hidden_size=moe_hidden_size,
+            capacity_factor=1.25,
+            router=MoERouterConfig(top_k=8, gating_function=MoERouterGatingFunction.sigmoid),
+            #  shared_mlp=FeedForwardConfig(hidden_size=4096, bias=False),
+            mup=mup,
+            lb_loss_weight=0.05,
+            z_loss_weight=None,
+            lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
+            scale_loss_by_num_layers=False,
+        ),
+        feed_forward=FeedForwardConfig(hidden_size=feed_forward_hidden_size, bias=False, mup=mup),
+        init_std=0.01,
+        mup=mup,
+    )
+    config.block.attention.sliding_window = SlidingWindowAttentionConfig(
+        force_first=False, pattern=[False, False, False, True]
+    )
+    config.block.attention.use_flash = True
+    config.block.attention.use_head_qk_norm = True
+
+    # First block will be a regular transformer block (no MoE component).
+    config.block_overrides = {
+        0: dataclasses.replace(
+            config.block,
+            name=TransformerBlockType.reordered_norm,
+            feed_forward_moe=None,
+            feed_forward=FeedForwardConfig(
+                hidden_size=feed_forward_hidden_size + 8 * moe_hidden_size, bias=False, mup=mup
+            ),
+        ),
+    }
+
+    return config
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -76,7 +123,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             name=MoEType.default,
             num_experts=128,
             hidden_size=1024,
-            capacity_factor=1.05,
+            capacity_factor=1.25,
             router=MoERouterConfig(top_k=8, gating_function=MoERouterGatingFunction.sigmoid),
             #  shared_mlp=FeedForwardConfig(hidden_size=4096, bias=False),
             lb_loss_weight=0.05,
@@ -87,9 +134,6 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         feed_forward=FeedForwardConfig(hidden_size=4096, bias=False),
         init_std=0.01,
     )
-
-    config.lm_head.loss_implementation = LMLossImplementation.fused_linear
-
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_first=False, pattern=[False, False, False, True]
     )
@@ -113,8 +157,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
     return TransformerTrainModuleConfig(
         rank_microbatch_size=2 * 4096,
         max_sequence_length=common.dataset.effective_sequence_length,
-        #  optim=SkipStepAdamWConfig(
-        optim=AdamWConfig(
+        optim=SkipStepAdamWConfig(
             #  lr=1.6e-4
             #  * math.sqrt(
             #      GLOBAL_BATCH_SIZE / (4096 * 512)
@@ -125,7 +168,6 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
-            fused=True,
             compile=False,  # doesn't work with FP8, only God knows why
         ),
         compile_model=True,
@@ -138,17 +180,14 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             prefetch_factor=1,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),
-        ep_config=TransformerExpertParallelConfig(degree=-1),
-        ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.selected_modules, modules=["*norm"]
-        ),
+        #  ep_config=TransformerExpertParallelConfig(degree=-1),
         float8_config=Float8Config(
             ao=AOFloat8LinearConfig(
                 enable_fsdp_float8_all_gather=True,
                 force_recompute_fp8_weight_in_bwd=True,
                 round_scales_to_power_of_2=True,
             ),
-            enabled=False,
+            enabled=True,
         ),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,

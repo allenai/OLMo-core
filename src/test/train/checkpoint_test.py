@@ -48,7 +48,7 @@ def test_checkpointer_with_local_dir(tmp_path, tiny_model_factory):
     )
 
 
-def test_checkpointer_with_remote_dir(s3_checkpoint_dir, tmp_path, tiny_model_factory):
+def test_checkpointer_with_remote_s3_dir(s3_checkpoint_dir, tmp_path, tiny_model_factory):
     from botocore.exceptions import NoCredentialsError
 
     try:
@@ -59,6 +59,21 @@ def test_checkpointer_with_remote_dir(s3_checkpoint_dir, tmp_path, tiny_model_fa
     run_distributed_test(
         run_checkpointer,
         func_args=(s3_checkpoint_dir, tmp_path / "work_dir", tiny_model_factory),
+        start_method="spawn",
+    )
+
+
+def test_checkpointer_with_remote_gcs_dir(gcs_checkpoint_dir, tmp_path, tiny_model_factory):
+    from google.auth.exceptions import DefaultCredentialsError
+
+    try:
+        dir_is_empty(gcs_checkpoint_dir)
+    except DefaultCredentialsError:
+        pytest.skip("Requires authentication with Google Cloud")
+
+    run_distributed_test(
+        run_checkpointer,
+        func_args=(gcs_checkpoint_dir, tmp_path / "work_dir", tiny_model_factory),
         start_method="spawn",
     )
 
@@ -99,7 +114,7 @@ def test_async_checkpointer_with_local_dir(tmp_path, tiny_model_factory):
     )
 
 
-def test_async_checkpointer_with_remote_dir(s3_checkpoint_dir, tmp_path, tiny_model_factory):
+def test_async_checkpointer_with_remote_s3_dir(s3_checkpoint_dir, tmp_path, tiny_model_factory):
     from botocore.exceptions import NoCredentialsError
 
     try:
@@ -110,5 +125,20 @@ def test_async_checkpointer_with_remote_dir(s3_checkpoint_dir, tmp_path, tiny_mo
     run_distributed_test(
         run_async_checkpointer,
         func_args=(s3_checkpoint_dir, tmp_path / "work_dir", tiny_model_factory),
+        start_method="spawn",
+    )
+
+
+def test_async_checkpointer_with_remote_gcs_dir(gcs_checkpoint_dir, tmp_path, tiny_model_factory):
+    from google.auth.exceptions import DefaultCredentialsError
+
+    try:
+        dir_is_empty(gcs_checkpoint_dir)
+    except DefaultCredentialsError:
+        pytest.skip("Requires authentication with Google Cloud")
+
+    run_distributed_test(
+        run_async_checkpointer,
+        func_args=(gcs_checkpoint_dir, tmp_path / "work_dir", tiny_model_factory),
         start_method="spawn",
     )

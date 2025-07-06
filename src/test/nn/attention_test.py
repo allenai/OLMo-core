@@ -11,6 +11,7 @@ from olmo_core.nn.attention import (
     RingAttentionZigZagLoadBalancer,
 )
 from olmo_core.nn.layer_norm import LayerNormConfig
+from olmo_core.nn.mup import MuPConfig, MuPScalingStrategy
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.testing import (
     DEVICES,
@@ -314,3 +315,40 @@ def test_zig_zag_load_balancer_shard_by_document_with_padding():
             -1,
         ]
     ]
+
+
+@pytest.mark.parametrize(
+    "mup_scaling_strategy",
+    [pytest.param(scaling_strategy) for scaling_strategy in MuPScalingStrategy],
+)
+def test_attention_mup_no_width_scaling_same_output(mup_scaling_strategy):
+    torch.random.manual_seed(0)
+
+    d_model = 16
+    seq_len = 32
+
+    attn_config = AttentionConfig(name=AttentionType.default, n_heads=8, n_kv_heads=2)
+
+    mup_config = MuPConfig(scaling_strategy=mup_scaling_strategy)
+    mup_attn_config = AttentionConfig(
+        name=AttentionType.default, n_heads=8, n_kv_heads=2, mup=mup_config
+    )
+
+    attn = attn_config.build(d_model)
+    mup_attn = mup_attn_config.build(d_model)
+
+    assert isinstance(attn, Attention)
+    assert isinstance(mup_attn, Attention)
+
+    # Make muP and non-muP attention have same linear layer weights
+    with torch.no_grad():
+        mup_attn.w_q.load_state_dict(attn.w_q.state_dict())
+        mup_attn.w_k.load_state_dict(attn.w_k.state_dict())
+        mup_attn.w_v.load_state_dict(attn.w_v.state_dict())
+        mup_attn.w_out.load_state_dict(attn.w_out.state_dict())
+
+    x = torch.randn(1, seq_len, d_model)
+    y = attn(x)
+    mup_y = mup_attn(x)
+
+    torch.testing.assert_close(y, mup_y)
