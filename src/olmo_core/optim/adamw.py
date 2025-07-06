@@ -44,7 +44,7 @@ def adamw_step(
     update = -step_size * torch.div(exp_avg, denom)
     update.mul_(step_factor)
     p.add_(update)
-    # step.add_(step_factor)
+    step.add_(step_factor)
 
 
 def foreach_adamw_step(
