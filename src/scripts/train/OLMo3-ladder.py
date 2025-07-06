@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import math
 from typing import Any, ClassVar, Dict
 from datetime import datetime
 
@@ -11,6 +12,7 @@ from olmo_core.internal.model_ladder import RunDuration, main
 from olmo_core.io import join_path
 from olmo_core.model_ladder import ModelLadder, ModelSize
 from olmo_core.optim.scheduler import WSD
+from olmo_core.nn.mup import MuPConfig, MuPOptimizerType, MuPScalingStrategy
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.optim import OptimConfig, OptimGroupOverride, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
@@ -24,17 +26,38 @@ from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
     WandBCallback,
-    ConfigSaverCallback
+    ConfigSaverCallback,
 )
-
+from olmo_core.train.callbacks.mup_coord_data import MuPCoordDataCallback
 
 SEQUENCE_LENGTH = 8192
 SAVE_INTERVAL = 1_000
 EVAL_INTERVAL = 100
 
 
-#### TODO: Fix all these (will this change ladder options?)
-LR = 4.4e-5 * 2 # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes.
+def optimal_wsd_lr(D: float, G: float, T_0: int, T: int):
+    """ WSD LR implementation from @shana based on https://arxiv.org/abs/2501.18965v1 """
+    def _curlT_1_wsd(D: float, T_0: int, T: int) -> float:
+        return (D * D) / (T + T_0)
+
+    def _curlT_2_wsd(G: float, T_0: int, T: int) -> float:
+        # Eq. 21
+        term_1 = (G * G) / (6 * (T + T_0)) * (2 * T + 4 * T_0 - 1 + 1 / (T + 1 - T_0))
+        omega_2 = (2 * T - 2 * T_0 + 3 / (T - T_0) + 3 * sum(1 / i for i in range(1, T - T_0))) / (T - T_0 + 1)
+        # @shanea mathing (maybe wrong)
+        # omega_1_part_1 = 3 * _lambda_2(T_0, T)
+        omega_1_part_1 = 3 * sum(1 / i for i in range(T + T_0 - 2, T - T_0 + 1, -2))
+        # omega_1_part_2_factor1 = (1 / (T + 1 - T_0)) - (T - T_0 + 1)
+        omega_1_part_2_factor1 = - (T - T_0) / (T + 1 - T_0)
+        omega_1_part_2_factor2 = (T_0 - 1) / ((T - T_0 + 2) * (T + T_0))
+        omega_1_part_2 = omega_1_part_2_factor1 * omega_1_part_2_factor2
+        omega_1 = omega_1_part_1 + omega_1_part_2
+        term_2 = (G * G) * (1 / 3) * (omega_1 + omega_2)
+        return term_1 + term_2
+    
+    assert T_0 <= T
+
+    return math.sqrt(_curlT_1_wsd(D, T_0, T) / _curlT_2_wsd(G, T_0, T))
 
 
 @dataclass
@@ -65,12 +88,36 @@ class BaselineWSDModelLadder(ModelLadder):
     INCLUDE_INSTANCE_FILTER = True
 
     def _get_model_config(self, *, size: ModelSize) -> TransformerConfig:
-        config: TransformerConfig = getattr(TransformerConfig, f"olmo2_{size}")(
+        # Note: There are some olmo2_mup_{size}, but these are for @shanea's
+        # mup ladder. We can just use the existing sizes out-of-the-box
+        model_config: TransformerConfig = getattr(TransformerConfig, f"olmo2_{size}")(
             vocab_size=self.tokenizer.padded_vocab_size(),
             init_seed=self.init_seed,
             **self.MODEL_OVERRIDES.get(size, {}),
         )
 
+        base_size = ModelSize.size_7B
+        base_model_config = getattr(TransformerConfig, f"olmo2_{base_size}")(
+            vocab_size=self.tokenizer.padded_vocab_size(),
+            init_seed=self.init_seed,
+            **self.MODEL_OVERRIDES.get(base_size, {}),
+        )
+        mup_width_scalings = model_config.get_mup_width_scalings(base_model_config)
+        mup_config = MuPConfig(
+            MuPOptimizerType.adam_coupled_wd,
+            scaling_strategy=MuPScalingStrategy.constant_inputs,
+            width_scalings=mup_width_scalings,
+        )
+
+        # Need to reconstruct config to pass in muP config
+        config = getattr(TransformerConfig, f"olmo2_mup_{size}")(
+            vocab_size=self.tokenizer.padded_vocab_size(),
+            init_seed=self.init_seed,
+            mup=mup_config,
+            **self.MODEL_OVERRIDES.get(size, {}),
+        )
+
+        # TOOD: Do I need to update this on 
         config.block.attention.sliding_window = SlidingWindowAttentionConfig(
             force_full_attention_on_first_layer=False,
             force_full_attention_on_last_layer=True,
@@ -80,24 +127,31 @@ class BaselineWSDModelLadder(ModelLadder):
         config.block.attention.use_head_qk_norm = True
 
         return config
+    
+    def get_lr(self, total_toks: int) -> float:
+        # TODO: What are these magic numbers?
+        D = 0.099
+        G = 0.1
 
-    def get_optim_config(self) -> OptimConfig:
+        gbz_toks = self.get_global_batch_size()
+        steps = total_toks / gbz_toks
+
+        optimal_lr = optimal_wsd_lr(D, G, int(steps - 25_000), steps)
+
+        return optimal_lr
+
+    def get_optim_config(self, run_duration: RunDuration) -> OptimConfig:
+        total_toks = self.get_duration(run_duration)
+
         return SkipStepAdamWConfig(
-            lr=LR, # TODO: Where does this come from??
-            weight_decay=0.033, # TODO: Why??
+            lr=self.get_lr(total_toks),
+            weight_decay=0.1, # Follows hero run and mUP ladder
             betas=(0.9, 0.95),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
             compile=False,
         )
-
-        # Old LR calculation::
-        # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838
-        assert self.sequence_length in {2048, 4096}
-        lr = 0.0047 * (self.model_size / 108000000) ** (-1 / 3)
-        if self.sequence_length == 4096:
-            lr /= 4
 
     def get_train_module_config(
         # self, common: CommonComponents, dp_world_size: int
@@ -115,10 +169,14 @@ class BaselineWSDModelLadder(ModelLadder):
         if "B200" in CLUSTER_TO_GPU_TYPE.get(cluster, "unknown"):
             rank_mbz *= 2
 
+        # In the hero run, we're have a 100B decay stage for 6T toks, or 1.67% of the full run is decay
+        total_tokens = self.get_duration(run_duration)
+        ANNEAL_TOKENS = total_tokens * 0.0167 # decay for final 1.67% of training
+
         return TransformerTrainModuleConfig(
             rank_microbatch_size=rank_mbz,
             max_sequence_length=dataset.effective_sequence_length,
-            optim=self.get_optim_config(),
+            optim=self.get_optim_config(run_duration),
             compile_model=True,
             dp_config=TransformerDataParallelConfig(
                 name=DataParallelType.hsdp,
@@ -130,11 +188,11 @@ class BaselineWSDModelLadder(ModelLadder):
             max_grad_norm=1.0,
             scheduler=WSD(
                 units=SchedulerUnits.steps,
-                warmup=2000, # TODO: is this right?
-                decay=0, # disable decay (we will launch separately) TODO: I think? OR does peak LR depend on schedule
-                # decay=(
-                #     int(ANNEAL_TOKENS / self.get_global_batch_size())
-                # ),  # TODO (from OLMo 3 1B config): This isn't right because it doesn't take batchwup into account.
+                # warmup=2000, # from hero run
+                warmup=round(self.model_size / self.get_global_batch_size()), # from wsd ladder # TODO: how much warmup is right?
+                decay=(
+                    int(ANNEAL_TOKENS / self.get_global_batch_size())
+                ),  # In the hero run, we use 4x global batch size due to batch warmup
                 decay_fraction=None,
             ),
         )
@@ -201,14 +259,23 @@ class BaselineWSDModelLadder(ModelLadder):
             )
             .with_recommended_evals(
                 tokenizer=self.tokenizer, 
-                sequence_length=SEQUENCE_LENGTH, 
+                sequence_length=self.sequence_length, 
                 cluster=cluster, 
                 task_set="full", 
                 eval_interval=EVAL_INTERVAL
             )
         )
 
-        # # batch size warmup # TODO: Figure out how to do this
+        config = config.with_callback(
+            "mup_coord_data",
+            MuPCoordDataCallback(
+                enabled=True,
+                collection_step=10,
+            ),
+        )
+
+        # We are not using batch size warmup for ladder runs
+        # # batch size warmup 
         # config.callbacks["batchwup"] = BatchSizeSchedulerCallback(
         #     batch_sizes=[GLOBAL_BATCH_SIZE, GLOBAL_BATCH_SIZE * 2, GLOBAL_BATCH_SIZE * 4],
         #     schedule=[
