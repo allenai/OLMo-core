@@ -229,7 +229,7 @@ class Transformer(nn.Module):
             if hasattr(module, "reset_parameters"):
                 module.reset_parameters()  # type: ignore
 
-        seed = self.init_seed + get_rank()
+        seed = self.init_seed # + get_rank() bringing back this bug for testing
         generator = torch.Generator(device).manual_seed(seed)
 
         if self.embeddings is not None:
