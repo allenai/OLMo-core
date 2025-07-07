@@ -24,7 +24,12 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
             --output_dir /weka/oe-training-default/ai2-llm/jacobm/data/sft/jacobmorrison/tulu-3-sft-olmo-2-mixture
     ```
 
-    This command will also write tokenizer config files that will be needed later.
+    This command will also write tokenizer config files to `<output_dir>/tokenizer` that will be needed later.
+
+    *Be careful with your choice of chat template!* Olmo-core uses either `[eos]` or `[eos, bos]` runs of tokens as document
+    boundaries. So if you have no `bos` and you have `[eos]` scattered throughout your chat template then each turn of
+    your conversation will be treated as an entirely separate document! Alternatively if you have `bos` and `eos`, but they
+    are separated by a newline (eg `[eos, '\n', bos]`) then logically separete documents wont be separatated at all!
 
     > TIP: Using `uv` you can install gantry on your machine with `uv tool install beaker-gantry`.
 
