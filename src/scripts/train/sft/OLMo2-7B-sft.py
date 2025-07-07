@@ -219,8 +219,9 @@ class SFTConfig(Config):
             global_batch_size_tokens=global_batch_size,
             gpu_type=gpu_type,  # used to double microbatch size for B200s
         )
-        print("Batch size config (before overrides):")
-        print(bs_config)
+        if get_local_rank() == 0:
+            print("Batch size config (before overrides):")
+            print(bs_config)
 
         dp_shard_degree = GPUS_PER_NODE // (bs_config.cp_degree or 1)
         if not dp_shard_degree > 0:
