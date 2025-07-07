@@ -383,16 +383,7 @@ Examples:
     )
 
     # Parse known args to get positional arguments and cmd
-    args, remaining = parser.parse_known_args()
-
-    # Parse overrides from remaining args
-    overrides = []
-    for arg in remaining:
-        if arg.startswith("--"):
-            # Remove the -- prefix and add to overrides
-            overrides.append(arg[2:])
-        else:
-            parser.error(f"Unexpected argument: {arg}")
+    args, overrides = parser.parse_known_args()
 
     # Prepare the environment for the given command.
     if args.cmd in ("launch", "dry_run"):
