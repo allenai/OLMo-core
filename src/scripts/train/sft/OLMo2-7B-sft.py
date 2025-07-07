@@ -57,7 +57,7 @@ from olmo_core.utils import prepare_cli_environment, seed_all
 
 log = logging.getLogger(__name__)
 
-DEFAULT_SEQUENCE_LENGTH = 32_768
+DEFAULT_SEQUENCE_LENGTH = 16_384
 DEFAULT_NUM_NODES = 1
 GPUS_PER_NODE = 8
 MAX_RANK_MICROBATCH_SIZE_TOKENS = 16_384  # max tokens this config can handle on an H100
