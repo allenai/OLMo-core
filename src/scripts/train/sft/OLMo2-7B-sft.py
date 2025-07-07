@@ -101,7 +101,8 @@ class BatchSizeConfig:
 
         # Validate and calculate sequences per microbatch
         assert self.rank_microbatch_size_tokens % self.sequence_length == 0, (
-            "rank_microbatch_size_tokens must be divisible by sequence_length"
+            "rank_microbatch_size_tokens must be divisible by sequence_length (got "
+            f"{self.rank_microbatch_size_tokens} and {self.sequence_length})"
         )
         self.sequences_per_microbatch = self.rank_microbatch_size_tokens // self.sequence_length
 
@@ -109,7 +110,8 @@ class BatchSizeConfig:
         total_microbatch_tokens = self.rank_microbatch_size_tokens * self.num_data_parallel_ranks
         assert self.global_batch_size_tokens % total_microbatch_tokens == 0, (
             "global_batch_size_tokens must be divisible by "
-            "(rank_microbatch_size_tokens * num_data_parallel_ranks)"
+            "(rank_microbatch_size_tokens * num_data_parallel_ranks) (got "
+            f"{self.global_batch_size_tokens} and {total_microbatch_tokens})"
         )
         self.grad_accum_steps = self.global_batch_size_tokens // total_microbatch_tokens
 
