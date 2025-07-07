@@ -241,13 +241,13 @@ class SFTConfig(Config):
             train_module=TransformerTrainModuleConfig(
                 rank_microbatch_size=bs_config.rank_microbatch_size_tokens,
                 max_sequence_length=bs_config.sequence_length,
-                z_loss_multiplier=1e-5,
+                z_loss_multiplier=None,
                 compile_model=True,
                 optim=SkipStepAdamWConfig(
                     lr=8e-05,
                     weight_decay=0.0,  # NOTE: different from pretraining
                     betas=(0.9, 0.95),
-                    compile=True,
+                    compile=False,
                 ),
                 dp_config=TransformerDataParallelConfig(
                     name=DataParallelType.fsdp,
@@ -373,16 +373,13 @@ Examples:
         default=DEFAULT_SEQUENCE_LENGTH,
     )
     parser.add_argument(
-        "--num_nodes",
-        type=int,
-        help="The number of nodes to use.",
-        default=DEFAULT_NUM_NODES,
+        "--num_nodes", type=int, help="The number of nodes to use.", default=DEFAULT_NUM_NODES
     )
     parser.add_argument(
         "--global_batch_size",
         type=int,
         help="The global batch size in tokens.",
-        default=4 * DEFAULT_SEQUENCE_LENGTH * DEFAULT_NUM_NODES * GPUS_PER_NODE,
+        default=64 * DEFAULT_SEQUENCE_LENGTH,
     )
 
     # Parse known args to get positional arguments and cmd
