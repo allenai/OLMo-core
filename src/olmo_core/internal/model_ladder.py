@@ -103,6 +103,7 @@ class SubCmd(StrEnum):
 def build_config(
     ladder: ModelLadder,
     script: str,
+    name: str,
     size: ModelSize,
     run_duration: RunDuration,
     cmd: SubCmd,
@@ -115,7 +116,7 @@ def build_config(
     launch = build_launch_config(
         name=f"{ladder.name}-{size}-{run_duration}",
         root_dir=root_dir,
-        cmd=[script, SubCmd.train, size, run_duration, cluster, *overrides],
+        cmd=[script, SubCmd.train, name, size, run_duration, cluster, *overrides],
         cluster=cluster,
     ).merge(overrides, strict=False)
 
@@ -181,7 +182,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} 1B 1xC ai2/pluto-cirrascale --launch.n
     ladder = ladder.merge(overrides, prefix="ladder")
 
     # Build run config.
-    config = build_config(ladder, script, size, run_duration, cmd, cluster, overrides)
+    config = build_config(ladder, script, name, size, run_duration, cmd, cluster, overrides)
     config.ladder.validate()
 
     # Run the cmd.
