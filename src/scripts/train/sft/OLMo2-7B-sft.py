@@ -3,13 +3,13 @@ This script can be used to launch an SFT run for the 7B model on Beaker.
 Run the script without any arguments to see usage info. See the README for more details.
 """
 
+import argparse
 import logging
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple, cast
+from typing import List, Optional, cast
 
-import rich
 import yaml
 from rich import print
 
@@ -38,7 +38,6 @@ from olmo_core.train import (
 )
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
-    CometCallback,
     ConfigSaverCallback,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
@@ -58,22 +57,84 @@ from olmo_core.utils import prepare_cli_environment, seed_all
 
 log = logging.getLogger(__name__)
 
-# TODO: make seq len and batch size configurable
-# Right now you can override them with a few flags in the command line.
-SEQUENCE_LENGTH = 16384
-GLOBAL_BATCH_SIZE = 16 * SEQUENCE_LENGTH
+DEFAULT_SEQUENCE_LENGTH = 16_384
+DEFAULT_NUM_NODES = 1
+GPUS_PER_NODE = 8
+MAX_RANK_MICROBATCH_SIZE_TOKENS = 16_384  # max tokens this config can handle on an H100
 
-INTRA_DOCUMENT_MASKING = True
-CP_DEGREE: Optional[int] = None
 
-NUM_GPUS = 8
-assert NUM_GPUS % 8 == 0, "NUM_GPUS must be divisible by 8"
-NUM_NODES = NUM_GPUS // 8
+@dataclass
+class BatchSizeConfig:
+    global_batch_size_tokens: int
+    sequence_length: int
+    dp_world_size: int
+    gpu_type: str
+    rank_microbatch_size_tokens: int = field(init=False)
+    rank_microbatch_size_sequences: int = field(init=False)
+    grad_accum_steps: int = field(init=False)
+    cp_degree: Optional[int] = None
+
+    def __post_init__(self):
+        assert self.global_batch_size_tokens > 0, "global_batch_size_tokens must be positive"
+        assert self.sequence_length > 0, "sequence_length must be positive"
+        assert (self.sequence_length & (self.sequence_length - 1)) == 0, (
+            "sequence_length must be a power of 2"
+        )
+        assert self.dp_world_size > 0, "dp_world_size must be positive"
+        assert (self.dp_world_size & (self.dp_world_size - 1)) == 0, (
+            "dp_world_size must be a power of 2"
+        )
+
+        assert self.global_batch_size_tokens % (self.dp_world_size * 2) == 0, (
+            "global_batch_size_tokens must be divisible by dp_world_size * 2 (got "
+            f"{self.global_batch_size_tokens} and {self.dp_world_size * 2})"
+        )
+
+        self.rank_microbatch_size_tokens = self.global_batch_size_tokens // (self.dp_world_size * 2)
+        # simple heuristic: double ubatch size to ~double throughput on B200s
+        max_tokens_per_rank = MAX_RANK_MICROBATCH_SIZE_TOKENS
+        if "B200" in self.gpu_type:
+            self.rank_microbatch_size_tokens *= 2
+            max_tokens_per_rank *= 2
+
+        # Check if we need context parallelism
+        if self.rank_microbatch_size_tokens > max_tokens_per_rank:
+            # Calculate minimum CP degree needed
+            min_cp_degree = 2
+            while (self.rank_microbatch_size_tokens // min_cp_degree) > max_tokens_per_rank:
+                min_cp_degree *= 2
+
+            self.cp_degree = min_cp_degree
+            log.info(
+                f"Rank microbatch size ({self.rank_microbatch_size_tokens} tokens) exceeds "
+                f"max ({max_tokens_per_rank} tokens). Setting cp_degree={self.cp_degree}"
+            )
+
+        assert self.rank_microbatch_size_tokens % self.sequence_length == 0, (
+            "rank_microbatch_size_tokens must be divisible by sequence_length (got "
+            f"{self.rank_microbatch_size_tokens} and {self.sequence_length})"
+        )
+        self.rank_microbatch_size_sequences = (
+            self.rank_microbatch_size_tokens // self.sequence_length
+        )
+
+        # Adjust total microbatch tokens calculation for CP
+        cp_factor = self.cp_degree if self.cp_degree is not None else 1
+        total_microbatch_tokens = self.rank_microbatch_size_tokens * self.dp_world_size * cp_factor
+        assert self.global_batch_size_tokens % total_microbatch_tokens == 0, (
+            "global_batch_size_tokens must be divisible by "
+            "(rank_microbatch_size_tokens * dp_world_size * cp_degree) (got "
+            f"{self.global_batch_size_tokens} and {total_microbatch_tokens})"
+        )
+        self.grad_accum_steps = self.global_batch_size_tokens // total_microbatch_tokens
 
 
 def build_sft_dataset(
-    dataset_name: str, root_dir: str
-) -> Tuple[NumpyDatasetConfig, TokenizerConfig]:
+    dataset_name: str,
+    root_dir: str,
+    tokenizer_config: TokenizerConfig,
+    sequence_length: int,
+) -> NumpyDatasetConfig:
     # NOTE: dataset path can be configured relative to root_dir
     # root_dir is /weka/oe-training-default/ai2-llm or gs://ai2-llm depending on the cluster
     sft_datasets_file = Path(__file__).parent / "sft_datasets.yaml"
@@ -94,9 +155,6 @@ def build_sft_dataset(
         label_mask_path = dataset_dir / label_mask_file
         label_mask_paths.append(root_dir + "/" + str(label_mask_path))
 
-    # tokenizer_config = TokenizerConfig.olmo2instruct()
-    tokenizer_config = TokenizerConfig.dolma2()
-
     dataset = NumpyDatasetConfig(
         # general config
         tokenizer=tokenizer_config,
@@ -105,14 +163,12 @@ def build_sft_dataset(
         paths=paths,
         label_mask_paths=label_mask_paths,
         # how to handle long docs?
-        #name=NumpyDatasetType.padded_fsl, # NumpyDatasetType.packed_fsl,  # concatenated short docs into a single sequence... (see also "padded_fsl")
-        #generate_doc_lengths=False, # INTRA_DOCUMENT_MASKING,  # ...and mask attention so that they don't attend to each other
         name=NumpyDatasetType.packed_fsl,  # concatenated short docs into a single sequence... (see also "padded_fsl")
-        generate_doc_lengths=INTRA_DOCUMENT_MASKING,  # ...and mask attention so that they don't attend to each other
+        generate_doc_lengths=True,  # ...and mask attention so that they don't attend to each other
         long_doc_strategy=LongDocStrategy.truncate,  # truncate docs...
-        sequence_length=SEQUENCE_LENGTH,  # ...that are over this length
+        sequence_length=sequence_length,  # ...that are over this length
     )
-    return dataset, tokenizer_config
+    return dataset
 
 
 @dataclass
@@ -143,6 +199,9 @@ class SFTConfig(Config):
         cmd: str,
         run_name: str,
         dataset_name: str,
+        seq_len: int,
+        num_nodes: int,
+        global_batch_size: int,
         checkpoint: str,
         cluster: str,
         overrides: List[str],
@@ -150,21 +209,43 @@ class SFTConfig(Config):
         root_dir = get_root_dir(cluster)
         user_name = get_beaker_username()
 
-        dataset, tokenizer_config = build_sft_dataset(dataset_name, root_dir)
+        tokenizer_config = TokenizerConfig.dolma2()
+        dataset_config = build_sft_dataset(dataset_name, root_dir, tokenizer_config, seq_len)
+        gpu_type = CLUSTER_TO_GPU_TYPE[cluster]
 
-        # simple heuristic: double ubatch size to ~double throughput on B200s
-        rank_microbatch_size = GLOBAL_BATCH_SIZE // NUM_GPUS // 2 // 2
-        if "B200" in CLUSTER_TO_GPU_TYPE.get(cluster, "unknown"):
-            rank_microbatch_size *= 2
+        bs_config = BatchSizeConfig(
+            sequence_length=seq_len,
+            dp_world_size=num_nodes * GPUS_PER_NODE,  # every rank is data parallel
+            global_batch_size_tokens=global_batch_size,
+            gpu_type=gpu_type,  # used to double microbatch size for B200s
+        )
+        if get_local_rank() == 0:
+            print("Batch size config (before overrides):")
+            print(bs_config)
+
+        dp_shard_degree = GPUS_PER_NODE // (bs_config.cp_degree or 1)
+        if not dp_shard_degree > 0:
+            raise OLMoConfigurationError(f"dp_shard_degree ({dp_shard_degree}) must be positive.")
 
         config = SFTConfig(
             run_name=run_name,
             launch=build_launch_config(
                 name=run_name,
                 root_dir=root_dir,
-                cmd=[script, cmd, run_name, dataset_name, checkpoint, cluster, *overrides],
+                cmd=[
+                    script,
+                    cmd,
+                    run_name,
+                    dataset_name,
+                    checkpoint,
+                    cluster,
+                    f"--seq_len={seq_len}",
+                    f"--num_nodes={num_nodes}",
+                    f"--global_batch_size={global_batch_size}",
+                    *overrides,
+                ],
                 cluster=cluster,
-                num_nodes=NUM_NODES,
+                num_nodes=num_nodes,
                 budget="ai2/oe-adapt",
                 workspace="ai2/olmo-instruct",
             ),
@@ -173,17 +254,15 @@ class SFTConfig(Config):
                 use_flash=True,
                 rope_theta=8 * 10**6,
             ),
-            dataset=dataset,
+            dataset=dataset_config,
             data_loader=NumpyDataLoaderConfig(
-                global_batch_size=GLOBAL_BATCH_SIZE,  # specified in tokens, not instances/sequences
-                seed=34521,
-                num_workers=4,
+                global_batch_size=bs_config.global_batch_size_tokens, seed=34521, num_workers=4
             ),
             train_module=TransformerTrainModuleConfig(
-                rank_microbatch_size=rank_microbatch_size,
-                max_sequence_length=SEQUENCE_LENGTH,
+                rank_microbatch_size=bs_config.rank_microbatch_size_tokens,
+                max_sequence_length=bs_config.sequence_length,
                 z_loss_multiplier=None,
-                compile_model=False,
+                compile_model=True,
                 optim=SkipStepAdamWConfig(
                     lr=8e-05,
                     weight_decay=0.0,  # NOTE: different from pretraining
@@ -191,17 +270,21 @@ class SFTConfig(Config):
                     compile=False,
                 ),
                 dp_config=TransformerDataParallelConfig(
-                    name=DataParallelType.fsdp,
+                    name=DataParallelType.hsdp,
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
+                    shard_degree=GPUS_PER_NODE  # try to keep communication w/in a node
+                    // (bs_config.cp_degree or 1),
                 ),
                 cp_config=(
-                    TransformerContextParallelConfig.llama3(degree=CP_DEGREE)
-                    if INTRA_DOCUMENT_MASKING
-                    else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE)
-                )
-                if CP_DEGREE
-                else None,
+                    (
+                        TransformerContextParallelConfig.llama3(degree=bs_config.cp_degree)
+                        if dataset_config.generate_doc_lengths  # only use llama3 if we're masking docs
+                        else TransformerContextParallelConfig.zig_zag(degree=bs_config.cp_degree)
+                    )
+                    if bs_config.cp_degree
+                    else None
+                ),
                 ac_config=TransformerActivationCheckpointingConfig(
                     mode=TransformerActivationCheckpointingMode.selected_modules,
                     modules=["blocks.*.feed_forward"],
@@ -241,16 +324,6 @@ class SFTConfig(Config):
                     enabled=False,
                     cancel_check_interval=10,
                 ),
-            )
-            .with_callback(
-                "comet",
-                CometCallback(
-                    name=run_name,
-                    workspace="ai2",
-                    project=f"{user_name}-7B-sft",
-                    enabled=False,
-                    cancel_check_interval=10,
-                ),
             ),
         ).merge(overrides)
 
@@ -271,7 +344,6 @@ def train(checkpoint: str, config: SFTConfig):
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
     cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
-    cast(CometCallback, trainer.callbacks["comet"]).config = config_dict
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
     # Try loading a checkpoint from the save folder, otherwise start from the pretraining checkpoint.
@@ -289,53 +361,73 @@ def train(checkpoint: str, config: SFTConfig):
 
 
 if __name__ == "__main__":
-    USAGE = f"""
-SFT the 7B model.
+    parser = argparse.ArgumentParser(
+        description="SFT the 7B model.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python %(prog)s dry_run test my-dataset-name /path/to/ckpt ai2/cluster
+  python %(prog)s launch run01 OpenThoughts3-1.2M /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/jupiter-cirrascale-2 --seq_len=4096 --num_nodes=2 --launch.priority=high
+""",
+    )
 
-[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]launch|train|dry_run[/] [i b]RUN_NAME DATASET_NAME PRETRAIN_CHECKPOINT CLUSTER[/] [i][OVERRIDES...][/]
+    # Subcommand
+    parser.add_argument(
+        "cmd",
+        choices=["launch", "train", "dry_run"],
+        help="Subcommand to run",
+    )
 
-[b]Subcommands[/]
-[b magenta]launch:[/]      Launch the script on Beaker with the [b magenta]train[/] subcommand.
-[b magenta]train:[/]       Run the trainer. You usually shouldn't invoke the script with this subcommand directly.
-             Instead use the [b magenta]launch[/] cmd to submit it to Beaker or run it via torchrun if you know what you're doing.
-[b magenta]dry_run:[/]     Print the config for debugging.
+    # Positional arguments
+    parser.add_argument(
+        "run_name",
+        help="The name of the run. Used for the run name in W&B/Comet and the checkpoint dir.",
+    )
+    parser.add_argument(
+        "dataset_name", help="The name of the dataset to use. Must be defined in sft_datasets.yaml."
+    )
+    parser.add_argument("pretrain_checkpoint", help="Path to the pretraining checkpoint to load.")
+    parser.add_argument(
+        "cluster", help="The Beaker cluster to use (e.g., 'ai2/jupiter-cirrascale-2')."
+    )
+    parser.add_argument(
+        "--seq_len",
+        type=int,
+        help="The maximum sequence length to use.",
+        default=DEFAULT_SEQUENCE_LENGTH,
+    )
+    parser.add_argument(
+        "--num_nodes", type=int, help="The number of nodes to use.", default=DEFAULT_NUM_NODES
+    )
+    parser.add_argument(
+        "--global_batch_size",
+        type=int,
+        help="The global batch size in tokens.",
+        default=64 * DEFAULT_SEQUENCE_LENGTH,
+    )
 
-[b]Arguments[/]
-[b]RUN_NAME:[/]            The name of the run. Used for the run name in W&B/Comet and the checkpoint dir.
-[b]DATASET_NAME:[/]       The name of the dataset to use. Must be defined in sft_datasets.yaml.
-[b]PRETRAIN_CHECKPOINT:[/] Path to the pretraining checkpoint to load.
-[b]CLUSTER:[/]             The Beaker cluster to use (e.g., 'ai2/jupiter-cirrascale-2').
-[b]OVERRIDES:[/]           Optional key=value overrides for the config. Use dot notation for nested fields.
-                           E.g., `--launch.priority=high`, `--trainer.callbacks.wandb.enabled=True`, or `--train_module.optim.lr=1e-5`
-
-[b]Examples[/]
-$ [i]python {sys.argv[0]} dry_run test my-dataset-name /path/to/ckpt ai2/cluster
-$ [i]python {sys.argv[0]} launch run01 OpenThoughts3-1.2M /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/jupiter-cirrascale-2 --launch.priority=high[/]
-""".strip()
-
-    # Parse command line arguments.
-    if len(sys.argv) < 6 or sys.argv[1] not in ("launch", "train", "dry_run"):
-        rich.get_console().print(USAGE, highlight=False)
-        sys.exit(1)
-
-    script, cmd, run_name, dataset_name, checkpoint, cluster, *overrides = sys.argv
+    # Parse known args to get positional arguments and cmd
+    args, overrides = parser.parse_known_args()
 
     # Prepare the environment for the given command.
-    if cmd in ("launch", "dry_run"):
+    if args.cmd in ("launch", "dry_run"):
         prepare_cli_environment()
-    elif cmd == "train":
+    elif args.cmd == "train":
         prepare_training_environment()
     else:
-        raise NotImplementedError(cmd)
+        raise NotImplementedError(args.cmd)
 
     # Build the config, applying any overrides.
     config = SFTConfig.build(
-        script=script,
+        script=sys.argv[0],
         cmd="train",
-        run_name=run_name,
-        dataset_name=dataset_name,
-        checkpoint=checkpoint,
-        cluster=cluster,
+        run_name=args.run_name,
+        dataset_name=args.dataset_name,
+        checkpoint=args.pretrain_checkpoint,
+        cluster=args.cluster,
+        seq_len=args.seq_len,
+        num_nodes=args.num_nodes,
+        global_batch_size=args.global_batch_size,
         overrides=overrides,
     )
 
@@ -343,14 +435,14 @@ $ [i]python {sys.argv[0]} launch run01 OpenThoughts3-1.2M /weka/oe-training-defa
     if get_local_rank() == 0:
         print(config)
 
-    if cmd == "dry_run":
+    if args.cmd == "dry_run":
         pass
-    elif cmd == "launch":
+    elif args.cmd == "launch":
         config.launch.launch(follow=True)
-    elif cmd == "train":
+    elif args.cmd == "train":
         try:
-            train(checkpoint, config)
+            train(args.pretrain_checkpoint, config)
         finally:
             teardown_training_environment()
     else:
-        raise NotImplementedError(cmd)
+        raise NotImplementedError(args.cmd)
