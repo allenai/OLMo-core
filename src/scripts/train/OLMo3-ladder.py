@@ -32,7 +32,7 @@ from olmo_core.train.callbacks.mup_coord_data import MuPCoordDataCallback
 
 SEQUENCE_LENGTH = 8192
 SAVE_INTERVAL = 1_000
-EVAL_INTERVAL = 100
+EVAL_INTERVAL = 500
 
 
 def optimal_wsd_lr(D: float, G: float, T_0: int, T: int):
@@ -317,14 +317,14 @@ class BaselineWSDModelLadder(ModelLadder):
         )
 
 
-def build_ladder(root_dir: str) -> BaselineWSDModelLadder:
+def build_ladder(root_dir: str, name: str = "OLMo3") -> BaselineWSDModelLadder:
     beaker_username = get_beaker_username()
     if beaker_username is not None:
         save_folder = str(join_path(root_dir, f"checkpoints/{beaker_username.lower()}/ladder"))
     else:
         save_folder = str(join_path(root_dir, "checkpoints/ladder"))
     return BaselineWSDModelLadder(
-        name="OLMo3",
+        name=name,
         project="OLMo3-model-ladder",
         mix_base_dir=root_dir,
         work_dir=get_work_dir(root_dir),

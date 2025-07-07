@@ -145,7 +145,7 @@ def build_config(
 
 def main(ladder_builder: Callable[[str], ModelLadder]):
     usage = f"""
-[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]SIZE RUN_DURATION CLUSTER[/] [i][OVERRIDES...][/]
+[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]NAME SIZE RUN_DURATION CLUSTER[/] [i][OVERRIDES...][/]
 
 [b]Subcommands[/]
 [b magenta]launch:[/]       Launch the script on Beaker with the [b magenta]train[/] subcommand.
@@ -159,13 +159,14 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} 1B 1xC ai2/pluto-cirrascale --launch.n
     """.strip()
 
     try:
-        script, cmd, size, run_duration, cluster, overrides = (
+        script, cmd, name, size, run_duration, cluster, overrides = (
             sys.argv[0],
             SubCmd(sys.argv[1]),
-            ModelSize(sys.argv[2]),
-            RunDuration(sys.argv[3]),
-            sys.argv[4],
-            sys.argv[5:],
+            sys.argv[2],
+            ModelSize(sys.argv[3]),
+            RunDuration(sys.argv[4]),
+            sys.argv[5],
+            sys.argv[6:],
         )
     except (IndexError, ValueError):
         import rich
@@ -176,7 +177,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} 1B 1xC ai2/pluto-cirrascale --launch.n
     cmd.prepare_environment()
 
     # Build ladder config.
-    ladder = ladder_builder(get_root_dir(cluster))
+    ladder = ladder_builder(get_root_dir(cluster), name)
     ladder = ladder.merge(overrides, prefix="ladder")
 
     # Build run config.
