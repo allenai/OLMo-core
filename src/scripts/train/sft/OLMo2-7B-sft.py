@@ -73,7 +73,6 @@ class BatchSizeConfig:
     rank_microbatch_size_tokens: int = field(init=False)
     rank_microbatch_size_sequences: int = field(init=False)
     grad_accum_steps: int = field(init=False)
-    sequences_per_microbatch: int = field(init=False)
 
     def __post_init__(self):
         assert self.global_batch_size_tokens > 0, "global_batch_size_tokens must be positive"
@@ -105,13 +104,6 @@ class BatchSizeConfig:
         # simple heuristic: double ubatch size to ~double throughput on B200s
         if "B200" in self.gpu_type:
             self.rank_microbatch_size_tokens *= 2
-
-        # Validate and calculate sequences per microbatch
-        assert self.rank_microbatch_size_tokens % self.sequence_length == 0, (
-            "rank_microbatch_size_tokens must be divisible by sequence_length (got "
-            f"{self.rank_microbatch_size_tokens} and {self.sequence_length})"
-        )
-        self.sequences_per_microbatch = self.rank_microbatch_size_tokens // self.sequence_length
 
         # Validate and calculate gradient accumulation steps
         total_microbatch_tokens = self.rank_microbatch_size_tokens * self.num_data_parallel_ranks
