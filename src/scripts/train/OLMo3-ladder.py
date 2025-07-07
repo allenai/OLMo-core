@@ -74,8 +74,8 @@ class BaselineWSDModelLadder(ModelLadder):
         # ===============================
         ModelSize.size_190M: 16 * 4096,
         ModelSize.size_370M: 16 * 4096,
-        ModelSize.size_600M: 16 * 4096,
-        ModelSize.size_760M: 16 * 4096,
+        ModelSize.size_600M: 8 * 4096, # gettings ooms on 16
+        ModelSize.size_760M: 8 * 4096, # gettings ooms on 16
         # ===============================
         ModelSize.size_1B: 8 * 4096,
         ModelSize.size_3B: 4 * 4096,
