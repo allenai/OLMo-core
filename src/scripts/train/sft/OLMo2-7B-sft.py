@@ -267,7 +267,6 @@ class SFTConfig(Config):
                     weight_decay=0.0,  # NOTE: different from pretraining
                     betas=(0.9, 0.95),
                     compile=False,
-                    foreach=True,
                 ),
                 dp_config=TransformerDataParallelConfig(
                     name=DataParallelType.hsdp,
