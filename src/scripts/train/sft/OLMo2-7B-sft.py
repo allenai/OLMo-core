@@ -90,10 +90,13 @@ class BatchSizeConfig:
             f"{self.global_batch_size_tokens} and {self.num_data_parallel_ranks * 2})"
         )
 
-        # Calculate rank microbatch size
         self.rank_microbatch_size_tokens = self.global_batch_size_tokens // (
             self.num_data_parallel_ranks * 2
         )
+        # simple heuristic: double ubatch size to ~double throughput on B200s
+        if "B200" in self.gpu_type:
+            self.rank_microbatch_size_tokens *= 2
+
         assert self.rank_microbatch_size_tokens % self.sequence_length == 0, (
             "rank_microbatch_size_tokens must be divisible by sequence_length (got "
             f"{self.rank_microbatch_size_tokens} and {self.sequence_length})"
@@ -101,11 +104,7 @@ class BatchSizeConfig:
         self.rank_microbatch_size_sequences = (
             self.rank_microbatch_size_tokens // self.sequence_length
         )
-        # simple heuristic: double ubatch size to ~double throughput on B200s
-        if "B200" in self.gpu_type:
-            self.rank_microbatch_size_tokens *= 2
 
-        # Validate and calculate gradient accumulation steps
         total_microbatch_tokens = self.rank_microbatch_size_tokens * self.num_data_parallel_ranks
         assert self.global_batch_size_tokens % total_microbatch_tokens == 0, (
             "global_batch_size_tokens must be divisible by "
@@ -383,7 +382,7 @@ Examples:
         "--global_batch_size",
         type=int,
         help="The global batch size in tokens.",
-        default=32 * DEFAULT_SEQUENCE_LENGTH * DEFAULT_NUM_NODES * GPUS_PER_NODE,
+        default=4 * DEFAULT_SEQUENCE_LENGTH * DEFAULT_NUM_NODES * GPUS_PER_NODE,
     )
 
     # Parse known args to get positional arguments and cmd
