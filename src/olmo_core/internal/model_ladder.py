@@ -57,7 +57,7 @@ class SubCmd(StrEnum):
             print(config)
 
         if self == SubCmd.launch:
-            config.launch.launch(follow=True)
+            config.launch.launch(follow=False)
         elif self == SubCmd.dry_run:
             pass
         elif self in (SubCmd.train, SubCmd.train_single):

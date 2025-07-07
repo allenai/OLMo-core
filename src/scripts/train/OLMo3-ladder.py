@@ -36,7 +36,7 @@ EVAL_INTERVAL = 500
 
 
 def optimal_wsd_lr(D: float, G: float, T_0: int, T: int):
-    """ WSD LR implementation from @shana based on https://arxiv.org/abs/2501.18965v1 """
+    """ WSD LR implementation from @shanea based on https://arxiv.org/abs/2501.18965v1 """
     def _curlT_1_wsd(D: float, T_0: int, T: int) -> float:
         return (D * D) / (T + T_0)
 
@@ -133,23 +133,25 @@ class BaselineWSDModelLadder(ModelLadder):
 
         return config
     
-    def get_lr(self, total_tokens: int) -> float:
-        # TODO: What are these magic numbers?
-        D = 0.099
-        G = 0.1
-
+    def get_lr(self, total_tokens: int, decay_tokens: int) -> float:
         gbz_toks = self.get_global_batch_size()
-        steps = total_tokens / gbz_toks
 
-        optimal_lr = optimal_wsd_lr(D, G, int(steps - 25_000), steps)
+        # These are set from @shanea's LR sweep results
+        # for mup. We need to make sure D/G matches the hero run
+        sweep_gbz_tokes = 4096 * 128
+        D = 0.014 * math.sqrt(gbz_toks / sweep_gbz_tokes)
+        G = 0.1
+        
+        steps = total_tokens / gbz_toks
+        decay_steps = decay_tokens / gbz_toks
+
+        optimal_lr = optimal_wsd_lr(D, G, int(steps - decay_steps), steps)
 
         return optimal_lr
 
-    def get_optim_config(self, run_duration: RunDuration) -> OptimConfig:
-        total_tokens = self.get_duration(run_duration).value
-
+    def get_optim_config(self, total_tokens: int, decay_tokens: int) -> OptimConfig:
         return SkipStepAdamWConfig(
-            lr=self.get_lr(total_tokens),
+            lr=self.get_lr(total_tokens, decay_tokens),
             weight_decay=0.1, # Follows hero run and mUP ladder
             betas=(0.9, 0.95),
             group_overrides=[
@@ -175,13 +177,13 @@ class BaselineWSDModelLadder(ModelLadder):
             rank_mbz *= 2
 
         # In the hero run, we're have a 100B decay stage for 6T toks, or 1.67% of the full run is decay
-        total_tokens = self.get_duration(run_duration)
-        ANNEAL_TOKENS = total_tokens.value * 0.0167 # decay for final 1.67% of training
+        total_tokens = self.get_duration(run_duration).value
+        decay_tokens = total_tokens * 0.0167 # decay for final 1.67% of training
 
         return TransformerTrainModuleConfig(
             rank_microbatch_size=rank_mbz,
             max_sequence_length=dataset.effective_sequence_length,
-            optim=self.get_optim_config(run_duration),
+            optim=self.get_optim_config(total_tokens, decay_tokens),
             compile_model=True,
             dp_config=TransformerDataParallelConfig(
                 name=DataParallelType.hsdp,
@@ -195,9 +197,7 @@ class BaselineWSDModelLadder(ModelLadder):
                 units=SchedulerUnits.steps,
                 # warmup=2000, # from hero run
                 warmup=round(self.model_size / self.get_global_batch_size()), # from wsd ladder # TODO: how much warmup is right?
-                decay=(
-                    int(ANNEAL_TOKENS / self.get_global_batch_size())
-                ),  # In the hero run, we use 4x global batch size due to batch warmup
+                decay=(int(decay_tokens / self.get_global_batch_size())),  # In the hero run, we use 4x global batch size due to batch warmup
                 decay_fraction=None,
             ),
         )
