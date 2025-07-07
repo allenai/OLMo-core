@@ -60,8 +60,7 @@ log = logging.getLogger(__name__)
 DEFAULT_SEQUENCE_LENGTH = 32_768
 DEFAULT_NUM_NODES = 1
 GPUS_PER_NODE = 8
-INTRA_DOCUMENT_MASKING = True
-CP_DEGREE: Optional[int] = None
+MAX_RANK_MICROBATCH_SIZE_TOKENS = 16_384  # max tokens this config can handle on an H100
 
 
 @dataclass
@@ -73,6 +72,7 @@ class BatchSizeConfig:
     rank_microbatch_size_tokens: int = field(init=False)
     rank_microbatch_size_sequences: int = field(init=False)
     grad_accum_steps: int = field(init=False)
+    cp_degree: Optional[int] = None
 
     def __post_init__(self):
         assert self.global_batch_size_tokens > 0, "global_batch_size_tokens must be positive"
@@ -94,8 +94,23 @@ class BatchSizeConfig:
             self.num_data_parallel_ranks * 2
         )
         # simple heuristic: double ubatch size to ~double throughput on B200s
+        max_tokens_per_rank = MAX_RANK_MICROBATCH_SIZE_TOKENS
         if "B200" in self.gpu_type:
             self.rank_microbatch_size_tokens *= 2
+            max_tokens_per_rank *= 2
+
+        # Check if we need context parallelism
+        if self.rank_microbatch_size_tokens > max_tokens_per_rank:
+            # Calculate minimum CP degree needed
+            min_cp_degree = 2
+            while (self.rank_microbatch_size_tokens // min_cp_degree) > max_tokens_per_rank:
+                min_cp_degree *= 2
+
+            self.cp_degree = min_cp_degree
+            log.info(
+                f"Rank microbatch size ({self.rank_microbatch_size_tokens} tokens) exceeds "
+                f"max ({max_tokens_per_rank} tokens). Setting cp_degree={self.cp_degree}"
+            )
 
         assert self.rank_microbatch_size_tokens % self.sequence_length == 0, (
             "rank_microbatch_size_tokens must be divisible by sequence_length (got "
@@ -105,10 +120,14 @@ class BatchSizeConfig:
             self.rank_microbatch_size_tokens // self.sequence_length
         )
 
-        total_microbatch_tokens = self.rank_microbatch_size_tokens * self.num_data_parallel_ranks
+        # Adjust total microbatch tokens calculation for CP
+        cp_factor = self.cp_degree if self.cp_degree is not None else 1
+        total_microbatch_tokens = (
+            self.rank_microbatch_size_tokens * self.num_data_parallel_ranks * cp_factor
+        )
         assert self.global_batch_size_tokens % total_microbatch_tokens == 0, (
             "global_batch_size_tokens must be divisible by "
-            "(rank_microbatch_size_tokens * num_data_parallel_ranks) (got "
+            "(rank_microbatch_size_tokens * num_data_parallel_ranks * cp_degree) (got "
             f"{self.global_batch_size_tokens} and {total_microbatch_tokens})"
         )
         self.grad_accum_steps = self.global_batch_size_tokens // total_microbatch_tokens
@@ -255,12 +274,10 @@ class SFTConfig(Config):
                     reduce_dtype=DType.float32,
                 ),
                 cp_config=(
-                    TransformerContextParallelConfig.llama3(degree=CP_DEGREE)
-                    if INTRA_DOCUMENT_MASKING
-                    else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE)
-                )
-                if CP_DEGREE
-                else None,
+                    TransformerContextParallelConfig.llama3(degree=bs_config.cp_degree)
+                    if bs_config.cp_degree
+                    else None
+                ),
                 ac_config=TransformerActivationCheckpointingConfig(
                     mode=TransformerActivationCheckpointingMode.selected_modules,
                     modules=["blocks.*.feed_forward"],
