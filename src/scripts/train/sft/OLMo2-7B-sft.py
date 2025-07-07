@@ -67,7 +67,7 @@ MAX_RANK_MICROBATCH_SIZE_TOKENS = 16_384  # max tokens this config can handle on
 class BatchSizeConfig:
     global_batch_size_tokens: int
     sequence_length: int
-    num_data_parallel_ranks: int
+    dp_world_size: int
     gpu_type: str
     rank_microbatch_size_tokens: int = field(init=False)
     rank_microbatch_size_sequences: int = field(init=False)
@@ -80,19 +80,17 @@ class BatchSizeConfig:
         assert (self.sequence_length & (self.sequence_length - 1)) == 0, (
             "sequence_length must be a power of 2"
         )
-        assert self.num_data_parallel_ranks > 0, "num_data_parallel_ranks must be positive"
-        assert (self.num_data_parallel_ranks & (self.num_data_parallel_ranks - 1)) == 0, (
-            "num_data_parallel_ranks must be a power of 2"
+        assert self.dp_world_size > 0, "dp_world_size must be positive"
+        assert (self.dp_world_size & (self.dp_world_size - 1)) == 0, (
+            "dp_world_size must be a power of 2"
         )
 
-        assert self.global_batch_size_tokens % (self.num_data_parallel_ranks * 2) == 0, (
-            "global_batch_size_tokens must be divisible by num_data_parallel_ranks * 2 (got "
-            f"{self.global_batch_size_tokens} and {self.num_data_parallel_ranks * 2})"
+        assert self.global_batch_size_tokens % (self.dp_world_size * 2) == 0, (
+            "global_batch_size_tokens must be divisible by dp_world_size * 2 (got "
+            f"{self.global_batch_size_tokens} and {self.dp_world_size * 2})"
         )
 
-        self.rank_microbatch_size_tokens = self.global_batch_size_tokens // (
-            self.num_data_parallel_ranks * 2
-        )
+        self.rank_microbatch_size_tokens = self.global_batch_size_tokens // (self.dp_world_size * 2)
         # simple heuristic: double ubatch size to ~double throughput on B200s
         max_tokens_per_rank = MAX_RANK_MICROBATCH_SIZE_TOKENS
         if "B200" in self.gpu_type:
@@ -122,12 +120,10 @@ class BatchSizeConfig:
 
         # Adjust total microbatch tokens calculation for CP
         cp_factor = self.cp_degree if self.cp_degree is not None else 1
-        total_microbatch_tokens = (
-            self.rank_microbatch_size_tokens * self.num_data_parallel_ranks * cp_factor
-        )
+        total_microbatch_tokens = self.rank_microbatch_size_tokens * self.dp_world_size * cp_factor
         assert self.global_batch_size_tokens % total_microbatch_tokens == 0, (
             "global_batch_size_tokens must be divisible by "
-            "(rank_microbatch_size_tokens * num_data_parallel_ranks * cp_degree) (got "
+            "(rank_microbatch_size_tokens * dp_world_size * cp_degree) (got "
             f"{self.global_batch_size_tokens} and {total_microbatch_tokens})"
         )
         self.grad_accum_steps = self.global_batch_size_tokens // total_microbatch_tokens
@@ -219,7 +215,7 @@ class SFTConfig(Config):
 
         bs_config = BatchSizeConfig(
             sequence_length=seq_len,
-            num_data_parallel_ranks=num_nodes * GPUS_PER_NODE,  # every rank is data parallel
+            dp_world_size=num_nodes * GPUS_PER_NODE,  # every rank is data parallel
             global_batch_size_tokens=global_batch_size,
             gpu_type=gpu_type,  # used to double microbatch size for B200s
         )
