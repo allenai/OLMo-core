@@ -265,9 +265,11 @@ class SFTConfig(Config):
                     compile=False,
                 ),
                 dp_config=TransformerDataParallelConfig(
-                    name=DataParallelType.fsdp,
+                    name=DataParallelType.hsdp,
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
+                    shard_degree=GPUS_PER_NODE  # try to keep communication w/in a node
+                    // (bs_config.cp_degree or 1),
                 ),
                 cp_config=(
                     TransformerContextParallelConfig.llama3(degree=bs_config.cp_degree)
