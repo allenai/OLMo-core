@@ -71,6 +71,7 @@ class BatchSizeConfig:
     num_data_parallel_ranks: int
     gpu_type: str
     rank_microbatch_size_tokens: int = field(init=False)
+    rank_microbatch_size_sequences: int = field(init=False)
     grad_accum_steps: int = field(init=False)
     sequences_per_microbatch: int = field(init=False)
 
@@ -85,15 +86,21 @@ class BatchSizeConfig:
             "num_data_parallel_ranks must be a power of 2"
         )
 
-        assert (
-            self.global_batch_size_tokens
-            % (self.sequence_length * self.num_data_parallel_ranks * 2)
-            == 0
+        assert self.global_batch_size_tokens % (self.num_data_parallel_ranks * 2) == 0, (
+            "global_batch_size_tokens must be divisible by num_data_parallel_ranks * 2 (got "
+            f"{self.global_batch_size_tokens} and {self.num_data_parallel_ranks * 2})"
         )
 
         # Calculate rank microbatch size
         self.rank_microbatch_size_tokens = self.global_batch_size_tokens // (
-            self.sequence_length * self.num_data_parallel_ranks * 2
+            self.num_data_parallel_ranks * 2
+        )
+        assert self.rank_microbatch_size_tokens % self.sequence_length == 0, (
+            "rank_microbatch_size_tokens must be divisible by sequence_length (got "
+            f"{self.rank_microbatch_size_tokens} and {self.sequence_length})"
+        )
+        self.rank_microbatch_size_sequences = (
+            self.rank_microbatch_size_tokens // self.sequence_length
         )
         # simple heuristic: double ubatch size to ~double throughput on B200s
         if "B200" in self.gpu_type:
