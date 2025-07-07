@@ -11,7 +11,7 @@ from torch.distributed import DeviceMesh
 
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
 from olmo_core.ops import moe as ops
-from olmo_core.utils import ensure_multiple_of, get_default_device, move_to_device
+from olmo_core.utils import ensure_multiple_of, get_default_device, move_to_device, mark_dynamic
 
 from ..buffer_cache import BufferCache
 from .mlp import DroplessMoEMLP, MoEMLP, MoEMLPBase
@@ -1018,8 +1018,11 @@ class ParallelDroplessMLP(ParallelMLPBase):
         local_x_global_expert_indices: torch.Tensor,
         local_batch_size_per_global_expert: torch.Tensor,
         overlap_callback: Optional[Callable] = None,
+        overlap_callback_x=None,
+        **overlap_callback_kwargs,
     ):
         assert self.hidden_sharding_degree == 1, "Global permutation is only supported when hidden sharding degree is 1."
+        # mark_dynamic(local_batch_size_per_global_expert, (0,), strict=False)
         
         '''
         The global_permute_mlp_unpermute function performs the following steps:
@@ -1113,7 +1116,10 @@ class ParallelDroplessMLP(ParallelMLPBase):
             # 2. make permute in step 2 run longer (increase batch size)
             # 3. break the dense branch into smaller pieces and blend with other operations
             if overlap_callback is not None:
-                overlap_out = overlap_callback()
+                overlap_out = overlap_callback(
+                    overlap_callback_x, 
+                    **overlap_callback_kwargs,
+                )
             else:
                 overlap_out = None
                 
@@ -1144,184 +1150,198 @@ class ParallelDroplessMLP(ParallelMLPBase):
         
 
 
-        @torch.compile
-        def forward_step_1_9(
-            local_x: torch.Tensor,
-            global_x_local_expert_indices: torch.Tensor,
-            parallel_batch_size_per_expert_cpu: torch.Tensor,
-        ):
-            
-            ########### 2. permute local tokens to be ready for all-to-all communication ###########
-            with nvtx.annotate("Permute local tokens", color='green'):
-                routing_map = local_x_global_expert_indices.view(-1, self.top_k).int()
-                num_out_tokens = routing_map.size(0) * self.top_k # dropless
-                hidden_shape_before_permute = local_x.shape
-                permutated_local_x, reversed_local_x_permutation_mapping = moe_permute_no_compile(
-                    inp=local_x, 
-                    routing_map=routing_map, 
-                    num_out_tokens=num_out_tokens, 
-                    map_type='index'
-                ) # type: ignore
-                
-                # now permutated_local_x tokens are grouped by expert, which means tokens will go to expert id:
-                # [0 , 0 , ... 1, ... 2, ..., ..., 31, 31]  (if 32 experts)
-                # if EP=8, each rank has 4 experts, then tokens of
-                # [0, 0, ..., 3, 3] go to rank 0,
-                # [4, 4, ..., 7, 7] go to rank 1, 
-                # and so on.
-            ############################################ end
-            
-            ###########  4. Start the all-to-all communication asynchronously ###########
-
-            with nvtx.annotate("all2all", color='green'):
-                global_x, global_x_handle = ops.all_to_all(
-                    permutated_local_x,
-                    recv_counts,
-                    send_counts,
-                    group=self.ep_pg,
-                    async_op=True,
-                )
-                
-                global_x_handle.wait()
-                del permutated_local_x
-            ############################################ end
-        
-            ###########  5. Permute the global tokens to be ready for MLP computation ###########
-            with nvtx.annotate("Permute global tokens for MLP", color='green'):
-                # option 1: use moe_sort_chunks_by_index (by TE <- trition)
-                # input_chunk_idxs = torch.arange(
-                #     self.num_experts, device=local_x.device
-                # )
-                # [num_local_experts, tp_size * ep_size]. Sort the input chunks by local experts.
-                # sort_input_by_local_experts = input_chunk_idxs.reshape(
-                #     -1, self.num_local_experts
-                # ).T.ravel() 
-                # split into 32 chunks (32 experts)
-                # e.g., [ 
-                # 0,  4,  8, 12, 16, 20, 24, 28,    --> these 8 chunks come from all 8 EP ranks, go to local expert 0
-                # 1,  5,  9, 13, 17, 21, 25, 29,    --> these 8 chunks come from all 8 EP ranks, go to local expert 1
-                # 2,  6, 10, 14, 18, 22, 26, 30,    --> these 8 chunks come from all 8 EP ranks, go to local expert 2
-                # 3,  7, 11, 15, 19, 23, 27, 31     --> these 8 chunks come from all 8 EP ranks, go to local expert 3
-                # ].  (1D tensor)
-
-                
-                ## chunk size is specified by `global_batch_size_per_local_expert`
-                
-                
-                # e.g., global_batch_size_per_local_expert
-                # local experts 0     1     2     3
-                # ep0       [[3108, 5307, 5798, 4067],
-                # ep1        [4642, 3836, 3488, 3477],
-                # ep2        [5129, 3964, 2472, 4194],
-                # ep3        [4266, 3191, 4511, 3841],
-                # ep4        [5059, 5758, 4838, 3201],
-                # ep5        [5388, 3531, 3419, 2860],
-                # ep6        [3862, 3605, 2945, 3840],
-                # ep7        [3960, 4624, 3414, 4406]]
-                
-                # so we want to put (3108+4642+5129+4266+5059+5388+3862+3960) tokens to local expert 0,
-                # and so on
-                
-                # global_x = moe_sort_chunks_by_index_no_compile(
-                #     inp=global_x,
-                #     split_sizes=global_batch_size_per_local_expert.ravel(),
-                #     sorted_index=sort_input_by_local_experts
-                # ) # type: ignore
-
-                # option 2: use moe_permute (by TE), and pretend topk is 1
-                routing_map2 = global_x_local_expert_indices.view(-1, 1).int()
-                num_out_tokens2 = routing_map2.size(0) * 1 # dropless
-                hidden_shape_before_permute2 = global_x.shape
-                global_x, reversed_global_x_permutation_mapping = moe_permute_no_compile(
-                    inp=global_x, 
-                    routing_map=routing_map2, 
-                    num_out_tokens=num_out_tokens2, 
-                    map_type='index'
-                )    # type: ignore
-                    
-                    
-            ############################################ end
-
-            
-            ########## 6. MLP forwrad ###########
-
-            global_x = self.mlp(global_x, parallel_batch_size_per_expert_cpu.tolist())
-
-            ############################################ end
-            
-            
-            ############ 7. Unpermute the output tokens to be ready for all-to-all communication ##########
-            with nvtx.annotate("Unpermute global tokens", color='green'):
-                # option 1: use moe_sort_chunks_by_index (by TE <- trition)
-                # restore_output_by_local_experts = input_chunk_idxs.reshape(
-                #     self.num_local_experts, -1
-                # ).T.ravel() # [ 0,  8, 16, 24,  1,  9, 17, 25,  2, 10, 18, 26,  3, 11, 19, 27,  4, 12, 20, 28,  5, 13, 21, 29,  6, 14, 22, 30,  7, 15, 23, 31]
-                # global_x = moe_sort_chunks_by_index_no_compile(
-                #     global_x, 
-                #     split_sizes=global_batch_size_per_local_expert.T.ravel(),
-                #     sorted_index=restore_output_by_local_experts
-                # )
-                
-                # option 2: use moe_unpermute (by TE)
-                global_x = moe_unpermute_no_compile(
-                    inp=global_x,
-                    row_id_map=reversed_global_x_permutation_mapping,
-                    merging_probs=None,
-                    restore_shape=hidden_shape_before_permute2,
-                    map_type='index',
-                ) # type: ignore
-            ############################################ end
-        
-                
-        
-            ########## 8. reverse_all_to_all ###########
-            with nvtx.annotate("reverse_all_to_all", color='green'):
-                local_x, local_x_handle = ops.all_to_all(
-                    global_x,
-                    send_counts,
-                    recv_counts,
-                    group=self.ep_pg,
-                    async_op=True,
-                )
-                
-                local_x_handle.wait()
-                
-                del global_x # done with global tokens
-            ############################################ end
-            
-            
-            ############ 9. Unpermute the (local) tokens returned by all-to-all communication ##########
-            with nvtx.annotate("Unpermute-Merge local tokens", color='green'):
-                local_x = moe_unpermute_no_compile(
-                    inp=local_x,
-                    row_id_map=reversed_local_x_permutation_mapping,
-                    merging_probs=local_x_global_expert_weights.view(-1, self.top_k),
-                    restore_shape=hidden_shape_before_permute,
-                    map_type='index',
-                ) # type: ignore
-            ############################################ end
-        
-            return local_x
-
         
         EP_RECOMPUTE = True
         if EP_RECOMPUTE:
             local_x = checkpoint(
-                forward_step_1_9,
+                self.forward_step_1_9,
                 local_x,
+                local_x_global_expert_weights,
                 global_x_local_expert_indices,
                 parallel_batch_size_per_expert_cpu,
+                local_x_global_expert_indices,
+                recv_counts,
+                send_counts,
                 use_reentrant=False,
             )
         else:
-            local_x = forward_step_1_9(
+            local_x = self.forward_step_1_9(
                 local_x,
+                local_x_global_expert_weights,
                 global_x_local_expert_indices,
                 parallel_batch_size_per_expert_cpu,
+                local_x_global_expert_indices,
+                recv_counts,
+                send_counts,
             )
 
 
         return local_x, overlap_out
+
+
+    @torch.compile
+    def forward_step_1_9(
+        self,
+        local_x: torch.Tensor,
+        local_x_global_expert_weights: torch.Tensor,
+        global_x_local_expert_indices: torch.Tensor,
+        parallel_batch_size_per_expert_cpu: torch.Tensor,
+        local_x_global_expert_indices: torch.Tensor,
+        recv_counts: List[int],
+        send_counts: List[int]
+    ):
+        
+        ########### 2. permute local tokens to be ready for all-to-all communication ###########
+        with nvtx.annotate("Permute local tokens", color='green'):
+            routing_map = local_x_global_expert_indices.view(-1, self.top_k).int()
+            num_out_tokens = routing_map.size(0) * self.top_k # dropless
+            hidden_shape_before_permute = local_x.shape
+            permutated_local_x, reversed_local_x_permutation_mapping = moe_permute_no_compile(
+                inp=local_x, 
+                routing_map=routing_map, 
+                num_out_tokens=num_out_tokens, 
+                map_type='index'
+            ) # type: ignore
+            
+            # now permutated_local_x tokens are grouped by expert, which means tokens will go to expert id:
+            # [0 , 0 , ... 1, ... 2, ..., ..., 31, 31]  (if 32 experts)
+            # if EP=8, each rank has 4 experts, then tokens of
+            # [0, 0, ..., 3, 3] go to rank 0,
+            # [4, 4, ..., 7, 7] go to rank 1, 
+            # and so on.
+        ############################################ end
+        
+        ###########  4. Start the all-to-all communication asynchronously ###########
+
+        with nvtx.annotate("all2all", color='green'):
+            global_x, global_x_handle = ops.all_to_all(
+                permutated_local_x,
+                recv_counts,
+                send_counts,
+                group=self.ep_pg,
+                async_op=True,
+            )
+            
+            global_x_handle.wait()
+            del permutated_local_x
+        ############################################ end
+    
+        ###########  5. Permute the global tokens to be ready for MLP computation ###########
+        with nvtx.annotate("Permute global tokens for MLP", color='green'):
+            # option 1: use moe_sort_chunks_by_index (by TE <- trition)
+            # input_chunk_idxs = torch.arange(
+            #     self.num_experts, device=local_x.device
+            # )
+            # [num_local_experts, tp_size * ep_size]. Sort the input chunks by local experts.
+            # sort_input_by_local_experts = input_chunk_idxs.reshape(
+            #     -1, self.num_local_experts
+            # ).T.ravel() 
+            # split into 32 chunks (32 experts)
+            # e.g., [ 
+            # 0,  4,  8, 12, 16, 20, 24, 28,    --> these 8 chunks come from all 8 EP ranks, go to local expert 0
+            # 1,  5,  9, 13, 17, 21, 25, 29,    --> these 8 chunks come from all 8 EP ranks, go to local expert 1
+            # 2,  6, 10, 14, 18, 22, 26, 30,    --> these 8 chunks come from all 8 EP ranks, go to local expert 2
+            # 3,  7, 11, 15, 19, 23, 27, 31     --> these 8 chunks come from all 8 EP ranks, go to local expert 3
+            # ].  (1D tensor)
+
+            
+            ## chunk size is specified by `global_batch_size_per_local_expert`
+            
+            
+            # e.g., global_batch_size_per_local_expert
+            # local experts 0     1     2     3
+            # ep0       [[3108, 5307, 5798, 4067],
+            # ep1        [4642, 3836, 3488, 3477],
+            # ep2        [5129, 3964, 2472, 4194],
+            # ep3        [4266, 3191, 4511, 3841],
+            # ep4        [5059, 5758, 4838, 3201],
+            # ep5        [5388, 3531, 3419, 2860],
+            # ep6        [3862, 3605, 2945, 3840],
+            # ep7        [3960, 4624, 3414, 4406]]
+            
+            # so we want to put (3108+4642+5129+4266+5059+5388+3862+3960) tokens to local expert 0,
+            # and so on
+            
+            # global_x = moe_sort_chunks_by_index_no_compile(
+            #     inp=global_x,
+            #     split_sizes=global_batch_size_per_local_expert.ravel(),
+            #     sorted_index=sort_input_by_local_experts
+            # ) # type: ignore
+
+            # option 2: use moe_permute (by TE), and pretend topk is 1
+            routing_map2 = global_x_local_expert_indices.view(-1, 1).int()
+            num_out_tokens2 = routing_map2.size(0) * 1 # dropless
+            hidden_shape_before_permute2 = global_x.shape
+            global_x, reversed_global_x_permutation_mapping = moe_permute_no_compile(
+                inp=global_x, 
+                routing_map=routing_map2, 
+                num_out_tokens=num_out_tokens2, 
+                map_type='index'
+            )    # type: ignore
+                
+                
+        ############################################ end
+
+        
+        ########## 6. MLP forwrad ###########
+
+        global_x = self.mlp(global_x, parallel_batch_size_per_expert_cpu.tolist())
+
+        ############################################ end
+        
+        
+        ############ 7. Unpermute the output tokens to be ready for all-to-all communication ##########
+        with nvtx.annotate("Unpermute global tokens", color='green'):
+            # option 1: use moe_sort_chunks_by_index (by TE <- trition)
+            # restore_output_by_local_experts = input_chunk_idxs.reshape(
+            #     self.num_local_experts, -1
+            # ).T.ravel() # [ 0,  8, 16, 24,  1,  9, 17, 25,  2, 10, 18, 26,  3, 11, 19, 27,  4, 12, 20, 28,  5, 13, 21, 29,  6, 14, 22, 30,  7, 15, 23, 31]
+            # global_x = moe_sort_chunks_by_index_no_compile(
+            #     global_x, 
+            #     split_sizes=global_batch_size_per_local_expert.T.ravel(),
+            #     sorted_index=restore_output_by_local_experts
+            # )
+            
+            # option 2: use moe_unpermute (by TE)
+            global_x = moe_unpermute_no_compile(
+                inp=global_x,
+                row_id_map=reversed_global_x_permutation_mapping,
+                merging_probs=None,
+                restore_shape=hidden_shape_before_permute2,
+                map_type='index',
+            ) # type: ignore
+        ############################################ end
+    
+            
+    
+        ########## 8. reverse_all_to_all ###########
+        with nvtx.annotate("reverse_all_to_all", color='green'):
+            local_x, local_x_handle = ops.all_to_all(
+                global_x,
+                send_counts,
+                recv_counts,
+                group=self.ep_pg,
+                async_op=True,
+            )
+            
+            local_x_handle.wait()
+            
+            del global_x # done with global tokens
+        ############################################ end
+        
+        
+        ############ 9. Unpermute the (local) tokens returned by all-to-all communication ##########
+        with nvtx.annotate("Unpermute-Merge local tokens", color='green'):
+            local_x = moe_unpermute_no_compile(
+                inp=local_x,
+                row_id_map=reversed_local_x_permutation_mapping,
+                merging_probs=local_x_global_expert_weights.view(-1, self.top_k),
+                restore_shape=hidden_shape_before_permute,
+                map_type='index',
+            ) # type: ignore
+        ############################################ end
+    
+        return local_x
 
 
     @torch.compile
@@ -1333,6 +1353,8 @@ class ParallelDroplessMLP(ParallelMLPBase):
         local_x_global_expert_indices: torch.Tensor,
         local_batch_size_per_global_expert: torch.Tensor,
         overlap_callback: Optional[Callable] = None,
+        overlap_callback_x=None,
+        **overlap_callback_kwargs,
     ):
         x, expert_weights, expert_indices, batch_size_per_expert = (
             get_local_tensor(local_x),
@@ -1347,63 +1369,69 @@ class ParallelDroplessMLP(ParallelMLPBase):
         x = x.view(-1, x.shape[-1])
 
         # step 1A: DtoH token count communication
+        # mark_dynamic(batch_size_per_expert, (0,), strict=False)
         batch_size_per_expert_cpu, copy_stream, dtoh_event1 = async_copy_to_cpu(batch_size_per_expert) 
         
         # overlap compute while waiting for the copy to CPU to finish
         with nvtx.annotate("overlap_callback", color='green'):
             if overlap_callback is not None:
-                overlap_out = overlap_callback()
+                overlap_out = overlap_callback(overlap_callback_x, **overlap_callback_kwargs)
             else:
                 overlap_out = None
                 
         # step 1B: permute the input tokens
         copy_stream.synchronize() # wait for the copy to CPU to finish
         
-        @torch.compile
-        def forward_step_rc(
-            x: torch.Tensor,
-            expert_indices: torch.Tensor,
-            batch_size_per_expert_cpu: torch.Tensor
-        ):
-            routing_map = expert_indices.view(-1, self.top_k).int()
-            num_out_tokens = routing_map.size(0) * self.top_k # dropless
-            hidden_shape_before_permute = x.shape
-
-            # step 2: permute the input tokens
-            with nvtx.annotate("Permute", color='green'):
-                permutated_input_tokens, reversed_input_permutation_mapping = moe_permute_no_compile(
-                    inp=x, 
-                    routing_map=routing_map, 
-                    num_out_tokens=num_out_tokens, 
-                    map_type='index'
-                ) # type: ignore
-
-            # step 3: MLP
-            x = self.mlp(permutated_input_tokens, batch_size_per_expert_cpu.tolist())
-
-            # step 4: unpermutate the output tokens
-            with nvtx.annotate("Unpermute", color='green'):
-                unpermutated_x = moe_unpermute_no_compile(
-                    inp=x,
-                    row_id_map=reversed_input_permutation_mapping,
-                    restore_shape=hidden_shape_before_permute,
-                    map_type='index',
-                    merging_probs=expert_weights.view(-1, self.top_k)
-                ) # type: ignore
-                
-            return unpermutated_x.view(in_shape)
 
         # NOTE: GEMM_RECOMPUTE = True
         x_moe = checkpoint(
-            forward_step_rc,
+            self._forward_step_rc,
             x,
             expert_indices,
+            expert_weights,
             batch_size_per_expert_cpu,
             use_reentrant=False,
+            in_shape=in_shape,
         )
 
         return x_moe, overlap_out
 
+    @torch.compile
+    def _forward_step_rc(
+        self,
+        x: torch.Tensor,
+        expert_indices: torch.Tensor,
+        expert_weights: torch.Tensor,
+        batch_size_per_expert_cpu: torch.Tensor,
+        in_shape: torch.Size
+    ):
+        routing_map = expert_indices.view(-1, self.top_k).int()
+        num_out_tokens = routing_map.size(0) * self.top_k # dropless
+        hidden_shape_before_permute = x.shape
+
+        # step 2: permute the input tokens
+        with nvtx.annotate("Permute", color='green'):
+            permutated_input_tokens, reversed_input_permutation_mapping = moe_permute_no_compile(
+                inp=x, 
+                routing_map=routing_map, 
+                num_out_tokens=num_out_tokens, 
+                map_type='index'
+            ) # type: ignore
+
+        # step 3: MLP
+        x = self.mlp(permutated_input_tokens, batch_size_per_expert_cpu.tolist())
+
+        # step 4: unpermutate the output tokens
+        with nvtx.annotate("Unpermute", color='green'):
+            unpermutated_x = moe_unpermute_no_compile(
+                inp=x,
+                row_id_map=reversed_input_permutation_mapping,
+                restore_shape=hidden_shape_before_permute,
+                map_type='index',
+                merging_probs=expert_weights.view(-1, self.top_k)
+            ) # type: ignore
+            
+        return unpermutated_x.view(in_shape)
     # OLD COPY (with comparison)
 
     # def global_permute_mlp_unpermute(

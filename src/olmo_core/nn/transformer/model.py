@@ -735,7 +735,9 @@ class Transformer(nn.Module):
                 torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
             else:
                 torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
-
+                
+        self.to(torch.bfloat16) # HACK, need fix
+        
         replicate(self, device_mesh=dp_mesh, bucket_cap_mb=100)
         # Some inputs need to be on CPU initially, but DDP will move everything to model's
         # device if we don't hide it.
@@ -954,9 +956,9 @@ class MoETransformer(Transformer):
             #     reshard_after_forward = True # for the first x blocks, reshard to reduce memory pressure
             # else:
             #     reshard_after_forward = False
-            reshard_after_forward = False
-            # if pp_enabled or block.ep_enabled or block.tp_enabled:
-            #     reshard_after_forward = False
+            reshard_after_forward = True
+            if pp_enabled or block.ep_enabled or block.tp_enabled:
+                reshard_after_forward = False
             block.feed_forward_moe.prepare_experts_for_fsdp(
                 world_mesh=world_mesh,
                 mp_policy=MixedPrecisionPolicy(

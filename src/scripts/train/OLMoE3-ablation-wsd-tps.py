@@ -25,7 +25,7 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerType,
 )
-from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig, AdamWConfig
+from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig, AdamWConfig, ZeroAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
@@ -53,21 +53,36 @@ GLOBAL_BATCH_SIZE = (
 )  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
 MAX_DURATION = int(700e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
-LR= 1.6e-4
+LR= 4e-5
 
 NUM_EXPERTS = 64
 TOP_K = 4
 D_MODEL=2048
 MOE_HIDDEN_SIZE = 1024 + 1024
 
-SHARED_MLP_HIDDEN_SIZE = 1024  # Hidden size for shared MLP in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP in MoE blocks
 MICRO_BSZ = 8
+# NUM_LAYERS=8
 NUM_LAYERS=48
 DP_DIM=64
 EP_DIM=1
 PP_DIM=1
-
-
+SPLIT_POINTS = None
+# SPLIT_POINTS = [ 24, ]
+# SPLIT_POINTS = [4, 8, 12, ]
+# SPLIT_POINTS = [12, 24, 36, ]
+# SPLIT_POINTS = [6, 12, 18, 24, 30, 36, 42 ]
+# SPLIT_POINTS = [4, 8, 12, 16, 20, 24, 28 ]
+# SPLIT_POINTS = [8, 16, 24, ]
+# emb + 0 1 2 3 4 5
+# 6 7 8 9 10 11
+# 12 13 14 15 16 17
+# 18 19 20 21 22 23
+# 24 25 26 27 28 29
+# 30 31 32 33 34 35
+# 36 37 38 39 40 41
+# 42 43 44 45 46 + loss
+            
 TAG=f'dev'
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -128,38 +143,38 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             config.block, 
             name=TransformerBlockType.reordered_norm, 
             feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE), bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE), bias=False),
         ),
-        8: replace(
-            config.block, 
-            name=TransformerBlockType.reordered_norm, 
-            feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=(  TOP_K * MOE_HIDDEN_SIZE), bias=False),
-        ),
-        16: replace(
-            config.block, 
-            name=TransformerBlockType.reordered_norm, 
-            feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE), bias=False),
-        ),
-        24: replace(
-            config.block, 
-            name=TransformerBlockType.reordered_norm, 
-            feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=(  TOP_K * MOE_HIDDEN_SIZE), bias=False),
-        ),
-        32: replace(
-            config.block, 
-            name=TransformerBlockType.reordered_norm, 
-            feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE), bias=False),
-        ),
-        40: replace(
-            config.block, 
-            name=TransformerBlockType.reordered_norm, 
-            feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=(  TOP_K * MOE_HIDDEN_SIZE), bias=False),
-        ),
+        # 8: replace(
+        #     config.block, 
+        #     name=TransformerBlockType.reordered_norm, 
+        #     feed_forward_moe=None,
+        #     feed_forward=FeedForwardConfig(hidden_size=(  TOP_K * MOE_HIDDEN_SIZE), bias=False),
+        # ),
+        # 16: replace(
+        #     config.block, 
+        #     name=TransformerBlockType.reordered_norm, 
+        #     feed_forward_moe=None,
+        #     feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE), bias=False),
+        # ),
+        # 24: replace(
+        #     config.block, 
+        #     name=TransformerBlockType.reordered_norm, 
+        #     feed_forward_moe=None,
+        #     feed_forward=FeedForwardConfig(hidden_size=(  TOP_K * MOE_HIDDEN_SIZE), bias=False),
+        # ),
+        # 32: replace(
+        #     config.block, 
+        #     name=TransformerBlockType.reordered_norm, 
+        #     feed_forward_moe=None,
+        #     feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE), bias=False),
+        # ),
+        # 40: replace(
+        #     config.block, 
+        #     name=TransformerBlockType.reordered_norm, 
+        #     feed_forward_moe=None,
+        #     feed_forward=FeedForwardConfig(hidden_size=(  TOP_K * MOE_HIDDEN_SIZE), bias=False),
+        # ),
     }
 
     return config
@@ -170,6 +185,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         rank_microbatch_size=MICRO_BSZ * SEQUENCE_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=SkipStepAdamWConfig(
+        # optim=ZeroAdamWConfig(
         # optim=AdamWConfig(
             lr=LR,
             weight_decay=0.1,
@@ -182,21 +198,45 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             foreach=True
         ),
         compile_model=False,
+        
+        # FSDP
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
-            # reduce_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             #  num_replicas=1,  # to enable full-way expert parallel
             shard_degree=DP_DIM,
             prefetch_factor=1,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),
+
+        # DDP
+        # dp_config=TransformerDataParallelConfig(
+        #     name=DataParallelType.ddp,
+        #     param_dtype=DType.float32, # not used?
+        #     reduce_dtype=DType.float32,
+        #     #  num_replicas=1,  # to enable full-way expert parallel
+        #     # shard_degree=DP_DIM,
+        #     # prefetch_factor=1,
+        #     # wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+        #     only_allreduce_last_microbatch=True, # True -> only all-reduce gradients at last microbatch backward, otherwise False -> all-reduce gradients at every microbatch backward
+        # ),
+        # autocast_precision=DType.bfloat16, # set for fwd/bwd
+        
+        
          ep_config=TransformerExpertParallelConfig(degree=EP_DIM) if EP_DIM != 1 else None, # EP=1 means no expert parallel
         pp_config=TransformerPipelineParallelConfig(
             degree=PP_DIM,
-            schedule=PipelineScheduleType.interleaved_1F1B,
+            # schedule=PipelineScheduleType.interleaved_1F1B,
+            # schedule=PipelineScheduleType.single_1F1B,
+            schedule=PipelineScheduleType.custom_1F1B,
+            # schedule=PipelineScheduleType.custom_interleaved_1F1B,
+            use_custom_stage_implementation=True,  # use custom stage implementation that re-uses receive buffers across micro-batches
+            # schedule=PipelineScheduleType.looped_bfs,
+            # schedule=PipelineScheduleType.interleaved_zero_bubble,
             # schedule=PipelineScheduleType.zbv_zero_bubble,
+            split_points=SPLIT_POINTS
+            
         ) if PP_DIM > 1 else None,
         # ac_config=TransformerActivationCheckpointingConfig(
         #     mode=TransformerActivationCheckpointingMode.full,
@@ -231,7 +271,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     return (
         TrainerConfig(
-            save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{DP_DIM}DP{EP_DIM}EP{PP_DIM}PP_{MICRO_BSZ}MB_{TAG}',
+            # save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{DP_DIM}DP{EP_DIM}EP{PP_DIM}PP_{MICRO_BSZ}MB_{TAG}',
+            save_folder=f'/workspace/tmp/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{DP_DIM}DP{EP_DIM}EP{PP_DIM}PP_{MICRO_BSZ}MB_{TAG}',
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
@@ -280,7 +321,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=False, # NOTE: change this
+            NvidiaProfilerCallback(enabled=True, # NOTE: change this
                                    profile_ranks=[0, 8, 16, 24],
                                    start=30,
                                    end=33

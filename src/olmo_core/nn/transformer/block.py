@@ -23,7 +23,7 @@ from ..moe import MoEConfig, MoERouter
 from ..moe.parallel_mlp import ParallelMLPBase, ParallelDroplessMLP
 from .config import TransformerDataParallelWrappingStrategy
 from torch.utils.checkpoint import checkpoint, CheckpointFunction
-from ..moe.utils import async_copy_to_cpu
+from ..moe.utils import async_copy_to_cpu, wait_stream_no_compile
 
 import nvtx
 import torch.distributed as dist
@@ -878,6 +878,30 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
 @beta_feature
 class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
 
+    def __init__(self,
+        *,
+        d_model: int,
+        n_layers: int,
+        feed_forward_norm: LayerNormConfig,
+        attention_norm: LayerNormConfig,
+        feed_forward: FeedForwardConfig,
+        init_device: str = "cpu",
+        **kwargs,
+        ):
+        super().__init__(
+            d_model=d_model,
+            n_layers=n_layers,
+            feed_forward_norm=feed_forward_norm,
+            attention_norm=attention_norm,
+            feed_forward=feed_forward,
+            init_device=init_device,
+            **kwargs,
+        )
+        # self.dense_stream = get_or_init_stream(id=2, priority=20) # positive number -> low priority # does not work with pp split_model
+
+    def get_dense_stream(self) -> torch.cuda.Stream:
+        return get_or_init_stream(id=2, priority=20)
+
     def forward(
         self,
         x: torch.Tensor,
@@ -889,7 +913,27 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         # always use combined forward    
         return cast(MoEHybridReorderedNormTransformerBlock, self).combined_forward(x, loss_div_factor=loss_div_factor, **kwargs)
 
-            
+    @torch.compile
+    def dense_forward_rc(
+        self,
+        x: torch.Tensor,
+        **kwargs,
+    ) -> torch.Tensor:
+        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+        return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))   
+    
+    @torch.compile
+    def router_forward(
+        self,
+        local_x: torch.Tensor,
+        loss_div_factor: torch.Tensor,
+    ):
+        return self.router(
+            local_x, 
+            loss_div_factor=loss_div_factor # scalar
+        )
+    
+    @torch.compile
     def combined_forward(
         self,
         x: torch.Tensor,
@@ -900,30 +944,36 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
 
         B, S, D = x.shape
         
-        local_x = get_local_tensor(x)
+        ##### DENSE: submit the dense forward pass to a separate stream #####
+        # NOTE: launch dense after the router, so it's more likely to overlap permute and all-to-all,
+        # but it only depends on the x (before router), so the wait_stream() can be called here
+        # priority sparse forward > dense forward, because the sparse one is going to take longer
         
-        @torch.compile
-        def router_forward(
-            local_x: torch.Tensor,
-            loss_div_factor: torch.Tensor,
-        ):
-            return self.router(
-                local_x, 
-                loss_div_factor=loss_div_factor # scalar
-            )
+        wait_stream_no_compile(
+            this_stream=self.get_dense_stream(),  # type: ignore
+            other_stream=torch.cuda.current_stream() # type: ignore
+        ) # ignore
+        
+        # dense_out = self.overlap_callback(
+        #     x, **kwargs
+        # )
+        
+        local_x = get_local_tensor(x)
+    
             
         (
             local_x_global_expert_weights, # (B, S, top_k)
             local_x_global_expert_indices, # (B, S, top_k)
             local_batch_size_per_global_expert, # (num_experts, )
             router_aux_loss # scalar
-        ) = router_forward(
+        ) = self.router_forward(
             local_x, 
             loss_div_factor=loss_div_factor # scalar
         )
-        
-        if router_aux_loss is not None:
-            local_x = attach_auxiliary_loss(local_x, router_aux_loss)
+        with nvtx.annotate("attach_auxiliary_loss", color="blue"):
+            if router_aux_loss is not None:
+                local_x = attach_auxiliary_loss(local_x, router_aux_loss)
+
 
         # shape: (batch_size * seq_len, d_model)
         local_x = local_x.view(-1, D)
@@ -932,86 +982,83 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         # shape: (batch_size * seq_len * top_k,)
         local_x_global_expert_indices = get_local_tensor(local_x_global_expert_indices).flatten()
 
-        ##### DENSE: submit the dense forward pass to a separate stream #####
-        # NOTE: launch dense after the router, so it's more likely to overlap permute and all-to-all
-        # priority sparse forward > dense forward, because the sparse one is going to take longer
-        dense_stream = get_or_init_stream(id=2, priority=20) # positive number -> low priority
-        dense_stream.wait_stream(torch.cuda.current_stream())
-        
 
-        @torch.compile
-        def dense_forward_rc(
-            x: torch.Tensor,
-            **kwargs,
-        ) -> torch.Tensor:
-            h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-            return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
-        
-        
         assert self.shared_mlp is None
         
         
         ######################################################################
         ################# Call global_permute_mlp_unpermute() ##############
         ############################### START ################################
-        
-        def overlap_callback():
-            # NOTE: this is called in the middle of the global_permute_mlp_unpermute() function
-            # to overlap the dense forward pass with the all-to-all communication.
-            # It is called after the local_x_global_expert_weights and local_x_global_expert_indices
-            # are ready, but before the all-to-all communication starts.
-            with torch.cuda.stream(dense_stream):
-                # if self.block_idx % 2 == 0:
-                if True:
-                    xx = checkpoint(
-                        dense_forward_rc, x, use_reentrant=False, **kwargs
-                    )
-                else:
-                    xx = dense_forward_rc(
-                        x, **kwargs
-                    )
-                return xx
 
-        if self.ep_enabled:
-            x_moe, dense_out = cast(ParallelDroplessMLP, self.experts).global_permute_mlp_unpermute(
-                local_x,
-                local_x_global_expert_weights,
-                local_x_global_expert_indices, 
-                local_batch_size_per_global_expert=local_batch_size_per_global_expert,
-                overlap_callback=overlap_callback,
-            ) # type: ignore
-        else:
-            x_moe, dense_out = cast(ParallelDroplessMLP, self.experts).global_permute_mlp_unpermute_no_ep(
-                local_x,
-                local_x_global_expert_weights,
-                local_x_global_expert_indices, 
-                local_batch_size_per_global_expert=local_batch_size_per_global_expert,
-                overlap_callback=overlap_callback,
-            ) # type: ignore
+
+        with nvtx.annotate("permute_mlp_unpermute", color="blue"):
+            if self.ep_enabled:
+                x_moe, dense_out = cast(ParallelDroplessMLP, self.experts).global_permute_mlp_unpermute(
+                    local_x,
+                    local_x_global_expert_weights,
+                    local_x_global_expert_indices,
+                    local_batch_size_per_global_expert=local_batch_size_per_global_expert,
+                    overlap_callback=self.overlap_callback,
+                    # overlap_callback=None,
+                    overlap_callback_x=x,
+                    **kwargs,
+                ) # type: ignore
+            else:
+                x_moe, dense_out = cast(ParallelDroplessMLP, self.experts).global_permute_mlp_unpermute_no_ep(
+                    local_x,
+                    local_x_global_expert_weights,
+                    local_x_global_expert_indices, 
+                    local_batch_size_per_global_expert=local_batch_size_per_global_expert,
+                    overlap_callback=self.overlap_callback,
+                    # overlap_callback=None,
+                    overlap_callback_x=x,
+                    **kwargs,
+                ) # type: ignore
         ######################################################################
         ################# Call global_permute_mlp_unpermute() ##############
         ############################### END ##################################
 
         
         x_moe = x_moe.view(B, -1, D) # (B, S * top_k, d_model)
-        
-        @torch.compile
-        def sparse_drop_norm_forward(
-            x_moe: torch.Tensor,
-        ) -> torch.Tensor:
-            return self.dropout(self.feed_forward_moe_norm(x_moe))
+
         
         # sparse_out = sparse_drop_norm_forward(
         #     x_moe
         # )
         # NOTE: SPARSE_DROP_NORM_RECOMPUTE = True
         sparse_out = checkpoint(
-            sparse_drop_norm_forward, x_moe, use_reentrant=False
+            self.sparse_drop_norm_forward, x_moe, use_reentrant=False
         )
         
-        torch.cuda.current_stream().wait_stream(dense_stream)
+        # torch.cuda.current_stream().wait_stream(self.dense_stream)
+        wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream()) # type: ignore
         
         final_out = dense_out + sparse_out
         
         return final_out
 
+    @torch.compile
+    def sparse_drop_norm_forward(
+        self,
+        x_moe: torch.Tensor,
+    ) -> torch.Tensor:
+        return self.dropout(self.feed_forward_moe_norm(x_moe))
+    
+    
+    def overlap_callback(self, x, **kwargs):
+        # NOTE: this is called in the middle of the global_permute_mlp_unpermute() function
+        # to overlap the dense forward pass with the all-to-all communication.
+        # It is called after the local_x_global_expert_weights and local_x_global_expert_indices
+        # are ready, but before the all-to-all communication starts.
+        with torch.cuda.stream(self.get_dense_stream()):
+            # if self.block_idx % 2 == 0:
+            # x = self.attention(x, **kwargs)
+            if True:
+                xx = checkpoint(
+                    self.dense_forward_rc, x, use_reentrant=False, **kwargs
+                )
+            else:
+                xx = self.dense_forward_rc(
+                    x, **kwargs
+                )
+            return xx

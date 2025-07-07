@@ -1,7 +1,7 @@
 import torch
 from olmo_core.utils import get_or_init_stream
     
-@torch.compiler.disable(recursive=False)         # helper runs eagerly, 
+@torch._dynamo.disable()         # helper runs eagerly, 
 def async_copy_to_cpu(gpu_buf):
     # *** async copy to CPU for future GroupedGEMM ***
     # start a new stream for the copy
@@ -23,3 +23,7 @@ def async_copy_to_cpu(gpu_buf):
     # gpu_buf.record_stream(dtoh_stream) # NOTE: does not work with compile
     return cpu_buf, dtoh_stream, dtoh_event
         
+@torch._dynamo.disable()        # helper runs eagerly,
+def wait_stream_no_compile(this_stream: torch.cuda.Stream, other_stream: torch.cuda.Stream):
+    this_stream.wait_stream(other_stream)
+    

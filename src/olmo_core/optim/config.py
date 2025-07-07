@@ -25,6 +25,8 @@ from ..config import Config
 from ..exceptions import OLMoConfigurationError
 from ..utils import get_default_device, move_to_device
 
+from ..train.train_module import TrainModule
+
 __all__ = [
     "OptimConfig",
     "OptimGroupOverride",
@@ -159,13 +161,16 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         """
         raise NotImplementedError
 
-    def build(self, model: nn.Module, strict: bool = True) -> Opt:
+    def build(self, model: nn.Module, train_module: TrainModule, strict: bool = True) -> Opt:
         """
         Build the optimizer.
 
         :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
             match any parameter.
         """
+        
+        # not used: train_module
+        
         kwargs = self.as_dict()
         kwargs.pop("group_overrides")
         kwargs.pop("compile")

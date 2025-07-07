@@ -58,9 +58,8 @@ LR= 5e-5
 NUM_EXPERTS = 64
 TOP_K = 4
 D_MODEL=2048
-MOE_HIDDEN_SIZE = 1024 * 2
-
-SHARED_MLP_HIDDEN_SIZE = 1536  # Hidden size for shared MLP in MoE blocks
+MOE_HIDDEN_SIZE = 1024 + 1024
+SHARED_MLP_HIDDEN_SIZE = 1024  # Hidden size for shared MLP in MoE blocks
 MICRO_BSZ = 8
 NUM_LAYERS=48
 DP_DIM=64
@@ -128,37 +127,37 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             config.block, 
             name=TransformerBlockType.reordered_norm, 
             feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE), bias=False),
         ),
         8: replace(
             config.block, 
             name=TransformerBlockType.reordered_norm, 
             feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=(  TOP_K * MOE_HIDDEN_SIZE), bias=False),
         ),
         16: replace(
             config.block, 
             name=TransformerBlockType.reordered_norm, 
             feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE), bias=False),
         ),
         24: replace(
             config.block, 
             name=TransformerBlockType.reordered_norm, 
             feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=(  TOP_K * MOE_HIDDEN_SIZE), bias=False),
         ),
         32: replace(
             config.block, 
             name=TransformerBlockType.reordered_norm, 
             feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE), bias=False),
         ),
         40: replace(
             config.block, 
             name=TransformerBlockType.reordered_norm, 
             feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=(  TOP_K * MOE_HIDDEN_SIZE), bias=False),
         ),
     }
 
@@ -240,9 +239,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
-                ephemeral_save_interval=200,
+                ephemeral_save_interval=250,
                 save_async=True,
-                pre_train_checkpoint=False,
+                pre_train_checkpoint=True,
             ),
         )
         .with_callback(
@@ -260,8 +259,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=common.run_name,
                 entity="ai2-llm",
-                project="tianhua-moe",
-                # project="olmo3",
+                # project="tianhua-moe",
+                project="olmo3",
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
@@ -308,6 +307,6 @@ if __name__ == "__main__":
         trainer_config_builder=build_trainer_config,
         include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
-        intra_document_masking=True,
+        # intra_document_masking=True,
         finalize_config=finalize_config,
     )
