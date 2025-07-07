@@ -210,7 +210,7 @@ class SFTConfig(Config):
         user_name = get_beaker_username()
 
         tokenizer_config = TokenizerConfig.dolma2()
-        dataset = build_sft_dataset(dataset_name, root_dir, tokenizer_config, seq_len)
+        dataset_config = build_sft_dataset(dataset_name, root_dir, tokenizer_config, seq_len)
         gpu_type = CLUSTER_TO_GPU_TYPE[cluster]
 
         bs_config = BatchSizeConfig(
@@ -221,6 +221,10 @@ class SFTConfig(Config):
         )
         print("Batch size config (before overrides):")
         print(bs_config)
+
+        dp_shard_degree = GPUS_PER_NODE // (bs_config.cp_degree or 1)
+        if not dp_shard_degree > 0:
+            raise OLMoConfigurationError(f"dp_shard_degree ({dp_shard_degree}) must be positive.")
 
         config = SFTConfig(
             run_name=run_name,
@@ -249,7 +253,7 @@ class SFTConfig(Config):
                 use_flash=True,
                 rope_theta=8 * 10**6,
             ),
-            dataset=dataset,
+            dataset=dataset_config,
             data_loader=NumpyDataLoaderConfig(
                 global_batch_size=bs_config.global_batch_size_tokens, seed=34521, num_workers=4
             ),
@@ -263,6 +267,7 @@ class SFTConfig(Config):
                     weight_decay=0.0,  # NOTE: different from pretraining
                     betas=(0.9, 0.95),
                     compile=False,
+                    foreach=True,
                 ),
                 dp_config=TransformerDataParallelConfig(
                     name=DataParallelType.hsdp,
@@ -272,7 +277,11 @@ class SFTConfig(Config):
                     // (bs_config.cp_degree or 1),
                 ),
                 cp_config=(
-                    TransformerContextParallelConfig.llama3(degree=bs_config.cp_degree)
+                    (
+                        TransformerContextParallelConfig.llama3(degree=bs_config.cp_degree)
+                        if dataset_config.generate_doc_lengths  # only use llama3 if we're masking docs
+                        else TransformerContextParallelConfig.zig_zag(degree=bs_config.cp_degree)
+                    )
                     if bs_config.cp_degree
                     else None
                 ),
