@@ -204,6 +204,8 @@ class SFTConfig(Config):
             global_batch_size_tokens=global_batch_size,
             gpu_type=gpu_type,  # used to double microbatch size for B200s
         )
+        print("Batch size config (before overrides):")
+        print(bs_config)
 
         config = SFTConfig(
             run_name=run_name,
@@ -340,8 +342,8 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python %(prog)s dry_run test my-dataset-name 32768 /path/to/ckpt ai2/cluster
-  python %(prog)s launch run01 OpenThoughts3-1.2M 32768 /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/jupiter-cirrascale-2 --launch.priority=high
+  python %(prog)s dry_run test my-dataset-name /path/to/ckpt ai2/cluster
+  python %(prog)s launch run01 OpenThoughts3-1.2M /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/jupiter-cirrascale-2 --seq_len=4096 --num_nodes=2 --launch.priority=high
 """,
     )
 
@@ -380,7 +382,7 @@ Examples:
         "--global_batch_size",
         type=int,
         help="The global batch size in tokens.",
-        default=2 * DEFAULT_SEQUENCE_LENGTH * DEFAULT_NUM_NODES * GPUS_PER_NODE,
+        default=32 * DEFAULT_SEQUENCE_LENGTH * DEFAULT_NUM_NODES * GPUS_PER_NODE,
     )
 
     # Parse known args to get positional arguments and cmd
