@@ -195,6 +195,43 @@ datasets:
       - labels_mask_part_0000.npy
       - labels_mask_part_0001.npy
       - labels_mask_part_0002.npy
+  tulu3_toolu100k_base_replacements_removals-add_IF_SFT:
+    base_dir: jacobm/data/sft/usable-tulu-16k/tulu3_toolu100k_base_replacements_removals-add_IF_SFT
+    tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/tulu3_toolu100k_base_replacements_removals-add_IF_SFT/tokenizer
+    token_ids:
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
+  tulu3_toolu100k_base_replacements_removals-add_VERIFIABLE_o3:
+    base_dir: jacobm/data/sft/usable-tulu-16k/tulu3_toolu100k_base_replacements_removals-add_VERIFIABLE_o3
+    tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/tulu3_toolu100k_base_replacements_removals-add_VERIFIABLE_o3/tokenizer
+    token_ids:
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
+  tulu3_toolu100k_base_replacements_removals-add_OT3_no_cots:
+    base_dir: jacobm/data/sft/usable-tulu-16k/tulu3_toolu100k_base_replacements_removals-add_OT3_no_cots
+    tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/tulu3_toolu100k_base_replacements_removals-add_OT3_no_cots/tokenizer
+    token_ids:
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+      - token_ids_part_0003.npy
+      - token_ids_part_0004.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
+      - labels_mask_part_0003.npy
+      - labels_mask_part_0004.npy
   openthoughts3-456k:
     base_dir: jacobm/data/sft/test/jacobmorrison/openthoughts3-456k
     tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/test/jacobmorrison/openthoughts3-456k/tokenizer
