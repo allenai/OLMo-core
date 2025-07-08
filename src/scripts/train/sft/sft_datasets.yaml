@@ -1,0 +1,95 @@
+datasets:
+  tulu-3-sft-olmo-2:
+    # https://huggingface.co/datasets/allenai/tulu-3-sft-olmo-2-mixture
+    base_dir: tylerr/data/sft/jacobmorrison/tulu-3-sft-olmo-2-mixture
+    # NOTE: be careful that this tokenizer matches the pretraining data you've prepared!
+    # https://huggingface.co/allenai/OLMo-2-1124-7B-Instruct
+    tokenizer: allenai/OLMo-2-1124-7B-Instruct
+    token_ids:
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
+  tulu-3-sft-olmo-2-4k:
+    # https://huggingface.co/datasets/allenai/tulu-3-sft-olmo-2-mixture
+    base_dir: jacobm/data/sft/4k/jacobmorrison/tulu-3-sft-olmo-2-mixture
+    # NOTE: be careful that this tokenizer matches the pretraining data you've prepared!
+    # https://huggingface.co/allenai/OLMo-2-1124-7B-Instruct
+    token_ids:
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
+  tulu-3-olmo-2-sft-mixture-jacobtest2-shuffled-16k:
+    base_dir: jacobm/data/sft/test/jacobmorrison/tulu-3-sft-olmo-2-mixture-jacobtest-2-shuffled-16k
+    tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/test/jacobmorrison/tulu-3-sft-olmo-2-mixture-jacobtest-2-shuffled-16k/tokenizer
+    token_ids:
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
+  openthoughts3-456k-no-cot:
+    base_dir: jacobm/data/sft/test/jacobmorrison/openthoughts3-456k-no-cot
+    tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/test/jacobmorrison/openthoughts3-456k-no-cot/tokenizer
+    token_ids:
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+  openthoughts3-456k:
+    base_dir: jacobm/data/sft/test/jacobmorrison/openthoughts3-456k
+    tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/test/jacobmorrison/openthoughts3-456k/tokenizer
+    token_ids:
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+      - token_ids_part_0003.npy
+      - token_ids_part_0004.npy
+      - token_ids_part_0005.npy
+      - token_ids_part_0006.npy
+      - token_ids_part_0007.npy
+      - token_ids_part_0008.npy
+      - token_ids_part_0009.npy
+      - token_ids_part_0010.npy
+      - token_ids_part_0011.npy
+      - token_ids_part_0012.npy
+      - token_ids_part_0013.npy
+      - token_ids_part_0014.npy
+      - token_ids_part_0015.npy
+      - token_ids_part_0016.npy
+      - token_ids_part_0017.npy
+      - token_ids_part_0018.npy
+      - token_ids_part_0019.npy
+      - token_ids_part_0020.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
+      - labels_mask_part_0003.npy
+      - labels_mask_part_0004.npy
+      - labels_mask_part_0005.npy
+      - labels_mask_part_0006.npy
+      - labels_mask_part_0007.npy
+      - labels_mask_part_0008.npy
+      - labels_mask_part_0009.npy
+      - labels_mask_part_0010.npy
+      - labels_mask_part_0011.npy
+      - labels_mask_part_0012.npy
+      - labels_mask_part_0013.npy
+      - labels_mask_part_0014.npy
+      - labels_mask_part_0015.npy
+      - labels_mask_part_0016.npy
+      - labels_mask_part_0017.npy
+      - labels_mask_part_0018.npy
+      - labels_mask_part_0019.npy
+      - labels_mask_part_0020.npy
