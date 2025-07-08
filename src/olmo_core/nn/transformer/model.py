@@ -21,7 +21,8 @@ from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
 from olmo_core.data.utils import get_cumulative_document_lengths
-from olmo_core.distributed.utils import get_rank, hide_from_torch, unhide_from_torch
+from olmo_core.distributed.parallel import get_pp_mesh
+from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
@@ -216,6 +217,7 @@ class Transformer(nn.Module):
         max_seq_len: Optional[int] = None,
         max_local_microbatch_size: Optional[int] = None,
         device: Optional[torch.device] = None,
+        world_mesh: Optional[DeviceMesh] = None,
     ) -> torch.Generator:
         """
         Initialize the model weights.
@@ -233,7 +235,10 @@ class Transformer(nn.Module):
             if hasattr(module, "reset_parameters"):
                 module.reset_parameters()  # type: ignore
 
-        seed = self.init_seed + get_rank()
+        seed = self.init_seed
+        if world_mesh is not None and self.pp_enabled:
+            seed += get_pp_mesh(world_mesh).get_local_rank()
+
         generator = torch.Generator(device).manual_seed(seed)
 
         if self.embeddings is not None:
@@ -853,13 +858,8 @@ class NormalizedTransformer(Transformer):
         return block
 
     @torch.no_grad()
-    def init_weights(
-        self,
-        *,
-        max_seq_len: Optional[int] = None,
-        device: Optional[torch.device] = None,
-    ) -> torch.Generator:
-        generator = super().init_weights(max_seq_len=max_seq_len, device=device)
+    def init_weights(self, *args, **kwargs) -> torch.Generator:
+        generator = super().init_weights(*args, **kwargs)
         self.normalize_matrices()
         return generator
 
