@@ -542,6 +542,7 @@ class Transformer(nn.Module):
         mode: TransformerActivationCheckpointingMode,
         block_interval: Optional[int] = None,
         modules: Optional[List[str]] = None,
+        activation_memory_budget: Optional[float] = None,
     ):
         """
         Apply activation checkpointing to the model.
@@ -551,7 +552,20 @@ class Transformer(nn.Module):
             which blocks are wrapped.
         :param modules: Required when :data:`mode` is "selected_modules". A list of modules names
             to wrap for activation checkpointing. Globs are supported.
+        :param activation_memory_budget: The memory budget for activation checkpointing in the range
+            [0, 1]. 0 corresponds to the memory usage when recomputing all activations, and 1
+            corresponds to the memory usage when recomputing no activations (which is the default).
+            Requires compilation to be enabled.
         """
+
+        if mode == TransformerActivationCheckpointingMode.budget:
+            if activation_memory_budget is None:
+                raise ValueError("'activation_memory_budget' is required for 'budget' mode")
+            if activation_memory_budget < 0 or activation_memory_budget > 1:
+                raise ValueError("'activation_memory_budget' must be in the range [0, 1]")
+            torch._functorch.config.activation_memory_budget = activation_memory_budget
+            return
+
         from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
             checkpoint_wrapper as ptd_checkpoint_wrapper,
         )

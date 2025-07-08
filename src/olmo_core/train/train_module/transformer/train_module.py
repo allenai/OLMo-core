@@ -37,6 +37,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.transformer import Transformer
+from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
@@ -140,6 +141,15 @@ class TransformerTrainModule(TrainModule):
         ):
             raise OLMoConfigurationError(
                 "Training parallelism configs are only valid for distributed training"
+            )
+
+        if (
+            ac_config is not None
+            and ac_config.mode == TransformerActivationCheckpointingMode.budget
+            and not compile_model
+        ):
+            raise OLMoConfigurationError(
+                "Activation checkpointing with 'budget' mode requires compilation to be enabled"
             )
 
         # Parallelize model.
