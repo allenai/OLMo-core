@@ -13,19 +13,49 @@ gantry run \
         --chat_template_name jacobtest2 \
         --max_seq_length 16384
 
-# 32k tokenize test:
 gantry run \
-    --cluster ai2/saturn-cirrascale \
+    --cluster ai2/ceres-cirrascale \
     --allow-dirty --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/jacobm \
     --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync" \
     --weka=oe-training-default:/weka/oe-training-default \
+    --env-secret HF_TOKEN=HF_TOKEN \
     -- /root/.local/bin/uv run python scripts/data/convert_sft_data_for_olmocore.py \
-        --dataset_mixer_list allenai/persona-precise-if-r1-shard-2 1.0 \
+        --dataset_mixer_list jacobmorrison/oasst1_converted-with-olmo-system-prompt 1.0 \
+            jacobmorrison/flan_v2_converted-with-olmo-system-prompt 1.0 \
+            VGraf/hardcoded-olmo-2 1.0 \
+            jacobmorrison/wildchat_perturbed_6000_replaced_no_keyword-with-olmo-system-prompt 1.0 \
+            jacobmorrison/numinamath_tir_math_decontaminated-with-olmo-system-prompt 1.0 \
+            jacobmorrison/personahub_code_v2_34999-with-olmo-system-prompt 1.0 \
+            jacobmorrison/tulu-3-sft-coconot-regenerated-with-olmo-system-prompt 1.0 \
+            jacobmorrison/tulu_v3.9_wildjailbreak_decontaminated_50k-with-olmo-system-prompt 1.0 \
+            jacobmorrison/tulu_v3.9_synthetic_finalresp_wildguardmixtrain_decontaminated_50k-with-olmo-system-prompt 1.0 \
+            jacobmorrison/tulu_v3.9_sciriff_10k-with-olmo-system-prompt 1.0 \
+            jacobmorrison/tulu_v3.9_table_gpt_5k-with-olmo-system-prompt 1.0 \
+            jacobmorrison/tulu_v3.9_aya_100k-with-olmo-system-prompt 1.0 \
+            jacobmorrison/tulu-3-sft-personas-instruction-following-o3-with-olmo-system-prompt 1.0 \
+            jacobmorrison/tulu-3-sft-personas-math-o3-with-olmo-system-prompt 1.0 \
+            jacobmorrison/tulu-3-sft-personas-math-grade-o3-with-olmo-system-prompt 1.0 \
+            jacobmorrison/tulu-3-sft-personas-algebra-o3-with-olmo-system-prompt 1.0 \
+            jacobmorrison/the-algorithm-python-sft-with-olmo-system-prompt 1.0 \
+            jacobmorrison/llama-nemotron-rlvr-sft-fn-with-olmo-system-prompt 1.0 \
+            jacobmorrison/llama-nemotron-rlvr-sft-stdin-with-olmo-system-prompt 1.0 \
+            jacobmorrison/open-code-reasoning-rlvr-sft-stdin-with-olmo-system-prompt 1.0 \
+            VGraf/toolu-sft-mix-T2-system-prompt 0.3 \
+            jacobmorrison/OpenThoughts3-456k-no-cot-with-olmo-system-prompt 1.0 \
         --tokenizer_name_or_path /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921-hf \
-        --output_dir /weka/oe-training-default/ai2-llm/jacobm/data/sft/test/jacobmorrison/persona-precise-if-r1-shard-2-32k \
+        --output_dir /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/tulu3_toolu100k_base_replacements_removals-add_OT3_no_cots \
         --visualize True \
-        --chat_template_name jacobtest2 \
-        --max_seq_length 32768
+        --chat_template_name olmo_toolu \
+        --max_seq_length 16384
+
+# datasets to ablate:
+    jacobmorrison/IF_sft_data_verified-with-olmo-system-prompt 1.0 \
+    jacobmorrison/verifiable-tasks-o3-7500-with-olmo-system-prompt 1.0 \
+    jacobmorrison/OpenThoughts3-456k-no-cot-with-olmo-system-prompt 1.0 \
+
+        
+        # 32768
+
 
 gantry run \
     --cluster ai2/phobos-cirrascale \
@@ -57,8 +87,8 @@ usable-tulu-integration-test-tulu_3_all-toolu_T2_50k
 # lc olmo 2: /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_4K_20B/step33379
 # normal olmo 2: /weka/oe-training-default/ai2-llm/checkpoints/dustins/OLMo-2-1124-7B
 
-MAX_LENGTH=16384
 # MAX_LENGTH=32768
+MAX_LENGTH=16384
 python src/scripts/train/sft/OLMo2-7B-sft.py launch \
     olmo2-7B-lc-openthoughts3-full \
         openthoughts3-full \

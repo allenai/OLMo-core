@@ -184,6 +184,17 @@ datasets:
     label_mask:
       - labels_mask_part_0000.npy
       - labels_mask_part_0001.npy
+  tulu3_toolu100k_base_replacements_removals:
+    base_dir: jacobm/data/sft/usable-tulu-16k/tulu3_toolu100k_base_replacements_removals
+    tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/tulu3_toolu100k_base_replacements_removals/tokenizer
+    token_ids:
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
   openthoughts3-456k:
     base_dir: jacobm/data/sft/test/jacobmorrison/openthoughts3-456k
     tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/test/jacobmorrison/openthoughts3-456k/tokenizer
