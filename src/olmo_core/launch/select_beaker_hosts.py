@@ -53,7 +53,10 @@ def get_host_name_constraints(
                 continue
 
             if (
-                job.is_running and job.execution and job.execution.spec.resources.gpu_count > 0
+                job.is_running
+                and job.execution
+                and job.execution.spec.resources
+                and job.execution.spec.resources.gpu_count > 0
             ) and (not job.is_preemptible or job.priority == "urgent"):
                 del machines_metadata[host]
 
