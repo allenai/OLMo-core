@@ -243,6 +243,14 @@ class TransformerActivationCheckpointingConfig(Config):
     activation checkpointing. Globs are supported.
     """
 
+    activation_memory_budget: Optional[float] = None
+    """
+    Required when :data:`mode` is "budget". Memory budget for activation checkpointing in range [0, 1].
+    0 = recompute all activations, 1 = recompute none (default). Requires compilation to be enabled.
+
+    See https://pytorch.org/blog/activation-checkpointing-techniques/ for more details.
+    """
+
     def __post_init__(self):
         if (
             self.mode == TransformerActivationCheckpointingMode.selected_blocks
