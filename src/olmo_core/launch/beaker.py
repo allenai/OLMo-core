@@ -436,7 +436,7 @@ class BeakerLaunchConfig(Config):
                 result_path=self.result_dir,
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
-            .with_constraint(clusters=self.clusters)
+            .with_constraint(cluster=self.clusters)
             .with_env_var(GIT_REPO_URL_ENV_VAR, self.git.repo_url)
             .with_env_var(GIT_REF_ENV_VAR, self.git.ref)
         )
