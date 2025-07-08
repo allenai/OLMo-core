@@ -719,6 +719,7 @@ class Transformer(nn.Module):
     def apply_ddp(
         self,
         dp_mesh: Optional[DeviceMesh] = None,
+        param_dtype: Optional[torch.dtype] = None,
         compile_enabled: bool = False,
         autograd_compile_enabled: bool = False,
     ):
@@ -726,6 +727,11 @@ class Transformer(nn.Module):
         Apply DDP to the model.
         """
         from torch.distributed._composable.replicate import replicate
+
+        # Cast model explicitly to the specified dtype before applying DDP
+        target_dtype = param_dtype or self.dtype
+        if target_dtype != self.dtype:
+            self.to(dtype=target_dtype)
 
         # Adapted from
         # https://github.com/pytorch/torchtitan/blob/90c889e972b56b9faadebbb78fc985dedc537ed9/torchtitan/parallelisms/parallelize_llama.py#L328
