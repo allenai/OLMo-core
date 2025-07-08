@@ -90,8 +90,8 @@ usable-tulu-integration-test-tulu_3_all-toolu_T2_50k
 # MAX_LENGTH=32768
 MAX_LENGTH=16384
 python src/scripts/train/sft/OLMo2-7B-sft.py launch \
-    olmo2-7B-lc-openthoughts3-full \
-        openthoughts3-full \
+    olmo2-7B-lc-tulu3_toolu100k_base_replacements_removals \
+        tulu3_toolu100k_base_replacements_removals \
         /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_4K_20B/step33379 \
         ai2/titan-cirrascale \
     --trainer.callbacks.wandb.enabled=True \
@@ -99,7 +99,7 @@ python src/scripts/train/sft/OLMo2-7B-sft.py launch \
     --train_module.optim.lr=5e-5 \
     --seq_len=$MAX_LENGTH \
     --launch.num_gpus=8 \
-    --num_nodes=4 \
+    --num_nodes=1 \
     --launch.priority=urgent
 
 gantry run --cluster ai2/phobos-cirrascale --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/olmo-instruct \
