@@ -85,31 +85,46 @@ class BatchSizeConfig:
             "dp_world_size must be a power of 2"
         )
 
-        assert self.global_batch_size_tokens % (self.dp_world_size * 2) == 0, (
-            "global_batch_size_tokens must be divisible by dp_world_size * 2 (got "
-            f"{self.global_batch_size_tokens} and {self.dp_world_size * 2})"
-        )
-
-        self.rank_microbatch_size_tokens = self.global_batch_size_tokens // (self.dp_world_size * 2)
-        # simple heuristic: double ubatch size to ~double throughput on B200s
+        # Determine max tokens per rank based on GPU type
         max_tokens_per_rank = MAX_RANK_MICROBATCH_SIZE_TOKENS
         if "B200" in self.gpu_type:
-            self.rank_microbatch_size_tokens *= 2
             max_tokens_per_rank *= 2
 
-        # Check if we need context parallelism
-        if self.rank_microbatch_size_tokens > max_tokens_per_rank:
-            # Calculate minimum CP degree needed
+        # Check if we need context parallelism based on sequence length
+        if self.sequence_length > max_tokens_per_rank:
+            # Calculate minimum CP degree needed to fit sequence length
             min_cp_degree = 2
-            while (self.rank_microbatch_size_tokens // min_cp_degree) > max_tokens_per_rank:
+            while (self.sequence_length // min_cp_degree) > max_tokens_per_rank:
                 min_cp_degree *= 2
 
             self.cp_degree = min_cp_degree
             log.info(
-                f"Rank microbatch size ({self.rank_microbatch_size_tokens} tokens) exceeds "
-                f"max ({max_tokens_per_rank} tokens). Setting cp_degree={self.cp_degree}"
+                f"Sequence length ({self.sequence_length} tokens) exceeds "
+                f"max tokens per rank ({max_tokens_per_rank} tokens). Setting cp_degree={self.cp_degree}"
             )
 
+        # Calculate rank batch size and grad accum steps
+        cp_factor = self.cp_degree if self.cp_degree is not None else 1
+        rank_batch_size_tokens = self.global_batch_size_tokens // (self.dp_world_size * cp_factor)
+
+        # Ensure rank_batch_size_tokens doesn't exceed max_tokens_per_rank
+        if rank_batch_size_tokens > max_tokens_per_rank:
+            # Need gradient accumulation
+            self.grad_accum_steps = 1
+            while rank_batch_size_tokens // self.grad_accum_steps > max_tokens_per_rank:
+                self.grad_accum_steps *= 2
+
+            self.rank_microbatch_size_tokens = rank_batch_size_tokens // self.grad_accum_steps
+            log.info(
+                f"Rank batch size ({rank_batch_size_tokens} tokens) exceeds "
+                f"max tokens per rank ({max_tokens_per_rank} tokens). "
+                f"Using grad_accum_steps={self.grad_accum_steps}"
+            )
+        else:
+            self.rank_microbatch_size_tokens = rank_batch_size_tokens
+            self.grad_accum_steps = 1
+
+        # Validate that rank_microbatch_size_tokens is divisible by sequence_length
         assert self.rank_microbatch_size_tokens % self.sequence_length == 0, (
             "rank_microbatch_size_tokens must be divisible by sequence_length (got "
             f"{self.rank_microbatch_size_tokens} and {self.sequence_length})"
@@ -118,15 +133,18 @@ class BatchSizeConfig:
             self.rank_microbatch_size_tokens // self.sequence_length
         )
 
-        # Adjust total microbatch tokens calculation for CP
-        cp_factor = self.cp_degree if self.cp_degree is not None else 1
-        total_microbatch_tokens = self.rank_microbatch_size_tokens * self.dp_world_size * cp_factor
-        assert self.global_batch_size_tokens % total_microbatch_tokens == 0, (
-            "global_batch_size_tokens must be divisible by "
-            "(rank_microbatch_size_tokens * dp_world_size * cp_degree) (got "
-            f"{self.global_batch_size_tokens} and {total_microbatch_tokens})"
+        # Final validation
+        total_tokens = (
+            self.rank_microbatch_size_tokens
+            * self.dp_world_size
+            * cp_factor
+            * self.grad_accum_steps
         )
-        self.grad_accum_steps = self.global_batch_size_tokens // total_microbatch_tokens
+        assert self.global_batch_size_tokens == total_tokens, (
+            "global_batch_size_tokens must equal "
+            "(rank_microbatch_size_tokens * dp_world_size * cp_degree * grad_accum_steps) (got "
+            f"{self.global_batch_size_tokens} and {total_tokens})"
+        )
 
 
 def build_sft_dataset(
