@@ -35,7 +35,7 @@ MAX_DURATION = int(
 )  # Setting this higher than 6T (expected run time), in case we get to run longer since 1) we're using WSD and 2) our anneal will use different data
 ANNEAL_TOKENS = int(100e9)
 LR = (
-    4.4e-5 * 2
+    2.2e-4
 )  # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes.
 SAVE_INTERVAL = 10000
 EVAL_INTERVAL = 1000
