@@ -470,8 +470,8 @@ class Attention(AttentionBase):
                 raise ValueError("Block mask missing during flex attention.")
 
             # Reshape (batch_size, seq_len) so that the seq_len matches that of the block mask.
-            # This is needed for intra-document masking, in which the block make sequence length
-            # is batch_size * seq_len.
+            # This is needed for intra-document masking, in which case the block mask sequence
+            # length is batch_size * seq_len.
             # shape: (batch_size, seq_len, n_heads, head_dim)
             #        (batch_size, seq_len, n_kv_heads, head_dim),
             #        (batch_size, seq_len, n_kv_heads, head_dim)
@@ -497,15 +497,14 @@ class Attention(AttentionBase):
             #        (batch_size, n_kv_heads, seq_len, head_dim)
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
+            # SDPA uses full precision. We match it for flex attention.
             og_dtype = q.dtype
             q, k, v = q.float(), k.float(), v.float()
-
             with torch.autocast(enabled=False, device_type=q.device.type):
                 # shape: (batch_size, n_heads, seq_len, head_dim)
                 flex_att = flex_attention(
                     q, k, v, block_mask=block_mask, scale=scale, enable_gqa=True
                 )
-
             assert isinstance(flex_att, torch.Tensor)
             att = flex_att.to(dtype=og_dtype)
 

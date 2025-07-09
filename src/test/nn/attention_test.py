@@ -26,7 +26,6 @@ from olmo_core.testing import (
 )
 
 
-# Implementation adapted from https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html
 def scaled_dot_product_attention(
     q: torch.Tensor,
     k: torch.Tensor,
