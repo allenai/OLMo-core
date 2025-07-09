@@ -195,9 +195,12 @@ class BaselineWSDModelLadder(ModelLadder):
             max_grad_norm=1.0,
             scheduler=WSD(
                 units=SchedulerUnits.steps,
-                # warmup=2000, # from hero run
-                warmup=round(self.model_size / self.get_global_batch_size()), # from wsd ladder # TODO: how much warmup is right?
-                decay=(int(decay_tokens / self.get_global_batch_size())),  # In the hero run, we use 4x global batch size due to batch warmup
+                # from original ladder logic
+                # https://github.com/allenai/OLMo-core/blob/c1a1d73803d1ec162d87e08062555d3efcbfaf3a/src/olmo_core/model_ladder.py#L386C74-L386C83
+                warmup=round(self.model_size / self.get_global_batch_size()),
+                # Scale decay tokens to match hero run.
+                # In the hero run, you may notice we use 4x global batch size. This is due to batch warmup.
+                decay=(int(decay_tokens / self.get_global_batch_size())),
                 decay_fraction=None,
             ),
         )
