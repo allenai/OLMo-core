@@ -1055,25 +1055,6 @@ def _get_flex_attn_mask_mod(
     return and_masks(*mask_mods)
 
 
-@cache
-def _get_causal_block_mask(
-    seq_len: int,
-    device: torch.device,
-    window_size: Optional[Tuple[int, int]] = None,
-    block_size: int = 128,
-) -> BlockMask:
-    return create_block_mask(
-        _get_flex_attn_mask_mod(window_size, device=device),
-        B=None,
-        H=None,
-        Q_LEN=seq_len,
-        KV_LEN=seq_len,
-        device=device.type,
-        BLOCK_SIZE=block_size,
-    )
-
-
-@cache
 def _get_flex_attn_causal_block_mask(
     seq_len: int,
     device: torch.device,

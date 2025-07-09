@@ -216,18 +216,24 @@ class Transformer(nn.Module):
         if device is None:
             device = self.device
 
+        block_masks_by_window_size = {}
         block_masks = []
         for block in self.blocks.values():
             block = cast(TransformerBlock, block)
             att = cast(Union[Attention, FusedAttention], block.attention)
 
+            block_mask = None
             if att.use_flex_attn:
+                # Reuse block masks across layers with the same window size
                 window_size = getattr(att, "window_size", None)
-                block_masks.append(
-                    get_flex_attn_causal_block_mask(seq_len, device, window_size, doc_lens)
-                )
-            else:
-                block_masks.append(None)
+                if window_size not in block_masks_by_window_size:
+                    block_masks_by_window_size[window_size] = get_flex_attn_causal_block_mask(
+                        seq_len, device, window_size, doc_lens
+                    )
+
+                block_mask = block_masks_by_window_size[window_size]
+
+            block_masks.append(block_mask)
 
         return block_masks
 
