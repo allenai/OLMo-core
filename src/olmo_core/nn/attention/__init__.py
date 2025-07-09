@@ -1036,6 +1036,7 @@ def _get_flex_attn_mask_mod(
         def _sliding_window_mask_mod(
             B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
         ) -> torch.Tensor:
+            assert window_size is not None
             return torch.logical_and(
                 q_idx - kv_idx <= window_size[0], kv_idx - q_idx <= window_size[1]
             )
