@@ -469,20 +469,19 @@ class Transformer(nn.Module):
         # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
-        # Mark any block masks as dynamic for torch.compile().
-        if self.compile_enabled and (block_masks := block_kwargs.get("block_masks")) is not None:
-            for block_mask in block_masks:
-                if block_mask is None:
-                    continue
-
-                _mark_block_mask_dynamic(block_mask)
+        block_mask_by_layer = block_kwargs.pop("block_masks", [None] * self.n_layers)
 
         # Run each block.
-        for block in self.blocks.values():
+        for key, block in self.blocks.items():
+            block_mask = block_mask_by_layer[int(key)]
+
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
-            h = block(h, **block_kwargs)
+                if block_mask is not None:
+                    _mark_block_mask_dynamic(block_mask)
+
+            h = block(h, block_mask=block_mask, **block_kwargs)
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:

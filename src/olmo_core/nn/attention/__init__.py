@@ -238,7 +238,6 @@ class AttentionConfig(Config):
         kwargs.update(
             dtype=kwargs.pop("dtype").as_pt(),
             d_model=d_model,
-            layer_idx=layer_idx,
             init_device=init_device,
             cache=cache,
         )
@@ -324,7 +323,6 @@ class Attention(AttentionBase):
         d_model: int,
         n_heads: int,
         n_kv_heads: Optional[int] = None,
-        layer_idx: Optional[int] = None,
         bias: bool = True,
         rope: Optional[RoPEConfig] = None,
         clip_qkv: Optional[float] = None,
@@ -344,7 +342,6 @@ class Attention(AttentionBase):
         self.n_kv_heads = n_kv_heads or n_heads
         self.n_rep = self.n_heads // self.n_kv_heads
         self.head_dim = d_model // n_heads
-        self.layer_idx = layer_idx
         self.w_q = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
         self.w_k = nn.Linear(
             d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
@@ -561,7 +558,7 @@ class Attention(AttentionBase):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
-        block_masks: Optional[List[Optional[BlockMask]]] = None,
+        block_mask: Optional[BlockMask] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -620,12 +617,9 @@ class Attention(AttentionBase):
                 q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
             )
 
-        block_mask = None
-        if self.use_flex_attn:
-            assert block_masks is not None, "Block masks are needed for flex attention"
-            assert self.layer_idx is not None, "Block masks cannot be used without layer index"
-            block_mask = block_masks[self.layer_idx]
-            assert block_mask is not None, "Block mask cannot be null for flex attention layer"
+        assert (
+            not self.use_flex_attn or block_mask is not None
+        ), "Block mask cannot be null for flex attention layer"
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
