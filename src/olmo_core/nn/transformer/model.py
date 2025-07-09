@@ -469,6 +469,14 @@ class Transformer(nn.Module):
         # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
+        # Mark any block masks as dynamic for torch.compile().
+        if self.compile_enabled and (block_masks := block_kwargs.get("block_masks")) is not None:
+            for block_mask in block_masks:
+                if block_mask is None:
+                    continue
+
+                _mark_block_mask_dynamic(block_mask)
+
         # Run each block.
         for block in self.blocks.values():
             # Mark sizes as dynamic for torch.compile().
@@ -1016,3 +1024,20 @@ def _unhide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[s
     if (doc_lens := kwargs.get("doc_lens")) is not None:
         kwargs["doc_lens"] = unhide_from_torch(doc_lens)
     return (args, kwargs)
+
+
+def _mark_block_mask_dynamic(block_mask: BlockMask):
+    mark_dynamic(block_mask.kv_num_blocks, 2)
+    mark_dynamic(block_mask.kv_indices, (2, 3))
+    if block_mask.full_kv_num_blocks is not None:
+        mark_dynamic(block_mask.full_kv_num_blocks, 2)
+    if block_mask.full_kv_indices is not None:
+        mark_dynamic(block_mask.full_kv_indices, (2, 3))
+    if block_mask.q_num_blocks is not None:
+        mark_dynamic(block_mask.q_num_blocks, 2)
+    if block_mask.q_indices is not None:
+        mark_dynamic(block_mask.q_indices, (2, 3))
+    if block_mask.full_q_num_blocks is not None:
+        mark_dynamic(block_mask.full_q_num_blocks, 2)
+    if block_mask.full_q_indices is not None:
+        mark_dynamic(block_mask.full_q_indices, (2, 3))
