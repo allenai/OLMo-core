@@ -410,8 +410,8 @@ datasets:
       - labels_mask_part_0064.npy
       - labels_mask_part_0065.npy
   OpenThoughts3-full-regenerations:
-    base_dir: 
-    tokenizer: 
+    base_dir: jacobm/data/sft/rl-sft-32k/OpenThoughts3-full-regenerations
+    tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/OpenThoughts3-full-regenerations/tokenizer
     token_ids:
       - token_ids_part_0000.npy
       - token_ids_part_0001.npy
