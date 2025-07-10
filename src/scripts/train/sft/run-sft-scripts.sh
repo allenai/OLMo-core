@@ -106,8 +106,8 @@ MAX_LENGTH=16384
 
 # USABLE!!!!!
 python src/scripts/train/sft/OLMo2-7B-sft.py launch \
-    olmo2-7B-lc-OpenThoughts3-456k-no-cot-olmo-chat-template \
-        OpenThoughts3-456k-no-cot-olmo-chat-template \
+    olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k \
+        tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k \
         /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_4K_20B/step33379 \
         ai2/jupiter-cirrascale-2 \
     --trainer.callbacks.wandb.enabled=True \

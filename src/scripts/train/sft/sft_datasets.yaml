@@ -97,3 +97,12 @@ datasets:
       - labels_mask_part_0000.npy
       - labels_mask_part_0001.npy
       - labels_mask_part_0002.npy
+  OpenThoughts3-456k-no-cot-olmo-chat-template:
+    base_dir: jacobm/data/sft/rl-sft-32k/OpenThoughts3-456k-no-cot-olmo-chat-template
+    tokenizer:  /weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/OpenThoughts3-456k-no-cot-olmo-chat-template/tokenizer
+    token_ids:
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
