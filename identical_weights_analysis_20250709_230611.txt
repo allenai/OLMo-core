@@ -1,0 +1,15 @@
+🔍 IDENTICAL WEIGHTS DETECTION TOOL
+============================================================
+📁 Analyzing: /data/input/amanr/step0/model_and_optim
+📝 Log file: identical_weights_analysis_20250709_230611.txt
+============================================================
+🔍 SEARCHING FOR IDENTICAL WEIGHT INITIALIZATION PATTERNS
+============================================================
+🔧 Configured for 64-node distributed training analysis
+============================================================
+📊 Found 355 weight/bias parameters
+🔧 Found 12 different layer types
+
+🔍 Analyzing w_q.weight (32 instances)
+
+🔍 Checking patterns in model.blocks.0.attention.w_q.weight (shape: torch.Size([4096, 4096]))

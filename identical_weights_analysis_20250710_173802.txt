@@ -1,0 +1,20 @@
+🔍 IDENTICAL WEIGHTS DETECTION TOOL
+============================================================
+📁 Analyzing: /data/input/amanr/step10000/model_and_optim
+📝 Log file: identical_weights_analysis_20250710_173802.txt
+============================================================
+🔍 ANALYZING COSINE SIMILARITY PATTERNS
+============================================================
+🔧 Computing average cosine similarities across layers, blocks, rows, and columns
+============================================================
+📊 Found 355 weight/bias parameters
+🔧 Found 12 different layer types
+
+🔍 Analyzing w_q.weight (32 instances)
+    📊 LAYER-WISE: Avg cosine similarity = -0.000291 (45 pairs)
+
+🔍 Analyzing cosine similarities in model.blocks.0.attention.w_q.weight (shape: torch.Size([4096, 4096]))
+    📊 DIM 0, BLOCK_SIZE 2: Avg cosine similarity = 0.013306 (2048 blocks)
+    📊 DIM 0, BLOCK_SIZE 3: Avg cosine similarity = 0.006247 (1365 blocks)
+    📊 DIM 0, BLOCK_SIZE 4: Avg cosine similarity = 0.026160 (1024 blocks)
+    📊 DIM 0, BLOCK_SIZE 8: Avg cosine similarity = 0.051969 (512 blocks)

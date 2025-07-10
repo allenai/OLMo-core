@@ -1,5 +1,3 @@
-Is this correct??
-
 import os
 import torch
 import torch.nn as nn
@@ -41,9 +39,9 @@ mesh = build_world_mesh(
 )
 print(f"Rank {rank}: Built mesh with world size: {mesh.size()}")
 
-def build_olmo_model_config():
+def build_model_config_1b():
     config = TransformerConfig.olmo2_1B(
-        vocab_size=50304,
+        vocab_size=100278,
         n_layers=16,
         hidden_size_multiple_of=1024,
     )
@@ -56,7 +54,26 @@ def build_olmo_model_config():
     config.block.attention.use_head_qk_norm = True
     return config
 
-model_config = build_olmo_model_config()
+def build_model_config_7b():
+    config = TransformerConfig.olmo2_7B(
+        vocab_size=100278,
+        n_kv_heads=8,
+        hidden_size_multiplier=1.2,
+        hidden_size_multiple_of=1024,
+    )
+    #  config.block.name = TransformerBlockType.default
+    #  config.block.attention.qk_norm = None
+    config.block.attention.sliding_window = SlidingWindowAttentionConfig(
+        force_full_attention_on_first_layer=False,
+        force_full_attention_on_last_layer=True,
+        pattern=[4096, 4096, 4096, -1],
+    )
+    config.block.attention.use_flash = True
+    config.block.attention.use_head_qk_norm = True
+
+    return config
+
+model_config = build_model_config_1b()
 model = model_config.build()
 print(f"Rank {rank}: Model built with {sum(p.numel() for p in model.parameters()) / 1e6:.1f}M parameters")
 
@@ -76,10 +93,11 @@ def init_weights(module):
         nn.init.trunc_normal_(module.weight, mean=0.0, std=0.02, a=-0.06, b=0.06, generator=generator)
 
 model.apply(init_weights)
+print(f"Rank {rank}: OLMo model initialized")
 
 def compare_shards():
+    print(f"\n=== SHARD COMPARISON (Rank {rank}) ===")
     shard_data = {}
-    
     for name, param in model.named_parameters():
         if "weight" in name and param.numel() > 1000: 
             if hasattr(param, '_local_tensor') and param._local_tensor is not None:
@@ -101,11 +119,11 @@ def compare_shards():
             if len(tensors) >= 2:
                 rank0_shard = tensors[0]
                 rank1_shard = tensors[1]
-
                 cos_sim = torch.nn.functional.cosine_similarity(
                     rank0_shard.unsqueeze(0), 
                     rank1_shard.unsqueeze(0)
                 ).item()
+                
                 l2_dist = torch.norm(rank0_shard - rank1_shard).item()
                 rel_l2_dist = l2_dist / torch.norm(rank0_shard).item()
                 identical_elements = torch.equal(rank0_shard, rank1_shard)
@@ -119,7 +137,7 @@ def compare_shards():
                 print(f"  Rank1 shard mean: {rank1_shard.mean().item():.6f}")
                 print(f"  Rank0 shard std: {rank0_shard.std().item():.6f}")
                 print(f"  Rank1 shard std: {rank1_shard.std().item():.6f}")
-                
+
                 if cos_sim > 0.99:
                     print(f"HIGH COSINE SIMILARITY")
                 if rel_l2_dist < 0.01:
@@ -131,5 +149,6 @@ def compare_shards():
     else:
         for name, tensor in shard_data.items():
             dist.all_gather([torch.zeros_like(tensor) for _ in range(world_size)], tensor)
+
 
 compare_shards()
