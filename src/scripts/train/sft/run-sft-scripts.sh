@@ -60,28 +60,40 @@ allenai/IF_sft_data_verified 1.0 \
 jacobmorrison/OpenThoughts3-456k-no-cot 1.0 \
 jacobmorrison/verifiable-tasks-o3-7500 1.0 \
 
-# reasoning:
+# usable:
 gantry run \
-    --cluster ai2/jupiter-cirrascale-2 \
-    --allow-dirty --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/jacobm \
+    --cluster ai2/saturn-cirrascale \
+    --allow-dirty --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/olmo-instruct \
     --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync" \
     --weka=oe-training-default:/weka/oe-training-default \
     --env-secret HF_TOKEN=HF_TOKEN \
+    --gpus 1 \
+    --priority urgent \
     -- /root/.local/bin/uv run python scripts/data/convert_sft_data_for_olmocore.py \
-        --dataset_mixer_list jacobmorrison/OpenThoughts3-456k 0.549 \
+        --dataset_mixer_list DATASET 0.549 \
         --tokenizer_name_or_path /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921-hf \
-        --output_dir /weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/OT3-456-subsample_256k \
+        --output_dir /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/DATA \
+        --visualize True \
+        --chat_template_name olmo \
+        --max_seq_length 16384
+
+# reasoning:
+gantry run \
+    --cluster ai2/saturn-cirrascale \
+    --allow-dirty --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/olmo-instruct \
+    --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync" \
+    --weka=oe-training-default:/weka/oe-training-default \
+    --env-secret HF_TOKEN=HF_TOKEN \
+    --gpus 8 \
+    --priority urgent \
+    -- /root/.local/bin/uv run python scripts/data/convert_sft_data_for_olmocore.py \
+        --dataset_mixer_list jacobmorrison/OpenThoughts3-456k 1.0 \
+            jacobmorrison/OpenThoughts3-743k-QwQ-generations-32k-parsed-2 1.0 \
+        --tokenizer_name_or_path /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921-hf \
+        --output_dir /weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/OpenThoughts3-full-regenerations-2 \
         --visualize True \
         --chat_template_name olmo_thinker \
         --max_seq_length 32768
-
-gantry run \
-    --cluster ai2/jupiter-cirrascale-2 \
-    --allow-dirty --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/jacobm \
-    --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync" \
-    --weka=oe-training-default:/weka/oe-training-default \
-    --env-secret HF_TOKEN=HF_TOKEN \
-    -- /root/.local/bin/uv run python scripts/data/convert_sft_data_for_olmocore.py --dataset_mixer_list jacobmorrison/OpenThoughts3-456k 0.549 --tokenizer_name_or_path /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921-hf --output_dir /weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/OT3-456-subsample_250k --visualize True --chat_template_name olmo_thinker --max_seq_length 32768
 
 
 python src/scripts/train/sft/OLMo2-7B-sft.py launch \
@@ -106,8 +118,8 @@ MAX_LENGTH=16384
 
 # USABLE!!!!!
 python src/scripts/train/sft/OLMo2-7B-sft.py launch \
-    olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k \
-        tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k \
+    olmo2-7B-lc-tulu3-olmo2-mix \
+        tulu3-olmo2-mix \
         /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_4K_20B/step33379 \
         ai2/jupiter-cirrascale-2 \
     --trainer.callbacks.wandb.enabled=True \
