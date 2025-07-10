@@ -103,15 +103,31 @@ usable-tulu-integration-test-tulu_3_all-toolu_T2_50k
 
 # MAX_LENGTH=32768
 MAX_LENGTH=16384
+
+# USABLE!!!!!
 python src/scripts/train/sft/OLMo2-7B-sft.py launch \
-    olmo2-7B-lc-tulu3_toolu100k_base_replacements_removals-add_OT3_no_cots \
-        tulu3_toolu100k_base_replacements_removals-add_OT3_no_cots \
+    olmo2-7B-lc-OpenThoughts3-456k-no-cot-olmo-chat-template \
+        OpenThoughts3-456k-no-cot-olmo-chat-template \
+        /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_4K_20B/step33379 \
+        ai2/jupiter-cirrascale-2 \
+    --trainer.callbacks.wandb.enabled=True \
+    --trainer.max_duration.value=2 \
+    --train_module.optim.lr=5e-5 \
+    --seq_len=16384 \
+    --launch.num_gpus=8 \
+    --num_nodes=1 \
+    --launch.priority=urgent
+
+# REASONING!!!!!
+python src/scripts/train/sft/OLMo2-7B-sft.py launch \
+    olmo2-7B-lc-tulu3-olmo2-mix \
+        tulu3-olmo2-mix \
         /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_4K_20B/step33379 \
         ai2/titan-cirrascale \
     --trainer.callbacks.wandb.enabled=True \
     --trainer.max_duration.value=2 \
     --train_module.optim.lr=5e-5 \
-    --seq_len=$MAX_LENGTH \
+    --seq_len=32768 \
     --launch.num_gpus=8 \
     --num_nodes=1 \
     --launch.priority=urgent
