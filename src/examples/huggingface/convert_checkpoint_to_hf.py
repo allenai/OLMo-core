@@ -61,6 +61,12 @@ def convert_checkpoint_to_hf(
         output_path: Where to save the converted model
         transformer_config_dict: Dictionary form of OLMo core model config
         tokenizer_config_dict: Dictionary form of OLMo core tokenizer config
+        dtype: The torch dtype that model weights should be saved as.
+        max_sequence_length: The maximum sequence length that the model supports.
+        validate: Whether to validate the converted model.
+        debug: Whether to enable debug mode.
+        device: The device to use for the model.
+        validation_sliding_window: The sliding window size to use for validation.
     """
     if max_sequence_length <= 0:
         raise ValueError(f"Missing or invalid sequence length: {max_sequence_length}")
@@ -253,9 +259,7 @@ def validate_conversion(
         stack.enter_context(torch.no_grad())
         # Flex attention matches SDPA maths backend
         if use_flex_attn:
-            stack.enter_context(
-                torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH)
-            )
+            stack.enter_context(torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH))
 
         hf_logits, *_ = hf_model(input_ids=input_ids, return_dict=False)
 
@@ -275,9 +279,9 @@ def validate_conversion(
         assert state_mapping is not None
 
         simple_key_mapping = {
-            mapping.source_keys[0]
-            .replace(".weight", ""): mapping.dest_keys[0]
-            .replace(".weight", "")
+            mapping.source_keys[0].replace(".weight", ""): mapping.dest_keys[0].replace(
+                ".weight", ""
+            )
             for mapping in state_mapping
             if len(mapping.source_keys) == 1 and len(mapping.dest_keys) == 1
         }

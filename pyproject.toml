@@ -57,7 +57,7 @@ dev = [
 beaker = ["beaker-py>=1.36.0,<2.0", "GitPython>=3.0,<4.0"]
 wandb = ["wandb"]
 comet = ["comet_ml"]
-transformers = ["transformers"]
+transformers = ["transformers @ git+https://github.com/2015aroras/transformers@shanea/olmo3"]
 all = ["ai2-olmo-core[dev,beaker,wandb,comet,transformers]"]
 
 [tool.setuptools]
