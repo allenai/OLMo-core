@@ -10,6 +10,7 @@ import os
 import sys
 from dataclasses import dataclass
 from typing import List, cast
+import glob
 
 from olmo_core.config import Config, DType
 from olmo_core.data import (
@@ -47,21 +48,8 @@ SEQUENCE_LENGTH = 1024
 
 # This will read stream data from the public endpoints by default, but that might be a lot slower
 # than reading data locally.
-DATA_ROOT = os.environ.get("OLMO_DATA_ROOT", "http://olmo-data.org/examples/c4-en/gpt2").rstrip("/")
-DATA_PATHS = [
-    f"{DATA_ROOT}/c4-train.00000-00099.npy",
-    f"{DATA_ROOT}/c4-train.00100-00199.npy",
-    f"{DATA_ROOT}/c4-train.00200-00299.npy",
-    f"{DATA_ROOT}/c4-train.00300-00399.npy",
-    f"{DATA_ROOT}/c4-train.00400-00499.npy",
-    f"{DATA_ROOT}/c4-train.00500-00599.npy",
-    f"{DATA_ROOT}/c4-train.00600-00699.npy",
-    f"{DATA_ROOT}/c4-train.00700-00799.npy",
-    f"{DATA_ROOT}/c4-train.00800-00899.npy",
-    f"{DATA_ROOT}/c4-train.00900-00999.npy",
-    f"{DATA_ROOT}/c4-train.01000-01023.npy",
-]
-EVAL_DATA_PATHS = [f"{DATA_ROOT}/c4-validation.00000-00008.npy"]
+DATA_PATTERN = "/weka/oe-training-default/ai2-llm/preprocessed/dclm/baseline_type_topic_classified_20pct/allenai/dolma2-tokenizer/**/**/part-0*-00000.npy"
+DATA_PATHS = sorted(glob.glob(DATA_PATTERN, recursive=True))
 DATA_WORK_DIR = "/tmp/dataset-cache"
 
 
@@ -76,7 +64,7 @@ class ExperimentConfig(Config):
 
 
 def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
-    tokenizer_config = TokenizerConfig.gpt2()
+    tokenizer_config = TokenizerConfig.dolma2()
 
     model_config = TransformerConfig.llama2_271M(
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
@@ -131,38 +119,17 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             ),
         )
         .with_callback(
-            "comet",
-            CometCallback(
-                name=run_name,
-                cancel_check_interval=10,
-                enabled=False,  # change to true to enable
-            ),
-        )
-        .with_callback(
             "wandb",
             WandBCallback(
                 name=run_name,
+                project="benjaminm-tok",
+                entity="ai2-llm",
                 cancel_check_interval=10,
-                enabled=False,  # change to true to enable
+                enabled=True,  # change to true to enable
             ),
         )
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("profiler", ProfilerCallback(enabled=False))
-        .with_callback(
-            "lm_evaluator",
-            LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyDatasetConfig(
-                    paths=EVAL_DATA_PATHS,
-                    metadata=[{"label": "c4-validation"}],
-                    name=NumpyDatasetType.padded_fsl,
-                    sequence_length=SEQUENCE_LENGTH,
-                    tokenizer=tokenizer_config,
-                    work_dir=DATA_WORK_DIR,
-                ),
-                eval_interval=250,
-                eval_duration=Duration.steps(50),
-            ),
-        )
         .with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
@@ -213,5 +180,7 @@ if __name__ == "__main__":
     prepare_training_environment()
     try:
         main(run_name, overrides=overrides)
+    except Exception as e:
+        import ipdb; ipdb.post_mortem()
     finally:
         teardown_training_environment()
