@@ -132,8 +132,8 @@ python src/scripts/train/sft/OLMo2-7B-sft.py launch \
 
 # REASONING!!!!!
 python src/scripts/train/sft/OLMo2-7B-sft.py launch \
-    olmo2-7B-lc-OT3-456-subsample_100k \
-        OT3-456-subsample_100k \
+    olmo2-7B-lc-OpenThoughts3-1.2M \
+        OpenThoughts3-1.2M \
         /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_4K_20B/step33379 \
         ai2/titan-cirrascale \
     --trainer.callbacks.wandb.enabled=True \
@@ -141,24 +141,34 @@ python src/scripts/train/sft/OLMo2-7B-sft.py launch \
     --train_module.optim.lr=5e-5 \
     --seq_len=32768 \
     --launch.num_gpus=8 \
-    --num_nodes=1 \
+    --num_nodes=4 \
     --launch.priority=urgent
 
-gantry run --cluster ai2/phobos-cirrascale --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/olmo-instruct \
+INPUT_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-tulu3-olmo2-mix-remov_replac/step1368
+MODEL_NAME=olmo2-7B-lc-tulu3-olmo2-mix-remov_replac
+gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/olmo-instruct \
         --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync --all-extras" \
         --weka=oe-adapt-default:/weka/oe-adapt-default \
         --weka=oe-training-default:/weka/oe-training-default \
+        --priority urgent \
+        --gpus 1 \
         -- /root/.local/bin/uv run python src/examples/huggingface/convert_checkpoint_to_hf.py \
-            -i /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-openthoughts3-456k-no-cot/step2742/ \
-            -o /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/<PATh> \
+            -i $INPUT_PATH \
+            -o /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/$MODEL_NAME \
             --max-sequence-length 65536
 
 olmo2-7B-lc-openthoughts3-456k/step42798
 olmo2-7B-lc-openthoughts3-456k-no-cot/step2742
 
-cp /weka/oe-adapt-default/jacobm/rl-sft/checkpoints/olmo-2-tokenizer-olmo_toolu-template/* \
-    /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/olmo2-7B-sft/olmo2-7B-lc-openthoughts3-456k-no-cot/step2742-hf
-# IN OPEN-INSTRUCT
+##### REASONING:
+cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-olmo_thinker-chat-template/* \
+    <OUTPUT_DIR>
+
+#### USABLE:
+cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-olmo-chat-template/* \
+    <OUTPUT_DIR>
+
+
 
 # ALL
 EXP_NAME=olmo2-7B-lc-tulu3_toolu100k_base_replacements_removals
