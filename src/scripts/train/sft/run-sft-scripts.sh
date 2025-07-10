@@ -132,8 +132,8 @@ python src/scripts/train/sft/OLMo2-7B-sft.py launch \
 
 # REASONING!!!!!
 python src/scripts/train/sft/OLMo2-7B-sft.py launch \
-    olmo2-7B-lc-OpenThoughts3-1.2M \
-        OpenThoughts3-1.2M \
+    olmo2-7B-lc-OpenThoughts3-full-regenerations \
+        OpenThoughts3-full-regenerations \
         /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_4K_20B/step33379 \
         ai2/titan-cirrascale \
     --trainer.callbacks.wandb.enabled=True \
@@ -144,8 +144,8 @@ python src/scripts/train/sft/OLMo2-7B-sft.py launch \
     --num_nodes=4 \
     --launch.priority=urgent
 
-INPUT_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-tulu3-olmo2-mix-remov_replac/step1368
-MODEL_NAME=olmo2-7B-lc-tulu3-olmo2-mix-remov_replac
+INPUT_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-tulu3-olmo2-mix/step1484
+MODEL_NAME=olmo2-7B-lc-tulu3-olmo2-mix
 gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/olmo-instruct \
         --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync --all-extras" \
         --weka=oe-adapt-default:/weka/oe-adapt-default \
@@ -164,15 +164,23 @@ olmo2-7B-lc-openthoughts3-456k-no-cot/step2742
 cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-olmo_thinker-chat-template/* \
     <OUTPUT_DIR>
 
+find /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/usable-tulu/ -maxdepth 1 -type d -name "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac*" -exec cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-olmo-chat-template/tokenizer_config.json {} \;
+
 #### USABLE:
 cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-olmo-chat-template/* \
-    <OUTPUT_DIR>
+    /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/usable-tulu/olmo2-7B-lc-tulu3-olmo2-mix-remov_replac
 
 
 
 # ALL
-EXP_NAME=olmo2-7B-lc-tulu3_toolu100k_base_replacements_removals
-MODEL_PATH=/weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/olmo2-7B-sft/olmo2-7B-lc-tulu3_toolu100k_base_replacements_removals/step1376-hf
+  
+                                   
+  
+
+REASONING_LENGTH=32768
+USABLE_LENGTH=4096
+EXP_NAME=olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-saurabh_code
+MODEL_PATH=/weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/usable-tulu/$EXP_NAME
 WANDB_RUN=placeholder
 python scripts/submit_eval_jobs.py \
         --model_name $EXP_NAME \
@@ -186,11 +194,42 @@ python scripts/submit_eval_jobs.py \
         --evaluate_on_weka \
         --run_id $WANDB_RUN \
         --workspace tulu-3-results \
-        --oe_eval_max_length 32768 \
-        --oe_eval_stop_sequences '</answer>,<|endoftext|>' \
+        --oe_eval_max_length $USABLE_LENGTH \
+        --oe_eval_stop_sequences '</answer>' \
         --process_output r1_style \
-        --oe_eval_tasks alpaca_eval_v3::hamish_zs_reasoning \
         --skip_oi_evals 
+
+MODEL_NAMES=(
+    "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac"
+    "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-faeze_verifiable"
+    "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-val_if"
+    "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu"
+    "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-ot3_456k"
+    "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k"
+    "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-saurabh_code"
+)
+
+for MODEL_NAME in "${MODEL_NAMES[@]}"; do
+    USABLE_LENGTH=4096
+    MODEL_PATH=/weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/usable-tulu/$MODEL_NAME
+    WANDB_RUN=placeholder
+    python scripts/submit_eval_jobs.py \
+            --model_name $MODEL_NAME \
+            --location $MODEL_PATH \
+            --cluster ai2/saturn-cirrascale ai2/jupiter-cirrascale-2 ai2/ceres-cirrascale \
+            --is_tuned \
+            --priority high \
+            --preemptible \
+            --use_hf_tokenizer_template \
+            --run_oe_eval_experiments \
+            --evaluate_on_weka \
+            --run_id $WANDB_RUN \
+            --workspace tulu-3-results \
+            --oe_eval_max_length $USABLE_LENGTH \
+            --oe_eval_stop_sequences '</answer>' \
+            --process_output r1_style \
+            --skip_oi_evals 
+done
 
 
 
