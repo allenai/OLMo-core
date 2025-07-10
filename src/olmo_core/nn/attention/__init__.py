@@ -45,11 +45,6 @@ from .ring import (
     RingAttentionZigZagLoadBalancer,
 )
 
-try:
-    from functools import cache
-except ImportError:
-    from functools import lru_cache as cache
-
 __all__ = [
     "AttentionType",
     "AttentionConfig",
