@@ -168,6 +168,13 @@ def save_hf_model(
     hf_model.config.vocab_size = vocab_size or model.vocab_size
     hf_model.resize_token_embeddings(hf_model.config.vocab_size)
 
+    # TODO: make this generalizable
+    hf_model.generation_config.eos_token_id = [
+        100265, # <|im_end|>
+        100257  # <|endoftext|>
+    ]
+    hf_model.generation_config.pad_token = 100277
+
     if get_fs_local_rank(process_group) == 0:
         if is_url(save_dir):
             assert work_dir is not None

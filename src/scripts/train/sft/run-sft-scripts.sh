@@ -144,8 +144,8 @@ python src/scripts/train/sft/OLMo2-7B-sft.py launch \
     --num_nodes=4 \
     --launch.priority=urgent
 
-INPUT_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-tulu3-olmo2-mix-remov_replac/step1368
-MODEL_NAME=olmo2-7B-lc-tulu3-olmo2-mix-remov_replac
+INPUT_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k/step2460
+MODEL_NAME=olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k
 gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/olmo-instruct \
         --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync --all-extras" \
         --weka=oe-adapt-default:/weka/oe-adapt-default \
@@ -154,7 +154,7 @@ gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt
         --gpus 1 \
         -- /root/.local/bin/uv run python src/examples/huggingface/convert_checkpoint_to_hf.py \
             -i $INPUT_PATH \
-            -o /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/$MODEL_NAME \
+            -o /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/usable-tulu/$MODEL_NAME \
             --max-sequence-length 65536
 
 olmo2-7B-lc-openthoughts3-456k/step42798
