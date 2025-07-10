@@ -48,8 +48,9 @@ log = logging.getLogger(__name__)
 
 
 SEQUENCE_LENGTH = 8192
+GLOBAL_BATCH_SIZE_SEQ=512
 GLOBAL_BATCH_SIZE = (
-    (512) * SEQUENCE_LENGTH
+    (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
 MAX_DURATION = int(700e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
@@ -60,11 +61,11 @@ TOP_K = 4
 D_MODEL=2048
 MOE_HIDDEN_SIZE = 1024 + 1024
 
-SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP in MoE blocks
-MICRO_BSZ = 8
-# NUM_LAYERS=8
-NUM_LAYERS=8
-DP_DIM=8
+SHARED_MLP_HIDDEN_SIZE = 4096  # Hidden size for shared MLP in MoE blocks
+MICRO_BSZ = 4
+
+NUM_LAYERS=48
+DP_DIM=32
 EP_DIM=1
 PP_DIM=1
 SPLIT_POINTS = None
@@ -83,7 +84,7 @@ SPLIT_POINTS = None
 # 36 37 38 39 40 41
 # 42 43 44 45 46 + loss
             
-TAG=f'dev'
+TAG=f'debug'
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = D_MODEL
@@ -268,13 +269,13 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 10
     
-    cluster = 'ai2/jupiter-cirrascale-2'
-    # cluster = 'ai2/augusta-google-1'
+    # cluster = 'ai2/jupiter-cirrascale-2'
+    cluster = 'ai2/augusta-google-1'
 
     return (
         TrainerConfig(
-            # save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{DP_DIM}DP{EP_DIM}EP{PP_DIM}PP_{MICRO_BSZ}MB_{TAG}',
-            save_folder=f'/workspace/tmp/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{DP_DIM}DP{EP_DIM}EP{PP_DIM}PP_{MICRO_BSZ}MB_{TAG}',
+            save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{DP_DIM}DP{EP_DIM}EP{PP_DIM}PP_{GLOBAL_BATCH_SIZE_SEQ}GBS_{TAG}',
+            # save_folder=f'/workspace/tmp/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{DP_DIM}DP{EP_DIM}EP{PP_DIM}PP_{MICRO_BSZ}MB_{TAG}',
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
@@ -323,22 +324,22 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=True, # NOTE: change this
+            NvidiaProfilerCallback(enabled=False, # NOTE: change this
                                    profile_ranks=[0, 8, 16, 24],
                                    start=30,
                                    end=33
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        )
+        # .with_recommended_evals(
+        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+        # )
     )
 
 
 def finalize_config(config: ExperimentConfig):
-    # config.dataset.mix = 'OLMo-mix-0625' # new dataset mix
-    # config.dataset.mix_base_dir = "gs://ai2-llm" # only avail on Google Cloud
+    config.dataset.mix = 'OLMo-mix-0625' # new dataset mix
+    config.dataset.mix_base_dir = "gs://ai2-llm" # only avail on Google Cloud
     
     # add active & total params to the wandb name
     total_params_in_B = config.model.num_params/1000/1000/1000

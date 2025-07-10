@@ -1151,8 +1151,8 @@ class ParallelDroplessMLP(ParallelMLPBase):
 
 
         
-        EP_RECOMPUTE = True
-        if EP_RECOMPUTE:
+        EP_PERMUTE_GEMM_UNPERMUTE_USE_RECOMPUTE = True
+        if EP_PERMUTE_GEMM_UNPERMUTE_USE_RECOMPUTE:
             local_x = checkpoint(
                 self.forward_step_1_9,
                 local_x,
@@ -1383,16 +1383,25 @@ class ParallelDroplessMLP(ParallelMLPBase):
         copy_stream.synchronize() # wait for the copy to CPU to finish
         
 
-        # NOTE: GEMM_RECOMPUTE = True
-        x_moe = checkpoint(
-            self._forward_step_rc,
-            x,
-            expert_indices,
-            expert_weights,
-            batch_size_per_expert_cpu,
-            use_reentrant=False,
-            in_shape=in_shape,
-        )
+        PERMUTE_GEMM_UNPERMUTE_USE_RECOMPUTE = True
+        if PERMUTE_GEMM_UNPERMUTE_USE_RECOMPUTE:
+            x_moe = checkpoint(
+                self._forward_step_rc,
+                x,
+                expert_indices,
+                expert_weights,
+                batch_size_per_expert_cpu,
+                use_reentrant=False,
+                in_shape=in_shape,
+            )
+        else:
+            x_moe = self._forward_step_rc(
+                x,
+                expert_indices,
+                expert_weights,
+                batch_size_per_expert_cpu,
+                in_shape=in_shape,
+            )
 
         return x_moe, overlap_out
 

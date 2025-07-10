@@ -696,7 +696,11 @@ class Transformer(nn.Module):
         # which can be expensive and non-overlapped
         reshard_after_forward = False if pp_enabled else True
 
-        for block in self.blocks.values():
+        for block_idx, block in enumerate(self.blocks.values()):
+            # if block_idx % 2 == 0:
+            #     reshard_after_forward = True
+            # else:
+            #     reshard_after_forward = False
             block = cast(TransformerBlockBase, block)
             block.apply_fsdp(
                 dp_mesh=dp_mesh,

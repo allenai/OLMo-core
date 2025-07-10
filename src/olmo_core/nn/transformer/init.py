@@ -187,7 +187,8 @@ class InitMethod(StrEnum):
             std = std / (2 * (block_idx + 1)) ** 0.5
 
         if isinstance(m.router, MoELinearRouter):
-            nn.init.trunc_normal_(
+            _apply_init(
+                nn.init.trunc_normal_,
                 cast(MoELinearRouter, m.router).weight,
                 mean=0.0,
                 std=std,
@@ -196,7 +197,8 @@ class InitMethod(StrEnum):
                 generator=generator,
             )
         elif isinstance(m.router, MoEOrthogonalRouter):
-            nn.init.trunc_normal_(
+            _apply_init(
+                nn.init.trunc_normal_,
                 cast(MoEOrthogonalRouter, m.router).weight,
                 mean=0.0,
                 std=std,
@@ -204,14 +206,16 @@ class InitMethod(StrEnum):
                 b=3 * std,
                 generator=generator,
             )
-            nn.init.orthogonal_(
+            _apply_init(
+                nn.init.orthogonal_,
                 cast(MoEOrthogonalRouter, m.router).weight,
                 gain=1,
                 generator=generator,
             )
             # x = cast(MoEOrthogonalRouter, m.router).weight.full_tensor()
             # pass
-        nn.init.trunc_normal_(
+        _apply_init(
+            nn.init.trunc_normal_,
             cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w1,
             mean=0.0,
             std=std,
