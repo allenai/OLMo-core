@@ -116,6 +116,7 @@ datasets:
   OT3-456-subsample_100k: 
     base_dir: jacobm/data/sft/rl-sft-32k/OT3-456-subsample_100k
     tokenizer:  /weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/OT3-456-subsample_100k/tokenizer
+    token_ids:
       - token_ids_part_0000.npy
       - token_ids_part_0001.npy
       - token_ids_part_0002.npy
@@ -132,6 +133,7 @@ datasets:
   OT3-456-subsample_250k: 
     base_dir: jacobm/data/sft/rl-sft-32k/OT3-456-subsample_250k
     tokenizer:  /weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/OT3-456-subsample_250k/tokenizer
+    token_ids:
       - token_ids_part_0000.npy
       - token_ids_part_0001.npy
       - token_ids_part_0002.npy
@@ -162,6 +164,7 @@ datasets:
   OpenThoughts3-456k: 
     base_dir: jacobm/data/sft/rl-sft-32k/OpenThoughts3-456k
     tokenizer:  /weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/OpenThoughts3-456k/tokenizer
+    token_ids:
       - token_ids_part_0000.npy
       - token_ids_part_0001.npy
       - token_ids_part_0002.npy
@@ -208,6 +211,7 @@ datasets:
   OpenThoughts3-456k-gpt4.1-cot:
     base_dir: jacobm/data/sft/rl-sft-32k/OpenThoughts3-456k-gpt4.1-cot
     tokenizer:  /weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/OpenThoughts3-456k-gpt4.1-cot/tokenizer
+    token_ids:
       - token_ids_part_0000.npy
       - token_ids_part_0001.npy
       - token_ids_part_0002.npy

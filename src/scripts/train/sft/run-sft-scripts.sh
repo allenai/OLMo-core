@@ -120,8 +120,8 @@ python src/scripts/train/sft/OLMo2-7B-sft.py launch \
 
 # REASONING!!!!!
 python src/scripts/train/sft/OLMo2-7B-sft.py launch \
-    olmo2-7B-lc-tulu3-olmo2-mix \
-        tulu3-olmo2-mix \
+    olmo2-7B-lc-OT3-456-subsample_100k \
+        OT3-456-subsample_100k \
         /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_4K_20B/step33379 \
         ai2/titan-cirrascale \
     --trainer.callbacks.wandb.enabled=True \
