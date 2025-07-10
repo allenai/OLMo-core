@@ -130,7 +130,7 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
                     num_stages,
                     device,
                     is_rddp=use_ddp,
-                    buffer_pool_size=2, # 2 for interleaved?, 1 for 1f1b?
+                    buffer_pool_size=1, # 2 for interleaved?, 1 for 1f1b?
                     group=pp_mesh.get_group("pp"),
                 )
             else:
