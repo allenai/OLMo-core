@@ -45,6 +45,7 @@ def transformer_config_with_swa(tokenizer_config: TokenizerConfig) -> Transforme
         force_full_attention_on_last_layer=True,
     )
     config.block.attention.use_head_qk_norm = True
+
     return config
 
 
@@ -73,15 +74,15 @@ def olmo_core_model_path_with_swa(
 def _validate_models_match(
     hf_model: PreTrainedModel,
     olmo_core_model: Transformer,
+    device: torch.device,
     batch_size: int = 4,
     seq_len: int = 8,
-    device: torch.device | None = None,
 ):
     min_vocab_size = min(int(hf_model.vocab_size), olmo_core_model.vocab_size)
     assert min_vocab_size > 0
 
     # Move models to device
-    device = device or get_default_device()
+    device = device
     hf_model = hf_model.to(device)
     olmo_core_model = olmo_core_model.to(device)
 
@@ -119,7 +120,7 @@ def _validate_models_match(
         logits[..., :min_vocab_size],
         rtol=1e-5,
         atol=1e-5,
-        msg=f"Logits mismatch for batch_size={batch_size}, seq_len={seq_len}",
+        msg=lambda msg: f"Logits mismatch for batch_size={batch_size}, seq_len={seq_len}, msg {msg}",
     )
 
     # Additional validation: parameter count
@@ -318,7 +319,7 @@ def test_convert_checkpoint_to_hf_with_swa_model(
     )
 
     # Load both models and verify outputs match
-    olmo_core_model = TransformerConfig.from_dict(test_config).build()
+    olmo_core_model = TransformerConfig.from_dict(test_config).build(init_device=device.type)
     load_model_and_optim_state(
         olmo_core_model_path_with_swa / "model_and_optim", model=olmo_core_model
     )
@@ -335,4 +336,6 @@ def test_convert_checkpoint_to_hf_with_swa_model(
         f"OLMo model dtype mismatch: expected {expected_dtype}, got {olmo_param_dtype}"
     )
 
-    _validate_models_match(hf_model, olmo_core_model, batch_size=2, seq_len=sequence_length)
+    _validate_models_match(
+        hf_model, olmo_core_model, batch_size=2, seq_len=sequence_length, device=device
+    )
