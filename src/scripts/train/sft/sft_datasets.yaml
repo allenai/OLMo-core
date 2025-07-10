@@ -106,3 +106,165 @@ datasets:
     label_mask:
       - labels_mask_part_0000.npy
       - labels_mask_part_0001.npy
+  OT3-456-subsample_10k: 
+    base_dir: jacobm/data/sft/rl-sft-32k/OT3-456-subsample_10k
+    tokenizer:  /weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/OT3-456-subsample_10k/tokenizer
+    token_ids:
+      - token_ids_part_0000.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+  OT3-456-subsample_100k: 
+    base_dir: jacobm/data/sft/rl-sft-32k/OT3-456-subsample_100k
+    tokenizer:  /weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/OT3-456-subsample_100k/tokenizer
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+      - token_ids_part_0003.npy
+      - token_ids_part_0004.npy
+      - token_ids_part_0005.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
+      - labels_mask_part_0003.npy
+      - labels_mask_part_0004.npy
+      - labels_mask_part_0005.npy
+  OT3-456-subsample_250k: 
+    base_dir: jacobm/data/sft/rl-sft-32k/OT3-456-subsample_250k
+    tokenizer:  /weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/OT3-456-subsample_250k/tokenizer
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+      - token_ids_part_0003.npy
+      - token_ids_part_0004.npy
+      - token_ids_part_0005.npy
+      - token_ids_part_0006.npy
+      - token_ids_part_0007.npy
+      - token_ids_part_0008.npy
+      - token_ids_part_0009.npy
+      - token_ids_part_0010.npy
+      - token_ids_part_0011.npy
+      - token_ids_part_0012.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
+      - labels_mask_part_0003.npy
+      - labels_mask_part_0004.npy
+      - labels_mask_part_0005.npy
+      - labels_mask_part_0006.npy
+      - labels_mask_part_0007.npy
+      - labels_mask_part_0008.npy
+      - labels_mask_part_0009.npy
+      - labels_mask_part_0010.npy
+      - labels_mask_part_0011.npy
+      - labels_mask_part_0012.npy
+  OpenThoughts3-456k: 
+    base_dir: jacobm/data/sft/rl-sft-32k/OpenThoughts3-456k
+    tokenizer:  /weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/OpenThoughts3-456k/tokenizer
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+      - token_ids_part_0003.npy
+      - token_ids_part_0004.npy
+      - token_ids_part_0005.npy
+      - token_ids_part_0006.npy
+      - token_ids_part_0007.npy
+      - token_ids_part_0008.npy
+      - token_ids_part_0009.npy
+      - token_ids_part_0010.npy
+      - token_ids_part_0011.npy
+      - token_ids_part_0012.npy
+      - token_ids_part_0013.npy
+      - token_ids_part_0014.npy
+      - token_ids_part_0015.npy
+      - token_ids_part_0016.npy
+      - token_ids_part_0017.npy
+      - token_ids_part_0018.npy
+      - token_ids_part_0019.npy
+      - token_ids_part_0020.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
+      - labels_mask_part_0003.npy
+      - labels_mask_part_0004.npy
+      - labels_mask_part_0005.npy
+      - labels_mask_part_0006.npy
+      - labels_mask_part_0007.npy
+      - labels_mask_part_0008.npy
+      - labels_mask_part_0009.npy
+      - labels_mask_part_0010.npy
+      - labels_mask_part_0011.npy
+      - labels_mask_part_0012.npy
+      - labels_mask_part_0013.npy
+      - labels_mask_part_0014.npy
+      - labels_mask_part_0015.npy
+      - labels_mask_part_0016.npy
+      - labels_mask_part_0017.npy
+      - labels_mask_part_0018.npy
+      - labels_mask_part_0019.npy
+      - labels_mask_part_0020.npy
+  OpenThoughts3-456k-gpt4.1-cot:
+    base_dir: jacobm/data/sft/rl-sft-32k/OpenThoughts3-456k-gpt4.1-cot
+    tokenizer:  /weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/OpenThoughts3-456k-gpt4.1-cot/tokenizer
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+      - token_ids_part_0003.npy
+      - token_ids_part_0004.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
+      - labels_mask_part_0003.npy
+      - labels_mask_part_0004.npy
+  OT3-456k-R1_wildchat_p1_2_oasst:
+    base_dir: jacobm/data/sft/rl-sft-32k/OT3-456k-R1_wildchat_p1_2_oasst
+    tokenizer:  /weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/OT3-456k-R1_wildchat_p1_2_oasst/tokenizer
+    token_ids:
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+      - token_ids_part_0003.npy
+      - token_ids_part_0004.npy
+      - token_ids_part_0005.npy
+      - token_ids_part_0006.npy
+      - token_ids_part_0007.npy
+      - token_ids_part_0008.npy
+      - token_ids_part_0009.npy
+      - token_ids_part_0010.npy
+      - token_ids_part_0011.npy
+      - token_ids_part_0012.npy
+      - token_ids_part_0013.npy
+      - token_ids_part_0014.npy
+      - token_ids_part_0015.npy
+      - token_ids_part_0016.npy
+      - token_ids_part_0017.npy
+      - token_ids_part_0018.npy
+      - token_ids_part_0019.npy
+      - token_ids_part_0020.npy
+      - token_ids_part_0021.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
+      - labels_mask_part_0003.npy
+      - labels_mask_part_0004.npy
+      - labels_mask_part_0005.npy
+      - labels_mask_part_0006.npy
+      - labels_mask_part_0007.npy
+      - labels_mask_part_0008.npy
+      - labels_mask_part_0009.npy
+      - labels_mask_part_0010.npy
+      - labels_mask_part_0011.npy
+      - labels_mask_part_0012.npy
+      - labels_mask_part_0013.npy
+      - labels_mask_part_0014.npy
+      - labels_mask_part_0015.npy
+      - labels_mask_part_0016.npy
+      - labels_mask_part_0017.npy
+      - labels_mask_part_0018.npy
+      - labels_mask_part_0019.npy
+      - labels_mask_part_0020.npy
+      - labels_mask_part_0021.npy
