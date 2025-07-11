@@ -48,7 +48,7 @@ log = logging.getLogger(__name__)
 
 
 SEQUENCE_LENGTH = 8192
-GLOBAL_BATCH_SIZE_SEQ=4096-1024
+GLOBAL_BATCH_SIZE_SEQ=512
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
@@ -62,7 +62,7 @@ D_MODEL=2048
 MOE_HIDDEN_SIZE = 1024 + 1024
 
 SHARED_MLP_HIDDEN_SIZE = 4096  # Hidden size for shared MLP in MoE blocks
-MICRO_BSZ = 6
+MICRO_BSZ = 4
 
 NUM_LAYERS=48
 DP_DIM=128
