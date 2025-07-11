@@ -118,7 +118,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             num_experts=NUM_EXPERTS,
             hidden_size=MOE_HIDDEN_SIZE,
             # capacity_factor=1.0,
-            router=MoERouterConfig(top_k=TOP_K, gating_function=MoERouterGatingFunction.sigmoid, uniform_expert_assignment=True),
+            router=MoERouterConfig(top_k=TOP_K, gating_function=MoERouterGatingFunction.sigmoid, uniform_expert_assignment=False),
             # shared_mlp=FeedForwardConfig(hidden_size=SHARED_MLP_HIDDEN_SIZE, bias=False) if USE_SHARED_MLP else None,
             lb_loss_weight=0.05,
             z_loss_weight=None,
