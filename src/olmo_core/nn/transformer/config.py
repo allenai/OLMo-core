@@ -938,6 +938,88 @@ class TransformerConfig(Config):
         )
 
     @classmethod
+    def llama_like_blt(
+        cls,
+        *,
+        d_model: int,
+        vocab_size: int,
+        n_layers: int,
+        n_heads: int,
+        n_kv_heads: Optional[int] = None,
+        qk_norm: bool = False,
+        layer_norm_eps: float = 1e-5,
+        rope_theta: int = 500_000,
+        rope_type: Optional[RoPEType] = None,
+        hidden_size_multiple_of: int = 256,
+        hidden_size_multiplier: Optional[float] = None,
+        fused_ops: bool = False,
+        use_flash: bool = False,
+        block_name: TransformerBlockType = TransformerBlockType.default,
+        dtype: DType = DType.float32,
+        rope_scaling: Optional[RoPEScalingConfig] = None,
+        feed_forward: Optional[FeedForwardConfig] = None,
+        feed_forward_moe: Optional[MoEConfig] = None,
+        **kwargs,
+    ) -> "TransformerConfig":
+        """
+        TODO
+        """
+        # Resolve hidden size of FFN in blocks.
+        hidden_size = int(8 * d_model / 3)
+        if hidden_size_multiplier is not None:
+            hidden_size = int(hidden_size_multiplier * hidden_size)
+        hidden_size = ensure_multiple_of(hidden_size, hidden_size_multiple_of)
+
+        # Configure global layer norm.
+        layer_norm = LayerNormConfig(
+            name=LayerNormType.fused_rms if fused_ops else LayerNormType.rms,
+            eps=layer_norm_eps,
+            bias=False,
+            dtype=dtype,
+        )
+
+        # Decide on attention/rope implementations.
+        att_type = AttentionType.default
+        if rope_type is None:
+            rope_type = RoPEType.default
+            if fused_ops and n_kv_heads is None:  # fused attention not compatible with MQA/GQA.
+                att_type = AttentionType.fused
+                rope_type = RoPEType.fused
+
+        # Feed-forward.
+        if feed_forward is None and feed_forward_moe is None:
+            feed_forward = FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype)
+
+        # Configure blocks.
+        block = TransformerBlockConfig(
+            name=block_name,
+            attention=AttentionConfig(
+                name=att_type,
+                n_heads=n_heads,
+                n_kv_heads=n_kv_heads,
+                bias=False,
+                rope=RoPEConfig(name=rope_type, theta=rope_theta, scaling=rope_scaling),
+                qk_norm=layer_norm if qk_norm else None,
+                use_flash=use_flash,
+                dtype=dtype,
+            ),
+            feed_forward=feed_forward,
+            feed_forward_moe=feed_forward_moe,
+            layer_norm=layer_norm,
+        )
+
+        return cls(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=n_layers,
+            block=block,
+            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+            dtype=dtype,
+            **kwargs,
+        )
+
+
+    @classmethod
     def llama_like_moe(
         cls,
         *,
