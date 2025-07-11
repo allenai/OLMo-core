@@ -141,8 +141,8 @@ python src/scripts/train/sft/OLMo2-7B-sft.py launch \
     --num_nodes=4 \
     --launch.priority=urgent
 
-INPUT_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-OpenThoughts3-456k-no-cot-olmo-chat-template/step744
-MODEL_NAME=olmo2-7B-lc-OpenThoughts3-456k-no-cot-olmo-chat-template
+INPUT_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-OT3-456-subsample_100k/step2654
+MODEL_NAME=olmo2-7B-lc-OT3-456-subsample_100k
 gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/olmo-instruct \
         --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync --all-extras" \
         --weka=oe-adapt-default:/weka/oe-adapt-default \
@@ -154,14 +154,16 @@ gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt
             -o /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/rl-sft/$MODEL_NAME \
             --max-sequence-length 65536
 
-olmo2-7B-lc-openthoughts3-456k/step42798
-olmo2-7B-lc-openthoughts3-456k-no-cot/step2742
+olmo2-7B-lc-OpenThoughts3-456k-no-cot-olmo-chat-template
 
 ##### REASONING:
 cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-olmo_thinker-chat-template/* \
     <OUTPUT_DIR>
 
-find /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/usable-tulu/ -maxdepth 1 -type d -name "olmo2-7B-lc-tulu3-olmo2-mix*" -exec cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-olmo-chat-template/* {} \;
+find /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/usable-tulu/ -maxdepth 1 -type d -name "olmo2-7B-lc*" -exec cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-olmo-chat-template/* {} \;
+
+find /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/rl-sft/ -maxdepth 1 -type d -name "olmo2-7B-lc*" -exec cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-olmo_thinker-chat-template/* {} \;
+
 
 #### USABLE:
 cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-olmo-chat-template/* \
@@ -204,8 +206,10 @@ python scripts/submit_eval_jobs.py \
     # "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-ot3_456k"
     # "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k"
     # "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-saurabh_code"
+
+# USABLE
 MODEL_NAMES=(
-    "olmo2-7B-lc-tulu3-olmo2-mix"
+    "olmo2-7B-lc-OpenThoughts3-456k-no-cot-olmo-chat-template"
 )
 
 for MODEL_NAME in "${MODEL_NAMES[@]}"; do
@@ -230,7 +234,34 @@ for MODEL_NAME in "${MODEL_NAMES[@]}"; do
             --skip_oi_evals 
 done
 
-
+# RL
+MODEL_NAMES=(
+"olmo2-7B-lc-OpenThoughts3-456k"
+"olmo2-7B-lc-OpenThoughts3-456k-gpt4.1-cot"
+"olmo2-7B-lc-OT3-456-subsample_100k"
+"olmo2-7B-lc-OT3-456-subsample_10k"
+)
+for MODEL_NAME in "${MODEL_NAMES[@]}"; do
+    RL_LENGTH=32768
+    MODEL_PATH=/weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/rl-sft/$MODEL_NAME
+    WANDB_RUN=placeholder
+    python scripts/submit_eval_jobs.py \
+            --model_name $MODEL_NAME \
+            --location $MODEL_PATH \
+            --cluster ai2/saturn-cirrascale ai2/jupiter-cirrascale-2 ai2/ceres-cirrascale \
+            --is_tuned \
+            --priority high \
+            --preemptible \
+            --use_hf_tokenizer_template \
+            --run_oe_eval_experiments \
+            --evaluate_on_weka \
+            --run_id $WANDB_RUN \
+            --workspace tulu-3-results \
+            --oe_eval_max_length $RL_LENGTH \
+            --oe_eval_stop_sequences '</answer>' \
+            --process_output r1_style \
+            --skip_oi_evals 
+done
 
 
 
