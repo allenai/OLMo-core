@@ -65,7 +65,7 @@ SHARED_MLP_HIDDEN_SIZE = 4096  # Hidden size for shared MLP in MoE blocks
 MICRO_BSZ = 4
 
 NUM_LAYERS=48
-DP_DIM=128
+DP_DIM=32
 EP_DIM=1
 PP_DIM=1
 SPLIT_POINTS = None
