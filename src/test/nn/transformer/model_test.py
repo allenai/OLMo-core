@@ -4,12 +4,18 @@ from typing import cast
 
 import pytest
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed.tensor import DTensor, init_device_mesh
 
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
+)
+from olmo_core.distributed.parallel import (
+    DataParallelConfig,
+    DataParallelType,
+    build_world_mesh,
 )
 from olmo_core.distributed.utils import get_full_tensor, get_world_size
 from olmo_core.nn.attention import AttentionConfig
@@ -220,6 +226,41 @@ def test_tensor_parallel_transformer(backend: str, architecture: str, tmp_path):
             outputs_path,
             architecture,
         ),
+    )
+
+
+def run_init_with_hsdp():
+    assert dist.get_world_size() == 4
+    mesh = build_world_mesh(
+        dp=DataParallelConfig(name=DataParallelType.hsdp, shard_degree=2, num_replicas=2)
+    )
+    config = get_transformer_config("olmo2")
+    model = config.build(init_device="meta")
+    model.apply_fsdp(mesh)
+    model.init_weights(max_seq_len=512, device=get_default_device())
+
+    # Check that params across all replica groups are exactly the same.
+    for name, param in model.named_parameters():
+        full_param = get_full_tensor(param).detach()
+        full_param_avg = full_param / 4
+        dist.all_reduce(full_param_avg)
+        torch.testing.assert_close(
+            full_param_avg,
+            full_param,
+            msg=f"parameter '{name}' is inconsistent across the process group",
+        )
+
+
+@requires_multi_gpu
+def test_init_with_hsdp():
+    if torch.cuda.device_count() < 4:
+        pytest.skip("Requires 4 GPUs")
+
+    run_distributed_test(
+        run_init_with_hsdp,
+        backend="nccl",
+        start_method="spawn",
+        world_size=4,
     )
 
 
