@@ -583,58 +583,68 @@ datasets:
       - labels_mask_part_0082.npy
       - labels_mask_part_0083.npy
 # new datasets (update):
-  # tulu3-olmo2-mix-remov_replac-100k_toolu:
-  #   base_dir: jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu
-  #   tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu/tokenizer
-  #   token_ids:
-  #     - token_ids_part_0000.npy
-  #     - token_ids_part_0001.npy
-  #     - token_ids_part_0002.npy
-  #   label_mask:
-  #     - labels_mask_part_0000.npy
-  #     - labels_mask_part_0001.npy
-  #     - labels_mask_part_0002.npy
-  # tulu3-olmo2-mix-remov_replac-100k_toolu:
-  #   base_dir: jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu
-  #   tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu/tokenizer
-  #   token_ids:
-  #     - token_ids_part_0000.npy
-  #     - token_ids_part_0001.npy
-  #     - token_ids_part_0002.npy
-  #   label_mask:
-  #     - labels_mask_part_0000.npy
-  #     - labels_mask_part_0001.npy
-  #     - labels_mask_part_0002.npy
-  # tulu3-olmo2-mix-remov_replac-100k_toolu:
-  #   base_dir: jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu
-  #   tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu/tokenizer
-  #   token_ids:
-  #     - token_ids_part_0000.npy
-  #     - token_ids_part_0001.npy
-  #     - token_ids_part_0002.npy
-  #   label_mask:
-  #     - labels_mask_part_0000.npy
-  #     - labels_mask_part_0001.npy
-  #     - labels_mask_part_0002.npy
-  # tulu3-olmo2-mix-remov_replac-100k_toolu:
-  #   base_dir: jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu
-  #   tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu/tokenizer
-  #   token_ids:
-  #     - token_ids_part_0000.npy
-  #     - token_ids_part_0001.npy
-  #     - token_ids_part_0002.npy
-  #   label_mask:
-  #     - labels_mask_part_0000.npy
-  #     - labels_mask_part_0001.npy
-  #     - labels_mask_part_0002.npy
-  # tulu3-olmo2-mix-remov_replac-100k_toolu:
-  #   base_dir: jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu
-  #   tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu/tokenizer
-  #   token_ids:
-  #     - token_ids_part_0000.npy
-  #     - token_ids_part_0001.npy
-  #     - token_ids_part_0002.npy
-  #   label_mask:
-  #     - labels_mask_part_0000.npy
-  #     - labels_mask_part_0001.npy
-  #     - labels_mask_part_0002.npy
+  tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas:
+    base_dir: jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas
+    tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas/tokenizer
+    token_ids:
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+      - token_ids_part_0003.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
+      - labels_mask_part_0003.npy
+  tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-and-numinamath:
+    base_dir: jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-and-numinamath
+    tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-and-numinamath/tokenizer
+    token_ids:
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+      - token_ids_part_0003.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
+      - labels_mask_part_0003.npy
+  tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-and-flan:
+    base_dir: jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-and-flan
+    tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-and-flan/tokenizer
+    token_ids:
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+      - token_ids_part_0003.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
+      - labels_mask_part_0003.npy
+  tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-and-oasst:
+    base_dir: jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-and-oasst
+    tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-and-oasst/tokenizer
+    token_ids:
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+      - token_ids_part_0003.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
+      - labels_mask_part_0003.npy
+  usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-andtheother3:
+    base_dir: jacobm/data/sft/usable-tulu-16k/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-andtheother3
+    tokenizer: /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-andtheother3/tokenizer
+    token_ids:
+      - token_ids_part_0000.npy
+      - token_ids_part_0001.npy
+      - token_ids_part_0002.npy
+      - token_ids_part_0003.npy
+    label_mask:
+      - labels_mask_part_0000.npy
+      - labels_mask_part_0001.npy
+      - labels_mask_part_0002.npy
+      - labels_mask_part_0003.npy
